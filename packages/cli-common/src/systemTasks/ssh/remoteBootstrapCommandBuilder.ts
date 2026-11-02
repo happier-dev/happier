@@ -2,6 +2,52 @@ import { DEFAULT_HAPPIER_CLOUD_SERVER_URL } from '../../happierCloud.js';
 import { quoteRemotePathWithHomeExpansion, safeBashSingleQuote } from '../../ssh/shellQuote.js';
 import { resolveRemoteInstalledFirstPartyBinaryPath } from './remoteFirstPartyInstallPath.js';
 import { normalizePublicReleaseRingLabel } from '@happier-dev/release-runtime/releaseRings';
+import type { ManagedMachineEnrollmentIdentityV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+
+export const DEDICATED_DAEMON_INSTALL_HOME = '/opt/happier';
+
+/** The bootstrap principal supplies privilege only; every ordinary CLI call runs as the dedicated user. */
+export function buildDedicatedDaemonInvocationCommand(command: string): string {
+  const userCommand = [
+    'set -eu',
+    'happier_uid="$(id -u happier)"',
+    'test "$happier_uid" -ne 0',
+    'happier_home="$(getent passwd happier | cut -d: -f6)"',
+    'test -n "$happier_home"',
+    `exec runuser -u happier -- env -i HOME="$happier_home" USER=happier LOGNAME=happier SHELL=/bin/bash PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HAPPIER_HOME_DIR="$happier_home/.happier" HAPPIER_FIRST_PARTY_INSTALL_HOME=${DEDICATED_DAEMON_INSTALL_HOME} XDG_RUNTIME_DIR="/run/user/$happier_uid" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$happier_uid/bus" sh -c ${safeBashSingleQuote(command)}`,
+  ].join('; ');
+  return buildBootstrapRootCommand(userCommand);
+}
+
+/** Fixed bootstrap transport, shared by SSH and native exec. No root daemon fallback. */
+export function buildBootstrapRootCommand(command: string): string {
+  const invocation = `sh -c ${safeBashSingleQuote(command)}`;
+  return `if [ "$(id -u)" -eq 0 ]; then ${invocation}; else sudo -n -- ${invocation}; fi`;
+}
+
+/** Account/home creation is the only pre-installer effect; later effects use the installed typed interpreter. */
+export function buildDedicatedDaemonAccountCommand(): string {
+  return buildBootstrapRootCommand([
+    'set -eu',
+    'test "$(uname -s)" = Linux',
+    'command -v systemctl >/dev/null',
+    'command -v loginctl >/dev/null',
+    'command -v runuser >/dev/null',
+    'test -d /run/systemd/system',
+    'if ! id happier >/dev/null 2>&1; then useradd --create-home --user-group --shell /bin/bash happier; usermod --lock happier; fi',
+    'happier_uid="$(id -u happier)"',
+    'test "$happier_uid" -ne 0',
+    'test "$(id -gn happier)" = happier',
+    'case "$(passwd -S happier | cut -d\' \' -f2)" in L|LK) ;; *) exit 1 ;; esac',
+    'happier_home="$(getent passwd happier | cut -d: -f6)"',
+    'test -n "$happier_home" && test "$happier_home" != / && test -d "$happier_home" && test ! -L "$happier_home"',
+    'test "$(stat -c %u "$happier_home")" = "$happier_uid"',
+    'if [ -e "$happier_home/.happier" ]; then test ! -L "$happier_home/.happier" && test "$(stat -c %u "$happier_home/.happier")" = "$happier_uid"; fi',
+    `if [ -e ${DEDICATED_DAEMON_INSTALL_HOME} ]; then test ! -L ${DEDICATED_DAEMON_INSTALL_HOME} && test "$(stat -c %u ${DEDICATED_DAEMON_INSTALL_HOME})" = "$happier_uid"; fi`,
+    'install -d -o happier -g happier -m 0700 "$happier_home" "$happier_home/.happier"',
+    `install -d -o happier -g happier -m 0755 ${DEDICATED_DAEMON_INSTALL_HOME}`,
+  ].join('; '));
+}
 
 /** Binary path, literal argv and ring scope are independent of guest transport. */
 export function buildRemoteHappierInvocationCommand(params: Readonly<{ binaryPath: string; args: readonly string[]; channel?: string }>): string {
@@ -102,11 +148,19 @@ export function buildRemoteBootstrapCommand(params: Readonly<{
   channel?: string;
   webappUrl?: string;
   daemonServiceMode?: 'none' | 'user' | 'system';
+  enrollmentIdentity?: ManagedMachineEnrollmentIdentityV1;
+  remoteHomeDir?: string;
   data?: JsonRecord;
 }>): string {
+  if (params.enrollmentIdentity?.kind === 'dedicatedDaemonUser') {
+    return buildDedicatedDaemonInvocationCommand(buildRemoteBootstrapCommand({
+      ...params, enrollmentIdentity: undefined, daemonServiceMode: 'user', remoteHomeDir: DEDICATED_DAEMON_INSTALL_HOME,
+    }));
+  }
   const happier = quoteRemotePathWithHomeExpansion(resolveRemoteInstalledFirstPartyBinaryPath({
     componentId: 'happier-cli',
     channel: params.channel,
+    remoteHomeDir: params.remoteHomeDir,
   }));
 
   const useCloudId = shouldUseCloudProfileId(params);
@@ -203,46 +257,4 @@ export function buildRemoteBootstrapCommand(params: Readonly<{
     ].join(' ');
   }
   throw new Error(`Unsupported remote bootstrap command: ${params.label satisfies never}`);
-}
-
-export function buildBootstrapRootCommand(command: string): string {
-  const invocation = `sh -c ${safeBashSingleQuote(command)}`;
-  return `if [ "$(id -u)" -eq 0 ]; then ${invocation}; else sudo -n -- ${invocation}; fi`;
-}
-
-export function buildDedicatedDaemonInvocationCommand(command: string): string {
-  const userCommand = [
-    'set -eu',
-    'happier_uid="$(id -u happier)"',
-    'test "$happier_uid" -ne 0',
-    'happier_home="$(getent passwd happier | cut -d: -f6)"',
-    'test -n "$happier_home"',
-    `exec runuser -u happier -- env -i HOME="$happier_home" USER=happier LOGNAME=happier SHELL=/bin/bash PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HAPPIER_HOME_DIR="$happier_home/.happier" HAPPIER_FIRST_PARTY_INSTALL_HOME=${DEDICATED_DAEMON_INSTALL_HOME} XDG_RUNTIME_DIR="/run/user/$happier_uid" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$happier_uid/bus" sh -c ${safeBashSingleQuote(command)}`,
-  ].join('; ');
-  return buildBootstrapRootCommand(userCommand);
-}
-
-export const DEDICATED_DAEMON_INSTALL_HOME = '/opt/happier';
-
-export function buildDedicatedDaemonAccountCommand(): string {
-  return buildBootstrapRootCommand([
-    'set -eu',
-    'test "$(uname -s)" = Linux',
-    'command -v systemctl >/dev/null',
-    'command -v loginctl >/dev/null',
-    'command -v runuser >/dev/null',
-    'test -d /run/systemd/system',
-    'if ! id happier >/dev/null 2>&1; then useradd --create-home --user-group --shell /bin/bash happier; usermod --lock happier; fi',
-    'happier_uid="$(id -u happier)"',
-    'test "$happier_uid" -ne 0',
-    'test "$(id -gn happier)" = happier',
-    'case "$(passwd -S happier | cut -d\' \' -f2)" in L|LK) ;; *) exit 1 ;; esac',
-    'happier_home="$(getent passwd happier | cut -d: -f6)"',
-    'test -n "$happier_home" && test "$happier_home" != / && test -d "$happier_home" && test ! -L "$happier_home"',
-    'test "$(stat -c %u "$happier_home")" = "$happier_uid"',
-    'if [ -e "$happier_home/.happier" ]; then test ! -L "$happier_home/.happier" && test "$(stat -c %u "$happier_home/.happier")" = "$happier_uid"; fi',
-    `if [ -e ${DEDICATED_DAEMON_INSTALL_HOME} ]; then test ! -L ${DEDICATED_DAEMON_INSTALL_HOME} && test "$(stat -c %u ${DEDICATED_DAEMON_INSTALL_HOME})" = "$happier_uid"; fi`,
-    'install -d -o happier -g happier -m 0700 "$happier_home" "$happier_home/.happier"',
-    `install -d -o happier -g happier -m 0755 ${DEDICATED_DAEMON_INSTALL_HOME}`,
-  ].join('; '));
 }

@@ -23,7 +23,11 @@ driver's shared bootstrap recipe. A durable retry approval with a captured
 Machine target returns to that controller, including from a public approval
 projection. The controller performs ordinary replay admission and owns the
 new operation; choosing its location grants no authority. Retry failures use
-the same durable bootstrap observations described above.
+the same durable bootstrap observations described above. An admitted retained
+native retry waits for daemon registration within its operation's cancellation
+lifecycle, without the standalone setup cutoff. Initial enrollment continues to
+supply its remaining pairing lifetime; callers without a containing operation
+keep the standalone readiness timeout.
 
 
 This document describes the Happier CLI (`apps/cli`) and its daemon. The CLI is both an interactive tool and a background session manager that keeps machine state in sync with the server.

@@ -1,9 +1,10 @@
 import type { PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
 import type { OpenSshAuth as CanonicalOpenSshAuth } from '../../ssh/openSshTransport.js';
-import { buildRemoteHappierInvocationCommand } from '../ssh/remoteBootstrapCommandBuilder.js';
+import { buildDedicatedDaemonInvocationCommand, buildRemoteHappierInvocationCommand, DEDICATED_DAEMON_INSTALL_HOME } from '../ssh/remoteBootstrapCommandBuilder.js';
 export type { OpenSshAuth } from '../../ssh/openSshTransport.js';
 import { SystemTaskResultSchema } from '@happier-dev/protocol/system/tasks/spec';
 import type { SystemTaskJsonObject } from '@happier-dev/protocol';
+import type { ManagedMachineEnrollmentIdentityV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 
 import type { SystemTaskSshConnectionConfig } from '../kinds/relayRuntimeKinds.js';
 import { resolveRemoteInstalledFirstPartyBinaryPath } from '../ssh/remoteFirstPartyInstallPath.js';
@@ -58,11 +59,15 @@ export function createOpenSshHappierJsonExecutor(params: Readonly<{
   auth: CanonicalOpenSshAuth;
   knownHostsMode: 'app' | 'system';
   channel?: PublicReleaseRingId;
+  enrollmentIdentity?: ManagedMachineEnrollmentIdentityV1;
   happierCommand?: string;
   runRemoteText: OpenSshRunRemoteText;
 }>): HappierJsonExecutor {
   const channel = params.channel ?? 'stable';
-  const remoteHappier = String(params.happierCommand ?? '').trim() || resolveRemoteInstalledFirstPartyBinaryPath({
+  const dedicated = params.enrollmentIdentity?.kind === 'dedicatedDaemonUser';
+  const remoteHappier = dedicated ? resolveRemoteInstalledFirstPartyBinaryPath({
+    componentId: 'happier-cli', channel, remoteHomeDir: DEDICATED_DAEMON_INSTALL_HOME,
+  }) : String(params.happierCommand ?? '').trim() || resolveRemoteInstalledFirstPartyBinaryPath({
     componentId: 'happier-cli',
     channel,
   });
@@ -73,7 +78,7 @@ export function createOpenSshHappierJsonExecutor(params: Readonly<{
         ssh: params.ssh,
         auth: params.auth,
         knownHostsMode: params.knownHostsMode,
-        remoteCommand,
+        remoteCommand: dedicated ? buildDedicatedDaemonInvocationCommand(remoteCommand) : remoteCommand,
         label: `happier ${args.slice(0, 2).join(' ') || '…'}`,
         signal: opts?.signal,
         timeoutMs: opts?.timeoutMs,

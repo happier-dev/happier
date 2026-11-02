@@ -244,6 +244,8 @@ export async function approveTerminalAuthRequest(params: Readonly<{
   pairing?: unknown;
   supportsTokenOnly?: boolean;
   target?: ResolvedHomeTarget;
+  /** Finite admitted Account custody, separate from the ambient terminal sign-in. */
+  accountCredentials?: StoredCredentials;
   /** Explicit operator consent to copy this credential's current qualifying evidence. */
   authorizeUnattendedTeamAccess?: boolean;
   signal?: AbortSignal;
@@ -251,9 +253,14 @@ export async function approveTerminalAuthRequest(params: Readonly<{
   params.signal?.throwIfAborted();
   const recipientPk = decodePublicKey(params.publicKey);
   const targetCredentials = params.target
-    ? await resolveCredentialsForApprovalTarget(params.target, params.signal)
+    ? params.accountCredentials ? {
+        credentials: params.accountCredentials,
+        observedHomeServerIdentityId: null,
+        credentialDestination: params.target.descriptor
+          ? createHomeCredentialDestinationV1(params.target.descriptor) : null,
+      } : await resolveCredentialsForApprovalTarget(params.target, params.signal)
     : null;
-  const creds = params.target ? targetCredentials?.credentials ?? null : await readStoredCredentials();
+  const creds = params.target ? targetCredentials?.credentials ?? null : params.accountCredentials ?? await readStoredCredentials();
   if (!creds) {
     throw new Error('Not authenticated. Run `happier auth login` first.');
   }

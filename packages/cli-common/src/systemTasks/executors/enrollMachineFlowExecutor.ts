@@ -133,21 +133,21 @@ export function createEnrollMachineFlowExecutorFromHappierJsonExecutor(params: R
   };
 
   const waitForReadyDaemon: NonNullable<EnrollMachineFlowExecutor['waitForReadyDaemon']> = async (opts) => {
-    const timeoutMs = opts.timeoutMs ?? readPositiveIntEnv(
+    const timeoutMs = opts.timeoutMs === undefined ? readPositiveIntEnv(
       'HAPPIER_BOOTSTRAP_SETUP_THIS_COMPUTER_SERVICE_READY_TIMEOUT_MS',
       DEFAULT_DAEMON_READY_TIMEOUT_MS,
       { min: 100, max: 120_000 },
-    );
+    ) : opts.timeoutMs;
     const pollMs = readPositiveIntEnv(
       'HAPPIER_BOOTSTRAP_SETUP_THIS_COMPUTER_SERVICE_READY_POLL_MS',
       DEFAULT_DAEMON_READY_POLL_MS,
       { min: 50, max: 5_000 },
     );
 
-    const deadline = Date.now() + timeoutMs;
+    const deadline = timeoutMs === null ? null : Date.now() + timeoutMs;
     let latest = await readDaemonStatus();
 
-    while (!(opts.signal?.aborted) && Date.now() < deadline) {
+    while (!(opts.signal?.aborted) && (deadline === null || Date.now() < deadline)) {
       if ((opts.requireServiceInstalled === false || latest.serviceInstalled) && latest.daemonRunning && !latest.needsAuth
         && (!opts.requireMachineControlReady || latest.daemonHealthy === true)) {
         return latest;

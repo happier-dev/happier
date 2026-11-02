@@ -139,3 +139,8 @@ export {
 export { createEnrollMachineFlowExecutorFromHappierJsonExecutor } from './executors/enrollMachineFlowExecutor.js';
 
 export * from './kinds/index.js';
+
+export { createOpenSshRemoteCliTransport } from './ssh/openSshRemoteCliTransport.js';
+export { runRemoteHomeEnrollmentFlow } from './flows/remoteHomeEnrollmentFlow.js';
+export { sshCommandError, sshCommandFailure } from './ssh/sshCommandFailure.js';
+export type { RemoteFirstPartyCommandResult } from './kinds/remoteFirstPartyPayloadInstaller.js';

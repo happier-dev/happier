@@ -1,7 +1,11 @@
 import { spawnSync } from 'node:child_process';
-import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { mkdirSync, readFileSync } from 'node:fs';
 import { link, mkdtemp, rm } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
+import { installRemoteCli } from '@happier-dev/cli-common/systemTasks/nativeRemoteSshBootstrap';
+import type { ManagedMachineEnrollmentIdentityV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import type { ManagedNativeBootstrapIO } from '@/machines/managed/enrollment';
 
 import * as relayHost from '@happier-dev/cli-common/relayHost';
 import * as systemTasks from '@happier-dev/cli-common/systemTasks';
@@ -10,9 +14,8 @@ import type {
   RemoteHostTrustResolution,
   SystemTaskSshConnectionConfig,
 } from '@happier-dev/cli-common/systemTasks';
-import { redactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports/redaction';
-import { sanitizeBugReportArtifactPath } from '@happier-dev/protocol/bugs/reports/sanitize';
 import type { SystemTaskJsonObject } from '@happier-dev/protocol';
+import type { SshCommandFailurePhase } from '@happier-dev/protocol/ssh/commandFailure';
 import {
   resolvePublicReleaseRingIdForLabel,
   type PublicReleaseRingLabel,
@@ -30,6 +33,7 @@ import { isLoopbackServerHost } from '@/server/serverUrlClassification';
 import { createLivePersonalHomeOperations } from '../relayRuntime/liveRelayRuntime';
 
 import { buildRemoteBootstrapCommand } from './remoteBootstrapCommandBuilder';
+import { sshCommandError, sshCommandFailure } from './sshCommandFailure';
 import {
   parseJsonLinesBestEffort,
   safeBashSingleQuote,
@@ -39,24 +43,21 @@ import {
   buildSshKeyscanInvocation,
   readKnownHostsTextSyncWithFs,
   runOpenSshRemoteCommand,
-  transferOpenSshFile,
+  transferOpenSshFile as transferOpenSshFileBoundary,
   withOpenSshLocalPortForward,
-  writeKnownHostsTextSyncWithFs,
   type OpenSshAuth,
 } from '@happier-dev/cli-common/ssh';
 
 type JsonRecord = Record<string, unknown>;
 type RemoteCommandResult = Readonly<{ status: number; stdout: string; stderr: string }>;
 
-const ABSOLUTE_PATH_TOKEN_PATTERN = /(^|[\s"'`=:(])((?:~\/|\/|[A-Za-z]:\\)[^\s"'`]+)/gu;
-
-function redactSshStderrForErrorMessage(raw: string): string {
-  const base = redactBugReportSensitiveText(String(raw ?? ''));
-  return base.replace(ABSOLUTE_PATH_TOKEN_PATTERN, (match, prefix: string, token: string) => {
-    const sanitized = sanitizeBugReportArtifactPath(token);
-    if (!sanitized) return match;
-    return `${prefix}${sanitized}`;
-  });
+async function transferOpenSshFile(params: Parameters<typeof transferOpenSshFileBoundary>[0]): Promise<void> {
+  try {
+    await transferOpenSshFileBoundary(params);
+  } catch (error) {
+    params.signal?.throwIfAborted();
+    throw sshCommandFailure(error instanceof Error ? error.message : '');
+  }
 }
 
 function resolveAppKnownHostsPath(): string {
@@ -75,10 +76,6 @@ function resolveKnownHostsPath(
 
 function readKnownHostsText(knownHostsPath: string | undefined): string {
   return readKnownHostsTextSyncWithFs(knownHostsPath, { readFileSync });
-}
-
-function writeKnownHostsText(knownHostsPath: string | undefined, text: string): void {
-  writeKnownHostsTextSyncWithFs(knownHostsPath, text, { mkdirSync, writeFileSync, chmodSync });
 }
 
 function parseSshTarget(target: string): Readonly<{ host: string; port?: number }> {
@@ -269,12 +266,10 @@ function resolveSshEndpoint(params: Readonly<{
     windowsHide: true,
   });
   if (result.error) {
-    throw result.error;
+    throw sshCommandFailure(result.error.message);
   }
   if ((result.status ?? 1) !== 0) {
-    const stderr = String(result.stderr ?? '').trim();
-    const redactedStderr = redactSshStderrForErrorMessage(stderr).trim();
-    throw new Error(redactedStderr ? `SSH config resolution failed: ${redactedStderr}` : 'SSH config resolution failed');
+    throw sshCommandFailure(String(result.stderr ?? ''));
   }
 
   const values = new Map<string, string>();
@@ -312,18 +307,12 @@ function runCommandSync(params: Readonly<{
     windowsHide: true,
   });
   if (result.error) {
-    throw result.error;
+    throw sshCommandFailure(result.error.message);
   }
   if ((result.status ?? 1) !== 0) {
     const stderr = String(result.stderr ?? '').trim();
     const stdout = String(result.stdout ?? '').trim();
-    const detail = stderr || stdout;
-    const redactedDetail = detail ? redactSshStderrForErrorMessage(detail).trim() : '';
-    throw new Error(
-      redactedDetail
-        ? `${params.errorPrefix}: ${redactedDetail}`
-        : `${params.errorPrefix}: ${params.redactedLabel ?? params.command}`,
-    );
+    throw sshCommandFailure(stderr || stdout);
   }
   return String(result.stdout ?? '');
 }
@@ -340,32 +329,8 @@ async function runSshCommand(params: Readonly<{
   includeStdoutInError?: boolean;
   input?: string;
 }>): Promise<string> {
-  if ((params.knownHostsMode ?? 'app') === 'app' && params.knownHostsPath) {
-    mkdirSync(dirname(params.knownHostsPath), { recursive: true });
-  }
-  const invocation = {
-    target: params.ssh.target,
-    port: params.ssh.port,
-    sshConfigFile: params.ssh.sshConfigFile,
-    remoteCommand: params.remoteCommand,
-    knownHostsPath: params.knownHostsPath,
-    knownHostsMode: params.knownHostsMode,
-    auth: params.auth,
-    connectTimeoutSec: 10,
-    serverAliveIntervalSec: 15,
-    serverAliveCountMax: 2,
-    signal: params.signal,
-    timeoutMs: params.timeoutMs,
-    onStdoutChunk: params.onStdoutChunk,
-    includeStdoutInError: params.includeStdoutInError,
-    input: params.input,
-  };
-  // cli-common owns the nullable timeout contract. Its tracked declarations can
-  // lag the current source during a shared package/CLI edit, so keep this
-  // boundary assertion local while preserving `null` verbatim at runtime.
-  const result = await runOpenSshRemoteCommand(
-    invocation as Parameters<typeof runOpenSshRemoteCommand>[0],
-  );
+  const result = await runSshCommandResult(params);
+  if (result.status !== 0) throw sshCommandFailure(result.stderr || result.stdout, result);
   return result.stdout;
 }
 
@@ -375,6 +340,7 @@ async function runSshCommandResult(params: Readonly<{
   knownHostsPath?: string;
   knownHostsMode?: 'app' | 'system';
   remoteCommand: readonly string[];
+  phase?: SshCommandFailurePhase;
   signal?: AbortSignal;
   timeoutMs?: number | null;
   onStdoutChunk?: (text: string) => void;
@@ -384,24 +350,38 @@ async function runSshCommandResult(params: Readonly<{
   if ((params.knownHostsMode ?? 'app') === 'app' && params.knownHostsPath) {
     mkdirSync(dirname(params.knownHostsPath), { recursive: true });
   }
-  return await runOpenSshRemoteCommand({
-    target: params.ssh.target,
-    port: params.ssh.port,
-    sshConfigFile: params.ssh.sshConfigFile,
-    remoteCommand: params.remoteCommand,
-    knownHostsPath: params.knownHostsPath,
-    knownHostsMode: params.knownHostsMode,
-    auth: params.auth,
-    connectTimeoutSec: 10,
-    serverAliveIntervalSec: 15,
-    serverAliveCountMax: 2,
-    signal: params.signal,
-    timeoutMs: params.timeoutMs,
-    onStdoutChunk: params.onStdoutChunk,
-    includeStdoutInError: params.includeStdoutInError,
-    input: params.input,
-    rejectOnNonZero: false,
-  });
+  try {
+    const result = await runOpenSshRemoteCommand({
+      target: params.ssh.target,
+      port: params.ssh.port,
+      sshConfigFile: params.ssh.sshConfigFile,
+      remoteCommand: params.remoteCommand,
+      knownHostsPath: params.knownHostsPath,
+      knownHostsMode: params.knownHostsMode,
+      auth: params.auth,
+      connectTimeoutSec: 10,
+      serverAliveIntervalSec: 15,
+      serverAliveCountMax: 2,
+      signal: params.signal,
+      timeoutMs: params.timeoutMs,
+      onStdoutChunk: params.onStdoutChunk,
+      includeStdoutInError: params.includeStdoutInError,
+      input: params.input,
+      rejectOnNonZero: false,
+    });
+    if (result.status !== 0) {
+      const failure = sshCommandFailure(result.stderr || result.stdout, result, params.phase);
+      if (failure.code !== 'ssh_command_failed' || result.status === 255
+        || (params.includeStdoutInError !== false && !parseJsonLinesBestEffort(result.stdout))) throw failure;
+      // Text results stay internal: the enrollment owner must recognize released
+      // unsupported-command output. JSON/text command wrappers close other errors.
+    }
+    return result;
+  } catch (error) {
+    params.signal?.throwIfAborted();
+    if (error instanceof systemTasks.SystemTaskExecutionError) throw error;
+    throw sshCommandFailure(error instanceof Error ? error.message : '', undefined, params.phase);
+  }
 }
 
 async function runSshJson<T extends JsonRecord>(params: Readonly<{
@@ -410,28 +390,12 @@ async function runSshJson<T extends JsonRecord>(params: Readonly<{
   knownHostsPath?: string;
   knownHostsMode?: 'app' | 'system';
   remoteCommand: readonly string[];
+  phase?: SshCommandFailurePhase;
   authStatus?: boolean;
   signal?: AbortSignal;
   timeoutMs?: number;
 }>): Promise<T> {
-  if ((params.knownHostsMode ?? 'app') === 'app' && params.knownHostsPath) {
-    mkdirSync(dirname(params.knownHostsPath), { recursive: true });
-  }
-  const result = await runOpenSshRemoteCommand({
-    target: params.ssh.target,
-    port: params.ssh.port,
-    sshConfigFile: params.ssh.sshConfigFile,
-    remoteCommand: params.remoteCommand,
-    knownHostsPath: params.knownHostsPath,
-    knownHostsMode: params.knownHostsMode,
-    auth: params.auth,
-    connectTimeoutSec: 10,
-    serverAliveIntervalSec: 15,
-    serverAliveCountMax: 2,
-    signal: params.signal,
-    timeoutMs: params.timeoutMs,
-    rejectOnNonZero: false,
-  });
+  const result = await runSshCommandResult(params);
   const stdout = result.stdout;
   const parsed = parseJsonLinesBestEffort<T>(stdout);
   if (parsed && (result.status === 0
@@ -439,16 +403,9 @@ async function runSshJson<T extends JsonRecord>(params: Readonly<{
     return parsed;
   }
   if (result.status === 0) {
-    throw new Error('Remote command did not return valid JSON');
+    throw sshCommandError('ssh_invalid_response', result, params.phase);
   }
-  const stderr = result.stderr.trim();
-  const detail = stderr || stdout.trim();
-  const redactedDetail = detail ? redactSshStderrForErrorMessage(detail).trim() : '';
-  throw new Error(
-    redactedDetail
-      ? `SSH command failed: ${redactedDetail}`
-      : 'SSH command failed: remote command returned no JSON result',
-  );
+  throw sshCommandFailure(result.stderr || stdout, result, params.phase);
 }
 
 async function runSshPosixJson<T extends JsonRecord>(params: Readonly<{
@@ -457,6 +414,7 @@ async function runSshPosixJson<T extends JsonRecord>(params: Readonly<{
   knownHostsPath?: string;
   knownHostsMode?: 'app' | 'system';
   shellCommand: string;
+  phase?: SshCommandFailurePhase;
   authStatus?: boolean;
   signal?: AbortSignal;
   timeoutMs?: number;
@@ -467,6 +425,7 @@ async function runSshPosixJson<T extends JsonRecord>(params: Readonly<{
     knownHostsPath: params.knownHostsPath,
     knownHostsMode: params.knownHostsMode,
     remoteCommand: ['bash', '-lc', safeBashSingleQuote(params.shellCommand)],
+    phase: params.phase,
     authStatus: params.authStatus,
     signal: params.signal,
     timeoutMs: params.timeoutMs,
@@ -688,12 +647,18 @@ async function resolveLiveRemoteHostTrust(params: Readonly<{
   const knownHostsPath = resolveKnownHostsPath(params.ssh, params.knownHostsMode);
   const existingKnownHostsText = readKnownHostsText(knownHostsPath);
   const parsedTarget = resolveSshEndpoint({ ssh: params.ssh });
-  const keyscanOutput = runCommandSync({
-    ...buildSshKeyscanInvocation({ host: parsedTarget.host, port: parsedTarget.port, timeoutSec: 5, keyType: 'ed25519' }),
-    errorPrefix: 'ssh-keyscan failed',
-  });
-  params.signal?.throwIfAborted();
-  const scanned = systemTasks.extractFirstScannedSshKnownHostLine(keyscanOutput);
+  let scanned: ReturnType<typeof systemTasks.extractFirstScannedSshKnownHostLine>;
+  try {
+    const keyscanOutput = runCommandSync({
+      ...buildSshKeyscanInvocation({ host: parsedTarget.host, port: parsedTarget.port, timeoutSec: 5, keyType: 'ed25519' }),
+      errorPrefix: 'ssh-keyscan failed',
+    });
+    params.signal?.throwIfAborted();
+    scanned = systemTasks.extractFirstScannedSshKnownHostLine(keyscanOutput);
+  } catch {
+    params.signal?.throwIfAborted();
+    throw new systemTasks.SystemTaskExecutionError('native_ssh_host_key_unavailable', 'The SSH host key could not be observed.');
+  }
   const normalizedHost = formatKnownHostsHostToken(parsedTarget);
   const scannedHostKeyLine = normalizedHost ? `${normalizedHost} ${scanned.keyType} ${scanned.key}` : scanned.line;
   if (params.ssh.hostKeyEvidence) {
@@ -717,7 +682,7 @@ async function resolveLiveRemoteHostTrust(params: Readonly<{
     );
   }
   if (trust.status === 'trusted') {
-    if (trust.nextKnownHostsText !== existingKnownHostsText) writeKnownHostsText(knownHostsPath, trust.nextKnownHostsText);
+    systemTasks.persistSshKnownHostTrust({ knownHostsPath, trust, trustedHostKey: params.ssh.trustedHostKey });
     return { status: 'trusted' };
   }
   return {
@@ -730,44 +695,27 @@ async function resolveLiveRemoteHostTrust(params: Readonly<{
       fingerprint: trust.scanned.fingerprint,
       ...(trust.promptKind === 'ssh.replaceHostKey' ? { existingFingerprint: trust.existingFingerprint ?? null } : {}),
     },
-    accept: async () => writeKnownHostsText(knownHostsPath, trust.nextKnownHostsText),
+    accept: async () => systemTasks.persistSshKnownHostTrust({ knownHostsPath, trust, trustedHostKey: params.ssh.trustedHostKey }),
   };
 }
 
-async function installLiveRemoteCli(params: Readonly<{
+function createLiveRemoteCliTransport(params: Readonly<{
   ssh: SystemTaskSshConnectionConfig;
   auth: SshAuth;
   knownHostsMode: 'app' | 'system';
   channel: 'stable' | 'preview' | 'dev';
   signal?: AbortSignal;
-}>): Promise<void> {
+}>) {
   const knownHostsPath = resolveKnownHostsPath(params.ssh, params.knownHostsMode);
-  await systemTasks.installRemoteFirstPartyComponent({
-    componentId: 'happier-cli', channel: params.channel, ssh: params.ssh, knownHostsMode: params.knownHostsMode,
-    ...(params.signal ? { signal: params.signal } : {}),
-  }, {
-    resolveRemoteReleaseTarget: async ({ signal }) => {
-      const preflight = await runSshPosixJson<Readonly<{ platform?: unknown; arch?: unknown }>>({
-        ssh: params.ssh, auth: params.auth, knownHostsPath, knownHostsMode: params.knownHostsMode,
-        shellCommand: ["printf '{\"platform\":\"%s\",\"arch\":\"%s\"}\\n'", '"$(uname -s | tr \'[:upper:]\' \'[:lower:]\')"', '"$(uname -m | tr \'[:upper:]\' \'[:lower:]\')"'].join(' '),
-        signal,
-      });
-      return { os: systemTasks.normalizeRemoteReleaseOs(preflight.platform), arch: systemTasks.normalizeRemoteReleaseArch(preflight.arch) };
-    },
-    runRemoteText: async ({ remoteCommand, signal }) => runSshPosixText({
-      ssh: params.ssh, auth: params.auth, knownHostsPath, knownHostsMode: params.knownHostsMode,
-      shellCommand: remoteCommand, signal,
-    }),
-    copyLocalDirectoryToRemote: async ({ localPath, remotePath, signal }) => {
-      await transferOpenSshFile({
-        direction: 'upload', target: params.ssh.target, localPath, remotePath, recursive: true,
-        sshConfigFile: params.ssh.sshConfigFile, knownHostsPath, knownHostsMode: params.knownHostsMode,
-        auth: params.auth, port: params.ssh.port, connectTimeoutSec: 10,
-        serverAliveIntervalSec: 15, serverAliveCountMax: 2,
-        ...(signal ? { signal } : {}), timeoutMs: 15 * 60_000,
-      });
-    },
-  });
+  const connection = { ssh: params.ssh, auth: params.auth, knownHostsPath, knownHostsMode: params.knownHostsMode };
+  const exec: ManagedNativeBootstrapIO['exec'] = async request => {
+    params.signal?.throwIfAborted();
+    request.signal?.throwIfAborted();
+    return await runSshPosixCommandResult({ ...connection, shellCommand: request.command, input: request.input,
+      signal: request.signal ?? params.signal, timeoutMs: request.timeoutMs, onStdoutChunk: request.onStdoutChunk,
+      includeStdoutInError: false });
+  };
+  return systemTasks.createOpenSshRemoteCliTransport({ ...params, knownHostsPath, exec });
 }
 
 export function createLiveRemoteSshManageHostTaskKind() {
@@ -844,8 +792,8 @@ export function createLiveRemoteSshManageHostTaskKind() {
         shellCommand: 'true', timeoutMs: 15_000, signal,
       });
     },
-    installRemoteCli: async ({ ssh, auth, knownHostsMode, channel, signal }) => await installLiveRemoteCli({
-      ssh, auth: auth as SshAuth, knownHostsMode, channel, ...(signal ? { signal } : {}),
+    installRemoteCli: async ({ ssh, auth, knownHostsMode, channel, signal }) => await installRemoteCli({
+      channel, signal, transport: createLiveRemoteCliTransport({ ssh, auth: auth as SshAuth, knownHostsMode, channel, signal }),
     }),
     runDaemonServiceCommand: async () => {
       throw new systemTasks.SystemTaskExecutionError('unsupported', 'Remote daemon management is not available through this coordinator yet.');
@@ -962,7 +910,7 @@ export function createLiveRemoteSshManageHostTaskKind() {
         }),
       });
       try {
-        const enrolled = await systemTasks.runRemoteHomeEnrollmentRecipe({
+        const enrolled = await systemTasks.runRemoteHomeEnrollmentFlow({
           executor: localExecutor,
           homeTargetInput: {
             kind: 'descriptor',
@@ -970,7 +918,6 @@ export function createLiveRemoteSshManageHostTaskKind() {
             authority: 'trusted_enrollment',
           },
           signal,
-          timeoutMs: 10 * 60_000,
           approvePairingRequest: async (request) => {
             if (request.homeServerIdentityId !== descriptor.homeServerIdentityId) {
               throw new systemTasks.SystemTaskExecutionError(
@@ -999,22 +946,33 @@ export function createLiveRemoteSshManageHostTaskKind() {
   });
 }
 
-export function createLiveRemoteSshBootstrapTaskKind(options: Pick<systemTasks.RemoteSshBootstrapMachineDeps, 'assertManagedEnrollmentCurrent' | 'onEnrollmentDeadline'> = {}) {
+export function createLiveRemoteSshBootstrapTaskKind(options: Pick<systemTasks.RemoteSshBootstrapMachineDeps, 'reviewedChild' | 'assertManagedEnrollmentCurrent' | 'onEnrollmentDeadline' | 'deliverAuthApproval'> & Readonly<{
+  approveLocalAuthRequest?: systemTasks.RemoteSshBootstrapMachineDeps['approveLocalAuthRequest'];
+  prepareDedicatedBootstrap?: (input: Readonly<{ binaryPath: string; exec: ManagedNativeBootstrapIO['exec'];
+    context: Pick<systemTasks.InteractiveSystemTaskContext, 'emit' | 'prompt'>; channel: 'stable' | 'preview' | 'dev' }>) => Promise<void>;
+}> = {}) {
   const baseKind = systemTasks.createRemoteSshBootstrapMachineTaskKind({
     ...options,
     materializeIdentityPrivateKey: systemTasks.materializeSshIdentityPrivateKeyToTempFile,
     resolveHostTrust: resolveLiveRemoteHostTrust,
-    installRemoteCli: async ({ parsed, auth, knownHostsMode, signal }) => await installLiveRemoteCli({
-      ssh: parsed.ssh, auth: auth as SshAuth, knownHostsMode, channel: parsed.channel ?? 'stable', signal,
-    }),
+    installRemoteCli: async ({ parsed, auth, knownHostsMode, signal, context }) => {
+      const channel = parsed.channel ?? 'stable';
+      await installRemoteCli({ channel, signal,
+        transport: createLiveRemoteCliTransport({ ssh: parsed.ssh, auth: auth as SshAuth, knownHostsMode, channel, signal }),
+        bootstrap: { parsed, context, createPromptId: randomUUID,
+          ...(options.prepareDedicatedBootstrap && options.assertManagedEnrollmentCurrent
+            ? { prepareManagedBootstrap: options.prepareDedicatedBootstrap } : {}) },
+      });
+    },
     createRemoteEnrollmentExecutor: ({ parsed, auth, knownHostsMode, signal }) => createLiveRemoteEnrollmentExecutor({
       ssh: parsed.ssh,
       auth: auth as SshAuth,
       knownHostsMode,
       channel: parsed.channel ?? 'stable',
+      enrollmentIdentity: parsed.enrollmentIdentity,
       signal,
     }),
-    approveLocalAuthRequest: async ({ publicKey, pairing, supportsTokenOnly, parsed, signal }) => {
+    approveLocalAuthRequest: options.approveLocalAuthRequest ?? (async ({ publicKey, pairing, supportsTokenOnly, parsed, signal }) => {
       const knownHostsMode = parsed.knownHostsMode ?? 'app';
       const knownHostsPath = resolveKnownHostsPath(parsed.ssh, knownHostsMode);
       // Forward the remote request's v3 pairing context verbatim so the
@@ -1101,7 +1059,7 @@ export function createLiveRemoteSshBootstrapTaskKind(options: Pick<systemTasks.R
           await approveTerminalAuthRequest(approvalRequest);
         },
       });
-    },
+    }),
     runRemoteCommand: async ({ label, parsed, auth, knownHostsMode, data, signal }) => {
       const knownHostsPath = resolveKnownHostsPath(parsed.ssh, knownHostsMode);
 
@@ -1132,6 +1090,7 @@ export function createLiveRemoteSshBootstrapTaskKind(options: Pick<systemTasks.R
         knownHostsPath,
         knownHostsMode,
         authStatus: label === 'auth.status',
+        phase: label,
         shellCommand: (() => {
           const localServerUrl = typeof data?.localServerUrl === 'string' ? data.localServerUrl.trim() : '';
           return buildRemoteBootstrapCommand({
@@ -1143,6 +1102,7 @@ export function createLiveRemoteSshBootstrapTaskKind(options: Pick<systemTasks.R
               ? undefined
               : parsed.relay.webappUrl,
             daemonServiceMode: parsed.serviceMode,
+            enrollmentIdentity: parsed.enrollmentIdentity,
             data,
           });
         })(),
@@ -1164,6 +1124,7 @@ export function createLiveRemoteEnrollmentExecutor(params: Readonly<{
   auth: SshAuth;
   knownHostsMode: 'app' | 'system';
   channel?: PublicReleaseRingLabel;
+  enrollmentIdentity?: ManagedMachineEnrollmentIdentityV1;
   happierCommand?: string;
   signal?: AbortSignal;
 }>): systemTasks.HappierJsonExecutor {
@@ -1172,6 +1133,7 @@ export function createLiveRemoteEnrollmentExecutor(params: Readonly<{
     auth: params.auth,
     knownHostsMode: params.knownHostsMode,
     channel: resolvePublicReleaseRingIdForLabel(params.channel ?? 'stable'),
+    enrollmentIdentity: params.enrollmentIdentity,
     ...(params.happierCommand ? { happierCommand: params.happierCommand } : {}),
     runRemoteText: async ({
       remoteCommand,

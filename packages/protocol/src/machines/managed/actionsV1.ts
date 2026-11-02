@@ -414,3 +414,5 @@ export type MachineSetupAppReviewV1 = z.infer<typeof MachineSetupAppReviewV1Sche
 export { isMachineSetupPlanRpcChildV1 } from './actionIdsV1.js';
 
 export { ManagedInstallationServerOriginV1Schema } from './managedInstallationV1.js';
+
+export { ManagedTerminalPairingContextV1Schema } from './managedInstallationV1.js';

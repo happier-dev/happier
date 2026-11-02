@@ -71,6 +71,8 @@ export const RetainedManagedLaunchSnapshotV1Schema = lazyDefinition(() => create
 export function createManagedMachineV1Schema<Launch extends z.core.$ZodType, Native extends z.core.$ZodType, Operation extends z.core.$ZodType = typeof PluginJsonValueV2Schema>(launch: Launch, native: Native, nativeOperation?: Operation) {
   return z.strictObject({
     id: id(), homeId: id(), custodianAccountId: id(),
+    enrollmentAccountId: z.optional(id()),
+    enrollmentIdentity: z.optional(ManagedMachineEnrollmentIdentityV1Schema),
     preset: z.optional(z.strictObject({ id: id(), revision: z.int().check(z.gte(0)) })),
     launch: createRetainedManagedLaunchSnapshotV1Schema(launch), controller: ManagedControllerV1Schema,
     reviewedFacts: z.optional(createManagedConfigurationFactsV1Schema(launch)),

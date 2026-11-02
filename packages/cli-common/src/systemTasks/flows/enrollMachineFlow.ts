@@ -94,8 +94,8 @@ export type EnrollMachineFlowExecutor = Readonly<{
   restartDaemonService?: (opts?: Pick<EnrollMachineServiceCommandOptions, 'timeoutMs'>) => Promise<void>;
   waitForReadyDaemon?: (params: Readonly<{
     signal?: AbortSignal;
-    /** Remaining containing-operation lifetime, not a new service deadline. */
-    timeoutMs?: number;
+    /** Remaining containing-operation lifetime; null follows its signal without a phase cutoff. */
+    timeoutMs?: number | null;
     /** Managed enrollment dispatches guest Actions immediately after completion. */
     requireMachineControlReady?: boolean;
     /** Native-process guests have no user-service installation to wait for. */
