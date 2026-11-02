@@ -12,6 +12,7 @@ import * as PluginUiData from '@happier-dev/plugin-ui/data';
 import * as PluginUiDeclarative from '@happier-dev/plugin-ui/declarative';
 import * as PluginUiEnvironment from '@happier-dev/plugin-ui/environment';
 import * as PluginUiAdvanced from '@happier-dev/plugin-ui/advanced';
+import * as PluginUiAnsi from '@happier-dev/plugin-ui/ansi';
 import * as PluginUiClient from '@happier-dev/plugin-sdk/ui/client';
 
 import type { PluginUiHostRuntimeExternalModulesV1 } from '@happier-dev/protocol/plugins/ui';
@@ -40,5 +41,7 @@ export const PLUGIN_UI_COMMON_JS_HOST_MODULES: PluginUiHostRuntimeExternalModule
     '@happier-dev/plugin-ui/declarative': PluginUiDeclarative,
     '@happier-dev/plugin-ui/environment': PluginUiEnvironment,
     '@happier-dev/plugin-ui/advanced': PluginUiAdvanced,
+    '@happier-dev/plugin-ui/ansi': PluginUiAnsi,
+    get '@happier-dev/plugin-sdk/machine-provisioners'(): unknown { return require('@happier-dev/plugin-sdk/machine-provisioners'); },
     '@happier-dev/plugin-sdk/ui/client': PluginUiClient,
 });

@@ -21,6 +21,8 @@ export const PLUGIN_UI_HOST_RUNTIME_EXTERNAL_SPECIFIERS = Object.freeze([
     '@happier-dev/plugin-ui/declarative',
     '@happier-dev/plugin-ui/environment',
     '@happier-dev/plugin-ui/advanced',
+    '@happier-dev/plugin-ui/ansi',
+    '@happier-dev/plugin-sdk/machine-provisioners',
     '@happier-dev/plugin-sdk/ui/client',
 ] as const);
 

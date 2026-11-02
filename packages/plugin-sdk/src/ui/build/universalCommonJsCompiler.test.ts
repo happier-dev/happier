@@ -224,6 +224,7 @@ describe('compileUniversalPluginUiCommonJs', () => {
         ['sentry', 'src/ui/renderSurface.tsx', 'sentry-detail-native'],
         ['triage', 'src/ui/comparisonPicker.tsx', 'triage-comparison-picker-native'],
     ])('compiles the current %s UI artifact through the source author boundary', async (directory, entry, artifactId) => {
+        const warning = vi.spyOn(console, 'warn').mockImplementation(() => {});
         const repoRoot = resolve(import.meta.dirname, '../../../../..');
         const packages = await readWorkspacePackages(repoRoot);
         const projectRoot = join(repoRoot, 'packages/plugins', directory);
@@ -234,6 +235,24 @@ describe('compileUniversalPluginUiCommonJs', () => {
                 ? resolveWorkspaceSource(packages, specifier, { conditions: ['react-native'] }) : undefined,
         });
         expect(result.bytes.byteLength).toBeGreaterThan(0);
+        expect(warning).not.toHaveBeenCalledWith(expect.stringContaining('[bundled_host_module]'), expect.anything());
+    });
+
+    it.each([
+        ['@happier-dev/plugin-ui', 'ansi'],
+        ['@happier-dev/plugin-sdk', 'machine-provisioners'],
+    ])('keeps the host-provided %s/%s facade outside the artifact', async (packageName, subpath) => {
+        const specifier = `${packageName}/${subpath}`;
+        const { root, entry } = await fixture(`import { marker } from '${specifier}'; export const renderSurface = () => marker;`);
+        const packageRoot = join(root, 'node_modules', packageName);
+        await mkdir(packageRoot, { recursive: true });
+        await writeFile(join(packageRoot, 'package.json'), JSON.stringify({
+            name: packageName, type: 'module', exports: { [`./${subpath}`]: './index.js' },
+        }));
+        await writeFile(join(packageRoot, 'index.js'), "export const marker = 'duplicated-host-facade';");
+        const result = await compileFixture(root, entry, subpath);
+        expect(result.externalSpecifiers).toContain(specifier);
+        expect(new TextDecoder().decode(result.bytes)).not.toContain('duplicated-host-facade');
     });
 
     it('keeps a real Triage text projection free of unused schema and crypto implementations', async () => {
