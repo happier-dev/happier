@@ -1,7 +1,15 @@
-import type { ActionSpecProjectionMetadata, PreNormalizedActionSpec } from '../actionSpecs.js';
+import type { ActionSpecProjectionMetadata, PreNormalizedActionSpec } from './definition.js';
 import { DeploymentActionInputSchemasV1, DeploymentActionOutputSchemasV1, type DeploymentActionIdV1 } from '../../deployments/deploymentActionsV1.js';
 
-function deploymentSpec<TId extends DeploymentActionIdV1>(id: TId, title: string, path: string | undefined, read = false) {
+type DeploymentActionSpec<TId extends DeploymentActionIdV1> = ActionSpecProjectionMetadata & Readonly<{
+  id: TId;
+  inputSchema: (typeof DeploymentActionInputSchemasV1)[TId];
+  outputSchema: (typeof DeploymentActionOutputSchemasV1)[TId];
+  approval: { result: 'required' };
+  requiredAuthority: 'account_automation';
+}>;
+
+function deploymentSpec<TId extends DeploymentActionIdV1>(id: TId, title: string, path: string | undefined, read = false): DeploymentActionSpec<TId> {
   return {
     id, title, safety: read ? 'safe' : 'danger', sideEffectClass: read ? 'read' : 'write',
     ...(id === 'deployments.templates.instantiate' ? { safetyForInput: (input: unknown): 'safe' | 'danger' => {
@@ -99,11 +107,7 @@ function deploymentSpec<TId extends DeploymentActionIdV1>(id: TId, title: string
     ...(id === 'deployments.backups.restore' || id === 'deployments.domains.add' || id === 'deployments.domains.remove' || id === 'deployments.templates.instantiate' || id === 'deployments.publish' || id === 'deployments.deploy' || id === 'deployments.rollback' || id === 'deployments.promote' || id === 'deployments.teardown' ? {
       operation: { version: 1, visibility: 'activity', progress: 'reported', presentation: { onStart: 'current' } },
     } : {}),
-  } as const satisfies ActionSpecProjectionMetadata & Readonly<{
-    id: TId; inputSchema: (typeof DeploymentActionInputSchemasV1)[TId]; outputSchema: (typeof DeploymentActionOutputSchemasV1)[TId];
-    approval: { result: 'required' };
-    requiredAuthority: 'account_automation';
-  }>;
+  } as const satisfies DeploymentActionSpec<TId>;
 }
 
 /** Storage declarations and real daemon effects share this single Action front door. */
