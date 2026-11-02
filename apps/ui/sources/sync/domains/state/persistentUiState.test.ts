@@ -8,6 +8,83 @@ import { parseRecentWorkspaceFiles } from '@/sync/domains/workspaces/files/recen
 import { appendFileEditorAiSuggestionUsage, FileEditorAiSuggestionDailyUsageSchema } from '@/sync/domains/workspaces/languageIntelligence/fileEditorAiSuggestionUsage';
 
 describe('device-local keyed UI state', () => {
+    it('persists an explicit repair even when it equals a tolerant fallback', () => {
+        const state = createPersistentUiState<string | null>('fallback-repair', value => z.catch(z.nullable(z.string()), null).parse(value));
+        const device = getPersistenceStorage();
+        device.set('ui-state:fallback-repair:value', JSON.stringify({ future: true }));
+        expect(state.read('value')).toBeNull();
+        state.set('value', null);
+        expect(device.getString('ui-state:fallback-repair:value')).toBe('null');
+        expect(state.readStrict('value', value => z.nullable(z.string()).parse(value))).toBeNull();
+    });
+
+    it('admits exact stored bytes before migration can retire a source, including after a tolerant read', () => {
+        const state = createPersistentUiState<string | null>('strict-admission', value => z.catch(z.nullable(z.string()), null).parse(value));
+        const device = getPersistenceStorage();
+        const key = 'ui-state:strict-admission:value';
+        device.set(key, JSON.stringify({ future: true }));
+        expect(state.read('value')).toBeNull();
+        const admit = (value: unknown) => z.nullable(z.string()).parse(value);
+        expect(() => state.readStrict('value', admit)).toThrow(UiStatePersistenceError);
+        expect(device.getString(key)).toBe(JSON.stringify({ future: true }));
+        expect(state.read('value')).toBeNull();
+        const changed = vi.fn();
+        const stop = state.subscribeKey('value', changed);
+        try {
+            state.set('value', 'repaired');
+            expect(state.readStrict('value', admit)).toBe('repaired');
+            expect(changed).toHaveBeenCalledTimes(1);
+            expect(state.readStrict('missing', admit)).toBeUndefined();
+            device.set('ui-state:strict-admission:cleared', 'null');
+            expect(state.readStrict('cleared', admit)).toBeNull();
+        } finally { stop(); }
+    });
+
+    it('keeps 153 restored keyed readers idle for 50 clock ticks and releases their subscriptions', async () => {
+        vi.useFakeTimers();
+        const state = createPersistentUiState('idle-153', value => z.object({ position: z.number() }).parse(value));
+        const mmkv = getPersistenceStorage();
+        for (let index = 0; index < 153; index += 1) mmkv.set(`ui-state:idle-153:scope-${index}`, JSON.stringify({ position: index }));
+        const writes = vi.spyOn(mmkv, 'set');
+        const notifications = vi.fn();
+        const callbacks = vi.fn();
+        const stop = state.subscribe(notifications);
+        const stops = Array.from({ length: 153 }, (_, index) => state.subscribeKey(`scope-${index}`, callbacks));
+        try {
+            const retained = state.readAll();
+            expect(Object.keys(retained)).toHaveLength(153);
+            expect(writes).not.toHaveBeenCalled();
+            expect(notifications).not.toHaveBeenCalled();
+            expect(callbacks).not.toHaveBeenCalled();
+            expect(vi.getTimerCount()).toBe(0);
+            for (let tick = 0; tick < 50; tick += 1) {
+                await vi.advanceTimersByTimeAsync(1000);
+                expect(state.readAll()).toBe(retained);
+                for (let index = 0; index < 153; index += 1) expect(state.read(`scope-${index}`)).toBe(retained[`scope-${index}`]);
+            }
+            expect(writes).not.toHaveBeenCalled();
+            expect(notifications).not.toHaveBeenCalled();
+            expect(callbacks).not.toHaveBeenCalled();
+            expect(vi.getTimerCount()).toBe(0);
+            // Equal reconstructed input must not replace retained records or notify readers.
+            for (let index = 0; index < 153; index += 1) state.set(`scope-${index}`, { position: index });
+            expect(state.readAll()).toBe(retained);
+            expect(writes).not.toHaveBeenCalled();
+            expect(notifications).not.toHaveBeenCalled();
+            expect(callbacks).not.toHaveBeenCalled();
+            stop();
+            for (const unsubscribe of stops) unsubscribe();
+            for (let index = 0; index < 153; index += 1) state.set(`scope-${index}`, { position: index + 1 });
+            expect(writes).toHaveBeenCalledTimes(153);
+            expect(notifications).not.toHaveBeenCalled();
+            expect(callbacks).not.toHaveBeenCalled();
+            expect(Object.keys(state.readAll())).toHaveLength(153);
+        } finally {
+            stop(); for (const unsubscribe of stops) unsubscribe();
+            writes.mockRestore(); vi.useRealTimers();
+        }
+    });
+
     it('withdraws retained projections when the canonical persistence lifecycle clears device data', async () => {
         const state = createPersistentUiState('clear-lifecycle', value => z.string().parse(value));
         state.set('draft', 'private content');
