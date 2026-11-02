@@ -110,6 +110,7 @@ import { createAcpToolCallLifecycle } from './updates/toolCalls/createAcpToolCal
 import { readPositiveIntEnv } from '@/utils/readPositiveIntEnv';
 import { createEventShapeLoggerForLog } from '@/diagnostics/eventShapeForLog';
 import type { AcpTurnOutcome } from './backend/turn/_types';
+import type { AcpProviderTurnSource, AcpProviderTurnSourceFactory, AcpProviderTurnSink } from './backend/turn/providerTurns';
 import { mapStopReasonToAcpTurnOutcome, readPromptStopReason } from './backend/turn/acpTurnCompletion';
 import { abortPendingAcpPermissionRequests } from './backend/permissions/acpPermissionFinalization';
 import { SessionControlApplyError } from '@/agent/runtime/sessionControlApplyError';
@@ -331,6 +332,8 @@ export type SessionConfigOption = Readonly<{
   options?: ReadonlyArray<Readonly<{ value: SessionConfigOptionValueId; name: string; description?: string }>>;
 }>;
 
+export type AcpPermissionCallContext = Readonly<{ permissionMode?: PermissionMode }>;
+
 /**
  * Permission handler interface for ACP backends
  */
@@ -342,7 +345,8 @@ export interface AcpPermissionHandler {
   getImmediateDecision?(
     toolCallId: string,
     toolName: string,
-    input: unknown
+    input: unknown,
+    context?: AcpPermissionCallContext,
   ): Pick<PermissionResult, 'decision'> | null;
 
   /**
@@ -356,7 +360,7 @@ export interface AcpPermissionHandler {
     toolCallId: string,
     toolName: string,
     input: unknown,
-    context?: Readonly<{ permissionMode?: PermissionMode }>,
+    context?: AcpPermissionCallContext,
   ): Promise<PermissionResult>;
 
   /**
@@ -613,6 +617,7 @@ export function buildInitializeRequest(params: {
 export function createAcpClientFsMethods(params: {
   cwd: string;
   permissionHandler?: AcpPermissionHandler;
+  getPermissionContext?: () => AcpPermissionCallContext | undefined;
 }): Required<Pick<AcpClientConnectionHandlers, 'readTextFile' | 'writeTextFile'>> {
   const rootResolved = resolve(params.cwd);
   const rootRealPromise = fs.realpath(rootResolved).catch(() => rootResolved);
@@ -704,6 +709,7 @@ export function createAcpClientFsMethods(params: {
   };
 
   const writeTextFile: NonNullable<AcpClientConnectionHandlers['writeTextFile']> = async (req) => {
+    const permissionContext = params.getPermissionContext?.();
     const targetPath = isAbsolute(req.path) ? resolve(req.path) : resolve(rootResolved, req.path);
     await assertWithinCwd(targetPath, { kind: 'write' });
     const reqRecord = asRecord(req) ?? {};
@@ -714,7 +720,7 @@ export function createAcpClientFsMethods(params: {
       const result = await params.permissionHandler.handleToolCall(toolCallId, 'writeTextFile', {
         path: targetPath,
         bytes: Buffer.byteLength(req.content, 'utf8'),
-      });
+      }, permissionContext);
 
       const approved =
         result.decision === 'approved' ||
@@ -804,6 +810,14 @@ export interface AcpBackendOptions {
 
   /** False hides and rejects mode controls when the provider's semantics are not supported. */
   sessionModesEnabled?: boolean;
+
+  /** Provider-required native mode, applied before a new, resumed, or forked session becomes usable. */
+  initialSessionModeId?: string;
+
+  /** Supplemental native evidence; ACP remains the execution and filesystem owner. */
+  providerTurnSource?: AcpProviderTurnSourceFactory;
+  permissionMode?: PermissionMode;
+  getPermissionMode?: () => PermissionMode | null | undefined;
 
   /** Provider-owned in-flight steer extension. Omit to retain the ACP session/prompt contract. */
   inFlightSteer?: AcpInFlightSteerAdapter;
@@ -907,6 +921,7 @@ export class AcpBackend implements AgentBackend {
   private listeners: AgentMessageHandler[] = [];
   private readonly providerTurnEventListeners = new Set<() => void>();
   private process: ChildProcess | null = null;
+  private spawnedProcessEnv: NodeJS.ProcessEnv = {};
   private processLaunchCleanup: (() => void | Promise<void>) | null = null;
   private stderrAppender: BoundedTextFileAppender | null = null;
   private readonly summarizeStderrForLogs = createAcpStderrLogSummarizer();
@@ -979,6 +994,13 @@ export class AcpBackend implements AgentBackend {
   private toolCallCountSincePrompt = 0;
   /** Timeout for emitting 'idle' status after last message chunk */
   private idleTimeout: NodeJS.Timeout | null = null;
+  private providerSource: AcpProviderTurnSource | null = null;
+  private providerCancellation: Promise<void> | null = null;
+  private providerSourceLifetime: AbortController | null = null;
+  private readonly providerToolContexts = new Map<string, AcpPermissionCallContext>();
+  private readonly providerContinuations = new Map<string, AcpPermissionCallContext | null>();
+  private providerTurn: Readonly<{ generation: number; turnId: string; lifetime: AbortController }> | null = null;
+  private activePermissionContext: AcpPermissionCallContext | undefined;
   private turnGeneration = 0;
   private closedTurnGeneration: number | null = null;
   private pendingTurnOutcome: AcpTurnOutcome | null = null;
@@ -1035,6 +1057,145 @@ export class AcpBackend implements AgentBackend {
     });
   }
 
+  private async stopProviderTurnSource(): Promise<void> {
+    const source = this.providerSource;
+    this.providerSource = null;
+    this.providerSourceLifetime?.abort(makeAbortError('Provider turn source closed'));
+    this.providerSourceLifetime = null;
+    this.providerTurn = null;
+    this.activePermissionContext = undefined;
+    this.providerToolContexts.clear();
+    this.providerContinuations.clear();
+    await source?.dispose();
+  }
+
+  private async catchUpProviderTurns(permissionToolCallId?: string): Promise<void> {
+    const source = this.providerSource;
+    if (!source) return;
+    await source.catchUp({
+      ...(permissionToolCallId ? { permissionToolCallId } : {}),
+      foregroundActive: this.dispatchedPromptTurnGeneration === this.turnGeneration
+        && this.waitingForResponse && !this.isCurrentTurnGenerationClosed(),
+      signal: this.providerSourceLifetime?.signal,
+    });
+  }
+
+  private assertClientFsRequestOwnership(sessionId: string): void {
+    if (!this.options.providerTurnSource) return;
+    if (
+      this.disposed || sessionId !== this.acpSessionId || this.providerCancellation
+      || !this.providerSource || !this.activePermissionContext
+      || !this.waitingForResponse || this.isCurrentTurnGenerationClosed()
+    ) {
+      throw new Error('ACP filesystem request has no active turn ownership');
+    }
+  }
+
+  private captureProviderToolContext(toolCallId: string): void {
+    if (!this.providerSourceLifetime || !this.waitingForResponse || this.isCurrentTurnGenerationClosed()
+      || !this.activePermissionContext || !this.toolCalls.get(toolCallId) || this.providerToolContexts.has(toolCallId)) return;
+    this.providerToolContexts.set(toolCallId, this.activePermissionContext);
+  }
+
+  private async startProviderTurnSource(): Promise<void> {
+    if (!this.options.providerTurnSource || !this.acpSessionId) return;
+    await this.stopProviderTurnSource();
+    const lifetime = new AbortController();
+    this.providerSourceLifetime = lifetime;
+    const sessionId = this.acpSessionId;
+    const current = () => !this.disposed && !lifetime.signal.aborted
+      && this.providerSourceLifetime === lifetime && this.acpSessionId === sessionId;
+    const source = await this.options.providerTurnSource({
+      sessionId, cwd: this.options.cwd, env: { ...this.spawnedProcessEnv }, signal: lifetime.signal,
+      registerContinuation: ({ id, parentToolCallId }) => {
+        const context = this.providerToolContexts.get(parentToolCallId);
+        if (!current() || !readNonBlankOpaqueIdentifier(id) || !context || this.providerContinuations.has(id)) return false;
+        this.providerContinuations.set(id, context);
+        return true;
+      },
+      releaseToolCalls: (ids) => {
+        if (current()) for (const id of ids) this.providerToolContexts.delete(id);
+      },
+      beginContinuation: ({ id, turnId }): AcpProviderTurnSink | null => {
+        const context = this.providerContinuations.get(id);
+        if (!current() || !context || !readNonBlankOpaqueIdentifier(turnId)
+          || this.waitingForResponse || this.activePromptRpc || this.providerTurn) return null;
+        this.providerContinuations.set(id, null);
+        this.beginResponseTurn(context);
+        const turn = { generation: this.turnGeneration, turnId, lifetime };
+        this.providerTurn = turn;
+        this.emit({ type: 'status', status: 'running' });
+        let pending = Promise.resolve();
+        let finishing = false;
+        const ownsTurn = () => current() && this.providerTurn === turn
+          && this.turnGeneration === turn.generation && !this.isCurrentTurnGenerationClosed();
+        const enqueue = (operation: () => Promise<void>): Promise<void> => {
+          const next = pending.then(async () => { if (ownsTurn()) await operation(); });
+          pending = next.catch((error: unknown) => {
+            if (ownsTurn()) this.failPendingResponseWait(error instanceof Error ? error : new Error('Provider turn update failed'));
+          });
+          return next;
+        };
+        return {
+          update: (update) => finishing ? Promise.resolve() : enqueue(async () => {
+            await this.handleSessionUpdate({ sessionId, update } as SessionNotification, turn.generation);
+          }),
+          finish: (outcome) => {
+            if (finishing) return pending;
+            finishing = true;
+            return enqueue(async () => {
+              this.providerTurn = null;
+              if (outcome.kind === 'failed') {
+                this.failPendingResponseWait(outcome.error);
+                this.emit({ type: 'status', status: 'error', detail: outcome.error.message, error: outcome.error });
+              } else {
+                this.finalizeTurnOutcome(outcome);
+              }
+            });
+          },
+        };
+      },
+      fail: (error) => {
+        if (!current()) return;
+        this.failPendingResponseWait(error);
+        this.emit({ type: 'status', status: 'error', detail: error.message, error });
+        void this.cleanupInitializedProcessConnection({ graceMs: 250 });
+      },
+    });
+    if (!current()) { await source.dispose(); return; }
+    this.providerSource = source;
+  }
+
+  private beginResponseTurn(permissionContext?: AcpPermissionCallContext): void {
+    this.turnGeneration++;
+    this.closedTurnGeneration = null;
+    this.promptCompletionSettlement = null;
+    this.dispatchedPromptTurnGeneration = null;
+    this.pendingTurnOutcome = null;
+    this.lastTurnOutcome = null;
+    this.pendingPromptResponseTurnGeneration = null;
+    this.idleStatusDeferredUntilPromptResponse = false;
+    this.permissionFlushTurnGeneration = null;
+    this.waitingForResponse = true;
+    this.responseCompletionError = null;
+    this.sawSessionUpdateSincePrompt = false;
+    this.sawAssistantMessageSincePrompt = false;
+    this.firstSessionUpdateSincePromptResolver = null;
+    this.toolCallCountSincePrompt = 0;
+    this.activePermissionContext = permissionContext;
+    this.clearResponseCompletionTimeout();
+    this.resetExtensionAbortControllerForTurn();
+    if (this.idleTimeout) { clearTimeout(this.idleTimeout); this.idleTimeout = null; }
+    if (this.postPromptCompletionIdleTimeout) {
+      clearTimeout(this.postPromptCompletionIdleTimeout);
+      this.postPromptCompletionIdleTimeout = null;
+    }
+    if (this.postIdleWithoutAssistantMessageTimeout) {
+      clearTimeout(this.postIdleWithoutAssistantMessageTimeout);
+      this.postIdleWithoutAssistantMessageTimeout = null;
+    }
+  }
+
   setPlanStatePublisher(
     publisher: (snapshot: NormalizedAcpPlanSnapshot) => Promise<void>,
   ): void {
@@ -1053,7 +1214,7 @@ export class AcpBackend implements AgentBackend {
   private observeProviderTurnEvent(sessionId: unknown): void {
     if (
       this.disposed || this.replayCapture || this.acpSessionId === null || sessionId !== this.acpSessionId
-      || this.dispatchedPromptTurnGeneration !== this.turnGeneration
+      || (this.dispatchedPromptTurnGeneration !== this.turnGeneration && this.providerTurn?.generation !== this.turnGeneration)
       || this.isCurrentTurnGenerationClosed()
     ) return;
     for (const listener of this.providerTurnEventListeners) {
@@ -1160,6 +1321,7 @@ export class AcpBackend implements AgentBackend {
   }
 
   private async cleanupInitializedProcessConnection(params: { graceMs: number }): Promise<void> {
+    await this.stopProviderTurnSource();
     const proc = this.process;
     const connection = this.connection;
     this.process = null;
@@ -1193,6 +1355,7 @@ export class AcpBackend implements AgentBackend {
   private async cleanupPreparedProcessLaunch(): Promise<void> {
     const cleanup = this.processLaunchCleanup;
     this.processLaunchCleanup = null;
+    this.spawnedProcessEnv = {};
     if (!cleanup) return;
     try {
       await cleanup();
@@ -1302,13 +1465,15 @@ export class AcpBackend implements AgentBackend {
         throw new Error('Backend has been disposed');
       }
 
+      this.spawnedProcessEnv = { ...this.buildSpawnEnv(), ...preparedLaunch?.env };
+
       // Spawn the ACP agent process.
       // Use cross-spawn so Windows quoting/.cmd resolution is handled safely without joining args.
       const spec = buildAcpSpawnSpec({
         command: preparedLaunch?.command ?? this.options.command,
         args: preparedLaunch?.args ? [...preparedLaunch.args] : (this.options.args || []),
         cwd: this.options.cwd,
-        env: { ...this.buildSpawnEnv(), ...preparedLaunch?.env },
+        env: this.spawnedProcessEnv,
       });
 
 	    this.process = spawn(spec.command, spec.args, spec.options);
@@ -1559,6 +1724,25 @@ export class AcpBackend implements AgentBackend {
       requestPermission: async (params: RequestPermissionRequest): Promise<RequestPermissionResponse> => {
         const extendedParams = params as ExtendedRequestPermissionRequest;
         const requestSessionId = typeof params.sessionId === 'string' ? params.sessionId : (this.acpSessionId ?? '');
+        const toolCall = extendedParams.toolCall;
+        const options = extendedParams.options || [];
+        // ACP spec: toolCall.toolCallId is the correlation ID. Fall back to legacy fields when needed.
+        const toolCallId =
+          (typeof toolCall?.toolCallId === 'string' && toolCall.toolCallId.trim().length > 0)
+            ? toolCall.toolCallId
+            : (typeof toolCall?.id === 'string' && toolCall.id.trim().length > 0)
+              ? toolCall.id
+              : randomUUID();
+        const permissionId = toolCallId;
+        if (requestSessionId === this.acpSessionId) {
+          try {
+            await this.catchUpProviderTurns(toolCallId);
+          } catch (error) {
+            logger.warnFile('[AcpBackend] Withdrew permission without native turn evidence', error);
+            return { outcome: { outcome: 'cancelled' } };
+          }
+        }
+        const permissionContext = this.activePermissionContext;
         const permissionTurnGeneration = this.turnGeneration;
         const tracksForeground = this.transport.getPermissionRequestScope?.() !== 'session';
         const hasSessionPolicy = !tracksForeground && this.options.permissionHandler !== undefined;
@@ -1575,17 +1759,9 @@ export class AcpBackend implements AgentBackend {
           return { outcome: { outcome: 'cancelled' } };
         };
         if (!isCurrentPermissionRequest()) return withdrawPermissionRequest();
-        if (tracksForeground) this.observeProviderTurnEvent(requestSessionId);
-        const toolCall = extendedParams.toolCall;
-        const options = extendedParams.options || [];
-        // ACP spec: toolCall.toolCallId is the correlation ID. Fall back to legacy fields when needed.
-        const toolCallId =
-          (typeof toolCall?.toolCallId === 'string' && toolCall.toolCallId.trim().length > 0)
-            ? toolCall.toolCallId
-            : (typeof toolCall?.id === 'string' && toolCall.id.trim().length > 0)
-              ? toolCall.id
-              : randomUUID();
-        const permissionId = toolCallId;
+        if (tracksForeground) {
+          this.observeProviderTurnEvent(requestSessionId);
+        }
 
         let toolNameHint = extractPermissionToolNameHint(extendedParams as PermissionRequestLike);
         const resolvedToolNameHint = resolvePermissionToolName({
@@ -1649,6 +1825,7 @@ export class AcpBackend implements AgentBackend {
             ...(Object.keys(input).length > 0 ? { rawInput: input } : {}),
           });
           markToolCallWaitingForPermission(toolCallId, this.createHandlerContext());
+          this.captureProviderToolContext(toolCallId);
 
           // Increment tool call counter for context tracking
           this.toolCallCountSincePrompt++;
@@ -1673,6 +1850,7 @@ export class AcpBackend implements AgentBackend {
           toolCallId,
           toolName,
           input,
+          permissionContext,
         ) ?? null;
 
         if (!immediateDecision) {
@@ -1703,7 +1881,8 @@ export class AcpBackend implements AgentBackend {
             const result = await this.options.permissionHandler.handleToolCall(
               toolCallId,
               toolName,
-              input
+              input,
+              permissionContext,
             );
 
             if (!isCurrentPermissionRequest()) return withdrawPermissionRequest();
@@ -1747,7 +1926,9 @@ export class AcpBackend implements AgentBackend {
               // Important: still return the actual permission outcome (e.g. "deny") so ACP agents
               // can distinguish an explicit rejection from a transport cancellation.
               if (tracksForeground) {
-                void this.cancel(requestSessionId);
+                void this.cancel(requestSessionId).catch((error: unknown) => {
+                  this.emit({ type: 'status', status: 'error', detail: error instanceof Error ? error.message : 'ACP cancellation failed', error });
+                });
                 this.clearTrackedToolCall(toolCallId, `permission decision=${result.decision}`);
               }
               return { outcome };
@@ -1787,15 +1968,22 @@ export class AcpBackend implements AgentBackend {
       const clientFs = createAcpClientFsMethods({
         cwd: this.options.cwd,
         permissionHandler: this.options.permissionHandler,
+        getPermissionContext: () => this.activePermissionContext,
       });
       Object.assign(clientHandlers, {
-        readTextFile: (request: ReadTextFileRequest) => {
+        readTextFile: async (request: ReadTextFileRequest) => {
+          if (request.sessionId === this.acpSessionId) await this.catchUpProviderTurns();
+          this.assertClientFsRequestOwnership(request.sessionId);
+          const result = clientFs.readTextFile(request);
           this.observeProviderTurnEvent(request.sessionId);
-          return clientFs.readTextFile(request);
+          return result;
         },
-        writeTextFile: (request: WriteTextFileRequest) => {
+        writeTextFile: async (request: WriteTextFileRequest) => {
+          if (request.sessionId === this.acpSessionId) await this.catchUpProviderTurns();
+          this.assertClientFsRequestOwnership(request.sessionId);
+          const result = clientFs.writeTextFile(request);
           this.observeProviderTurnEvent(request.sessionId);
-          return clientFs.writeTextFile(request);
+          return result;
         },
       } satisfies Pick<AcpClientConnectionHandlers, 'readTextFile' | 'writeTextFile'>);
     }
@@ -2004,10 +2192,12 @@ export class AcpBackend implements AgentBackend {
       this.acpSessionId = sessionId;
       logger.debug(`[AcpBackend] Session created: ${sessionId}`);
 
+      await this.applyInitialSessionMode(sessionResponse);
       this.seedSessionModesFromSessionResponse(sessionResponse);
       this.seedSessionModelsFromSessionResponse(sessionResponse);
       this.seedSessionConfigOptionsFromSessionResponse(sessionResponse);
 
+      await this.startProviderTurnSource();
       this.emitIdleStatus();
 
       // Send initial prompt if provided
@@ -2110,10 +2300,12 @@ export class AcpBackend implements AgentBackend {
       this.acpSessionId = normalized;
       logger.debug(`[AcpBackend] Session loaded: ${normalized}`);
 
+      await this.applyInitialSessionMode(sessionResponse);
       this.seedSessionModesFromSessionResponse(sessionResponse);
       this.seedSessionModelsFromSessionResponse(sessionResponse);
       this.seedSessionConfigOptionsFromSessionResponse(sessionResponse);
 
+      await this.startProviderTurnSource();
       this.emitIdleStatus();
       return { sessionId: normalized };
     } catch (error) {
@@ -2188,9 +2380,11 @@ export class AcpBackend implements AgentBackend {
       }
 
       this.acpSessionId = forkedSessionId;
+      await this.applyInitialSessionMode(response);
       this.seedSessionModesFromSessionResponse(response);
       this.seedSessionModelsFromSessionResponse(response);
       this.seedSessionConfigOptionsFromSessionResponse(response);
+      await this.startProviderTurnSource();
       this.emitIdleStatus();
 
       return { sessionId: forkedSessionId };
@@ -2314,7 +2508,7 @@ export class AcpBackend implements AgentBackend {
     };
   }
 
-  private async handleSessionUpdate(params: SessionNotification): Promise<void> {
+  private async handleSessionUpdate(params: SessionNotification, providerGeneration?: number): Promise<void> {
     const raw = asRecord(params) ?? {};
     const updateCandidates: unknown[] = [];
 
@@ -2380,7 +2574,10 @@ export class AcpBackend implements AgentBackend {
       }
     }
 
-    const processableUpdateCandidates = this.filterPromptTurnUpdatesByDispatch(updateCandidates);
+    const ownsProviderTurn = providerGeneration !== undefined
+      && this.providerTurn?.generation === providerGeneration && providerGeneration === this.turnGeneration
+      && !this.isCurrentTurnGenerationClosed() && raw.sessionId === this.acpSessionId;
+    const processableUpdateCandidates = ownsProviderTurn ? updateCandidates : this.filterPromptTurnUpdatesByDispatch(updateCandidates);
 
     if (processableUpdateCandidates.length === 0) {
       logger.debug('[AcpBackend] Dropping prompt-turn session/update outside an active dispatched generation');
@@ -2505,6 +2702,7 @@ export class AcpBackend implements AgentBackend {
 
       if (sessionUpdateType === 'tool_call_update') {
         const result = handleToolCallUpdate(update, ctx);
+        if (typeof update.toolCallId === 'string') this.captureProviderToolContext(update.toolCallId);
         if (result.toolCallCountSincePrompt !== undefined) {
           this.toolCallCountSincePrompt = result.toolCallCountSincePrompt;
         }
@@ -2518,6 +2716,7 @@ export class AcpBackend implements AgentBackend {
 
       if (sessionUpdateType === 'tool_call') {
         handleToolCall(update, ctx);
+        if (typeof update.toolCallId === 'string') this.captureProviderToolContext(update.toolCallId);
         return;
       }
 
@@ -2690,6 +2889,22 @@ export class AcpBackend implements AgentBackend {
       }
       await handleOneUpdate(update);
     }
+  }
+
+  private async applyInitialSessionMode(sessionResponse: unknown): Promise<void> {
+    const requiredModeId = this.options.initialSessionModeId;
+    if (requiredModeId === undefined) return;
+    const modeId = readNonBlankSessionControlIdentifier(requiredModeId);
+    const modes = asRecord(asRecord(sessionResponse)?.modes);
+    const availableModes = Array.isArray(modes?.availableModes) ? modes.availableModes : [];
+    if (!modeId || !availableModes.some((mode) => asRecord(mode)?.id === modeId)) {
+      throw new Error('The provider-required initial session mode was not advertised');
+    }
+    // Display controls may be disabled while the transport still requires a safe native mode.
+    await applyAcpSessionControl(() => this.connection!.peer.setSessionMode({
+      sessionId: this.acpSessionId!,
+      modeId,
+    }));
   }
 
   private seedSessionModesFromSessionResponse(sessionResponse: unknown): void {
@@ -3018,6 +3233,7 @@ export class AcpBackend implements AgentBackend {
     this.plans.finalizeTurn(resolveAcpPlanTurnId(this.turnGeneration));
     this.closeCurrentTurnGeneration();
     this.waitingForResponse = false;
+    this.providerTurn = null;
 
     if (outcome.kind !== 'timed_out') {
       this.emit({ type: 'status', status: 'idle', turnFinished: true });
@@ -3030,6 +3246,9 @@ export class AcpBackend implements AgentBackend {
       this.pendingTurnOutcome = null;
       resolve(outcome);
     }
+    if (this.providerSource) void this.catchUpProviderTurns().catch((error: unknown) => {
+      this.emit({ type: 'status', status: 'error', detail: error instanceof Error ? error.message : 'Provider observation failed', error });
+    });
   }
 
   private handlePromptResponseForTurn(
@@ -3218,10 +3437,12 @@ export class AcpBackend implements AgentBackend {
         new Error('Session not started'),
       );
     }
-    if (this.activePromptRpc) {
+    if (this.activePromptRpc || this.providerTurn || this.providerCancellation) {
       throw new AcpPromptSubmissionPhaseError(
         'rejected_before_effect',
-        new Error('Previous ACP prompt RPC is still settling'),
+        new Error(this.providerCancellation
+          ? 'ACP session cancellation is still settling'
+          : 'Previous ACP prompt RPC is still settling'),
       );
     }
 
@@ -3237,31 +3458,10 @@ export class AcpBackend implements AgentBackend {
     }
 
     this.emit({ type: 'status', status: 'running' });
-    const turnGeneration = this.turnGeneration + 1;
-    this.turnGeneration = turnGeneration;
-    this.closedTurnGeneration = null;
-    this.promptCompletionSettlement = null;
-    this.dispatchedPromptTurnGeneration = null;
-    this.pendingTurnOutcome = null;
-    this.lastTurnOutcome = null;
-    this.pendingPromptResponseTurnGeneration = null;
-    this.idleStatusDeferredUntilPromptResponse = false;
-    this.permissionFlushTurnGeneration = null;
-    this.waitingForResponse = true;
-    this.responseCompletionError = null;
-    this.sawSessionUpdateSincePrompt = false;
-    this.sawAssistantMessageSincePrompt = false;
-    this.firstSessionUpdateSincePromptResolver = null;
-    this.clearResponseCompletionTimeout();
-    this.resetExtensionAbortControllerForTurn();
-    if (this.postPromptCompletionIdleTimeout) {
-      clearTimeout(this.postPromptCompletionIdleTimeout);
-      this.postPromptCompletionIdleTimeout = null;
-    }
-    if (this.postIdleWithoutAssistantMessageTimeout) {
-      clearTimeout(this.postIdleWithoutAssistantMessageTimeout);
-      this.postIdleWithoutAssistantMessageTimeout = null;
-    }
+    this.beginResponseTurn(this.options.providerTurnSource ? Object.freeze({
+      permissionMode: this.options.getPermissionMode?.() ?? this.options.permissionMode ?? 'default',
+    }) : undefined);
+    const turnGeneration = this.turnGeneration;
 
     type PromptErrorDisposition =
       | 'failed'
@@ -3413,7 +3613,10 @@ export class AcpBackend implements AgentBackend {
       // Establish both dispatch and secondary-completion ownership before invoking the peer: a
       // conforming ACP agent may emit updates and notifications before its prompt RPC resolves.
       this.dispatchedPromptTurnGeneration = turnGeneration;
-      const promptPromise = this.connection.peer.prompt(promptRequest);
+      const promptPromise = this.connection.peer.prompt(promptRequest).then(async (response) => {
+        await this.catchUpProviderTurns();
+        return response;
+      });
       const activePromptRpc = {
         generation: turnGeneration,
         settled: promptPromise.then(() => undefined, () => undefined),
@@ -3883,6 +4086,7 @@ export class AcpBackend implements AgentBackend {
   }
 
   private emitIdleStatus(): void {
+    if (this.providerTurn) return;
     if (
       this.waitingForResponse &&
       this.pendingPromptResponseTurnGeneration === this.turnGeneration
@@ -3922,6 +4126,7 @@ export class AcpBackend implements AgentBackend {
   }
 
   private scheduleIdleStatusAfterToolCompletion(): void {
+    if (this.providerTurn) return;
     if (this.toolCalls.activeSize > 0) return;
 
     if (!this.waitingForResponse) {
@@ -3989,7 +4194,63 @@ export class AcpBackend implements AgentBackend {
     return true;
   }
 
+  private async cancelProviderSession(sessionId: string): Promise<void> {
+    const foregroundCancellation = this.activePromptRpc && this.connection
+      ? this.connection.peer.cancel({ sessionId })
+        .catch((error) => logger.debug('[AcpBackend] Error cancelling foreground before session close:', error))
+      : undefined;
+    this.failPendingResponseWait(makeAbortError('Cancelled by user'));
+    await this.stopProviderTurnSource();
+    await foregroundCancellation;
+    this.toolCalls.cancelAll();
+    if (!this.connection) return;
+    if (!this.negotiatedSessionCapabilities.close) {
+      await this.cleanupInitializedProcessConnection({ graceMs: 250 });
+      await this.loadSession(sessionId);
+    } else {
+      try {
+        await this.connection.peer.closeSession({ sessionId });
+        this.replayCapture = new AcpReplayCapture();
+        const response = await this.connection.peer.loadSession({
+          sessionId, cwd: this.options.cwd, mcpServers: this.buildAcpMcpServersForSessionRequest(),
+        });
+        this.lastSelectedPermissionOptionIdByToolCallId.clear();
+        await this.plans.reset();
+        this.toolCalls.reset();
+        await this.applyInitialSessionMode(response);
+        this.seedSessionModesFromSessionResponse(response);
+        this.seedSessionModelsFromSessionResponse(response);
+        this.seedSessionConfigOptionsFromSessionResponse(response);
+        this.replayCapture = null;
+        await this.startProviderTurnSource();
+      } catch (error) {
+        this.replayCapture = null;
+        await this.cleanupInitializedProcessConnection({ graceMs: 250 });
+        throw error;
+      }
+    }
+    this.finalizeTurnOutcome({ kind: 'aborted', stopReason: 'cancelled' });
+    this.emit({ type: 'status', status: 'stopped', detail: 'Cancelled by user' });
+  }
+
   async cancel(sessionId: SessionId): Promise<void> {
+    if (this.acpSessionId === sessionId) {
+      if (this.providerCancellation) {
+        await this.providerCancellation;
+        return;
+      }
+      if (this.providerSource) {
+        // Background work outlives the foreground prompt; cancellation owns the whole native session.
+        const cancellation = Promise.resolve().then(() => this.cancelProviderSession(sessionId));
+        this.providerCancellation = cancellation;
+        try {
+          await cancellation;
+        } finally {
+          if (this.providerCancellation === cancellation) this.providerCancellation = null;
+        }
+        return;
+      }
+    }
     this.promptCompletionSettlement = null;
     if (this.waitingForResponse) {
       this.failPendingResponseWait(makeAbortError('Cancelled by user'));
@@ -4073,6 +4334,7 @@ export class AcpBackend implements AgentBackend {
 
   private async disposeResources(preserveProviderSession: boolean): Promise<void> {
     logger.debug('[AcpBackend] Disposing backend');
+    await this.stopProviderTurnSource();
 
     if (this.waitingForResponse || this.responseCompletionTimeout) {
       this.failPendingResponseWait(makeAbortError('Backend disposed'));

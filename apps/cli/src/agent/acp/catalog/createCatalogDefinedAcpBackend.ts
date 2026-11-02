@@ -15,9 +15,11 @@ export type CatalogDefinedAcpBackendOptions = AgentFactoryOptions & Readonly<{
   permissionMode?: PermissionMode;
   getPermissionMode?: () => PermissionMode | null | undefined;
   prepareProcessLaunch?: AcpBackendOptions['prepareProcessLaunch'];
+  providerTurnSource?: AcpBackendOptions['providerTurnSource'];
   unsetEnv?: AcpBackendOptions['unsetEnv'];
   isAuthenticationSetupFailure?: AcpBackendOptions['isAuthenticationSetupFailure'];
   sessionModelAdapter?: AcpBackendOptions['sessionModelAdapter'];
+  initialSessionModeId?: AcpBackendOptions['initialSessionModeId'];
   launch?: Readonly<{ command: string; args: readonly string[] }>;
 }>;
 
@@ -48,9 +50,13 @@ export function createCatalogDefinedAcpBackend(
     isAuthenticationSetupFailure: options.isAuthenticationSetupFailure,
     sessionModelAdapter: options.sessionModelAdapter,
     sessionModesEnabled: config.supportsModes !== 'no',
+    initialSessionModeId: options.initialSessionModeId,
     mcpServers: config.mcpServers === 'drop' ? undefined : options.mcpServers,
     permissionHandler: options.permissionHandler,
-    transportHandler: resolveAcpCatalogTransportHandler(config.transportProfile),
+    permissionMode: options.permissionMode,
+    getPermissionMode: options.getPermissionMode,
+    providerTurnSource: options.providerTurnSource,
+    transportHandler: resolveAcpCatalogTransportHandler(config.transportProfile, agentId),
     declaredSessionLoadSupport: config.supportsLoadSession,
   });
 

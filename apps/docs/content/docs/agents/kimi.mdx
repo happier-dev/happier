@@ -13,7 +13,7 @@ Use the current Kimi Code CLI from Happier through `kimi acp` in your project di
 
 ## Requirements
 
-- Current Kimi Code CLI installed locally.
+- Current Kimi Code CLI installed locally. The development integration is validated with Kimi Code 2.4.1 and its journal protocol 1.5.
 - Binary available on `PATH` (or set `HAPPIER_KIMI_PATH`).
 
 ## Install Kimi
@@ -58,13 +58,19 @@ For the shared user guide, see [Provider authentication](/agents/provider-authen
 happier kimi
 ```
 
+## Background continuations
+
+In the development integration, a continuation started by a background task makes the session active again. Happier displays its output and approvals, then returns to idle after publishing the result. The continuation retains the permission policy of the turn that started its task, even if a later turn uses a different policy.
+
+Cancelling the session stops pending background tasks and active continuations. The same session remains available for another prompt. A detached shell waiting for work does not itself keep the session marked active.
+
 ## Notes
 
 - Kimi advertises list, load, fork, close, delete, and cancellation in its [ACP capability reference](https://moonshotai.github.io/kimi-code/en/reference/kimi-acp). Happier consumes supported methods through its shared ACP runtime; advertised vendor methods do not imply a dedicated control in every Happier client.
 - When creating a new session, the **Resume** field can browse session IDs reported by `kimi acp` through ACP `session/list`, filtered to the selected directory, and use one as the session to resume. Those entries are resume-only. Listing them does not establish that Kimi's interactive terminal uses the same IDs, and Happier does not provide live takeover, writer safety, transcript following or import, or terminal attachment for them. When the live Kimi ACP connection also advertises `session/delete`, the resume picker offers a confirmed delete action for the provider-owned candidate. This does not delete a persisted Happier session.
 - Models come from the active ACP session. Happier does not translate them into top-level Kimi flags.
 - MCP servers use standard ACP descriptors, including stdio, HTTP, and SSE transports supported by Kimi.
-- Permission-mode mappings are not advertised until they have authenticated live proof.
+- Happier keeps Kimi in manual approval mode and applies the Happier permission policy. Native automatic-approval mode controls are not exposed.
 - Tool calls are normalized to canonical Happier tool renderers.
 
 Update an existing current installation with:
@@ -80,6 +86,10 @@ If Kimi is not detected:
 1. Verify `kimi --version` works.
 2. Restart Happier.
 3. Set `HAPPIER_KIMI_PATH` if needed.
+
+### Unsupported journal protocol
+
+If Happier reports an unsupported Kimi journal protocol, that Kimi version is not compatible with the development integration's background-turn reader. Use the validated Kimi version or a Happier update that supports the newer protocol. Happier stops the session rather than treating unrecognized background events as authorized work.
 
 ### Legacy `kimi-cli` detected
 

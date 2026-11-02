@@ -913,7 +913,12 @@ export function createAcpRuntime(params: {
   };
 
   const waitForTurnResponse = (b: AcpRuntimeBackend, turn: RuntimeTurnState): Promise<AcpTurnOutcome | void> => {
-    turn.responseCompletion ??= b.waitForResponseComplete?.() ?? Promise.resolve();
+    if (!turn.responseCompletion) {
+      turn.responseCompletion = b.waitForResponseComplete?.() ?? Promise.resolve();
+      // Publication can defer the settlement consumer; keep the rejection observed
+      // while that consumer still receives the original completion promise.
+      void turn.responseCompletion.catch(() => {});
+    }
     return turn.responseCompletion;
   };
 
@@ -924,6 +929,7 @@ export function createAcpRuntime(params: {
   };
 
   const rethrowPromptError = (error: unknown, turn: RuntimeTurnState = turnState): never => {
+    if (isAbortLikeError(error)) rememberTurnOutcome({ kind: 'aborted', stopReason: 'cancelled' }, turn);
     if (turn.turnAborted && !isAbortLikeError(error)) {
       throw createRuntimeHandledTurnAbortError(error);
     }
@@ -941,14 +947,14 @@ export function createAcpRuntime(params: {
           cause,
         );
 
-  const rethrowAcpPromptSubmissionError = (error: unknown): never => {
+  const rethrowAcpPromptSubmissionError = (error: unknown, turn: RuntimeTurnState): never => {
     if (
       error instanceof AcpPromptSubmissionPhaseError
       && error.phase === 'rejected_before_effect'
     ) {
       throw createRejectedBeforeProviderEffectError(error, 'provider_rejected_before_acceptance');
     }
-    return rethrowPromptError(error);
+    return rethrowPromptError(error, turn);
   };
 
   const rebalanceTurnUnavailableSessionMedia = (turn: RuntimeTurnState): void => {
@@ -1389,7 +1395,9 @@ export function createAcpRuntime(params: {
         try {
           rememberTurnOutcome(await completion, turn);
         } catch (error) {
-          if (!turn.turnAborted) {
+          if (isAbortLikeError(error)) {
+            rememberTurnOutcome({ kind: 'aborted', stopReason: 'cancelled' }, turn);
+          } else if (!turn.turnAborted) {
             turn.pendingTurnOutcome = { kind: 'failed', error: error instanceof Error ? error : new Error(String(error)) };
             turn.turnAborted = true;
             await settlePromptFailure(error, turn);
@@ -1634,7 +1642,7 @@ export function createAcpRuntime(params: {
         }
         if (msg.status === 'idle' && (!turnState.turnInFlight || msg.turnFinished)) {
           const turn = turnState;
-          const completion = msg.turnFinished && turn.turnInFlight ? waitForTurnResponse(b, turn) : undefined;
+          const completion = msg.turnFinished ? waitForTurnResponse(b, turn) : undefined;
           void flushCapturedTurn(turn, completion).catch((error) => {
             logger.infoFile(`[${params.provider}] Failed to settle provider turn`, error);
           });
@@ -2410,7 +2418,7 @@ export function createAcpRuntime(params: {
         await b.sendPrompt(sessionId, prompt);
       }
     } catch (error) {
-      rethrowAcpPromptSubmissionError(error);
+      rethrowAcpPromptSubmissionError(error, turn);
     }
     await callbacks.onProviderPromptSubmitted?.();
 

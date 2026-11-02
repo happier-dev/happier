@@ -4,12 +4,12 @@ import type { TransportHandler } from '@/agent/transport/TransportHandler';
 import { DefaultTransport } from '@/agent/transport';
 import { KiroTransport } from '@/backends/kiro/acp/transport';
 
-export function resolveAcpCatalogTransportHandler(profile: AcpCatalogTransportProfileV1): TransportHandler {
+export function resolveAcpCatalogTransportHandler(profile: AcpCatalogTransportProfileV1, agentName: string = profile): TransportHandler {
   switch (profile) {
     case 'kiro':
       return new KiroTransport();
     case 'generic':
     default:
-      return new DefaultTransport(profile);
+      return new DefaultTransport(agentName);
   }
 }
