@@ -373,7 +373,7 @@ jobs:
             --build-json "/tmp/eas_build_${EAS_PLATFORM}.json" \
             --out-dir "dist/ui-mobile" \
             --publish-apk-release false \
-            --release-message "${{ inputs.release_message }}" \
+            --release-message="${{ inputs.release_message }}" \
             ${store_args[@]+"${store_args[@]}"} \
             --secrets-source env
 
@@ -488,7 +488,7 @@ jobs:
             --apk-path "${apks[0]}" \
             --version "$APP_VERSION" \
             --target-sha "$AUTHORIZED_SHA" \
-            --release-message "$RELEASE_MESSAGE"
+            --release-message="$RELEASE_MESSAGE"
 
   build_ios:
     name: Build (ios)
@@ -583,7 +583,7 @@ jobs:
             --out-dir "dist/ui-mobile" \
             --publish-apk-release false \
             --testflight-distribution-mode deferred \
-            --release-message "${{ inputs.release_message }}" \
+            --release-message="${{ inputs.release_message }}" \
             ${store_args[@]+"${store_args[@]}"} \
             --secrets-source env
 

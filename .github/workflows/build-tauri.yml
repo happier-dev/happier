@@ -1151,6 +1151,6 @@ jobs:
             --target-sha "$TARGET_SHA" \
             --prerelease false \
             --notes "$RELEASE_MESSAGE" \
-            --release-message "$RELEASE_MESSAGE" \
+            --release-message="$RELEASE_MESSAGE" \
             --repo "$GH_REPO" \
             --public-key scripts/release/installers/happier-release.pub

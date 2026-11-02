@@ -334,7 +334,7 @@ jobs:
             --build-json "/tmp/eas_build.json" \
             --out-dir "dist/ui-mobile" \
             --eas-cli-version "${EAS_CLI_VERSION}" \
-            --release-message "${{ inputs.release_message }}" \
+            --release-message="${{ inputs.release_message }}" \
             --publish-apk-release false \
             --secrets-source env
 
@@ -362,7 +362,7 @@ jobs:
             --build-json "/tmp/eas_build.json" \
             --out-dir "dist/ui-mobile" \
             --eas-cli-version "${EAS_CLI_VERSION}" \
-            --release-message "${{ inputs.release_message }}" \
+            --release-message="${{ inputs.release_message }}" \
             --publish-apk-release false \
             --secrets-source env
 
@@ -400,7 +400,7 @@ jobs:
             --environment dev \
             --apk-path "$apk" \
             --target-sha "$AUTHORIZED_SHA" \
-            --release-message "$RELEASE_MESSAGE"
+            --release-message="$RELEASE_MESSAGE"
 
       - name: Note
         run: |
@@ -504,7 +504,7 @@ jobs:
             --build-json "/tmp/eas_build.ios.json" \
             --out-dir "dist/ui-mobile" \
             --eas-cli-version "${EAS_CLI_VERSION}" \
-            --release-message "${{ inputs.release_message }}" \
+            --release-message="${{ inputs.release_message }}" \
             --secrets-source env
 
       - name: Dispatch exact TestFlight reconciliation
@@ -624,7 +624,7 @@ jobs:
             --build-json "/tmp/eas_build.ios.json" \
             --out-dir "dist/ui-mobile" \
             --eas-cli-version "${EAS_CLI_VERSION}" \
-            --release-message "${{ inputs.release_message }}" \
+            --release-message="${{ inputs.release_message }}" \
             --secrets-source env
 
       - name: Dispatch exact TestFlight reconciliation

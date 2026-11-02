@@ -468,7 +468,7 @@ jobs:
             --phase finalize-candidate --prepared-artifacts \
             --authorized-sha "$AUTHORIZED_SHA" --base-version "$BASE_VERSION" --version "$VERSION" \
             --channel "$CHANNEL" --allow-stable "$ALLOW_STABLE" \
-            --release-message "$RELEASE_MESSAGE" --run-contracts false --check-installers false \
+            --release-message="$RELEASE_MESSAGE" --run-contracts false --check-installers false \
             --publish-rolling "$PUBLISH_ROLLING"
 
   promote_existing:
@@ -529,7 +529,7 @@ jobs:
           node scripts/pipeline/release/publish-server-runtime.mjs \
             --phase promote-rolling --authorized-sha "$AUTHORIZED_SHA" --version "$VERSION" \
             --base-version "$BASE_VERSION" --channel "$CHANNEL" --allow-stable "$ALLOW_STABLE" \
-            --release-message "$RELEASE_MESSAGE" --run-contracts false --check-installers false
+            --release-message="$RELEASE_MESSAGE" --run-contracts false --check-installers false
           status=$?
           set -e
           if [ "$status" -eq 75 ]; then
@@ -593,4 +593,4 @@ jobs:
           node scripts/pipeline/release/publish-server-runtime.mjs \
             --phase promote-rolling --authorized-sha "$AUTHORIZED_SHA" --version "$VERSION" \
             --base-version "$BASE_VERSION" --channel "$CHANNEL" --allow-stable "$ALLOW_STABLE" \
-            --release-message "$RELEASE_MESSAGE" --run-contracts false --check-installers false
+            --release-message="$RELEASE_MESSAGE" --run-contracts false --check-installers false
