@@ -9,6 +9,8 @@ export type HappierLiveStreamGestureGeometry = Readonly<{
 }>;
 
 export type HappierLiveStreamPoint = Readonly<{ x: number; y: number }>;
+/** Platform gesture conventions shared by stream, document and editor input owners. */
+export const HAPPIER_GESTURE_TIMING = {slopPx: 12, doubleTapMs: 300, longPressMs: 500} as const;
 
 export type HappierLiveStreamInputGesture =
     | (Readonly<{ kind: 'tap'; point: HappierLiveStreamPoint }> & HappierLiveStreamGestureGeometry)
