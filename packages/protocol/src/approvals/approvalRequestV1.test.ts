@@ -1403,7 +1403,7 @@ describe('ApprovalRequestV1Schema', () => {
         actionArgs: { sessionId: 's1', engineIds: ['x'], instructions: 'y' },
         summary: 'Run review',
         decision: { kind: entry.decisionKind, decidedAtMs: 2 },
-        ...(entry.execution ? { execution: entry.execution } : {}),
+        ...('execution' in entry ? { execution: entry.execution } : {}),
       })).toThrow(/decision/i);
     }
   });
