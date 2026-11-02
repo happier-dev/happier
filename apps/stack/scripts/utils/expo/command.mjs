@@ -1,5 +1,6 @@
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { readdirSync, realpathSync } from 'node:fs';
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 
@@ -16,6 +17,7 @@ import { applyExpoExportMaxWorkersArgs } from './exportWorkers.mjs';
 export { applyExpoExportMaxWorkersArgs } from './exportWorkers.mjs';
 import { repairExpoYarnPackageBinShims } from './expoPackageBinShims.mjs';
 import { ensureReactNativeLibsodiumNativeBuild } from './libsodiumNativeBuild.mjs';
+import { reapHistoricalTempRoots } from '../dev_targets/historical_temp_roots.mjs';
 import {
   ensureReactNativeSkiaAndroidBinaries,
   ensureReactNativeSkiaIosBinaries,
@@ -24,14 +26,41 @@ import {
 
 const CANONICAL_UI_PREFLIGHT_ERROR_CODE = 'HAPPIER_EXPO_CANONICAL_UI_PREFLIGHT_FAILED';
 
+const activePreparationRoots = new Set();
+
+export function reapExpoPreparationRoots({ tmpDir, dryRun = false }) {
+  const retained = { reclaimedBytes: 0, reclaimedRoots: 0, reclaimableBytes: 0, reclaimableRoots: 0,
+    retainedRoots: 0, observationUnavailable: null };
+  try {
+    const parent = realpathSync(tmpDir);
+    const candidateNames = readdirSync(parent).filter(name => /^happier-expo-preparation-[A-Za-z0-9]{6}$/.test(name));
+    if (process.platform !== 'linux') {
+      return { ...retained, retainedRoots: candidateNames.length,
+        observationUnavailable: 'historical process references require Linux procfs' };
+    }
+    return reapHistoricalTempRoots(parent, '/proc', { candidateNames, dryRun,
+      retainCandidate: directory => activePreparationRoots.has(directory) });
+  } catch (error) {
+    retained.observationUnavailable = String(error.code ?? error.name);
+    console.warn(`[expo] historical preparation cleanup withheld: ${retained.observationUnavailable}`);
+    return retained;
+  }
+}
+
 export async function withExpoPreparationEnv(envIn, action) {
   if (typeof action !== 'function') {
     throw new TypeError('withExpoPreparationEnv requires an action function');
   }
   const env = { ...(envIn ?? process.env) };
-  const scratchBase = String(env.TMPDIR ?? env.TMP ?? env.TEMP ?? tmpdir()).trim() || tmpdir();
+  // Match QA browser IPC placement: inherited workspace/macOS temp roots can
+  // exceed sun_path once tools such as tsx append their socket names.
+  const scratchBase = process.platform === 'win32'
+    ? String(env.TMPDIR ?? env.TMP ?? env.TEMP ?? tmpdir()).trim() || tmpdir()
+    : '/tmp';
   await mkdir(scratchBase, { recursive: true });
-  const scratchDir = await mkdtemp(join(scratchBase, 'happier-expo-preparation-'));
+  reapExpoPreparationRoots({ tmpDir: scratchBase });
+  const scratchDir = await mkdtemp(join(realpathSync(scratchBase), 'happier-expo-preparation-'));
+  activePreparationRoots.add(scratchDir);
   env.TMPDIR = scratchDir;
   env.TMP = scratchDir;
   env.TEMP = scratchDir;
@@ -39,6 +68,7 @@ export async function withExpoPreparationEnv(envIn, action) {
     return await action(env);
   } finally {
     await rm(scratchDir, { recursive: true, force: true }).catch(() => {});
+    activePreparationRoots.delete(scratchDir);
   }
 }
 
