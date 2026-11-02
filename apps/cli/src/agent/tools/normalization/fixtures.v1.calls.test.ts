@@ -59,7 +59,6 @@ describe('tool normalization fixtures (v1): tool calls + permissions', () => {
           rawToolName: toolName,
           canonicalToolName: normalized.canonicalToolName,
         });
-        expect(inputRecord?._raw).toBeDefined();
       }
     }
   });
@@ -197,7 +196,6 @@ describe('tool normalization fixtures (v1): tool calls + permissions', () => {
 
         expect(typeof normalized.canonicalToolName).toBe('string');
         expect(normalized.canonicalToolName.length).toBeGreaterThan(0);
-        expect(asRecord(normalized.input)?._raw).toBeDefined();
       }
     }
   });

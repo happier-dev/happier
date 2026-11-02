@@ -8,6 +8,37 @@ import {
 } from './projection.js';
 
 describe('Claude JSONL projection', () => {
+    it.each([
+        { body: 'command output\n'.repeat(100), native: { stdout: 'command output\n'.repeat(100), stderr: '', exitCode: 0, backgroundTaskId: 'job-1' } },
+        { body: 'Task report\n'.repeat(100), native: { content: [{ type: 'text', text: 'Task report\n'.repeat(100) }], status: 'completed', agentId: 'child-1', totalTokens: 42 } },
+    ])('stores an exact repeated native body once and retains its structured facts', ({ body, native }) => {
+        const [item] = projectClaudeJsonlLineToDirectMessages({ fileRelPath: 'session.jsonl', lineStartOffsetBytes: 42,
+            lineValue: { type: 'user', uuid: 'result', message: { content: [
+                { type: 'tool_result', tool_use_id: 'call', content: [{ type: 'text', text: body }] },
+            ] }, toolUseResult: native },
+        });
+        expect(item?.raw).toMatchObject({ content: { data: { type: 'tool-result', callId: 'call', output: native } } });
+        expect(JSON.stringify(item).split(JSON.stringify(body).slice(1, -1))).toHaveLength(2);
+    });
+
+    it('retains different native text and native diff facts with the canonical result', () => {
+        const native = { stdout: 'separate output', structuredPatch: [{ oldStart: 1, newStart: 1, lines: ['-old', '+new'] }] };
+        const [item] = projectClaudeJsonlLineToDirectMessages({ fileRelPath: 'session.jsonl', lineStartOffsetBytes: 42,
+            lineValue: { type: 'user', uuid: 'result', message: { content: [
+                { type: 'tool_result', tool_use_id: 'call', content: 'canonical output' },
+            ] }, toolUseResult: native },
+        });
+        expect(item?.raw).toMatchObject({ content: { data: { output: { content: 'canonical output', tool_use_result: native } } } });
+    });
+    it('keeps canonical text-block facts that are absent from the native body', () => {
+        const content = [{ type: 'text', text: 'body', citations: [{ source: 'file.txt' }] }];
+        const [item] = projectClaudeJsonlLineToDirectMessages({ fileRelPath: 'session.jsonl', lineStartOffsetBytes: 42,
+            lineValue: { type: 'user', uuid: 'result', message: { content: [
+                { type: 'tool_result', tool_use_id: 'call', content },
+            ] }, toolUseResult: { stdout: 'body' } },
+        });
+        expect(item?.raw).toMatchObject({ content: { data: { output: { content, tool_use_result: { stdout: 'body' } } } } });
+    });
     it('summarizes searchable text and exact ordinals without transporting tool payloads', () => {
         const params = { fileRelPath: 'session.jsonl', lineStartOffsetBytes: 42,
             lineValue: { type: 'user', uuid: 'mixed-result', message: { role: 'user', content: [

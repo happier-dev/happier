@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { extractToolResultBlocksFromSdkMessage } from './streamEvents.js';
 
 import {
     hasClaudeAgentSdkDefinitiveSubagentRuntimeAuthFailureEvidence,
@@ -8,6 +9,25 @@ import {
 } from './index.js';
 
 describe('Claude remote SDK stream event helpers', () => {
+    it.each([
+        [{ type: 'text', text: 'body', citations: [{ source: 'file.txt' }] }],
+        [{ type: 'text', text: 'body' }, { type: 'resource', uri: 'file:///report.txt' }],
+    ])('retains SDK tool-result block facts before comparing native text', (...content) => {
+        const native = { stdout: 'body', backgroundTaskId: 'job-1' };
+        expect(extractToolResultBlocksFromSdkMessage({ type: 'user', toolUseResult: native,
+            message: { content: [{ type: 'tool_result', tool_use_id: 'call', content }] },
+        })).toEqual([{ toolUseId: 'call', output: { content, tool_use_result: native } }]);
+    });
+
+    it('keeps plain SDK text blocks as strings and exact native bodies once', () => {
+        const message = { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'call',
+            content: [{ type: 'text', text: 'bo' }, { type: 'text', text: 'dy' }] }] } };
+        expect(extractToolResultBlocksFromSdkMessage(message)).toEqual([{ toolUseId: 'call', output: 'body' }]);
+        const native = { stdout: 'body', stderr: '', backgroundTaskId: 'job-1' };
+        expect(extractToolResultBlocksFromSdkMessage({ ...message, toolUseResult: native }))
+            .toEqual([{ toolUseId: 'call', output: native }]);
+    });
+
     it('normalizes result text and redacted failure detail', () => {
         expect(readClaudeAgentSdkResultText({
             type: 'result',

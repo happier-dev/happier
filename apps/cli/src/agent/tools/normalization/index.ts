@@ -1,5 +1,5 @@
 import { extractDeferredToolExecutionCall } from './deferredToolExecutionCanonicalization';
-import { truncateDeep } from '../redaction/redact';
+import { withUnrepresentedRaw } from './rawRetention';
 import type { ToolHappierMetaV2, ToolNormalizationProtocol } from '@happier-dev/protocol';
 import { isChangeTitleToolNameAlias, isShellToolNameAlias } from '@happier-dev/protocol/tools/v2/aliases';
 import { normalizeBashInput, normalizeBashResult } from './families/execute';
@@ -327,7 +327,7 @@ export function normalizeToolCallInputV2(opts: {
             canonicalToolName: opts.canonicalToolName,
         };
         const withHappier = mergeHappierMeta(normalized, meta);
-        return { ...withHappier, _raw: truncateDeep(opts.rawInput) };
+        return withUnrepresentedRaw(withHappier, opts.rawInput);
     }
 
     if (opts.canonicalToolName === 'Bash') {
@@ -340,7 +340,7 @@ export function normalizeToolCallInputV2(opts: {
             canonicalToolName: opts.canonicalToolName,
         };
         const withHappier = mergeHappierMeta(normalized, meta);
-        return { ...withHappier, _raw: truncateDeep(opts.rawInput) };
+        return withUnrepresentedRaw(withHappier, opts.rawInput);
     }
 
     if (opts.canonicalToolName === 'Read') {
@@ -353,7 +353,7 @@ export function normalizeToolCallInputV2(opts: {
             canonicalToolName: opts.canonicalToolName,
         };
         const withHappier = mergeHappierMeta(normalized, meta);
-        return { ...withHappier, _raw: truncateDeep(opts.rawInput) };
+        return withUnrepresentedRaw(withHappier, opts.rawInput);
     }
 
     if (opts.canonicalToolName === 'Delete') {
@@ -366,7 +366,7 @@ export function normalizeToolCallInputV2(opts: {
             canonicalToolName: opts.canonicalToolName,
         };
         const withHappier = mergeHappierMeta(normalized, meta);
-        return { ...withHappier, _raw: truncateDeep(opts.rawInput) };
+        return withUnrepresentedRaw(withHappier, opts.rawInput);
     }
 
     if (opts.canonicalToolName === 'TodoWrite') {
@@ -379,7 +379,7 @@ export function normalizeToolCallInputV2(opts: {
             canonicalToolName: opts.canonicalToolName,
         };
         const withHappier = mergeHappierMeta(normalized, meta);
-        return { ...withHappier, _raw: truncateDeep(opts.rawInput) };
+        return withUnrepresentedRaw(withHappier, opts.rawInput);
     }
 
     if (opts.canonicalToolName === 'TodoRead') {
@@ -392,7 +392,7 @@ export function normalizeToolCallInputV2(opts: {
             canonicalToolName: opts.canonicalToolName,
         };
         const withHappier = mergeHappierMeta(normalized, meta);
-        return { ...withHappier, _raw: truncateDeep(opts.rawInput) };
+        return withUnrepresentedRaw(withHappier, opts.rawInput);
     }
 
     if (opts.canonicalToolName === 'SubAgent' || opts.canonicalToolName === 'Task') {
@@ -405,7 +405,7 @@ export function normalizeToolCallInputV2(opts: {
             canonicalToolName: opts.canonicalToolName,
         };
         const withHappier = mergeHappierMeta(normalized, meta);
-        return { ...withHappier, _raw: truncateDeep(opts.rawInput) };
+        return withUnrepresentedRaw(withHappier, opts.rawInput);
     }
 
     if (opts.canonicalToolName === 'Write') {
@@ -418,7 +418,7 @@ export function normalizeToolCallInputV2(opts: {
             canonicalToolName: opts.canonicalToolName,
         };
         const withHappier = mergeHappierMeta(normalized, meta);
-        return { ...withHappier, _raw: truncateDeep(opts.rawInput) };
+        return withUnrepresentedRaw(withHappier, opts.rawInput);
     }
 
     if (opts.canonicalToolName === 'Edit') {
@@ -431,7 +431,7 @@ export function normalizeToolCallInputV2(opts: {
             canonicalToolName: opts.canonicalToolName,
         };
         const withHappier = mergeHappierMeta(normalized, meta);
-        return { ...withHappier, _raw: truncateDeep(opts.rawInput) };
+        return withUnrepresentedRaw(withHappier, opts.rawInput);
     }
 
     if (opts.canonicalToolName === 'MultiEdit') {
@@ -444,7 +444,7 @@ export function normalizeToolCallInputV2(opts: {
             canonicalToolName: opts.canonicalToolName,
         };
         const withHappier = mergeHappierMeta(normalized, meta);
-        return { ...withHappier, _raw: truncateDeep(opts.rawInput) };
+        return withUnrepresentedRaw(withHappier, opts.rawInput);
     }
 
     if (opts.canonicalToolName === 'Diff') {
@@ -457,7 +457,7 @@ export function normalizeToolCallInputV2(opts: {
             canonicalToolName: opts.canonicalToolName,
         };
         const withHappier = mergeHappierMeta(normalized, meta);
-        return { ...withHappier, _raw: truncateDeep(opts.rawInput) };
+        return withUnrepresentedRaw(withHappier, opts.rawInput);
     }
 
     if (opts.canonicalToolName === 'Patch') {
@@ -470,7 +470,7 @@ export function normalizeToolCallInputV2(opts: {
             canonicalToolName: opts.canonicalToolName,
         };
         const withHappier = mergeHappierMeta(normalized, meta);
-        return { ...withHappier, _raw: truncateDeep(opts.rawInput) };
+        return withUnrepresentedRaw(withHappier, opts.rawInput);
     }
 
     if (opts.canonicalToolName === 'Reasoning') {
@@ -483,7 +483,7 @@ export function normalizeToolCallInputV2(opts: {
             canonicalToolName: opts.canonicalToolName,
         };
         const withHappier = mergeHappierMeta(normalized, meta);
-        return { ...withHappier, _raw: truncateDeep(opts.rawInput) };
+        return withUnrepresentedRaw(withHappier, opts.rawInput);
     }
 
     if (opts.canonicalToolName === 'Glob') {
@@ -496,7 +496,7 @@ export function normalizeToolCallInputV2(opts: {
             canonicalToolName: opts.canonicalToolName,
         };
         const withHappier = mergeHappierMeta(normalized, meta);
-        return { ...withHappier, _raw: truncateDeep(opts.rawInput) };
+        return withUnrepresentedRaw(withHappier, opts.rawInput);
     }
 
     if (opts.canonicalToolName === 'CodeSearch') {
@@ -509,7 +509,7 @@ export function normalizeToolCallInputV2(opts: {
             canonicalToolName: opts.canonicalToolName,
         };
         const withHappier = mergeHappierMeta(normalized, meta);
-        return { ...withHappier, _raw: truncateDeep(opts.rawInput) };
+        return withUnrepresentedRaw(withHappier, opts.rawInput);
     }
 
     if (opts.canonicalToolName === 'Grep') {
@@ -522,7 +522,7 @@ export function normalizeToolCallInputV2(opts: {
             canonicalToolName: opts.canonicalToolName,
         };
         const withHappier = mergeHappierMeta(normalized, meta);
-        return { ...withHappier, _raw: truncateDeep(opts.rawInput) };
+        return withUnrepresentedRaw(withHappier, opts.rawInput);
     }
 
     if (opts.canonicalToolName === 'LS') {
@@ -535,7 +535,7 @@ export function normalizeToolCallInputV2(opts: {
             canonicalToolName: opts.canonicalToolName,
         };
         const withHappier = mergeHappierMeta(normalized, meta);
-        return { ...withHappier, _raw: truncateDeep(opts.rawInput) };
+        return withUnrepresentedRaw(withHappier, opts.rawInput);
     }
 
     if (opts.canonicalToolName === 'WebFetch') {
@@ -548,7 +548,7 @@ export function normalizeToolCallInputV2(opts: {
             canonicalToolName: opts.canonicalToolName,
         };
         const withHappier = mergeHappierMeta(normalized, meta);
-        return { ...withHappier, _raw: truncateDeep(opts.rawInput) };
+        return withUnrepresentedRaw(withHappier, opts.rawInput);
     }
 
     if (opts.canonicalToolName === 'WebSearch') {
@@ -561,7 +561,7 @@ export function normalizeToolCallInputV2(opts: {
             canonicalToolName: opts.canonicalToolName,
         };
         const withHappier = mergeHappierMeta(normalized, meta);
-        return { ...withHappier, _raw: truncateDeep(opts.rawInput) };
+        return withUnrepresentedRaw(withHappier, opts.rawInput);
     }
 
     const meta: ToolHappierMetaV2 = {
@@ -573,7 +573,7 @@ export function normalizeToolCallInputV2(opts: {
     };
     const record = asRecord(effectiveRawInput) ?? {};
     const withHappier = mergeHappierMeta(record, meta);
-    return { ...withHappier, _raw: truncateDeep(opts.rawInput) };
+    return withUnrepresentedRaw(withHappier, opts.rawInput);
 }
 
 export function normalizeToolCallV2(opts: {
@@ -672,5 +672,5 @@ export function normalizeToolResultV2(opts: {
     })();
 
     const withHappier = mergeHappierMeta(withCommonErrorMessage(normalized), meta);
-    return { ...withHappier, _raw: truncateDeep(opts.rawOutput) };
+    return withUnrepresentedRaw(withHappier, opts.rawOutput);
 }

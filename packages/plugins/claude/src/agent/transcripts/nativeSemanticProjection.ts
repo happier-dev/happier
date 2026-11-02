@@ -225,7 +225,16 @@ function readTextContentParts(value: unknown): string | null {
   return parts.length > 0 ? parts.join('') : null;
 }
 
-/** Keep native result metadata with its report for every conversation codec. */
+/** Collapse only plain text blocks; any additional block facts must survive. */
+export function readClaudeToolResultText(value: unknown): string | null {
+  if (typeof value === 'string') return value;
+  if (!Array.isArray(value) || value.length === 0) return null;
+  if (!value.every(part => isRecord(part) && part.type === 'text' && typeof part.text === 'string'
+    && Object.keys(part).every(key => key === 'type' || key === 'text'))) return null;
+  return value.map(part => part.text).join('');
+}
+
+/** Keep native facts, carrying an exactly repeated command/report body only once. */
 export function withClaudeNativeToolResultMetadata(content: unknown, row: unknown): unknown {
   // Image blocks have the same unsupported-image meaning inside tool results
   // as at the message level. Their bytes (also duplicated by native Read
@@ -239,6 +248,12 @@ export function withClaudeNativeToolResultMetadata(content: unknown, row: unknow
   if (isRecord(metadata) && metadata.type === 'image' && isRecord(metadata.file)) {
     const { base64: _imageBytes, ...file } = metadata.file;
     projectedMetadata = { ...metadata, file };
+  }
+  const text = readClaudeToolResultText(projectedContent);
+  if (text !== null && text.length > 0) {
+    if (projectedMetadata === text) return projectedContent;
+    if (isRecord(projectedMetadata) && [projectedMetadata.stdout, projectedMetadata.stderr, projectedMetadata.content]
+      .some(body => readClaudeToolResultText(body) === text)) return projectedMetadata;
   }
   return metadata === undefined ? projectedContent : { content: projectedContent, tool_use_result: projectedMetadata };
 }
