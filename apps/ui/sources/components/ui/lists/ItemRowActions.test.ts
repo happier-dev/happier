@@ -2,6 +2,7 @@ import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { collectUnexpectedRawTextNodes, renderScreen } from '@/dev/testkit';
+import { DeferredAnchoredTooltip } from '@/components/ui/overlays/DeferredAnchoredTooltip';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -85,11 +86,13 @@ describe('ItemRowActions', () => {
     it('forwards the press event to inline actions so modifier-aware navigation stays centralized', async () => {
         const { ItemRowActions } = await import('./ItemRowActions');
         const onPress = vi.fn();
+        const onPressIn = vi.fn();
         const stopPropagation = vi.fn();
         const event = { nativeEvent: { metaKey: true }, stopPropagation };
         const screen = await renderScreen(React.createElement(ItemRowActions, {
             title: 'Navigation',
             compactThreshold: 200,
+            onActionPressIn: onPressIn,
             actions: [{
                 id: 'new-session',
                 inlineTestID: 'new-session',
@@ -99,10 +102,18 @@ describe('ItemRowActions', () => {
             }],
         }));
 
-        act(() => screen.findByTestId('new-session')?.props.onPress(event));
+        const button = screen.findByTestId('new-session')!;
+        await act(async () => { button.props.onHoverIn?.(); });
+        const tooltips = screen.findAllByType(DeferredAnchoredTooltip);
+        expect(tooltips).toHaveLength(1);
+        expect(tooltips[0]!.props.label).toBe(button.props.accessibilityLabel);
+        await act(async () => { button.props.onHoverOut?.(); });
+        expect(screen.findAllByType(DeferredAnchoredTooltip)).toHaveLength(0);
+        act(() => { button.props.onPressIn(event); button.props.onPress(event); });
 
         expect(stopPropagation).toHaveBeenCalledTimes(1);
         expect(onPress).toHaveBeenCalledWith(event);
+        expect(onPressIn).toHaveBeenCalledOnce();
     });
 
     it('invokes overflow actions even when InteractionManager does not run callbacks', async () => {

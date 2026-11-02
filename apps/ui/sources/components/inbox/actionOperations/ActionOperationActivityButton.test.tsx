@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol';
 
 import { renderScreen } from '@/dev/testkit';
+import { DeferredAnchoredTooltip } from '@/components/ui/overlays/DeferredAnchoredTooltip';
 import { actionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
 
 const storageHooks = vi.hoisted(() => ({
@@ -186,6 +187,14 @@ describe('ActionOperationActivityButton', () => {
 
         const { ActionOperationActivityButton } = await import('./ActionOperationActivityButton');
         const screen = await renderScreen(<ActionOperationActivityButton />);
+
+        const trigger = screen.findByTestId('action-operation-activity-button')!;
+        await act(async () => { trigger.props.onHoverIn?.(); });
+        const tooltips = screen.findAllByType(DeferredAnchoredTooltip);
+        expect(tooltips).toHaveLength(1);
+        expect(tooltips[0]!.props.label).toBe(trigger.props.accessibilityLabel);
+        await act(async () => { trigger.props.onHoverOut?.(); });
+        expect(screen.findAllByType(DeferredAnchoredTooltip)).toHaveLength(0);
 
         expect(storageHooks.useAllMachines).not.toHaveBeenCalled();
         expect(storageHooks.useAllSessions).not.toHaveBeenCalled();
