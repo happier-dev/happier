@@ -15,7 +15,7 @@ import {
 } from '@/plugins/store/install/source';
 import { resolvePluginAuthoringSource } from '@/plugins/authoring/sourceModule';
 import { removeInstalledPlugin, type RemoveInstalledPluginResult } from '@/plugins/store/install/remove';
-import { requestUserPluginChange, type UserPluginChangeResult } from '@/plugins/daemon/changeClient';
+import { describeUserPluginChangeFailure, requestUserPluginChange, type UserPluginChangeResult } from '@/plugins/daemon/changeClient';
 import type { PluginChangeRequest } from '@/plugins/daemon/changeContract';
 import { resolveInstalledPluginSource } from '@/plugins/discovery/sources/resolve';
 import type { ResolvedPluginSource } from '@/plugins/discovery/sources/resolve';
@@ -52,6 +52,8 @@ export type PluginCatalogEntry = Readonly<{
   diagnostics: readonly PluginCompatibilityDiagnostic[];
 } & Partial<Omit<ResolvedPluginEnablement, 'enabled'>>>;
 
+type PluginCatalogChangeDiagnostic = PluginCompatibilityDiagnostic | ReturnType<typeof describeUserPluginChangeFailure>;
+
 export type InstallPluginFromLocatorResult =
   | Readonly<{
       ok: true;
@@ -61,7 +63,7 @@ export type InstallPluginFromLocatorResult =
     }>
   | Readonly<{
       ok: false;
-      diagnostics: readonly PluginCompatibilityDiagnostic[];
+      diagnostics: readonly PluginCatalogChangeDiagnostic[];
       change?: UserPluginChangeResult;
   }>;
 
@@ -87,7 +89,7 @@ export type RollbackPluginFromCatalogResult =
     }>
   | Readonly<{
       ok: false;
-      diagnostics: readonly PluginCompatibilityDiagnostic[];
+      diagnostics: readonly PluginCatalogChangeDiagnostic[];
   }>;
 
 type InspectPluginSourceErrorCode = Extract<InspectPluginSourceResult, { ok: false }>['errorCode'];
@@ -116,17 +118,6 @@ function mapRemovePluginErrorCodeToDiagnosticCode(errorCode: RemoveInstalledPlug
     default:
       return 'plugin_source_missing';
   }
-}
-
-function pluginChangeDiagnostic(change: UserPluginChangeResult): PluginCompatibilityDiagnostic {
-  return {
-    code: change.kind === 'reviewRequired' ? 'plugin_trust_approval_required' : 'plugin_manifest_invalid',
-    message: change.kind === 'reviewRequired' && change.reviewKind === 'installation'
-      ? `Plugin '${change.review.pluginId}' requires an authenticated present-user Install and trust decision.`
-      : change.kind === 'reviewRequired'
-        ? `Plugin source '${change.review.source.locator}' requires an authenticated present-user trust decision.`
-      : `The daemon did not commit the plugin change (${change.kind}).`,
-  };
 }
 
 function readResolvedManifest(
@@ -424,7 +415,7 @@ async function submitPluginInstallChange(params: Readonly<{
   if (change.kind !== 'committed') {
     return {
       ok: false,
-      diagnostics: [pluginChangeDiagnostic(change)],
+      diagnostics: [describeUserPluginChangeFailure(change)],
       change,
     };
   }
@@ -694,7 +685,7 @@ export async function rollbackPluginFromCatalog(params: Readonly<{
   if (change.kind !== 'committed') {
     return {
       ok: false,
-      diagnostics: [pluginChangeDiagnostic(change)],
+      diagnostics: [describeUserPluginChangeFailure(change)],
     };
   }
 

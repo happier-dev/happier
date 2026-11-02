@@ -2934,6 +2934,60 @@ describe('handlePluginsCommand', () => {
     }
   });
 
+  it('installs the maintained out-of-tree triage source as a development source', async () => {
+    const home = await createTempDir('happier-acme-install-');
+    const envScope = createEnvKeyScope(['HAPPIER_HOME_DIR']);
+    envScope.patch({ HAPPIER_HOME_DIR: home });
+    reloadConfiguration();
+    const sourceRoot = resolve('../../packages/tests/fixtures/plugin-platform/out-of-tree-triage-source');
+    const output = captureConsoleJsonOutput();
+    try {
+      await runCompiledPluginCommand(['install', sourceRoot, '--dev', '--json']);
+      expect(output.json()).toMatchObject({ ok: true, kind: 'plugins_install', data: { change: {
+        kind: 'committed', pluginId: 'acme.ledger',
+      } } });
+      expect((await readInstalledPluginCatalog({ happyHomeDir: home })).map(entry => entry.pluginId)).toContain('acme.ledger');
+    } finally {
+      output.restore();
+      await activePluginChangeService?.shutdown();
+      await activePluginReloadController?.shutdown();
+      activePluginChangeService = null;
+      activePluginReloadController = null;
+      envScope.restore();
+      reloadConfiguration();
+      await removeTempDir(home);
+    }
+  });
+
+  it('preserves the daemon rejection reason for a local path install', async () => {
+    const home = await createTempDir('happier-plugin-cli-rejection-');
+    const sourceRoot = await createTempDir('happier-plugin-cli-rejection-source-');
+    const envScope = createEnvKeyScope(['HAPPIER_HOME_DIR']);
+    envScope.patch({ HAPPIER_HOME_DIR: home });
+    reloadConfiguration();
+    await materializeSamplePluginFixture(sourceRoot);
+    // The daemon transport is the boundary; the catalog and CLI presentation stay real.
+    daemonBoundary.requestChange.mockResolvedValue({ kind: 'failed',
+      code: 'plugin_change_preparation_failed',
+      message: 'Immutable plugin generation source contains a symbolic link: node_modules/react' });
+    const output = captureConsoleJsonOutput();
+    try {
+      await runCompiledPluginCommand(['install', sourceRoot, '--json']);
+      expect(output.json()).toMatchObject({ ok: false, kind: 'plugins_install', error: {
+        code: 'plugin_change_preparation_failed',
+        message: 'Immutable plugin generation source contains a symbolic link: node_modules/react',
+      } });
+      expect(daemonBoundary.requestChange).toHaveBeenCalledTimes(1);
+      expect(daemonBoundary.readChangeStatus).not.toHaveBeenCalled();
+    } finally {
+      output.restore();
+      envScope.restore();
+      reloadConfiguration();
+      await removeTempDir(sourceRoot);
+      await removeTempDir(home);
+    }
+  });
+
   it('reports daemon-owned post-commit reconciliation as pending', async () => {
     const home = await createTempDir('happier-plugin-cli-reconciliation-pending-');
     const envScope = createEnvKeyScope(['HAPPIER_HOME_DIR', 'PATH']);
