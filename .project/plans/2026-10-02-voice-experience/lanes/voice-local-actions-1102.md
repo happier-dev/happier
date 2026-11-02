@@ -1,75 +1,76 @@
-STATUS: DONE — focused validation complete; broader package limitations recorded below
-Lane: VOICE-LOCAL-ACTIONS-1102; checkout: /home/leeroy.guest/.happier-stack/workspace/0.3
+STATUS: IMPLEMENTED_NOT_VERIFIED — RUN62H reproduced; pending loaded replay after reload
 
-Outcome: Local turns discover and invoke canonical settings and approval Actions;
-catalog operands survive privacy projection and owner refusals explain the tap.
+Outcome: corrected the shared Voice instructions actually delivered by the daemon.
+The settings action definitions were already present in the failed real turn;
+this follow-up does not claim a missing catalog registration caused RUN62H.
 
-Observed cause and ownership:
-- Both Actions were registered on Voice; no Local-only registration/allowlist fix was needed.
-- The canonical settings.list hint supplied no page ids or omit-to-discover guidance.
-  The real five-result "voice settings" search omitted settings.list.
-- approval.request.list was absent from the prompt's documented hot-path tools;
-  its workflow mentioned the name without supplying an invocation definition.
-- With path sharing off, provider redaction erased catalog path: "pageId" as a
-  filesystem path; summary privacy also stripped declaration titles/labels.
-- Generic action_execute results did not select the target's privacy classification.
-- The owner's present_user_required refusal was spoken as the raw error code.
-- RUN62G did not retain the model's exact discovery query. These are reproduced
-  catalog/prompt defects, not a claim about an unrecorded model reasoning trace.
+Loaded evidence (read-only nl3, restart90 daemon c348df0431567d85):
+- Carrier cmvzrzt8d003dmciqyvzq2jf9, runner1488451, startup marker revision4.
+- Codex state_5.sqlite and its retained rollouts identify row17 thread
+  01a19e2f-56fc-7b62-95f4-93adc2669477 / run_72088825-c629-4046-92e0-4c721f9b6995.
+- Row3 ON: thread01a19e36-01f6-7493-9573-fda4628a031c /
+  run_e576b18d-368e-4942-8423-2824bb349c80.
+- Both actual first-turn prompts contain settings_list/get/set/reset/invoke,
+  approval_request_list/get/decide, their schemas, and the Voice action channel.
+- Both also contain the obsolete unconditional instruction to read the request,
+  ask the person, and follow their answer before deciding. This contradicts the
+  10-30 spoken-confirmation ruling and the neighboring action workflow guidance.
+- Actual row3 output emits list and get action blocks, then asks again; no decide.
+  Actual row17 emits no action and falsely says settings actions are unavailable.
+- Native Codex logs show Happier MCP active and a rejected execution_run_wait
+  schema, plus unrelated PostgreSQL startup failures; no settings rejection.
+  The complete native model tool allowlist is not retained in these rollouts.
+- Saved projections/raw reads: .project/tmp/voice-local-actions-1102/
+  loaded-turn-composition-evidence.json, loaded-real-turn-items.json,
+  loaded-real-prompt-and-tools.json, loaded-row17-tool-inventory.json,
+  loaded-session-persisted-input.json. No credentials were printed.
 
-Deliverables:
-- packages/protocol/src/actions/specs/settings.ts derives known page ids from
-  BUILT_IN_SETTINGS_DECLARATIONS_V1; pageId remains open to contributed pages.
-- packages/protocol/src/actions/specs/approvals.ts documents list with get/decide.
-- Shared Voice guidance follows the spoken-confirmation ruling; no extra ask.
-- spokenActionOutcome.ts presents the owner's refusal with localized tap copy
-  in all locales, without rechecking Voice delegation or changing authority.
-- The existing provider redaction owner distinguishes declaration labels/schema
-  operands from private Session summaries and actual filesystem strings. Generic
-  calls reuse resolveVoiceExecutionToolName and the existing envelope projector.
-- Real Local turn regression discovers returned page/binding/anchor/request ids,
-  invokes the existing owners, checks saved Balanced and executed request state,
-  preserves an open request when delegation is off, and rejects false success.
-- docs/actions.md records the shared discovery and refusal behavior.
+Cause and correction:
+- Observed approval cause: stale shared base/global custody instructions compete
+  with the action's correct confirmation guidance. One shared rules constant now
+  serves global, Local and realtime prompts: spoken approval confirms; self-
+  initiated decisions still ask; OFF preserves the owner's tap-required refusal.
+- Observed settings boundary: the model refused before any action or lookup,
+  despite receiving the definitions. Its internal reason is not observable.
+  The canonical Local output contract now explicitly distinguishes these routes,
+  requires the action attempt and typed result before claiming unavailability.
+  This response remains unverified against the real model until live replay.
+- Global startup revision5 makes existing carrier renewal consume the correction.
+  No separate Voice catalog, permission check or tool allowlist was introduced.
+- Producers remain canonical Action specs -> shared prompt -> daemon composition.
+  Native MCP and Voice action blocks retain distinct invocation/authority routes.
 
-Validation evidence: .project/tmp/voice-local-actions-1102/
-- discovery-red.log: expected search/prompt failures; 28 existing tests passed.
-- refusal-red.log: both direct and generic transports exposed raw present_user_required.
-- catalog-projection-red.log: composed validation caught my invalid static-option
-  hint; corrected to text guidance, preserving contributed page support.
-- catalog-green.log: canonical search plus strict external projection PASS.
-- privacy-red.log: three failures reproduce erased operands and declaration labels.
-- final-ui-green.log: 83 PASS (23 composed Local turns plus 60 privacy/outcome tests).
-- prompt-final.log: current-source prompt suite 29 PASS.
-- cli-composed-current.log: real Manager/client approval path 4 PASS; an earlier
-  collection failure in foreign bot-template translations cleared on retry.
-- entry-loads-final.log: requested current-source entry-load command 7/7 PASS.
-- protocol-typecheck.log: public package typecheck PASS, zero diagnostics.
-- protocol-adjacent.log: 10,871 PASS / 22 FAIL in desktop/catalog/approval census
-  outside this change; the focused discovery/guidance cases pass. Not a clean baseline.
-- UI typecheck emitted dependency diagnostics outside lane files; agents typecheck
-  remains queued for worker memory. Neither is claimed green (see their logs).
-- coherence.log owns the single authorized candidate check and CAS commit;
-  the finalizer commits only on zero new diagnostics, replaying moved HEAD safely.
+Regression and validation (.project/tmp/voice-local-actions-1102/):
+- followup-prompt-red.log: 1 intended confirmation-rule failure / 28 passing.
+- composition-channel-red.log: all4 real ExecutionRunHostBridge/native factory
+  compositions fail on missing action-channel availability instruction; real MCP
+  settings inventories pass before the delivered-prompt assertion.
+- followup-prompt-final-green.log: 29 passing on the final shared prompt.
+- followup-composition-green.log: all4 actual SDK/native composition cases PASS.
+- followup-startup-consumers-green.log: FAIL, 67 failed/34 passed, 6 unhandled
+  errors; untouched carrier/admission paths, unattributed to this lane.
+- followup-action-owners-green.log: 24 PASS including setting/approval/OFF/refusal;
+  1 unrelated send-error failure: expected dispatch_ambiguous, got send_failed.
+- followup-agents-typecheck.log: public package check PASS, zero diagnostics.
+- followup-cli-typecheck.log: public package check launched; no green verdict
+  at candidate assembly. Its terminal result remains in the log/final handoff.
+- followup-entry-loads.log: requested current-source entry-load command7/7 PASS.
+- followup-coherence.log: single wrapped private-index check/CAS; terminal output
+  is authoritative. Earlier wrong-filter invocations selected no tests, not PASS.
+- Owner execution tests do not prove real Codex chooses actions; RUN62H refuted
+  that claim. No prompt-only assertion is reported as a successful spoken replay.
 
-Split-brain audit: canonical declarations -> Action metadata -> shared prompt,
-native discovery and client handlers. Existing Local/realtime transports consume
-the same owners; neither owns a separate settings or approval catalog. The existing
-approval owner still decides delegation and returns present_user_required when off.
-No runtime registration, permission owner, persistence schema, feature gate or
-per-turn allowlist was added. CLI production and native Codex exclusions are unaffected.
+Self-review: real prompts refute a registration-only diagnosis. Removed duplicate
+custody text; no competing catalog or delegation decision added. Existing UI
+marker consumers use the exported revision. Docs/actions.md already describes
+this intended behavior; no documentation contract changed. No stack lifecycle,
+process kill, shared-index staging, branch change or push performed.
+Mechanism delta: +1 shared instruction constant / -1 duplicate rule set;
++1 Local transport-availability instruction; +0 runtime checks/states/errors/
+timers/retries/catalogs/files. Test assertions inspect actual native SDK input.
 
-Mechanism delta: +1 refusal-presentation branch; +1 catalog classification and
-optional schema-path mode at the existing privacy owner, justified by reproduced
-erased operands; +0 authority checks, states, error codes, timers, retries/budgets;
--0 runtime mechanisms; +3 test files. Metadata exposes existing capabilities.
-
-Self-review: arbitrary contributed page ids remain supported; strict discovery
-projection is exercised; speech follows saved owner results; real paths and
-Session titles stay private. Existing transports consume one catalog/privacy owner.
-No stack lifecycle, process kill, branch switch, shared-index staging or push.
-Commit: private-index CAS finalizer output in coherence.log (no push).
-
-Residual risk: no new loaded Codex/provider replay yet. Reload the UI and renew
-the Local Voice runtime with these sources, then replay RUN62G rows 17/3 ON/OFF.
-The exact next model response remains a live-validation obligation.
+Residual risk: model behavior is not certified by prompt assertions. Reload the
+CLI/daemon runtime and UI shared prompt producer, renew Local Voice, then replay
+row17 and row3 ON/OFF on built-in Codex gpt-6-luna. Require saved Balanced, an
+executed approval without another question, and OFF's typed disabled/tap reason.
+Keep IMPLEMENTED_NOT_VERIFIED until that loaded replay passes.

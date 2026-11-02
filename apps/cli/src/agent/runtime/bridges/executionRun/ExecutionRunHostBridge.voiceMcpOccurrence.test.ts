@@ -232,6 +232,15 @@ describe('Voice Run MCP provisioning occurrence', () => {
       // Account queue discovery remains in the canonical long tail; the
       // prompt explains it without inlining its large selector schema.
       expect(prompts[0]).toContain('approval_request_list with status open');
+      // Inspect the instructions actually delivered to the retained native
+      // Agent, so a correct shared helper omitted by composition cannot pass.
+      expect(prompts[0]).toContain('even when no corresponding native tool is listed');
+      expect(prompts[0]).toContain("The person's explicit spoken request is the confirmation");
+      expect(prompts[0]).toContain('do not ask for confirmation again');
+      expect(prompts[0]).toContain('When Voice agent can approve requests is off');
+      expect(prompts[0]).toContain('a tap in the request UI is required');
+      expect(prompts[0]).toContain('Only report the permission as approved, denied, or settled after canonical request state shows that outcome');
+      expect(prompts[0]).not.toContain('Read the specific request aloud within the sharing policy, ask the person, and follow their answer before deciding');
       if (mode === 'bound') {
         const receipt = { serverId: 'srv_receipt_home', sessionId: 'voice-parent' };
         expect(prompts[0]).toContain('VOICE_RECEIPT_PERSONA');

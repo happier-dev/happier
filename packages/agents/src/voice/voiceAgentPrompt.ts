@@ -18,12 +18,18 @@ export const DEFAULT_VOICE_ASSISTANT_NAME = 'Happier Voice';
 
 export const GLOBAL_VOICE_AGENT_STARTUP_INSTRUCTIONS_ID =
   'happier.global_voice_agent';
-export const GLOBAL_VOICE_AGENT_STARTUP_INSTRUCTIONS_REVISION = 4;
+export const GLOBAL_VOICE_AGENT_STARTUP_INSTRUCTIONS_REVISION = 5;
 
 const VOICE_AGENT_DIRECT_IDENTITY_RULE =
   'Speak as the coding assistant directly, not as a coordinator or wrapper.';
 const VOICE_AGENT_IRREVERSIBLE_ACTION_RULE =
   'Do not take irreversible actions unless the user explicitly asked you to.';
+const VOICE_AGENT_APPROVAL_RULES = [
+  'Voice agent can approve requests is enabled by default: you may approve or deny pending requests on the person\'s behalf through canonical tools.',
+  'Read the specific request aloud within the sharing policy. The person\'s explicit spoken request is the confirmation: when they ask you to approve or deny it, use the canonical decision action and do not ask for confirmation again. Ask the person before deciding only when they have not already requested that decision.',
+  'When Voice agent can approve requests is off, tell the person a tap in the request UI is required; do not bypass a present_user_required refusal.',
+  'Only report the permission as approved, denied, or settled after canonical request state shows that outcome.',
+] as const;
 
 export function buildGlobalVoiceAgentStartupInstructionsPlanV1() {
   return buildPromptPlanV1({
@@ -51,10 +57,7 @@ export function buildGlobalVoiceAgentStartupInstructionsPlanV1() {
         scope: 'session',
         text: [
           'Normal permission and approval custody applies through the canonical request tools and session UI.',
-          'Voice agent can approve requests is enabled by default: you may approve or deny pending requests on the person\'s behalf through canonical tools.',
-          'Read the specific request aloud within the sharing policy, ask the person, and follow their answer before deciding.',
-          'When Voice agent can approve requests is off, tell the person a tap in the request UI is required; do not bypass a present_user_required refusal.',
-          'Only report the permission as approved, denied, or settled after canonical request state shows that outcome.',
+          ...VOICE_AGENT_APPROVAL_RULES,
           'Never semantically retry a mutation. If an outcome is unknown, report that uncertainty and wait for canonical evidence.',
           VOICE_AGENT_IRREVERSIBLE_ACTION_RULE,
         ].join('\n'),
@@ -144,10 +147,7 @@ function buildVoiceAgentBaseText(params?: Readonly<{
     '- If the active coding session asks a follow-up question or presents options, answer that question first before sending more coding work.',
     '',
     'Permissions:',
-    '- Voice agent can approve requests is enabled by default: you may approve or deny pending requests on the person\'s behalf through canonical tools.',
-    '- Read the specific request aloud within the sharing policy, ask the person, and follow their answer before deciding.',
-    '- When Voice agent can approve requests is off, tell the person a tap in the request UI is required; do not bypass a present_user_required refusal.',
-    '- Only report the permission as approved, denied, or settled after canonical request state shows that outcome.',
+    ...VOICE_AGENT_APPROVAL_RULES.map(rule => `- ${rule}`),
     ...(hasTool('answerUserActionRequest')
       ? ['- If a user-action request arrives with options or questions, briefly present the choices, ask the human to answer, and then use answerUserActionRequest with structured answers.']
       : ['- If a user-action request arrives with options or questions, briefly present the choices and ask the human to answer.']),
@@ -367,6 +367,7 @@ export function buildLocalVoiceAgentSystemPrompt(params?: Readonly<{
             `- After actions run, you may receive a follow-up user message that starts with "${VOICE_TOOL_RESULTS_JSON_PREFIX}". Parse the JSON after that prefix (next line) as { toolResults: [...] } and use it to confirm success or explain errors.`,
             '- Always include sessionId internally when the action accepts it.',
             '- These actions run through the Happier Voice host. Use this action channel for app settings and request discovery or decisions; native coding tools retain their own authority and do not gain Voice delegation.',
+            `- The listed actions are available through <${tag}> even when no corresponding native tool is listed. Emit the action block for a supported request and use its typed result; do not claim an action is unavailable merely because it is absent from the native tool list.`,
             '- The action list below is only the hot path. For anything else, use searchActionSpecs first instead of guessing.',
             '',
             ...(discoveryLines.length > 0 ? ['Discovery checklist:', ...discoveryLines, ''] : []),

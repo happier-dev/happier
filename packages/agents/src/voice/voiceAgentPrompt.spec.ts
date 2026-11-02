@@ -124,14 +124,14 @@ describe('voiceAgentPrompt', () => {
       digest: createHash('sha256').update(rendered, 'utf8').digest('hex'),
     }).toEqual({
       id: 'happier.global_voice_agent',
-      revision: 4,
+      revision: 5,
       blockIds: [
         'voice.global_agent.identity',
         'voice.global_agent.authority',
         'voice.global_agent.custody',
         'voice.global_agent.results',
       ],
-      digest: 'b5f76b12bd1973d8455970eeb0fb4368258b5f7c9c6eaef060ae51d85dc81cc2',
+      digest: '45bf29aa1c62c076d616ecc714d378bef7fc2761a20d54297b234e8667db499b',
     });
 
     expect(rendered).toContain("Happier's global Voice agent");
@@ -157,6 +157,9 @@ describe('voiceAgentPrompt', () => {
     for (const prompt of prompts) {
       expect(prompt).toContain('Voice agent can approve requests is enabled by default');
       expect(prompt).toContain('Read the specific request aloud within the sharing policy');
+      expect(prompt).toContain("The person's explicit spoken request is the confirmation");
+      expect(prompt).toContain('do not ask for confirmation again');
+      expect(prompt).not.toContain('ask the person, and follow their answer before deciding');
       expect(prompt).toContain('a tap in the request UI is required');
       expect(prompt).toContain('do not bypass a present_user_required refusal');
       expect(prompt).toContain('Only report the permission as approved, denied, or settled after canonical request state shows that outcome');
