@@ -4978,6 +4978,13 @@ available. A guarded refusal to signal does not authorize an unsafe kill: Stop
 rechecks positive runner exit before reporting incomplete termination. Transport
 timeout or disconnect never proves physical termination.
 
+In 0.3 development source, a positively dead runner leaves the daemon's local
+inventory once its resources and durable exit staging are complete, even if Home
+terminal publication remains pending. Its exact retained Session marker owns
+server settlement and control-metadata retirement on reconnect. A disconnected
+Machine socket alone cannot keep that local Stop incomplete; missing death or
+marker proof and incomplete local cleanup still retain custody.
+
 ### Session spawning
 
 In 0.3 development, the Claude plugin retains its effective native account directory in the existing native runtime descriptor. Its daemon environment hook restores that directory before the ambient daemon default; explicit profile and materialized credential selections still take precedence. No parallel host-owned native-environment metadata is introduced.
