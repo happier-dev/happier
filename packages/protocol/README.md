@@ -4,13 +4,13 @@ Shared cross-package contracts between Happier CLI and Happier app.
 
 ## Source-derived exports (0.3 development)
 
-After adding or moving a public source module, run
-`pnpm --filter @happier-dev/protocol generate:exports` before adding consumers.
 The generator derives exact package exports from the compiler's source inventory;
 `export-aliases.json` owns renamed entrypoints and directory-index aliases.
-Do not hand-edit `package.json#exports`. Builds, typechecks and the export
-regression suite reject stale output; `pnpm --filter @happier-dev/protocol check:exports`
-checks it without writing.
+Run `pnpm --filter @happier-dev/protocol generate:exports` after adding or moving
+a public module, before capture or source preparation. Commit the resulting map;
+runtime preparation and Metro consume it without loading development tooling.
+Do not hand-edit `package.json#exports`. Builds, typechecks and `check:exports`
+reject stale output without writing.
 
 Compiled implementation leaves are available through their source-relative
 subpaths. Declaration inputs, tests, testkits and fixture directories stay private.

@@ -1501,13 +1501,14 @@ For `packages/plugin-sdk`, source and integration validation must prove through 
 ## Missing `dist` / invalid exports
 
 In 0.3 development, Protocol's export map is generated from its compiled source
-inventory. After adding or moving a public Protocol module, run
-`pnpm --filter @happier-dev/protocol generate:exports` before adding consumers.
+inventory by development tooling before workspace capture.
 Renamed and directory-index entrypoints are owned by
 `packages/protocol/export-aliases.json`; tests, declaration inputs and fixture
-support stay private. Build/typecheck preparation checks for stale exports before
-compilation. Generation is an explicit authoring step: running it inside a captured
-workspace build would be too late to update that build's manifest/target inventory.
+support stay private. Run Protocol's `generate:exports` command after adding or
+moving a public module and commit the resulting map. Runtime/source preparation,
+captured inputs and Metro consume that map without running its generator, which
+requires the development TypeScript tooling. The canonical workspace input
+inventory includes the alias configuration; builds/typechecks reject stale maps.
 Exact entries retain the source, types and JavaScript resolution used by Metro,
 source tools and published/bundled hosts.
 

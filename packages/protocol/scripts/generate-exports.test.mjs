@@ -5,6 +5,9 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { test, expect } from 'vitest';
 import { generateProtocolExports } from './generate-exports.mjs';
+import { readWorkspacePackages, resolveWorkspaceSource } from '../../cli-common/sourceRuntimeEntries.mjs';
+import { captureBuildInputFiles } from '../../../scripts/workspaces/buildInputConvergence.mjs';
+import { readWorkspaceBuildInputs } from '../../../apps/stack/scripts/utils/fs/workspaceBuildInputs.mjs';
 
 test('publishes newly added source subpaths without hand-editing the manifest', async () => {
   const root = await mkdtemp(join(tmpdir(), 'protocol-derived-exports-'));
@@ -72,4 +75,39 @@ test('publishes newly added source subpaths without hand-editing the manifest', 
 
 test('published exports match the current compiled public source inventory', async () => {
   await generateProtocolExports({ check: true });
+});
+
+test('a generated new leaf resolves after capture without loading development tooling', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'protocol-captured-exports-'));
+  const packageRoot = join(root, 'source/packages/protocol');
+  const captureDir = join(root, 'capture');
+  try {
+    await mkdir(join(packageRoot, 'src'), { recursive: true });
+    await mkdir(join(packageRoot, 'scripts'));
+    await writeFile(join(packageRoot, 'package.json'), JSON.stringify({
+      name: '@happier-dev/protocol', type: 'module', exports: {},
+    }));
+    await writeFile(join(packageRoot, 'tsconfig.json'), JSON.stringify({ include: ['src/**/*.ts'] }));
+    await writeFile(join(packageRoot, 'export-aliases.json'), '{".":"./src/index.ts"}');
+    await writeFile(join(packageRoot, 'src/index.ts'), 'export const value = 1;');
+    // Source preparation must consume committed exports without importing tooling.
+    await writeFile(join(packageRoot, 'scripts/generate-exports.mjs'),
+      'throw new Error("Runtime preparation imported the export generator");');
+    await generateProtocolExports({ packageRoot });
+    await writeFile(join(packageRoot, 'src/systemSessionMarker.ts'), 'export const value = 43;');
+    await expect(generateProtocolExports({ packageRoot, check: true })).rejects.toThrow('Protocol exports are stale');
+    await generateProtocolExports({ packageRoot });
+    await captureBuildInputFiles({ sourceDir: join(root, 'source'), captureDir,
+      readPaths: () => readWorkspaceBuildInputs(packageRoot).map(path => `packages/protocol/${path}`),
+    });
+    const packages = await readWorkspacePackages(captureDir);
+    const target = resolveWorkspaceSource(packages, '@happier-dev/protocol/systemSessionMarker');
+    expect(target).toBe(join(captureDir, 'packages/protocol/src/systemSessionMarker.ts'));
+    const manifest = JSON.parse(await readFile(join(captureDir, 'packages/protocol/package.json'), 'utf8'));
+    expect(manifest.exports['./systemSessionMarker']['happier-source']).toBe('./src/systemSessionMarker.ts');
+    expect(await readFile(join(captureDir, 'packages/protocol/package.json'), 'utf8'))
+      .toBe(await readFile(join(packageRoot, 'package.json'), 'utf8'));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
