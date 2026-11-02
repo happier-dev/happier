@@ -32,7 +32,8 @@ import { waitForNetworkResponseForTests } from '../mocks/runtimeFetch';
 import { loadSyncSingletonForTests } from './syncSingletonLoader';
 import { MachineReadBatchRequestV1Schema, MachineReadBatchResponseV1Schema } from '@happier-dev/protocol/machines/machineReadBatchV1';
 import { createSessionReadBatchHttpBoundary } from './sessionReadBatchHttpBoundary';
-import type { ManagedMachineActionInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedMachineActionOutputSchemasV1, managedMachineActionEndpointPathV1,
+    type ManagedMachineActionInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import type { ActionExecutorContext, WorkflowActionExecute } from '@happier-dev/protocol';
 import { DiscussionCreateRequestV1Schema, DiscussionCreateResponseV1Schema, DiscussionPostRequestV1Schema,
     type DiscussionCreateResponseV1 } from '@happier-dev/protocol/discussions/api';
@@ -414,6 +415,11 @@ export function createHomeGovernanceHarness(): HomeGovernanceHarness {
             record.answers.set(ACCOUNT_SETTINGS_V2_PATH, { body: { content: null, version: 0 } });
             record.answers.set('/health', { body: {} });
             record.answers.set('/v1/auth/ping', { body: {} });
+            // Explicit Machine execution resolves its managed association before
+            // dispatch. An unseeded Home has no managed Machines; cases may override it.
+            record.answers.set(managedMachineActionEndpointPathV1('machines.managed.list'), {
+                body: ManagedMachineActionOutputSchemasV1['machines.managed.list'].parse({ machines: [] }),
+            });
             // Artifact persistence also answers the Account cursor/change feed,
             // including the managed Socket's authenticated cursor probe.
             if ((options.accountEncryptionMode ?? 'plain') === 'plain') {

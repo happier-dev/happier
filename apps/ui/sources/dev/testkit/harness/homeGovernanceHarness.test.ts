@@ -51,6 +51,20 @@ it('serves strict selected Machine batches from the same seeded rows without syn
     } finally { release(); await pending; }
 });
 
+it('lets an explicit managed inventory answer replace the empty Home default', async () => {
+    const serverUrl = 'https://governance-managed.test';
+    const serverId = await homes.addHome({ name: 'Managed inventory', serverUrl, accountId: 'owner' });
+    const path = '/v1/machines/managed/actions/list';
+    const request = () => homes.request(`${serverUrl}${path}`, {
+        method: 'POST', body: JSON.stringify({ homeId: serverId }),
+    });
+    expect(await (await request()).json()).toEqual({ machines: [] });
+    homes.answer(serverId, path, { status: 503, body: { code: 'controller_unavailable' } });
+    const response = await request();
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({ code: 'controller_unavailable' });
+});
+
 it('publishes committed Artifact changes to the same Account cursor used by warm inventories', async () => {
     installHomeGovernanceBoundaries(homes);
     const serverUrl = 'https://governance-artifacts.test';
