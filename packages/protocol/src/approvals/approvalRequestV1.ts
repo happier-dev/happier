@@ -1,5 +1,7 @@
 import * as zMini from 'zod/mini';
 import { lazyZodSchema } from '../lazyZodSchema.js';
+import { ApprovalRequestStatusSchema, ApprovalRequestV2StatusSchema } from './approvalRequestStatus.js';
+export { ApprovalRequestStatusSchema, ApprovalRequestV2StatusSchema, type ApprovalRequestStatus } from './approvalRequestStatus.js';
 import { z } from 'zod/mini';
 import { createStoredReadSchema } from '../json/storedReadSchema.js';
 import { asProtocolZod } from "../plugins/actions/internalProtocolZodAdapter.js";
@@ -48,14 +50,6 @@ import { MachineStorageTrashMoveInputV1Schema, PileApplyResultStoredV1Schema, Pi
 import { prepareDocDiscussionMutationV1 } from '../artifacts/artifactCollaborationActionsV1.js';
 import { ApprovalStaleFailureDetailsSchema } from './approvalStaleReason.js';
 export { ApprovalStaleReasonSchema, ApprovalStaleFailureDetailsSchema, type ApprovalStaleReason } from './approvalStaleReason.js';
-
-export const ApprovalRequestStatusSchema = lazyZodSchema(() => z.enum(['open', 'approved', 'rejected', 'executed', 'failed', 'canceled']));
-export type ApprovalRequestStatus = z.infer<typeof ApprovalRequestStatusSchema>;
-
-/** Current executable lifecycle. The released V1 status schema above stays byte-for-byte closed. */
-export const ApprovalRequestV2StatusSchema = lazyZodSchema(() => z.enum([
-  'open', 'approved', 'executing', 'rejected', 'executed', 'failed', 'canceled',
-]));
 
 const ApprovalRequestedSurfaceSchema = lazyZodSchema(() => z.string().check(z.minLength(1)));
 
@@ -172,7 +166,7 @@ export type ApprovalExecutionV2 = z.infer<typeof ApprovalExecutionV2Schema>;
 export const ApprovalRequestPublicSettlementSchema = lazyZodSchema(() => z.object({
   v: z.union([z.literal(1), z.literal(2)]),
   actionId: ApprovalRequestV1HistoricalActionIdSchema,
-  status: z.enum(['executed', 'failed']),
+  status: z.enum(['executed', 'failed', 'outcome_unknown']),
   execution: ApprovalExecutionV2Schema,
 }).check(z.refine(value => value.execution.ok === (value.status === 'executed'),
   'Public approval status must match its execution outcome')));
@@ -503,8 +497,8 @@ function validateApprovalRequestLifecycle(
     || status === 'executing'
     || status === 'rejected'
     || status === 'executed'
-    || status === 'failed';
-  const requiresExecution = status === 'executed' || status === 'failed';
+    || status === 'failed' || status === 'outcome_unknown';
+  const requiresExecution = status === 'executed' || status === 'failed' || status === 'outcome_unknown';
 
   if (status === 'open') {
     if (decision != null) ctx.addIssue({ code: "custom", path: ['decision'], message: 'open approval requests must not include a decision' });
@@ -513,13 +507,17 @@ function validateApprovalRequestLifecycle(
   if (requiresDecision && decision == null) ctx.addIssue({ code: "custom", path: ['decision'], message: `status ${status} requires a decision` });
   if (requiresExecution && execution == null) ctx.addIssue({ code: "custom", path: ['execution'], message: `status ${status} requires execution metadata` });
   if (!requiresExecution && execution != null) ctx.addIssue({ code: "custom", path: ['execution'], message: `status ${status} must not include execution metadata` });
-  if ((status === 'approved' || status === 'executing' || status === 'executed' || status === 'failed') && decision?.kind !== 'approve') {
+  if ((status === 'approved' || status === 'executing' || status === 'executed' || status === 'failed' || status === 'outcome_unknown') && decision?.kind !== 'approve') {
     ctx.addIssue({ code: "custom", path: ['decision'], message: `status ${status} requires an approve decision` });
   }
   if (status === 'rejected' && decision?.kind !== 'reject') ctx.addIssue({ code: "custom", path: ['decision'], message: 'status rejected requires a reject decision' });
   if (status === 'canceled' && decision != null) ctx.addIssue({ code: "custom", path: ['decision'], message: 'canceled approval requests must not include a decision' });
   if (status === 'executed' && execution?.ok !== true) ctx.addIssue({ code: "custom", path: ['execution'], message: 'status executed requires a successful execution result' });
   if (status === 'failed' && execution?.ok !== false) ctx.addIssue({ code: "custom", path: ['execution'], message: 'status failed requires a failed execution result' });
+  if (status === 'outcome_unknown' && (value.v !== 2 || execution?.ok !== false
+    || (execution as ApprovalExecutionV2).effectAttempted !== true)) {
+    ctx.addIssue({ code: 'custom', path: ['execution'], message: 'Unknown approval outcomes require a possibly attempted V2 execution' });
+  }
   if (value.v === 2 && execution?.ok === true && Object.hasOwn(execution, 'details')) {
     ctx.addIssue({ code: "custom", path: ['execution', 'details'], message: 'successful approval execution cannot include failure details' });
   }
