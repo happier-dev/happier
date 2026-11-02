@@ -171,6 +171,9 @@ export async function runQaBrowserWorker({ sessionName, proxy = false, trustSpki
   let resolveAudio;
   const audio = fakeAudio === 'file' ? new Promise(resolve => { resolveAudio = resolve; }) : null;
   const control = createInterface({ input });
+  // Managed custody forwards this control pipe. Its EOF means the owner is
+  // gone; ordinary payload stdin can still be closed from the outset.
+  if (env.HAPPIER_REMOTE_EXEC_CONTROL_STDIN === '1') input.once('end', close);
   control.on('line', line => {
     if (line === 'close') close();
     else if (resolveAudio && line.startsWith('fake-audio:')) resolveAudio(Buffer.from(line.slice('fake-audio:'.length), 'base64'));
@@ -235,6 +238,7 @@ export async function runQaBrowserWorker({ sessionName, proxy = false, trustSpki
   } finally {
     clearInterval(lifetime);
     control.close();
+    input.off('end', close);
     input.pause();
     try {
       await cleanupQaBrowserProfile({ session: openedSession, profile, env: browserEnv }, { capture });

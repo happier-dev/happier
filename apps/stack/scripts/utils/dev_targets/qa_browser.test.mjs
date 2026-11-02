@@ -172,6 +172,30 @@ test('cancelling CDP acquisition retires its worker without replacement', { time
   assert.equal(socketClosed, true);
 });
 
+test('managed control EOF retires its browser without requiring a later signal', { timeout: 10_000 }, async t => {
+  const port = await fakeChromeCommandLine(t);
+  const input = new PassThrough();
+  const signals = new EventEmitter();
+  let announceReady;
+  const ready = new Promise(resolve => { announceReady = resolve; });
+  const closed = [];
+  const completion = runQaBrowserWorker({ sessionName: 'control-eof', input,
+    env: { ...process.env, HAPPIER_REMOTE_EXEC_CONTROL_STDIN: '1' }, writeReady: announceReady,
+  }, { signalSource: signals, capture: async (_command, args) => {
+    if (args.includes('open')) {
+      await writeFile(join(args[args.indexOf('--profile') + 1], 'DevToolsActivePort'), `${port}\n/devtools/browser/fixture-browser\n`);
+    } else closed.push(args[args.indexOf('--session') + 1]);
+    return { ok: true, exitCode: 0, out: '', err: '' };
+  } });
+  t.signal.addEventListener('abort', () => signals.emit('SIGINT'), { once: true });
+  t.after(async () => { signals.emit('SIGINT'); await completion; });
+  const browser = await ready;
+  input.end();
+  await completion;
+  assert.ok(closed.includes(browser.session), 'control loss must close the serving browser');
+  await assert.rejects(access(browser.profile), { code: 'ENOENT' });
+});
+
 test('source control refuses a missing mirror before dispatching its browser helper', async t => {
   const { root } = await createTempFixture(t, { prefix: 'hstack-browser-missing-mirror-' });
   const stackName = 'fixture-missing-mirror';
