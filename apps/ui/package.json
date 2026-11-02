@@ -346,7 +346,7 @@
     "reanimated-color-picker": "4.2.0",
     "remend": "^1.3.0",
     "rn-encryption": "^3.0.7",
-    "shiki": "3.22.0",
+    "shiki": "4.5.0",
     "socket.io-client": "^4.8.1",
     "uuid": "^11.1.0",
     "vitest": "^3.2.4",
