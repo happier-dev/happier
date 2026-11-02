@@ -67,6 +67,7 @@ export type BrowserSurfaceHostPropsInput = Readonly<{
     scope: BrowserSurfaceScope;
     sessionId?: string | null;
     workspaceRefId?: string | null;
+    workspaceRoot?: string | null;
     machineId?: string | null;
     serverId?: string | null;
     platform?: BrowserPlatformV1 | LocalServicePreviewPlatform | null;
@@ -205,6 +206,8 @@ export function useBrowserSurfaceHostFeed(
         machineId,
         serverId,
         sessionId: input.sessionId,
+        scope: input.workspaceRefId ? 'workspace' : undefined,
+        workspaceRoot: input.workspaceRoot,
         enabled: input.enabled !== false && input.launcherEnabled !== false && input.launcherState === undefined,
         snapshotClient: input.launcherSnapshotClient,
         nowMs: input.nowMs,

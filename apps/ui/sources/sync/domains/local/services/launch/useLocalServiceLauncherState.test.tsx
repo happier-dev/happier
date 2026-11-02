@@ -73,6 +73,58 @@ describe('useLocalServiceLauncherState', () => {
         vi.restoreAllMocks();
     });
 
+    it('lists the Project running Service in Browser through the Services scope without another inventory read', async () => {
+        const connection = await restoreServerAccountForTest({ serverUrl: 'https://project-browser-services.example.test', accountId: 'account-a' });
+        onTestFinished(() => connection.dispose());
+        const { useBrowserSurfaceHostProps } = await import('@/components/browser/surfaces/useBrowserSurfaceHostProps');
+        const workspaceRoot = '/repo/project-browser';
+        const snapshot = {
+            ...initialSnapshot,
+            sessionId: undefined,
+            targets: [{ ...initialSnapshot.targets[0], title: 'l12fx-http', serviceState: 'running',
+                cwd: workspaceRoot, endpointUrl: 'http://127.0.0.1:42879', actions: ['register_preview'] }],
+        } satisfies LocalServiceLauncherSnapshot;
+        // The daemon transport returns this Project's services only for its workspace query.
+        const snapshotClient = vi.fn<LocalServiceLauncherSnapshotClient>(async input => ({ ok: true,
+            snapshot: { ...snapshot, targets: input.scope === 'workspace' && input.workspaceRoot === workspaceRoot ? snapshot.targets : [] },
+        }));
+        const services = await renderHook(() => useLocalServiceLauncherStateController({
+            machineId: 'machine-a', serverId: connection.serverId, scope: 'workspace', workspaceRoot, snapshotClient,
+        }));
+        await vi.waitFor(() => expect(services.getCurrent().state.targetsById.get('managed:preview')?.serviceState).toBe('running'));
+        await flushHookEffects();
+        const reads = snapshotClient.mock.calls.length;
+        const inventoryReads = vi.mocked(inventoryMachineRpc.fetchLocalServiceInventorySnapshotViaMachineRpc).mock.calls.length;
+        const inventoryWatches = vi.mocked(inventoryMachineRpc.watchLocalServiceInventorySnapshotViaMachineRpc).mock.calls.length;
+        const browserInput = {
+            scope: 'workspaceDetails' as const, workspaceRefId: 'project-browser', workspaceRoot,
+            machineId: 'machine-a', serverId: connection.serverId, launcherSnapshotClient: snapshotClient,
+            localServicePreviewState: null,
+        };
+        const browser = await renderHook(() => useBrowserSurfaceHostProps(browserInput));
+        try {
+            await vi.waitFor(() => expect(browser.getCurrent().launchpadRows).toEqual([
+                expect.objectContaining({ title: 'l12fx-http', section: 'running',
+                    serviceRow: expect.objectContaining({ status: 'running' }) }),
+            ]));
+            expect(browser.getCurrent().localServiceTargets).toEqual(snapshot.targets);
+            await flushHookEffects();
+            expect(snapshotClient).toHaveBeenCalledTimes(reads);
+            expect(inventoryMachineRpc.fetchLocalServiceInventorySnapshotViaMachineRpc).toHaveBeenCalledTimes(inventoryReads);
+            expect(inventoryMachineRpc.watchLocalServiceInventorySnapshotViaMachineRpc).toHaveBeenCalledTimes(inventoryWatches);
+            browserInput.workspaceRoot = '/repo/other-checkout';
+            await browser.rerender();
+            await vi.waitFor(() => expect(browser.getCurrent().feed.refreshStatus).toBe('idle'));
+            expect(browser.getCurrent().launchpadRows).toEqual([]);
+            expect(services.getCurrent().state.targetsById.get('managed:preview')?.title).toBe('l12fx-http');
+            expect(inventoryMachineRpc.fetchLocalServiceInventorySnapshotViaMachineRpc).toHaveBeenCalledTimes(inventoryReads);
+            expect(inventoryMachineRpc.watchLocalServiceInventorySnapshotViaMachineRpc).toHaveBeenCalledTimes(inventoryWatches);
+        } finally {
+            await browser.unmount();
+            await services.unmount();
+        }
+    });
+
     it.each(['hidden', 'unmounted'] as const)('drops retained launcher facts on actual credential retirement after becoming %s', async visibility => {
         const serverUrl = `https://launcher-retirement-${visibility}.example.test`;
         const connection = await restoreServerAccountForTest({ serverUrl, accountId: 'account-a' });

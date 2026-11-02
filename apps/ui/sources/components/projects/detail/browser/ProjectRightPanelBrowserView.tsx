@@ -39,6 +39,7 @@ export function ProjectRightPanelBrowserView(props: Readonly<{
     const hostProps = useBrowserSurfaceHostProps({
         scope: 'workspaceDetails',
         workspaceRefId: props.workspaceRefId,
+        workspaceRoot: selectedWorkspaceScope?.rootPath ?? null,
         machineId: selectedWorkspaceScope?.machineId ?? null,
         serverId: selectedWorkspaceScope?.serverId ?? null,
         pluginUiProjection: pluginProjection.pluginUiProjection,

@@ -170,6 +170,8 @@ export function BrowserDetailsSurface(props: Readonly<{
     localServiceLauncherState?: LocalServiceLauncherState | null;
     /** Session launcher scope; project augmentation does not turn a workspace feed into a Session feed. */
     sessionId?: string | null;
+    workspaceRefId?: string | null;
+    workspaceRoot?: string | null;
     machineId?: string | null;
     serverId?: string | null;
     pluginUiProjection?: PluginUiProjectionModel | null;
@@ -206,6 +208,8 @@ export function BrowserDetailsSurface(props: Readonly<{
         machineId: props.machineId,
         serverId: props.serverId,
         sessionId: props.sessionId,
+        workspaceRefId: props.workspaceRefId,
+        workspaceRoot: props.workspaceRoot,
         platform,
         enabled: props.launchpadRows === undefined,
         launcherEnabled: props.visible !== false && props.active !== false,
@@ -361,6 +365,7 @@ export function createBrowserViewDetailsSurfaceRenderer(
             || readBrowserViewLaunchpadResource(input.tab.resource) !== null
         ),
         render: (input: DetailsSurfaceRenderInputV1) => {
+            const workspace = input.scope.kind === 'workspace' || input.scope.kind === 'project' ? input.scope : null;
             const viewResource = readBrowserViewDetailsResource(input.tab.resource);
             const launchpadResource = viewResource
                 ? null
@@ -428,6 +433,8 @@ export function createBrowserViewDetailsSurfaceRenderer(
                     localServicePreviewServerId={options.localServicePreviewServerId}
                     localServiceLauncherState={options.localServiceLauncherState}
                     sessionId={options.sessionId}
+                    workspaceRefId={workspace?.workspaceRefId}
+                    workspaceRoot={workspace?.kind === 'project' ? workspace.activeRootPath ?? workspace.rootPath : workspace?.rootPath}
                     machineId={options.machineId}
                     serverId={options.serverId}
                     pluginUiProjection={options.pluginUiProjection}
