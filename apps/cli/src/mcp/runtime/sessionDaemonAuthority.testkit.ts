@@ -2,6 +2,7 @@ import { createServer } from 'node:http';
 import { vi } from 'vitest';
 import type { ActionExecuteResult } from '@happier-dev/protocol';
 import type { RequesterAgentStartPolicyV1 } from '@/daemon/sessionEncryption/requesterAgentStartPolicy';
+import type { TrackedSession } from '@/daemon/types';
 import { configuration } from '@/configuration';
 import * as processIdentity from '@/daemon/processIdentity';
 import { hashProcessCommand } from '@/daemon/sessionRegistry';
@@ -90,6 +91,16 @@ export async function createSessionDaemonAuthorityFixture(input: Readonly<{
   await publishAgentRuntimeDaemonServiceAuthority({ ...authority, httpPort: address.port, capability });
   process.env.HAPPIER_AGENT_RUNTIME_DAEMON_SERVICE_AUTHORITY_FILE = path;
   return {
+    /** The same daemon-owned record consumed by approval Session-currentness. */
+    trackedSession: {
+      startedBy: 'daemon', pid: runner.pid, happySessionId: input.sessionId,
+      runnerProcessIdentity: { pid: runner.pid, processStartTimeMs: runner.processStartTimeMs,
+        processCommandHash: runner.processCommandHash },
+      agentRuntimeDaemonServiceAuthorityFilePath: path,
+      agentRuntimeDaemonServiceCapabilityHash: hashPrivateBearer(capability),
+      runnerAgentSourceCustodyV1: authority.retainedAgent.sourceCustody,
+      runnerAgentInvocationContext: { cwd: '/fixture', environment: {}, providerBindingActive: false },
+    } satisfies TrackedSession,
     async close() {
       if (previousAuthorityPath === undefined) delete process.env.HAPPIER_AGENT_RUNTIME_DAEMON_SERVICE_AUTHORITY_FILE;
       else process.env.HAPPIER_AGENT_RUNTIME_DAEMON_SERVICE_AUTHORITY_FILE = previousAuthorityPath;
