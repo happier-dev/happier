@@ -1,3 +1,6 @@
+import type { NativeHardwareKeyboardEventLike } from '@/keyboard/runtime';
+import { parseBrowserGuestKeyboardEvent } from './guestKeyboard';
+
 import { readCanonicalPaddedBase64DecodedLength } from '@happier-dev/protocol/crypto/base64';
 
 import { invokeDesktopHost, isDesktopHost, listenDesktopHostEvent } from '@/utils/platform/desktopHost';
@@ -118,7 +121,8 @@ export type DesktopBrowserPageInfoResult = Readonly<{
 
 export type DesktopBrowserViewEvent =
     | Readonly<{ kind: 'pageInfoChanged'; pageInfo: DesktopBrowserPageInfo; lifecycleChanged: boolean; navigationGeneration: number }>
-    | Readonly<{ kind: 'diagnosticsAvailable' }>;
+    | Readonly<{ kind: 'diagnosticsAvailable' }>
+    | Readonly<{ kind: 'keyboardShortcut'; event: NativeHardwareKeyboardEventLike }>;
 
 /** Native facts and IPC arrivals, scoped to the exact mounted view. No settled polling. */
 export function subscribeDesktopBrowserView(
@@ -129,6 +133,11 @@ export function subscribeDesktopBrowserView(
         if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return;
         const value = payload as Record<string, unknown>;
         if (value.browserSessionId !== target.browserSessionId || value.viewId !== target.viewId) return;
+        if (value.kind === 'keyboardShortcut') {
+            const event = parseBrowserGuestKeyboardEvent(value.event);
+            if (event) listener({ kind: 'keyboardShortcut', event });
+            return;
+        }
         if (value.kind === 'diagnosticsAvailable') { listener({ kind: 'diagnosticsAvailable' }); return; }
         if (value.kind !== 'pageInfoChanged' || typeof value.lifecycleChanged !== 'boolean') return;
         const pageInfo = normalizeDesktopBrowserPageInfo(value.pageInfo);

@@ -1,4 +1,5 @@
 import { COOPERATIVE_NAVIGATION_BIND_KIND, COOPERATIVE_NAVIGATION_BIND_REQUEST_KIND } from './cooperative.js';
+import { INJECTED_BROWSER_KEYBOARD_RUNTIME } from './keyboard.js';
 
 /**
  * The cooperative preview's navigation reporter. It is the only part of the collector that every
@@ -9,6 +10,7 @@ import { COOPERATIVE_NAVIGATION_BIND_KIND, COOPERATIVE_NAVIGATION_BIND_REQUEST_K
  */
 export const INJECTED_COOPERATIVE_NAVIGATION_RUNTIME = `
   (function (config) {
+    ${INJECTED_BROWSER_KEYBOARD_RUNTIME}
     var navigationPending = false;
     var reportedTitle = null;
     var collectorQueryNames = ['__happierCollector', '__happierCollectorState'];
@@ -63,6 +65,19 @@ export const INJECTED_COOPERATIVE_NAVIGATION_RUNTIME = `
         return;
       }
       if (event.origin !== config.webPostMessageTargetOrigin) return;
+      if (message && message.v === 1 && message.kind === 'browser.collector.keyboard.configure'
+          && message.browserSessionId === config.browserSessionId && message.viewId === config.viewId
+          && message.navigationGeneration === config.navigationGeneration
+          && message.collectorId === config.collector.collectorId && message.nonce === config.collector.nonce
+          && Array.isArray(message.signatures) && message.signatures.every(function (value) { return typeof value === 'string'; })) {
+        installBrowserKeyboard(message.signatures, function (keyboardEvent) {
+          window.parent.postMessage(JSON.stringify({ v: 1, kind: 'browser.collector.keyboard',
+            browserSessionId: config.browserSessionId, viewId: config.viewId,
+            navigationGeneration: config.navigationGeneration,
+            collectorId: config.collector.collectorId, nonce: config.collector.nonce, event: keyboardEvent }), config.webPostMessageTargetOrigin);
+        });
+        return;
+      }
       if (!message || message.v !== 1 || message.kind !== 'browser.collector.navigate'
           || message.browserSessionId !== config.browserSessionId || message.viewId !== config.viewId
           || message.navigationGeneration !== config.navigationGeneration

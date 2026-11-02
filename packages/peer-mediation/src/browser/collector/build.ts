@@ -12,6 +12,7 @@ import { INJECTED_NETWORK_HELPERS, INJECTED_NETWORK_INTERCEPTORS } from './netwo
 import { INJECTED_OBJECT_INSPECTOR_RUNTIME } from './objectInspector.js';
 import { INJECTED_SANITIZE_RUNTIME } from './sanitize.js';
 import { INJECTED_STORAGE_RUNTIME } from './storage.js';
+export { buildDesktopBrowserKeyboardScript } from './keyboard.js';
 
 export function buildInjectedBrowserDiagnosticsRuntimeScript(config: string): string {
     return [

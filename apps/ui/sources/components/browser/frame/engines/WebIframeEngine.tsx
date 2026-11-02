@@ -1,4 +1,6 @@
 import * as React from 'react';
+import { useEmbeddedBrowserKeyboard, normalizeKeyboardEvent, readKeyboardContextFromEventTarget } from '@/keyboard';
+import { parseBrowserGuestKeyboardEvent } from '@/sync/domains/browser/adapters/guestKeyboard';
 import { createPortal } from 'react-dom';
 import { View } from 'react-native';
 import { ARTIFACT_HTML_SHELL_CSP_V1 } from '@happier-dev/protocol/artifacts/artifactHtmlDocumentV1';
@@ -28,6 +30,7 @@ import {
     COOPERATIVE_COLLECTOR_STATE_QUERY, buildCooperativeCollectorNavigationUrl, buildCooperativeNavigationCommandMessage,
     cooperativeCollectorIdentity, isCooperativeCollectorMessage, parseCooperativeCollectorConfig, parseCooperativeNavigationState,
     isCooperativeNavigationBindRequest, buildCooperativeNavigationBindMessage,
+    buildCooperativeKeyboardConfiguration, parseCooperativeKeyboardEvent,
     type CooperativeNavigationCommand,
 } from '@happier-dev/peer-mediation/browser/collector/cooperative';
 import { withoutPreviewAdmission } from '@/sync/domains/local/services/preview/url';
@@ -135,6 +138,9 @@ function NavigationContainedIframe(props: WebIframeEngineProps): React.ReactElem
 
 function WebIframeGuest(props: WebIframeEngineProps): React.ReactElement {
     const iframeRef = React.useRef<HTMLIFrameElement | null>(null);
+    const guestKeyboard = useEmbeddedBrowserKeyboard();
+    const guestKeyboardRef = React.useRef(guestKeyboard);
+    guestKeyboardRef.current = guestKeyboard;
     // The host derives the reload key from its latest effect only, so the command after a Reload (Stop, Back)
     // arrives without it. The frame keeps the key of its last reload: dropping it would remount the frame
     // and load the opening page instead of the one the preview is on.
@@ -285,8 +291,11 @@ function WebIframeGuest(props: WebIframeEngineProps): React.ReactElement {
             try { message = JSON.parse(event.data); } catch { return; }
             if (isCooperativeNavigationBindRequest(message)) {
                 iframeRef.current.contentWindow.postMessage(buildCooperativeNavigationBindMessage(cooperativeNavigation.config), cooperativeNavigation.sourceOrigin);
+                iframeRef.current.contentWindow.postMessage(buildCooperativeKeyboardConfiguration(cooperativeNavigation.config, guestKeyboardRef.current.signatures), cooperativeNavigation.sourceOrigin);
                 return;
             }
+            const keyboardEvent = parseBrowserGuestKeyboardEvent(parseCooperativeKeyboardEvent(message, cooperativeNavigation.config));
+            if (keyboardEvent) { guestKeyboardRef.current.dispatch(keyboardEvent); return; }
             const state = parseCooperativeNavigationState(message, cooperativeNavigation.config);
             if (!state || normalizePostMessageOrigin(state.url) !== cooperativeNavigation.sourceOrigin) return;
             frameUrlRef.current = state.url;
@@ -297,6 +306,29 @@ function WebIframeGuest(props: WebIframeEngineProps): React.ReactElement {
         window.addEventListener('message', listener);
         return () => window.removeEventListener('message', listener);
     }, [cooperativeNavigation]);
+
+    React.useEffect(() => {
+        const target = iframeRef.current?.contentWindow;
+        if (!target || !hasLoadedCurrentNavigationRef.current) return;
+        if (cooperativeNavigation) {
+            target.postMessage(buildCooperativeKeyboardConfiguration(cooperativeNavigation.config, guestKeyboard.signatures), cooperativeNavigation.sourceOrigin);
+            return () => target.postMessage(buildCooperativeKeyboardConfiguration(cooperativeNavigation.config, []), cooperativeNavigation.sourceOrigin);
+        }
+        let guestDocument: Document;
+        try { guestDocument = target.document; } catch { return; }
+        const listener = (event: KeyboardEvent) => {
+            if (event.defaultPrevented || event.isComposing) return;
+            const normalized = normalizeKeyboardEvent(event);
+            if (!guestKeyboardRef.current.dispatch({ key: normalized.key, code: normalized.code, repeat: normalized.repeat,
+                isEditableTarget: readKeyboardContextFromEventTarget(event.target).isEditableTarget,
+                modifiers: { shift: normalized.shiftKey, ctrl: normalized.ctrlKey, meta: normalized.metaKey, alt: normalized.altKey } })) return;
+            window.focus();
+            event.preventDefault();
+            event.stopImmediatePropagation();
+        };
+        guestDocument.addEventListener('keydown', listener, true);
+        return () => guestDocument.removeEventListener('keydown', listener, true);
+    }, [cooperativeNavigation, guestKeyboard.signatures, loadedDocumentRevision]);
 
     React.useLayoutEffect(() => {
         frameUrlRef.current = null;
@@ -371,7 +403,8 @@ function WebIframeGuest(props: WebIframeEngineProps): React.ReactElement {
                     if (isCooperativeCollectorMessage(message, 'browser.collector.ready', cooperativeNavigation.config)
                         || isCooperativeCollectorMessage(message, 'browser.collector.retire', cooperativeNavigation.config)
                         || isCooperativeNavigationBindRequest(message)
-                        || parseCooperativeNavigationState(message, cooperativeNavigation.config)) return;
+                        || parseCooperativeNavigationState(message, cooperativeNavigation.config)
+                        || parseCooperativeKeyboardEvent(message, cooperativeNavigation.config)) return;
                 } catch { /* The diagnostics parser reports malformed messages below. */ }
             }
 

@@ -1,4 +1,6 @@
 import * as React from 'react';
+import { buildDesktopBrowserKeyboardScript } from '@happier-dev/peer-mediation/browser/collector/build';
+import { useEmbeddedBrowserKeyboard } from '@/keyboard';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
@@ -190,6 +192,9 @@ export function DesktopWebViewEngine(props: Readonly<{
     nowMs?: () => number;
 }>): React.ReactElement {
     const bridge = props.bridge ?? defaultBridge;
+    const guestKeyboard = useEmbeddedBrowserKeyboard();
+    const guestKeyboardRef = React.useRef(guestKeyboard);
+    guestKeyboardRef.current = guestKeyboard;
     const onLifecycleRef = React.useRef<BrowserViewLifecycleEmitter | undefined>(props.onLifecycle);
     onLifecycleRef.current = props.onLifecycle;
     const desiredUrl = props.url === undefined ? resolveViewUrl(props.view) : props.url;
@@ -210,6 +215,7 @@ export function DesktopWebViewEngine(props: Readonly<{
     // Recovery is manual (user-initiated Reload) rather than a silent auto-reload: it can never
     // crash-loop a pathological page, and the user stays in control of re-running the dead view.
     const [crashedUrl, setCrashedUrl] = React.useState<string | null>(null);
+    const [openedViewKey, setOpenedViewKey] = React.useState<string | null>(null);
     desiredUrlRef.current = desiredUrl;
 
     // Injected full in-page devtools (console/network/resources/storage) without CDP: the canonical
@@ -399,6 +405,7 @@ export function DesktopWebViewEngine(props: Readonly<{
         }
 
         let disposed = false;
+        setOpenedViewKey(null);
         lastRequestedUrlRef.current = openUrl;
         lastObservedUrlRef.current = null;
         setUnavailableReason(null);
@@ -417,9 +424,17 @@ export function DesktopWebViewEngine(props: Readonly<{
         bridge.subscribe(commandTarget, (event) => {
             if (disposed) return;
             if (event.kind === 'diagnosticsAvailable') void drainInjectedDiagnosticsRef.current();
+            else if (event.kind === 'keyboardShortcut') {
+                if (presentationActiveRef.current) guestKeyboardRef.current.dispatch(event.event);
+            }
             else {
                 publishNativePageInfoRef.current(event.pageInfo, event.lifecycleChanged, event.navigationGeneration);
                 if (event.lifecycleChanged && injectedDiagnosticsRef.current) void syncCollectorPresentation();
+                if (event.lifecycleChanged && event.pageInfo.loadingState === 'finished') {
+                    void bridge.evalScript({ ...commandTarget, script: buildDesktopBrowserKeyboardScript(
+                        presentationActiveRef.current ? guestKeyboardRef.current.signatures : [],
+                    ) });
+                }
             }
         }).then((stop) => {
             if (disposed) { stop(); return null; }
@@ -436,6 +451,7 @@ export function DesktopWebViewEngine(props: Readonly<{
                 markNativeViewUnavailableRef.current(firstDisabledReason(result) ?? 'desktop_webview_native_command_unavailable');
                 return;
             }
+            setOpenedViewKey(viewKey);
             void drainInjectedDiagnosticsRef.current();
             if (diagnostics) void syncCollectorPresentation();
         }).catch(() => {
@@ -455,6 +471,11 @@ export function DesktopWebViewEngine(props: Readonly<{
             // (a viewKey change) is handled natively — `open_view` replaces and drops the old view.
         };
     }, [bridge, buildDiagnosticsInitScript, commandTarget, props.profileId, syncCollectorPresentation, viewKey]);
+
+    React.useEffect(() => {
+        if (openedViewKey !== viewKey) return;
+        void bridge.evalScript({ ...commandTarget, script: buildDesktopBrowserKeyboardScript(presentationActive ? guestKeyboard.signatures : []) });
+    }, [bridge, commandTarget, guestKeyboard.signatures, openedViewKey, presentationActive, viewKey]);
 
     React.useEffect(() => {
         // Harden (§15 Δ2): only skip when the URL is genuinely unchanged. The previous

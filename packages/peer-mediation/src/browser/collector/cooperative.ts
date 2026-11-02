@@ -102,6 +102,21 @@ export function buildCooperativeNavigationCommandMessage(config: CooperativeColl
     return JSON.stringify({ v: 1, kind: COOPERATIVE_NAVIGATION_COMMAND_KIND, ...cooperativeCollectorIdentity(config), command });
 }
 
+export function buildCooperativeKeyboardConfiguration(config: CooperativeCollectorConfig, signatures: readonly string[]): string {
+    return JSON.stringify({ v: 1, kind: 'browser.collector.keyboard.configure', ...cooperativeCollectorIdentity(config), signatures });
+}
+
+/** The exact preview frame and origin are checked by its host before this document identity. */
+export function parseCooperativeKeyboardEvent(value: unknown, config: CooperativeCollectorConfig): unknown {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    const message = value as Record<string, unknown>;
+    const identity = cooperativeCollectorIdentity(config);
+    if (message.v !== 1 || message.kind !== 'browser.collector.keyboard'
+        || Object.keys(message).length !== Object.keys(identity).length + 3
+        || !Object.entries(identity).every(([key, expected]) => message[key] === expected)) return null;
+    return message.event;
+}
+
 /** Parses a document's navigation report; null unless it carries exactly this pane's identity. */
 export function parseCooperativeNavigationState(value: unknown, config: CooperativeCollectorConfig): CooperativeNavigationState | null {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return null;

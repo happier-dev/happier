@@ -61,6 +61,7 @@ type EmbeddedKeyboardChannel = Readonly<{
 const EmbeddedKeyboardContext = React.createContext<Readonly<{
     find: EmbeddedKeyboardChannel;
     editor: EmbeddedKeyboardChannel;
+    browser: EmbeddedKeyboardChannel;
 }> | null>(null);
 
 export type KeyboardShortcutContextSnapshot = Readonly<{
@@ -205,6 +206,10 @@ export function useEmbeddedFindKeyboard(): Readonly<{
 /** Code editors forward configured Find, Save and Ask chords through the same host dispatcher. */
 export function useEmbeddedEditorKeyboard(): EmbeddedKeyboardChannel {
     return React.useContext(EmbeddedKeyboardContext)?.editor ?? EMPTY_EMBEDDED_KEYBOARD;
+}
+/** Browser guests forward the effective browser bindings, never a second shortcut registry. */
+export function useEmbeddedBrowserKeyboard(): EmbeddedKeyboardChannel {
+    return React.useContext(EmbeddedKeyboardContext)?.browser ?? EMPTY_EMBEDDED_KEYBOARD;
 }
 const EMPTY_EMBEDDED_KEYBOARD: EmbeddedKeyboardChannel = { signatures: [], dispatch: () => false };
 
@@ -397,21 +402,22 @@ export function KeyboardShortcutProvider(props: React.PropsWithChildren<Readonly
         }));
     }, [find]);
     const embeddedKeyboard = React.useMemo(() => {
-        const channel = (surface: 'find' | 'editor'): EmbeddedKeyboardChannel => {
+        const channel = (surface: 'find' | 'editor' | 'browser'): EmbeddedKeyboardChannel => {
             const options = { ...dispatcherOptions, handlers: selectEmbeddedKeyboardHandlers(dispatcherOptions.handlers, surface) };
             const signatures = [...resolveNativeHardwareKeyboardConsumableEventSignatures(options)];
-            if (findAvailability.open) signatures.push('Escape|shift=false|ctrl=false|meta=false|alt=false');
+            if (surface !== 'browser' && findAvailability.open) signatures.push('Escape|shift=false|ctrl=false|meta=false|alt=false');
             return { signatures, dispatch: (nativeEvent: NativeHardwareKeyboardEventLike) => {
                 const event = normalizeNativeHardwareKeyboardEvent(nativeEvent);
-                if (find.closeFromKeyboard(event) === 'handled') return true;
+                if (surface !== 'browser' && find.closeFromKeyboard(event) === 'handled') return true;
                 const current = dispatcherOptionsRef.current;
                 return createKeyboardShortcutDispatcher({ ...current,
                     handlers: selectEmbeddedKeyboardHandlers(current.handlers, surface),
-                    getContext: () => ({ isEditableTarget: true, isComposing: event.isComposing, findInputFocused: find.resolve()?.isInputFocused() === true }),
+                    getContext: () => ({ isEditableTarget: surface === 'browser' ? nativeEvent.isEditableTarget === true : true,
+                        isComposing: event.isComposing, findInputFocused: find.resolve()?.isInputFocused() === true }),
                 })(event);
             } };
         };
-        return { find: channel('find'), editor: channel('editor') };
+        return { find: channel('find'), editor: channel('editor'), browser: channel('browser') };
     }, [dispatcherOptions, find, findAvailability.open, findAvailability.inputFocused]);
     const registrationContextValue = React.useMemo<KeyboardShortcutRegistrationContextValue>(
         () => ({ registerHandlers, executeCommand, submitFindInput, find, refreshFindAvailability }),

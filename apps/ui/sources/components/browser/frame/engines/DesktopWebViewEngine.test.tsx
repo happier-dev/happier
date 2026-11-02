@@ -18,11 +18,14 @@ import type {
 } from '@/sync/domains/browser/adapters/desktopWebViewBridge';
 
 import { DesktopWebViewEngine, type DesktopWebViewEngineBridge } from './DesktopWebViewEngine';
+import { KeyboardShortcutProvider } from '@/keyboard/KeyboardShortcutProvider';
+import { storage } from '@/sync/domains/state/storage';
 import { buildInjectedBrowserDiagnosticsScript } from '@/components/browser/adapters/diagnostics';
 import { applyBrowserControlEvent, createBrowserControlState } from '@/sync/domains/browser/control/reducer';
 import { browserViewLifecycleEvent, type BrowserViewLifecycleSignal } from '@/sync/domains/browser/control/lifecycle';
 
 vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
+vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 
 vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
@@ -137,6 +140,58 @@ function createBridge() {
 }
 
 describe('DesktopWebViewEngine', () => {
+    it('returns address focus from a guest field through the configured keyboard owner and releases hidden views', async () => {
+        const host = new JSDOM('<input id="address">', { url: 'https://host.test' });
+        const guest = new JSDOM('<input id="page-field">', { url: 'https://page.test', runScripts: 'outside-only' });
+        const originalSettings = storage.getState().settings;
+        vi.stubGlobal('window', host.window);
+        vi.stubGlobal('navigator', { platform: 'MacIntel' });
+        vi.stubGlobal('isTauri', true);
+        storage.setState({ settings: { ...originalSettings, keyboardShortcutsV2Enabled: true,
+            keyboardShortcutOverridesV1: { 'browser.address.focus': [{ binding: 'Mod+Shift+Y' }] },
+            keyboardShortcutDisabledCommandIdsV1: [],
+        } });
+        const address = host.window.document.querySelector('input')!;
+        const bridge = createBridge();
+        // Wry evaluation and IPC are the OS boundary; the guest reporter, engine and keyboard owner run together.
+        Reflect.set(guest.window, 'ipc', { postMessage: (raw: string) => {
+            const message = JSON.parse(raw) as Extract<DesktopBrowserViewEvent, { kind: 'keyboardShortcut' }>;
+            bridge.subscribe.mock.calls[0]?.[1]({ kind: 'keyboardShortcut', event: message.event });
+        } });
+        bridge.evalScript.mockImplementation(async ({ script }) => {
+            guest.window.eval(script);
+            return { ok: true, availability: availableDesktopWebView };
+        });
+        const element = (lifecycleState: 'visible' | 'hidden') => <KeyboardShortcutProvider handlers={{
+            'browser.address.focus': () => { address.focus(); },
+        }}><DesktopWebViewEngine view={createExternalDesktopView()} profileId="profile_1"
+            testID="native-shortcut" bridge={bridge} lifecycleState={lifecycleState} /></KeyboardShortcutProvider>;
+        const press = (key: string, shiftKey = false) => {
+            address.blur();
+            const event = new guest.window.KeyboardEvent('keydown', { key, code: `Key${key.toUpperCase()}`,
+                metaKey: true, shiftKey, bubbles: true, cancelable: true });
+            guest.window.document.querySelector('input')!.dispatchEvent(event);
+            return event.defaultPrevented;
+        };
+        const screen = await renderScreen(element('visible'));
+        try {
+            await flushHookEffects();
+            expect(press('l')).toBe(false);
+            expect(press('y', true)).toBe(true);
+            expect(host.window.document.activeElement).toBe(address);
+            await screen.update(element('hidden'));
+            expect(press('y', true)).toBe(false);
+            expect(host.window.document.activeElement).not.toBe(address);
+        } finally {
+            await screen.unmount();
+            storage.setState({ settings: originalSettings });
+            vi.unstubAllGlobals();
+            guest.window.close();
+            host.window.close();
+        }
+    });
+
+
     beforeEach(() => {
         vi.restoreAllMocks();
     });

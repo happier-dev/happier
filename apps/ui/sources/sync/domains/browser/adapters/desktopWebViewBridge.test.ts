@@ -12,6 +12,21 @@ vi.mock('@/utils/platform/desktopHost', () => ({
 }));
 
 describe('desktop WebView native bridge', () => {
+    it('delivers guest shortcut events only to the exact view with validated keyboard data', async () => {
+        listenDesktopHostEventMock.mockResolvedValue(() => {});
+        const { subscribeDesktopBrowserView } = await import('./desktopWebViewBridge');
+        const listener = vi.fn();
+        const unsubscribe = await subscribeDesktopBrowserView({ browserSessionId: 'session', viewId: 'view' }, listener);
+        try {
+            const publish = listenDesktopHostEventMock.mock.calls.at(-1)![1] as (value: unknown) => void;
+            const event = { key: 'l', code: 'KeyL', repeat: false, modifiers: { shift: false, ctrl: false, meta: true, alt: false } };
+            publish({ kind: 'keyboardShortcut', browserSessionId: 'other', viewId: 'view', event });
+            publish({ kind: 'keyboardShortcut', browserSessionId: 'session', viewId: 'view', event: { ...event, repeat: 'false' } });
+            expect(listener).not.toHaveBeenCalled();
+            publish({ kind: 'keyboardShortcut', browserSessionId: 'session', viewId: 'view', event });
+            expect(listener).toHaveBeenCalledWith({ kind: 'keyboardShortcut', event });
+        } finally { unsubscribe(); }
+    });
     it('admits changed native facts only for the subscribed view and releases the host listener', async () => {
         const stop = vi.fn();
         listenDesktopHostEventMock.mockResolvedValue(stop);
