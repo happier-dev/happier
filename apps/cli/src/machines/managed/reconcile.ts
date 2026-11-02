@@ -566,6 +566,7 @@ export async function reconcileManagedMachine(params: ManagedMachineReconciliati
     let enrollmentAttempted = false;
     try {
         const enrollment = await runManagedMachineEnrollment({ correlation, target, carrier, signal: params.options.signal,
+            operationId: params.options.context?.operationAcceptance?.operationId,
             onTask: ({ taskId, kind }) => {
                 bootstrapTask = { id: taskId, taskKind: kind };
                 params.options.context?.operationOwnerUpdate?.update({ domainRef: { ...domainRef, bootstrapTask } });
