@@ -1577,7 +1577,7 @@ describe('default Action executor mode and catalog contracts', () => {
     await expect(executeSessionAction({
       actionId: 'ui.session.delete',
       target: createSessionActionTarget({ session, serverId, currentUserId: 'alice', isConnected: false, isPinned: false }),
-      context: { presentUserConfirmation: { actionId: 'session.delete' } },
+      context: { confirmed: true },
     })).resolves.toBeUndefined();
     expect(deleteRequests).toBe(1);
   });

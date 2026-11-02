@@ -9,11 +9,6 @@ import { readSessionBotV1, type SessionBotV1 } from '@happier-dev/protocol/sessi
 import { announceBotMarkerAccepted } from '@/components/sessions/bots/botMarkerFeedback';
 import { publishPresentationNotice, retirePresentationNotice } from '@/components/sessions/presentation/presentationNotices';
 import { getStorage } from '@/sync/domains/state/storageStore';
-import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
-import { readSessionListRowForServerId } from '@/sync/domains/session/listing/sessionListRowStateLookup';
-import { buildSessionFromListRenderable } from '@/sync/domains/session/listing/sessionListRenderableSessionProjection';
-import { nowServerMs } from '@/sync/runtime/time';
-import { createSessionActionTarget } from './sessionActionContext';
 
 import * as React from 'react';
 import { Avatar } from '@/components/ui/avatar/Avatar';
@@ -30,6 +25,7 @@ import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntim
 import { classifyHomeActionOutcome } from '@/sync/ops/home/homeActionOutcome';
 import { VoiceConversationActionOutputSchemas } from '@happier-dev/protocol/actions/voiceConversationActionFamily';
 import { SessionArchiveActionResultV1Schema } from '@happier-dev/protocol/sessions/control/contract';
+import type { SessionStopIntent } from '@happier-dev/protocol/sessions/metadata/sessionExplicitStopV1';
 import { archiveSessionReports } from './confirmSessionArchive';
 import {
     sessionSetManualReadStateWithServerScope,
@@ -80,55 +76,45 @@ import type {
     SessionActionId,
     SessionActionOperationResult,
     SessionActionTarget,
-    SessionDeletePresentUserConfirmation,
 } from './sessionActionTypes';
 
 const executeVoiceAction = createFrontDoorActionExecute();
-
-function canDeleteCurrentSession(target: SessionActionTarget): boolean {
-    if (!target.canDelete || !target.serverId) return false;
-    const state = getStorage().getState();
-    const heldSession = state.sessions[target.sessionId];
-    const sameHomeSession = heldSession?.serverId
-        && areServerProfileIdentifiersEquivalent(heldSession.serverId, target.serverId)
-        ? heldSession : undefined;
-    const row = readSessionListRowForServerId(state.sessionListRowsByServerId, target.serverId, target.sessionId);
-    // Row publication can precede full-Session hydration. The existing projection
-    // owner reconciles its current lifecycle, access and metadata with held detail.
-    const session = row ? buildSessionFromListRenderable(row, {
-        serverId: target.serverId, baseSession: sameHomeSession,
-    }) : sameHomeSession;
-    if (!session) return false;
-    return createSessionActionTarget({
-        session, serverId: target.serverId,
-        isConnected: getSessionStatus(session, nowServerMs()).isConnected,
-    }).canDelete;
-}
-
 
 export async function executeSessionLifecycleAction(
     actionId: 'session.stop' | 'session.archive' | 'session.unarchive' | 'session.delete' | 'session.title.set',
     sessionId: string,
     options?: Readonly<{
         serverId?: string | null;
+        stopIntent?: SessionStopIntent;
         alsoArchiveReports?: boolean;
         archiveOperation?: SessionArchiveOperation;
-        presentUserConfirmation?: SessionDeletePresentUserConfirmation;
+        confirmed?: true;
+        signal?: AbortSignal;
+        expectedAccountId?: string;
     }>,
     title?: string,
 ): Promise<SessionActionOperationResult> {
-    const outcome = await executeVoiceAction(actionId, { sessionId, ...(title === undefined ? {} : { title }),
-        ...(actionId === 'session.archive' && options?.alsoArchiveReports !== undefined ? { alsoArchiveReports: options.alsoArchiveReports } : {}) }, {
-        surface: 'ui',
+    const outcome = await (options?.confirmed ? executeVoiceAction.confirmed : executeVoiceAction)(actionId, { sessionId, ...(title === undefined ? {} : { title }),
+        ...(actionId === 'session.stop' && options?.stopIntent ? { stopIntent: options.stopIntent } : {}),
+        ...(actionId === 'session.archive' && options?.alsoArchiveReports !== undefined ? { alsoArchiveReports: options.alsoArchiveReports } : {}) }, createSessionLifecycleActionContext(sessionId, options));
+    return readSessionLifecycleActionOutcome(actionId, outcome);
+}
+
+function createSessionLifecycleActionContext(sessionId: string, options: Parameters<typeof executeSessionLifecycleAction>[2]) {
+    return {
+        surface: 'ui' as const,
         defaultSessionId: sessionId,
         ...(options?.archiveOperation ? { archiveOperation: options.archiveOperation } : {}),
         ...(options?.serverId ? { serverId: options.serverId } : {}),
-        ...(options?.presentUserConfirmation ? {
-            authority: 'present_user' as const,
-            actionCaller: { kind: 'host' as const },
-            presentUserConfirmation: options.presentUserConfirmation,
-        } : {}),
-    });
+        ...(options?.signal ? { signal: options.signal } : {}),
+        ...(options?.expectedAccountId ? { expectedAccountId: options.expectedAccountId } : {}),
+    };
+}
+
+function readSessionLifecycleActionOutcome(
+    actionId: Parameters<typeof executeSessionLifecycleAction>[0],
+    outcome: Awaited<ReturnType<typeof executeVoiceAction>>,
+): SessionActionOperationResult {
     if (!outcome.ok) {
         const details = outcome.details;
         const message = outcome.errorCode === 'session_archive_timeout' ? undefined
@@ -493,18 +479,13 @@ export async function executeSessionAction(params: Readonly<{
             );
             return;
         case SESSION_ACTION_DELETE_ID:
-            if (!canDeleteCurrentSession(params.target)) {
+            if (!params.target.serverId || (!params.target.canDelete && !params.target.canStopAndDelete)) {
                 throw new HappyError(t('sessionInfo.failedToDeleteSession'), false);
             }
-            throwIfFailed(
-                await resolveDeleteSession(params.context)(params.target.sessionId, {
-                    serverId: params.target.serverId,
-                    ...(params.context?.presentUserConfirmation
-                        ? { presentUserConfirmation: params.context.presentUserConfirmation }
-                        : {}),
-                }),
-                t('sessionInfo.failedToDeleteSession'),
-            );
+            throwIfFailed(await resolveDeleteSession(params.context)(params.target.sessionId, {
+                serverId: params.target.serverId,
+                confirmed: params.context?.confirmed,
+            }), t('sessionInfo.failedToDeleteSession'));
             return;
         case SESSION_ACTION_PIN_ID:
         case SESSION_ACTION_UNPIN_ID: {

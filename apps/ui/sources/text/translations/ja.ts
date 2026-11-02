@@ -9731,6 +9731,8 @@ localTailscale: {
     deleteSession: "セッションを削除",
     deleteSessionSubtitle: "このセッションを完全に削除",
     deleteSessionConfirm: "セッションを完全に削除しますか？",
+    stopAndDeleteSession: "停止して削除",
+    stopAndDeleteSessionWarning: "セッションを停止し、すべてのメッセージとデータを完全に削除します。この操作は取り消せません。",
     deleteSessionWarning:
       "この操作は取り消せません。このセッションに関連するすべてのメッセージとデータが完全に削除されます。",
     failedToDeleteSession: "セッションの削除に失敗しました",

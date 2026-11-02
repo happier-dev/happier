@@ -1148,7 +1148,7 @@ function SessionInfoContent({
     await executeSessionAction({
       actionId: SESSION_ACTION_DELETE_ID,
       target,
-      context: { presentUserConfirmation: { actionId: 'session.delete' } },
+      context: { confirmed: true },
     });
     handleExitAfterSessionMutation();
   });

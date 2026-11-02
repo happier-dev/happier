@@ -9086,6 +9086,8 @@ export const zhHans: TranslationStructure = {
     deleteSession: "删除会话",
     deleteSessionSubtitle: "永久删除此会话",
     deleteSessionConfirm: "永久删除会话？",
+    stopAndDeleteSession: "停止并删除",
+    stopAndDeleteSessionWarning: "这将停止会话，并永久删除其所有消息和数据。此操作无法撤销。",
     deleteSessionWarning:
       "此操作无法撤销。与此会话相关的所有消息和数据将被永久删除。",
     failedToDeleteSession: "删除会话失败",

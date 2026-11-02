@@ -11144,6 +11144,8 @@ const enSessionInfo = {
   deleteSession: 'Delete session',
   deleteSessionSubtitle: 'Permanently remove this session',
   deleteSessionConfirm: 'Delete Session Permanently?',
+  stopAndDeleteSession: 'Stop and delete',
+  stopAndDeleteSessionWarning: 'This will stop the session and permanently delete all its messages and data. This action cannot be undone.',
   deleteSessionWarning:
     'This action cannot be undone. All messages and data associated with this session will be permanently deleted.',
   failedToDeleteSession: 'Failed to delete session',

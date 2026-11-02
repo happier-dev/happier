@@ -9427,6 +9427,8 @@ encryptedUnavailable: "Detalles cifrados no disponibles",
     deleteSession: "Eliminar sesión",
     deleteSessionSubtitle: "Eliminar permanentemente esta sesión",
     deleteSessionConfirm: "¿Eliminar sesión permanentemente?",
+    stopAndDeleteSession: "Detener y eliminar",
+    stopAndDeleteSessionWarning: "Esto detendrá la sesión y eliminará permanentemente todos sus mensajes y datos. Esta acción no se puede deshacer.",
     deleteSessionWarning:
       "Esta acción no se puede deshacer. Todos los mensajes y datos asociados con esta sesión se eliminarán permanentemente.",
     failedToDeleteSession: "Error al eliminar la sesión",

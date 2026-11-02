@@ -7907,6 +7907,8 @@ export const ru: TranslationStructure = {
     deleteSession: "Удалить сессию",
     deleteSessionSubtitle: "Удалить эту сессию навсегда",
     deleteSessionConfirm: "Удалить сессию навсегда?",
+    stopAndDeleteSession: "Остановить и удалить",
+    stopAndDeleteSessionWarning: "Сессия будет остановлена, а все её сообщения и данные будут удалены навсегда. Это действие нельзя отменить.",
     deleteSessionWarning:
       "Это действие нельзя отменить. Все сообщения и данные, связанные с этой сессией, будут удалены навсегда.",
     failedToDeleteSession: "Не удалось удалить сессию",

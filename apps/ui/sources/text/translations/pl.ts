@@ -9261,6 +9261,8 @@ encryptedUnavailable: "Zaszyfrowane dane niedostępne",
     deleteSession: "Usuń sesję",
     deleteSessionSubtitle: "Trwale usuń tę sesję",
     deleteSessionConfirm: "Usunąć sesję na stałe?",
+    stopAndDeleteSession: "Zatrzymaj i usuń",
+    stopAndDeleteSessionWarning: "Spowoduje to zatrzymanie sesji i trwałe usunięcie wszystkich jej wiadomości i danych. Tej operacji nie można cofnąć.",
     deleteSessionWarning:
       "Ta operacja jest nieodwracalna. Wszystkie wiadomości i dane powiązane z tą sesją zostaną trwale usunięte.",
     failedToDeleteSession: "Nie udało się usunąć sesji",

@@ -73,10 +73,10 @@ describe('executeSessionAction', () => {
             await executeSessionAction({
                 actionId: SESSION_ACTION_DELETE_ID,
                 target: createSessionActionTarget({ session, serverId: 'server_1', isConnected: false }),
-                context: { presentUserConfirmation: { actionId: 'session.delete' }, operations: { deleteSession } },
+                context: { confirmed: true, operations: { deleteSession } },
             });
             expect(deleteSession).toHaveBeenCalledWith('session_1', {
-                serverId: 'server_1', presentUserConfirmation: { actionId: 'session.delete' },
+                serverId: 'server_1', confirmed: true,
             });
         } finally {
             storage.setState(previousState, true);

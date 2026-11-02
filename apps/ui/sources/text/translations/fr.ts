@@ -9267,6 +9267,8 @@ encryptedUnavailable: "Détails chiffrés indisponibles",
     deleteSession: "Supprimer la session",
     deleteSessionSubtitle: "Supprimer définitivement cette session",
     deleteSessionConfirm: "Supprimer définitivement la session ?",
+    stopAndDeleteSession: "Arrêter et supprimer",
+    stopAndDeleteSessionWarning: "Cette action arrêtera la session et supprimera définitivement tous ses messages et toutes ses données. Cette action est irréversible.",
     deleteSessionWarning:
       "Cette action est irréversible. Tous les messages et toutes les données associés à cette session seront définitivement supprimés.",
     failedToDeleteSession: "Échec de la suppression de la session",

@@ -9647,6 +9647,8 @@ encryptedUnavailable: "Dettagli crittografati non disponibili",
     deleteSession: "Elimina sessione",
     deleteSessionSubtitle: "Rimuovi definitivamente questa sessione",
     deleteSessionConfirm: "Eliminare definitivamente la sessione?",
+    stopAndDeleteSession: "Interrompi ed elimina",
+    stopAndDeleteSessionWarning: "Questa azione interromperà la sessione ed eliminerà definitivamente tutti i suoi messaggi e dati. Questa azione non può essere annullata.",
     deleteSessionWarning:
       "Questa azione non può essere annullata. Tutti i messaggi e i dati associati a questa sessione verranno eliminati definitivamente.",
     failedToDeleteSession: "Impossibile eliminare la sessione",

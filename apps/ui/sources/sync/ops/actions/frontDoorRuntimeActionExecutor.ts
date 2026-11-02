@@ -15,7 +15,7 @@ export type FrontDoorRuntimeActionExecute = (
 ) => Promise<unknown>;
 export type UiActionOperation = Pick<UiActionExecutorContext,
   'signal' | 'presentUserConfirmation' | 'defaultSessionId' | 'actionRequestId' | 'onTransportIssued' | 'isPluginSettingsIntentCurrent'
-  | 'executionRunTargetMachineId' | 'executionRunLaunchOrigin' | 'externalActionTarget' | 'openRoute' | 'reviewPublicProfilePreparedAction'>;
+  | 'executionRunTargetMachineId' | 'executionRunLaunchOrigin' | 'externalActionTarget' | 'openRoute' | 'reviewPublicProfilePreparedAction'> & Readonly<{ confirmed?: true }>;
 
 /** Retain typed refusal and pending custody instead of exposing either as a completed effect. */
 export function requireActionSuccess(result: ActionExecuteResult): asserts result is Extract<ActionExecuteResult, { ok: true }> {
@@ -94,10 +94,8 @@ export function createFrontDoorUiActionExecutor(
 ) => Promise<unknown> {
   const execute = createFrontDoorActionExecute(executor);
   return async (actionId, input, options) => {
-    const result = await execute(actionId, input, {
+    const result = await (options?.confirmed ? execute.confirmed : execute)(actionId, input, {
       surface: 'ui',
-      authority: options?.presentUserConfirmation ? 'present_user' : undefined,
-      actionCaller: options?.presentUserConfirmation ? { kind: 'host' } : undefined,
       ...scopeContext,
       ...(options?.signal ? { signal: options.signal } : {}),
       ...(options?.presentUserConfirmation ? { presentUserConfirmation: options.presentUserConfirmation } : {}),

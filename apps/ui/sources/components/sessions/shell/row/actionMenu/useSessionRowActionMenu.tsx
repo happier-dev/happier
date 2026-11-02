@@ -284,7 +284,7 @@ export function useSessionRowActionMenu(params: Readonly<{
         await executeSessionAction({
             actionId: SESSION_ACTION_DELETE_ID,
             target: deleteTarget,
-            context: { presentUserConfirmation: { actionId: 'session.delete' } },
+            context: { confirmed: true },
         });
     });
     const handleDeleteSession = React.useCallback(async () => {

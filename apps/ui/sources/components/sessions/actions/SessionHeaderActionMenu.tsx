@@ -1,3 +1,6 @@
+import { useSessionActionNavigation } from '@/hooks/session/useSessionActionNavigation';
+import { confirmSessionDelete } from './confirmSessionDelete';
+import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { useSessionArchivePending } from '@/hooks/session/useSessionArchivePending';
 import { confirmSessionArchive } from '@/components/sessions/actions/confirmSessionArchive';
 import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
@@ -67,6 +70,7 @@ import {
 } from '@/components/sessions/actions/sessionActionAvailability';
 import {
   SESSION_ACTION_ARCHIVE_ID,
+  SESSION_ACTION_DELETE_ID,
   SESSION_ACTION_RENAME_ID,
   SESSION_ACTION_RESUME_ID,
   resolveManualReadStateFromSessionActionId,
@@ -362,6 +366,10 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
     () => resolveSessionTargetServerId(props.sessionId, preferredSessionServerId ?? session.serverId ?? null),
     [preferredSessionServerId, session.serverId, props.sessionId],
   );
+  const navigateAfterDelete = useSessionActionNavigation({
+    sessionId: props.sessionId, serverId: sessionServerId ?? null,
+    onNavigate: React.useCallback(() => safeRouterBack({ router, fallbackHref: '/' }), [router]),
+  });
   const companionAddress = React.useMemo(
     () => normalizeSessionAddress(sessionServerId, props.sessionId),
     [props.sessionId, sessionServerId],
@@ -884,6 +892,13 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
                   target: sessionActionTarget,
                   input: { title: newName },
                 });
+                return;
+              }
+              if (actionId === SESSION_ACTION_DELETE_ID) {
+                if (!await confirmSessionDelete({ target: sessionActionTarget })) return;
+                const result = await executeSessionAction({ actionId, target: sessionActionTarget,
+                  context: { confirmed: true } });
+                if (result !== false) navigateAfterDelete();
                 return;
               }
               let alsoArchiveReports = false;

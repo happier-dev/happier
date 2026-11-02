@@ -106,10 +106,6 @@ export type SessionActionOperationResult = Readonly<{
     reportsError?: SessionArchiveActionResultV1['reportsError'];
 }>;
 
-export type SessionDeletePresentUserConfirmation = Readonly<{
-    actionId: 'session.delete';
-}>;
-
 export type SessionActionExecutionInput = Readonly<{
     alsoArchiveReports?: boolean;
     title?: string;
@@ -141,7 +137,9 @@ export type SessionActionExecutionOperations = Readonly<{
     resumeSession?: (sessionId: string) => void | Promise<void>;
     deleteSession?: (sessionId: string, opts?: Readonly<{
         serverId?: string | null;
-        presentUserConfirmation?: SessionDeletePresentUserConfirmation;
+        confirmed?: true;
+        signal?: AbortSignal;
+        expectedAccountId?: string;
     }>) => Promise<SessionActionOperationResult>;
     setPinned?: (
         sessionId: string,
@@ -171,6 +169,6 @@ export type SessionActionExecutionOperations = Readonly<{
 
 export type SessionActionExecutionContext = Readonly<{
     hideInactiveSessions?: boolean;
-    presentUserConfirmation?: SessionDeletePresentUserConfirmation;
+    confirmed?: true;
     operations?: SessionActionExecutionOperations;
 }>;

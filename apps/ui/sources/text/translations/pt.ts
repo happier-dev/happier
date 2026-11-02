@@ -9545,6 +9545,8 @@ encryptedUnavailable: "Detalhes encriptados indisponíveis",
     deleteSession: "Excluir sessão",
     deleteSessionSubtitle: "Remover permanentemente esta sessão",
     deleteSessionConfirm: "Excluir sessão permanentemente?",
+    stopAndDeleteSession: "Parar e excluir",
+    stopAndDeleteSessionWarning: "Isso interromperá a sessão e excluirá permanentemente todas as suas mensagens e dados. Esta ação não pode ser desfeita.",
     deleteSessionWarning:
       "Esta ação não pode ser desfeita. Todas as mensagens e dados associados a esta sessão serão excluídos permanentemente.",
     failedToDeleteSession: "Falha ao excluir sessão",

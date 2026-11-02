@@ -45,21 +45,23 @@ async function readTargetWarningOptions(target: SessionActionTarget): Promise<Se
     };
 }
 
-/** One irreversible-delete confirmation for Session Info and archived list rows. */
+/** One irreversible-delete confirmation for every single-Session surface. */
 export async function confirmSessionDelete(
-    options: SessionDeleteWarningOptions | Readonly<{ target: SessionActionTarget }> = {},
+    options: SessionDeleteWarningOptions & Readonly<{ target?: SessionActionTarget }> = {},
 ): Promise<boolean> {
-    const warning = 'target' in options ? await readTargetWarningOptions(options.target) : options;
+    const warning = options.target ? { ...await readTargetWarningOptions(options.target), ...options } : options;
+    const stopAndDelete = options.target?.canStopAndDelete === true;
+    const confirmText = t(stopAndDelete ? 'sessionInfo.stopAndDeleteSession' : 'sessionInfo.deleteSession');
     return await Modal.confirm(
         t('sessionInfo.deleteSession'),
         resolveSessionDeleteWarning({
             metadata: warning.metadata,
             machineOnline: warning.machineOnline ?? null,
-            defaultWarning: t('sessionInfo.deleteSessionWarning'),
+            defaultWarning: t(stopAndDelete ? 'sessionInfo.stopAndDeleteSessionWarning' : 'sessionInfo.deleteSessionWarning'),
             offlineManagedWarning: t('sessionDirectoryRecovery.offlineDelete', {
                 machine: warning.machineLabel ?? t('status.unknown'),
             }),
         }),
-        { cancelText: t('common.cancel'), confirmText: t('sessionInfo.deleteSession'), destructive: true },
+        { cancelText: t('common.cancel'), confirmText, destructive: true },
     );
 }
