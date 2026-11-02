@@ -13,6 +13,7 @@ import {
   definePlugin,
   type PluginInvocationContext,
 } from '@happier-dev/plugin-sdk';
+import { GITHUB_CHANNEL_PULL_REQUESTS } from './githubChannelContribution.js';
 import type { ActionInputHints } from '@happier-dev/plugin-sdk/actions';
 import type { BackgroundServiceContext } from '@happier-dev/plugin-sdk/background-services';
 import { QualifiedConnectedAccountRefJsonSchema } from '@happier-dev/plugin-sdk/connected-accounts';
@@ -1503,7 +1504,7 @@ function createGithubPlugin() {
     [CHANNELS_PLUGIN_ID]: {
       [CONVERSATION_PROVIDERS_CONTRIBUTION_POINT_ID_V1]: {
         [GITHUB_CHANNEL_PROVIDER_CONTRIBUTION_ID]: providers.contribute({
-          descriptor: { v: 1, displayName: 'GitHub' },
+          descriptor: { v: 1, displayName: 'GitHub', pullRequests: GITHUB_CHANNEL_PULL_REQUESTS },
           operations: {
             setup: providers.operations.setup.bind(GITHUB_CHANNEL_ACTION_IDS.setup),
             connectionTest: providers.operations.connectionTest.bind(GITHUB_CHANNEL_ACTION_IDS.connectionTest),
