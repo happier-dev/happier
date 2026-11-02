@@ -492,7 +492,7 @@ export function createTerminalPtySessionManager(params: Readonly<{
     session.lastActivityAtMs = now();
     delete session.terminalGuardStateV1;
     delete session.guardWarningFailedPolicy;
-    notifyLiveWorkChanged();
+    // I/O renews only the local idle deadline; it is not a work transition.
   };
   const getLiveWorkProducer = (): LiveWorkProducerV1 => ({
     read: () => ({
@@ -505,7 +505,7 @@ export function createTerminalPtySessionManager(params: Readonly<{
           machineId: session.custody.machineId, installationId: session.custody.installationId,
         } : { kind: 'unknown' },
         state: session.stopUnconfirmed ? 'unknown' : session.stopPending || session.finiteHold || !session.ended ? 'active' : 'settled',
-        settledAt: session.lastActivityAtMs,
+        ...(session.ended ? { settledAt: session.lastActivityAtMs } : {}),
       })),
     }),
     subscribe: listener => {

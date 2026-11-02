@@ -13,6 +13,7 @@ import {
 
 import { createTerminalPtySessionManager as createRealTerminalPtySessionManager, type TerminalPtySessionManagerConfig } from './sessions';
 import { createTerminalProcessRegistry } from '@/daemon/local/services/inventory/terminalRegistry';
+import { createManagedActivityInventory } from '@/daemon/lifecycle/managedActivity';
 import { createDaemonAdmissionDrain } from '@/daemon/lifecycle/admissionDrain';
 import { createProcessOwnershipRuntime } from '@/daemon/processes/ownership/processOwnershipRuntime';
 import { createEndOwnerRemainder } from '@/daemon/processes/endOwnerRemainder';
@@ -525,7 +526,51 @@ describe('TerminalPtySessionManager', () => {
     } finally { manager.dispose(); }
   });
 
-  it('projects retained terminals and observes lifecycle edges without using output recency', () => {
+  it('publishes work summaries once per terminal transition and never per input or output chunk', async () => {
+    const provider = new FakePtyProvider();
+    let clock = 0;
+    const manager = createTerminalPtySessionManager({ ptyProvider: provider, config: defaultConfig(), now: () => clock, env: BASH_ENV });
+    const producer = manager.getLiveWorkProducer();
+    const activity = createManagedActivityInventory({ producers: [producer], now: () => clock });
+    let publications = 0;
+    let ownerNotifications = 0;
+    const stopFacts = activity.subscribeFacts(() => { publications++; });
+    const stopOwner = producer.subscribe(() => { ownerNotifications++; });
+    try {
+      await activity.read();
+      publications = 0;
+      const opened = await manager.ensure({ terminalKey: 'summary-cost', cwd: '/project' });
+      if (!opened.ok) throw new Error('Terminal must open');
+      await activity.read();
+      expect(publications).toBe(1);
+      expect(ownerNotifications).toBe(1);
+      publications = 0;
+      ownerNotifications = 0;
+      for (let chunk = 0; chunk < 64; chunk++) {
+        clock++;
+        expect(await manager.input({ terminalId: opened.terminalId, data: 'x' })).toEqual({ ok: true });
+        await activity.read();
+        clock++;
+        provider.spawned[0]!.pty.emitData('output');
+        await activity.read();
+      }
+      expect(publications).toBe(0);
+      expect(ownerNotifications).toBe(0);
+      expect(manager.readGuardResources()[0]?.lastActivityAtMs).toBe(clock);
+      clock++;
+      provider.spawned[0]!.pty.emitExit({ exitCode: 0 });
+      await activity.read();
+      expect(publications).toBe(1);
+      expect(ownerNotifications).toBe(1);
+      expect((await producer.read()).items[0]).toMatchObject({ state: 'settled', settledAt: clock });
+      manager.close({ terminalId: opened.terminalId });
+      await activity.read();
+      expect(publications).toBe(2);
+      expect(ownerNotifications).toBe(2);
+    } finally { stopFacts(); stopOwner(); activity.dispose(); manager.dispose(); }
+  });
+
+  it('projects retained terminals and observes lifecycle edges without using output recency', async () => {
     const provider = new FakePtyProvider();
     let clock = 0;
     const manager = createTerminalPtySessionManager({ ptyProvider: provider, config: defaultConfig(), now: () => clock, env: BASH_ENV });
@@ -533,20 +578,20 @@ describe('TerminalPtySessionManager', () => {
     const observations: unknown[] = [];
     const unsubscribe = producer.subscribe(() => observations.push(producer.read()));
     try {
-      const custody = { serverId: 'home', machineId: 'machine', installationId: 'installation', workspaceRefId: 'checkout', projectKey: 'project', rootPath: '/project', requesterAccountId: 'bob' };
-      const opened = manager.ensure({ terminalKey: 'shell', cwd: '/project', custody });
+      const custody = { serverId: 'home', homeServerIdentityId: 'srv_terminal_home', machineId: 'machine', installationId: 'installation', workspaceRefId: 'checkout', projectKey: 'project', rootPath: '/project', requesterAccountId: 'bob' };
+      const opened = await manager.ensure({ terminalKey: 'shell', cwd: '/project', custody });
       if (!opened.ok) throw new Error('Terminal must open');
       clock = 86_400_000;
       expect(producer.read()).toEqual({ coverage: 'complete', items: [{
         category: 'terminal', ownerRef: opened.terminalId,
-        attribution: { serverId: 'home', accountId: 'bob', machineId: 'machine', installationId: 'installation' }, state: 'active', settledAt: 0,
+        attribution: { serverId: 'home', accountId: 'bob', machineId: 'machine', installationId: 'installation' }, state: 'active',
       }] });
       provider.spawned[0]!.pty.emitExit({ exitCode: 0 });
       expect(producer.read()).toMatchObject({ items: [{ ownerRef: opened.terminalId, state: 'settled' }] });
       manager.close({ terminalId: opened.terminalId });
       expect(observations.at(-1)).toEqual({ coverage: 'complete', items: [] });
       unsubscribe();
-      manager.ensure({ terminalKey: 'other', cwd: '/project' });
+      await manager.ensure({ terminalKey: 'other', cwd: '/project' });
       expect(observations).toHaveLength(3);
     } finally { unsubscribe(); manager.dispose(); }
     expect(producer.read()).toEqual({ coverage: 'unknown', items: [] });
@@ -1415,11 +1460,11 @@ describe('TerminalPtySessionManager', () => {
     manager.readBytes({ terminalId: ensured.terminalId, byteOffset: 0, maxBytes: 1024, maxChunks: 10 });
     manager.acknowledgeByteStream({ terminalId: ensured.terminalId, ackedByteOffset: 0 });
     manager.resize({ terminalId: ensured.terminalId, cols: 100, rows: 40 });
-    manager.ensure({ terminalKey: 'k-zero-credit-liveness', cwd: '/tmp' });
-    expect((await manager.getLiveWorkProducer().read()).items[0]?.settledAt).toBe(0);
-    expect(manager.input({ terminalId: ensured.terminalId, data: 'still attached' })).toEqual({ ok: true });
+    await manager.ensure({ terminalKey: 'k-zero-credit-liveness', cwd: '/tmp' });
+    expect(manager.readGuardResources()[0]?.lastActivityAtMs).toBe(0);
+    expect(await manager.input({ terminalId: ensured.terminalId, data: 'still attached' })).toEqual({ ok: true });
     expect(pty.writes).toEqual(['still attached']);
-    expect((await manager.getLiveWorkProducer().read()).items[0]?.settledAt).toBe(120);
+    expect(manager.readGuardResources()[0]?.lastActivityAtMs).toBe(120);
     manager.dispose();
   });
 
