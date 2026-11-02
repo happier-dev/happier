@@ -71,7 +71,8 @@ describe.runIf(process.platform === 'linux' && userInfo().uid !== 0)('builtin Ma
         .toMatchObject({ status: 'applied' });
       await f.hostNative.setNativeSshPort(22);
       const posture = MachineReachabilityPostureV1Schema.parse({ revision: 0,
-        management: { providers: [], publicSsh: { kind: 'open', port: 22, sourceCidrs: ['0.0.0.0/0', '::/0'] } },
+        management: { providers: [], publicSsh: { kind: 'open', port: 22, sourceCidrs: ['0.0.0.0/0', '::/0'] },
+          independentRecovery: { kind: 'providerConsole', evidence: 'userAttested', confirmedAtMs: 1_793_610_000_000 } },
         defaultServiceIngress: { kind: 'none' } });
       const reviewFirst = async () => {
         const raw = await api.inspectOriginalCli({ serverId: f.home.serverIdentityId, machineId,

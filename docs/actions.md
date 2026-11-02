@@ -7440,6 +7440,19 @@ basis while `posture` stays null. Configure observes those facts again and rejec
 native facts return `required_fact_unavailable`; no default posture or SSH
 decision is inferred. Existing saved-posture reviews retain their revision basis.
 
+Recovery may carry optional `confirmedAtMs`, the time a person explicitly
+confirmed that recovery path. A console confirmation remains `userAttested`,
+not a native sign-in verification. It is saved in the existing posture through
+the same reviewed configure Action; inspection never creates or refreshes it.
+Older undated recovery values remain readable. This is an unreleased 0.3 closed
+schema extension requiring matching development readers and writers.
+
+The Network field hook projects native SSH endpoints separately from the saved
+SSH policy. Its selected ingress capability describes availability and required
+ports; it does not prove a service or Domain is exposed. Effective Docker
+bindings alone likewise do not establish internet reachability. Joined-service
+exposure must come from the admitted deployment and Domain owners.
+
 Without the required administrator access, inspection returns the elevation
 owner's typed refusal, such as `mode_none` or `not_preauthorized`. A missing
 managed executable returns `managed_cli_unavailable` with the installation

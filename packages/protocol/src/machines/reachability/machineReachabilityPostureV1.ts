@@ -12,6 +12,8 @@ const text = () => z.string().check(z.trim(), z.minLength(1));
 const revision = () => z.number().check(z.int(), z.nonnegative());
 export const MachineReachabilityRecoveryV1Schema = lazyZodSchema(() => z.strictObject({
   kind: z.enum(['providerConsole', 'tailscaleSsh', 'explicitSsh']), evidence: z.enum(['verified', 'userAttested']),
+  /** Explicit human confirmation of this recovery path, never an inspection or expiry timestamp. */
+  confirmedAtMs: z.optional(revision()),
 }));
 export type MachineReachabilityRecoveryV1 = z.infer<typeof MachineReachabilityRecoveryV1Schema>;
 export const MachineReachabilityPostureV1Schema = lazyZodSchema(() => z.strictObject({
