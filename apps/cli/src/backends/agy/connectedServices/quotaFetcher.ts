@@ -1,4 +1,4 @@
-import { ConnectedServiceQuotaSnapshotV1Schema, type ConnectedServiceQuotaMeterV1 } from '@happier-dev/protocol';
+import { AGY_ACP_SERVER_VERSION, ConnectedServiceQuotaSnapshotV1Schema, type ConnectedServiceQuotaMeterV1 } from '@happier-dev/protocol';
 import { ConnectedServiceQuotaFetchError, type ConnectedServiceQuotaFetcher, type ConnectedServiceQuotaFetcherDescriptor } from '@/daemon/connectedServices/quotas/types';
 import { requestGoogleCodeAssist, type GoogleCodeAssistFetchRuntime } from '@/daemon/connectedServices/quotas/googleCodeAssistRequest';
 import { readConnectedServiceQuotaStaleAfterMs } from '@/daemon/connectedServices/quotas/configuration';
@@ -62,7 +62,10 @@ export function createAgyQuotaFetcher(deps: Readonly<{ fetchRuntime?: GoogleCode
       throw new ConnectedServiceQuotaFetchError('missing_antigravity_oauth_record', { quotaFetchErrorCode: 'missing_auth' });
     }
     const explicitProject = text(object(record.oauth.raw)?.project_id);
-    const request = { fetchRuntime: deps.fetchRuntime ?? fetch, accessToken: record.oauth.accessToken, signal };
+    // ACP's useragent.py identifies the Antigravity client surface. Without this
+    // product token, Google returns UNSUPPORTED_CLIENT instead of its entitlement.
+    const userAgent = `antigravity/acp/${AGY_ACP_SERVER_VERSION} (aidev_client; host_path=happier; proxy_client=antigravity/sdk)`;
+    const request = { fetchRuntime: deps.fetchRuntime ?? fetch, accessToken: record.oauth.accessToken, userAgent, signal };
     // ACP 1.3.0 onboard.py bootstraps on prod and selects daily only for consumer tiers.
     // Quota refresh reads the entitlement; it never invokes onboardUser or changes billing.
     const load = object(await requestGoogleCodeAssist({ ...request, endpoint: 'https://cloudcode-pa.googleapis.com', method: 'loadCodeAssist',

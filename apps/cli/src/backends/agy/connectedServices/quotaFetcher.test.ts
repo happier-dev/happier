@@ -6,6 +6,16 @@ function record(raw: Readonly<{ project_id?: string }> | null = null) {
   return buildConnectedServiceCredentialRecord({ now: 1000, serviceId: 'antigravity', profileId: 'agy-selected', kind: 'oauth', expiresAt: 9000,
     oauth: { accessToken: 'agy-selected-token', refreshToken: 'refresh', idToken: null, scope: null, tokenType: null, providerAccountId: 'selected-google-id', providerEmail: 'agy@example.com', raw } });
 }
+
+// Google returns HTTP 200 without a project/tier when the client is not
+// identified as Antigravity, even with a valid Antigravity OAuth token.
+function unsupportedClientResponse(init: RequestInit): Response | null {
+  if (new Headers(init.headers).get('user-agent')?.startsWith('antigravity/')) return null;
+  return Response.json({
+    allowedTiers: [{ id: 'standard-tier', userDefinedCloudaicompanionProject: true }],
+    ineligibleTiers: [{ reasonCode: 'UNSUPPORTED_CLIENT' }],
+  });
+}
 // Response fields and endpoint selection are sourced from Antigravity ACP 1.3.0's
 // bundled CCPA discovery document and ccpa_connection/onboard.py, not live auth proof.
 describe('Antigravity selected-account quota summary', () => {
@@ -18,8 +28,10 @@ describe('Antigravity selected-account quota summary', () => {
   });
   it('retains exact model identity when only per-model quota is available', async () => {
     const requests: string[] = [];
-    const fetcher = createAgyQuotaFetcher({ fetchRuntime: async url => {
+    const fetcher = createAgyQuotaFetcher({ fetchRuntime: async (url, init) => {
       requests.push(url);
+      const unsupported = unsupportedClientResponse(init);
+      if (unsupported) return unsupported;
       return Response.json(url.endsWith(':loadCodeAssist') ? { currentTier: { id: 'free' }, cloudaicompanionProject: 'project' }
         : url.endsWith(':retrieveUserQuotaSummary') ? { groups: [] }
         : { buckets: [{ modelId: 'gemini-2.5-flash', remainingFraction: 0.2 }, { modelId: 'gemini-3-flash', tokenType: 'REQUESTS', remainingFraction: 0.8, remainingAmount: '80' }, { modelId: 'gemini-3-flash', tokenType: 'WTUS', remainingFraction: 0.4, remainingAmount: '40' }] });
@@ -36,6 +48,8 @@ describe('Antigravity selected-account quota summary', () => {
     const requests: Array<{ url: string; init: RequestInit }> = [];
     const fetcher = createAgyQuotaFetcher({ staleAfterMs: 45000, fetchRuntime: async (url, init) => {
       requests.push({ url, init });
+      const unsupported = unsupportedClientResponse(init);
+      if (unsupported) return unsupported;
       return Response.json(url.endsWith(':loadCodeAssist') ? { currentTier: { id: 'selected-tier' }, paidTier: { usesGcpTos }, cloudaicompanionProject: 'selected-project' }
         : { groups: [{ displayName: 'Gemini Pro', buckets: [
           { bucketId: 'provider-window', window: 'provider-period', remainingFraction: 0.25, remainingAmount: '50', resetTime: '2026-10-09T12:00:00Z' },
