@@ -24,7 +24,6 @@ import { BrowserViewFrame } from '../frame/BrowserViewFrame.web';
 import {
     canLoadHostedPluginTargetUrl,
     DEFAULT_HOSTED_PLUGIN_SECURITY,
-    resolveHostedPluginWebSandboxPolicy,
 } from './HostedPluginTargetSecurity';
 import type {
     BrowserDiagnosticsEngineBridgeConfig,
@@ -149,7 +148,7 @@ export function HostedPluginTarget(props: Readonly<{
         props.onUnexpectedNavigation?.();
     }, [opaqueArtifactFrame, props.onUnexpectedNavigation]);
 
-    if (document.kind === 'error' || artifactFrameRevoked || (props.bundle === undefined && !canLoadHostedPluginTargetUrl({ security, url: props.url }))) {
+    if (document.kind === 'error' || artifactFrameRevoked || (props.bundle === undefined && !canLoadHostedPluginTargetUrl({ url: props.url }))) {
         return (
             <BrowserViewFrame
                 engine={{
@@ -163,27 +162,18 @@ export function HostedPluginTarget(props: Readonly<{
 
     if (source === null) return <BrowserFrameLoading testID={props.testID} host={props.title} />;
 
-    // Frame-level CSP: defense-in-depth on generic host-rendered plugin frames.
-    // Artifact URLs rely on the canonical Protocol CSP emitted by their route;
-    // bundle guests also have the shared engine's enclosing navigation shell.
-    // Chromium treats an iframe `csp` attribute as an
-    // independently opted-in embedder policy, so duplicating it there rejects
-    // an otherwise policy-compliant opaque Artifact response.
-    //
-    // EU-8: the ancestor is THIS document, so it is named here for the same
-    // reason the served header names it — an unconditional `'none'` would have
-    // the frame-level policy contradict the response header and refuse the
-    // frame Happier is itself rendering.
+    // The shared plugin policy keeps host embedding/transport boundaries only.
+    // Opaque Artifacts keep their separate document policy and navigation shell.
     const frameCsp = opaqueArtifactFrame
         ? undefined
         : buildPluginHostedWebStaticAssetContentSecurityPolicyV1(security, {
             frameAncestors: resolveHostDocumentOrigin(),
         });
-    const resolvedSandbox = props.bundle !== undefined ? DEFAULT_HOSTED_PLUGIN_SANDBOX : resolveHostedPluginWebSandboxPolicy({
-        sandbox,
-        security,
-        url: props.url,
-    });
+    // URL admission already established https or loopback. Its addressable
+    // origin is required for exact-origin bridge delivery (EU-8).
+    const resolvedSandbox = props.bundle !== undefined
+        ? DEFAULT_HOSTED_PLUGIN_SANDBOX
+        : { ...sandbox, sameOrigin: true };
 
     return (
         <BrowserViewFrame

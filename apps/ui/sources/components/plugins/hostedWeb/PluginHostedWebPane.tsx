@@ -45,7 +45,6 @@ import type {
 import { BrowserFrameError } from '@/components/browser/frame/BrowserFrameError';
 import { BrowserFrameLoading } from '@/components/browser/frame/BrowserFrameLoading';
 import type { SurfaceStateAction } from '@/components/ui/surfaces/SurfaceStateCard';
-import { isLoopbackHostedWebUrl } from '@/components/browser/adapters/HostedPluginTargetSecurity';
 import { createInlineHostedHtmlSecurityPolicy } from '@/components/browser/adapters/HostedPluginTargetSecurity';
 import { resolvePluginUiText } from '@/sync/domains/plugins/ui/i18n';
 import { getPreferredLanguage } from '@/text';
@@ -148,42 +147,6 @@ function readEndpointUrl(value: string | null | undefined): URL | null {
     }
 }
 
-/**
- * RN-WEB-LOADER item 6: native blocks ANY loopback hostedWeb endpoint by
- * default (fail-closed trust-boundary stance — a native app rendering
- * arbitrary loopback content is a materially wider attack surface than a
- * browser tab doing the same). The ONE narrow relaxation: a contribution
- * that has ITSELF declared `security.mixedContent: 'devLoopbackOnly'` (the
- * pre-existing author opt-in `HostedPluginTargetSecurity.ts` already
- * recognizes downstream — this wires the pane-level check that runs BEFORE
- * it to stop pre-empting that opt-in), on the `development` channel, in a
- * dev build. All three must hold; missing any one keeps the endpoint
- * blocked exactly as before. This enables an on-device/simulator dev loop
- * for hostedWeb authoring without weakening the default posture for
- * production/store/internal-channel content or release builds.
- */
-function canRenderHostedWebEndpoint(params: Readonly<{
-    url: URL | null;
-    platform: PluginHostedWebPanePlatform;
-    security?: PluginHostedWebSecurityPolicyV1 | null;
-    channel?: PluginUiChannelV1;
-    isDevBuildOverride?: boolean;
-}>): boolean {
-    if (!params.url) {
-        return false;
-    }
-    if (params.platform !== 'web' && isLoopbackHostedWebUrl(params.url.toString())) {
-        if (!params.security || !isLocalTrustedDevLoopbackAllowed({
-            security: params.security,
-            channel: params.channel,
-            isDevBuildOverride: params.isDevBuildOverride,
-        })) {
-            return false;
-        }
-    }
-    return true;
-}
-
 function resolvePlatform(platform: PluginHostedWebPanePlatform | undefined): PluginHostedWebPanePlatform {
     if (platform) {
         return platform;
@@ -248,73 +211,6 @@ function canRenderProjectedHostedWebRuntime(
     return hasExactEndpoint
         && readRecord(runtime?.decision)?.reason === 'hosted_web_frame_adapter_unavailable';
 }
-
-function isDevBuild(): boolean {
-    return typeof __DEV__ !== 'undefined' && __DEV__ === true;
-}
-
-/**
- * RN-WEB-LOADER item 6 — the ONE predicate for the native dev-loopback
- * relaxation, shared by both gates that need it
- * (`isRestrictiveHostedWebSecurityPolicy` and `canRenderHostedWebEndpoint`)
- * so the three-part condition is never duplicated/drifted. A contribution's
- * OWN declared `security.mixedContent: 'devLoopbackOnly'`, on the
- * `development` channel, in a dev build — all three must hold.
- */
-function isLocalTrustedDevLoopbackAllowed(params: Readonly<{
-    security: PluginHostedWebSecurityPolicyV1;
-    channel?: PluginUiChannelV1;
-    isDevBuildOverride?: boolean;
-}>): boolean {
-    return params.security.mixedContent === 'devLoopbackOnly'
-        && params.channel === 'development'
-        && (params.isDevBuildOverride ?? isDevBuild());
-}
-
-function isRestrictiveHostedWebSecurityPolicy(
-    security: PluginHostedWebSecurityPolicyV1,
-    allowDevLoopbackMixedContent: boolean,
-): boolean {
-    return security.allowedNavigationOrigins.length === 0
-        && security.allowedCallbackOrigins.length === 0
-        && security.allowedConnectOrigins.length === 0
-        && security.sourceMaps === 'disabled'
-        && (security.mixedContent === 'deny' || allowDevLoopbackMixedContent)
-        && security.csp.connectSrc === 'selfOnly'
-        && security.csp.allowDataUrls === false
-        && security.csp.allowBlobUrls === false
-        && security.csp.allowInlineStyles === false
-        && security.csp.allowEval === false;
-}
-
-function canEnforceHostedWebSecurityPolicy(input: Readonly<{
-    descriptor: Record<string, unknown>;
-    security: PluginHostedWebSecurityPolicyV1;
-    channel?: PluginUiChannelV1;
-    isDevBuildOverride?: boolean;
-}>): boolean {
-    const serviceKind = readServiceKind(input.descriptor.service);
-    const allowDevLoopbackMixedContent = isLocalTrustedDevLoopbackAllowed({
-        security: input.security,
-        channel: input.channel,
-        isDevBuildOverride: input.isDevBuildOverride,
-    });
-    return serviceKind === 'staticAssets'
-        || isRestrictiveHostedWebSecurityPolicy(input.security, allowDevLoopbackMixedContent);
-}
-
-/**
- * §8 split-brain removal (EU-8): `sameOrigin` had TWO narrowing owners in
- * series — this one and `resolveHostedPluginWebSandboxPolicy`, which runs
- * afterwards and actually decides the rendered `sandbox` attribute. They
- * disagreed (this one also demanded `routeMode: 'hostOrigin'`), and because the
- * daemon's static-asset server serves `pathFallback` over loopback `http`, the
- * pair forced every daemon-served hosted-web guest into an OPAQUE origin — which
- * silently breaks both bridge directions in a real browser.
- *
- * The narrowing now has one owner. This function keeps only what the DESCRIPTOR
- * decides, which is nothing about origins.
- */
 
 type HostedWebBridgeCorrelation = Readonly<{
     identity: PluginUiHostApiWireIdentityV1;
@@ -408,7 +304,6 @@ function resolveHostedWebPaneUnavailableDiagnosticCode(input: Readonly<{
     nativeArtifactAdapterUnavailable: boolean;
     sandboxAvailable: boolean;
     securityAvailable: boolean;
-    securityEnforceable: boolean;
     frameOriginAvailable: boolean;
     bridgeRequested: boolean;
     bridgeNonceAvailable: boolean;
@@ -444,7 +339,7 @@ function resolveHostedWebPaneUnavailableDiagnosticCode(input: Readonly<{
     if (!input.sandboxAvailable) {
         return resolveDownstreamDiagnostic('hosted_web_sandbox_unavailable');
     }
-    if (!input.securityAvailable || !input.securityEnforceable) {
+    if (!input.securityAvailable) {
         return resolveDownstreamDiagnostic('hosted_web_security_unavailable');
     }
     if (!input.frameOriginAvailable) {
@@ -1211,15 +1106,7 @@ export function PluginHostedWebPane(props: Readonly<{
             descriptor.runtime,
             hasDaemonEndpointFrame || hasNativeArtifactSource,
         );
-    const securityEnforceable = Boolean(inlineDocument) || hasDescriptor
-        && security !== null
-        && canEnforceHostedWebSecurityPolicy({ descriptor, security, channel: props.hostApi?.channel });
-    const endpointRenderable = Boolean(inlineDocument) || hasNativeArtifactSource || canRenderHostedWebEndpoint({
-        url: endpoint,
-        platform,
-        security,
-        channel: props.hostApi?.channel,
-    });
+    const endpointRenderable = Boolean(inlineDocument) || hasNativeArtifactSource || endpoint !== null;
     const unavailableDiagnosticCode = resolveHostedWebPaneUnavailableDiagnosticCode({
         upstreamDiagnosticCode: upstreamUnavailableDiagnosticCode,
         descriptorPresent: hasDescriptor || inlineDocument !== undefined,
@@ -1230,7 +1117,6 @@ export function PluginHostedWebPane(props: Readonly<{
         nativeArtifactAdapterUnavailable: nativeArtifactAdapterUnavailable || nativeInlineDocumentUnavailable,
         sandboxAvailable: sandbox !== null,
         securityAvailable: security !== null,
-        securityEnforceable,
         frameOriginAvailable: Boolean(frameOrigin),
         bridgeRequested,
         bridgeNonceAvailable: Boolean(bridgeNonce),
@@ -1406,6 +1292,8 @@ export function PluginHostedWebPane(props: Readonly<{
                     networkOrigins: props.inlineDocumentNetworkOrigins,
                     network: props.inlineDocumentNetwork,
                     bootstrapConfig: { identity: bridgeIdentity, frameOrigin: 'null', hostOrigin: canonicalHostOrigin },
+                    // Inline and generated documents here are the trusted plugin's own UI.
+                    pluginAuthored: true,
                     onUnexpectedNavigation: handleOpaqueArtifactUnexpectedNavigation,
                     onNativeHostedHtmlUnavailable: handleNativeHostedHtmlUnavailable,
                 } : {})}

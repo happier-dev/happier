@@ -1,8 +1,6 @@
 import { isLoopbackHostname } from '@happier-dev/protocol/server/urls/loopbackHostname';
 import type { PluginHostedWebSecurityPolicyV1 } from '@happier-dev/protocol/plugins/contributions/ui/hostedWebSecurity';
 
-import type { PluginHostedWebSandboxPolicy } from '@/components/plugins/hostedWeb/sandbox';
-
 export const DEFAULT_HOSTED_PLUGIN_SECURITY: PluginHostedWebSecurityPolicyV1 = {
     allowedNavigationOrigins: [],
     allowedCallbackOrigins: [],
@@ -18,7 +16,7 @@ export const DEFAULT_HOSTED_PLUGIN_SECURITY: PluginHostedWebSecurityPolicyV1 = {
     mixedContent: 'deny',
 };
 
-/** Security metadata matching the CSP emitted for an installed inline HTML document. */
+/** Declaration metadata for an installed inline HTML document. */
 export function createInlineHostedHtmlSecurityPolicy(
     networkOrigins: readonly string[],
 ): PluginHostedWebSecurityPolicyV1 {
@@ -56,7 +54,6 @@ export function isLoopbackHostedWebUrl(url: string): boolean {
 }
 
 export function canLoadHostedPluginTargetUrl(input: Readonly<{
-    security: PluginHostedWebSecurityPolicyV1;
     url: string;
 }>): boolean {
     const parsed = parseHostedPluginTargetUrl(input.url);
@@ -66,53 +63,5 @@ export function canLoadHostedPluginTargetUrl(input: Readonly<{
     if (parsed.protocol === 'https:') {
         return true;
     }
-    return input.security.mixedContent === 'devLoopbackOnly' && isLoopbackHostedWebUrl(input.url);
-}
-
-function canAllowTopNavigation(input: Readonly<{
-    security: PluginHostedWebSecurityPolicyV1;
-    url: URL;
-}>): boolean {
-    return input.security.allowedNavigationOrigins.includes(input.url.origin)
-        || input.security.allowedCallbackOrigins.includes(input.url.origin);
-}
-
-export function resolveHostedPluginWebSandboxPolicy(input: Readonly<{
-    sandbox: PluginHostedWebSandboxPolicy;
-    security: PluginHostedWebSecurityPolicyV1;
-    url: string;
-}>): PluginHostedWebSandboxPolicy {
-    const parsed = parseHostedPluginTargetUrl(input.url);
-    // EU-8: an addressable origin is a TRANSPORT requirement, not an author
-    // capability. A frame sandboxed without `allow-same-origin` has an opaque
-    // origin, and BOTH bridge directions then fail in a real browser: the
-    // guest's `postMessage` arrives with `origin: "null"` and the host's
-    // inbound validator rejects it, while the host cannot address an exact
-    // `targetOrigin` back — so it must never use `'*'` instead. That was
-    // observed in Chromium, not inferred: every unit test on this path
-    // fabricates `event.origin` and therefore could not see it.
-    //
-    // It is granted for the origins the HOST itself addresses — a secure origin,
-    // or the daemon's own loopback static-asset server — and for nothing else.
-    // `allow-scripts allow-same-origin` is only dangerous when the framed
-    // document is same-origin with its EMBEDDER, which a plugin asset served
-    // from a different origin never is. The author's remaining sandbox flags
-    // (popups, top navigation, mixed content) keep their meaning untouched.
-    const sameOrigin = Boolean(parsed
-        && (parsed.protocol === 'https:' || isLoopbackHostedWebUrl(input.url)));
-    const topNavigation = Boolean(parsed && input.sandbox.topNavigation && canAllowTopNavigation({
-        security: input.security,
-        url: parsed,
-    }));
-    const mixedContent = Boolean(
-        input.sandbox.mixedContent
-        && input.security.mixedContent === 'devLoopbackOnly'
-        && isLoopbackHostedWebUrl(input.url),
-    );
-    return {
-        ...input.sandbox,
-        sameOrigin,
-        topNavigation,
-        mixedContent,
-    };
+    return isLoopbackHostedWebUrl(input.url);
 }

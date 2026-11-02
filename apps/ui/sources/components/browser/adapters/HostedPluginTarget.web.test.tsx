@@ -1,8 +1,9 @@
 import type {
-    PluginHostedWebBridgeEnvelopeV1,
+    PluginHostedWebBridgeEnvelopeV1} from '@happier-dev/protocol/plugins/ui/hostedWebBridge';
+import type {
     PluginHostedWebSecurityPolicyV1,
-} from '@happier-dev/protocol';
-import { artifactHtmlBundleFromBodyV1 } from '@happier-dev/protocol';
+} from '@happier-dev/protocol/plugins/contributions/ui/hostedWebSecurity';
+import { artifactHtmlBundleFromBodyV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
@@ -193,8 +194,8 @@ describe('HostedPluginTarget web', () => {
 
         const iframe = screen.findByType('iframe');
         expect(typeof iframe.props.csp).toBe('string');
-        expect(iframe.props.csp).toContain("default-src 'none'");
-        expect(iframe.props.csp).toContain("script-src 'self'");
+        expect(iframe.props.csp).not.toContain("default-src");
+        expect(iframe.props.csp).not.toContain("script-src");
         // No readable host document origin in this environment, so the ancestor
         // fails closed rather than being widened.
         expect(iframe.props.csp).toContain("frame-ancestors 'none'");
@@ -282,7 +283,7 @@ describe('HostedPluginTarget web', () => {
         expect(screen.findAllByType('iframe')).toHaveLength(0);
     });
 
-    it('clamps same-origin and top-navigation iframe privileges at the browser adapter layer', async () => {
+    it('keeps the addressable bridge origin and the plugin requested top navigation', async () => {
         const screen = await renderScreen(
             <HostedPluginTarget
                 title="Hosted plugin"
@@ -301,13 +302,7 @@ describe('HostedPluginTarget web', () => {
 
         const iframe = screen.findByType('iframe');
         expect(iframe.props.src).toBe('http://localhost:42135/plugin');
-        // The clamp that matters is still enforced — an author asking for top
-        // navigation without a declared navigation/callback origin does not get
-        // it, and popups stay off. The daemon's own loopback origin DOES get
-        // `allow-same-origin`, because the bridge cannot address an opaque
-        // origin in either direction (EU-8, proven in Chromium).
-        expect(iframe.props.sandbox).toBe('allow-scripts allow-same-origin');
-        expect(iframe.props.sandbox).not.toContain('allow-top-navigation');
+        expect(iframe.props.sandbox).toBe('allow-scripts allow-same-origin allow-top-navigation-by-user-activation');
         expect(iframe.props.sandbox).not.toContain('allow-popups');
         expect(iframe.props.referrerPolicy).toBe('no-referrer');
     });

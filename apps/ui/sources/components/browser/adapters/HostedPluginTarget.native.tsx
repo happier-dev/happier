@@ -1,7 +1,8 @@
 import type {
-    PluginHostedWebBridgeBootstrapConfigV1,
+    PluginHostedWebBridgeBootstrapConfigV1} from '@happier-dev/protocol/plugins/ui/hostedWebBridge';
+import type {
     PluginHostedWebSecurityPolicyV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/plugins/contributions/ui/hostedWebSecurity';
 import type { UiSurfaceNetworkOriginV1 } from '@happier-dev/protocol/plugins/ui';
 import * as React from 'react';
 import type { ArtifactHtmlBundleV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
@@ -15,7 +16,6 @@ import { BrowserViewFrame } from '../frame/BrowserViewFrame.native';
 import {
     canLoadHostedPluginTargetUrl,
     DEFAULT_HOSTED_PLUGIN_SECURITY,
-    isLoopbackHostedWebUrl,
 } from './HostedPluginTargetSecurity';
 import type {
     BrowserDiagnosticsEngineBridgeConfig,
@@ -30,15 +30,6 @@ const DEFAULT_HOSTED_PLUGIN_SANDBOX: PluginHostedWebSandboxPolicy = {
     topNavigation: false,
     mixedContent: false,
 };
-
-function resolveNativeMixedContentMode(
-    security: PluginHostedWebSecurityPolicyV1,
-    url: string,
-): 'never' | 'compatibility' {
-    return security.mixedContent === 'devLoopbackOnly' && isLoopbackHostedWebUrl(url)
-        ? 'compatibility'
-        : 'never';
-}
 
 export function HostedPluginTarget(props: Readonly<{
     title: string;
@@ -87,7 +78,7 @@ export function HostedPluginTarget(props: Readonly<{
             testID={props.testID}
         />;
     }
-    if (!origin || !canLoadHostedPluginTargetUrl({ security, url: props.url })) {
+    if (!origin || !canLoadHostedPluginTargetUrl({ url: props.url })) {
         return (
             <BrowserViewFrame
                 engine={{
@@ -107,13 +98,9 @@ export function HostedPluginTarget(props: Readonly<{
                 url: props.url,
                 testID: props.testID,
                 navigationCommand: props.navigationCommand,
-                originWhitelist: [...new Set([
-                    origin!,
-                    ...security.allowedCallbackOrigins,
-                    ...security.allowedNavigationOrigins,
-                ])],
+                originWhitelist: ['*'],
                 javaScriptEnabled: sandbox.scripts,
-                mixedContentMode: resolveNativeMixedContentMode(security, props.url),
+                mixedContentMode: sandbox.mixedContent ? 'compatibility' : 'never',
                 diagnostics: props.diagnostics,
                 nativeMessageBridge,
                 onLoadStart: props.onLoadStart,

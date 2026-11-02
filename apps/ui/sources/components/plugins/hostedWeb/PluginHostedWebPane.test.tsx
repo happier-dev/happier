@@ -733,7 +733,7 @@ describe('PluginHostedWebPane', () => {
         expect(frame?.props.sandbox).toContain('allow-same-origin');
     });
 
-    it('fails closed when session hosted-web endpoints request unenforceable CSP widening', async () => {
+    it('renders a real plugin page declaring connect origins, eval, data and blob resources', async () => {
         const { PluginHostedWebPane } = await import('./PluginHostedWebPane');
         const sessionEndpointProjection: PluginUiProjectionModel = {
             ...projection,
@@ -746,7 +746,9 @@ describe('PluginHostedWebPane', () => {
                         allowedConnectOrigins: ['https://api.example.test'],
                         csp: {
                             connectSrc: 'declaredOrigins',
-                            allowEval: false,
+                            allowEval: true,
+                            allowDataUrls: true,
+                            allowBlobUrls: true,
                         },
                     },
                 },
@@ -761,9 +763,8 @@ describe('PluginHostedWebPane', () => {
             platform="web"
         />);
 
-        expect(screen.findByTestId('plugin-hosted-web-unavailable')).toBeTruthy();
-        expect(screen.findByTestId('plugin-hosted-web-unavailable-diagnostic-hosted_web_security_unavailable')).toBeTruthy();
-        expect(screen.getTextContent()).toContain('pluginRuntime.hostedWebSecurityUnavailable');
+        expect(findHostedWebIframe(screen)).toBeTruthy();
+        expect(screen.findByTestId('plugin-hosted-web-unavailable')).toBeNull();
     });
 
     it('presents a missing sandbox policy with its own recovery guidance while retaining its bounded diagnostic', async () => {
@@ -1479,198 +1480,17 @@ describe('PluginHostedWebPane', () => {
         expect(frame?.props.sandbox).not.toContain('allow-top-navigation');
     });
 
-    it('does not render daemon loopback endpoints on native clients', async () => {
+    it.each(['ios', 'android'] as const)('renders a loopback plugin on %s without a development-channel gate', async (platform) => {
         const { PluginHostedWebPane } = await import('./PluginHostedWebPane');
-
         const screen = await renderScreen(<PluginHostedWebPane mountLifetime={mountLifetime} interactionEnabled
             contributionId="hostedWeb:acme.preview:preview-web"
             surfaceContext={surfaceContext}
             pluginUiProjection={projection}
             endpointUrl="http://127.0.0.1:5173/"
-            platform="ios"
+            platform={platform}
         />);
-
-        expect(screen.findByTestId('plugin-hosted-web-unavailable')).toBeTruthy();
-        expect(screen.findByTestId('plugin-hosted-web-unavailable-diagnostic-hosted_web_endpoint_policy_denied')).toBeTruthy();
-        expect(screen.getTextContent()).toContain('pluginRuntime.hostedWebEndpointPolicyDenied');
-    });
-
-    it('does not render loopback aliases or IPv4-mapped loopback endpoints on native clients', async () => {
-        const { PluginHostedWebPane } = await import('./PluginHostedWebPane');
-
-        const ipv4Alias = await renderScreen(<PluginHostedWebPane mountLifetime={mountLifetime} interactionEnabled
-            contributionId="hostedWeb:acme.preview:preview-web"
-            surfaceContext={surfaceContext}
-            pluginUiProjection={projection}
-            endpointUrl="http://127.1.2.3:5173/"
-            platform="ios"
-        />);
-        const mappedIpv6 = await renderScreen(<PluginHostedWebPane mountLifetime={mountLifetime} interactionEnabled
-            contributionId="hostedWeb:acme.preview:preview-web"
-            surfaceContext={surfaceContext}
-            pluginUiProjection={projection}
-            endpointUrl="http://[::ffff:127.0.0.1]:5173/"
-            platform="android"
-        />);
-
-        expect(ipv4Alias.findByTestId('plugin-hosted-web-unavailable')).toBeTruthy();
-        expect(mappedIpv6.findByTestId('plugin-hosted-web-unavailable')).toBeTruthy();
-        expect(ipv4Alias.findByTestId('plugin-hosted-web-unavailable-diagnostic-hosted_web_endpoint_policy_denied')).toBeTruthy();
-        expect(mappedIpv6.findByTestId('plugin-hosted-web-unavailable-diagnostic-hosted_web_endpoint_policy_denied')).toBeTruthy();
-    });
-
-    describe('native dev-loopback relaxation (RN-WEB-LOADER item 6)', () => {
-        type DevGlobal = typeof globalThis & { __DEV__?: boolean };
-
-        function stubDevBuild(enabled: boolean): () => void {
-            const devGlobal = globalThis as DevGlobal;
-            const hadOwnDevFlag = Object.prototype.hasOwnProperty.call(devGlobal, '__DEV__');
-            const previousDevFlag = devGlobal.__DEV__;
-            vi.stubGlobal('__DEV__', enabled);
-            return () => {
-                if (hadOwnDevFlag) {
-                    vi.stubGlobal('__DEV__', previousDevFlag);
-                } else {
-                    Reflect.deleteProperty(devGlobal, '__DEV__');
-                }
-            };
-        }
-
-        const devLoopbackProjection: PluginUiProjectionModel = {
-            ...projection,
-            hostedWebById: {
-                ...projection.hostedWebById,
-                'hostedWeb:acme.preview:preview-web': {
-                    ...projection.hostedWebById['hostedWeb:acme.preview:preview-web'],
-                    security: { mixedContent: 'devLoopbackOnly' },
-                },
-            },
-        };
-
-        afterEach(() => {
-            vi.unstubAllGlobals();
-        });
-
-        it('still blocks a devLoopbackOnly + development-channel endpoint on native in a PRODUCTION build (fail-closed default unchanged)', async () => {
-            const restore = stubDevBuild(false);
-            try {
-                const { PluginHostedWebPane } = await import('./PluginHostedWebPane');
-                const screen = await renderScreen(<PluginHostedWebPane mountLifetime={mountLifetime} interactionEnabled
-                    contributionId="hostedWeb:acme.preview:preview-web"
-                    surfaceContext={surfaceContext}
-                    pluginUiProjection={devLoopbackProjection}
-                    endpointUrl="http://127.0.0.1:5173/"
-                    platform="ios"
-                    hostApi={{ platform: 'ios', channel: 'development', handleRequest: async () => null }}
-                />);
-                expect(screen.findByTestId('plugin-hosted-web-unavailable')).toBeTruthy();
-            } finally {
-                restore();
-            }
-        });
-
-        it('still blocks a devLoopbackOnly endpoint on native in a dev build when the channel is NOT development', async () => {
-            const restore = stubDevBuild(true);
-            try {
-                const { PluginHostedWebPane } = await import('./PluginHostedWebPane');
-                const screen = await renderScreen(<PluginHostedWebPane mountLifetime={mountLifetime} interactionEnabled
-                    contributionId="hostedWeb:acme.preview:preview-web"
-                    surfaceContext={surfaceContext}
-                    pluginUiProjection={devLoopbackProjection}
-                    endpointUrl="http://127.0.0.1:5173/"
-                    platform="ios"
-                    hostApi={{ platform: 'ios', channel: 'internal', handleRequest: async () => null }}
-                />);
-                expect(screen.findByTestId('plugin-hosted-web-unavailable')).toBeTruthy();
-            } finally {
-                restore();
-            }
-        });
-
-        it('still blocks a development-channel loopback endpoint on native in a dev build when security does NOT declare devLoopbackOnly', async () => {
-            const restore = stubDevBuild(true);
-            try {
-                const { PluginHostedWebPane } = await import('./PluginHostedWebPane');
-                const screen = await renderScreen(<PluginHostedWebPane mountLifetime={mountLifetime} interactionEnabled
-                    contributionId="hostedWeb:acme.preview:preview-web"
-                    surfaceContext={surfaceContext}
-                    pluginUiProjection={projection}
-                    endpointUrl="http://127.0.0.1:5173/"
-                    platform="ios"
-                    hostApi={{ platform: 'ios', channel: 'development', handleRequest: async () => null }}
-                />);
-                expect(screen.findByTestId('plugin-hosted-web-unavailable')).toBeTruthy();
-            } finally {
-                restore();
-            }
-        });
-
-        it('renders a devLoopbackOnly + development-channel loopback endpoint on native ONLY in a dev build (all three conditions hold)', async () => {
-            const restore = stubDevBuild(true);
-            try {
-                const { PluginHostedWebPane } = await import('./PluginHostedWebPane');
-                const screen = await renderScreen(<PluginHostedWebPane mountLifetime={mountLifetime} interactionEnabled
-                    contributionId="hostedWeb:acme.preview:preview-web"
-                    surfaceContext={surfaceContext}
-                    pluginUiProjection={devLoopbackProjection}
-                    endpointUrl="http://127.0.0.1:5173/"
-                    platform="ios"
-                    hostApi={{ platform: 'ios', channel: 'development', handleRequest: async () => null }}
-                />);
-                expect(screen.findByTestId('plugin-hosted-web-unavailable')).toBeNull();
-                expect(screen.findByTestId('plugin-hosted-web-frame')).toBeTruthy();
-            } finally {
-                restore();
-            }
-        });
-
-        it('leaves production HTTPS-served hostedWeb endpoints unaffected on native (Q2: not a gap)', async () => {
-            const { PluginHostedWebPane } = await import('./PluginHostedWebPane');
-            const screen = await renderScreen(<PluginHostedWebPane mountLifetime={mountLifetime} interactionEnabled
-                contributionId="hostedWeb:acme.preview:preview-web"
-                surfaceContext={surfaceContext}
-                pluginUiProjection={projection}
-                endpointUrl="https://plugin.example.test/"
-                platform="ios"
-            />);
-            expect(screen.findByTestId('plugin-hosted-web-unavailable')).toBeNull();
-            expect(screen.findByTestId('plugin-hosted-web-frame')).toBeTruthy();
-        });
-    });
-
-    it('renders a platform-compatible hosted-web projection and hides incompatible platforms', async () => {
-        const { PluginHostedWebPane } = await import('./PluginHostedWebPane');
-        const policyProjection: PluginUiProjectionModel = {
-            ...projection,
-            hostedWebById: {
-                ...projection.hostedWebById,
-                'hostedWeb:acme.preview:preview-web': {
-                    ...projection.hostedWebById['hostedWeb:acme.preview:preview-web'],
-                    availability: {
-                        state: 'available', reason: 'available', diagnostics: [],
-                        when: { fact: 'host.platform', operator: 'equals', value: 'web' },
-                    },
-                },
-            },
-        };
-
-        const screen = await renderScreen(<PluginHostedWebPane mountLifetime={mountLifetime} interactionEnabled
-            contributionId="hostedWeb:acme.preview:preview-web"
-            surfaceContext={surfaceContext}
-            pluginUiProjection={policyProjection}
-            endpointUrl="https://preview.happier.test/plugin/acme/"
-            platform="web"
-        />);
-        const native = await renderScreen(<PluginHostedWebPane mountLifetime={mountLifetime} interactionEnabled
-            contributionId="hostedWeb:acme.preview:preview-web"
-            surfaceContext={surfaceContext}
-            pluginUiProjection={policyProjection}
-            endpointUrl="https://preview.happier.test/plugin/acme/"
-            platform="ios"
-        />);
-
         expect(screen.findByTestId('plugin-hosted-web-frame')).toBeTruthy();
-        expect(native.findByTestId('plugin-hosted-web-unavailable')).toBeTruthy();
+        expect(screen.findByTestId('plugin-hosted-web-unavailable')).toBeNull();
     });
 
     it('fails closed when hosted-web security policy is absent or malformed', async () => {

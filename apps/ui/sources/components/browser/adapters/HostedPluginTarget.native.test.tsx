@@ -1,8 +1,10 @@
-import { artifactHtmlBundleFromBodyV1, type PluginHostedWebBridgeEnvelopeV1 } from '@happier-dev/protocol';
+import { artifactHtmlBundleFromBodyV1} from '@happier-dev/protocol/artifacts/artifactHtmlV1';
+import { type PluginHostedWebBridgeEnvelopeV1 } from '@happier-dev/protocol/plugins/ui/hostedWebBridge';
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
+import { HostedPluginTarget } from './HostedPluginTarget.native';
 
 let lastWebViewProps: Readonly<Record<string, unknown>> | null = null;
 const nativeFrame = vi.hoisted(() => ({
@@ -30,7 +32,6 @@ vi.mock('react-native-webview', () => ({
 
 describe('HostedPluginTarget native', () => {
     it('loads an expanded boundary-sized bundle through the isolated token transport without a WebView HTML source', async () => {
-        const { HostedPluginTarget } = await import('./HostedPluginTarget.native');
         lastWebViewProps = null;
         nativeFrame.registerInlineDocument.mockClear();
         nativeFrame.View.mockClear();
@@ -48,7 +49,6 @@ describe('HostedPluginTarget native', () => {
         expect(nativeFrame.unregisterInlineDocument).toHaveBeenCalledWith(registered?.token);
     });
     it('blocks insecure non-loopback hosted-plugin URLs before creating a native WebView', async () => {
-        const { HostedPluginTarget } = await import('./HostedPluginTarget.native');
         lastWebViewProps = null;
 
         const screen = await renderScreen(
@@ -84,8 +84,7 @@ describe('HostedPluginTarget native', () => {
         expect(screen.findByTestId('hosted-plugin-unavailable')).toBeTruthy();
     });
 
-    it('includes allowed navigation origins in the native WebView origin whitelist without duplicates', async () => {
-        const { HostedPluginTarget } = await import('./HostedPluginTarget.native');
+    it('does not constrain trusted plugin navigation to a declared origin allowlist', async () => {
         lastWebViewProps = null;
 
         await renderScreen(
@@ -126,14 +125,11 @@ describe('HostedPluginTarget native', () => {
         expect((lastWebViewProps as Readonly<{
             originWhitelist?: readonly string[];
         }> | null)?.originWhitelist).toEqual([
-            'https://preview.example.test',
-            'https://callback.example.test',
-            'https://docs.example.test',
+            '*',
         ]);
     });
 
     it('validates and forwards hosted-plugin bridge messages from the native WebView frame', async () => {
-        const { HostedPluginTarget } = await import('./HostedPluginTarget.native');
         const onMessage = vi.fn<(envelope: PluginHostedWebBridgeEnvelopeV1) => void>();
 
         await renderScreen(
@@ -210,7 +206,6 @@ describe('HostedPluginTarget native', () => {
     });
 
     it('keeps a stable hook order while native hosted-plugin admission changes', async () => {
-        const { HostedPluginTarget } = await import('./HostedPluginTarget.native');
         const element = (url: string) => (
             <HostedPluginTarget
                 title="Hosted plugin"
