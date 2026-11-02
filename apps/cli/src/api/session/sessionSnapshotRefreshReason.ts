@@ -7,7 +7,8 @@ export type SessionSnapshotRefreshReason =
   | 'explicit-drain'
   | 'startup-drain'
   | 'manual-recovery'
-  | 'legacy-compat-proof';
+  | 'legacy-compat-proof'
+  | 'requester-binding';
 
 const PURPOSE_BY_REASON: Record<SessionSnapshotRefreshReason, string> = {
   connect: 'session-detail:socket-connect-catchup',
@@ -19,6 +20,7 @@ const PURPOSE_BY_REASON: Record<SessionSnapshotRefreshReason, string> = {
   'startup-drain': 'session-detail:startup-drain',
   'manual-recovery': 'session-detail:manual-recovery',
   'legacy-compat-proof': 'session-detail:legacy-compat-proof',
+  'requester-binding': 'session-detail:requester-binding',
 };
 
 export function resolveSessionSnapshotRequestPurpose(reason: SessionSnapshotRefreshReason | undefined): string {
