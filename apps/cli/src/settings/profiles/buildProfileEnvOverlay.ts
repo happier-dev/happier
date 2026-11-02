@@ -64,6 +64,8 @@ export async function buildProfileEnvOverlay(params: Readonly<({
   accountSettings: Readonly<Record<string, unknown>>;
   credentials: Credentials;
   processEnv: NodeJS.ProcessEnv;
+  /** Explicit session values take precedence over saved bindings and ambient shell values. */
+  environmentVariables?: Readonly<Record<string, string>>;
   promptSecretFn: SecretPromptFn | null;
   startedBy: 'terminal' | 'daemon' | undefined;
 }>): Promise<BuildProfileEnvOverlayResult> {
@@ -72,6 +74,7 @@ export async function buildProfileEnvOverlay(params: Readonly<({
 
   const overlayRaw: Record<string, string> = {
     ...getProfileEnvironmentVariables(params.profile),
+    ...params.environmentVariables,
   };
 
   const requiredEnvNames = new Set<string>(
@@ -85,7 +88,8 @@ export async function buildProfileEnvOverlay(params: Readonly<({
     .filter((r) => (r.kind ?? 'secret') === 'config');
 
   for (const req of configRequirements) {
-    const value = readNonEmptyEnv(params.processEnv, req.name);
+    const value = readNonEmptyEnv(params.environmentVariables ?? {}, req.name)
+      ?? readNonEmptyEnv(params.processEnv, req.name);
     if (value) {
       overlayRaw[req.name] = value;
       continue;
@@ -106,17 +110,18 @@ export async function buildProfileEnvOverlay(params: Readonly<({
   const settingsSecretsReadKeys = deriveSettingsSecretsReadKeysForCredentials(params.credentials);
 
   for (const req of secretRequirements) {
-    const fromEnv = readNonEmptyEnv(params.processEnv, req.name);
-    if (fromEnv) {
-      overlayRaw[req.name] = fromEnv;
-      continue;
-    }
-
     const bindingId = readSecretBindingId({
       secretBindingsByProfileId,
       profileId: params.profile.id,
       envVarName: req.name,
     });
+
+    const fromEnv = readNonEmptyEnv(params.environmentVariables ?? {}, req.name)
+      ?? (params.startedBy === 'daemon' && bindingId ? null : readNonEmptyEnv(params.processEnv, req.name));
+    if (fromEnv) {
+      overlayRaw[req.name] = fromEnv;
+      continue;
+    }
 
     if (bindingId) {
       const container = savedSecretsById.get(bindingId) ?? null;
@@ -124,6 +129,9 @@ export async function buildProfileEnvOverlay(params: Readonly<({
       if (typeof plaintext === 'string' && plaintext.trim().length > 0) {
         overlayRaw[req.name] = plaintext.trim();
         continue;
+      }
+      if (params.startedBy === 'daemon') {
+        throw new Error(`Saved secret binding for ${req.name} in profile "${params.profile.name}" is unavailable.`);
       }
     }
 

@@ -3829,6 +3829,8 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                   logWarn: (message) => logger.warn(message),
                   connectedServiceAuth,
                   existingSessionMetadata: existingSessionPersistedMetadata,
+                  accountSettings: launchAccountSettings,
+                  credentials,
                 });
                 spawnResourceCleanupOnFailure = spawnEnvironment.cleanupOnFailure;
                 spawnResourceCleanupOnExit = spawnEnvironment.cleanupOnExit;

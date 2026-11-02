@@ -400,12 +400,16 @@ export function resolveSessionRuntimeSnapshot(
     vendorResumeId: chooseVendorResumeId(params),
   };
 
+  const profileId = params.incomingOptions.profileId
+    ?? (typeof params.persistedMetadata?.profileId === 'string' ? params.persistedMetadata.profileId : undefined)
+    ?? params.trackedSpawnOptions?.profileId;
   const persistedNativeEnvironment = readSessionNativeEnvironment(params.persistedMetadata?.nativeAgentEnvironmentV1);
   const trackedNativeEnvironment = readSessionNativeEnvironment(params.trackedSpawnOptions?.environmentVariables);
   return {
     snapshot,
     spawnOptions: applySnapshotToSpawnOptions({
       ...params.incomingOptions,
+      ...(profileId !== undefined ? { profileId } : {}),
       ...((persistedNativeEnvironment || trackedNativeEnvironment) ? {
         environmentVariables: {
           ...trackedNativeEnvironment,

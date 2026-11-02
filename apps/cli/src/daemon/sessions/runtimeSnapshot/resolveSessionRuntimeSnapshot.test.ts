@@ -41,6 +41,20 @@ function baseIncomingOptions(overrides: Partial<SpawnSessionOptions> = {}): Spaw
 }
 
 describe('resolveSessionRuntimeSnapshot', () => {
+  it('restores the AI profile identity for resume and respawn, preserving an explicit no-profile selection', () => {
+    const persistedMetadata = { profileId: 'saved-profile' };
+    expect(resolveSessionRuntimeSnapshot({
+      incomingOptions: baseIncomingOptions(), persistedMetadata,
+    }).spawnOptions.profileId).toBe('saved-profile');
+    expect(resolveSessionRuntimeSnapshot({
+      incomingOptions: baseIncomingOptions({ profileId: '' }), persistedMetadata,
+    }).spawnOptions.profileId).toBe('');
+    expect(resolveSessionRuntimeSnapshot({
+      incomingOptions: baseIncomingOptions(),
+      trackedSpawnOptions: baseIncomingOptions({ profileId: 'tracked-profile' }),
+    }).spawnOptions.profileId).toBe('tracked-profile');
+  });
+
   it('restores native account directories through the runtime snapshot while preserving explicit overrides', () => {
     const metadata = { nativeAgentEnvironmentV1: {
       CLAUDE_CONFIG_DIR: '/accounts/original', CODEX_HOME: '/accounts/codex',

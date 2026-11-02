@@ -3903,6 +3903,49 @@ describe('startDaemon spawn resume wiring (integration)', () => {
     }
   });
 
+  it('restores a persisted profile before launching an app resume without caller environment', async () => {
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+    const refreshEnvOriginal = process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED;
+    process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = 'false';
+    vi.mocked(fetchSessionByIdCompat).mockResolvedValue(createSessionRecordFixture({
+      id: 'sess_plain', encryptionMode: 'plain', dataEncryptionKey: null,
+      metadata: JSON.stringify({ flavor: 'claude', claudeSessionId: 'vendor-profile', profileId: 'custom-profile', path: '/tmp' }),
+    }));
+    let run: Promise<void> | null = null;
+    try {
+      const { startDaemon } = await import('./startDaemon');
+      run = startDaemon();
+      const spawnSession = await waitForSpawnSessionRegistration();
+      setActiveAccountSettingsSnapshot({
+        source: 'network', settingsVersion: 1, loadedAtMs: Date.now(), settingsSecretsReadKeys: [],
+        settings: accountSettingsParse({ profiles: [{
+          id: 'custom-profile', name: 'Custom provider', createdAt: 0, updatedAt: 0,
+          environmentVariables: [
+            { name: 'ANTHROPIC_BASE_URL', value: 'https://provider.example/anthropic' },
+            { name: 'ANTHROPIC_MODEL', value: 'provider-model' },
+            { name: 'ANTHROPIC_AUTH_TOKEN', value: 'test-profile-token' },
+          ],
+        }] }),
+      });
+      const result = await spawnSession({
+        directory: '/tmp', backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+        existingSessionId: 'sess_plain',
+      });
+      expect(result.type).toBe('success');
+      expect(spawnHappyCLI.mock.calls[0]?.[1]).toMatchObject({ env: {
+        HAPPIER_SESSION_PROFILE_ID: 'custom-profile',
+        ANTHROPIC_BASE_URL: 'https://provider.example/anthropic',
+        ANTHROPIC_MODEL: 'provider-model', ANTHROPIC_AUTH_TOKEN: 'test-profile-token',
+      } });
+      expect(spawnHappyCLI.mock.calls[0]?.[0]).toEqual(expect.arrayContaining(['--resume', 'vendor-profile']));
+    } finally {
+      if (run) { harness.requestShutdown('happier-cli'); await run; }
+      if (refreshEnvOriginal === undefined) delete process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED;
+      else process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = refreshEnvOriginal;
+      await restoreDaemonExitBoundary(exitSpy);
+    }
+  });
+
   it('resolves persisted runtime state before spawning an existing session with stale incoming controls', async () => {
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
     const refreshEnvOriginal = process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED;

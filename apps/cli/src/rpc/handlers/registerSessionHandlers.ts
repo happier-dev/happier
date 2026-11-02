@@ -159,9 +159,9 @@ export interface SpawnSessionOptions {
      */
     windowsTerminalWindowName?: string;
     /**
-     * Session-scoped profile identity for display/debugging across devices.
-     * This is NOT the profile content; actual runtime behavior is still driven
-     * by environmentVariables passed for this spawn.
+     * Session-scoped profile identity. Existing-session launches restore its
+     * environment and saved-secret bindings from account settings; explicit
+     * environmentVariables override those defaults.
      *
      * Empty string is allowed and means "no profile".
      */

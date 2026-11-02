@@ -1,3 +1,7 @@
+import type { Credentials } from '@/persistence';
+import { readProfilesFromAccountSettings } from '@/settings/profiles/readProfilesFromAccountSettings';
+import { resolveProfileForBackendTarget } from '@/settings/profiles/resolveProfileForAgent';
+import { buildProfileEnvOverlay } from '@/settings/profiles/buildProfileEnvOverlay';
 import { SPAWN_SESSION_ERROR_CODES } from '@/rpc/handlers/registerSessionHandlers';
 import type { SpawnSessionOptions } from '@/rpc/handlers/registerSessionHandlers';
 import type { SpawnSessionErrorCode } from '@/rpc/handlers/registerSessionHandlers';
@@ -67,6 +71,8 @@ export async function resolveSpawnChildEnvironment(params: {
     diagnostics?: readonly ConnectedServicesMaterializationDiagnostic[];
   } | null;
   existingSessionMetadata?: unknown;
+  accountSettings?: Readonly<Record<string, unknown>> | null;
+  credentials?: Credentials;
 }): Promise<ResolveSpawnChildEnvironmentResult> {
   const connectedCleanupOnFailure = params.connectedServiceAuth?.cleanupOnFailure ?? null;
   const connectedCleanupOnExit = params.connectedServiceAuth?.cleanupOnExit ?? null;
@@ -106,11 +112,45 @@ export async function resolveSpawnChildEnvironment(params: {
   }
   const sanitizedAuthEnv = sanitizeEnvVarRecord(authEnv);
 
+  let resolvedProfileEnvironment = params.profileEnvironmentVariables;
+  if (params.options.existingSessionId && params.options.profileId) {
+    try {
+      if (!params.accountSettings || !params.credentials || !params.options.backendTarget) {
+        throw new Error('Account settings and credentials are required to restore the session profile.');
+      }
+      const profile = resolveProfileForBackendTarget({
+        backendTarget: params.options.backendTarget,
+        query: params.options.profileId,
+        customProfiles: readProfilesFromAccountSettings(params.accountSettings).customProfiles,
+      });
+      if (profile.id !== params.options.profileId) throw new Error('The saved session profile is unavailable.');
+      const overlay = await buildProfileEnvOverlay({
+        backendTarget: params.options.backendTarget,
+        profile,
+        accountSettings: params.accountSettings,
+        credentials: params.credentials,
+        processEnv: params.processEnv,
+        environmentVariables: params.profileEnvironmentVariables,
+        promptSecretFn: null,
+        startedBy: 'daemon',
+      });
+      resolvedProfileEnvironment = overlay.envOverlayExpanded;
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Session profile restoration failed.';
+      params.logWarn(`[DAEMON RUN] ${errorMessage}`);
+      return {
+        ok: false, errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED, errorMessage,
+        cleanupOnFailure, cleanupOnExit,
+        ...(materializationDiagnostics ? { materializationDiagnostics } : {}),
+      };
+    }
+  }
+
   let profileEnv: Record<string, string> = {};
-  if (Object.keys(params.profileEnvironmentVariables).length > 0) {
-    profileEnv = stripDaemonOwnedChildEnvOverrides(sanitizeEnvVarRecord(params.profileEnvironmentVariables));
-    params.logInfo(`[DAEMON RUN] Using GUI-provided profile environment variables (${Object.keys(profileEnv).length} vars)`);
-    params.logDebug(`[DAEMON RUN] GUI profile env var keys: ${Object.keys(profileEnv).join(', ')}`);
+  if (Object.keys(resolvedProfileEnvironment).length > 0) {
+    profileEnv = stripDaemonOwnedChildEnvOverrides(sanitizeEnvVarRecord(resolvedProfileEnvironment));
+    params.logInfo(`[DAEMON RUN] Using resolved profile environment variables (${Object.keys(profileEnv).length} vars)`);
+    params.logDebug(`[DAEMON RUN] Profile env var keys: ${Object.keys(profileEnv).join(', ')}`);
   } else {
     params.logDebug('[DAEMON RUN] No profile environment variables provided by caller; skipping profile env injection');
   }
