@@ -16,6 +16,11 @@
       "happier-source": "./src/v1/index.ts",
       "types": "./dist/v1/index.d.ts",
       "default": "./dist/v1/index.js"
+    },
+    "./testing/v1": {
+      "happier-source": "./src/testing/v1.ts",
+      "types": "./dist/testing/v1.d.ts",
+      "default": "./dist/testing/v1.js"
     }
   },
   "files": [
