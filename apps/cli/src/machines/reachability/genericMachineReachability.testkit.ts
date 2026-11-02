@@ -5,7 +5,7 @@ import { chmod, lstat, mkdir, mkdtemp, readFile, rename, rm, symlink, writeFile 
 import { createRequire } from 'node:module';
 import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { tmpdir, userInfo } from 'node:os';
+import { networkInterfaces, tmpdir, userInfo } from 'node:os';
 import { PassThrough, Writable } from 'node:stream';
 import axios, { type AxiosRequestConfig } from 'axios';
 import { z } from 'zod/mini';
@@ -703,6 +703,7 @@ export async function installGenericRootFileSystemBoundary(directory: string) {
   await fs.mkdir(dockerFd);
   await fs.symlink('socket:[123]', join(dockerFd, '3'));
   let dockerProcessAvailable = false;
+  let sshProcessAvailable = false;
   const dockerFactReads: ('identity' | 'descriptors' | 'listeners')[] = [];
   const mutations: Readonly<{ method: string; paths: readonly string[] }>[] = [];
   const reads = new Set(['lstat', 'stat', 'readFile', 'readdir', 'realpath', 'readlink', 'access', 'opendir']);
@@ -718,6 +719,7 @@ export async function installGenericRootFileSystemBoundary(directory: string) {
     const input = pathname(args[0]);
     // Exact procfs/OS facts only. The production local-engine binding parser,
     // socket correlation and explicit Engine API probe remain untouched.
+    if (sshProcessAvailable && method === 'readlink' && input === '/proc/412/exe') return '/usr/sbin/sshd';
     if (dockerProcessAvailable) {
       const links: Readonly<Record<string, string>> = { '/proc/42/exe': '/usr/bin/dockerd', '/proc/42/root': '/',
         '/proc/42/ns/mnt': 'mnt:[1]', '/proc/self/ns/mnt': 'mnt:[1]',
@@ -804,6 +806,7 @@ export async function installGenericRootFileSystemBoundary(directory: string) {
   await expect(namedFs.appendFile('/opt/generic-fixture-forbidden', 'not-written')).rejects.toMatchObject({ code: 'generic_fixture_os_refused' });
   return { rootfs, ownership, mutations, dockerFactReads, resolvePath: (path: string) => mapped(path, false),
     setDockerProcessAvailable(value: boolean) { dockerProcessAvailable = value; },
+    setSshProcessAvailable(value: boolean) { sshProcessAvailable = value; },
     dispose() { fixtureOs.promiseRoute = null; fixtureOs.syncRoute = null; },
   };
 }
@@ -1091,10 +1094,28 @@ export function createGenericHostNativeBoundary(params: Readonly<{
   let tailscaleOperator = daemon.username;
   const tailscaleMutations: string[][] = [];
   const engineId = 'fixture-observed-engine';
+  let nativeSshPort: number | undefined;
+  const externalInterface = Object.entries(networkInterfaces()).find(([, entries]) => entries?.some(entry => !entry.internal))?.[0];
   const ok = (stdout = '') => ({ code: 0, stdout, stderr: '' });
   const runNative = async (command: MachineSetupNativeCommand): Promise<MachineSetupNativeCommandResult> => {
     calls.push(command);
     const args = command.args;
+    if (nativeSshPort !== undefined) {
+      if (command.executable === '/usr/sbin/nft') {
+        if (args.join(' ') === '--version') return ok('nftables v1.0.0');
+        expect(args).toEqual(['-j', 'list', 'tables']);
+        return ok(JSON.stringify({ nftables: [] }));
+      }
+      if (command.executable === 'ip') {
+        expect(args).toEqual(['-j', expect.stringMatching(/^-([46])$/u), 'route', 'show', 'default']);
+        return ok(JSON.stringify([{ dst: 'default', dev: externalInterface }]));
+      }
+      if (command.executable === 'ss') {
+        expect(args).toEqual([expect.stringMatching(/^-([46])$/u), '-H', '-ltnp']);
+        const address = args[0] === '-4' ? '0.0.0.0' : '[::]';
+        return ok(`LISTEN 0 128 ${address}:${nativeSshPort} *:* users(("sshd",pid=412,fd=3))\n`);
+      }
+    }
     if (command.executable.replace(/\\/gu, '/').split('/').at(-1) === 'tailscale') {
       if (args[0] === 'status') return ok(JSON.stringify({ BackendState: tailscaleState, HaveNodeKey: true, TUN: true,
         TailscaleIPs: ['100.92.0.7'], Self: { DNSName: 'host.example.ts.net.' },
@@ -1196,6 +1217,15 @@ export function createGenericHostNativeBoundary(params: Readonly<{
     throw new Error(`Unexpected P20 native process ${command.executable}`);
   };
   return { calls, runNative, installed, engineId, dockerUnitMutations,
+    async setNativeSshPort(port: number) {
+      if (!externalInterface) throw new Error('The OS fixture requires an external interface');
+      await mkdir('/usr/sbin', { recursive: true, mode: 0o755 });
+      // Supply protected OS ancestors, independent of the test host's umask.
+      for (const path of ['/usr', '/usr/sbin', '/etc', '/etc/systemd', '/etc/systemd/system']) await chmod(path, 0o755);
+      for (const path of ['/usr/sbin/nft', '/usr/sbin/sshd']) await writeFile(path, 'fixture executable', { mode: 0o755 });
+      params.filesystem.setSshProcessAvailable(true);
+      nativeSshPort = port;
+    },
     tailscaleMutations, tailscaleState: () => tailscaleState,
     setTailscaleProfileId(value: string) { tailscaleProfileId = value; },
     setTailscaleOperator(value: string) { tailscaleOperator = value; },
@@ -2137,7 +2167,7 @@ async function executeReviewedReachabilityConfigureTask(
   fixture: Awaited<ReturnType<typeof journey>>,
   api: Awaited<ReturnType<typeof createGenericDefaultFactoryJourney>>,
   review: ReturnType<typeof parseReachabilityInspectResult>,
-  options: Readonly<{ beforeDecision?(): void; reviewArtifact?(request: ApprovalRequest): void }> = {},
+  options: Readonly<{ beforeDecision?(): void | Promise<void>; reviewArtifact?(request: ApprovalRequest): void }> = {},
 ) {
   if (!review.plan) throw new Error('Expected the real reviewed plan');
   const artifactCount = fixture.home.artifacts.size;
@@ -2185,7 +2215,7 @@ async function executeReviewedReachabilityConfigureTask(
   expect(JSON.stringify([...fixture.home.artifacts.values()])).not.toContain(fixture.privateSetupKey);
   options.reviewArtifact?.(request);
   console.info('Generic public journey stage', { stage: 'review_ready', atMs: Date.now() });
-  options.beforeDecision?.();
+  await options.beforeDecision?.();
   api.signal.throwIfAborted();
   const decision = await api.decide(created.artifactId);
   api.signal.throwIfAborted();

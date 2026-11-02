@@ -7434,6 +7434,12 @@ include the actual SSH endpoints and their source ranges; unavailable native
 facts name `requiredFact`. Desired posture is never treated as observed SSH
 exposure. A provider-specific membership review reads only its selected provider.
 
+Reviewing an explicit first posture uses the same native observation as its plan
+basis while `posture` stays null. Configure observes those facts again and rejects
+`plan_changed` before saving if they differ from the reviewed digest. Unavailable
+native facts return `required_fact_unavailable`; no default posture or SSH
+decision is inferred. Existing saved-posture reviews retain their revision basis.
+
 Without the required administrator access, inspection returns the elevation
 owner's typed refusal, such as `mode_none` or `not_preauthorized`. A missing
 managed executable returns `managed_cli_unavailable` with the installation

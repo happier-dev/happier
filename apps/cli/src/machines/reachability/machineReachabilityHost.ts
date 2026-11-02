@@ -133,11 +133,11 @@ async function prepare(input: MachineReachabilityInspectInputV1, deps: MachineRe
   let membershipEntry: MachineReachabilityPlanBasisV1['recipePlans'][number] | undefined;
   const nativeProfiles: NonNullable<MachineReachabilityPlanBasisV1['nativeProfiles']> = [];
   if (change?.kind === 'posture') {
-    if (!state.posture) return refuse('machine_reachability_posture_unavailable');
-    if (!sameStrictJsonValue(change.posture.management, state.posture.management)
-      || change.posture.defaultServiceIngress.kind !== 'none') return refuse('machine_reachability_closure_unsupported');
-    if (change.posture.revision !== state.posture.revision + 1
-      && !sameStrictJsonValue(change.posture, state.posture)) return refuse('plan_changed');
+    if (change.posture.defaultServiceIngress.kind !== 'none'
+      || state.posture && !sameStrictJsonValue(change.posture.management, state.posture.management))
+      return refuse('machine_reachability_closure_unsupported');
+    if (state.posture ? change.posture.revision !== state.posture.revision + 1
+      && !sameStrictJsonValue(change.posture, state.posture) : change.posture.revision !== 0) return refuse('plan_changed');
   }
   if (change?.kind === 'privateNetwork') {
     const selected = await providers.prepareRole(change.selection, change.intent,
@@ -253,9 +253,33 @@ async function prepare(input: MachineReachabilityInspectInputV1, deps: MachineRe
   }
   if (!await deps.isCurrent()) return refuse('approval_stale');
   observation ??= await observeMachineReachability({ state, providers, isCurrent: deps.isCurrent });
+  // A first posture has no saved policy to review against. Bind its native
+  // facts in the plan, and rebuild them at configure before the metadata CAS.
+  let nativeFirewall: MachineReachabilityPlanBasisV1['nativeFirewall'];
+  if (actionId === 'machines.reachability.inspect' && (!change || change.kind === 'posture')
+    || change?.kind === 'posture' && !state.posture) {
+    const requestId = deps.context.actionRequestId;
+    if (!requestId) return refuse('admission_unavailable');
+    const setup = await getMachineSetupDesiredV1(deps.port);
+    if (setup.status !== 'ready') return refuse(`machine_setup_content_${setup.status}`);
+    const native = await inspectMachineReachabilityNativeFirewall({ machineId: deps.target.machineId, requestId,
+      signal: deps.context.signal, basis: { kind: 'setup', machineId: deps.target.machineId, desiredRevision: setup.policy.revision } },
+    { ...deps.elevation, verifyCurrent: deps.isCurrent });
+    if (!native.ok) return native;
+    const facts = native.facts;
+    const publicSsh = facts.status === 'unavailable' ? 'unknown' : facts.retainedSshEndpoints.some(endpoint =>
+      facts.externalInterfaces.includes(endpoint.interfaceName) && endpoint.sourceCidrs.length > 0) ? 'open' : 'closed';
+    observation = { ...observation, nativeFirewall: facts,
+      management: { ...observation.management, publicSsh } };
+    if (change?.kind === 'posture' && !state.posture) {
+      if (facts.status === 'unavailable') return refuse('required_fact_unavailable');
+      nativeFirewall = facts;
+    }
+  }
   const basis: MachineReachabilityPlanBasisV1 | undefined = change ? { machineId: deps.target.machineId,
     installationId: deps.target.installationId, currentPostureRevision: state.posture?.revision ?? null,
     currentSelections: state.selections, change, occurrences, recipePlans,
+    ...(nativeFirewall ? { nativeFirewall } : {}),
     ...(nativeProfiles.length ? { nativeProfiles } : {}),
     ...(credentialFileReview ? { credentialFileReview } : {}) } : undefined;
   const plan = basis ? MachineReachabilityPlanV1Schema.parse({ basis, reviewedPlanDigest: reviewedPlanDigest(basis) }) : undefined;
@@ -269,23 +293,6 @@ async function prepare(input: MachineReachabilityInspectInputV1, deps: MachineRe
 export async function inspectMachineReachability(input: MachineReachabilityInspectInputV1, deps: MachineReachabilityHostDependencies) {
   const prepared = await prepare(input, deps, 'machines.reachability.inspect');
   if ('ok' in prepared) return prepared;
-  // Network membership reviews demand only that provider. A general Machine
-  // inspection also observes SSH; desired posture is never evidence of it.
-  if (!input.change || input.change.kind === 'posture') {
-    const requestId = deps.context.actionRequestId;
-    if (!requestId) return refuse('admission_unavailable');
-    const setup = await getMachineSetupDesiredV1(deps.port);
-    if (setup.status !== 'ready') return refuse(`machine_setup_content_${setup.status}`);
-    const native = await inspectMachineReachabilityNativeFirewall({ machineId: deps.target.machineId, requestId,
-      signal: deps.context.signal, basis: { kind: 'setup', machineId: deps.target.machineId, desiredRevision: setup.policy.revision } },
-    { ...deps.elevation, verifyCurrent: deps.isCurrent });
-    if (!native.ok) return native;
-    const facts = native.facts;
-    const publicSsh = facts.status === 'unavailable' ? 'unknown' : facts.retainedSshEndpoints.some(endpoint =>
-      facts.externalInterfaces.includes(endpoint.interfaceName) && endpoint.sourceCidrs.length > 0) ? 'open' : 'closed';
-    prepared.observation = { ...prepared.observation, nativeFirewall: facts,
-      management: { ...prepared.observation.management, publicSsh } };
-  }
   const observation = await deps.publish(prepared.observation);
   return { machineId: deps.target.machineId, ...prepared.state, observation,
     ...(prepared.plan ? { plan: prepared.plan } : {}) };

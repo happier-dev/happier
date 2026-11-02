@@ -61,6 +61,53 @@ describe.runIf(process.platform === 'linux' && userInfo().uid !== 0)('builtin Ma
     } finally { await api.dispose(); }
   });
 
+  it('reviews and configures the first posture against native SSH facts, refusing changed facts', async () => {
+    const { f, api } = prepared;
+    try {
+      const snapshot = api.client.getMachineMetadataSnapshot();
+      if (snapshot.status !== 'ready') throw new Error('The public Machine metadata is unavailable');
+      const { reachabilityPosture: _posture, ...metadata } = snapshot.metadata;
+      expect(await api.client.compareAndSwapMachineMetadata({ expectedMetadataVersion: snapshot.metadataVersion, metadata }))
+        .toMatchObject({ status: 'applied' });
+      await f.hostNative.setNativeSshPort(22);
+      const posture = MachineReachabilityPostureV1Schema.parse({ revision: 0,
+        management: { providers: [], publicSsh: { kind: 'open', port: 22, sourceCidrs: ['0.0.0.0/0', '::/0'] } },
+        defaultServiceIngress: { kind: 'none' } });
+      const reviewFirst = async () => {
+        const raw = await api.inspectOriginalCli({ serverId: f.home.serverIdentityId, machineId,
+          change: { kind: 'posture', posture } });
+        expect(raw.ok, JSON.stringify(raw)).toBe(true);
+        if (!raw.ok) throw new Error(raw.errorCode);
+        return parseReachabilityInspectResult(raw.result);
+      };
+      const review = await reviewFirst();
+      expect(review).toMatchObject({ posture: null, plan: { basis: { currentPostureRevision: null } },
+        observation: { management: { publicSsh: 'open' }, nativeFirewall: { status: 'available',
+          retainedSshEndpoints: expect.arrayContaining([expect.objectContaining({ port: 22, sourceCidrs: ['0.0.0.0/0'] })]) } } });
+      expect(review.plan?.basis).toMatchObject({ nativeFirewall: review.observation.nativeFirewall });
+      const before = api.client.getMachineMetadataSnapshot();
+      const stale = await executeReviewedReachabilityConfigure(f, api, review, {
+        async beforeDecision() { await f.hostNative.setNativeSshPort(2205); },
+      });
+      expect(stale.result).toMatchObject({ ok: false, errorCode: 'plan_changed', effectAttempted: false });
+      expect(api.client.getMachineMetadataSnapshot()).toEqual(before);
+      await f.hostNative.setNativeSshPort(22);
+      const fresh = await reviewFirst();
+      const saved = await executeReviewedReachabilityConfigure(f, api, fresh);
+      expect(parseCompletedReachabilityConfigure(saved.result)).toMatchObject({ status: 'applied', posture });
+      const existing = parseReachabilityInspectResult(await api.invoke('machines.reachability.inspect', {
+        serverId: 'generic-home', machineId, change: { kind: 'posture', posture: { ...posture, revision: 1 } },
+      }));
+      expect(existing.plan?.basis.currentPostureRevision).toBe(0);
+      expect(existing.plan?.basis).not.toHaveProperty('nativeFirewall');
+      expect(parseCompletedReachabilityConfigure((await executeReviewedReachabilityConfigure(f, api, existing)).result))
+        .toMatchObject({ status: 'applied', posture: { ...posture, revision: 1 } });
+      expect(f.elevation.diagnostics.flatMap(diagnostic => diagnostic.requests).every(request => request.mode === 'check')).toBe(true);
+      expect(f.hostNative.calls.filter(call => call.executable === '/usr/sbin/nft').every(call =>
+        call.args.join(' ') === '--version' || call.args.join(' ') === '-j list tables')).toBe(true);
+    } finally { await api.dispose(); }
+  });
+
   it('lists real native descriptors without a plugin identity and inspects only demanded Caddy through the host Action', async () => {
     const { f, api } = prepared;
     try {
