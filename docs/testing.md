@@ -301,6 +301,9 @@ separate from dependency freshness, while missing patches/assets and stale insta
 canonical writer. Already-loaded untyped lock owners remain conservatively
 treated as possible writers by read-only verification.
 
+Agent hooks protect primary-checkout patch files and `patchedDependencies`; prepare changes in an outside worktree and hand the diff to Systemic.
+Only the dependency applier sets `HAPPIER_DEPENDENCY_APPLIER=1` in its hook environment when applying the complete validated change.
+
 Refresh reports `stacksNeedingRestart` for running Stacks; their owners restart
 them at the next boundary. Development Expo retains its Metro process and
 observes dependency writes through Metro's watcher. Package metadata and link

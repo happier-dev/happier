@@ -26,6 +26,9 @@ if (typeof value === "string") process.stdout.write(value);
 
 TOOL_NAME=$(json_field 'tool_name')
 if [[ -z "$TOOL_NAME" ]]; then TOOL_NAME=$(json_field 'tool'); fi
+if ! node "$(dirname "${BASH_SOURCE[0]}")/dependencyPatchGuard.mjs" <<<"$INPUT"; then
+  exit 1
+fi
 if [[ "$TOOL_NAME" != "Bash" ]]; then
   exit 0
 fi

@@ -8,7 +8,7 @@ try {
   const event = JSON.parse(readFileSync(0, 'utf8'));
   const guard = fileURLToPath(new URL('../../.claude/hooks/prevent-destructive-git.sh', import.meta.url));
   const result = spawnSync('bash', [guard.replaceAll('\\', '/')], {
-    input: JSON.stringify({ tool: event.tool_name, args: event.tool_input }),
+    input: JSON.stringify(event),
     encoding: 'utf8',
   });
   if (result.error || result.status !== 0) {
