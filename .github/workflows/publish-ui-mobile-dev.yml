@@ -321,6 +321,7 @@ jobs:
       - name: Build Android APK (dev lane, cloud)
         if: inputs.publish_android_apk && inputs.eas_builder == 'eas_cloud'
         env:
+          RELEASE_MESSAGE: ${{ inputs.release_message }}
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
         run: |
           set -euo pipefail
@@ -334,7 +335,7 @@ jobs:
             --build-json "/tmp/eas_build.json" \
             --out-dir "dist/ui-mobile" \
             --eas-cli-version "${EAS_CLI_VERSION}" \
-            --release-message="${{ inputs.release_message }}" \
+            --release-message="$RELEASE_MESSAGE" \
             --publish-apk-release false \
             --secrets-source env
 
@@ -347,6 +348,7 @@ jobs:
       - name: Build Android APK (dev lane, local via Dagger)
         if: inputs.publish_android_apk && inputs.eas_builder == 'eas_local'
         env:
+          RELEASE_MESSAGE: ${{ inputs.release_message }}
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
         run: |
@@ -362,7 +364,7 @@ jobs:
             --build-json "/tmp/eas_build.json" \
             --out-dir "dist/ui-mobile" \
             --eas-cli-version "${EAS_CLI_VERSION}" \
-            --release-message="${{ inputs.release_message }}" \
+            --release-message="$RELEASE_MESSAGE" \
             --publish-apk-release false \
             --secrets-source env
 
@@ -481,6 +483,7 @@ jobs:
 
       - name: iOS TestFlight submit (dev lane) (best-effort)
         env:
+          RELEASE_MESSAGE: ${{ inputs.release_message }}
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
           APPLE_API_PRIVATE_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
           APP_STORE_CONNECT_PUBLICDEV_EXTERNAL_GROUPS: ${{ vars.APP_STORE_CONNECT_PUBLICDEV_EXTERNAL_GROUPS }}
@@ -504,7 +507,7 @@ jobs:
             --build-json "/tmp/eas_build.ios.json" \
             --out-dir "dist/ui-mobile" \
             --eas-cli-version "${EAS_CLI_VERSION}" \
-            --release-message="${{ inputs.release_message }}" \
+            --release-message="$RELEASE_MESSAGE" \
             --secrets-source env
 
       - name: Dispatch exact TestFlight reconciliation
@@ -600,6 +603,7 @@ jobs:
 
       - name: iOS TestFlight submit (dev lane) (best-effort)
         env:
+          RELEASE_MESSAGE: ${{ inputs.release_message }}
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
           APPLE_API_PRIVATE_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
           APP_STORE_CONNECT_PUBLICDEV_EXTERNAL_GROUPS: ${{ vars.APP_STORE_CONNECT_PUBLICDEV_EXTERNAL_GROUPS }}
@@ -624,7 +628,7 @@ jobs:
             --build-json "/tmp/eas_build.ios.json" \
             --out-dir "dist/ui-mobile" \
             --eas-cli-version "${EAS_CLI_VERSION}" \
-            --release-message="${{ inputs.release_message }}" \
+            --release-message="$RELEASE_MESSAGE" \
             --secrets-source env
 
       - name: Dispatch exact TestFlight reconciliation

@@ -142,7 +142,7 @@ test('reusable tests calls make their run flags authoritative regardless of the 
   assert.equal(testsWorkflow.on.workflow_call.inputs.select_jobs_explicitly.default, false);
   assert.equal(
     testsWorkflow.concurrency.group,
-    'tests-${{ github.workflow }}-${{ github.ref }}',
+    'tests-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}',
     'the reusable tests workflow must not share its caller concurrency group and cancel the caller',
   );
   const defaultSuiteInputs = new Map([

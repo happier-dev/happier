@@ -352,6 +352,7 @@ jobs:
 
       - name: EAS build (pipeline)
         env:
+          RELEASE_MESSAGE: ${{ inputs.release_message }}
           RELEASE_NOTES_ID: ${{ inputs.release_notes_id }}
           HAPPIER_PIPELINE_REPO_ROOT: ${{ github.workspace }}
         run: |
@@ -373,7 +374,7 @@ jobs:
             --build-json "/tmp/eas_build_${EAS_PLATFORM}.json" \
             --out-dir "dist/ui-mobile" \
             --publish-apk-release false \
-            --release-message="${{ inputs.release_message }}" \
+            --release-message="$RELEASE_MESSAGE" \
             ${store_args[@]+"${store_args[@]}"} \
             --secrets-source env
 
@@ -561,6 +562,7 @@ jobs:
 
       - name: EAS build (pipeline)
         env:
+          RELEASE_MESSAGE: ${{ inputs.release_message }}
           HAPPIER_PIPELINE_REPO_ROOT: ${{ github.workspace }}
           RELEASE_NOTES_ID: ${{ inputs.release_notes_id }}
         run: |
@@ -583,7 +585,7 @@ jobs:
             --out-dir "dist/ui-mobile" \
             --publish-apk-release false \
             --testflight-distribution-mode deferred \
-            --release-message="${{ inputs.release_message }}" \
+            --release-message="$RELEASE_MESSAGE" \
             ${store_args[@]+"${store_args[@]}"} \
             --secrets-source env
 

@@ -73,7 +73,9 @@ test('build-ui-mobile-local exposes immutable APK retry recovery as a workflow i
 test('build-ui-mobile-local passes approved release notes and projects exact retry-candidate notes', () => {
   const src = fs.readFileSync(path.join(repoRoot, '.github', 'workflows', 'build-ui-mobile-local.yml'), 'utf8');
   assert.match(src, /release_message:/);
-  assert.match(src, /--release-message(?:=|\s+)"\$\{\{\s*inputs\.release_message\s*\}\}"/);
+  assert.match(src, /RELEASE_MESSAGE: \$\{\{\s*inputs\.release_message\s*\}\}/);
+  assert.match(src, /--release-message(?:=|\s+)"\$RELEASE_MESSAGE"/);
+  assert.doesNotMatch(src, /--release-message(?:=|\s+)"\$\{\{/);
   assert.match(src, /Project approved release notes from exact immutable candidate/);
   assert.match(src, /release-notes\.md/);
   assert.match(src, /ref: \$\{\{ steps\.source\.outputs\.authorized_sha \}\}[\s\S]*?path: candidate/);

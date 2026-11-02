@@ -31,12 +31,11 @@ for (const file of readdirSync(workflowDirectory).filter((name) => name.endsWith
   const workflow = YAML.parse(readFileSync(new URL(file, workflowDirectory), 'utf8'));
   for (const [jobName, job] of Object.entries(workflow.jobs ?? {})) {
     for (const step of job.steps ?? []) {
-      const fragments = String(step.run ?? '').matchAll(/--(release-message|notes)(?:=|\s+)"(?:\$\{?RELEASE_MESSAGE\}?|\$\{?release_message\}?|\$\{\{\s*inputs\.release_message\s*\}\})"/g);
+      const fragments = String(step.run ?? '').matchAll(/--(release-message|notes)(?:=|\s+)"(?:\$\{?RELEASE_MESSAGE\}?|\$\{?release_message\}?)"/g);
       for (const [fragment, option] of fragments) {
         test(`${file}/${jobName}/${step.name}: ${option} preserves dash-leading notes through shell and parser`, () => {
           // Isolate the argument expression, without running publication commands.
-          // Render the Actions placeholder through env to test argv transport only.
-          const expression = fragment.replace(/\$\{\{\s*inputs\.release_message\s*\}\}/g, '$RELEASE_MESSAGE');
+          const expression = fragment;
           for (const message of messages) {
             const output = execFileSync('bash', ['-e', '-c', `printf '%s\\0' ${expression}`], {
               env: { ...process.env, RELEASE_MESSAGE: message, release_message: message },
@@ -48,6 +47,23 @@ for (const file of readdirSync(workflowDirectory).filter((name) => name.endsWith
     }
   }
 }
+
+test('no workflow interpolates free-text release notes into a run: script', () => {
+  // GitHub substitutes ${{ }} before the shell parses the script, so notes text
+  // (backticks, $(...), quotes) would execute next to the job's secrets. Pass it via env.
+  const offenders = [];
+  for (const file of readdirSync(workflowDirectory).filter((name) => name.endsWith('.yml'))) {
+    const workflow = YAML.parse(readFileSync(new URL(file, workflowDirectory), 'utf8'));
+    for (const [jobName, job] of Object.entries(workflow.jobs ?? {})) {
+      for (const step of job.steps ?? []) {
+        if (/\$\{\{[^}]*release_(message|notes)[^}]*\}\}/.test(String(step.run ?? ''))) {
+          offenders.push(`${file}/${jobName}/${step.name}`);
+        }
+      }
+    }
+  }
+  assert.deepEqual(offenders, []);
+});
 
 test('local immutable and rolling commands preserve dash-leading release notes at every publisher', () => {
   for (const message of messages) {

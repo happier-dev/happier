@@ -121,6 +121,7 @@ async function main() {
             '--repo', repo,
             '--title', 'Release notes assets',
             '--notes', 'Rolling tag for in-app release-notes story media. Updated by CI.',
+            '--latest=false',
         ], { dryRun });
     }
 

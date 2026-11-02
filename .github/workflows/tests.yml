@@ -206,7 +206,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: tests-${{ github.workflow }}-${{ github.ref }}
+  group: tests-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
   # Superseded PR heads are not evidence. Preserve active push collectors so late
   # lanes still report failures; newer pushes replace only stale pending work.
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
