@@ -1,3 +1,4 @@
+import { useMachineGuestExecution } from '@/hooks/machine/useMachineGuestExecution';
 import * as React from 'react';
 import type { PrincipalRefV1 } from '@happier-dev/protocol/teams/principal';
 import { ActionApprovalRequestCreatedResultSchema, isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -87,6 +88,7 @@ export function useMachineShareController(input: Readonly<{ machineId: string; m
     const intents = React.useRef(new Map<string, Mutation>());
     const names = React.useRef(new Map<string, string>());
     const response = state.response;
+    const guestExecution = useMachineGuestExecution({ machineId, scope, execute, canManage: response?.canManage === true });
     const responseRef = React.useRef(response);
     responseRef.current = response;
     // The Action policy decides whether a confirmation shows; this only words it. A grant names the
@@ -326,7 +328,7 @@ export function useMachineShareController(input: Readonly<{ machineId: string; m
             }),
         })) },
     };
-    return { model, actions, response, viewerRow, inherited, canLeave, loading: state.phase === 'initial' || readSettling, issue: readSettling ? undefined : state.issue,
+    return { model, actions, response, guestExecution, viewerRow, inherited, canLeave, loading: state.phase === 'initial' || readSettling, issue: readSettling ? undefined : state.issue,
         notice, retryContent: load, approvalId: approval.approvalId,
         prepareKeys: (ref: PrincipalRefV1) => { if (canWrite && response?.grants.some(row =>
             sessionAccessSubjectKey(row.principal) === sessionAccessSubjectKey(ref) && row.audience.some(member => member.canPrepareKeys)))

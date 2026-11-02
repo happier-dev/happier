@@ -1,7 +1,7 @@
 import { lstat, realpath } from 'node:fs/promises';
 import { dirname, isAbsolute } from 'node:path';
 import { applyMachineSetupEffectPlan, checkMachineSetupEffectPlan, createMachineSetupNativeBackend, type MachineSetupBackend } from '@happier-dev/cli-common/machineSetup';
-import { readMachineAgentIsolationPolicyV1, type AgentIsolationEffectPlanV1, type MachineAgentIsolationPolicyV1,
+import { resolveMachineAgentExecutionPlacementV1, readMachineAgentIsolationPolicyV1, type AgentIsolationEffectPlanV1, type MachineAgentIsolationPolicyV1,
   type MachineAgentIsolationPreviewResultV1, type MachineAgentIsolationStatusV1, type MachineElevatedResultV1 } from '@happier-dev/protocol';
 import type { MachineSetupEffectPlanV1 } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
 import type { MachineMetadataFieldPortV1 } from '@happier-dev/protocol/machines/machineMetadataFieldV1';
@@ -158,7 +158,7 @@ export async function applyAgentIsolationMemberEffects(input: ApplyAgentIsolatio
     const snapshot = await input.port.read();
     if (snapshot.status !== 'ready') return refused('denied');
     const policy = readMachineAgentIsolationPolicyV1(snapshot.metadata);
-    if (policy.status !== 'ready' || !policy.policy.enabled || policy.policy.memberProvisioning !== 'linuxUsersV1') return refused('denied');
+    if (policy.status !== 'ready' || resolveMachineAgentExecutionPlacementV1({ policy: policy.policy, platform: effects.platform }) !== 'member') return refused('denied');
     const scope = { activeServerDir: input.activeServerDir, homeServerIdentityId: input.requesterIdentity.homeServerIdentityId,
       machineId: input.machineId, installationId: input.requesterIdentity.requester.installationId };
     const binding = await readAgentIsolationMemberBindingForAccount(scope, input.requesterIdentity.requester.accountId);

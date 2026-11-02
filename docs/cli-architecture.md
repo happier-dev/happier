@@ -5881,3 +5881,23 @@ no scheduling observation survives an invocation.
 - API clients: `apps/cli/src/api`
 - Persistence: `apps/cli/src/persistence.ts`
 - Config: `apps/cli/src/configuration.ts`
+
+The 2026-11-02 owner ruling amends MI-1's mandatory member placement: sharing
+is for trusted people, not a sandbox against malicious guests. Localhost reach
+is accepted, including other people's development servers.
+
+`resolveHostRequesterAgentPlacementForHost` consumes the shared
+`resolveMachineAgentExecutionPlacementV1` policy projection. Linux with enabled
+`memberProvisioning: 'linuxUsersV1'` selects `member`; otherwise every requester
+uses the owner's Agent placement (`sharedAgent` when isolation is enabled,
+`daemon` when disabled). macOS and Windows do not provision member users.
+Native readiness is still required for an enabled isolation transport; a broken
+member setup never silently falls back. Unknown requester custody still refuses.
+Placement changes neither requester credentials nor Session ownership or the
+Session's role at the Computer gate. Happier's Computer controls require Manage
+to access the owner's real display. In fallback mode, a guest's Agent runs as you
+and can do anything you can do on this Machine, including seeing your screen.
+The grant controller exposes this same policy projection and the existing
+preview/set Actions for the disclosure and Linux separate-user setup; visual
+composition is a separate UI pass. Older daemons keep returning their typed
+isolation refusal, which newer clients present without a private-RPC retry.

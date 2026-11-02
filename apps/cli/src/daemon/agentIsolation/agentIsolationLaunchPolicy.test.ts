@@ -1,12 +1,59 @@
 import { withTempDir } from '@/testkit/fs/tempDir';
 import { join } from 'node:path';
-import { createAgentIsolationSessionContext } from './agentIsolationSessionContext';
+import { createAgentIsolationOperationContext, createAgentIsolationSessionContext } from './agentIsolationSessionContext';
 import { describe, expect, it } from 'vitest';
-import { admitAgentIsolationLaunchForHost, isHostRequesterUnrestrictedOwner, selectHostRequesterExecutionIdentity, type HostAgentIsolationLaunchSnapshot } from './agentIsolationLaunchPolicy';
+import { admitAgentIsolationLaunchForHost, resolveHostRequesterAgentPlacementForHost, isHostRequesterUnrestrictedOwner, selectHostRequesterExecutionIdentity, type HostAgentIsolationLaunchSnapshot } from './agentIsolationLaunchPolicy';
 import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { deriveAgentIsolationMemberIdentity } from './provisioning';
 
 describe('held Agent isolation launch admission', () => {
+    // 2026-11-02 owner ruling: placement follows Machine policy, not requester privilege.
+    it.each(['owner', 'manage', 'use'] as const)('preserves %s custody across the guest fallback matrix', async role => {
+        const accountId = role === 'owner' ? 'owner' : role;
+        const requester = { serverId: 'home', accountId, machineId: 'machine', installationId: 'installation' };
+        const identity = selectHostRequesterExecutionIdentity({ hostHomeServerIdentityId: 'home', hostCustodianAccountId: 'owner',
+            hostExecutionTarget: { machineId: 'machine', installationId: 'installation' },
+            rpcContext: { signal: new AbortController().signal, callerAuthority: 'account_automation',
+                machineAdmission: { actorAccountId: accountId, custodianAccountId: 'owner', machineId: 'machine',
+                    installationId: 'installation', role: role === 'manage' ? 'manage' : 'use', encryptionMode: 'plain' },
+                verifyMachineAdmissionCurrent: async () => true } });
+        expect(identity).toMatchObject({ kind: 'isolated', requester, separationRequired: role === 'use' });
+        if (identity.kind !== 'isolated') throw new Error('Expected retained requester custody');
+        for (const platform of ['linux', 'darwin', 'win32'] as const) {
+            for (const snapshot of [
+                { enabled: false }, { enabled: true }, { enabled: true, memberProvisioning: 'linuxUsersV1' as const },
+            ]) {
+                expect(resolveHostRequesterAgentPlacementForHost({ identity, snapshot, platform }))
+                    .toBe(!snapshot.enabled ? 'daemon' : platform === 'linux' && snapshot.memberProvisioning ? 'member' : 'sharedAgent');
+            }
+        }
+        await expect(admitAgentIsolationLaunchForHost({ requesterIdentity: identity, agentNativeLaunch: true,
+            context: { read: () => ({ enabled: false, status: { kind: 'disabled' }, workspaceRoots: [] }) } }))
+            .resolves.toBeUndefined();
+        if (role === 'use') {
+            expect(isHostRequesterUnrestrictedOwner(identity)).toBe(false);
+            await expect(admitAgentIsolationLaunchForHost({ requesterIdentity: identity, personBreakGlass: true }))
+                .rejects.toMatchObject({ code: 'agent_isolation_unavailable', retryable: false });
+        }
+    });
+    it.skipIf(process.platform !== 'linux')('admits a use guest through shared-user Exec without borrowing owner identity', async () => {
+        await withTempDir('guest-shared-exec-', async cwd => {
+            const requesterIdentity = { kind: 'isolated' as const, separationRequired: true, homeServerIdentityId: 'home',
+                requester: { serverId: 'home', accountId: 'guest', machineId: 'machine', installationId: 'installation' } };
+            const material = { materializationKey: 'guest-operation', environment: { GUEST_SELECTED: 'selected' }, selectedMaterials: [] };
+            // Constructed native observation; no account or process is created by this policy test.
+            const target = { runtimeHome: join(cwd, 'runtime', 'guest'), environment: material.environment, selectedMaterials: [] };
+            const context = createAgentIsolationOperationContext({ requesterIdentity, signal: new AbortController().signal,
+                machine: { read: () => ({ enabled: true, status: { kind: 'effective', platform: 'linux', agentUser: 'happier-agent' },
+                    workspaceRoots: [cwd] }) }, managedHappierBinaryPath: '/opt/happier/current/happier',
+                nativeIdentity: { home: cwd, agentUid: 2401, agentGid: 2401 }, readMaterial: () => material, readTarget: () => target });
+            const admitted = await admitAgentIsolationLaunchForHost({ context, cwd, agentNativeLaunch: true });
+            expect(context.requesterIdentity).toMatchObject({ requester: requesterIdentity.requester, separationRequired: true });
+            expect(admitted?.snapshot.launch).toMatchObject({ runtimeHome: target.runtimeHome, environment: material.environment });
+            expect(admitted?.snapshot.memberIdentity).toBeUndefined();
+            expect(isHostRequesterUnrestrictedOwner(context.requesterIdentity!)).toBe(false);
+        });
+    });
     it('qualifies canonical Home separately without widening the bare requester identity', () => {
         const hostAccount = { accountId: 'owner', custodianAccountId: 'owner', machineId: 'machine', installationId: 'installation' };
         for (const field of ['hostAccountAgent', 'hostAccountAutomation'] as const) {
@@ -205,4 +252,12 @@ describe('held Agent isolation launch admission', () => {
         });
     });
 
+    it.each([false, true])('uses the disabled-policy fallback and refuses an enabled unready transport (enabled=%s)', async enabled => {
+        const context = { requesterIdentity: { kind: 'isolated' as const, separationRequired: true, requester: {
+            serverId: 'home', accountId: 'member', machineId: 'machine', installationId: 'installation',
+        } }, read: () => ({ enabled, status: { kind: 'disabled' as const }, workspaceRoots: [] }) };
+        const admission = admitAgentIsolationLaunchForHost({ context, hostNativeSystemTool: true });
+        if (enabled) await expect(admission).rejects.toMatchObject({ code: 'agent_isolation_unavailable', retryable: false });
+        else await expect(admission).resolves.toBeUndefined();
+    });
 });

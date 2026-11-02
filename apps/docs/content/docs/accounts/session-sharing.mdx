@@ -42,6 +42,47 @@ made by that administrator. The Session still belongs to the person who starts
 it; the Machine owner does not gain access to its transcript through Machine
 management alone.
 
+Share a Machine only with people you trust, such as friends or coworkers.
+Machine sharing is not a sandbox and does not protect against a malicious
+guest. Guests can reach localhost services on that Machine, including the
+owner's and other guests' development servers. Use a separate sandbox when
+you need protection from an untrusted person.
+
+Guest execution placement is **unreleased 0.3 development behavior**. On Linux,
+when separate users are explicitly enabled, each requester gets their own
+operating-system user, private home and checkout. Enabling Agent isolation
+alone does not enable separate users. Personal and adopted Machines default
+to provisioning off; Happier-created dedicated servers opt in during setup.
+
+When separate users are off or unavailable, including on macOS and Windows,
+a guest uses the same execution placement as the owner's Agents: the shared
+Agent user if Agent isolation is enabled, otherwise the daemon's
+operating-system user. This does not grant Manage access: Happier's Computer
+controls require Manage to access the owner's real display. In fallback mode,
+a guest's Agent runs as you and can do anything you can do on this Machine,
+including seeing your screen. Shared-user execution allows peers to read
+material delivered to that operating-system user, including selected Provider
+credentials and readable Session context. Older daemons may still refuse
+these guest launches; update the daemon to use the fallback. Enabled separation
+whose native setup fails still reports its typed failure rather than silently
+changing placement.
+
+The Machine owner can inspect keys and selected credential material delivered to
+the Machine, including after separate member users are available. This concerns
+material entrusted to that Machine, not automatic access to every credential in
+your Account. Before choosing [Direct delivery](/accounts/team-credentials#direct-delivery-on-a-shared-machine),
+account for both owner visibility and the current shared-user peer visibility.
+An enabled isolation preference or pending/unknown setup is not proof of
+effective separation. Native launch and file-effect support is still being
+implemented; a typed refusal does not mean a usable isolated path has been
+verified.
+
+Machine ownership means the Account enrolled as that Machine's custodian on its
+Home. A Team owner or admin is not automatically that owner. Only the present
+Machine owner may use its custodian terminal recovery path. **Can manage**
+includes trusted administration that can defeat host isolation; share it only
+with people you trust to administer the Machine.
+
 The development Machine work summary is a separate, content-free view for the
 owner or someone with current Manage access. It shows people and active-work
 counts, not Session links, messages, prompts or terminal output. Unavailable or

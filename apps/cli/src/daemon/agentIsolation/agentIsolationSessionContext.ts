@@ -1,7 +1,7 @@
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { requireAgentIsolationMaterialNativeIdentity, projectAgentIsolationOperationMaterial,
   type AgentLaunchMaterialization, type AgentLaunchOperationMaterialization } from './agentLaunchMaterials';
-import { selectHostRequesterExecutionIdentity, type HostAgentIsolationLaunchContext, type HostAgentIsolationLaunchSnapshot } from './agentIsolationLaunchPolicy';
+import { resolveHostRequesterAgentPlacementForHost, selectHostRequesterExecutionIdentity, type HostAgentIsolationLaunchContext, type HostAgentIsolationLaunchSnapshot } from './agentIsolationLaunchPolicy';
 import type { RequesterWorkAttributionV1 } from '@/daemon/lifecycle/requesterWorkAttribution';
 import { readAgentIsolationNativeIdentity } from './agentIsolationNativeIdentity';
 import type { AgentIsolationMemberRequester, AgentIsolationDaemonObservation } from './provisioning';
@@ -52,7 +52,7 @@ export function createAgentIsolationSessionContext(input: Readonly<{
         requireAgentIsolationMaterialNativeIdentity(member, { ...requesterIdentity, homeServerIdentityId: home });
         if (!isCanonicalAbsolutePathInsideRoot(member.home, material.runtimeHome)) throw new PluginError({
           code: 'agent_isolation_unavailable', message: 'Current Session material belongs to a different requester', retryable: false });
-      } else if (requesterIdentity.separationRequired) {
+      } else if (resolveHostRequesterAgentPlacementForHost({ identity: requesterIdentity, snapshot: input.machine?.read() }) === 'member') {
         throw new PluginError({ code: 'agent_isolation_unavailable',
           message: 'Current Session member material is unavailable', retryable: false });
       }
@@ -130,7 +130,7 @@ export function createAgentIsolationOperationContext(input: Readonly<{
   input.signal.throwIfAborted();
   const member = input.memberIdentity;
   const identity = member ? requireAgentIsolationMaterialNativeIdentity(member, input.requesterIdentity)
-    : !input.requesterIdentity.separationRequired && 'nativeIdentity' in input
+    : resolveHostRequesterAgentPlacementForHost({ identity: input.requesterIdentity, snapshot: input.machine.read() }) === 'sharedAgent' && 'nativeIdentity' in input
       ? input.nativeIdentity : unavailable();
   const requesterIdentity = { kind: input.requesterIdentity.kind, requester: input.requesterIdentity.requester,
     separationRequired: input.requesterIdentity.separationRequired,
@@ -176,7 +176,7 @@ export function createAgentIsolationOperationContext(input: Readonly<{
       if (requesterIdentity?.kind !== 'isolated') unavailable();
       if (member) requireAgentIsolationMaterialNativeIdentity(member, { ...requesterIdentity,
         homeServerIdentityId: input.requesterIdentity.homeServerIdentityId });
-      else if (requesterIdentity.separationRequired) unavailable();
+      else if (resolveHostRequesterAgentPlacementForHost({ identity: requesterIdentity, snapshot: input.machine.read() }) === 'member') unavailable();
       const captured = input.readMaterial();
       if (!captured) unavailable();
       read(captured);

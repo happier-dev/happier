@@ -1,3 +1,4 @@
+import { resolveMachineAgentExecutionPlacementV1 } from '@happier-dev/protocol';
 import { realpath } from 'node:fs/promises';
 import { isAbsolute } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
@@ -76,7 +77,9 @@ export function readRetainedVerifiedExternalActionRequester(
 export type HostRequesterExecutionIdentity =
     /** Legacy tag for a present custodian or admitted Machine Manage grantee. */
     | Readonly<{ kind: 'owner_person'; requester: RequesterWorkAttributionV1 }>
-    | Readonly<{ kind: 'isolated'; requester: RequesterWorkAttributionV1; separationRequired: boolean;
+    | Readonly<{ kind: 'isolated'; requester: RequesterWorkAttributionV1;
+        /** Legacy requester-authority marker; Machine policy decides native placement. */
+        separationRequired: boolean;
         /** Verified present person, not a Session/Agent execution source. */
         presentPerson?: true;
         /** Verified Account automation, not a Session/Agent execution source. */
@@ -85,7 +88,7 @@ export type HostRequesterExecutionIdentity =
 
 type HostAgentIsolationRefusalReason = Extract<HostRequesterExecutionIdentity, { kind: 'unknown' }>['reason']
     | Extract<MachineAgentIsolationStatusV1, { kind: 'unavailable' }>['code']
-    | 'owner_person_authority_required' | 'member_isolation_required' | 'launch_probe_failed'
+    | 'owner_person_authority_required' | 'launch_probe_failed'
     | 'workspace_not_ready' | 'unsupported_platform' | 'agent_launch_kind_unavailable';
 
 function throwNativeAdmissionRefusal(error: PluginError, reason: HostAgentIsolationRefusalReason,
@@ -309,15 +312,15 @@ export function isHostRequesterUnrestrictedOwner(identity: HostRequesterExecutio
         && !identity.separationRequired && identity.accountAutomation === true;
 }
 
-/** Placement follows the same Machine launch policy; it grants no person or
- * filesystem authority. Required member separation never becomes a fallback. */
+/** All requesters consume the Machine placement policy. Requester custody and
+ * person/administration authority remain independent of execution placement. */
 export function resolveHostRequesterAgentPlacementForHost(input: Readonly<{
     identity: Extract<HostRequesterExecutionIdentity, { kind: 'isolated' }>;
     snapshot?: Pick<HostAgentIsolationLaunchSnapshot, 'enabled' | 'memberProvisioning'>;
+    platform?: NodeJS.Platform;
 }>): 'daemon' | 'sharedAgent' | 'member' {
-    if (input.identity.separationRequired) return 'member';
-    if (!input.snapshot?.enabled) return 'daemon';
-    return input.snapshot.memberProvisioning === 'linuxUsersV1' ? 'member' : 'sharedAgent';
+    return resolveMachineAgentExecutionPlacementV1({ policy: input.snapshot ?? { enabled: false },
+        platform: input.platform ?? process.platform });
 }
 
 function assertHostIsolationLaunchKindSupported(
@@ -338,10 +341,8 @@ export function assertHostRequesterExecutionAdmissionForHost(input: Readonly<{
 }>): boolean {
     const identity = input.identity;
     const ownerBreakGlass = input.personBreakGlass === true && identity?.kind === 'owner_person';
-    if (input.personBreakGlass && !ownerBreakGlass || identity?.kind === 'unknown'
-        || identity?.kind === 'isolated' && identity.separationRequired && !input.snapshot?.enabled) {
-        const reason = identity?.kind === 'unknown' ? identity.reason : input.personBreakGlass
-            ? 'owner_person_authority_required' : 'member_isolation_required';
+    if (input.personBreakGlass && !ownerBreakGlass || identity?.kind === 'unknown') {
+        const reason = identity?.kind === 'unknown' ? identity.reason : 'owner_person_authority_required';
         throwNativeAdmissionRefusal(new PluginError({ code: 'agent_isolation_unavailable',
             message: 'Requester execution protection is unavailable', retryable: false, details: { reason } }), reason, input.agentLaunchKind);
     }

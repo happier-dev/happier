@@ -1,4 +1,4 @@
-import { readMachineAgentIsolationPolicyV1 } from '@happier-dev/protocol';
+import { resolveMachineAgentExecutionPlacementV1, readMachineAgentIsolationPolicyV1 } from '@happier-dev/protocol';
 import { createMachineSetupNativeBackend } from '@happier-dev/cli-common/machineSetup';
 import type { MachineMetadataFieldPortV1 } from '@happier-dev/protocol/machines/machineMetadataFieldV1';
 import type { AgentIsolationEffectDependencies, ApplyAgentIsolationMemberEffectsResult } from '@/daemon/agentIsolation/agentIsolationProvisioner';
@@ -40,8 +40,7 @@ export async function ensureAgentIsolationMember(input: EnsureAgentIsolationMemb
     if (snapshot.status !== 'ready') return refused('denied');
     const policy = readMachineAgentIsolationPolicyV1(snapshot.metadata);
     // Deliberate old enablement alone does not approve future user creation.
-    if (policy.status !== 'ready' || !policy.policy.enabled
-      || policy.policy.memberProvisioning !== 'linuxUsersV1') return refused('denied');
+    if (policy.status !== 'ready' || resolveMachineAgentExecutionPlacementV1({ policy: policy.policy, platform: effects.platform }) !== 'member') return refused('denied');
     const daemonObservation = effects.readDaemonObservation?.();
     if (daemonObservation) {
       try {

@@ -4812,3 +4812,17 @@ A mismatched provider or obsolete element binding returns
 `computer_element_stale`, requiring another observation. An explicit disabled or
 missing provider returns `computer_provider_unavailable` with an install hint.
 This is a contained development-source trial, not a released availability claim.
+
+The 2026-11-02 guest-fallback amendment changes host placement, without changing
+policy or refusal wire shapes. Enabled Linux member provisioning selects member
+users; otherwise guests use the owner's Agent placement (shared Agent user when
+enabled, daemon user when disabled). Requester credentials and Session roles stay
+intact. Happier's Computer controls require Manage to access the owner's real
+display. In fallback mode, a guest's Agent runs as you and can do anything you can
+do on this Machine, including seeing your screen. Pre-amendment 0.3 daemons
+may return `agent_isolation_unavailable` for those guests. Updated clients retain
+the typed isolation-failure presentation rather than retrying a private RPC or
+claiming separation. Updating the daemon is required to obtain fallback behavior.
+The retained 0.2 checkout has no member-isolation surface, so it cannot certify
+this pre-amendment 0.3 refusal path. No persisted migration or version shim is
+introduced by the placement change.

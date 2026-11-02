@@ -9,6 +9,16 @@ const version = z.number().check(z.int(), z.nonnegative());
 export const MachineAgentIsolationPolicyV1Schema = lazyZodSchema(() => z.strictObject({ enabled: z.boolean(),
   memberProvisioning: z.optional(z.literal('linuxUsersV1')) }));
 export type MachineAgentIsolationPolicyV1 = z.infer<typeof MachineAgentIsolationPolicyV1Schema>;
+/** Desired execution placement shared by host dispatch and grant disclosure.
+ * This grants no requester authority and does not claim native readiness. */
+export function resolveMachineAgentExecutionPlacementV1(input: Readonly<{
+  policy: MachineAgentIsolationPolicyV1;
+  platform: string;
+}>): 'daemon' | 'sharedAgent' | 'member' {
+  if (!input.policy.enabled) return 'daemon';
+  return input.platform === 'linux' && input.policy.memberProvisioning === 'linuxUsersV1' ? 'member' : 'sharedAgent';
+}
+
 export const MachineAgentIsolationPolicyV1StoredSchema = createStoredReadSchema(MachineAgentIsolationPolicyV1Schema);
 export const agentIsolationMetadataFieldV1 = {
   field: 'agentIsolation', storedSchema: MachineAgentIsolationPolicyV1StoredSchema,
