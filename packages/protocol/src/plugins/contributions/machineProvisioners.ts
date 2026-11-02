@@ -1,4 +1,6 @@
 import { z } from 'zod/mini';
+import { isNormalizedPluginJsonSchema } from './jsonSchema.js';
+import { sameStrictJsonValue } from '../../json/strictJsonValue.js';
 import { zodSchemaToJsonSchemaObject } from '../../actions/actionInputJsonSchema.js';
 import * as mini from 'zod/mini';
 import { lazyDefinition, lazyZodSchema } from '../../lazyZodSchema.js';
@@ -43,13 +45,14 @@ function isClosedSchema(schema: PluginJsonSchemaV2): boolean {
 
 const strictPortableSchema = lazyZodSchema(() => PluginJsonSchemaV2Schema.check(z.superRefine((value, context) => {
   try {
-    normalizePluginJsonSchema(value);
+    if (!isNormalizedPluginJsonSchema(value)) normalizePluginJsonSchema(value);
     if (!isClosedSchema(value)) context.addIssue({ code: 'custom', message: 'Managed native declarations require recursively closed object schemas.' });
   } catch { context.addIssue({ code: 'custom', message: 'Invalid portable managed native schema.' }); }
 })));
 const local = () => asProtocolZod(PluginContributionLocalIdSchema);
 function nestedProjection(schema: PluginJsonSchemaV2): PluginJsonSchemaV2 {
-  const { $schema: _dialect, ...projection } = normalizePluginJsonSchema(schema);
+  if (schema.$schema === undefined) return schema;
+  const { $schema: _dialect, ...projection } = schema;
   return projection;
 }
 
@@ -57,9 +60,10 @@ function nestedProjection(schema: PluginJsonSchemaV2): PluginJsonSchemaV2 {
 // existing Mini owners; there is no second provider-facts validation tree.
 /** Older writers may omit optional result facts, but cannot redefine a retained field. */
 function machineProvisionerResultMatches(declared: PluginJsonSchemaV2, canonical: PluginJsonSchemaV2): boolean {
+  if (declared === canonical) return true;
   const writer = nestedProjection(declared);
   const reader = nestedProjection(canonical);
-  if (pluginJsonValuesEqual(writer, reader)) return true;
+  if (sameStrictJsonValue(writer, reader)) return true;
   function projectWriterShape(expected: PluginJsonSchemaV2, supplied: PluginJsonSchemaV2): PluginJsonSchemaV2 {
     let projected = expected;
     if (expected.properties) {
@@ -84,7 +88,7 @@ function machineProvisionerResultMatches(declared: PluginJsonSchemaV2, canonical
     }
     return projected;
   }
-  return pluginJsonValuesEqual(writer, projectWriterShape(reader, writer));
+  return sameStrictJsonValue(writer, projectWriterShape(reader, writer));
 }
 
 export const MachineProvisionerContributionV1Schema = lazyZodSchema(() => z.strictObject({
@@ -182,13 +186,19 @@ export function validateMachineProvisionerContributionsV1(value: Readonly<{ mach
         continue;
       }
       const input = machineProvisionerRoleInputProjection(descriptor, binding.role);
-      if (input && !pluginJsonValuesEqual(nestedProjection(action.inputSchema), nestedProjection(input))) {
-        context.addIssue({ code: 'custom', path, message: 'Provisioner role input must use its canonical contract and declared launch/resource schema.' });
+      if (input) {
+        const declaredInput = isNormalizedPluginJsonSchema(action.inputSchema)
+          ? action.inputSchema : normalizePluginJsonSchema(action.inputSchema);
+        if (declaredInput !== input && !sameStrictJsonValue(nestedProjection(declaredInput), nestedProjection(input))) {
+          context.addIssue({ code: 'custom', path, message: 'Provisioner role input must use its canonical contract and declared launch/resource schema.' });
+        }
       }
       const result = machineProvisionerRoleResultProjection(descriptor, binding.role);
-      const resultMatches = machineProvisionerResultMatches(action.resultSchema, result)
+      const declaredResult = isNormalizedPluginJsonSchema(action.resultSchema)
+        ? action.resultSchema : normalizePluginJsonSchema(action.resultSchema);
+      const resultMatches = machineProvisionerResultMatches(declaredResult, result)
         || binding.role === 'destroy' && machineProvisionerResultMatches(
-          action.resultSchema, MachineProvisionerPowerResultV1Schema.jsonSchema);
+          declaredResult, MachineProvisionerPowerResultV1Schema.jsonSchema);
       if (!resultMatches) {
         context.addIssue({ code: 'custom', path, message: 'Provisioner role results must use their canonical declared contract.' });
       }
@@ -456,7 +466,7 @@ export const MachineProvisionerRebuildResultV1Schema = projectRoleSchema(lazyDef
 ])));
 function acquireResultProjection(resource: PluginJsonSchemaV2, nativeOperation?: PluginJsonSchemaV2): PluginJsonSchemaV2 {
   const canonical = MachineProvisionerAcquireResultV1Schema.jsonSchema;
-  return normalizePluginJsonSchema({ ...canonical, oneOf: canonical.oneOf?.filter(variant => nativeOperation !== undefined || variant.properties?.kind?.const !== 'pending').map(variant => {
+  return { ...canonical, oneOf: canonical.oneOf?.filter(variant => nativeOperation !== undefined || variant.properties?.kind?.const !== 'pending').map(variant => {
     const kind = variant.properties?.kind?.const;
     if (kind !== 'bound' && kind !== 'pending') return variant;
     const key = kind === 'bound' ? 'resource' : 'nativeOperationRef';
@@ -464,7 +474,7 @@ function acquireResultProjection(resource: PluginJsonSchemaV2, nativeOperation?:
     const envelope = variant.properties?.[key];
     if (!envelope || !declared) return variant;
     return { ...variant, properties: { ...variant.properties, [key]: { ...envelope, properties: { ...envelope.properties, value: nestedProjection(declared) } } } };
-  }) });
+  }) };
 }
 function machineProvisionerRoleResultProjection(descriptor: MachineProvisionerContributionV1, role: MachineProvisionerRoleV1): PluginJsonSchemaV2 {
   switch (role) {
@@ -506,21 +516,21 @@ function machineProvisionerRoleInputProjection(descriptor: MachineProvisionerCon
   if (role === 'cleanup') {
     if (!descriptor.reconciliation) return undefined;
     const { cleanupInput } = genericReconciliationRoleSchemas();
-    return normalizePluginJsonSchema({ ...cleanupInput.jsonSchema,
-      properties: { nativeOperation: nestedProjection(descriptor.reconciliation.nativeOperationSchema) } });
+    return { ...cleanupInput.jsonSchema,
+      properties: { nativeOperation: nestedProjection(descriptor.reconciliation.nativeOperationSchema) } };
   }
   if (role === 'reconcile' || role === 'destroy' && descriptor.reconciliation) {
     if (!descriptor.reconciliation) return undefined;
     const schemas = genericReconciliationRoleSchemas();
     const projection = (role === 'reconcile' ? schemas.input : schemas.destroyInput).jsonSchema;
-    return normalizePluginJsonSchema({ ...projection, anyOf: projection.anyOf!.map(variant => {
+    return { ...projection, anyOf: projection.anyOf!.map(variant => {
       if (variant.properties?.nativeOperation) return { ...variant,
         properties: { nativeOperation: nestedProjection(descriptor.reconciliation!.nativeOperationSchema) } };
       if (variant.properties?.resource) return { ...variant, properties: { resource: nestedProjection(descriptor.resourceSchema) } };
       const correlation = variant.properties?.correlation;
       return correlation ? { ...variant, properties: { correlation: { ...correlation,
         properties: { ...correlation.properties, launch: nestedProjection(descriptor.launchSchema) } } } } : variant;
-    }) });
+    }) };
   }
   const roles = genericRoleSchemas(descriptor.reconciliation?.continueAcquire === true);
   const schema = role === 'check' ? roles.checkInput : role === 'acquire' ? roles.acquireInput
@@ -529,10 +539,10 @@ function machineProvisionerRoleInputProjection(descriptor: MachineProvisionerCon
   if (role === 'check') return schema.jsonSchema;
   const key = role === 'acquire' ? 'launch' : 'resource';
   const native = role === 'acquire' ? descriptor.launchSchema : descriptor.resourceSchema;
-  return normalizePluginJsonSchema({ ...schema.jsonSchema, properties: {
+  return { ...schema.jsonSchema, properties: {
     ...schema.jsonSchema.properties, [key]: nestedProjection(native),
     ...(role === 'acquire' && descriptor.reconciliation?.continueAcquire ? { resource: nestedProjection(descriptor.resourceSchema) } : {}),
-  } });
+  } };
 }
 function defineAcquireResult<TInput, TOutput, NInput, NOutput>(resource: ProtocolComposableSchema<TInput, TOutput>, nativeOperation?: ProtocolComposableSchema<NInput, NOutput>) {
   return createProtocolComposableSchema<AcquireResultV1, AcquireResultV1>(() => acquireResultProjection(resource.jsonSchema, nativeOperation?.jsonSchema), value => {
@@ -556,12 +566,12 @@ function destroyResultProjection(nativeOperation: PluginJsonSchemaV2): PluginJso
   const pending = acquireResultProjection(nativeOperation, nativeOperation).oneOf
     ?.find(variant => variant.properties?.kind?.const === 'pending');
   if (!pending) throw new Error('Destroy custody requires the canonical pending native-operation envelope.');
-  return normalizePluginJsonSchema({ anyOf: [
+  return { anyOf: [
     ...(power.anyOf ?? []),
     { ...pending, properties: { ...pending.properties,
       kind: { ...pending.properties!.kind, const: 'accepted' },
     } },
-  ] });
+  ] };
 }
 function defineDestroyResult<NI, NO>(nativeOperation: ProtocolComposableSchema<NI, NO>) {
   return createProtocolComposableSchema(() => destroyResultProjection(nativeOperation.jsonSchema), value => {
@@ -576,7 +586,7 @@ function defineDestroyResult<NI, NO>(nativeOperation: ProtocolComposableSchema<N
 function rebuildResultProjection(resource: PluginJsonSchemaV2): PluginJsonSchemaV2 {
   const replacement = acquireResultProjection(resource).oneOf?.filter(variant => ['bound', 'unknown'].includes(String(variant.properties?.kind?.const))) ?? [];
   const refused = MachineProvisionerRebuildResultV1Schema.jsonSchema.oneOf?.find(variant => variant.properties?.kind?.const === 'refused');
-  return normalizePluginJsonSchema({ oneOf: [...replacement, ...(refused ? [refused] : [])] });
+  return { oneOf: [...replacement, ...(refused ? [refused] : [])] };
 }
 function defineRebuildResult<I, O>(resource: ProtocolComposableSchema<I, O>) {
   return createProtocolComposableSchema(() => rebuildResultProjection(resource.jsonSchema), value => {

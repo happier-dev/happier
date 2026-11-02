@@ -16,6 +16,7 @@ import {
 } from '../contributions/jsonSchemaValues.js';
 import {
   PluginJsonSchemaV2Schema,
+  normalizedPluginJsonSchemas,
   type PluginJsonSchemaV2,
 } from '../contributions/jsonSchema.js';
 import {
@@ -102,17 +103,11 @@ function assertSchemaSemantics(schema: Readonly<Record<string, unknown>>): void 
   }
 }
 
-// Retain snapshots only for their input's lifetime. Mutable declarations still
-// pass admission on every read; unchanged bytes keep one immutable identity for
-// the compiler, and edits replace that identity rather than reusing stale code.
-const normalizedPluginJsonSchemas = new WeakMap<object, PluginJsonSchemaV2>();
-
 /** @internal Only this owner's admitted/constructed immutable documents are reusable. */
-export function isNormalizedPluginJsonSchema(schema: unknown): schema is PluginJsonSchemaV2 {
-  return schema !== null && typeof schema === 'object'
-    && normalizedPluginJsonSchemas.get(schema) === schema;
-}
+export { isNormalizedPluginJsonSchema } from '../contributions/jsonSchema.js';
 
+// Mutable declarations still pass admission on every read; unchanged bytes keep
+// one immutable compiler identity, and edits replace it instead of reusing stale code.
 export function normalizePluginJsonSchema(schema: object): PluginJsonSchemaV2 {
   const previous = normalizedPluginJsonSchemas.get(schema);
   if (previous === schema) return previous;

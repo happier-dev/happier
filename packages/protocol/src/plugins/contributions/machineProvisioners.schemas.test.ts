@@ -138,6 +138,33 @@ function nativeDurationManifest() {
 }
 
 describe('public machine provisioner role schemas', () => {
+  it('retains older optional result snapshots while rejecting changed retained fields and native values', () => {
+    const manifest = nativeDurationManifest();
+    const snapshot = structuredClone(manifest);
+    const check = snapshot.contributes.actions.find(action => action.id === 'check')!;
+    delete check.resultSchema.properties!.nativeCredentialDelivery;
+    const inspect = snapshot.contributes.actions.find(action => action.id === 'inspect')!;
+    delete inspect.resultSchema.properties!.nativeCause;
+    const olderBound = snapshot.contributes.actions.find(action => action.id === 'acquire')!.resultSchema.oneOf!
+      .find(arm => arm.properties?.kind?.const === 'bound')!;
+    delete olderBound.properties!.startPending;
+    expect(PluginManifestV2Schema.safeParse(snapshot).success).toBe(true);
+    const changed = structuredClone(snapshot);
+    changed.contributes.actions.find(action => action.id === 'check')!.resultSchema.properties!.available = { type: 'string' };
+    expect(PluginManifestV2Schema.safeParse(changed).success).toBe(false);
+    const changedNative = structuredClone(snapshot);
+    const acquire = changedNative.contributes.actions.find(action => action.id === 'acquire')!;
+    const bound = acquire.resultSchema.oneOf!.find(arm => arm.properties?.kind?.const === 'bound')!;
+    bound.properties!.resource!.properties!.value = { type: 'object', properties: {}, additionalProperties: false };
+    expect(PluginManifestV2Schema.safeParse(changedNative).success).toBe(false);
+    // Structural manifest parsing admits the array shape; the role admission
+    // must still apply the normalizer's semantic checks to declared documents.
+    const invalid = structuredClone(snapshot);
+    const input = invalid.contributes.actions.find(action => action.id === 'acquire')!.inputSchema;
+    input.required!.push(input.required![0]!);
+    expect(() => PluginManifestV2Schema.safeParse(invalid)).toThrow(Error);
+  });
+
   it('admits independent option facts and refuses the retired Cartesian catalog', () => {
     const options = {
       base: { launch: {} },

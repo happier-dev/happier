@@ -133,6 +133,17 @@ export type PluginJsonSchemaV2 = {
   not?: PluginJsonSchemaV2;
 };
 
+// Keep the normalizer's existing lifetime proof at this leaf: admission must
+// not import the composable-schema owner back through a module cycle.
+/** @internal Mutable inputs map to snapshots; only a self-entry proves admission. */
+export const normalizedPluginJsonSchemas = new WeakMap<object, PluginJsonSchemaV2>();
+
+/** @internal Only the normalizer's immutable documents may bypass structural copying. */
+export function isNormalizedPluginJsonSchema(schema: unknown): schema is PluginJsonSchemaV2 {
+  return schema !== null && typeof schema === 'object'
+    && normalizedPluginJsonSchemas.get(schema) === schema;
+}
+
 const PluginJsonSchemaV2Definition: z.ZodMiniType<PluginJsonSchemaV2> = lazyZodSchema(() => z.strictObject({
   $schema: z.optional(z.literal('http://json-schema.org/draft-07/schema#')),
   $ref: z.optional(z.string().check(z.regex(/^#(?:\/.*)?$/u, 'Schema references must be document-local JSON Pointers'))),
@@ -157,6 +168,19 @@ const PluginJsonSchemaV2Definition: z.ZodMiniType<PluginJsonSchemaV2> = lazyZodS
   not: z.optional(PluginJsonSchemaV2Schema),
 }));
 
-// Native projection revisits recursive getters; construct this declaration
-// once while retaining the public lazy root and its recursive admission.
-export const PluginJsonSchemaV2Schema: z.ZodMiniType<PluginJsonSchemaV2> = z.lazy(() => PluginJsonSchemaV2Definition);
+// Reuse only admitted immutable identities. Foreign declarations retain the
+// same recursive structural parser and independent output snapshots.
+export const PluginJsonSchemaV2Schema: z.ZodMiniType<PluginJsonSchemaV2> = z.pipe(z.unknown(), z.transform((value, context): PluginJsonSchemaV2 => {
+  if (isNormalizedPluginJsonSchema(value)) return value;
+  const parsed = PluginJsonSchemaV2Definition.safeParse(value);
+  if (parsed.success) return parsed.data;
+  for (const issue of parsed.error.issues) {
+    context.issues.push({ ...issue, input: value } as z.core.$ZodRawIssue);
+  }
+  return z.NEVER;
+}));
+// Preserve the recursive public vocabulary independently of admission.
+PluginJsonSchemaV2Schema._zod.processJSONSchema = (context, _json, params) => {
+  z.core.process(PluginJsonSchemaV2Definition, context, params);
+  context.seen.get(PluginJsonSchemaV2Schema)!.ref = PluginJsonSchemaV2Definition;
+};
