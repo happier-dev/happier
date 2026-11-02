@@ -1,9 +1,10 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { flushHookEffects, renderHook } from '@/dev/testkit';
 import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
 
 import { recordFirstListPaintTelemetry, recordStablePaintTelemetry } from './paintTelemetry';
-import type { TranscriptPaintTelemetryState } from './useTranscriptTelemetryHost';
+import { useTranscriptTelemetryHost, type TranscriptPaintTelemetryState } from './useTranscriptTelemetryHost';
 
 /**
  * First paint cannot happen after stable paint.
@@ -60,6 +61,7 @@ function readDurations(name: string): number {
 
 describe('transcript paint telemetry ordering', () => {
     beforeEach(() => {
+        vi.useFakeTimers();
         syncPerformanceTelemetry.configure({ enabled: true, flushIntervalMs: 30_000 });
         syncPerformanceTelemetry.reset();
     });
@@ -67,6 +69,7 @@ describe('transcript paint telemetry ordering', () => {
     afterEach(() => {
         syncPerformanceTelemetry.reset();
         syncPerformanceTelemetry.configure({ enabled: false });
+        vi.useRealTimers();
     });
 
     it('records the first paint it never observed when the transcript settles without one', () => {
@@ -97,5 +100,32 @@ describe('transcript paint telemetry ordering', () => {
         // Still exactly one first paint: the observed one.
         expect(readDurations('ui.sessions.transcript.firstPaint')).toBe(1);
         expect(readDurations('ui.sessions.transcript.stablePaint')).toBe(1);
+    });
+
+    it.each(['disabled', 'recorded'] as const)('stops web paint retries when telemetry is %s', async (state) => {
+        const screen = await renderHook(() => useTranscriptTelemetryHost({ platformOS: 'web', sessionId: 'session-1' }));
+        try {
+            // Prove this mounted owner can retry before testing its stopping condition.
+            screen.getCurrent().scheduleWebStablePaintRetry();
+            await flushHookEffects({ advanceTimersMs: 80, cycles: 1 });
+            expect(screen.getCurrent().webStablePaintRetryTick).toBe(1);
+
+            if (state === 'disabled') {
+                syncPerformanceTelemetry.configure({ enabled: false });
+            } else {
+                const host = screen.getCurrent();
+                expect(recordStablePaintTelemetry(stableParams({
+                    platformOS: 'web',
+                    telemetryState: host.stablePaintTelemetryRef.current,
+                    clearWebStablePaintRetry: host.clearWebStablePaintRetry,
+                }))).toBe(true);
+            }
+
+            screen.getCurrent().scheduleWebStablePaintRetry();
+            await flushHookEffects({ advanceTimersMs: 80, cycles: 1 });
+            expect(screen.getCurrent().webStablePaintRetryTick).toBe(1);
+        } finally {
+            await screen.unmount();
+        }
     });
 });
