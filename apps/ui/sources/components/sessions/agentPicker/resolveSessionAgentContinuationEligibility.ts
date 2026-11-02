@@ -5,6 +5,7 @@ import {
 } from '@happier-dev/protocol/sessions/agentTransition';
 
 import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
+import type { Machine } from '@/sync/domains/state/storageTypes';
 import type { SessionStorageKind } from '@/sync/domains/session/sessionStorageKind';
 import type { SessionContinuationInspectionQueryV1 } from '@/sync/ops/sessionContinuationInspection';
 
@@ -83,6 +84,16 @@ export type SessionAgentContinuationSourceState = Readonly<{
     hasConversationToCarry: boolean;
 }>;
 
+/** State revisions include unrelated publications; only a runtime replacement invalidates answers. */
+export function resolveSessionContinuationDaemonGeneration(
+    machine: Pick<Machine, 'daemonState'> | null | undefined,
+): string {
+    const state = machine?.daemonState;
+    // Stack may inherit runtimeId across daemon processes; PID/start time still
+    // distinguish a replacement within that runtime.
+    return JSON.stringify([state?.runtimeId ?? null, state?.startedAt ?? null, state?.pid ?? null]);
+}
+
 /**
  * Where `session.continuation.inspect` has to be asked, and how long an answer
  * may be trusted.
@@ -100,16 +111,11 @@ export type SessionAgentContinuationMachineTarget = Readonly<{
      */
     connectionGeneration: number | null;
     /**
-     * The machine's daemon, as the machine record already reports it.
-     *
-     * The two generations are independent, and only this one moves when the
-     * daemon restarts under a live connection — the window in which the rail kept
-     * advertising targets the send path then refused as `unsupported_operation`,
-     * because the answers it was showing came from a daemon that no longer
-     * existed. This is the same daemon-currentness fact CLI detection keys its own
-     * cache on, not a second notion of it.
+     * The published runtime identity, with start time/PID for older daemons.
+     * A daemon restart can leave the client connection alive. Content versions
+     * and liveness timestamps are not runtime identities.
      */
-    daemonGeneration: number | null;
+    daemonGeneration: string | number | null;
 }>;
 
 /**

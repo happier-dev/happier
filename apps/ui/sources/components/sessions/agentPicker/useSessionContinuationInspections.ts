@@ -1,4 +1,6 @@
 import * as React from 'react';
+import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { useHostActivelyViewed } from '@/utils/runtime/useHostActivelyViewed';
 
 import type {
     SessionAgentTransitionSelectionV1,
@@ -26,9 +28,8 @@ type UseSessionContinuationInspectionsParams = Readonly<{
     /** The exact targets the picker can offer, so nothing else is ever asked about. */
     targetSelections: readonly SessionAgentTransitionSelectionV1[];
     /**
-     * Whether this Session wants live answers at all. The caller decides; a
-     * Session whose picker could never offer a switch passes `false` and its
-     * machine is asked nothing.
+     * Whether the picker is open and can offer a switch. Hidden layout/host
+     * presentation further suspends reads without discarding settled answers.
      */
     demanded: boolean;
 }>;
@@ -47,10 +48,8 @@ function selectionKey(selection: SessionAgentTransitionSelectionV1): string {
  *
  * Three properties are deliberate.
  *
- * **Asked only where a switch is possible.** Every answer is per target, so the
- * caller narrows the question to the Sessions whose picker could actually offer
- * one: a closed gate, a read-only or external Session, an offline machine or a
- * Session with no other Agent asks nothing at all.
+ * **Asked only by an open, visible picker.** The caller supplies exactly its
+ * eligible targets; hidden layouts/hosts suspend its reads.
  *
  * **One runtime pair, one answer.** Answers are cached against the realtime
  * connection, the daemon generation, and the machine state they were read over,
@@ -66,7 +65,10 @@ function selectionKey(selection: SessionAgentTransitionSelectionV1): string {
 export function useSessionContinuationInspections(
     params: UseSessionContinuationInspectionsParams,
 ): SessionContinuationInspections {
-    const { demanded, machine, machinePresence, sessionId, targetSelections } = params;
+    const { machine, machinePresence, sessionId, targetSelections } = params;
+    const presented = useLayoutPresentationActive();
+    const hostViewed = useHostActivelyViewed();
+    const demanded = params.demanded && presented && hostViewed;
     const [answers, setAnswers] = React.useState<
         ReadonlyMap<string, SessionAgentContinuationInspectionState>
     >(() => new Map());

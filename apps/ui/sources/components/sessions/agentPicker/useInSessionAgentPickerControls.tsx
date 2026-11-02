@@ -485,8 +485,8 @@ export function useInSessionAgentPickerControls(
             writePersistedArmedContinuation(accountScope, draftSessionId, next);
         }
     }, [accountScope, accountScopeIsCurrent, draftSessionId]);
-    // Whether the composer's Agent picker is on screen. Its only job is to scope
-    // the rail decision below to one open popover.
+    // Whether the composer's Agent picker is on screen: the inspection demand
+    // boundary and the scope of one popover's geometry.
     const [pickerVisible, setPickerVisible] = React.useState(false);
 
     const targetEntries = React.useMemo(() => entries.filter((entry) => (
@@ -533,22 +533,14 @@ export function useInSessionAgentPickerControls(
             : []
     ), [featureEnabled, sessionReason, targetEntries, targetSelectionByTargetKey]);
 
-    // The rail decision has to be settled BEFORE the click that opens the popover.
-    // That click also chooses between the shared Agent picker and the running
-    // Agent's model-only picker. Starting this request from hover, focus or
-    // press-in is therefore racy: the click can observe the old empty option list
-    // and open the model-only surface even though switching is supported.
-    //
-    // Preflight the exact eligible targets when this Session view is ready. This
-    // remains bounded: a closed gate, read-only or external Session, offline
-    // machine, or Session with no other Agent supplies no request, and one batched
-    // answer serves the mounted view for the current runtime pair.
+    // Opening is the demand boundary. Pending disabled rows already identify
+    // the shared picker, so choosing that surface never requires an eager RPC.
     const inspections = useSessionContinuationInspections({
         sessionId,
         machine: params.machine,
         machinePresence: source.machinePresence,
         targetSelections: inspectableTargetSelections,
-        demanded: inspectableTargetSelections.length > 0,
+        demanded: pickerVisible && inspectableTargetSelections.length > 0,
     });
     const readInspection = inspections.read;
 
@@ -564,11 +556,8 @@ export function useInSessionAgentPickerControls(
         }))
     ), [readInspection, source, targetEntries, targetSelectionByTargetKey]);
 
-    // The rail exists to offer a choice, and a question still in flight is not a
-    // choice. Only a target the machine has actually cleared sustains the rail:
-    // counting an unanswered one is what let the rail appear on the strength of
-    // questions the machine then refused, and take itself away half a second
-    // later with the reader already looking at it.
+    // Pending targets keep the shared picker reachable before its first open;
+    // only answered eligible targets can be armed.
     const hasSwitchableTarget = targetRows.some((row) => row.eligibility.status === 'eligible');
     // Every target has been decided — answered by the machine, or refused by the
     // local rules before the machine was ever asked.
@@ -588,22 +577,11 @@ export function useInSessionAgentPickerControls(
     const railOffersRowsNow = featureEnabled
         && currentAgentId !== null
         && targetRows.length > 0
-        && hasSwitchableTarget;
+        && (hasSwitchableTarget || (!railDecisionSettled && inspectableTargetSelections.length > 0));
 
-    // One open popover keeps one shape.
-    //
-    // Inspection is answered over the network while the popover is opening, so
-    // the honest value of the line above changes mid-open. Rendering that change
-    // is the defect: a rail that appears and then vanishes is worse than either
-    // steady answer, and a rail frozen on the optimistic pending value would be a
-    // list of dead rows, which is worse still.
-    //
-    // The first visible render decides the whole open. A cached positive answer
-    // therefore opens with the rail, while an unresolved answer opens without it
-    // and cannot inject a new column after the reader has started navigating.
-    //
-    // While the picker is closed the live value is used directly: nothing is on
-    // screen to disturb, and the next open must start from the truth.
+    // Keep one geometry throughout an open popover. Its initial pending rows
+    // may settle disabled, but do not remove a column under the reader. Closing
+    // uses the settled answer for the next open.
     const railLatchRef = React.useRef<Readonly<{ open: boolean; decided: boolean | null }>>(
         { open: false, decided: null },
     );
@@ -737,14 +715,9 @@ export function useInSessionAgentPickerControls(
     // in the context it was made in, and persistence must not defeat the scope
     // that protects it: the gate has to still be open, the Session has to still
     // run the Agent the arm was formed against, and the exact row it was chosen
-    // from has to still be offered and still be eligible. An arm restored onto an
-    // Agent that can no longer be switched to is strictly worse than no arm — the
-    // send control would promise a continuation the machine has already refused.
-    //
-    // The decision therefore waits for the rail to settle. Before every target has
-    // answered, "not eligible" only means "not answered yet", and clearing on that
-    // would throw away a good arm every time the reader returns to the Session.
-    //
+    // from must not have been refused. A closed picker restores the choice
+    // without refreshing its label: opening owns inspection, and Send owns
+    // admission. An unanswered target is not evidence the saved choice is stale.
     const reconciledArmScopeKeyRef = React.useRef<string | null>(null);
     React.useEffect(() => {
         if (draftSessionId === null) return;
@@ -772,7 +745,7 @@ export function useInSessionAgentPickerControls(
         }
 
         if (reconciledArmScopeKeyRef.current === armScopeKey) return;
-        if (!accountScopeIsCurrent() || !featureEnabled || !railDecisionSettled || currentAgentId === null) return;
+        if (!accountScopeIsCurrent() || !featureEnabled || currentAgentId === null) return;
         if (armed !== null) return;
 
         const persisted = readPersistedArmedContinuation(accountScope, draftSessionId);
@@ -795,7 +768,7 @@ export function useInSessionAgentPickerControls(
 
         const row = targetRows.find(({ entry }) => entry.backendTargetKey === persisted.backendTargetKey);
         const stillHonourable = row !== undefined
-            && row.eligibility.status === 'eligible'
+            && (row.eligibility.status === 'eligible' || row.eligibility.status === 'checking')
             && resolveContinuationAgentId(row.entry) === persisted.intent.selection.agentId
             && persisted.intent.sourceAgentId === currentAgentId;
         if (stillHonourable) {

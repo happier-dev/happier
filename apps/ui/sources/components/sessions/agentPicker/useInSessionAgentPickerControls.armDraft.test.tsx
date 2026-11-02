@@ -154,11 +154,12 @@ async function renderControls(props: HookProps = {}) {
     return hook;
 }
 
-/** Let the preflight answer, then select a target row. */
+/** Open the picker, let its demanded inspection answer, then select a target row. */
 async function armTarget(
     hook: Awaited<ReturnType<typeof renderControls>>,
     optionId: string,
 ): Promise<void> {
+    await act(async () => { hook.getCurrent().onAgentPickerVisibilityChange(true); });
     await act(async () => { await Promise.resolve(); });
     await act(async () => { await Promise.resolve(); });
     await act(async () => {
@@ -355,10 +356,8 @@ describe('useInSessionAgentPickerControls arm draft', () => {
         expect(hook.getCurrent().armedContinuationLocalId).not.toBe(submittedLocalId);
     });
 
-    it('asks the machine for a Session that is already armed, without waiting for the chip', async () => {
-        // The reader armed this Session in an earlier mount. Waiting for them to
-        // reach for the Agent chip again would leave the composer promising a
-        // continuation whose rail has not been decided.
+    it('retains a restored arm without inspecting a closed picker', async () => {
+        // Opening the picker owns the label refresh; Send independently owns admission.
         writeSessionDraftValue(SCOPE, 'session-1', 'routing.agentContinuation', {
             backendTargetKey: 'agent:happier.agent.codex/codex',
             intent: armedIntentFor('codex'),
@@ -366,14 +365,14 @@ describe('useInSessionAgentPickerControls arm draft', () => {
 
         const hook = await renderControls();
 
-        expect(machineRpcWithServerScope).toHaveBeenCalled();
+        expect(machineRpcWithServerScope).not.toHaveBeenCalled();
         expect(hook.getCurrent().armedContinuation).toEqual(armedIntentFor('codex'));
     });
 
-    it('preflights an unarmed Session without arming anything', async () => {
+    it('leaves a closed unarmed Session idle', async () => {
         const hook = await renderControls();
 
-        expect(machineRpcWithServerScope).toHaveBeenCalledTimes(1);
+        expect(machineRpcWithServerScope).not.toHaveBeenCalled();
         expect(hook.getCurrent().armedContinuation).toBeNull();
         expect(readPersistedArm()).toBeUndefined();
     });
@@ -395,7 +394,7 @@ describe('useInSessionAgentPickerControls arm draft', () => {
         expect(second.getCurrent().armedContinuation).toBeNull();
     });
 
-    it('clears a persisted arm whose target Agent is no longer eligible instead of restoring it', async () => {
+    it('keeps a restored choice cancellable when another target still sustains the rail', async () => {
         writeSessionDraftValue(SCOPE, 'session-1', 'routing.agentContinuation', {
             backendTargetKey: 'agent:happier.agent.codex/codex',
             intent: armedIntentFor('codex'),
@@ -411,6 +410,13 @@ describe('useInSessionAgentPickerControls arm draft', () => {
 
         const hook = await renderControls({ entries: [entry('claude'), entry('codex'), entry('gemini')] });
 
+        expect(hook.getCurrent().armedContinuation).toEqual(armedIntentFor('codex'));
+        await act(async () => { hook.getCurrent().onAgentPickerVisibilityChange(true); });
+        // Opening refreshes availability; it does not discard a cancellable choice.
+        expect(hook.getCurrent().armedContinuation).toEqual(armedIntentFor('codex'));
+        await act(async () => {
+            hook.getCurrent().composeAgentPickerOptions([CURRENT_AGENT_ROW])[0]?.onSelectImmediate?.();
+        });
         expect(hook.getCurrent().armedContinuation).toBeNull();
         expect(readPersistedArm()).toBeNull();
     });
@@ -616,6 +622,9 @@ describe('useInSessionAgentPickerControls arm draft', () => {
         });
         await act(async () => { await Promise.resolve(); });
 
+        // The open rail retains its cancel gesture; its next closed decision
+        // clears the choice once no target can sustain that rail.
+        await act(async () => hook.getCurrent().onAgentPickerVisibilityChange(false));
         expect(hook.getCurrent().armedContinuation).toBeNull();
         expect(hook.getCurrent().armedContinuationLocalId).toBeNull();
         expect(readPersistedArm()).toBeNull();
@@ -629,6 +638,7 @@ describe('useInSessionAgentPickerControls arm draft', () => {
         // Every target refused: the rail is gone, and with it the only gesture that
         // could cancel the arm. A persisted arm here would come back uncancellable.
         await hook.rerender({ source: { ...supportedSource, machinePresence: 'offline' } });
+        await act(async () => hook.getCurrent().onAgentPickerVisibilityChange(false));
 
         expect(hook.getCurrent().armedContinuation).toBeNull();
         expect(readPersistedArm()).toBeNull();

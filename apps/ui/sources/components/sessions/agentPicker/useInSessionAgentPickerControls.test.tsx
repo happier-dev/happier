@@ -30,6 +30,8 @@ import {
     useInSessionAgentPickerControls,
     type SessionAgentContinuationFeatureDecision,
 } from './useInSessionAgentPickerControls';
+import { resolveSessionContinuationDaemonGeneration } from './resolveSessionAgentContinuationEligibility';
+import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import type {
     SessionAgentContinuationMachineTarget,
     SessionAgentContinuationSourceState,
@@ -339,16 +341,14 @@ describe('useInSessionAgentPickerControls', () => {
         expect(machineRpcWithServerScope).not.toHaveBeenCalled();
     });
 
-    it('preflights eligible targets before the first click can choose the model-only popover', async () => {
+    it('leaves closed picker idle and opens the shared picker before its first inspection answers', async () => {
         const hook = await renderControls();
         await act(async () => { await Promise.resolve(); });
 
-        // The click that opens the picker also chooses between the shared Agent
-        // picker and the running Agent's model-only picker. Starting inspection
-        // from press-in is therefore too late: that click observes the old empty
-        // option list and opens the wrong surface. One batched preflight for a
-        // locally eligible Session makes the first click deterministic.
-        expect(machineRpcWithServerScope).toHaveBeenCalledTimes(1);
+        expect(machineRpcWithServerScope).not.toHaveBeenCalled();
+        expect(optionsOf(hook.getCurrent()).map(option => option.id))
+            .toEqual(['engine:claude', 'backend:codex']);
+        expect(optionsOf(hook.getCurrent())[1]?.disabled).toBe(true);
         await act(async () => {
             hook.getCurrent().onAgentPickerVisibilityChange(true);
         });
@@ -1014,6 +1014,32 @@ describe('useInSessionAgentPickerControls', () => {
         expect(machineRpcWithServerScope).toHaveBeenCalledTimes(1);
     });
 
+    it('ignores idle daemon publications and closed-picker generations, then batches one real runtime change', async () => {
+        const machine = createMachineFixture({ daemonState: { status: 'running', runtimeId: 'runtime-one', startedAt: 100, pid: 42 }, daemonStateVersion: 1 });
+        const target = (record: typeof machine) => ({ ...onlineMachine,
+            daemonGeneration: resolveSessionContinuationDaemonGeneration(record) });
+        const hook = await renderControls({ machine: target(machine) });
+        await openPicker(hook);
+        expect(machineRpcWithServerScope).toHaveBeenCalledTimes(1);
+        machineRpcWithServerScope.mockClear();
+        for (let index = 0; index < 32; index++) {
+            await hook.rerender({ machine: target({ ...machine, activeAt: index + 1000,
+                daemonStateVersion: index + 2, daemonState: { ...machine.daemonState!, contributionRegistryProjectionRevision: index } }) });
+        }
+        expect(machineRpcWithServerScope).not.toHaveBeenCalled();
+        await hook.rerender({ machine: target({ ...machine, daemonStateVersion: 34,
+            daemonState: { ...machine.daemonState!, runtimeId: 'runtime-one', startedAt: 200, pid: 43 } }) });
+        expect(machineRpcWithServerScope).toHaveBeenCalledTimes(1);
+        expect(machineRpcWithServerScope).toHaveBeenLastCalledWith(expect.objectContaining({ method: 'session.continuation.inspectBatch' }));
+        await act(async () => hook.getCurrent().onAgentPickerVisibilityChange(false));
+        machineRpcWithServerScope.mockClear();
+        await hook.rerender({ machine: target({ ...machine, daemonStateVersion: 35,
+            daemonState: { ...machine.daemonState!, runtimeId: 'runtime-three', startedAt: 300, pid: 44 } }) });
+        expect(machineRpcWithServerScope).not.toHaveBeenCalled();
+        await openPicker(hook);
+        expect(machineRpcWithServerScope).toHaveBeenCalledTimes(1);
+    });
+
     it('re-inspects after a reconnect instead of trusting the previous connection', async () => {
         const hook = await renderControls();
         await openPicker(hook);
@@ -1095,21 +1121,20 @@ describe('useInSessionAgentPickerControls', () => {
         expect(optionsOf(hook.getCurrent())).toEqual([CURRENT_AGENT_ROW]);
     });
 
-    it('drops the rail once every Agent in it has been refused', async () => {
+    it('keeps refused rows stable during the first open and omits them on the next open', async () => {
         machineRpcWithServerScope.mockRejectedValue(Object.assign(
             new Error('RPC method not available'),
             { rpcErrorCode: 'RPC_METHOD_NOT_AVAILABLE' },
         ));
-        const hook = await renderControls({
-            entries: [entry('claude'), entry('codex'), entry('gemini')],
-        });
-
-        // An unanswered question is not a choice, so a rail is never offered on the
-        // strength of one — not before the picker is opened, and not while it waits.
-        expect(optionsOf(hook.getCurrent())).toEqual([CURRENT_AGENT_ROW]);
-
+        const hook = await renderControls({ entries: [entry('claude'), entry('codex'), entry('gemini')] });
+        expect(machineRpcWithServerScope).not.toHaveBeenCalled();
         await openPicker(hook);
-
+        expect(optionsOf(hook.getCurrent()).map(option => option.id))
+            .toEqual(['engine:claude', 'backend:codex', 'backend:gemini']);
+        expect(optionsOf(hook.getCurrent()).slice(1).every(option => option.disabled)).toBe(true);
+        await act(async () => hook.getCurrent().onAgentPickerVisibilityChange(false));
+        expect(optionsOf(hook.getCurrent())).toEqual([CURRENT_AGENT_ROW]);
+        await openPicker(hook);
         expect(optionsOf(hook.getCurrent())).toEqual([CURRENT_AGENT_ROW]);
     });
 
@@ -1131,7 +1156,7 @@ describe('useInSessionAgentPickerControls', () => {
         await act(async () => { await Promise.resolve(); });
 
         const whileWaiting = optionsOf(hook.getCurrent()).map((option) => option.id);
-        expect(whileWaiting).toEqual(['engine:claude']);
+        expect(whileWaiting).toEqual(['engine:claude', 'backend:codex', 'backend:gemini']);
 
         await act(async () => {
             for (const resolve of answers) resolve({
@@ -1149,36 +1174,19 @@ describe('useInSessionAgentPickerControls', () => {
         expect(optionsOf(hook.getCurrent()).map((option) => option.id)).toEqual(whileWaiting);
     });
 
-    it('does not add the rail after a popover has already opened without it', async () => {
-        // The popover shape is decided from facts available at its first visible
-        // render. A late positive answer belongs to the next open; otherwise the
-        // rail appears beside a reader who is already navigating the current-Agent
-        // option.
+    it('keeps pending targets disabled in the same open picker until the batch answers', async () => {
         let resolveInspection: ((value: unknown) => void) | null = null;
-        machineRpcWithServerScope.mockImplementation(() => new Promise((resolve) => {
-            resolveInspection = resolve;
-        }));
+        machineRpcWithServerScope.mockImplementation(() => new Promise((resolve) => { resolveInspection = resolve; }));
         const hook = await renderControls();
-
+        expect(machineRpcWithServerScope).not.toHaveBeenCalled();
         await openPicker(hook);
-        expect(optionsOf(hook.getCurrent()).map((option) => option.id))
-            .toEqual(['engine:claude']);
-
-        await act(async () => {
-            resolveInspection?.({ v: 1, inspections: [AVAILABLE] });
-            await Promise.resolve();
-        });
-        await act(async () => { await Promise.resolve(); });
-
-        expect(optionsOf(hook.getCurrent()).map((option) => option.id))
-            .toEqual(['engine:claude']);
-
-        await act(async () => {
-            hook.getCurrent().onAgentPickerVisibilityChange(false);
-            hook.getCurrent().onAgentPickerVisibilityChange(true);
-        });
-        expect(optionsOf(hook.getCurrent()).map((option) => option.id))
-            .toEqual(['engine:claude', 'backend:codex']);
+        expect(optionsOf(hook.getCurrent()).map(option => option.id)).toEqual(['engine:claude', 'backend:codex']);
+        expect(optionsOf(hook.getCurrent())[1]?.disabled).toBe(true);
+        expect(optionsOf(hook.getCurrent())[1]?.onSelectImmediate).toBeUndefined();
+        await act(async () => { resolveInspection?.({ v: 1, inspections: [AVAILABLE] }); });
+        expect(optionsOf(hook.getCurrent()).map(option => option.id)).toEqual(['engine:claude', 'backend:codex']);
+        expect(optionsOf(hook.getCurrent())[1]?.disabled).toBe(false);
+        expect(optionsOf(hook.getCurrent())[1]?.onSelectImmediate).toBeTypeOf('function');
     });
 
     it('holds a rail it has already shown for the rest of that open popover', async () => {

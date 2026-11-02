@@ -1,3 +1,4 @@
+import { resolveSessionContinuationDaemonGeneration } from '@/components/sessions/agentPicker/resolveSessionAgentContinuationEligibility';
 import { providerDeclarationContext } from '@/providers/catalog/accountProviderDeclarations';
 import { resolveSessionAutoResumeAdmissionV1 } from '@happier-dev/protocol/sessions/metadata/sessionExplicitStopV1';
 import { readRuntimeDescriptorV1FromMetadata } from "@happier-dev/protocol/sessions/metadata/runtime-descriptor-compat";
@@ -1556,19 +1557,15 @@ export function useSessionComposerController({
         // be loaded.
         hasConversationToCarry: session.seq > 0,
     }), [hasWriteAccess, machineReachability, providerAgentTargetKey, session]);
-    // `session.continuation.inspect` is answered by the machine hosting the
-    // Session, so an answer only holds for as long as BOTH runtimes behind it do:
-    // this realtime connection, and the daemon that answered. A daemon that
-    // restarts leaves the socket untouched, so its own generation — the machine
-    // record's daemon-state version, the same currentness fact CLI detection keys
-    // on — has to be part of the scope or the rail keeps offering targets the
-    // send path already refuses.
+    // Reconnects and daemon replacement invalidate continuation answers;
+    // unrelated daemon publications and presence heartbeats do not.
+    const continuationDaemonGeneration = resolveSessionContinuationDaemonGeneration(sessionMachineRecord);
     const agentContinuationMachine = React.useMemo(() => ({
         machineId: typeof machineId === 'string' && machineId.length > 0 ? machineId : null,
         serverId: sessionRouteServerId,
         connectionGeneration: socketConnectionGeneration,
-        daemonGeneration: sessionMachineRecord?.daemonStateVersion ?? null,
-    }), [machineId, sessionMachineRecord?.daemonStateVersion, sessionRouteServerId, socketConnectionGeneration]);
+        daemonGeneration: continuationDaemonGeneration,
+    }), [machineId, continuationDaemonGeneration, sessionRouteServerId, socketConnectionGeneration]);
     // What a target Agent's own model/mode/config detail resolves against. Same
     // machine, server and folder as this Session, so the models offered for the
     // target are the models it would actually run with here.
