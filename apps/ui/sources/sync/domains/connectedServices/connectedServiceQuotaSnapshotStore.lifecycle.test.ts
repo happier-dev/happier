@@ -30,6 +30,7 @@ vi.mock('@/sync/http/client', () => ({
             }
         }
         if (url.startsWith('/v2/') && !sealedReads) return Response.json({ error: 'not_found' }, { status: 404 });
+        const metadataAtRead = readMetadata;
         let snapshot;
         try {
             snapshot = await getSnapshotPlain();
@@ -37,7 +38,7 @@ vi.mock('@/sync/http/client', () => ({
             return Response.json({ error: error instanceof Error ? error.message : 'read_failed' }, { status: 403 });
         }
         if (!snapshot) return Response.json({ error: 'not_found' }, { status: 404 });
-        const metadata = readMetadata ?? {
+        const metadata = metadataAtRead ?? {
             fetchedAt: snapshot.fetchedAt, staleAfterMs: snapshot.staleAfterMs, status: 'ok',
             ...(snapshot.fetchedAt <= 1 ? { refreshRequestedAt: 2 } : {}),
         };
@@ -226,6 +227,40 @@ describe('connectedServiceQuotaSnapshotStore polling lifecycle', () => {
         await refresh;
         expect(requestRefresh).toHaveBeenCalledTimes(1);
         expect(getQuotaSnapshotEntry(key)).toMatchObject({ refreshing: true, snapshot, error: null });
+        release();
+    });
+
+    it('does not let a read begun during the refresh request settle its accepted intent', async () => {
+        const snapshot = { v: 1 as const, serviceId: ctx.serviceId, profileId: ctx.profileId,
+            fetchedAt: 1, staleAfterMs: 60_000, planLabel: null, accountLabel: null, meters: [] };
+        getSnapshotPlain.mockResolvedValue(snapshot);
+        readMetadata = { fetchedAt: 1, staleAfterMs: 60_000, status: 'ok' };
+        let finishRequest!: (accepted: boolean) => void;
+        requestRefresh.mockReturnValueOnce(new Promise<boolean>((resolve) => { finishRequest = resolve; }));
+        const key = buildQuotaSnapshotScopeKey(ctx.credentialScope, ctx.serviceId, ctx.profileId);
+        const release = retainQuotaSnapshotPolling(key, ctx);
+        await vi.advanceTimersByTimeAsync(0);
+        const refresh = refreshQuotaSnapshot(key, ctx);
+        await vi.advanceTimersByTimeAsync(60_000);
+
+        // Another mounted consumer starts an overdue read before the POST records its marker.
+        let finishRead!: (value: typeof snapshot) => void;
+        getSnapshotPlain.mockReturnValueOnce(new Promise((resolve) => { finishRead = resolve; }));
+        const releaseAgain = retainQuotaSnapshotPolling(key, ctx);
+        await vi.advanceTimersByTimeAsync(0);
+        expect(getQuotaSnapshotEntry(key).loading).toBe(true);
+        readMetadata = { fetchedAt: 1, staleAfterMs: 60_000, status: 'ok', refreshRequestedAt: 2 };
+        finishRequest(true);
+        await vi.advanceTimersByTimeAsync(0);
+        finishRead(snapshot);
+        await refresh;
+
+        expect(getQuotaSnapshotEntry(key)).toMatchObject({ refreshing: true, snapshot, error: null });
+        readMetadata = { fetchedAt: 1, staleAfterMs: 60_000, status: 'error', refreshErrorAt: 2 };
+        await vi.advanceTimersByTimeAsync(30_000);
+        expect(getQuotaSnapshotEntry(key).refreshing).toBe(false);
+        expect(getQuotaSnapshotEntry(key).error).toBeTruthy();
+        releaseAgain();
         release();
     });
 

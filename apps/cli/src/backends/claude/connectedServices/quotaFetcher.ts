@@ -849,6 +849,16 @@ export function createClaudeSubscriptionQuotaFetcher(params?: Readonly<{
         signal,
       });
 
+      if (!response.ok && response.status >= 500 && response.status < 600) {
+        response = await fetchUsage({
+          usageUrl,
+          accessToken: record.oauth.accessToken,
+          betaHeaderValue,
+          userAgent,
+          signal,
+        });
+      }
+
       if (!response.ok && response.status === 429) {
         observeRateLimit(response, record, now);
         const retryAfter = parseRetryAfterHeader(response.headers?.get?.('retry-after'), { nowMs: now });
@@ -863,16 +873,6 @@ export function createClaudeSubscriptionQuotaFetcher(params?: Readonly<{
             quotaFetchErrorCode: 'provider_backoff',
           },
         );
-      }
-
-      if (!response.ok && response.status >= 500 && response.status < 600) {
-        response = await fetchUsage({
-          usageUrl,
-          accessToken: record.oauth.accessToken,
-          betaHeaderValue,
-          userAgent,
-          signal,
-        });
       }
 
       if (!response.ok) await throwUsageError(response);

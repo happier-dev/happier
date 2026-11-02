@@ -19,6 +19,7 @@ import {
   openConnectedServiceCredentialCiphertext,
   openConnectedServiceQuotaSnapshotCiphertext,
   openSealedProviderAccountUsageSnapshot,
+  ProviderAccountUsageDiagnosticV1Schema,
   projectProviderAccountUsageSnapshotToConnectedServiceQuotaSnapshotV1,
   sealProviderAccountUsageSnapshot,
   splitProviderAccountUsageSubscription,
@@ -4198,6 +4199,8 @@ export class ConnectedServiceQuotasCoordinator {
     }), subscription };
     await this.recordFetchedQuotaSnapshotAsAccountUsage({ ...input, snapshot,
       now: base?.evidence?.observedAtMs ?? base?.fetchedAtMs ?? base?.fetchedAt ?? 0,
+      refreshError: stored?.state === 'error_last_known_good' && base?.evidence
+        ? ProviderAccountUsageDiagnosticV1Schema.parse(base.evidence) : undefined,
       sourceProviderAccountId: readCredentialAccountIdentity(input.record)?.providerAccountId ?? null,
     });
   }

@@ -787,15 +787,14 @@ describe('createClaudeSubscriptionQuotaFetcher', () => {
     expect(usageCalls).toBe(2);
   });
 
-  it('preserves provider Retry-After for a forced refresh attempt', async () => {
+  it.each([
+    { firstStatus: 429, retryAfterSeconds: 120, remainingBackoffMs: 840_000 },
+    { firstStatus: 503, retryAfterSeconds: 1_800, remainingBackoffMs: 1_740_000 },
+  ])('preserves provider Retry-After for a forced refresh attempt after HTTP $firstStatus', async ({ firstStatus, retryAfterSeconds, remainingBackoffMs }) => {
     const now = 5_100_000;
-    const fetchMock429 = vi.fn(async () => ({
-      ok: false,
-      status: 429,
-      statusText: 'Too Many Requests',
-      headers: { get: (name: string) => (name.toLowerCase() === 'retry-after' ? '120' : null) },
-      text: async () => 'rate limited',
-    }));
+    const fetchMock429 = vi.fn()
+      .mockResolvedValueOnce(new Response('', { status: firstStatus, headers: { 'retry-after': String(retryAfterSeconds) } }))
+      .mockResolvedValue(new Response('', { status: 429, headers: { 'retry-after': String(retryAfterSeconds) } }));
     const fetchMock = vi.fn(async (_input: unknown) => ({
       ok: true,
       status: 200,
@@ -831,13 +830,14 @@ describe('createClaudeSubscriptionQuotaFetcher', () => {
     await expect(fetcher.fetch({ record, now: clock, signal: new AbortController().signal })).rejects.toMatchObject({
       quotaFetchErrorCode: 'provider_backoff',
       status: 429,
-      retryAfterMs: 120_000,
+      retryAfterMs: retryAfterSeconds * 1_000,
     });
+    expect(fetchMock429).toHaveBeenCalledTimes(firstStatus === 503 ? 2 : 1);
     clock += 60_000;
 
     vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
     await expect(fetcher.fetch({ record, now: clock, signal: new AbortController().signal, force: true }))
-      .rejects.toMatchObject({ quotaFetchErrorCode: 'provider_backoff', retryAfterMs: 840_000 });
+      .rejects.toMatchObject({ quotaFetchErrorCode: 'provider_backoff', retryAfterMs: remainingBackoffMs });
     expect(fetchMock).not.toHaveBeenCalled();
   });
 

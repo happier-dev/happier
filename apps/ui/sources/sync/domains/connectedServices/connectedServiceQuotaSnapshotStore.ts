@@ -481,6 +481,10 @@ export async function refreshQuotaSnapshot(key: string, ctx: QuotaSnapshotLoadCo
             }
             if (!ok) throw new Error(t('common.error'));
             if (entry.refreshPromise !== promise || !isCurrentEntry() || !entry.refreshing) return;
+            // A consumer may have started a read while the POST was pending. Its
+            // pre-request metadata cannot attest that this accepted refresh settled.
+            await entry.loadPromise;
+            if (entry.refreshPromise !== promise || !isCurrentEntry() || !entry.refreshing) return;
             entry.refreshAccepted = true;
             await runLoad(key, ctx);
         } catch (error) {
