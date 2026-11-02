@@ -23,6 +23,64 @@ describe('ConnectedServiceQuotasCoordinator startup current-source refresh sched
     invalidateConnectedServiceAccountMode();
   });
 
+  it.each([false, true])('retains source repair until credential identity authorizes a link (scheduler=%s)', async (scheduler) => {
+    const now = 1_000_000;
+    const buildRecord = (providerAccountId: string | null) => buildConnectedServiceCredentialRecord({
+      now, serviceId: 'openai-codex', profileId: 'cold-profile', kind: 'oauth', expiresAt: now + 3_600_000,
+      oauth: { accessToken: 'access', refreshToken: 'refresh', idToken: null, scope: null, tokenType: null,
+        providerAccountId, providerEmail: null },
+    });
+    let record = buildRecord(null);
+    type Write = Parameters<NonNullable<QuotaApi['registerProviderAccountUsageSnapshotPlain']>>[0];
+    const writes: Write[] = [];
+    const api = {
+      getAccountEncryptionMode: async () => 'plain' as const,
+      getConnectedServiceQuotaSnapshotPlain: async () => null,
+      getConnectedServiceCredentialPlain: async () => ({ content: { t: 'plain' as const, v: record } }),
+      getConnectedServiceQuotaSnapshotSealed: async () => null,
+      getConnectedServiceCredentialSealed: async () => null,
+      registerProviderAccountUsageSnapshotPlain: async (write: Write) => { writes.push(write); },
+    } satisfies QuotaApi;
+    const persistence = scheduler ? createProviderAccountUsagePersistenceScheduler({
+      api, now: () => now, fingerprintKey: new Uint8Array(32),
+    }) : null;
+    const store = createProviderAccountUsageStore();
+    const providerHttp = vi.fn(async () => new Response('{}', { status: 200 }));
+    vi.stubGlobal('fetch', providerHttp);
+    const coordinator = new ConnectedServiceQuotasCoordinator({
+      api, credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array(32) } },
+      quotaFetchers: [createOpenAiCodexQuotaFetcher({ usageUrl: 'https://quota.example/usage', resetCreditsUrl: null })],
+      accountUsageStore: store, ...(persistence ? { accountUsagePersistence: persistence } : {}),
+      discoveryEnabled: false, now: () => now, randomBytes,
+    });
+    const source = { serviceId: 'openai-codex', profileId: 'cold-profile', bindingKind: 'profile' } as const;
+    try {
+      coordinator.scheduleCurrentSourceRefresh([source]);
+      await coordinator.tickOnce();
+      await persistence?.flush(1_000);
+      expect(writes).toHaveLength(1);
+      expect(writes[0].source).toBeUndefined();
+      expect(store.resolveBySource(source)).toBeNull();
+      expect(coordinator.scheduleCurrentSourceRefresh([source])).toEqual({ accepted: 0, ignored: 1 });
+
+      // An unchanged record-only observation still has not repaired the source.
+      await coordinator.tickOnce();
+      await persistence?.flush(1_000);
+      expect(store.resolveBySource(source)).toBeNull();
+      expect(coordinator.scheduleCurrentSourceRefresh([source])).toEqual({ accepted: 0, ignored: 1 });
+
+      record = buildRecord('acct-cold');
+      await coordinator.tickOnce();
+      await persistence?.flush(1_000);
+      expect(providerHttp).toHaveBeenCalledTimes(3);
+      expect(store.resolveBySource(source)).toMatchObject({
+        state: 'loaded_empty', recordKey: { subjectKind: 'account', accountSubjectId: 'acct-cold' },
+      });
+      expect(writes).toEqual(expect.arrayContaining([expect.objectContaining({ source })]));
+      expect(coordinator.scheduleCurrentSourceRefresh([source])).toEqual({ accepted: 1, ignored: 0 });
+    } finally { persistence?.dispose(); }
+  });
+
   it.each([
     { scheduler: false, providerStatus: 429, renewDuringWrite: false },
     { scheduler: false, providerStatus: 429, renewDuringWrite: true },

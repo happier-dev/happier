@@ -57,6 +57,7 @@ describe('recordFetchedQuotaSnapshotAsAccountUsage', () => {
 
   it('does not grant a profile link for failure data without credential identity proof', async () => {
     const store = createProviderAccountUsageStore();
+    const onPersistenceAccepted = vi.fn();
     const writes: ProviderAccountUsageSnapshotV1[] = [];
     const persistence = createProviderAccountUsagePersistenceScheduler({
       api: { getAccountEncryptionMode: async () => 'plain', registerProviderAccountUsageSnapshotPlain: async ({ content, source }) => {
@@ -68,6 +69,7 @@ describe('recordFetchedQuotaSnapshotAsAccountUsage', () => {
       await recordFetchedQuotaSnapshotAsAccountUsage({ accountUsageStore: store, accountUsagePersistence: persistence,
         quotaFingerprintHmacKey: new Uint8Array(32), persistQuotaSnapshotWithServerWork: async () => {}, handleAccountUsageChanged: async () => {},
       }, { serviceId: 'openai-codex', profileId: 'primary', now: 2_000,
+        onPersistenceAccepted,
         refreshError: { kind: 'unavailable', code: 'quota_refresh_failed', observedAtMs: 2_000 },
         snapshot: { v: 1, serviceId: 'openai-codex', profileId: 'primary', fetchedAt: 0, staleAfterMs: 300_000,
           activeAccountId: 'unverified', planLabel: null, accountLabel: null, meters: [] },
@@ -76,6 +78,7 @@ describe('recordFetchedQuotaSnapshotAsAccountUsage', () => {
       expect(writes).toHaveLength(1);
       expect(writes[0].state).toBe('error_last_known_good');
       expect(store.resolveBySource({ serviceId: 'openai-codex', profileId: 'primary', bindingKind: 'profile' })).toBeNull();
+      expect(onPersistenceAccepted).not.toHaveBeenCalled();
     } finally { persistence.dispose(); }
   });
 
