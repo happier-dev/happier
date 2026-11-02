@@ -16,6 +16,7 @@ import { SessionAgentActivityHeadlineV1Schema } from '../work/agentActivity/agen
 import { SessionWorkflowActivityHeadlineV1Schema, SessionWorkflowRunHeadlineV1Schema } from '../work/workflow/sessionWorkflowActivityHeadlineV1.js';
 import { SessionSharedAgentPresentationV1Schema, SessionOwnerWorkspaceV1Schema, SessionOwnerCursorsV1Schema } from './sessionMetadataPresentationSchemasV1.js';
 import { SessionBotV1Schema } from '../identity/sessionBotV1.js';
+import { SessionBotFaceV1Schema } from '../identity/sessionBotFaceV1.js';
 import { ExternalSessionOperationSharedPresentationV1Schema } from '../external/operationV1.js';
 import { SessionGuardStateV1Schema } from '../../machines/guard/sessionGuardStateV1.js';
 import { ExternalAgentObservationSnapshotV1Schema } from '../external/externalAgentObservationV1.js';
@@ -30,6 +31,7 @@ export const SessionSharedDisplayV1Schema = lazyZodSchema(() => z.strictObject({
   summaryText: z.optional(z.string()),
   agentPresentation: z.optional(SessionSharedAgentPresentationV1Schema),
   bot: z.optional(SessionBotV1Schema),
+  botFace: z.optional(SessionBotFaceV1Schema),
   externalSessionOperationPresentationV1: z.optional(ExternalSessionOperationSharedPresentationV1Schema),
   sessionGuardStateV1: z.optional(SessionGuardStateV1Schema),
 }));

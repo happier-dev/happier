@@ -50,6 +50,7 @@ import {
 import { readRuntimeDescriptorV1 } from './runtimeDescriptorV1.js';
 import { SessionDirectoryV1Schema } from './sessionDirectoryV1.js';
 import { SessionBotV1Schema, readSessionBotV1 } from '../identity/sessionBotV1.js';
+import { SessionBotFaceV1Schema, readSessionBotFaceV1 } from '../identity/sessionBotFaceV1.js';
 import { SessionVoicePreferenceV1Schema } from '../instructions/sessionVoicePreferenceV1.js';
 import { SessionPromptStackV1Schema, SessionDisabledInheritedEntryIdsV1Schema, migrateRetainedSessionWorkContextV1, migrateRetainedSessionMetadataContextV1 } from '../context/sessionContextV1.js';
 import { SessionRunnerRuntimeStateV1Schema } from '../control/sessionRunnerRuntimeV1.js';
@@ -505,6 +506,7 @@ export function addSessionTeamsToShareStatementV1<T extends Readonly<Record<stri
 export const SessionSharedMetadataV1Schema = lazyZodSchema(() => z.strictObject({
   v: z.literal(SESSION_SHARED_METADATA_VERSION_V1),
   bot: z.optional(SessionBotV1Schema),
+  botFace: z.optional(SessionBotFaceV1Schema),
   summary: z.optional(SessionSharedSummaryV1Schema),
   agentPresentation: z.optional(SessionSharedAgentPresentationV1Schema),
   externalSessionOperationPresentationV1:
@@ -1521,6 +1523,7 @@ const SessionOwnerCompatibilityRuntimeDescriptorV1Schema =
  * incumbent work-state and headline fields remain flat.
  */
 export const SessionOwnerCompatibilityViewV1Schema = lazyZodSchema(() => z.strictObject({
+  botFace: SessionSharedMetadataV1Schema.shape.botFace,
   sessionGuardStateV1: z.optional(SessionGuardStateV1Schema),
   teamShareStatementV1: z.optional(SessionTeamShareStatementV1Schema),
   summary: z.optional(SessionSharedSummaryV1Schema),
@@ -1793,6 +1796,7 @@ export function projectSessionSharedMetadataV1(params: Readonly<{
 }>): SessionSharedMetadataV1 {
   const metadata = readRecord(params.metadata) ?? {};
   const bot = readSessionBotV1(metadata.bot);
+  const botFace = readSessionBotFaceV1(metadata.botFace);
   const summary = projectSummary(metadata);
   const agentPresentation = projectAgentPresentation(metadata);
   const externalSessionOperationPresentationV1 =
@@ -1811,6 +1815,7 @@ export function projectSessionSharedMetadataV1(params: Readonly<{
   return SessionSharedMetadataV1Schema.parse({
     v: SESSION_SHARED_METADATA_VERSION_V1,
     ...(bot ? { bot } : {}),
+    ...(botFace ? { botFace } : {}),
     ...(summary ? { summary } : {}),
     ...(agentPresentation ? { agentPresentation } : {}),
     ...(externalSessionOperationPresentationV1
@@ -1935,6 +1940,7 @@ export function projectSessionOwnerCompatibilityViewV1(
     ...(ownerMetadata.handoff ?? {}),
     ...(ownerMetadata.cursors ?? {}),
     ...(bot ? { bot } : {}),
+    ...(sharedMetadata.botFace ? { botFace: sharedMetadata.botFace } : {}),
     ...(createdAsBot ? { createdAsBot } : {}),
     ...(sessionWorkStateV1 ? { sessionWorkStateV1 } : {}),
     ...(sessionWorkflowActivityHeadlineV1 ? { sessionWorkflowActivityHeadlineV1 } : {}),
@@ -1946,6 +1952,7 @@ export function projectSessionOwnerCompatibilityViewV1(
 }
 
 const SHARED_ONLY_METADATA_KEYS = new Set([
+  'botFace',
   'summary',
   'agentPresentation',
   'sessionGuardStateV1',

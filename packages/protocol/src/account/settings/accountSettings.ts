@@ -20,6 +20,10 @@ import { UsageNightHoursV1Schema } from '../../usage/usageWorkIntervals.js';
 import { PetAccountReferenceV1Schema } from '../../pets/selection.js';
 import { DEFAULT_ATTACHMENT_UPLOAD_MAX_FILE_BYTES_V1, MAX_ATTACHMENT_UPLOAD_FILE_BYTES_V1 } from '../../transfers/attachments/attachmentLimitsV1.js';
 import { normalizeAttachmentRelativePathV1 } from '../../transfers/attachments/attachmentPathV1.js';
+import { BotFaceStyleSchema } from '../../sessions/identity/sessionBotFaceV1.js';
+
+export const BotMotionSchema = z.enum(['lively', 'reactions', 'still']);
+export type BotMotion = z.infer<typeof BotMotionSchema>;
 
 import {
   DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1,
@@ -917,6 +921,8 @@ const ACCOUNT_CORE_CATALOG_DEFINITIONS = {
     workspaceMachineSubtitlesEnabled: accountPreference(z.boolean(), true, 'session list presentation'),
     showFlavorIcons: accountPreference(z.boolean(), true, 'application chrome'),
     avatarStyle: accountPreference(z.enum(['pixelated', 'gradient', 'brutalist']), 'brutalist', 'avatar presentation'),
+    botFaceStyle: accountPreference(BotFaceStyleSchema, 'dither', 'Bot face presentation'),
+    botMotion: accountPreference(BotMotionSchema, 'lively', 'Bot motion presentation'),
     hideInactiveSessions: accountPreference(z.boolean(), false, 'session list presentation'),
     groupInactiveSessionsByProject: accountPreference(z.boolean(), false, 'session list presentation'),
     sessionListActiveGroupingV1: accountPreference(z.enum(['project', 'date']), 'project', 'session list presentation'),

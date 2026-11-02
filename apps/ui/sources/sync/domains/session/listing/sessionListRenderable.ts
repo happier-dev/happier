@@ -5,7 +5,7 @@ import { readSessionExplicitStopV1FromMetadata } from '@happier-dev/protocol/ses
 import { readSessionAnswersWorkerQuestionsV1 } from '@happier-dev/protocol/prompts/roles/sessionRolesSnapshot';
 import { readSessionDirectoryKind } from '@happier-dev/protocol/sessions/metadata/directory';
 import type { SessionWorkspaceLocationV1 } from '@happier-dev/protocol/sessions/metadata/sessionWorkspaceLocationV1';
-import type { SessionBotV1 } from '@happier-dev/protocol/sessions/identity/sessionBotV1';
+import { areSessionBotFacesEqual, type SessionBotV1, type SessionBotFaceV1 } from '@happier-dev/protocol/sessions/identity/sessionBotV1';
 import {
     hasUnreadActivityForSessionViewer,
     isSessionPersonallyTrackedForViewer,
@@ -91,6 +91,7 @@ export interface SessionListRenderableMetadata {
     /** Owner-private last observed branch: missing is unavailable, null is detached. */
     branch?: string | null;
     bot?: SessionBotV1;
+    botFace?: SessionBotFaceV1;
     name?: string;
     summaryText?: string | null;
     path: string;
@@ -1234,6 +1235,7 @@ export function didSessionListRenderableWarmCacheFieldsChange(
     if ((prevMeta?.name ?? null) !== (nextMeta?.name ?? null)) return true;
     if ((prevMeta?.summaryText ?? null) !== (nextMeta?.summaryText ?? null)) return true;
     if ((prevMeta?.bot?.kind ?? null) !== (nextMeta?.bot?.kind ?? null)) return true;
+    if (!areSessionBotFacesEqual(prevMeta?.botFace, nextMeta?.botFace)) return true;
     if (String(prevMeta?.path ?? '') !== String(nextMeta?.path ?? '')) return true;
     if ((prevMeta?.homeDir ?? null) !== (nextMeta?.homeDir ?? null)) return true;
     if ((prevMeta?.host ?? null) !== (nextMeta?.host ?? null)) return true;

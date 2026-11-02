@@ -1,6 +1,6 @@
 import { readSessionDirectoryKind } from '@happier-dev/protocol/sessions/metadata/directory';
 import type { SessionSemanticDisplayV1, SessionOwnerDisplayV1 } from '@happier-dev/protocol';
-import { readSessionBotV1, type SessionBotV1 } from '@happier-dev/protocol/sessions/identity/sessionBotV1';
+import { readSessionBotV1, readSessionBotFaceV1, areSessionBotFacesEqual, type SessionBotV1, type SessionBotFaceV1 } from '@happier-dev/protocol/sessions/identity/sessionBotV1';
 import type { Metadata } from '@happier-dev/session-core/state';
 import {
     readExternalAgentObservationSessionState,
@@ -38,6 +38,7 @@ export type SessionListRenderableMetadataComparison = Readonly<{
     sessionWorkspaceLocationV1?: SessionListRenderableMetadata['sessionWorkspaceLocationV1'];
     branch?: string | null;
     bot?: SessionBotV1;
+    botFace?: SessionBotFaceV1;
     name: string | undefined;
     summaryText: string | null;
     path: string;
@@ -66,6 +67,7 @@ type SessionListRenderableMetadataComparisonSnapshot = Readonly<{
     sessionWorkspaceLocationV1?: SessionListRenderableMetadata['sessionWorkspaceLocationV1'];
     branch?: string | null;
     bot?: unknown;
+    botFace?: unknown;
     name?: string;
     summaryText: string | null;
     path: string;
@@ -231,6 +233,7 @@ function isSessionListRenderableMetadataComparisonSnapshotEqual(
         && areSessionListWorkspaceLocationsEqual(previous.sessionWorkspaceLocationV1, snapshot.sessionWorkspaceLocationV1)
         && previous.branch === snapshot.branch
         && (readSessionBotV1(previous.bot)?.kind ?? null) === (readSessionBotV1(snapshot.bot)?.kind ?? null)
+        && areSessionBotFacesEqual(previous.botFace, readSessionBotFaceV1(snapshot.botFace))
         && (previous.summaryText ?? null) === snapshot.summaryText
         && previous.path === snapshot.path
         && (previous.homeDir ?? null) === snapshot.homeDir
@@ -284,6 +287,7 @@ export function normalizeSessionListRenderableMetadataComparison(
         previous?.terminalControlServiceabilityV1 ?? null,
     );
     const nextBot = readSessionBotV1(normalizedSnapshot.bot);
+    const nextBotFace = readSessionBotFaceV1(normalizedSnapshot.botFace);
 
     if (previous && isSessionListRenderableMetadataComparisonSnapshotEqual(
         normalizedSnapshot,
@@ -303,6 +307,7 @@ export function normalizeSessionListRenderableMetadataComparison(
         ...(normalizedSnapshot.sessionWorkspaceLocationV1 === undefined ? {} : { sessionWorkspaceLocationV1: normalizedSnapshot.sessionWorkspaceLocationV1 }),
         ...(normalizedSnapshot.branch === undefined ? {} : { branch: normalizedSnapshot.branch }),
         ...(nextBot ? { bot: previous?.bot ?? nextBot } : {}),
+        ...(nextBotFace ? { botFace: areSessionBotFacesEqual(previous?.botFace, nextBotFace) ? previous?.botFace : nextBotFace } : {}),
         name: normalizedSnapshot.name,
         summaryText: normalizedSnapshot.summaryText,
         path: normalizedSnapshot.path,
@@ -338,6 +343,7 @@ export function readSessionListRenderableMetadataComparison(
         sessionWorkspaceLocationV1: readSessionWorkspaceLocationFromMetadata({ metadata }),
         branch: typeof metadata.branch === 'string' || metadata.branch === null ? metadata.branch : undefined,
         bot: metadata.bot,
+        botFace: metadata.botFace,
         name: typeof metadata.name === 'string' ? metadata.name : undefined,
         summaryText: readRenderableSummaryText(metadata),
         path: typeof metadata.path === 'string' ? metadata.path : '',
@@ -365,6 +371,7 @@ export function readSessionListRenderableMetadataComparisonFromDisplay(
         ...owner,
         name: owner?.name ?? undefined,
         bot: display.shared.bot,
+        botFace: display.shared.botFace,
         summaryText: display.shared.summaryText ?? null,
         path: owner?.path ?? '', homeDir: owner?.homeDir ?? null, host: owner?.host ?? null,
         machineId: owner?.machineId ?? null,
@@ -389,6 +396,7 @@ export function readSessionListRenderableMetadataComparisonFromRenderable(
         sessionWorkspaceLocationV1: metadata.sessionWorkspaceLocationV1,
         branch: metadata.branch,
         bot: metadata.bot,
+        botFace: metadata.botFace,
         name: metadata.name,
         summaryText: metadata.summaryText ?? null,
         path: metadata.path,
@@ -431,6 +439,7 @@ export function areSessionListRenderableMetadataComparisonsEqual(
         && areSessionListWorkspaceLocationsEqual(previous.sessionWorkspaceLocationV1, next.sessionWorkspaceLocationV1)
         && previous.branch === next.branch
         && (previous.bot?.kind ?? null) === (next.bot?.kind ?? null)
+        && areSessionBotFacesEqual(previous.botFace, next.botFace)
         && (previous.summaryText ?? null) === (next.summaryText ?? null)
         && previous.path === next.path
         && (previous.homeDir ?? null) === (next.homeDir ?? null)
