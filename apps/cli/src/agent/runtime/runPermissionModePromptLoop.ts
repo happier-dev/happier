@@ -803,6 +803,18 @@ export async function runPermissionModePromptLoop(opts: {
     try {
       return opts.runtime.subscribeRuntimeEvents((rawMessage) => {
         const event = AgentSessionRuntimeEventSchema.safeParse(rawMessage);
+        if (!turnInFlight && event.success && (event.data.kind === 'turn-complete'
+          || event.data.kind === 'turn-failed' || event.data.kind === 'turn-cancelled')) {
+          // Native terminal input can finish while this loop is parked rather than
+          // awaiting its own turn. Settle the existing lifecycle boundary before
+          // waking the same Pending consumer; terminal events are not metadata updates.
+          void (async () => {
+            await opts.onAfterLoopBoundary?.({ reason: 'turn_completed' });
+            inputConsumer.notifyInputReadinessChanged();
+          })().catch(() => {
+            logger.debug(`[${opts.providerName}] Native-turn Pending wake could not settle`);
+          });
+        }
         if (event.success && event.data.kind === 'context-compaction' && event.data.phase === 'completed') {
           // The canonical event invalidates this delivery owner. No compact
           // command heuristic, separate cadence or provider-specific marker.

@@ -33,6 +33,20 @@ const basePayload: ClaudeStatuslinePayload = {
 };
 
 describe('createClaudeStatuslineApplier', () => {
+    it('keeps native selection authoritative over resolved assistant inference ids', async () => {
+        const harness = createHarness();
+        await harness.applier.applyModelEvidence({ modelId: 'resolved-startup', source: 'assistant' });
+        expect(harness.onEffectiveModel).toHaveBeenLastCalledWith({ modelId: 'resolved-startup' });
+        await harness.applier.apply(basePayload);
+        await harness.applier.applyModelEvidence({ modelId: 'resolved-inference', source: 'assistant' });
+        expect(harness.onEffectiveModel).toHaveBeenLastCalledWith(expect.objectContaining({ modelId: basePayload.model!.id }));
+        await harness.applier.applyModelEvidence({ modelId: 'control-selected', source: 'control' });
+        expect(harness.onEffectiveModel).toHaveBeenLastCalledWith({ modelId: 'control-selected' });
+        await harness.applier.apply({ ...basePayload, model: { id: 'native-new-selection' } });
+        await harness.applier.applyModelEvidence({ modelId: 'resolved-new-inference', source: 'assistant' });
+        expect(harness.onEffectiveModel).toHaveBeenLastCalledWith(expect.objectContaining({ modelId: 'native-new-selection' }));
+    });
+
     it('publishes effective model identity and the direct context window once', async () => {
         const harness = createHarness();
 

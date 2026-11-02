@@ -231,6 +231,10 @@ export type SessionLoopLifecycleParams = Readonly<{
   capabilitySelection?: Pick<CapabilitySelectionSynchronizerInput, 'agent' | 'skillsRunner' | 'readSkillRules' | 'initialSkillRules' | 'readMcpRules' | 'initialMcpRules' | 'subscribeAccountSettings'>;
   registerProviderAcceptedEffect: RegisterProviderAcceptedEffect;
   terminalRemoteModeLoop?: HostSessionTerminalRemoteModeLoop | null;
+  prepareStartupPresentation?: () => Promise<Readonly<{
+    terminalRemoteModeLoop: HostSessionTerminalRemoteModeLoop | null;
+    ownsCurrentTerminalDisplay: boolean;
+  }>>;
   messageBuffer: MessageBuffer;
   permissionHandler: PromptLoopPermissionHandler;
   permissionModeState: Readonly<{
@@ -328,7 +332,7 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
       : observeAgentStreamTokenThroughPluginHooks);
 
   const hasTTY = process.stdout.isTTY && process.stdin.isTTY;
-  const shouldRenderTerminalDisplay = params.config.shouldRenderTerminalDisplay?.({ opts: params.opts, session: params.session, metadata: params.runtimeMetadata }) ?? true;
+  let shouldRenderTerminalDisplay = params.config.shouldRenderTerminalDisplay?.({ opts: params.opts, session: params.session, metadata: params.runtimeMetadata }) ?? true;
   const remoteControlSurface = resolveRemoteModeControlSurface({
     stdoutIsTTY: process.stdout.isTTY,
     stdinIsTTY: process.stdin.isTTY,
@@ -397,15 +401,14 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
     protocol: toolNormalizationProtocol,
   });
   const checkpointLifecycle = configuredCheckpointLifecycle ?? repositoryCheckpointLifecycle;
-  const terminalRemoteModeLoop = params.terminalRemoteModeLoop ?? null;
-  const resolvedStartingMode = resolveStartingMode({
+  let terminalRemoteModeLoop = params.terminalRemoteModeLoop ?? null;
+  const readStartingMode = () => resolveStartingMode({
     terminalCapable: terminalRemoteModeLoop !== null,
     userIntent: (params.opts as Readonly<{ startingMode?: unknown }>).startingMode,
-    providerHint:
-      terminalRemoteModeLoop?.ownsCurrentTerminalDisplay === true && !hasTTY
-        ? 'remote'
-        : terminalRemoteModeLoop?.startingMode,
+    providerHint: terminalRemoteModeLoop?.ownsCurrentTerminalDisplay === true && !hasTTY
+      ? 'remote' : terminalRemoteModeLoop?.startingMode,
   });
+  let resolvedStartingMode = readStartingMode();
   const terminalTurnStateMachine = createTerminalTurnStateMachine();
   const pendingRuntimeTranscriptProjections = new Set<Promise<void>>();
   const runtimeTranscriptStateByTurnId = new Map<string, {
@@ -1040,8 +1043,9 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
   const mountTerminalDisplay = async (): Promise<void> => {
     if (!hasTTY || shouldExit || inkInstance || staticControl) return;
     terminalDisplayRequested = true;
+    const startingMode = resolvedStartingMode;
     const shouldMountRemoteOnlyTerminalDisplay =
-      resolvedStartingMode.kind === 'remote-only' && remoteControlSurface !== 'none';
+      startingMode.kind === 'remote-only' && remoteControlSurface !== 'none';
     if (!shouldMountRemoteOnlyTerminalDisplay && remoteControlSurface === 'static') {
       staticControl = startRemoteModeStaticControlFn({
         providerName: params.config.providerName,
@@ -1071,7 +1075,7 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
           ]).then(([React, Display]) => React.createElement(Display, {
             ...displayProps,
             backendDisplayName: params.config.backendDisplayName,
-            requestedMode: resolvedStartingMode.requestedMode,
+            requestedMode: startingMode.requestedMode,
           }))
         : Promise.all([reactModule, params.config.loadTerminalDisplay()])
           .then(([React, Display]) => React.createElement(Display, displayProps));
@@ -1096,12 +1100,6 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
     inkInstance.unmount();
     inkInstance = null;
   };
-
-  params.config.onTerminalDisplayControllerReady?.({
-    mount: mountTerminalDisplay,
-    unmount: unmountTerminalDisplay,
-    isMounted: () => inkInstance !== null || staticControl !== null,
-  });
 
   const getKeepAliveMode = (): HostSessionKeepAliveMode =>
     params.config.resolveKeepAliveMode?.()
@@ -1260,28 +1258,44 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
   params.config.onRuntimeStopReady?.(requestRuntimeStop);
   registerKillSessionHandlerFn(params.session.rpcHandlerManager, requestRuntimeStop);
 
-  if (!shouldExit) {
-    try {
+  try {
+    if (!shouldExit) {
+      // Preparing native presentation can start a resumed provider turn.
+      // Its start and completion must reach the same lifecycle as queued input.
+      subscribeRuntimeEventsRequired();
+      const presentation = params.prepareStartupPresentation ? await params.prepareStartupPresentation() : null;
+      if (presentation) {
+        terminalRemoteModeLoop = presentation.terminalRemoteModeLoop;
+        if (presentation.ownsCurrentTerminalDisplay) shouldRenderTerminalDisplay = false;
+      }
+    }
+    resolvedStartingMode = readStartingMode();
+    activeTerminalRemoteMode = resolvedStartingMode.kind === 'switching' ? resolvedStartingMode.startingMode : 'remote';
+    params.config.onTerminalDisplayControllerReady?.({
+      mount: mountTerminalDisplay,
+      unmount: unmountTerminalDisplay,
+      isMounted: () => inkInstance !== null || staticControl !== null,
+    });
+    if (!shouldExit) {
       if (hasTTY && shouldRenderTerminalDisplay) await mountTerminalDisplay();
       if (!shouldExit) {
-        subscribeRuntimeEventsRequired();
         await startStartupCoordinator();
       }
-    } catch (error) {
-      terminationHandlers.dispose();
-      shouldExit = true;
-      abortController.abort();
-      closeFailedSession = true;
-      try {
-        await cleanupOnce();
-      } catch {
-        logger.debug(
-          `${params.config.uiLogPrefix} Shared startup coordinator cleanup failed after startup rejection (non-fatal)`,
-          { error: 'startup_coordinator_cleanup_failed' },
-        );
-      }
-      throw error;
     }
+  } catch (error) {
+    terminationHandlers.dispose();
+    shouldExit = true;
+    abortController.abort();
+    closeFailedSession = true;
+    try {
+      await cleanupOnce();
+    } catch {
+      logger.debug(
+        `${params.config.uiLogPrefix} Shared startup coordinator cleanup failed after startup rejection (non-fatal)`,
+        { error: 'startup_coordinator_cleanup_failed' },
+      );
+    }
+    throw error;
   }
 
   const createSendReady = params.config.createSendReady

@@ -3018,8 +3018,6 @@ export async function runHostSessionRuntime(
     admittedProviderBindingHandoff,
     skillsDelivered,
   } = resolveHostSessionRuntimeFactoryResult(createdRuntime);
-  let terminalRemoteModeLoop = initialTerminalRemoteModeLoop;
-  let presentationOwnsCurrentTerminalDisplay = false;
   const hookRuntime = (nativeRuntime ?? runtime) as HostSessionRuntimeHookRuntime;
   const idleCompactionCapability = hookRuntime.readSessionCompactionCapability?.()?.idle;
   const idleCompactionPreference = resolveSessionIdleCompactionSeed({
@@ -3526,12 +3524,6 @@ export async function runHostSessionRuntime(
     await preparation,
   );
   recordStartupPhase('model_authority_publication');
-  if (createdRuntime.prepareStartupPresentation) {
-    const presentation = await createdRuntime.prepareStartupPresentation();
-    terminalRemoteModeLoop = presentation.terminalRemoteModeLoop;
-    presentationOwnsCurrentTerminalDisplay = presentation.ownsCurrentTerminalDisplay;
-  }
-  recordStartupPhase('startup_presentation');
   const initialGoal = readInitialGoalFromEnv();
   if (initialGoal || commitPendingFirstInputAfterRuntimeReady) {
     startupCoordinatorStart = async () => {
@@ -3917,7 +3909,6 @@ export async function runHostSessionRuntime(
           ? { accountId: readAccountIdFromToken(runtimeAuthority.accountCredentials.token)!,
               serverHttpBaseUrl: currentLifecycleSession.getServerBinding().serverUrl }
           : undefined,
-        ...(presentationOwnsCurrentTerminalDisplay ? { shouldRenderTerminalDisplay: () => false } : {}),
         onRuntimeStopReady: (stop) => {
           runtimeStopDelegate = stop;
           dispatchRuntimeStop();
@@ -3941,7 +3932,15 @@ export async function runHostSessionRuntime(
       sessionIsNew: currentLifecycleSession.sessionId === initialSessionId ? sessionIsNew : false,
       runtime,
       hookRuntime,
-      terminalRemoteModeLoop,
+      terminalRemoteModeLoop: initialTerminalRemoteModeLoop,
+      prepareStartupPresentation: async () => {
+        const presentation = await createdRuntime.prepareStartupPresentation?.();
+        recordStartupPhase('startup_presentation');
+        return presentation ?? {
+          terminalRemoteModeLoop: initialTerminalRemoteModeLoop ?? null,
+          ownsCurrentTerminalDisplay: false,
+        };
+      },
       capabilitySelection: {
         agent: capabilitySelectionAgentFacts,
         initialSkillRules: runnerSkills?.reach,

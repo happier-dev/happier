@@ -91,6 +91,8 @@ export type WaitForNextProviderInputOptions = Readonly<{
 }>;
 
 export type SessionProviderInputConsumer<Mode, Message> = Readonly<{
+  /** Re-evaluate Pending eligibility after the runtime's settled-turn boundary. */
+  notifyInputReadinessChanged: () => void;
   readLiveWork: () => Promise<SessionInputLiveWork>;
   subscribeLiveWork: (listener: () => void) => () => void;
   /** The prompt-loop owner releases the batch after preparation/turn custody settles. */

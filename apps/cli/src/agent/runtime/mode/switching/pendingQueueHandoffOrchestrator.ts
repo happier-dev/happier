@@ -136,16 +136,8 @@ export function resolvePendingQueueHandoff(input: ResolvePendingQueueHandoffInpu
   }
 
   if (input.currentMode === 'remote') {
-    if (input.remoteTurnInFlight && input.intent !== 'force_send_now' && input.intent !== 'switch_now') {
-      return {
-        action: { type: 'defer_until_terminal_turn_finishes' },
-        status: createStatus({
-          status: 'deferred_until_terminal_turn_finishes',
-          pendingCount,
-          updatedAtMs: input.nowMs,
-        }),
-      };
-    }
+    // Home owns row eligibility: ordinary input waits for readiness, while an
+    // approved Send now can claim interrupt_and_send during the active turn.
     return {
       action: { type: 'materialize_remote_pending' },
       status: createStatus({

@@ -994,6 +994,7 @@ export function createClaudeUnifiedTerminalTurnOperations(
       }
       observeTaskNotificationReactionTranscriptRow(row);
       await statuslineApplier.applyModelEvidence({
+        source: 'assistant',
         modelId: readAssistantModelId(row),
       });
       // ONE raw channel, two provider-clean sources: goal status + workflow activity.
@@ -1505,7 +1506,7 @@ export function createClaudeUnifiedTerminalTurnOperations(
         const model = event.changes.find(change => change.key === 'model');
         const modelId = typeof model?.effective === 'string' && model.reason !== 'delivered_unverified'
           ? model.effective : verifiedModelId ?? launchModelId;
-        await statuslineApplier.applyModelEvidence({ modelId, reasoningEffort: effort.effective });
+        await statuslineApplier.applyModelEvidence({ source: 'control', modelId, reasoningEffort: effort.effective });
       }
       return await publishSessionEvent(event, {
         failureWarnMessage: '[ClaudeUnifiedTerminal] runtime-config-outcome publish failed',

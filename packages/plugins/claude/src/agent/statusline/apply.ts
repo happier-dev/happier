@@ -71,6 +71,7 @@ export function createClaudeStatuslineApplier(params: Readonly<{
 }>): Readonly<{
     apply(payload: ClaudeStatuslinePayload): Promise<void>;
     applyModelEvidence(input: Readonly<{
+        source: 'assistant' | 'control';
         modelId: string | null;
         displayName?: string | null | undefined;
         contextWindowTokens?: number | null | undefined;
@@ -81,6 +82,7 @@ export function createClaudeStatuslineApplier(params: Readonly<{
     let lastCanaryKey: string | null = null;
     let lastRuntimeTruthKey: string | null = null;
     let lastObservedModelId: string | null = null;
+    let hasStatuslineModel = false;
     const publishedModelChangeEventIds = new Set<string>();
 
     const maybeAdoptModelAndWindow = async (input: Readonly<{
@@ -154,6 +156,7 @@ export function createClaudeStatuslineApplier(params: Readonly<{
                 });
                 return;
             }
+            if (readString(payload.model?.id)) hasStatuslineModel = true;
             await maybeAdoptModelAndWindow({
                 modelId: payload.model?.id ?? null,
                 displayName: payload.model?.display_name ?? null,
@@ -164,6 +167,10 @@ export function createClaudeStatuslineApplier(params: Readonly<{
             maybeLogRuntimeCanary(payload);
         },
         async applyModelEvidence(input) {
+            // Assistant rows identify an inference deployment (often a dated id), not
+            // the native model selection. Use them only until statusline selection
+            // arrives; verified controls still describe a real selection change.
+            if (input.source === 'assistant' && hasStatuslineModel) return;
             await maybeAdoptModelAndWindow(input);
         },
     };

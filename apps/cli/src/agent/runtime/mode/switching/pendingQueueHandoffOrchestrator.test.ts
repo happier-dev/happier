@@ -16,11 +16,11 @@ const completedTerminalState = {
 } as const;
 
 describe('pendingQueueHandoffOrchestrator', () => {
-  it('lets remote idle mode materialize pending rows through the existing remote prompt loop', () => {
+  it.each([false, true])('lets Home select the pending action while remoteTurnInFlight=%s', remoteTurnInFlight => {
     expect(
       resolvePendingQueueHandoff({
         currentMode: 'remote',
-        remoteTurnInFlight: false,
+        remoteTurnInFlight,
         terminalTopology: 'exclusive',
         terminalTurnState: { state: 'idle', confidence: 'definite' },
         pendingCount: 1,

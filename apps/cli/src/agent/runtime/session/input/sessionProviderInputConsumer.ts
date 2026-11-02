@@ -518,6 +518,7 @@ export function createSessionProviderInputConsumer<Mode, Message>(
   };
 
   return {
+    notifyInputReadinessChanged: notifyAdmissionChanged,
     async readLiveWork(): Promise<SessionInputLiveWork> {
       let pendingKnown = false;
       let pendingActive = false;
