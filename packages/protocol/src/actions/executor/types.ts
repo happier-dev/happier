@@ -1176,8 +1176,18 @@ export type PluginSettingsAdministrationActionRequest = Readonly<{
 }>;
 
 export type ActionExecutorDeps = Readonly<{
+  /** The same target-daemon loaders serve finite Actions and demanded Resources. */
+  machineServiceAction?: (args: Readonly<{
+    actionId: import('../specs/machine/services.js').MachineServiceActionId;
+    input: import('../specs/machine/services.js').MachineServiceActionInput;
+    context: ActionExecutorContext;
+    signal?: AbortSignal;
+  }>) => Promise<unknown>;
+
   deploymentAction?: (actionId: DeploymentTransportActionIdV1, input: DeploymentActionInputV1,
-    context: ActionExecutorContext) => Promise<DeploymentActionOutputV1 | ActionApprovalRequestCreatedResult | ActionExecuteFailure>;
+    context: ActionExecutorContext,
+    creationReview?: import('../../deployments/deploymentActionsV1.js').DeploymentEnvironmentCreationReviewV1,
+  ) => Promise<DeploymentActionOutputV1 | ActionApprovalRequestCreatedResult | ActionExecuteFailure>;
   resolveEnvironmentApprovalScope?: (args: Readonly<{
     actionId: ActionId;
     input: unknown;
@@ -2855,6 +2865,18 @@ export type ActionExecutorDeps = Readonly<{
   }>) => Promise<unknown>;
 
   /** Read Machine samples/history and compose Account summaries through the existing scoped transports. */
+  /** Receiving daemon proves the service's scope before shared Action approval. */
+  machineServiceScope?: (args: Readonly<{
+    actionId?: 'machines.services.control' | 'machines.services.logs.read';
+    input: Readonly<{ serverId: string; machineId: string; serviceId: string; expectedGeneration?: string }>;
+    context: ActionExecutorContext;
+  }>) => Promise<import('../actionSettings.js').ActionApprovalScopeV1 | Extract<ActionExecuteResult, { ok: false }> | null>;
+  machineServiceControl?: (args: Readonly<{
+    input: import('../specs/machine/services.js').MachineServiceControlInputV1;
+    context: ActionExecutorContext;
+    approvalScope?: import('../actionSettings.js').ActionApprovalScopeV1;
+    signal?: AbortSignal;
+  }>) => Promise<unknown>;
   machineVitalsAction?: (args: Readonly<{
     actionId: MachineVitalsActionId;
     input: MachineVitalsActionInput;

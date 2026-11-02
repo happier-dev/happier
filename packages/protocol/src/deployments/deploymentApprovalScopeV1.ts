@@ -1,6 +1,35 @@
-import type { ActionExecutorDeps, ActionExecuteFailure } from '../actions/executor/types.js';
+import type { ActionExecutorContext, ActionExecutorDeps, ActionExecuteFailure } from '../actions/executor/types.js';
+import { artifactSavedByFromActionContextV1 } from '../artifacts/artifactBinaryV1.js';
 import { readRecord } from '../inputs/inputRecords.js';
 import { DeploymentEnvironmentGetResultV1Schema, DeploymentReceiptGetResultV1Schema } from './deploymentActionsV1.js';
+
+type EnvironmentApprovalRead = Readonly<{
+  serverId: string; environmentId: string; context: ActionExecutorContext;
+  read: NonNullable<ActionExecutorDeps['deploymentAction']>;
+}>;
+
+async function readApprovalEnvironment(input: EnvironmentApprovalRead) {
+  const loaded = await input.read('deployments.environments.get', { serverId: input.serverId, environmentId: input.environmentId }, input.context);
+  if ('errorCode' in loaded) return loaded;
+  const current = DeploymentEnvironmentGetResultV1Schema.safeParse(loaded);
+  if (!current.success) return failure('invalid_action_output');
+  if (!current.data.ok) return failure(current.data.error);
+  if (input.context.signal?.aborted) return failure('cancelled');
+  if (current.data.environment.id !== input.environmentId) return failure('deployment_unavailable');
+  return { ok: true as const, environment: current.data.environment };
+}
+
+/** Initial authoring choice only; saved consent and its readers never call this. */
+export async function resolveInitialDeploymentApprovalV1(input: Omit<EnvironmentApprovalRead, 'read'> & Readonly<{
+  mode?: 'automatic' | 'ask';
+  read?: EnvironmentApprovalRead['read'];
+}>): Promise<Readonly<{ ok: true; mode: 'automatic' | 'ask' }> | ActionExecuteFailure> {
+  if (input.mode !== undefined) return { ok: true, mode: input.mode };
+  if (artifactSavedByFromActionContextV1(input.context)?.kind !== 'person') return { ok: true, mode: 'ask' };
+  if (!input.read) return failure('target_unavailable');
+  const current = await readApprovalEnvironment({ ...input, read: input.read });
+  return current.ok ? { ok: true, mode: current.environment.protection === 'production' ? 'ask' : 'automatic' } : current;
+}
 
 /** The same exact admitted metadata read serves CLI, daemon and UI policy preparation. */
 export function createDeploymentApprovalScopeResolverV1(
@@ -33,20 +62,17 @@ export function createDeploymentApprovalScopeResolverV1(
       environmentId = receipt.data.deployment.environmentId;
     }
     if (!environmentId) return failure('invalid_parameters');
-    const loaded = await read('deployments.environments.get', { serverId, environmentId }, context);
-    if ('errorCode' in loaded) return loaded;
-    const current = DeploymentEnvironmentGetResultV1Schema.safeParse(loaded);
-    if (!current.success) return failure('invalid_action_output');
-    if (!current.data.ok) return failure(current.data.error);
-    if (context.signal?.aborted) return failure('cancelled');
-    const environment = current.data.environment;
-    if (environment.id !== environmentId) return failure('deployment_unavailable');
+    const current = await readApprovalEnvironment({ read, serverId, environmentId, context });
+    if (!current.ok) return current;
+    const environment = current.environment;
     if ((actionId === 'deployments.prepare' || actionId === 'deployments.templates.instantiate')
       && environment.projectSourceId !== target.projectSourceId) return failure('deployment_access_denied');
-    // The storage owner admits retained history and refuses effects on tombstones.
-    // P44 must prove the current child/template Source/provenance and exact head.
-    // Its absent relation producer cannot silently turn a preview into an ordinary scope.
-    if (environment.purpose === 'preview') return failure('deployment_unavailable');
+    // The metadata owner admits the non-content child/template relation.
+    // All previews spend the template's live preference, never a copied waiver.
+    if (environment.purpose === 'preview') {
+      if (!environment.previewTemplateEnvironmentId) return failure('deployment_unavailable');
+      return { scope: { kind: 'environment', environmentId: environment.previewTemplateEnvironmentId } };
+    }
     return { scope: { kind: 'environment', environmentId: environment.id } };
   };
 }

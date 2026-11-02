@@ -410,7 +410,7 @@ export interface ManagedServiceHandle extends Disposable {
     request(request: ManagedServiceRequest): Promise<ManagedServiceResponse>;
     stop(
         options?: PluginCancellationOptions,
-    ): Promise<Readonly<{ status: 'stopped' | 'detached' }>>;
+    ): Promise<Awaited<ReturnType<ManagedServiceNativeLifecycleV1['stop']>> | Readonly<{ status: 'detached' }>>;
     dispose(): Promise<void>;
 }
 

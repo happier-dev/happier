@@ -1265,3 +1265,5 @@ export function listDeclaredPluginContributionFamilies(
     .filter((entry) => entry.readEntries(contributes).length > 0)
     .map((entry) => entry.manifestKey));
 }
+
+export { AccessProviderRefV1Schema, type AccessProviderRefV1 } from './accessProviders.js';

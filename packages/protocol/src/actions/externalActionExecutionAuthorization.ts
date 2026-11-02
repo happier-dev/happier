@@ -206,3 +206,5 @@ export function verifyExternalActionMachineRequestV1(input: MachineRequest & Rea
     return verifyEd25519Signature(machineRequestBytes(input), signature, publicKey);
   } catch { return false; }
 }
+
+export type { DeploymentChildExecutionProofV1 } from '../deployments/deploymentChildExecutionProofV1.js';

@@ -4,7 +4,7 @@ import { lazyZodSchema } from '../../lazyZodSchema.js';
 const id = lazyZodSchema(() => z.string().check(z.minLength(1)));
 
 /** Stable service identity, independent of actor, release and Deployment receipt. */
-export const MachineServiceIdentityV1Schema = lazyZodSchema(() => z.strictObject({
+export const MachineDeploymentServiceIdentityV1Schema = lazyZodSchema(() => z.strictObject({
   kind: z.literal('deployment'),
   machineId: id,
   environmentId: id,
@@ -16,6 +16,9 @@ export const MachineServiceIdentityV1Schema = lazyZodSchema(() => z.strictObject
     ctx.addIssue({ code: 'custom', path: ['serviceId'], message: 'Service id must match its admitted Environment instance and Compose service.' });
   }
 })));
+export type MachineDeploymentServiceIdentityV1 = z.infer<typeof MachineDeploymentServiceIdentityV1Schema>;
+
+export const MachineServiceIdentityV1Schema = MachineDeploymentServiceIdentityV1Schema;
 export type MachineServiceIdentityV1 = z.infer<typeof MachineServiceIdentityV1Schema>;
 
 /** C1 owns occurrence encoding; this owner supplies only the canonical service tuple. */

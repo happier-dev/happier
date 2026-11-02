@@ -9899,3 +9899,25 @@ export * from './deployments/storedAppInputV1.js';
 export * from './machines/agentIsolationV1.js';
 export * from './machines/adminAccessV1.js';
 export * from './deployments/deploymentChildRpcV1.js';
+
+export * from './deployments/deploymentActionsV1.js';
+
+export { createDeploymentApprovalScopeResolverV1, resolveInitialDeploymentApprovalV1 } from './deployments/deploymentApprovalScopeV1.js';
+
+export { ScmCommitOidSchema } from './scm/commitPublication.js';
+
+export * from './machines/machineServiceWatchesV1.js';
+
+export * from './local/services/serviceIdentityV1.js';
+
+export * from './projects/projectDeploymentDefaultsV1.js';
+
+export * from './projects/deploymentCreationDefaultsV1.js';
+
+export * from './artifacts/deploymentArtifactKindsV1.js';
+
+export * from './deployments/deploymentBindingPatchV1.js';
+
+export * from './plugins/contributions/backupDestinations.js';
+
+export * from './plugins/contributions/deploymentTemplates.js';

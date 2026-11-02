@@ -65,6 +65,7 @@ export function registerDaemonLocalServicePreviewSnapshotHandler(
         const resolved = options.projectManagedServices.resolveProjectService(request.target);
         if (resolved.status !== 'found') return reply(refused, 'service_target_unresolved');
         const handle = resolved.handle;
+        if (handle.kind !== 'workspace') return reply(refused, 'workspace_service_required');
         const current = () => {
             const latest = options.projectManagedServices?.resolveProjectService(request.target);
             return !context.signal.aborted && !handle.retirementSignal.aborted && handle.isCurrent()

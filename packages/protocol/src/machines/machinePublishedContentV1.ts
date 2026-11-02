@@ -1,3 +1,4 @@
+import { MachineServiceWatchesV1Schema } from './machineServiceWatchesV1.js';
 import { z } from 'zod/mini';
 
 import { lazyZodSchema } from '../lazyZodSchema.js';
@@ -25,6 +26,7 @@ export const MachinePublishedMetadataV1Schema = lazyZodSchema(() => z.strictObje
   devcontainerChild: z.optional(DevcontainerChildProjectionV1Schema),
   finitePolicyV1: z.optional(MachineFinitePolicyV1Schema),
   resourcesPolicyV1: z.optional(MachineResourcesPolicyV1Schema),
+  serviceWatchesV1: z.optional(MachineServiceWatchesV1Schema),
   host: z.string(),
   platform: z.string(),
   happyCliVersion: z.string(),

@@ -140,3 +140,8 @@ export function projectOpenUsageNoticeHeaderV1(header: AccountNoticeArtifactHead
     ? { v: 1, kind: USAGE_NOTICE_ARTIFACT_KIND_V1, title: header.title, status: header.status, notice: header.notice,
       ...(header.excerpt === undefined ? {} : { excerpt: header.excerpt }) } : null;
 }
+
+export { DeploymentHealthStatusV1Schema, DeploymentHealthRoleV1Schema, DeploymentHealthRoleEvidenceV1Schema,
+  DeploymentHealthMemberV1Schema, DeploymentEnvironmentHealthAggregateV1Schema,
+  type DeploymentHealthStatusV1, type DeploymentHealthRoleV1, type DeploymentHealthRoleEvidenceV1,
+  type DeploymentHealthMemberV1, type DeploymentEnvironmentHealthAggregateV1 } from '../deployments/environmentHealthV1.js';

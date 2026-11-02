@@ -70,7 +70,8 @@ describe('native lifecycle-only invocation recovery', () => {
             },
         };
         const createInvocationContext: ProjectNativeAdapterInvocationContextFactoryV1 = input => {
-            const lifetime = createPluginInvocationLifetime(input.signal);
+                    if (input.root === undefined) throw new Error('Expected workspace invocation');
+                    const lifetime = createPluginInvocationLifetime(input.signal);
             const seed = { plugin: { id: pluginId, version: '1.0.0' },
                 contribution: { id: 'native', qualifiedId: `${pluginId}/projectNativeAdapters/native` },
                 occurrenceId: input.occurrenceId, correlationId: 'native-recovery-test', surface: 'cli' as const,

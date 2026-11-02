@@ -1,3 +1,7 @@
+import type { DeploymentSourceMaterializationV1 } from '@happier-dev/plugin-sdk/services';
+import type { EnvironmentProjectManagedServiceHandle } from '@/plugins/runtime/invocation/services/managedServicesOwner';
+import type { NativeComposeObservationIo, NativeComposeActivatedProject } from './nativeComposeLifecycle';
+import type { MachineNativeEffectKey } from './machineNativeEffectAdmission';
 import type { ManagedServiceNativeInstanceV1, ManagedServiceNativeLogReadV1, ManagedServiceNativeLogWatchV1, ManagedServiceNativeLogResultV1 } from '@happier-dev/plugin-sdk/managed-services';
 import type { Disposable } from '@happier-dev/plugin-sdk';
 import { createHash } from 'node:crypto';
@@ -53,6 +57,52 @@ export type ProjectServiceDeclarationStarterInput = Readonly<{
     resolveRuntime(ingress: RpcHandlerContext): Promise<ProjectFiniteActionRuntime | null>;
     acquirePluginRuntime(): Promise<PluginRuntimeLease>;
 }>;
+
+/** One already-activated project produces N observations, never N native starts. */
+export async function produceEnvironmentProjectServices(input: Readonly<{
+    owner: Pick<ReturnType<typeof createManagedServicesOwner>, 'superviseProject'>;
+    serverId: string;
+    release: DeploymentSourceMaterializationV1;
+    specIdentity: string;
+    signal?: AbortSignal;
+    isCurrent(): boolean;
+    nativeEffects: Readonly<{ keys: readonly MachineNativeEffectKey[]; settleNative?: () => Promise<void> }>;
+    io: NativeComposeObservationIo;
+    project: Pick<NativeComposeActivatedProject, 'composeArgs' | 'services' | 'nativeIdsForService' | 'authorizeServiceObserver'> & Readonly<{
+        /** Cold observation cannot reconstruct the secret-bearing activation render. */
+        nativeFactsForService(composeService: string): ReturnType<NativeComposeActivatedProject['nativeFactsForService']> | undefined;
+    }>;
+}>): Promise<readonly EnvironmentProjectManagedServiceHandle[]> {
+    const handles: EnvironmentProjectManagedServiceHandle[] = [];
+    const nativeProject = input.nativeEffects.keys.find(key => key.kind === 'composeProject');
+    for (const composeService of input.project.services) {
+        input.signal?.throwIfAborted();
+        await input.release.assertCurrent();
+        const native = createNativeComposeLifecycle({ args: input.project.composeArgs, io: input.io,
+            retainLaunch: () => input.project.authorizeServiceObserver(),
+            engineId: nativeProject?.dockerEndpoint,
+            environment: { composeService, containerIds: input.project.nativeIdsForService(composeService), facts: input.project.nativeFactsForService(composeService) } });
+        const launch = input.project.authorizeServiceObserver();
+        let released: Promise<void> | undefined;
+        const releaseObservation = () => released ??= Promise.resolve().then(() => launch.release());
+        let transferred = false;
+        try {
+            native.bindLaunch(launch);
+            const handle = await input.owner.superviseProject({ kind: 'environment', serverId: input.serverId,
+                machineId: input.release.machineId, environmentId: input.release.environmentId,
+                environmentInstanceId: input.release.environmentInstanceId, deploymentId: input.release.deploymentId,
+                release: input.release, composeService, serviceId: `${input.release.environmentInstanceId}/${composeService}`,
+                specIdentity: input.specIdentity, signal: input.signal, isCurrent: input.isCurrent,
+                nativeEffects: input.nativeEffects, releaseObservation,
+                processSpec: { mode: { kind: 'native', builtinLifecycle: native.lifecycle } },
+            });
+            if (handle.kind !== 'environment') throw new Error('environment_service_witness_mismatch');
+            transferred = true;
+            handles.push(handle);
+        } finally { if (!transferred) await releaseObservation(); }
+    }
+    return handles;
+}
 
 type Review = Readonly<{
     kind: 'target';
@@ -730,7 +780,7 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
             const builtinNative = current.builtinNative;
             const releaseNativeLifecycle = current.releaseNativeLifecycle;
             context.operationProgress?.update({ phase: 'starting', label: 'Starting service' });
-            const handle = await registry.projectManagedServices.superviseProject({ workspace: current.plan.workspace, declaration: current.declaration,
+            const handle = await registry.projectManagedServices.superviseProject({ kind: 'workspace', workspace: current.plan.workspace, declaration: current.declaration,
                 cwd: current.command.kind === 'literal' ? current.command.cwd : current.command.resolution.cwd,
                 requester: { serverId: current.runtime.serverId, accountId: ingress.machineAdmission!.actorAccountId,
                     machineId: ingress.machineAdmission!.machineId, installationId: ingress.machineAdmission!.installationId },
@@ -796,6 +846,7 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
         finally { if (!uncertain) await Promise.all([...nativeInvocations].map(production => production.release())); await lease?.release(); }
     }
     const restartManagedService: RestartProjectManagedService = async (request, handle, execution) => {
+        if (handle.kind !== 'workspace') return { status: 'denied', reasonCode: 'workspace_service_required' };
         if (!execution.prepareStartAction) return { status: 'denied', reasonCode: 'managed_service_restart_admission_required' };
         const start: DaemonLocalServiceLauncherStartRequestV1 = {
             ...buildProjectManagedServiceStartRequest(handle),

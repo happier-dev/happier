@@ -12,6 +12,7 @@ export type LiveWorkItemV1 = Readonly<{
     // supplies the actual canonical process/operation and terminal references.
     ownerRef: unknown;
     attribution: RequesterWorkAttributionV1 | Readonly<{ kind: 'unknown' }>;
+    lifecyclePurpose?: 'development' | 'deployment' | 'infrastructure';
     state: 'active' | 'settled' | 'unknown';
     /** Owner-reported anchor; never reconstructed from daemon uptime. */
     settledAt?: number;

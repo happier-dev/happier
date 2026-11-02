@@ -254,7 +254,7 @@ export type PluginInvocationServiceBinding = Readonly<{
 
 export type PluginFileSystemRoots = Readonly<{
     pluginData: string;
-    workspace: string;
+    workspace?: string;
     projects: ReadonlyMap<string, string>;
 }>;
 

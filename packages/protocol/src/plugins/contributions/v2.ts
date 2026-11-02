@@ -1115,3 +1115,9 @@ export {
   type PluginBrowserActionContributionV1,
   type PluginBrowserTargetContributionV1,
 } from './browser/v1.js';
+
+export * from './deploymentTargets.js';
+
+export * from './deploymentTargetRolesV1.js';
+
+export { DeploymentStepV1Schema } from '../../deployments/deploymentStateV1.js';

@@ -672,9 +672,11 @@ describe('target activation publication', () => {
         const selectedFactories: NonNullable<ProjectFiniteActionRuntime['plugins']> = { resolveProjectNativeAdapter(reference, role) {
             return resolveProjectNativeAdapter({ reference, role, targets, registry,
             createInvocationContext(input) {
+                if (input.root === undefined) throw new Error('Expected workspace invocation');
                 const target = targets.find(candidate => occurrenceIds.get(candidate.pluginId) === input.occurrenceId)!;
                 const localId = target.pluginId === commandAdapter.pluginId ? commandAdapter.localId : pixiAdapter.localId;
-                const lifetime = createPluginInvocationLifetime(input.signal);
+                if (input.root === undefined) throw new Error('Expected workspace invocation');
+                    const lifetime = createPluginInvocationLifetime(input.signal);
                 const observation = { signal: lifetime.signal };
                 if (target.pluginId === pixiAdapter.pluginId) environmentInvocations.push(observation);
                 else commandInvocations.push(observation);
@@ -1050,6 +1052,7 @@ describe('target activation publication', () => {
             expect(registry.targetRegistrations).toEqual([expect.objectContaining({ pluginId, registration: expect.objectContaining({ family: 'projectNativeAdapters', localId: 'pixi' }) })]);
             const selected = await resolveProjectNativeAdapter({ reference: instance.adapter, role: 'resolveCommand', targets: contributes.activationTargets, registry,
                 createInvocationContext(input) {
+                    if (input.root === undefined) throw new Error('Expected workspace invocation');
                     const lifetime = createPluginInvocationLifetime(input.signal);
                     const seed = { plugin: { id: pluginId, version: '1.0.0' },
                         contribution: { id: 'pixi', qualifiedId: `${pluginId}/projectNativeAdapters/pixi` },

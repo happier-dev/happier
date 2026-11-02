@@ -301,3 +301,17 @@ export async function inspectProjectImportCandidates(input: Readonly<{
     }
     return candidates;
 }
+
+export type ProjectNativeEnvironmentSelection = Readonly<{
+    environmentInstanceId: string;
+    services: readonly string[];
+    physicalProjectName?: string;
+}>;
+
+/** Environment custody supplies the physical name; actors, releases and services do not. */
+export function resolveEnvironmentComposeProjectName(environment: ProjectNativeEnvironmentSelection): string {
+    const project = environment.physicalProjectName
+        ?? `happier-${createHash('sha256').update(environment.environmentInstanceId).digest('hex')}`;
+    if (!environment.environmentInstanceId || !/^[a-z0-9][a-z0-9_-]*$/u.test(project)) throw new Error('native_compose_project_invalid');
+    return project;
+}

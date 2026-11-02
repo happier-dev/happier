@@ -612,7 +612,7 @@ export type ResolvedExecutablePluginRuntimeRegistry = Readonly<{
     ): Promise<ResolvedPluginExecutable>;
     /** Host-private Project supervision/control; the SDK remains plugin-scoped. */
     projectManagedServices: Pick<ReturnType<typeof createManagedServicesOwner>,
-        'superviseProject' | 'stopForAccessLoss' | 'resolveProjectService' | 'listProjectServices' | 'activity' | 'readProcessRoots' | 'readResourceTargets'>;
+        'resolveEnvironmentService' | 'machineServiceRows' | 'superviseMachine' | 'listMachineServices' | 'retireMachineServices' | 'resolveNativeService' | 'restoreEnvironmentServices' | 'superviseProject' | 'stopForAccessLoss' | 'resolveProjectService' | 'listProjectServices' | 'activity' | 'readProcessRoots' | 'readResourceTargets'>;
     /** Reads the retained daemon custody owner without activating a contribution. */
     readSharedProviderGatewayRuntime?: ReturnType<typeof createManagedServicesOwner>['readSharedProviderGatewayRuntime'];
     /** Transfers the same generic Project/shared Provider custody at publication. */
@@ -7635,7 +7635,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
                         });
                         if (!hostAccessRequests) throw new Error('Native adapter HostAccess is unavailable');
                         const services = invocationServiceOwners.createOperationServices(seed, {
-                            filesystemRoots: { pluginData: join(pluginStorePaths.storageDir, reference.pluginId, 'fs'), workspace: input.root, projects: new Map() },
+                            filesystemRoots: { pluginData: join(pluginStorePaths.storageDir, reference.pluginId, 'fs'), ...(input.machine ? {} : { workspace: input.root }), projects: new Map() },
                             hostAccessRequests, environment: input.environment,
                         });
                         return { context: { plugin: seed.plugin, contribution: seed.contribution, surface: seed.surface,

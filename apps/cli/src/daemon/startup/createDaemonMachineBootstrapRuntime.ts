@@ -547,6 +547,7 @@ export function createDaemonMachineBootstrapRuntime(
           await apiMachine.enqueueSessionPendingByMachine(request, options),
         machineActionDirectTargetTransport: {
           machineId: registeredMachine.id,
+          machineServiceAction: request => apiMachine.executeMachineServiceAction(request),
           invoke: async (method, request, options) => await apiMachine.invokeLocalMachineAction(method, request, options),
         },
       });
@@ -624,6 +625,7 @@ export function createDaemonMachineBootstrapRuntime(
               await automationApiMachine.enqueueSessionPendingByMachine(request, options),
             machineActionDirectTargetTransport: {
               machineId: runtimeMachineId,
+              machineServiceAction: request => automationApiMachine.executeMachineServiceAction(request),
               invoke: async (method, request, options) => {
                 const local = options?.localActionContext;
                 if (!local?.executionRunWorkflowRunId) return await automationApiMachine.invokeLocalMachineAction(method, request, options);

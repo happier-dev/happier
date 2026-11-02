@@ -30,7 +30,7 @@ async function startRequesterWorker(
   nativeLifecycle?: ManagedServiceNativeLifecycleV1,
 ) {
   const root = process.cwd();
-  return await owner.superviseProject({
+  return await owner.superviseProject({ kind: 'workspace',
     workspace: { id: 'workspace-a', serverId: 'home', machineId: 'machine-a', rootPath: root, createdAtMs: 1 },
     declaration: { workspaceRefId: 'workspace-a', selection: { kind: 'manifest', name: 'worker' } },
     requester: { serverId: 'home', accountId: 'bob', machineId: 'machine-a', installationId: 'installation-a' },

@@ -198,7 +198,7 @@ describe('daemon local-services runtime action executor', () => {
         const workspace = { id: 'workspace_1', serverId: 'home', machineId: 'machine_1', rootPath: process.cwd(), createdAtMs: 1 };
         const declaration = { workspaceRefId: workspace.id, selection: { kind: 'manifest' as const, name: 'web' } };
         let stopped = false;
-        const handle = await owner.superviseProject({ workspace, declaration, cwd: workspace.rootPath,
+        const handle = await owner.superviseProject({ kind: 'workspace', workspace, declaration, cwd: workspace.rootPath,
             serviceId: 'web', specIdentity: 'web', isCurrent: () => true,
             requester: { serverId: 'home', accountId: 'starter', machineId: 'machine_1', installationId: 'installation' },
             processSpec: { mode: { kind: 'native',

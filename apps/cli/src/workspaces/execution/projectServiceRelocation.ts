@@ -10,7 +10,7 @@ import { isLocalServiceStateRunningV1, type DaemonLocalServiceLauncherStartRespo
 
 import type { ManagedServiceProcessStopResult } from '@/plugins/runtime/invocation/services/managedProcessSupervisor';
 import type { ActionOperationProgressUpdate, ActionOperationOwnerUpdate } from '@/daemon/actionOperations/actionOperationTypes';
-import type { ProjectManagedServiceWitness } from '@/plugins/runtime/invocation/services/managedServicesOwner';
+import type { WorkspaceProjectManagedServiceWitness } from '@/plugins/runtime/invocation/services/managedServicesOwner';
 import { isWorkspacePathWithin } from '@/daemon/local/services/inventory/provenance';
 import { projectActionOperationFailure } from '@/daemon/actionOperations/actionOperationFailure';
 
@@ -21,8 +21,8 @@ type Refusal = Readonly<{ status: 'refused'; reasonCode: string; error?: string 
 export interface ProjectServiceRelocationPorts {
   readService(input: ProjectServiceRelocateInputV1, signal?: AbortSignal): Promise<Refusal | Readonly<{
     status: 'resolved'; execution: 'primary' | 'portable';
-    currentTarget: ManagedTarget & Pick<ProjectManagedServiceWitness, 'declaration' | 'cwd'> & Readonly<{ workspaceId: string }>;
-    workspace: ProjectManagedServiceWitness['workspace'];
+    currentTarget: ManagedTarget & Pick<WorkspaceProjectManagedServiceWitness, 'declaration' | 'cwd'> & Readonly<{ workspaceId: string }>;
+    workspace: WorkspaceProjectManagedServiceWitness['workspace'];
     instanceId: string; snapshot: Pick<ManagedServiceSnapshot, 'state'>;
   }>>;
   resolveDestination(input: ProjectServiceRelocateInputV1, signal?: AbortSignal): Promise<Refusal | Readonly<{
@@ -35,7 +35,7 @@ export interface ProjectServiceRelocationPorts {
   /** Must be production handoffPrepareBetween: it routes to the real Sync controller. */
   handoffPrepareBetween(request: WorkspaceSyncPrepareBetweenRequestV1, signal?: AbortSignal): Promise<WorkspaceSyncPrepareBetweenResultV1>;
   startService(input: ProjectServiceRelocateInputV1 & Readonly<{
-    currentTarget: ManagedTarget & Pick<ProjectManagedServiceWitness, 'declaration'>;
+    currentTarget: ManagedTarget & Pick<WorkspaceProjectManagedServiceWitness, 'declaration'>;
   }>, destination: WorkspaceRefV1, signal?: AbortSignal): Promise<Readonly<
     Pick<DaemonLocalServiceLauncherStartResponseV1, 'status' | 'currentTarget' | 'reasonCode'>
   >>;

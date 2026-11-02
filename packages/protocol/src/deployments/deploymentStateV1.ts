@@ -8,6 +8,11 @@ export const DeploymentStateV1Schema = lazyZodSchema(() => z.enum([
 ]));
 export type DeploymentStateV1 = z.infer<typeof DeploymentStateV1Schema>;
 
+/** P40-R13: only effecting receipts occupy the slot; unknown outcomes remain readable history. */
+export function deploymentInProgressStates(): string[] {
+    return ['queued', 'running'];
+}
+
 export const DeploymentStepV1Schema = lazyZodSchema(() => z.strictObject({
     id, label: z.string().check(z.trim(), z.minLength(1)),
     state: z.enum(['pending', 'running', 'succeeded', 'failed', 'skipped', 'cancelled', 'outcome_unknown']),

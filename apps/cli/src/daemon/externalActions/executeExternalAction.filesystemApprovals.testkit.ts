@@ -981,7 +981,7 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
       onTestFinished(() => finishStop());
       // Native lifecycle IO only: hold the physical Stop acknowledgement until
       // the accepted approval has returned and its ingress custody is disposed.
-      const handle = await pluginRuntime.registry.projectManagedServices.superviseProject({ workspace: ref,
+      const handle = await pluginRuntime.registry.projectManagedServices.superviseProject({ kind: 'workspace', workspace: ref,
         declaration: { workspaceRefId: ref.id, selection: { kind: 'manifest', name: 'web' } },
         cwd: ref.rootPath, serviceId: 'web', specIdentity: 'web', execution: 'portable', isCurrent: () => true,
         requester: { serverId: homeId, accountId: 'account', machineId: ref.machineId, installationId: sourceInstallation.installationId },

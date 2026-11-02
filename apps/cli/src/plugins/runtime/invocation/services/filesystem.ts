@@ -1,3 +1,4 @@
+import type { PluginFileSystemRoots } from './types';
 import { createHash, randomUUID } from 'node:crypto';
 import { lstat, mkdir, open, readdir, realpath, rename, rm, stat as nodeStat, unlink } from 'node:fs/promises';
 import { dirname, isAbsolute, resolve } from 'node:path';
@@ -82,14 +83,14 @@ export function isPluginPathCoveredByDisclosure(
 }
 
 export function resolvePluginPathWithinRoots(
-  roots: Readonly<{ pluginData: string; workspace: string; projects: ReadonlyMap<string, string> }>,
+  roots: PluginFileSystemRoots,
   path: PluginPath,
 ): string {
   const relativePath = normalizedRelativePath(path.relativePath);
   const rawRoot = path.root === 'pluginData'
     ? roots.pluginData
     : path.root === 'workspace'
-      ? roots.workspace
+      ? roots.workspace ?? fail('plugin_fs_root_unavailable', 'Workspace root is unavailable')
       : roots.projects.get(path.projectId) ?? fail('plugin_fs_root_unavailable', 'Project root is unavailable');
   const root = resolve(rawRoot);
   const candidate = resolve(root, relativePath);
@@ -98,7 +99,7 @@ export function resolvePluginPathWithinRoots(
 }
 
 export async function isCanonicalPathAuthorizedByPluginFileSystemScopes(params: Readonly<{
-  roots: Readonly<{ pluginData: string; workspace: string; projects: ReadonlyMap<string, string> }>;
+  roots: PluginFileSystemRoots;
   scopes: readonly PluginFileSystemScope[];
   canonicalPath: string;
   access: Access;
@@ -158,7 +159,7 @@ function validateReadLimit(maxBytes: number | undefined): number {
 }
 
 export function createPluginFileSystemService(params: Readonly<{
-  roots: Readonly<{ pluginData: string; workspace: string; projects: ReadonlyMap<string, string> }>;
+  roots: PluginFileSystemRoots;
   scopes: readonly PluginFileSystemScope[];
   signal: AbortSignal;
   isOccurrenceCurrent(): boolean;
@@ -170,7 +171,7 @@ export function createPluginFileSystemService(params: Readonly<{
   }
   function rootFor(path: PluginPath): string {
     if (path.root === 'pluginData') return params.roots.pluginData;
-    if (path.root === 'workspace') return params.roots.workspace;
+    if (path.root === 'workspace') return params.roots.workspace ?? fail('plugin_fs_root_unavailable', 'Workspace root is unavailable');
     return params.roots.projects.get(path.projectId) ?? fail('plugin_fs_root_unavailable', 'Project root is unavailable');
   }
   function resolveOperationPath(path: PluginPath, access: Access): { root: string; relativePath: string } {

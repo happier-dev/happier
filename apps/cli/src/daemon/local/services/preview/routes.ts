@@ -192,6 +192,7 @@ export function createLocalServicePreviewRoutes(input: Readonly<{
                 if (resolved?.status === 'unknown') return { ok: false, reasonCode: 'unknown_managed_service' };
                 if (resolved?.status !== 'found') return { ok: false, reasonCode: 'preview_target_unresolved' };
                 const handle = resolved.handle;
+                if (handle.kind !== 'workspace') return { ok: false, reasonCode: 'preview_target_unresolved' };
                 const endpoint = readProjectManagedServicePreviewEndpoint(handle);
                 if (!endpoint) return { ok: false, reasonCode: 'preview_target_unresolved' };
                 const existing = listLocalServicePreviewResources(input.registry).find(resource =>

@@ -3,10 +3,16 @@ import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { MachineServiceLogsReadInputV1Schema, ManagedServiceNativeLogResultV1Schema, ManagedServiceUnavailableReasonV1Schema } from '../../../local/services/nativeLogsV1.js';
 export { MachineServiceLogsReadInputV1Schema, type MachineServiceLogsReadInputV1 } from '../../../local/services/nativeLogsV1.js';
 import { ManagedServiceNativeStateV1Schema } from '../../../local/services/nativeStateV1.js';
+import { MachineServiceNativeRuntimeFactsV1Schema, DeploymentReviewServiceV1Schema } from '../../../local/services/nativeRuntimeFactsV1.js';
+export { MachineServiceNativeRuntimeFactsV1Schema, DeploymentReviewServiceV1Schema,
+  type MachineServiceNativeRuntimeFactsV1, type DeploymentReviewServiceV1 } from '../../../local/services/nativeRuntimeFactsV1.js';
 import { MACHINE_SERVICE_FRONTDOOR_ACTION_IDS } from '../../../local/services/actionIdsV1.js';
 import { MachineServiceWatchV1Schema } from '../../../machines/machineServiceWatchesV1.js';
+import { MachineDeploymentServiceIdentityV1Schema } from '../../../local/services/serviceIdentityV1.js';
+import { HealthCheckStatusV1Schema } from '../../../deployments/healthCheckV1.js';
 import { RPC_METHODS } from '../../../rpc/methods.js';
 import type { PreNormalizedActionSpec } from '../../actionSpecs.js';
+import { actionInputServerId } from '../definition.js';
 
 export { MACHINE_SERVICE_ACTION_IDS } from '../../../local/services/actionIdsV1.js';
 export type MachineServiceActionId = typeof MACHINE_SERVICE_FRONTDOOR_ACTION_IDS[number];
@@ -22,6 +28,14 @@ export const MachineServiceRowV1Schema = lazyZodSchema(() => z.strictObject({
   generation: z.nullable(id()), state: z.enum(['starting', 'running', 'detecting', 'healthy', 'unhealthy', 'stopping', 'stopped', 'failed', 'unknown']),
   unavailableReason: z.optional(ManagedServiceUnavailableReasonV1Schema),
   native: z.optional(ManagedServiceNativeStateV1Schema),
+  configuration: z.optional(z.nullable(z.pick(DeploymentReviewServiceV1Schema, { ports: true }))),
+  health: z.optional(z.strictObject({
+    status: HealthCheckStatusV1Schema,
+    observedAtMs: MachineServiceNativeRuntimeFactsV1Schema.shape.observedAt,
+    freshness: MachineServiceNativeRuntimeFactsV1Schema.shape.freshness,
+    reason: z.optional(id()), expectedDown: z.optional(z.literal('stop')),
+  })),
+  deployment: z.optional(z.strictObject({ deploymentId: id(), installationId: id(), service: MachineDeploymentServiceIdentityV1Schema })),
   nativeInstance: z.optional(z.strictObject({
     adapter: MachineServiceWatchV1Schema.shape.adapter,
     nativeResourceId: MachineServiceWatchV1Schema.shape.nativeResourceId,
@@ -34,6 +48,9 @@ export const MachineServiceRowV1Schema = lazyZodSchema(() => z.strictObject({
   if (row.authority === 'machine' && (!row.watchId || !row.watchRevision)) {
     ctx.addIssue({ code: 'custom', path: ['watchId'], message: 'An adopted service carries its current watch identity and revision.' });
   }
+  if (row.deployment && (row.environmentId !== row.deployment.service.environmentId || row.serviceId !== row.deployment.service.serviceId)) {
+    ctx.addIssue({ code: 'custom', path: ['deployment'], message: 'The deployment witness belongs to this exact service row.' });
+  }
 })));
 export type MachineServiceRowV1 = z.infer<typeof MachineServiceRowV1Schema>;
 export const MachineServiceDiscoveryCandidateV1Schema = lazyZodSchema(() => z.strictObject({
@@ -42,7 +59,7 @@ export const MachineServiceDiscoveryCandidateV1Schema = lazyZodSchema(() => z.st
   observation: z.extend(ManagedServiceNativeStateV1Schema, { endpoint: z.nullable(z.string()) }),
 }));
 export type MachineServiceDiscoveryCandidateV1 = z.infer<typeof MachineServiceDiscoveryCandidateV1Schema>;
-export const MachineServicesListInputV1Schema = lazyZodSchema(() => z.strictObject(machineTarget()));
+export const MachineServicesListInputV1Schema = lazyZodSchema(() => z.strictObject({ ...machineTarget(), environmentId: z.optional(id()) }));
 export const MachineServicesDiscoveryInputV1Schema = lazyZodSchema(() => z.strictObject({ ...machineTarget(), adapter: z.optional(MachineServiceWatchV1Schema.shape.adapter) }));
 export const MachineServicesDetailInputV1Schema = lazyZodSchema(() => z.strictObject({ ...machineTarget(), serviceId: id(), expectedGeneration: z.optional(id()) }));
 export const MachineServiceWatchInputV1Schema = lazyZodSchema(() => z.strictObject({
@@ -70,7 +87,8 @@ export const MachineServiceAccountingV1Schema = lazyZodSchema(() => z.discrimina
 export type MachineServiceAccountingV1 = z.infer<typeof MachineServiceAccountingV1Schema>;
 export const MachineServicesDetailResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('service'), service: MachineServiceRowV1Schema,
-    accounting: z.optional(MachineServiceAccountingV1Schema) }), unavailable,
+    accounting: z.optional(MachineServiceAccountingV1Schema),
+    runtimeFacts: z.optional(MachineServiceNativeRuntimeFactsV1Schema) }), unavailable,
 ]));
 export const MachineServiceWatchMutationResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.enum(['applied', 'unchanged', 'conflict']), revision: id(), watch: z.optional(MachineServiceWatchV1Schema) }), unavailable,
@@ -112,6 +130,7 @@ function serviceSpec<const Id extends MachineServiceActionId>(id: Id, title: str
     toolExposure: { agent: 'discoverable_only' }, surfaces: { ui: true, cli: true, agent: true, mcp: true, rpc: true, voice: false },
     bindings: { rpcMethod: rpcMethods[id], mcpToolName: id.replaceAll('.', '_') },
     inputSchema: MACHINE_SERVICE_ACTION_INPUT_SCHEMAS[id], outputSchema: MACHINE_SERVICE_ACTION_OUTPUT_SCHEMAS[id],
+    invocationServerIdForInput: actionInputServerId<(typeof MACHINE_SERVICE_ACTION_INPUT_SCHEMAS)[MachineServiceActionId]>(MACHINE_SERVICE_ACTION_INPUT_SCHEMAS[id], input => input.serverId),
     cli: { acceptsServerId: true, commands: [{ path: id.split('.'), visibility: 'canonical' }] },
     inputHints: { fields: [
       { path: 'serverId', title: 'Home ID', widget: 'text', required: true },

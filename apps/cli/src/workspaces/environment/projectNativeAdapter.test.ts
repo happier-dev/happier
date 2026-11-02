@@ -86,7 +86,8 @@ test.each(['ready', 'environmentOnly', 'environmentOnlyWrapper', 'ordinaryFailed
   try {
     const selected = await resolveProjectNativeAdapter({ reference: pixiAdapter, role: 'produceEnvironment', targets, registry,
       createInvocationContext(input) {
-        const lifetime = createPluginInvocationLifetime(input.signal);
+                    if (input.root === undefined) throw new Error('Expected workspace invocation');
+                    const lifetime = createPluginInvocationLifetime(input.signal);
         const seed = { plugin: { id: pixiAdapter.pluginId, version: plugin.manifest.version },
           contribution: { id: pixiAdapter.localId, qualifiedId: `${pixiAdapter.pluginId}/projectNativeAdapters/${pixiAdapter.localId}` },
           occurrenceId: input.occurrenceId, correlationId: 'native-environment-source-test', surface: 'cli' as const,

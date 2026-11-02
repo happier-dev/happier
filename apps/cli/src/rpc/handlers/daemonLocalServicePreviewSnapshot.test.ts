@@ -116,7 +116,7 @@ describe('daemon local service preview snapshot rpc handler', () => {
                     rootPath: homeDir, createdAtMs: 1 };
                 const declaration = { workspaceRefId: workspace.id, selection: { kind: 'manifest' as const, name: 'web' } };
                 let stopped = false;
-                const handle = await owner.superviseProject({ workspace, declaration, cwd: homeDir,
+                const handle = await owner.superviseProject({ kind: 'workspace', workspace, declaration, cwd: homeDir,
                     serviceId: 'declared-web', specIdentity: 'declared-web', isCurrent: () => true,
                     requester: { serverId: homeId, accountId: 'starter', machineId: workspace.machineId, installationId: 'installation' },
                     // Only the external native process lifecycle is substituted.

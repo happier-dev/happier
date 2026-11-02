@@ -538,7 +538,7 @@ describe('createManagedServiceProcessSupervisorHost', () => {
                 const workspace = { id: 'workspace-one', serverId: 'server-one', machineId: 'machine-one',
                     rootPath: directory, createdAtMs: 1 };
                 const pidsPath = join(directory, 'owned-pids');
-                const handle = await owner.superviseProject({
+                const handle = await owner.superviseProject({ kind: 'workspace',
                     workspace, declaration: { workspaceRefId: workspace.id, selection: { kind: 'manifest', name: 'worker' } },
                     cwd: directory, requester: { serverId: workspace.serverId, accountId: 'requester-one',
                         machineId: workspace.machineId, installationId: 'installation-one' },

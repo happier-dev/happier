@@ -209,6 +209,10 @@ export const ManagedMachineBootstrapApprovalPromptV1Schema = lazyZodSchema(() =>
 ]));
 export const ActionOperationDomainRefV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.strictObject({
+    kind: z.literal('deployment'), serverId: ActionOperationIdentifierV1Schema,
+    environmentId: ActionOperationIdentifierV1Schema, deploymentId: ActionOperationIdentifierV1Schema,
+  }),
+  z.strictObject({
     kind: z.literal('forkRequest'),
     id: ActionOperationIdentifierV1Schema,
     strategy: z.optional(SessionForkStrategySchema),

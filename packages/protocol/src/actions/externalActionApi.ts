@@ -1206,7 +1206,7 @@ export type ExternalActionExecutionAuthorizationV1 = z.infer<typeof ExternalActi
   }>;
 
 /** Optional authenticated auxiliary arm of the incumbent socket RPC request. */
-export const ExternalActionMachineRpcExecutionV1Schema = lazyZodSchema(() => z.strictObject({
+export const ExternalActionMachineRpcSourceExecutionV1Schema = lazyZodSchema(() => z.strictObject({
   v: z.literal(1),
   authorization: ExternalActionExecutionAuthorizationV1Schema,
   effectActionId: ExternalActionActionIdV1Schema,
@@ -1214,6 +1214,7 @@ export const ExternalActionMachineRpcExecutionV1Schema = lazyZodSchema(() => z.s
   installationId: z.string().check(z.trim(), z.minLength(1)),
   machineSignature: z.string().check(z.regex(/^[A-Za-z0-9_-]{86}$/u)),
 }));
+export const ExternalActionMachineRpcExecutionV1Schema = ExternalActionMachineRpcSourceExecutionV1Schema;
 export type ExternalActionMachineRpcExecutionV1 = z.infer<typeof ExternalActionMachineRpcExecutionV1Schema>;
 
 export const EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER = 'x-happier-action-execution-authorization';

@@ -259,7 +259,7 @@ describe('daemon local services machine rpc handlers', () => {
                 const workspace = { id: 'private-workspace', serverId: 'private-home', machineId: 'machine_1',
                     rootPath: root, createdAtMs: 1, projectKey: 'private-project' };
                 const declaration = { workspaceRefId: workspace.id, selection: { kind: 'manifest' as const, name: 'private-web' } };
-                const handle = await owner.superviseProject({
+                const handle = await owner.superviseProject({ kind: 'workspace',
                     workspace, declaration, cwd: root, serviceId: 'private-native-service', specIdentity: 'private-native-effect',
                     requester: { serverId: workspace.serverId, accountId: 'custodian', machineId: workspace.machineId,
                         installationId: 'installation_1' }, isCurrent: () => true,

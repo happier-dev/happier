@@ -1,3 +1,4 @@
+export type { DeploymentSourceMaterializationRequestV1, DeploymentSourceMaterializationV1, DeploymentSourceMaterializationPortV1 } from './deployments.js';
 import type { HealthChecksService } from '../healthCheckKinds.js';
 /** @moduleRealm daemon */
 import type { PluginOperationAvailability } from '../availability.js';

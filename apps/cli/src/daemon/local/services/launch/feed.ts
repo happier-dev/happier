@@ -88,21 +88,27 @@ function sourcePriority(target: LocalServiceLaunchTargetV1): number {
 function managedTarget(handle: ProjectManagedServiceHandle): LocalServiceLaunchTargetV1 {
     const snapshot = handle.snapshot();
     const servingCurrent = handle.isCurrent();
-    const selection = handle.declaration.selection;
-    const unavailableReason = snapshot.state !== 'stopped' && snapshot.nativePhase === 'unknown'
+    const title = handle.kind === 'environment' ? handle.composeService : formatLocalServiceLauncherTitle(
+        handle.declaration.selection.kind === 'manifest' ? handle.declaration.selection.name : handle.declaration.selection.source.target);
+    const active = snapshot.state !== 'stopped' && snapshot.state !== 'failed';
+    const unavailableReason = active && snapshot.nativePhase === 'unknown'
         ? 'managed_service_native_state_unknown'
-        : snapshot.state !== 'stopped' && snapshot.nativePhase === 'stopped'
+        : active && snapshot.nativePhase === 'stopped'
             ? 'managed_service_native_cleanup_unconfirmed' : undefined;
+    const endpointUrl = servingCurrent && !unavailableReason ? snapshot.baseUrl : null;
     return {
         id: handle.serviceId, source: 'managed_service',
         sourceClass: { kind: 'managed_service', managedServiceId: handle.instanceId },
+        ...(handle.kind === 'environment' ? { machineId: handle.machineId, lifecyclePurpose: handle.lifecyclePurpose,
+            environment: { environmentId: handle.environmentId, environmentInstanceId: handle.environmentInstanceId,
+                deploymentId: handle.deploymentId, composeService: handle.composeService } } : {
         machineId: handle.workspace.machineId, workspaceId: handle.workspace.id,
         workspace: { serverId: handle.workspace.serverId, workspaceId: handle.workspace.id,
             machineId: handle.workspace.machineId, rootPath: handle.workspace.rootPath },
         declaration: handle.declaration, cwd: handle.cwd,
-        ...(handle.execution ? { execution: handle.execution } : {}),
-        title: formatLocalServiceLauncherTitle(selection.kind === 'manifest' ? selection.name : selection.source.target),
-        subtitle: handle.cwd, confidence: 'high',
+        ...(handle.execution ? { execution: handle.execution } : {}), startedByAccountId: handle.requester.accountId }),
+        title,
+        ...(handle.kind === 'workspace' ? { subtitle: handle.cwd } : {}), confidence: 'high',
         state: snapshot.state === 'starting' ? 'starting' : 'available',
         serviceState: snapshot.state,
         // The supervisor owns sanitization and retention bounds. Publish only its
@@ -113,12 +119,13 @@ function managedTarget(handle: ProjectManagedServiceHandle): LocalServiceLaunchT
             })) } : {}),
         ...(unavailableReason ? { unavailableReason } : {}),
         ...(snapshot.startedAtMs !== null ? { startedAtMs: snapshot.startedAtMs } : {}),
-        startedByAccountId: handle.requester.accountId,
         endpointKind: handle.endpointKind === 'none' && snapshot.baseUrl ? 'http' : handle.endpointKind,
         ...(snapshot.readiness ? { readiness: snapshot.readiness } : {}),
-        ...(servingCurrent && !unavailableReason && snapshot.baseUrl ? { endpointUrl: snapshot.baseUrl } : {}),
+        ...(endpointUrl ? { endpointUrl } : {}),
         // Serving retirement does not settle native custody. The authenticated
         // Machine control path still owns Stop/retry for that exact occurrence.
+        // The private-preview owner admits Workspace occurrences. Opening one does
+        // not depend on a scanner listener or a pre-existing registration.
         actions: snapshot.state !== 'stopped' ? ['manage'] : [],
     };
 }
@@ -269,8 +276,8 @@ export function createLocalServiceLauncherFeed(
                 ...(workspaceScopePaths?.length === 1 ? { workspaceRoot: workspaceScopePaths[0] } : {}) })
                 : input.projectManagedServices?.listProjectServices() ?? [];
             const managed = handles
-                .filter(handle => (!bindingsOnly || handle.isCurrent()) && handle.workspace.machineId === input.machineId
-                    && (!workspaceScopePaths || workspaceScopePaths.some(root => isWorkspacePathWithin(root, handle.cwd))))
+                .filter(handle => (!bindingsOnly || handle.isCurrent()) && (handle.kind === 'workspace' ? handle.workspace.machineId : handle.machineId) === input.machineId
+                    && (!workspaceScopePaths || handle.kind === 'workspace' && workspaceScopePaths.some(root => isWorkspacePathWithin(root, handle.cwd))))
                 .map(handle => {
                     const nativeTarget = managedTarget(handle);
                     const preview = nativeTarget.endpointUrl ? managedPreviews.get(handle.instanceId) : undefined;

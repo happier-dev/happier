@@ -36,12 +36,15 @@ export async function getMachineMetadataFieldV1<T>(port: MachineMetadataFieldPor
   return result.status === 'ready' ? { ...result, metadataVersion: snapshot.metadataVersion } : result;
 }
 /** Field-semantic clients rebase unrelated edits; revision clients return the first contention. */
+export type MachineMetadataFieldMutationResultV1<T> =
+  | Readonly<{ status: 'conflict' | 'applied' | 'unchanged' | 'satisfied'; policy: T; metadataVersion: number }>
+  | Readonly<{ status: 'cancelled' | 'invalid' | 'unavailable' | 'locked' | 'outcomeUnknown' }>;
 export async function mutateMachineMetadataFieldV1<T>(
   mutation: Readonly<{ expectedMetadataVersion: number; expectedPolicy: T; policy: T; comparison: 'field' | 'revision' }>,
   port: MachineMetadataFieldPortV1,
   definition: MachineMetadataFieldDefinitionV1<T>,
   options?: Readonly<{ signal?: AbortSignal }>,
-) {
+): Promise<MachineMetadataFieldMutationResultV1<T>> {
   if (options?.signal?.aborted) return { status: 'cancelled' as const };
   let snapshot = await readMachineMetadataSnapshotV1(port);
   while (snapshot.status === 'ready') {

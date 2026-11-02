@@ -42,7 +42,7 @@ import {
     authorizeResolvedProjectExecLaunchForHost,
     createProjectNativeEnvironmentIoForHost,
 } from './invocation/services/exec';
-import type { ProjectManagedServiceSupervisionInput } from './invocation/services/managedServicesOwner';
+import type { WorkspaceProjectManagedServiceSupervisionInput } from './invocation/services/managedServicesOwner';
 import { MANAGED_SERVICE_NUMERIC_CONTRACT } from './invocation/services/managedServiceSpecNormalization';
 
 async function loadInstalledManagedServiceFixture(input: Readonly<{
@@ -85,7 +85,8 @@ describe('resolveExecutablePluginRuntimeRegistry managed-services production own
         const controller = createPluginReloadController({ resolveRuntimeRegistry: async () => first });
         const firstLease = await controller.acquireRuntimeRegistry();
         let stoppable = false;
-        const input: ProjectManagedServiceSupervisionInput = {
+        const input: WorkspaceProjectManagedServiceSupervisionInput = {
+            kind: 'workspace',
             workspace: { id: 'workspace-a', serverId: 'home', machineId: 'machine-a', rootPath: happyHomeDir, createdAtMs: 1 },
             declaration: { workspaceRefId: 'workspace-a', selection: { kind: 'manifest', name: 'worker' } },
             requester: { serverId: 'home', accountId: 'bob', machineId: 'machine-a', installationId: 'installation-a' },

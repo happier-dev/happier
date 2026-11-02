@@ -1,3 +1,5 @@
+import { createNativeComposeLifecycle } from '@/daemon/local/services/launch/nativeComposeLifecycle';
+import { projectNativeComposeReview } from '@/workspaces/projectSetup/nativeComposeReview';
 import { Buffer } from 'node:buffer';
 import { EventEmitter } from 'node:events';
 import { createServer, type ServerResponse } from 'node:http';
@@ -38,7 +40,7 @@ import type {
     ManagedProviderRequestAuthCapabilityPathBinding,
     ManagedServiceCredentialFileOwner,
 } from './managedServicesAdapter';
-import { createManagedServicesOwner, type ProjectManagedServiceSupervisionInput } from './managedServicesOwner';
+import { createManagedServicesOwner, type WorkspaceProjectManagedServiceSupervisionInput } from './managedServicesOwner';
 import { createProductionPluginInvocationServiceOwners } from './production';
 import { createLocalServiceActionRoutes } from '@/daemon/local/services/actions/routes';
 import { createLocalServicesDaemonRuntimeActionExecutor } from '@/daemon/local/services/actions/runtimeActionExecutor';
@@ -606,7 +608,7 @@ function createManagedProviderBinding(
 function createProjectLifecycleInput(options: Readonly<{
     isCurrent?: () => boolean;
     signal?: AbortSignal;
-}> = {}): ProjectManagedServiceSupervisionInput {
+}> = {}): WorkspaceProjectManagedServiceSupervisionInput {
     const isCurrent = options.isCurrent ?? (() => true);
     const workspace = {
         id: 'workspace-one', serverId: 'server-one', machineId: 'machine-one',
@@ -621,6 +623,7 @@ function createProjectLifecycleInput(options: Readonly<{
         machineId: workspace.machineId, installationId: 'installation-one',
     };
     return {
+        kind: 'workspace',
         workspace, declaration, requester, cwd: workspace.rootPath,
         serviceId: 'project:workspace-one:manifest:worker',
         specIdentity: 'reviewed-worker-effect',
@@ -1335,8 +1338,7 @@ describe('managed-services SVC09 owner', () => {
             nativeResourceId: 'exact-project-resource',
         };
         // Native resource inspection and termination are genuine external IO.
-        const handle = await owner.superviseProject({
-            ...input,
+        const handle = await owner.superviseProject({ ...input,
             processSpec: {
                 ...input.processSpec,
                 mode: {
@@ -1427,8 +1429,7 @@ describe('managed-services SVC09 owner', () => {
         const inspection = deferred<void>();
         let inspecting = false;
         let stoppable = initiallyStoppable;
-        const establishment = owner.superviseProject({
-            ...input,
+        const establishment = owner.superviseProject({ ...input,
             processSpec: {
                 ...input.processSpec,
                 mode: {
@@ -1487,8 +1488,7 @@ describe('managed-services SVC09 owner', () => {
         const input = createProjectLifecycleInput();
         const toolResolution = deferred<void>();
         let resolving = false;
-        const establishment = owner.superviseProject({
-            ...input,
+        const establishment = owner.superviseProject({ ...input,
             authorizeLaunch: ({ signal }) => authorizeResolvedProjectExecLaunchForHost({
                 signal,
                 assertCurrent() {},
@@ -7108,8 +7108,7 @@ describe('Project Local Services control composition', () => {
         const input = createProjectLifecycleInput();
         let nativeStopped = false;
         try {
-            const handle = await owner.superviseProject({
-                ...input,
+            const handle = await owner.superviseProject({ ...input,
                 processSpec: { ...input.processSpec, mode: { kind: 'native',
                     instance: { adapter: { pluginId: 'acme.native', localId: 'compose' }, nativeResourceId: 'cancellable-control-resource' },
                     // Resource inspection and termination are the actual external IO boundary.
@@ -7248,7 +7247,7 @@ describe('Project Local Services control composition', () => {
         const rpc = new RpcHandlerManager({ scopePrefix: workspace.machineId, localMachineId: workspace.machineId,
             encryptionMode: 'plain', logger() {}, authorizeRequest: request => authorizeMachineRpcRequest(request, boundary) });
         try {
-            const handle = await owner.superviseProject({
+            const handle = await owner.superviseProject({ kind: 'workspace',
                 workspace, declaration, cwd: workspace.rootPath, serviceId: 'project-preview-web', requester,
                 specIdentity: 'preview-web-effect', isCurrent: () => true,
                 processSpec: { mode: { kind: 'managedSpawn' }, startupTimeoutMs: 1_000 },
@@ -7315,7 +7314,7 @@ describe('Project Local Services control composition', () => {
         const reviewedEffectDigest = 'control-worker-effect';
         let servingCurrent = true;
         try {
-            const handle = await owner.superviseProject({
+            const handle = await owner.superviseProject({ kind: 'workspace',
                 workspace, declaration, cwd: workspace.rootPath, serviceId: 'project-control-worker',
                 requester: { serverId: workspace.serverId, accountId: 'starter-a', machineId: workspace.machineId, installationId: 'installation-a' },
                 specIdentity: reviewedEffectDigest, isCurrent: () => servingCurrent,
@@ -7373,4 +7372,75 @@ describe('Project Local Services control composition', () => {
                 .toMatchObject({ status: 'denied', reasonCode: 'unknown_managed_service' });
         } finally { await owner.dispose(); }
     });
+    it('projects changed native published ports after the same Environment generation stops and starts', async () => {
+        const { owner } = createLifecycleHarness([], 'daemon');
+        const id = 'a'.repeat(64);
+        const args = ['compose', '--project-name', 'production', '--file', '/release/compose.yaml'];
+        let state = 'running';
+        let published = '32769';
+        let inspections = 0;
+        let nativeEvent: ((value: unknown) => void) | undefined;
+        const configuration = projectNativeComposeReview({ services: { web: { ports: [
+            { target: 3000, published, host_ip: '127.0.0.1', protocol: 'tcp' },
+        ] } } }, '/release', value => value).services[0]!;
+        const capture = createNativeComposeLifecycle({ args, engineId: 'published-port-test',
+            environment: { composeService: 'web', containerIds: [id], facts: { configuration, containerImages: [] } }, io: {
+                async events({ event }) { nativeEvent = event; return { async dispose() {} }; },
+                async run() { inspections++; return { exitCode: 0, stdout: JSON.stringify([{ Id: id,
+                    Config: { Labels: { 'com.docker.compose.project': 'production', 'com.docker.compose.service': 'web' } },
+                    State: { Status: state }, NetworkSettings: { Ports: state === 'running'
+                        ? { '3000/tcp': [{ HostIp: '127.0.0.1', HostPort: published }] } : {} } }]) }; },
+            } });
+        capture.bindLaunch({ command: '/docker', args, cwd: '/release', env: {}, release() {} });
+        const handle = await owner.superviseProject({ kind: 'environment', serverId: 'home', machineId: 'machine',
+            environmentId: 'production', environmentInstanceId: 'production-machine', deploymentId: 'deploy-a',
+            composeService: 'web', serviceId: 'production-machine/web', specIdentity: 'deploy-a', isCurrent: () => true,
+            release: { environmentId: 'production', environmentInstanceId: 'production-machine', deploymentId: 'deploy-a',
+                machineId: 'machine', installationId: 'installation', rootPath: '/release', manifestFingerprint: 'exact-a',
+                assertCurrent: async () => {}, commit: async () => {}, abort: async () => {} },
+            nativeEffects: { keys: [{ kind: 'composeProject', dockerEndpoint: 'published-port-test', projectName: 'production' }] },
+            releaseObservation: async () => {}, processSpec: { mode: { kind: 'native', observationOnly: true, builtinLifecycle: capture.lifecycle } },
+        });
+        const projection = owner.machineServiceRows;
+        let publications = 0;
+        const subscription = projection.subscribe('machine', [handle], () => { publications++; });
+        try {
+            const initial = projection.read(handle);
+            expect(initial).toMatchObject({ baseUrl: 'http://127.0.0.1:32769', port: 32769,
+                configuration: { ports: [{ target: 3000, published: '32769', bindAddress: '127.0.0.1', protocol: 'tcp' }] } });
+            const initialInspections = inspections;
+            for (let index = 0; index < 100; index++) {
+                expect(projection.read(handle)).toBe(initial);
+                nativeEvent?.({ Type: 'container', Action: 'start', Actor: { ID: 'unrelated-container' } });
+            }
+            await new Promise<void>(resolve => setImmediate(resolve));
+            expect(inspections).toBe(initialInspections);
+            expect(publications).toBe(0);
+            nativeEvent?.({ Type: 'container', Action: 'start', Actor: { ID: id } });
+            await vi.waitFor(() => expect(inspections).toBe(initialInspections + 1));
+            expect(projection.read(handle)).toBe(initial);
+            expect(publications).toBe(0);
+            state = 'exited';
+            nativeEvent?.({ Type: 'container', Action: 'die', Actor: { ID: id } });
+            await vi.waitFor(() => expect(projection.read(handle).state).toBe('stopped'));
+            expect(projection.read(handle).baseUrl).toBeNull();
+            state = 'running';
+            published = '32770';
+            nativeEvent?.({ Type: 'container', Action: 'start', Actor: { ID: id } });
+            await vi.waitFor(() => expect(projection.read(handle).baseUrl).toBe('http://127.0.0.1:32770'));
+            const listed = await owner.listProjectServices({ requireComplete: true });
+            expect(listed).toEqual([handle]);
+            expect(projection.read(listed[0])).toMatchObject({ generation: initial.generation, port: 32770,
+                configuration: { ports: [{ target: 3000, published: '32770', bindAddress: '127.0.0.1', protocol: 'tcp' }] } });
+            expect(handle.readNativeRuntimeFacts!().configuration?.ports).toEqual(projection.read(handle).configuration?.ports);
+            const restarted = projection.read(handle);
+            const restartedPublications = publications;
+            nativeEvent?.({ Type: 'container', Action: 'start', Actor: { ID: id } });
+            await vi.waitFor(() => expect(inspections).toBe(initialInspections + 4));
+            expect(projection.read(handle)).toBe(restarted);
+            expect(publications).toBe(restartedPublications);
+        } finally { subscription.dispose(); await owner.dispose(); }
+    });
+
+
 });

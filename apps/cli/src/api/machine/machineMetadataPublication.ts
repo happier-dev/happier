@@ -5,6 +5,22 @@ import type { MachineContentCodec } from './machineStoredContent';
 import { emitSocketWithAck } from '@/session/transport/shared/socketAck';
 import { MachineUpdateMetadataResponseSchema } from '@happier-dev/protocol/machines/metadataUpdate';
 import { parseMachinePublishedMetadataV1, StoredMachinePublishedMetadataV1Schema, projectMachinePublishedMetadataFromRowV1 } from '@happier-dev/protocol/machines/machinePublishedContentV1';
+import { MachineServiceWatchesFieldV1 } from '@happier-dev/protocol';
+
+export type MachineMetadataChange = Readonly<{ serviceWatchesChanged: boolean }>;
+
+/** Ingress has already admitted both values. Publish the changed field fact
+ * once here, retaining unchanged watch identity across unrelated envelopes. */
+export function projectMachineMetadataChange(previous: Machine['metadata'], next: Machine['metadata']): Readonly<{
+  metadata: Machine['metadata']; change: MachineMetadataChange;
+}> {
+  const serviceWatchesChanged = previous === null || next === null ? previous !== next
+    : !MachineServiceWatchesFieldV1.equal(previous.serviceWatchesV1 ?? MachineServiceWatchesFieldV1.defaultValue(),
+      next.serviceWatchesV1 ?? MachineServiceWatchesFieldV1.defaultValue());
+  return { metadata: !serviceWatchesChanged && previous && next
+    ? { ...next, serviceWatchesV1: previous.serviceWatchesV1 } : next,
+    change: { serviceWatchesChanged } satisfies MachineMetadataChange };
+}
 
 export type MachineMetadataPublicationContext = Readonly<{
   getMachine: () => Machine;
@@ -13,7 +29,7 @@ export type MachineMetadataPublicationContext = Readonly<{
   expectedDataEncryptionKey: string | null;
   isContentCurrent: () => boolean;
   retireAndRefreshContent: () => Promise<void>;
-  notifyMetadataChanged: () => void;
+  notifyMetadataChanged: (change: MachineMetadataChange) => void;
 }>;
 export function readOpenedMachineMetadataSnapshot(machine: Machine, contentReady: boolean): MachineMetadataFieldReadV1 {
   if (!contentReady) return { status: 'locked' };
@@ -51,10 +67,12 @@ export async function publishMachineMetadataOnce(context: MachineMetadataPublica
   // A same-key refresh can replace the cache while retaining this admitted codec.
   machine = context.getMachine();
   if (answer.version > machine.metadataVersion || answer.result === 'success' && answer.version === machine.metadataVersion) {
-    machine.metadata = projectMachinePublishedMetadataFromRowV1(StoredMachinePublishedMetadataV1Schema.parse(codec.decodeStored(answer.metadata)), machine.metadata?.devcontainerChild);
+    const publication = projectMachineMetadataChange(machine.metadata,
+      projectMachinePublishedMetadataFromRowV1(StoredMachinePublishedMetadataV1Schema.parse(codec.decodeStored(answer.metadata)), machine.metadata?.devcontainerChild));
+    machine.metadata = publication.metadata;
     machine.metadataVersion = answer.version;
     if (machine.keyBasis) machine.keyBasis = { ...machine.keyBasis, metadataVersion: answer.version };
-    context.notifyMetadataChanged();
+    context.notifyMetadataChanged(publication.change);
   }
   const snapshot = readOpenedMachineMetadataSnapshot(machine, true);
   return snapshot.status === 'ready' ? { ...snapshot, status: answer.result === 'success' ? 'applied' : 'conflict' } : snapshot;

@@ -1,6 +1,3 @@
-import type { ManagedServiceNativeLogWatchV1 } from '@happier-dev/plugin-sdk/managed-services';
-import type { ManagedServiceNativeLogResultV1 } from '@happier-dev/protocol';
-import { createManagedServiceNativeLogs, MANAGED_SERVICE_NATIVE_LOG_PAGE_BYTES, type ManagedServiceNativeLogReadForHost, type ManagedServiceNativeLogReadOptionsForHost } from './managedServiceNativeLogs';
 import { randomUUID } from 'node:crypto';
 import { isAbsolute } from 'node:path';
 
@@ -12,13 +9,16 @@ import type {
 } from '@happier-dev/plugin-sdk/exec';
 import type {
     ManagedServiceHttpHealthResponse,
+    ManagedServiceSnapshot,
     ManagedServiceNativeInstanceV1,
     ManagedServiceNativeLifecycleV1,
     ManagedServiceNativeObservationV1,
+    ManagedServiceNativeLogWatchV1,
 } from '@happier-dev/plugin-sdk/managed-services';
 import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
 import type { PluginDiagnosticData } from '@happier-dev/plugin-sdk';
 import { PluginDiagnosticDataV1Schema } from '@happier-dev/protocol/daemon/pluginContributionIntrospection';
+import { type ManagedServiceNativeLogResultV1 } from '@happier-dev/protocol';
 import { readManagedServiceEndpointUrl } from '@happier-dev/protocol/plugins/managedServiceEndpointUrl';
 import { armDeadlineTimer } from '@happier-dev/protocol/common/deadlineTimer';
 import type { ManagedServiceEndpointHostPolicy } from '@happier-dev/protocol';
@@ -64,6 +64,8 @@ import {
 import { readCredentialRedactionValues } from './credentialRedactionValues';
 import { clonePluginPlainData } from '../../plainData';
 import { sanitizeExecDiagnosticText } from '../../exec/errors';
+import { createManagedServiceNativeLogs, MANAGED_SERVICE_NATIVE_LOG_PAGE_BYTES,
+    type ManagedServiceNativeLogReadForHost, type ManagedServiceNativeLogReadOptionsForHost } from './managedServiceNativeLogs';
 import { prepareCgroupProcessLaunchScope } from '@/daemon/platform/linux/buildCgroupSelfMigratingHappyCliLaunchSpec';
 import { configuration } from '@/configuration';
 import { formatProcessOwnerTag, type ProcessOwnerRef } from '@/processes/ownerTag';
@@ -71,6 +73,9 @@ import { classifySpawnFailure, type SpawnFailureLimitsReader } from '@/processes
 import { logger } from '@/ui/logger';
 import { isWorkspacePathWithin } from '@/daemon/local/services/inventory/provenance';
 import type { LocalServiceEstablishmentFailureV1 } from '@happier-dev/protocol/local/services/launcher/v1';
+import type { ManagedServiceNativeControlResult } from './managedServiceNativeControl';
+import type { MachineServiceNativeRuntimeFactsV1 } from '@happier-dev/protocol';
+import type { ProviderRedactionLease } from '@/providers/spawn/redaction';
 
 export type ManagedServiceProcessCredential =
     | Readonly<{
@@ -120,14 +125,72 @@ type ManagedServiceProcessLaunch =
     | Readonly<{ launch: PluginExecSpawnRequest; authorizeLaunch?: never }>
     | Readonly<{ launch?: never; authorizeLaunch: ProjectManagedServiceLaunchAuthorizer }>;
 
+/** Host-private admitted Docker evidence; reading it never performs native IO. */
+export type ProjectNativeContainerObservation = Readonly<{
+    id: string;
+    composeProject: string;
+    service: string;
+    containerName?: string;
+    networkNames?: readonly string[];
+    nativeImageId?: string;
+    /** Portable CONFIG identity proved by the activation image owner for this exact container. */
+    imageConfigDigest?: string;
+    /** Complete container Config/HostConfig comparison over private activation evidence. */
+    configurationMatches?: boolean;
+    pid?: number;
+    restartCount?: number;
+    restartPolicy?: Readonly<{ name: string; maximumRetryCount?: number }>;
+}>;
+
+/** Host-only borrowed transport from the admitted native generation. */
+export type ProjectNativeDockerPort = Readonly<{
+    engineId: string;
+    run(args: readonly string[], signal?: AbortSignal, inputBytes?: Uint8Array): Promise<Readonly<{ exitCode: number; stdout: string; stderr?: string }>>;
+}>;
+
+/** Same-capture effective structural facts, never raw interpolated config or environment. */
+export type ProjectNativeRuntimeFacts = MachineServiceNativeRuntimeFactsV1;
+
+/** Invocation-owned redacted output sink for host-native effects. */
+export type ProjectNativeStageOutput = Readonly<{
+    appendRedacted(stream: 'stdout' | 'stderr', chunk: Uint8Array): void;
+    assertWritten(): void;
+}>;
+
 /** Builtin codecs use the same native custody owner without impersonating a plugin. */
+export type ProjectNativeAccountingResult =
+    | Readonly<{ kind: 'sample'; samples: readonly Readonly<{
+        nativeResourceId: string;
+        cpuPercent: number | null;
+        memoryBytes: number | null;
+    }>[] }>
+    | Readonly<{ kind: 'unavailable'; reason: 'unavailable' }>;
+
 export type ProjectBuiltinNativeLifecycle = Readonly<{
     inspect(options?: Readonly<{ signal?: AbortSignal }>): Promise<ManagedServiceNativeObservationV1>;
+    start?(options?: Readonly<{ signal?: AbortSignal }>): Promise<ManagedServiceNativeObservationV1>;
+    restart?(options?: Readonly<{ signal?: AbortSignal }>): Promise<ManagedServiceNativeObservationV1>;
     stop(options?: Readonly<{ signal?: AbortSignal }>): ReturnType<ManagedServiceNativeLifecycleV1['stop']>;
+    /** Host-only exact admitted generation removal; never a public service control. */
+    remove?(options?: Readonly<{ signal?: AbortSignal; stageOutput?: ProjectNativeStageOutput }>): ReturnType<ManagedServiceNativeLifecycleV1['stop']>;
+    /** Read-only removal witness; an exited retained container is still present. */
+    inspectRemoval?(options?: Readonly<{ signal?: AbortSignal }>): Promise<'present' | 'absent' | 'unknown'>;
     logs?(options: ManagedServiceNativeLogReadForHost | ManagedServiceNativeLogWatchV1): Promise<ManagedServiceNativeLogResultV1 | import('@happier-dev/plugin-sdk').Disposable>;
+    /** Borrow the original generation's sanitizer without transferring its custody. */
+    readLogRedactionLease?(containerIds: readonly string[]): Pick<ProviderRedactionLease, 'isActive' | 'redact'> | undefined;
     prepareStart?(options?: Readonly<{ signal?: AbortSignal }>): Promise<void>;
     /** Builtin native codecs retain uncertainty once their starter can create resources. */
     markStarted?(): void;
+    /** Shared native push replaces this capture's watchdog for its whole lifetime. */
+    observe?(listener: (observation: ManagedServiceNativeObservationV1) => void,
+        options?: Readonly<{ signal?: AbortSignal }>): Promise<Readonly<{ dispose(): Promise<void> }>>;
+    nativeContainers?(): readonly ProjectNativeContainerObservation[] | null;
+    nativeDocker?(options?: Readonly<{ signal?: AbortSignal }>): Promise<ProjectNativeDockerPort>;
+    /** Exact aliases from this already-admitted native capture; never performs native IO. */
+    nativeInstances?(): readonly ManagedServiceNativeInstanceV1[] | undefined;
+    runtimeFacts?(): ProjectNativeRuntimeFacts;
+    /** One requested native batch; these metrics are not host process totals. */
+    readAccounting?(options?: Readonly<{ signal?: AbortSignal }>): Promise<ProjectNativeAccountingResult>;
     redactedValues?: readonly string[];
 }>;
 
@@ -166,14 +229,22 @@ export type ManagedServiceProcessSpec = Readonly<{
             instance: ManagedServiceNativeInstanceV1;
             lifecycle: ManagedServiceNativeLifecycleV1;
             builtinLifecycle?: never;
+            observationOnly?: never;
         } | {
             kind: 'native';
             instance?: never;
             lifecycle?: never;
             builtinLifecycle: ProjectBuiltinNativeLifecycle;
+            /** An admitted deployment already owns activation; this handle observes it. */
+            observationOnly?: true;
+            releaseObservation?: () => Promise<void>;
         }>;
         durableLog?: never;
-    }> & ManagedServiceProcessLaunch
+    }> & (ManagedServiceProcessLaunch | Readonly<{
+        mode: Readonly<{ kind: 'native'; builtinLifecycle: ProjectBuiltinNativeLifecycle; observationOnly: true; releaseObservation: () => Promise<void> }>;
+        launch?: never;
+        authorizeLaunch?: never;
+    }>)
     | Readonly<{
         mode: Readonly<{
             kind: 'externalAttach';
@@ -193,6 +264,8 @@ export type ManagedServiceProcessSnapshot = Readonly<{
     mode: 'managedSpawn' | 'externalAttach' | 'native';
     readiness?: ManagedServiceNativeObservationV1['readiness'];
     nativePhase?: ManagedServiceNativeObservationV1['phase'];
+    /** Admitted native desired stop, retained until a start or restart changes it. */
+    expectedDown?: 'stop';
     baseUrl: string | null;
     port: number | null;
     pid: number | null;
@@ -208,16 +281,19 @@ export type ManagedServiceDiagnosticRetention = Readonly<{
 }>;
 
 export type ManagedServiceProcessStopResult = Readonly<{
-    status: 'stopped' | 'detached' | 'unsupported' | 'termination_incomplete';
+    status: 'stopped' | 'detached' | 'accepted' | 'unsupported' | 'termination_incomplete';
 }>;
 
 export interface ManagedServiceProcessHandle {
+    snapshot(): ManagedServiceProcessSnapshot;
     readNativeLogs?(options?: ManagedServiceNativeLogReadOptionsForHost): Promise<ManagedServiceNativeLogResultV1>;
     watchNativeLogs?(options: Omit<ManagedServiceNativeLogWatchV1, 'kind' | 'maxBytes'>): Promise<Readonly<{ dispose(): Promise<void> }>>;
-    snapshot(): ManagedServiceProcessSnapshot;
+    /** Host-private live admission read; absent boundary doubles cannot admit previews. */
+    inspectCurrentOccurrence?(): Promise<ManagedServiceProcessSnapshot>;
     observe?(
         listener: (snapshot: ManagedServiceProcessSnapshot) => void,
     ): Readonly<{ dispose(): void }>;
+    observeHealth?(listener: (snapshot: ManagedServiceProcessHealthSnapshot) => void): Readonly<{ dispose(): void }>;
     waitUntilHealthy(options?: Readonly<{
         timeoutMs?: number;
         signal?: AbortSignal;
@@ -225,8 +301,14 @@ export interface ManagedServiceProcessHandle {
     stop(options?: Readonly<{
         signal?: AbortSignal;
     }>): Promise<ManagedServiceProcessStopResult>;
+    controlNative?(operation: 'start' | 'stop' | 'restart', options?: Readonly<{ signal?: AbortSignal }>): Promise<ManagedServiceNativeControlResult>;
     dispose(): Promise<void>;
 }
+
+export type ManagedServiceProcessHealthSnapshot = Readonly<
+    Pick<ManagedServiceSnapshot, 'state' | 'readiness' | 'nativePhase'>
+    & Pick<ManagedServiceProcessSnapshot, 'expectedDown'>
+>;
 
 export interface ManagedServiceProcessSupervisor {
     supervise(
@@ -265,8 +347,7 @@ Readonly<{
         executable: PluginExecSpawnRequest['executable'],
         isOccurrenceCurrent: () => boolean,
     ): Promise<ResolvedPluginExecutable>;
-}> | Readonly<{
-    kind: 'project';
+}> | (Readonly<{ kind: 'project' }> | Readonly<{ kind: 'machine' }>) & Readonly<{
     projectRoot?: string;
     occurrenceId?: never;
     sourceCustody?: never;
@@ -1018,6 +1099,7 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
             cleanup: () => Promise<void>,
             observation: ManagedServiceEstablishmentCustodyObservation,
         ) => Readonly<{ release(): void }>,
+        preparedRunnerSupervision?: RunnerManagedServiceSupervisionAuthorization,
     ): Promise<ManagedServiceProcessHandle> {
         let endpoint = resolveInitialEndpoint(spec);
         if (spec.healthCheck?.kind === 'http' && endpoint) {
@@ -1066,11 +1148,14 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
         let logClosed = false;
         const lifecycleProbeController = new AbortController();
         let watchdogTimer: ReturnType<typeof setInterval> | null = null;
+        let nativeObservationSubscription: Readonly<{ dispose(): Promise<void> }> | null = null;
+        let nativeObservationDelivery = Promise.resolve();
         let watchdogInFlight = false;
         let consecutiveHealthMisses = 0;
         const snapshotListeners = new Set<
             (snapshot: ManagedServiceProcessSnapshot) => void
         >();
+        const healthListeners = new Set<(snapshot: ManagedServiceProcessHealthSnapshot) => void>();
         let snapshot = freezeSnapshot({
             id: spec.id,
             instanceId,
@@ -1084,6 +1169,12 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
             diagnostics: Object.freeze([]),
             diagnosticsTruncated: false,
         });
+        const projectHealth = (value: ManagedServiceProcessSnapshot): ManagedServiceProcessHealthSnapshot => Object.freeze({
+            state: value.state, ...(value.readiness ? { readiness: value.readiness } : {}),
+            ...(value.nativePhase ? { nativePhase: value.nativePhase } : {}),
+            ...(value.expectedDown ? { expectedDown: value.expectedDown } : {}),
+        });
+        let healthSnapshot = projectHealth(snapshot);
         function retainObserverFailure(): void {
             const retained = retainManagedServiceDiagnostic(snapshot, {
                 code: 'plugin_managed_service_observer_failed',
@@ -1115,9 +1206,28 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
         const setSnapshot = (
             next: ManagedServiceProcessSnapshot,
         ): void => {
+            const healthChanged = snapshot.state !== next.state || snapshot.readiness !== next.readiness
+                || snapshot.nativePhase !== next.nativePhase || snapshot.expectedDown !== next.expectedDown;
             snapshot = freezeSnapshot(next);
+            if (healthChanged) {
+                healthSnapshot = projectHealth(snapshot);
+                for (const listener of healthListeners) {
+                    try { listener(healthSnapshot); }
+                    catch { healthListeners.delete(listener); retainObserverFailure(); }
+                }
+            }
             notifySnapshotListeners(true);
         };
+        function recordHealthyProbe(): void {
+            const next = { ...snapshot, state: 'healthy' as const, lastHealthyAtMs: now() };
+            if (snapshot.state !== next.state) {
+                setSnapshot(next);
+            } else {
+                // Fresh liveness is available to direct readers without waking
+                // semantic observers for an already healthy service.
+                snapshot = freezeSnapshot(next);
+            }
+        }
         const isStopped = (): boolean => snapshot.state === 'stopped';
         const isStopping = (): boolean => cleanupPromise !== null;
         const hasProvenManagedProcessTermination = (): boolean => {
@@ -1296,7 +1406,7 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
             'Managed server endpoint detection is incomplete',
         );
         async function publishEndpointProjection(): Promise<void> {
-            if (scope.kind === 'project') return;
+            if (scope.kind === 'project' || scope.kind === 'machine') return;
             if (endpointProjectionPublication) {
                 await endpointProjectionPublication;
                 return;
@@ -1374,7 +1484,7 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
         }
 
         async function releaseEndpointProjection(): Promise<void> {
-            if (scope.kind === 'project') return;
+            if (scope.kind === 'project' || scope.kind === 'machine') return;
             if (endpointProjectionPublication) {
                 await endpointProjectionPublication;
             }
@@ -1618,16 +1728,12 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
                 if (healthy) {
                     consecutiveHealthMisses = 0;
                     if (!isStopped() && !processTerminal && isGenerationUsable()) {
-                        setSnapshot({
-                            ...snapshot,
-                            state: 'healthy',
-                            lastHealthyAtMs: now(),
-                        });
+                        recordHealthyProbe();
                         await publishEndpointProjection();
                     }
                     return;
                 }
-            } catch {
+            } catch (error) {
                 // A failed probe is one missed interval; the bounded watchdog decides terminal health truth.
             } finally {
                 watchdogInFlight = false;
@@ -1641,6 +1747,7 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
         }
 
         function startWatchdog(): void {
+            if (nativeObservationSubscription) return;
             if (watchdogTimer || (!spec.healthCheck && spec.mode.kind !== 'native' && !observesOptionalEndpoint)) return;
             const intervalMs = spec.watchdog.intervalMs;
             watchdogTimer = setInterval(() => { void watchdogTick(); }, intervalMs);
@@ -1663,7 +1770,7 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
 
         const nativeLogs = createManagedServiceNativeLogs({ signal: entry.lifecycle.signal,
             maxBytes: MANAGED_SERVICE_NATIVE_LOG_PAGE_BYTES,
-            isCurrent: isGenerationUsable,
+            isCurrent: () => isGenerationUsable() && !observationDetached,
             redactedValues: () => [...launchRedactedValues, ...(spec.mode.kind === 'native' ? spec.mode.builtinLifecycle?.redactedValues ?? [] : [])
                 .flatMap(rawCredential => readCredentialRedactionValues({ rawCredential }))],
             ...(spec.mode.kind === 'native' && (spec.mode.builtinLifecycle?.logs || !spec.mode.builtinLifecycle && spec.mode.lifecycle.logs) ? {
@@ -1710,7 +1817,25 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
             }
         }
 
-        async function inspectNative(signal?: AbortSignal, explicitFailureOutput = false): Promise<ManagedServiceNativeObservationV1> {
+        function validateNativeObservation(observation: ManagedServiceNativeObservationV1): void {
+            if (!observation
+                || !['running', 'stopped', 'unknown'].includes(observation.phase)
+                || !['ready', 'not_ready', 'not_reported'].includes(observation.readiness)
+                || (observation.endpoint !== null && typeof observation.endpoint !== 'string')) {
+                fail('plugin_managed_service_unavailable', 'Native observation is invalid');
+            }
+        }
+
+        function nativeObservationState(observation: ManagedServiceNativeObservationV1): ManagedServiceProcessSnapshot['state'] {
+            return observation.phase === 'stopped'
+                ? hasProvenManagedProcessTermination() ? 'stopped' : 'unhealthy'
+                : observation.phase === 'unknown' ? 'unhealthy'
+                    : observation.readiness === 'ready' ? 'healthy'
+                        : spec.mode.kind === 'native' && spec.mode.observationOnly && observation.readiness === 'not_ready' ? 'unhealthy' : 'running';
+        }
+
+        async function inspectNative(signal?: AbortSignal, explicitFailureOutput = false,
+            pushed?: ManagedServiceNativeObservationV1, clearExpectedDown = false): Promise<ManagedServiceNativeObservationV1> {
             if (spec.mode.kind !== 'native') {
                 return fail('plugin_managed_service_unavailable', 'Native lifecycle is unavailable');
             }
@@ -1718,31 +1843,22 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
             assertGenerationUsable();
             const wasFailed = snapshot.state === 'unhealthy' || snapshot.nativePhase === 'stopped';
             try {
-                const observation = await waitWithAbort(spec.mode.builtinLifecycle
+                const observation = pushed ?? await waitWithAbort(spec.mode.builtinLifecycle
                     ? spec.mode.builtinLifecycle.inspect({ signal })
                     : spec.mode.lifecycle.inspect(spec.mode.instance, { signal }), signal);
                 assertNotAborted(signal);
                 assertGenerationUsable();
-                if (!observation
-                    || !['running', 'stopped', 'unknown'].includes(observation.phase)
-                    || !['ready', 'not_ready', 'not_reported'].includes(observation.readiness)
-                    || (observation.endpoint !== null && typeof observation.endpoint !== 'string')) {
-                    return fail('plugin_managed_service_unavailable', 'Native observation is invalid');
-                }
+                validateNativeObservation(observation);
                 // A delayed read cannot supersede an already authoritative stop witness.
-                if (nativeStopped || isStopped()) {
+                if (nativeStopped || isStopped() && !spec.mode.observationOnly) {
                     return observation;
                 }
                 endpoint = observation.endpoint === null
                     ? null
                     : parseManagedServiceEndpointUrl(observation.endpoint, 'ownedLoopback');
-                const state = observation.phase === 'stopped'
-                    // Native resource death is not settlement of its still-owned starter tree.
-                    ? hasProvenManagedProcessTermination() ? 'stopped' : 'unhealthy'
-                    : observation.phase === 'unknown'
-                        ? 'unhealthy'
-                        : observation.readiness === 'ready' ? 'healthy' : 'running';
-                if (state === 'stopped' && (!wasFailed || explicitFailureOutput)) {
+                // Native resource death is not settlement of a still-owned starter tree.
+                const state = nativeObservationState(observation);
+                if (state === 'stopped' && !spec.mode.observationOnly && (!wasFailed || explicitFailureOutput)) {
                     // Publishing terminal custody lets the managed owner begin cleanup.
                     // Withdraw serving first, then read output before terminal cleanup retires IO.
                     setSnapshot({ ...snapshot, state: 'unhealthy', nativePhase: observation.phase,
@@ -1752,7 +1868,7 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
                     assertGenerationUsable();
                     if (nativeStopped || isStopped()) return observation;
                 }
-                const next: ManagedServiceProcessSnapshot = {
+                const next = {
                     ...snapshot,
                     state,
                     readiness: observation.readiness,
@@ -1762,10 +1878,12 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
                     ...(observation.phase === 'running' && observation.readiness === 'ready'
                         ? { lastHealthyAtMs: now() }
                         : {}),
-                };
+                } satisfies ManagedServiceProcessSnapshot;
+                if (clearExpectedDown) delete next.expectedDown;
                 if (snapshot.state !== next.state
                     || snapshot.readiness !== next.readiness
                     || snapshot.nativePhase !== next.nativePhase
+                    || snapshot.expectedDown !== next.expectedDown
                     || snapshot.baseUrl !== next.baseUrl
                     || snapshot.port !== next.port) {
                     setSnapshot(next);
@@ -1774,7 +1892,7 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
                     // semantic lifecycle subscribers on every watchdog sample.
                     snapshot = freezeSnapshot(next);
                 }
-                if (state !== 'stopped' && (!wasFailed || explicitFailureOutput) && (state === 'unhealthy' || observation.phase === 'stopped'
+                if ((!spec.mode.builtinLifecycle?.observe || observation.phase !== 'unknown') && state !== 'stopped' && (!wasFailed || explicitFailureOutput) && (state === 'unhealthy' || observation.phase === 'stopped'
                     || explicitFailureOutput && observation.readiness === 'not_ready')) {
                     await collectNativeFailureOutput(signal);
                 }
@@ -1801,15 +1919,21 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
         }
 
         let nativeStopped = false;
+        let observationDetached = false;
 
         async function cleanup(): Promise<void> {
             if (!cleanupPromise) {
+                if (spec.mode.kind === 'native' && spec.mode.observationOnly) observationDetached = true;
                 lifecycleProbeController.abort();
                 stopWatchdog();
                 const attempt = (async () => {
                     const failures: ManagedServiceCleanupFailure[] = [];
                     await nativeLogs.dispose();
-                    if (spec.mode.kind === 'native' && !nativeStopped) {
+                    if (nativeObservationSubscription) {
+                        await nativeObservationSubscription.dispose();
+                        nativeObservationSubscription = null;
+                    }
+                    if (spec.mode.kind === 'native' && !spec.mode.observationOnly && !nativeStopped) {
                         if (snapshot.state === 'stopped') {
                             nativeStopped = true;
                         } else {
@@ -1933,8 +2057,12 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
                     const release = retainedLaunchRelease;
                     await release?.();
                     retainedLaunchRelease = null;
-                    if (processDisposed && !isStopped()) {
+                    if (processDisposed && !isStopped() && !(spec.mode.kind === 'native' && spec.mode.observationOnly)) {
                         setSnapshot({ ...snapshot, state: 'stopped' });
+                    }
+                    if (observationDetached) {
+                        healthListeners.clear();
+                        snapshotListeners.clear();
                     }
                 })();
                 cleanupPromise = attempt;
@@ -1942,7 +2070,7 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
                     await attempt;
                 } finally {
                     if (cleanupPromise === attempt) cleanupPromise = null;
-                    if (spec.mode.kind === 'native' && !nativeStopped && !isStopped() && isGenerationUsable()) {
+                    if (spec.mode.kind === 'native' && !observationDetached && !nativeStopped && !isStopped() && isGenerationUsable()) {
                         startWatchdog();
                     }
                 }
@@ -1959,7 +2087,11 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
                 return fail('plugin_managed_service_unavailable', 'Native lifetime requires daemon custody');
             }
             assertGenerationUsable();
-            if (scope.kind === 'project' && spec.authorizeLaunch) {
+            if (spec.mode.observationOnly) {
+                // Plan 41 activated this exact generation once. Observation can never
+                // acquire a starter or recreate an absent/stopped deployment.
+                if (!spec.mode.builtinLifecycle) return fail('plugin_managed_service_unavailable', 'Deployment native observation is unavailable');
+            } else if (scope.kind === 'project' && spec.authorizeLaunch) {
                 const launch = await spec.authorizeLaunch({ endpoint: null, signal: entry.lifecycle.signal });
                 retainLaunchDiagnostics(launch);
                 try {
@@ -2019,7 +2151,17 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
                 processContainmentTerminated = true;
                 await processTerminalObservation;
             }
-            await inspectNative(entry.lifecycle.signal);
+            if (spec.mode.builtinLifecycle?.observe) {
+                nativeObservationSubscription = await spec.mode.builtinLifecycle.observe(observation => {
+                    // Preserve event order (including die/restart before a later
+                    // running reconcile) and new-failure diagnostic deduplication.
+                    nativeObservationDelivery = nativeObservationDelivery.then(async () => {
+                        if (lifecycleProbeController.signal.aborted || !isGenerationUsable()) return;
+                        await inspectNative(entry.lifecycle.signal, false, observation);
+                    }).catch(() => {});
+                }, { signal: lifecycleProbeController.signal });
+                await nativeObservationDelivery;
+            } else await inspectNative(entry.lifecycle.signal);
             startWatchdog();
         } else if (spec.mode.kind === 'managedSpawn') {
             let managedProcessCustody: ProcessCustodySpawnSpec | null = null;
@@ -2147,15 +2289,15 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
                     validateHealthCheckTargets(spec.healthCheck, endpoint);
                 }
             }
-            const request = scope.kind === 'project' ? null : launchRequest(spec, endpoint);
+            const request = scope.kind === 'project' || scope.kind === 'machine' ? null : launchRequest(spec, endpoint);
             if (custodyOwner === 'sessionRunner') {
-                if (scope.kind === 'project' || !request || !scope.sessionId || !params.authorizeRunnerSupervision) {
+                if (scope.kind === 'project' || scope.kind === 'machine' || !request || !scope.sessionId || !params.authorizeRunnerSupervision) {
                     return fail(
                         'plugin_managed_server_authorization_unavailable',
                         'Runner-owned managed server launch authorization is unavailable',
                     );
                 }
-                const authorization = await params.authorizeRunnerSupervision({
+                const authorization = preparedRunnerSupervision ?? await params.authorizeRunnerSupervision({
                     mode: 'managedSpawn',
                     sessionId: scope.sessionId,
                     pluginId: scope.pluginId,
@@ -2215,7 +2357,7 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
             const spawnAuthorized = async (
                 launch: PluginExecSpawnRequest | null,
             ): Promise<PluginProcessHandle> => {
-                if (scope.kind === 'project') {
+                if (scope.kind === 'project' || scope.kind === 'machine') {
                     if (!spec.authorizeLaunch) {
                         return fail('plugin_managed_service_unavailable', 'Project launch admission is unavailable');
                     }
@@ -2419,7 +2561,7 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
                 }
             }
         } else if (custodyOwner === 'sessionRunner') {
-            if (scope.kind === 'project' || !scope.sessionId || !params.authorizeRunnerSupervision) {
+            if (scope.kind === 'project' || scope.kind === 'machine' || !scope.sessionId || !params.authorizeRunnerSupervision) {
                 return fail(
                     'plugin_managed_server_authorization_unavailable',
                     'Runner-owned managed server attach authorization is unavailable',
@@ -2446,9 +2588,19 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
         }
 
         const handle: ManagedServiceProcessHandle = Object.freeze({
+            snapshot: () => snapshot,
             readNativeLogs,
             watchNativeLogs: nativeLogs.watch,
-            snapshot: () => snapshot,
+            observeHealth(listener: (snapshot: ManagedServiceProcessHealthSnapshot) => void) {
+                healthListeners.add(listener);
+                try { listener(healthSnapshot); }
+                catch { healthListeners.delete(listener); retainObserverFailure(); }
+                return Object.freeze({ dispose() { healthListeners.delete(listener); } });
+            },
+            async inspectCurrentOccurrence() {
+                if (spec.mode.kind === 'native' && (!isStopped() || spec.mode.observationOnly)) await inspectNative(entry.lifecycle.signal);
+                return snapshot;
+            },
             observe(listener: (snapshot: ManagedServiceProcessSnapshot) => void) {
                 snapshotListeners.add(listener);
                 try {
@@ -2523,11 +2675,7 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
                         if (deadlineController.signal.aborted) break;
                         if (healthy) {
                             if (spec.mode.kind !== 'native') {
-                                setSnapshot({
-                                    ...snapshot,
-                                    state: 'healthy',
-                                    lastHealthyAtMs: now(),
-                                });
+                                recordHealthyProbe();
                             }
                             await publishEndpointProjection();
                             await assertWaitUsable();
@@ -2554,6 +2702,16 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
             },
             async stop(options?: { signal?: AbortSignal }): Promise<ManagedServiceProcessStopResult> {
                 assertNotAborted(options?.signal);
+                if (spec.mode.kind === 'native' && spec.mode.observationOnly) {
+                    assertGenerationUsable();
+                    const result = await spec.mode.builtinLifecycle!.stop(options);
+                    assertNotAborted(options?.signal);
+                    const observation = await inspectNative(options?.signal);
+                    if (result.status === 'accepted') {
+                        return { status: observation.phase === 'stopped' ? 'stopped' : 'termination_incomplete' };
+                    }
+                    return result;
+                }
                 try {
                     await waitWithAbort(cleanup(), options?.signal);
                 } catch (error) {
@@ -2576,6 +2734,55 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
                     throw error;
                 }
                 return Object.freeze({ status: spec.mode.kind !== 'externalAttach' ? 'stopped' : 'detached' });
+            },
+            async controlNative(operation: 'start' | 'stop' | 'restart', options?: { signal?: AbortSignal }): Promise<ManagedServiceNativeControlResult> {
+                assertNotAborted(options?.signal);
+                assertGenerationUsable();
+                if (spec.mode.kind !== 'native' || !spec.mode.observationOnly || !spec.mode.builtinLifecycle?.[operation]) {
+                    return { kind: 'unsupported', reason: 'unsupported' };
+                }
+                const previousExpectedDown = snapshot.expectedDown;
+                const setExpectedDown = (expectedDown: ManagedServiceProcessSnapshot['expectedDown']): void => {
+                    if (snapshot.expectedDown === expectedDown) return;
+                    const next = { ...snapshot };
+                    if (expectedDown === undefined) delete next.expectedDown;
+                    else next.expectedDown = expectedDown;
+                    setSnapshot(next);
+                };
+                // The native observation may arrive before its control reply.
+                // Keep the admitted intent on this same snapshot, so that push
+                // does not temporarily turn a deliberate stop into an outage.
+                if (operation === 'stop') setExpectedDown('stop');
+                let observation: ManagedServiceNativeObservationV1;
+                try {
+                    if (operation === 'stop') {
+                        const result = await spec.mode.builtinLifecycle.stop(options);
+                        if (result.status === 'unsupported') {
+                            setExpectedDown(previousExpectedDown);
+                            return { kind: 'unsupported', reason: 'unsupported' };
+                        }
+                        if (result.status === 'accepted') return { kind: 'accepted' };
+                        if (result.status === 'termination_incomplete') return { kind: 'outcome_unknown' };
+                        observation = { phase: 'stopped', readiness: 'not_reported', endpoint: null };
+                    } else {
+                        observation = await spec.mode.builtinLifecycle[operation]!(options);
+                    }
+                } catch (error) {
+                    setExpectedDown(previousExpectedDown);
+                    throw error;
+                }
+                validateNativeObservation(observation);
+                const state = nativeObservationState(observation);
+                // A settled effect remains true after observation retirement. Only
+                // current readers receive a newly published native snapshot.
+                if (isGenerationUsable() && !options?.signal?.aborted) {
+                    // Start/restart's accepted observation and desired state
+                    // publish together: no intermediate stopped or stale-intent
+                    // health fact reaches C1 between those two changes.
+                    try { await inspectNative(options?.signal, false, observation, operation !== 'stop'); }
+                    catch (error) { if (isGenerationUsable() && !options?.signal?.aborted) throw error; }
+                }
+                return { kind: 'observed', state };
             },
             async dispose(): Promise<void> {
                 await cleanup();
@@ -2600,6 +2807,9 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
         }
         return handle;
         };
+        if (spec.mode.kind === 'native' && spec.mode.observationOnly && spec.mode.releaseObservation) {
+            retainLaunch(spec.mode.releaseObservation);
+        }
         const cleanupCustody = registerEstablishmentCleanup?.(cleanup, {
             snapshot: () => snapshot,
             hasAcquiredCustody: () => process !== null || retainedLaunchRelease !== null,
@@ -2625,7 +2835,7 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
         return Object.freeze({
             async supervise(spec: ManagedServiceProcessSpec, options?: {
                 signal?: AbortSignal;
-                registerEstablishmentCleanup?(
+                    registerEstablishmentCleanup?(
                     cleanup: () => Promise<void>,
                     observation: ManagedServiceEstablishmentCustodyObservation,
                 ): Readonly<{ release(): void }>;

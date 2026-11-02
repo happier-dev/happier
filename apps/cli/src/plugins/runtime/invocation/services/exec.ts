@@ -1,3 +1,4 @@
+import type { ProviderRedactionLease } from '@/providers/spawn/redaction';
 import type { PluginAgentCliReadinessServiceForHost } from '../../context/agents';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import { realpath } from 'node:fs/promises';
@@ -288,6 +289,7 @@ export type HostResolvedSystemToolExecutable = Readonly<{
 }>;
 
 export type HostAuthorizedPluginExecLaunch = Readonly<{
+    secretRedactionLease?: ProviderRedactionLease;
     command: string;
     args: readonly string[];
     env: Readonly<Record<string, string>>;

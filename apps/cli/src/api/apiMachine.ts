@@ -1,3 +1,6 @@
+import { createApiMachineServicesBinding } from './machine/machineServicesBinding';
+import type { MachineServiceActionDirectTargetInvocation } from '@/session/actions/createCliActionDeps';
+import { resolveServerProfileHomeIdentityId } from '@/server/serverProfiles';
 /**
  * WebSocket client for machine/daemon communication with Happy server
  * Similar to ApiSessionClient but for machine-scoped connections
@@ -21,7 +24,7 @@ import { DISCUSSION_AGENT_POST_EVENT_V1, DiscussionMachinePublicationV2Schema,
 import { SESSION_PENDING_RESET_START_RELEASE_EVENT_V1, PendingResetStartReleaseRequestV1Schema, PendingResetStartReleaseResponseV1Schema, type PendingResetStartBindingV1 } from '@happier-dev/protocol/sessions/pending/pendingRequestedActionV1';
 import { NOTIFICATION_CHANNELS_ACCOUNT_KV_KEY_V1 } from '@happier-dev/protocol/account/settings/notificationChannelRecordV1';
 import { MachineUpdateStateResponseSchema } from '@happier-dev/protocol/machines/metadataUpdate';
-import { publishMachineMetadataOnce, readOpenedMachineMetadataSnapshot } from './machine/machineMetadataPublication';
+import { projectMachineMetadataChange, publishMachineMetadataOnce, readOpenedMachineMetadataSnapshot, type MachineMetadataChange } from './machine/machineMetadataPublication';
 import type { MachineMetadataFieldReadV1, MachineMetadataFieldPortV1 } from '@happier-dev/protocol/machines/machineMetadataFieldV1';
 import type { MountedAccountPluginExecutionSelectionResolver } from '@/plugins/runtime/invocation/mountedPluginInvocationCaller';
 import { registerDaemonMachineResourcesPolicyRpcHandlers, type DaemonMachineResourcesPolicyRoutes } from '@/rpc/handlers/daemonMachineResourcesPolicy';
@@ -700,6 +703,7 @@ export class ApiMachineClient {
     private readonly executionBudgetRegistry = createExecutionBudgetRegistry();
     private readonly machineRuntimeServerHttpBaseUrl: string;
     private readonly machineRuntimeServerId = configuration.activeServerId;
+    private machineServicesBinding: ReturnType<typeof createApiMachineServicesBinding> | null = null;
     private readonly machineRuntimeInstallationId = readInstallationIdentityIfExistsSync()?.installationId ?? null;
     private managedActivityPublicationCleanup: (() => void) | null = null;
     private readonly liveWorkProducer = createLiveWorkProducerGroup(() => {
@@ -2353,6 +2357,52 @@ export class ApiMachineClient {
 
     registerLocalServicesRoutes(localServices: DaemonLocalServicesMachineRpcRoutes): void {
         registerDaemonLocalServicesMachineRpcHandlers(this.rpcHandlerManager, localServices);
+        if (!this.projectionSchedulingClosed) this.getMachineServicesBinding().start();
+    }
+
+    /** One action's read and CAS remain on its receiving transport/content basis. */
+    private captureMachineMetadataFieldPort(): MachineMetadataFieldPortV1 {
+        const codec = this.machineContentCodec;
+        const generation = this.activeTransportGeneration;
+        const socket = this.socket;
+        const retired = () => {
+            if (!this.machineContentReady || this.machineContentCodec !== codec) return { status: 'locked' as const };
+            if (this.projectionSchedulingClosed || this.activeTransportGeneration !== generation
+                || this.socket !== socket || !socket?.connected) return { status: 'unavailable' as const };
+            return null;
+        };
+        return {
+            read: async () => retired() ?? this.getMachineMetadataSnapshot(),
+            compareAndSwap: async input => retired() ?? this.compareAndSwapMachineMetadata(input),
+        };
+    }
+
+    private getMachineServicesBinding() {
+        return this.machineServicesBinding ??= createApiMachineServicesBinding({ profileId: this.machineRuntimeServerId,
+            machineId: this.machine.id, readMetadata: () => this.getMachineMetadataSnapshot(),
+            captureMetadataPort: () => this.captureMachineMetadataFieldPort(),
+            restoreEnvironmentServices: async (owner, signal) => {
+                const installationId = this.machineRuntimeInstallationId;
+                const serverId = await resolveServerProfileHomeIdentityId(this.machineRuntimeServerId);
+                if (!installationId || !serverId) throw Object.assign(new Error('admission_unavailable'), { code: 'admission_unavailable' });
+                const { restoreOwnServerServicesForHost } = await import('@/deployments/targets/ownServer/restoreOwnServerServicesForHost');
+                await restoreOwnServerServicesForHost({ serverId, machineId: this.machine.id, installationId, owner, signal,
+                    resolveRuntime: workSignal => this.resolveInstalledAccountObservationRuntime(workSignal),
+                    isCurrent: () => !this.projectionSchedulingClosed && !signal.aborted
+                        && configuration.activeServerId === this.machineRuntimeServerId
+                        && readInstallationIdentityIfExistsSync()?.installationId === installationId });
+            } });
+    }
+
+    /** Read-only first-use adoption joins the same owner as Machine Services. */
+    async ensureEnvironmentServices(): Promise<void> {
+        if (this.projectionSchedulingClosed) throw Object.assign(new Error('admission_unavailable'), { code: 'admission_unavailable' });
+        await this.getMachineServicesBinding().ensureEnvironmentServices();
+    }
+
+    async executeMachineServiceAction(request: MachineServiceActionDirectTargetInvocation) {
+        if (this.projectionSchedulingClosed) return { kind: 'unavailable' as const, reason: 'admission_unavailable' as const };
+        return await this.getMachineServicesBinding().execute(request);
     }
 
     registerMachineVitalsRoutes(options: DaemonMachineVitalsRoutes): void {
@@ -4103,7 +4153,7 @@ export class ApiMachineClient {
             getMachine: () => this.machine, socket: this.socket, codec, expectedDataEncryptionKey: this.readOwnerEnvelopeForWrite(),
             isContentCurrent: () => this.machineContentReady && this.machineContentCodec === codec,
             retireAndRefreshContent: async () => { this.retireMachineContent(); await this.refreshMachineFromServer(); },
-            notifyMetadataChanged: () => this.notifyMachineMetadataChanged(),
+            notifyMetadataChanged: change => this.notifyMachineMetadataChanged(change),
         }, input);
     }
 
@@ -4701,10 +4751,12 @@ export class ApiMachineClient {
 
                 if (update.metadata && update.metadata.version > this.machine.metadataVersion) {
                     logger.debug('[API MACHINE] Received external metadata update');
-                    this.machine.metadata = projectMachinePublishedMetadataFromRowV1(StoredMachinePublishedMetadataV1Schema.parse(this.machineContentCodec.decodeStored(update.metadata.value)), update.devcontainerChild);
+                    const publication = projectMachineMetadataChange(this.machine.metadata,
+                        projectMachinePublishedMetadataFromRowV1(StoredMachinePublishedMetadataV1Schema.parse(this.machineContentCodec.decodeStored(update.metadata.value)), update.devcontainerChild));
+                    this.machine.metadata = publication.metadata;
                     this.machine.metadataVersion = update.metadata.version;
                     if (this.machine.keyBasis) this.machine.keyBasis = { ...this.machine.keyBasis, metadataVersion: update.metadata.version };
-                    this.notifyMachineMetadataChanged();
+                    this.notifyMachineMetadataChanged(publication.change);
                 }
 
                 // A blob CAS acknowledgement can precede its same-version
@@ -4713,7 +4765,7 @@ export class ApiMachineClient {
                     const metadata = projectMachinePublishedMetadataFromRowV1(this.machine.metadata, update.devcontainerChild);
                     if (metadata !== this.machine.metadata) {
                         this.machine.metadata = metadata;
-                        this.notifyMachineMetadataChanged();
+                        this.notifyMachineMetadataChanged({ serviceWatchesChanged: false });
                     }
                 }
 
@@ -4822,6 +4874,7 @@ export class ApiMachineClient {
         // retention and active local observers.
         retirePluginAccountCollectionWatchScope(resolveAccountSettingsScopeKeyForToken(this.token));
         this.projectionSchedulingClosed = true;
+        await this.machineServicesBinding?.dispose();
         await this.accountEncryptionCurrentness?.dispose();
         this.accountEncryptionCurrentness = null;
         await this.executionRunAccountSnapshots?.dispose();
@@ -4983,7 +5036,8 @@ export class ApiMachineClient {
         return await (signal ? waitForObservation(result, signal) : result);
     }
 
-    private notifyMachineMetadataChanged(): void {
+    private notifyMachineMetadataChanged(change: MachineMetadataChange): void {
+        this.machineServicesBinding?.notifyMetadataChanged(change);
         try {
             this.lifecycleDependencies.onMachineMetadataChanged?.();
         } catch {
@@ -4992,9 +5046,10 @@ export class ApiMachineClient {
     }
 
     private retireMachineContent(): void {
+        const serviceWatchesChanged = this.machineContentReady;
         this.machineContentContext = { codec: this.machineContentCodec, ready: false };
         this.rpcHandlerManager.retireEncryptionContext();
-        this.notifyMachineMetadataChanged();
+        this.notifyMachineMetadataChanged({ serviceWatchesChanged });
     }
 
     private readOwnerEnvelopeForWrite(): string | null {
@@ -5037,11 +5092,12 @@ export class ApiMachineClient {
             // A fresh same-key snapshot must not retire admitted publication ACKs.
             // Still replace the snapshot context so older refreshes cannot install it.
             const codec = retainCodec ? this.machineContentCodec : createMachineContentCodec(next);
+            const publication = projectMachineMetadataChange(this.machine.metadata, next.metadata);
             // Install decoded content, owner write basis, and RPC codec as one context.
-            this.machine = { ...next, daemonState: this.discardUnverifiedIrohEndpoint(next.daemonState) };
+            this.machine = { ...next, metadata: publication.metadata, daemonState: this.discardUnverifiedIrohEndpoint(next.daemonState) };
             this.machineContentContext = { codec, ready: true };
             this.rpcHandlerManager.adoptEncryptionContext(this.machine);
-            this.notifyMachineMetadataChanged();
+            this.notifyMachineMetadataChanged({ serviceWatchesChanged: !previousContext.ready || publication.change.serviceWatchesChanged });
         } catch (error) {
             // Transient reads provide no contrary key/owner evidence. Preserve
             // the admitted context; an already retired context stays retired.

@@ -111,7 +111,7 @@ describe('daemon Guard composition at the real minute, Activity and summary owne
                 stops++; present = false; Object.defineProperty(child, 'exitCode', { value: 0 });
                 child.emit('exit', 0, null); child.emit('close', 0, null);
             });
-            await serviceOwner.superviseProject({ workspace, declaration, cwd: '/project/nested',
+            await serviceOwner.superviseProject({ kind: 'workspace', workspace, declaration, cwd: '/project/nested',
                 requester: { ...target, accountId: requester.accountId }, serviceId: originalStart.targetId,
                 specIdentity: 'original-reviewed-declaration', isCurrent: () => true,
                 processSpec: { mode: { kind: 'managedSpawn', endpointNone: true } },

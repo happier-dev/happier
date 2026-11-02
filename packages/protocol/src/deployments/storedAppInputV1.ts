@@ -1,4 +1,3 @@
-import { ProjectSourcesCreateInputV1Schema, ProjectSourceOwnerV1Schema } from '../projects/sources/projectSourceV1.js';
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { DeploymentIdentifierV1Schema as id, DeploymentRevisionV1Schema as revision } from './deploymentIdentifiersV1.js';
@@ -12,10 +11,13 @@ import { ScmRepositoryContainedSubdirV1Schema } from '../scm/repositoryClone.js'
 import { AutomationIdV1Schema } from '../automations/automationIdV1.js';
 import { AutomationTriggerIdSchema, AutomationTriggerRevisionSchema } from '../automations/automationTriggerIdentity.js';
 import { AutomationOccurrenceKeyV1Schema } from '../automations/automationOccurrenceKeyV1.js';
+import { ProjectSourcesCreateInputV1Schema, ProjectSourceOwnerV1Schema } from '../projects/sources/projectSourceV1.js';
 
 /** Shared serialized leaves: feature-owned Environment records compose these same definitions. */
 export const DeploymentDigestV1Schema = lazyZodSchema(() => z.string().check(z.regex(/^sha256:[0-9a-f]{64}$/u)));
 export const DeploymentTextV1Schema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1)));
+/** Target enablement may offer retention without changing the allocation silently. */
+export const DeploymentTargetManagedRetentionV1Schema = lazyZodSchema(() => z.enum(['keep', 'until-delete']));
 export const DeploymentComposeSelectorsV1Schema = lazyZodSchema(() => z.strictObject({
     profiles: z.array(DeploymentTextV1Schema), services: z.array(DeploymentTextV1Schema), primaryService: z.optional(DeploymentTextV1Schema),
 }));
@@ -57,7 +59,7 @@ export const DeploymentPendingTriggerOccurrenceV1Schema = lazyZodSchema(() => z.
 export type DeploymentPendingTriggerOccurrenceV1 = z.infer<typeof DeploymentPendingTriggerOccurrenceV1Schema>;
 export const DeploymentPendingDeployIntentV1Schema = lazyZodSchema(() => z.strictObject({
     sourceIntent: DeploymentSourceIntentV1Schema, requestKey: id, targetLinkId: id,
-    expectedLinkRevision: revision, actionOperationId: id, sourceMethod: z.optional(DeploymentSourceMethodV1Schema),
+    actionOperationId: id, sourceMethod: z.optional(DeploymentSourceMethodV1Schema),
     triggerOccurrence: z.optional(DeploymentPendingTriggerOccurrenceV1Schema),
 }));
 export type DeploymentPendingDeployIntentV1 = z.infer<typeof DeploymentPendingDeployIntentV1Schema>;
@@ -67,12 +69,20 @@ export const DeploymentPendingDeployV1Schema = lazyZodSchema(() => z.discriminat
     z.strictObject({ t: z.literal('encrypted'), c: z.string().check(z.minLength(1)) }),
 ]));
 export type DeploymentPendingDeployV1 = z.infer<typeof DeploymentPendingDeployV1Schema>;
+/** Retained pending intent drops retired fields only at the existing storage/open boundary.
+ * Mutation input remains strict; encrypted TAKE retains its exact ciphertext. */
+export const DeploymentPendingDeployStoredIntentV1Schema = lazyZodSchema(() => z.object(DeploymentPendingDeployIntentV1Schema.shape));
+export const DeploymentPendingDeployStoredV1Schema = lazyZodSchema(() => z.discriminatedUnion('t', [
+    z.strictObject({ ...DeploymentPendingDeployV1Schema.def.options[0].shape, v: DeploymentPendingDeployStoredIntentV1Schema }),
+    DeploymentPendingDeployV1Schema.def.options[1],
+]));
 const sharedSecretRef = lazyZodSchema(() => z.string().check(z.refine(value => {
     try { return parseSavedSecretRefV1(value).kind === 'shared_resource'; } catch { return false; }
 }, { message: 'An exact shared Saved Secret reference is required.' })));
 export const DeploymentSecretBindingSourceV1Schema = lazyZodSchema(() => z.strictObject({
     kind: z.literal('secret'), ref: sharedSecretRef, resourceRevision: revision,
 }));
+export type DeploymentSecretBindingSourceV1 = z.infer<typeof DeploymentSecretBindingSourceV1Schema>;
 const publicValue = lazyZodSchema(() => z.strictObject({ kind: z.literal('value'), value: z.string() }));
 export const DeploymentNonSecretVariableBindingSourceV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
     publicValue,
@@ -97,8 +107,14 @@ const registryBindingIdentity = lazyZodSchema(() => z.strictObject({ purpose: z.
     registryOrigin: CanonicalHttpOriginSchema }));
 const backupBindingIdentity = lazyZodSchema(() => z.strictObject({ purpose: z.literal('backupDestination'),
     configKey: z.literal('destination'), role: z.enum(['accessKeyId', 'secretAccessKey', 'sessionToken', 'repositoryPassword', 'sshPrivateKey']) }));
+export { backupBindingIdentity as DeploymentBackupDestinationBindingIdentityV1Schema };
+export const DeploymentBackupDestinationBindingIdentityV1ProtocolSchema = projectZodProtocolSchema(backupBindingIdentity);
+export const DeploymentBackupDestinationCredentialRoleV1ProtocolSchema = projectZodProtocolSchema(backupBindingIdentity.shape.role);
 const domainBindingIdentity = lazyZodSchema(() => z.strictObject({ purpose: z.literal('domainCredential'), domainId: id,
     role: z.enum(['basicAuth', 'certificateChain', 'privateKey']) }));
+export const EnvironmentDomainCredentialBindingV1Schema = lazyZodSchema(() => z.strictObject({
+    ...domainBindingIdentity.shape, source: DeploymentSecretBindingSourceV1Schema,
+}));
 const serviceDataRoleAddress = lazyZodSchema(() => z.strictObject({ service: DeploymentTextV1Schema }));
 const managedDataRoleAddress = lazyZodSchema(() => z.strictObject({ targetLinkId: id }));
 /** Self-hosted services belong to the containing Environment; only managed data uses a target link. */
@@ -146,11 +162,12 @@ export function environmentSecretBindingIdentityV1(binding: EnvironmentSecretBin
     }
 }
 
-/** A catalog selection pins content and version; a plugin source also binds its admitted occurrence. */
+/** A catalog selection pins content and version; a plugin occurrence records supplier provenance. */
 export const DeploymentTemplateRefV1Schema = lazyZodSchema(() => z.strictObject({
     ...RegistryItemPointerV1Schema.shape, ref: RegistryContentRefV1Schema,
     expectedContributorOccurrenceId: z.optional(asProtocolZod(PluginUiRuntimeOccurrenceIdV1Schema)),
 }));
+export type DeploymentTemplateRefV1 = z.infer<typeof DeploymentTemplateRefV1Schema>;
 export const StoredAppPresetBindingV1Schema = lazyZodSchema(() => z.strictObject({
     ...variableIdentity(), source: z.discriminatedUnion('kind', [
         publicValue, DeploymentSecretBindingSourceV1Schema,
@@ -161,21 +178,7 @@ export const StoredAppPresetBindingV1Schema = lazyZodSchema(() => z.strictObject
 export const StoredAppPresetBindingsV1Schema = lazyZodSchema(() => z.array(StoredAppPresetBindingV1Schema).check(
     z.refine(bindings => new Set(bindings.map(binding => JSON.stringify([binding.phase, binding.name]))).size === bindings.length,
         { message: 'Variable phase/name identities must be unique.' })));
-/** Inert reusable authoring intent. Normalization, defaults and all writes remain P40/P45 owned. */
-export const StoredAppPresetInputV1Schema = lazyZodSchema(() => z.strictObject({
-    name: DeploymentTextV1Schema,
-    project: z.discriminatedUnion('kind', [
-        z.strictObject({ kind: z.literal('existing'), projectSourceId: id }),
-        z.strictObject({ kind: z.literal('create') }),
-    ]),
-    definition: z.discriminatedUnion('from', [
-        DeploymentComposeDefinitionInputV1Schema,
-        z.strictObject({ from: z.literal('catalogApp'), templateRef: DeploymentTemplateRefV1Schema }),
-    ]),
-    bindings: StoredAppPresetBindingsV1Schema,
-}));
-export type StoredAppPresetInputV1 = z.infer<typeof StoredAppPresetInputV1Schema>;
-
+/** The ordinary Source creator owns this reviewed, repository-free create intent. */
 export const DeploymentNewProjectV1Schema = lazyZodSchema(() => z.extend(z.pick(ProjectSourcesCreateInputV1Schema,
     { name: true, requestKey: true }), { owner: ProjectSourceOwnerV1Schema }));
 export type DeploymentNewProjectV1 = z.infer<typeof DeploymentNewProjectV1Schema>;
@@ -186,3 +189,17 @@ export function hasOneDeploymentProjectV1(source: unknown, newProject: unknown):
 export const DeploymentCatalogAppDefinitionInputV1Schema = lazyZodSchema(() => z.strictObject({
     from: z.literal('catalogApp'), templateRef: DeploymentTemplateRefV1Schema,
 }));
+/** Inert reusable authoring intent. Normalization, defaults and all writes remain P40/P45 owned. */
+export const StoredAppPresetInputV1Schema = lazyZodSchema(() => z.strictObject({
+    name: DeploymentTextV1Schema,
+    project: z.discriminatedUnion('kind', [
+        z.strictObject({ kind: z.literal('existing'), projectSourceId: id }),
+        z.strictObject({ kind: z.literal('create') }),
+    ]),
+    definition: z.discriminatedUnion('from', [
+        DeploymentComposeDefinitionInputV1Schema,
+        DeploymentCatalogAppDefinitionInputV1Schema,
+    ]),
+    bindings: StoredAppPresetBindingsV1Schema,
+}));
+export type StoredAppPresetInputV1 = z.infer<typeof StoredAppPresetInputV1Schema>;

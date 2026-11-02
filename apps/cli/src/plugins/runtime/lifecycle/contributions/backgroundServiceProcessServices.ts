@@ -20,7 +20,7 @@ export type BackgroundServiceProcessLocalPolicy = Readonly<{
         | 'processExecutables' | 'processEnvKeys' | 'processRequestIds' | 'environmentRequestIds'
         | 'networkOrigins' | 'networkHostSuffixes' | 'networkRequestIds' | 'networkScopes'
         | 'networkClientOrigins' | 'networkClientHostSuffixes' | 'networkClientRequestIds' | 'networkClientScopes'>;
-    filesystemRoots?: Readonly<{ pluginData: string; workspace: string; projects: readonly (readonly [string, string])[] }>;
+    filesystemRoots?: Readonly<{ pluginData: string; workspace?: string; projects: readonly (readonly [string, string])[] }>;
     environment?: Readonly<Record<string, string>>;
 }>;
 

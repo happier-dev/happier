@@ -123,6 +123,7 @@ export function createProjectServiceRelocationRoute(input: Readonly<{
                     }
                 }
                 const handle = resolved.handle;
+                if (handle.kind !== 'workspace') return refusal('workspace_service_required');
                 if (!handle.execution) return refusal('service_execution_unavailable');
                 return {
                     status: 'resolved' as const,

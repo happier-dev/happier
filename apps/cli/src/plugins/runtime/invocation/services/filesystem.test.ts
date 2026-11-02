@@ -10,6 +10,17 @@ import {
 } from './filesystem';
 
 describe('plugin invocation filesystem service', () => {
+  it('keeps Machine invocations without a Workspace root distinct from admitted Project roots', async () => {
+    const roots = { pluginData: tmpdir(), projects: new Map<string, string>() };
+    expect(() => resolvePluginPathWithinRoots(roots, { root: 'workspace', relativePath: 'file' }))
+      .toThrow(expect.objectContaining({ code: 'plugin_fs_root_unavailable' }));
+    const service = createPluginFileSystemService({ roots, scopes: [], signal: new AbortController().signal,
+      isOccurrenceCurrent: () => true });
+    await expect(service.stat({ root: 'workspace', relativePath: 'file' })).rejects.toMatchObject({ code: 'plugin_fs_root_unavailable' });
+    expect(resolvePluginPathWithinRoots({ ...roots, workspace: tmpdir() }, { root: 'workspace', relativePath: 'file' }))
+      .toBe(join(tmpdir(), 'file'));
+  });
+
   it.each([
     ['COM¹', false], ['CONIN$', false], ['CONOUT$', false], ['CLOCK$', false], ['LPT².txt', false],
     ['report?.txt', false], ['a<b.txt', false], ['report\u007f.txt', false],

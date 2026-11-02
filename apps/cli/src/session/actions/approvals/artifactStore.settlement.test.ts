@@ -468,7 +468,7 @@ describe('approval settlement through the real CLI Artifact store', () => {
       expect(gate.isEnabled('localServices.actions')).toBe(true);
       expect(gate.isEnabled('localServices.managed')).toBe(true);
       try {
-        const handle = await owner.superviseProject({
+        const handle = await owner.superviseProject({ kind: 'workspace',
           workspace, declaration, cwd: workspace.rootPath,
           requester: { serverId: workspace.serverId, accountId: 'account-1',
             machineId: workspace.machineId, installationId: 'stop-installation' },
