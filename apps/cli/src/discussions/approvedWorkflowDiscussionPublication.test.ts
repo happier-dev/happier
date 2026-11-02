@@ -1,4 +1,5 @@
 import { createApprovedWorkflowDiscussionPublisher } from './approvedWorkflowDiscussionPublisher';
+import { adoptServerProfileHomeConnectionDescriptor } from '@/server/serverProfiles';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { createServer } from 'node:http';
@@ -25,7 +26,7 @@ import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accou
 import { createDiscussionReplyReturnPublisher } from './discussionReplyReturnPublisher';
 import { readApprovedWorkflowDiscussionPublication } from './approvedDiscussionPublication';
 
-it.each(['publish', 'stable_delivery', 'foreign_delivery', 'unknown_delivery', 'revoked', 'observation'] as const)('rejoins one configured-Ask Workflow approval and reopens its exact accepted typed result (%s)', async mode => {
+it.each(['publish', 'stable_delivery', 'stable_replay_home', 'foreign_delivery', 'unknown_delivery', 'revoked', 'observation'] as const)('rejoins one configured-Ask Workflow approval and reopens its exact accepted typed result (%s)', async mode => {
   const accountId = 'account';
   const machineId = 'machine';
   const serverId = 'profile';
@@ -96,6 +97,9 @@ it.each(['publish', 'stable_delivery', 'foreign_delivery', 'unknown_delivery', '
   onTestFinished(() => new Promise<void>((resolve, reject) => home.close(error => error ? reject(error) : resolve())));
   const address = home.address(); if (!address || typeof address === 'string') throw new Error('Missing Home address');
   const serverUrl = `http://127.0.0.1:${address.port}`;
+  if (mode === 'stable_replay_home') await adoptServerProfileHomeConnectionDescriptor({ expectedProfileId: serverId, createIfMissing: true,
+    observation: 'exact', descriptor: { v: 1, homeServerIdentityId: serverIdentityId, canonicalServerUrl: serverUrl,
+      revision: 1, endpoints: [{ kind: 'https', url: serverUrl }] } });
   // The daemon normally has its current Account settings loaded before replay.
   // Use the canonical in-memory environment fixture, not a policy mock.
   runWithServerHttpBaseUrl(serverUrl, () => setActiveAccountSettingsSnapshot({ source: 'network', settings: accountSettingsParse({}),
@@ -170,7 +174,7 @@ it.each(['publish', 'stable_delivery', 'foreign_delivery', 'unknown_delivery', '
       const replayArtifactId = options.context.approvedActionReplay?.artifactId;
       if (!replayArtifactId) throw new Error('Expected admitted approval replay');
       const verification = { artifactId: replayArtifactId,
-        request, content: options.content, credentials, machineId, serverId, serverUrl,
+        request, content: options.content, credentials, machineId, serverId: mode === 'stable_replay_home' ? serverIdentityId : serverId, serverUrl,
         // The deciding ingress is present-user; replay context retains the
         // original automation authority, exactly as the daemon composition does.
         callerAuthority: 'present_user', isApprovalExecutionOriginCurrent: currentness,

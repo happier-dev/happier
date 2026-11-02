@@ -15,6 +15,7 @@ import { prepareWorkspaceFileExport, prepareWorkspaceEntryExport } from './prepa
 import { createPreparedFilesystemEntryCopyDestination } from './preparedFilesystemEntryCopyDestination';
 import type { PreparedFilesystemTransferScope } from './preparedFilesystemTransferScope';
 import type { DaemonAdmissionDrain } from '@/daemon/lifecycle/admissionDrain';
+import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
 
 type TransferActionId = 'daemon.filesystem.upload' | 'daemon.filesystem.download' | 'daemon.filesystem.transfer.cancel' | 'daemon.filesystem.copy';
 type TransferActionOutput = FilesystemUploadOutput | FilesystemDownloadOutput | FilesystemTransferCancelOutput | FilesystemCopyOutput;
@@ -64,7 +65,7 @@ export function createPreparedFilesystemTransferActionExecutor(params: Readonly<
       if (!acceptance) return { success: false, status: 'failed', error: 'Filesystem transfer operation owner is unavailable', errorCode: 'FILESYSTEM_OPERATION_OWNER_REQUIRED' };
       if (args.actionId === 'daemon.filesystem.upload' || args.actionId === 'daemon.filesystem.copy') {
         const copy = args.actionId === 'daemon.filesystem.copy' ? FilesystemPreparedCopyInputSchema.parse(args.input) : null;
-        if (copy && (copy.destination.serverId !== args.context.serverId
+        if (copy && (!args.context.serverId || !await isServerProfileHomeIdentity(args.context.serverId, copy.destination.serverId)
           || args.context.externalActionTarget?.kind !== 'machine'
           || copy.destination.machineId !== args.context.externalActionTarget.machineId)) {
           return failure('Prepared copy destination does not match the admitted target', 'target_unavailable');

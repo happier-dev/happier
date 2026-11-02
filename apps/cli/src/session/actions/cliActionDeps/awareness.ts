@@ -11,7 +11,8 @@ import type { fetchSessionByIdCompat, fetchSessionTurnsProjection } from '@/sess
 import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 export function createCliAwarenessActionDeps(
   params: Pick<CliActionDepsParams, 'credentials' | 'serverId' | 'token'>,
-  { resolveServerRequestHeaders, readServerFeaturesSnapshot }: Readonly<{
+  { resolveServerRequestHeaders, readServerFeaturesSnapshot, isSameActionHomeId }: Readonly<{
+    isSameActionHomeId: (serverId: string) => boolean;
     resolveServerRequestHeaders: (context: ActionExecutorContext | undefined, effectActionId: string, request: Readonly<{ method: string; path: string; body?: unknown }>) => Readonly<Record<string, string>> | null;
     readServerFeaturesSnapshot: () => Promise<CliServerFeaturesSnapshot | undefined>;
   }>,
@@ -21,7 +22,7 @@ export function createCliAwarenessActionDeps(
     sessionAwarenessWait: async ({ context, input, options, readAwareness }) => {
       if (input.target.kind !== 'session') return { disposition: 'unsupported_condition' };
       if (!params.credentials) return { disposition: 'permission_denied' };
-      if (!params.serverId || input.target.serverId !== params.serverId) return { disposition: 'permission_denied' };
+      if (!params.serverId || !isSameActionHomeId(input.target.serverId)) return { disposition: 'permission_denied' };
       const sessionId = input.target.sessionId;
       const { openSessionEventSource } = await import("@/session/transport/socket/sessionSocketAgentState");
       return waitForSessionAwarenessV1({

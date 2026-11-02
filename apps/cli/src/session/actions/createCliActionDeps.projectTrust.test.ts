@@ -2,6 +2,11 @@ import axios from 'axios';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { createCliActionExecutorHarness } from './createCliActionExecutorHarness';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { configuration } from '@/configuration';
+import { addServerProfile, adoptServerProfileHomeConnectionDescriptor } from '@/server/serverProfiles';
 
 afterEach(() => vi.restoreAllMocks());
 const project = { serverId: 'home', projectId: 'project' };
@@ -27,6 +32,42 @@ function networkBoundary() {
   });
 }
 describe('Project Trust Actions through requester CLI composition', () => {
+  it('lists and forgets portable Trust rows through a different local Home profile while refusing a foreign Home', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-trust-home-'));
+    const previous = { settingsFile: configuration.settingsFile, serversDir: configuration.serversDir };
+    try {
+      Object.assign(configuration, { settingsFile: join(root, 'settings.json'), serversDir: join(root, 'servers') });
+      const profile = await addServerProfile({ name: 'local-trust', serverUrl: 'https://home.test', webappUrl: 'https://home.test' });
+      const homeId = 'srv_trust_home';
+      await adoptServerProfileHomeConnectionDescriptor({ expectedProfileId: profile.id, observation: 'exact', descriptor: {
+        v: 1, homeServerIdentityId: homeId, canonicalServerUrl: profile.serverUrl, revision: 1,
+        endpoints: [{ kind: 'https', url: profile.serverUrl }],
+      } });
+      const portableProject = { ...project, serverId: homeId };
+      const portableValue = { ...value, project: portableProject };
+      vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, data: { mode: 'plain', updatedAt: 1 } });
+      const post = vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+        if (url.endsWith('/list')) return { status: 200, data: { rows: [{ project: portableProject, revision: 3, content: { t: 'plain', v: portableValue } }] } };
+        if (url.endsWith('/read')) return { status: 200, data: { status: 'present', revision: 3, content: { t: 'plain', v: portableValue } } };
+        expect(body).toEqual({ project: portableProject, expectedRevision: 3, content: null });
+        return { status: 200, data: { status: 'updated', revision: 4, cursor: 4 } };
+      });
+      const owner = createCliActionExecutorHarness({ token, credentials: { token, encryption: null },
+        sessionId: 'cli-global', mode: 'plain', ctx: null, serverId: profile.id,
+        serverIdentityId: homeId, serverHttpBaseUrl: profile.serverUrl }).executor;
+      expect(await owner.execute('projects.trust.list', {}, context)).toMatchObject({ ok: true,
+        result: { trust: [{ project: portableProject, revision: 3 }] } });
+      expect(await owner.execute('projects.trust.revoke', { project: portableProject, expectedRevision: 3, expectedEffectDigest: 'reviewed' }, context))
+        .toEqual({ ok: true, result: { project: portableProject, status: 'removed' } });
+      post.mockClear();
+      expect(await owner.execute('projects.trust.list', { project: { ...portableProject, serverId: 'srv_foreign' } }, context))
+        .toMatchObject({ ok: false, errorCode: 'server_scope_mismatch' });
+      expect(post).not.toHaveBeenCalled();
+    } finally {
+      Object.assign(configuration, previous);
+      await rm(root, { recursive: true, force: true });
+    }
+  });
   it('lists the reviewed revision and revokes exactly that effect through the canonical mode-aware client', async () => {
     const post = networkBoundary();
     const owner = executor();

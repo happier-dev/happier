@@ -4,6 +4,7 @@ import { automationOccurrenceRequest } from '@happier-dev/protocol/actions';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import type { CliActionDepsParams } from './types';
 import { AUTOMATION_HTTP_TIMEOUT_MS } from '@/api/automations';
+import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
 
 /** Account placement uses the held Home and credentials, including after approval replay. */
 export function createCliOccurrenceAction(params: Pick<CliActionDepsParams, 'credentials' | 'isCredentialCurrent'>,
@@ -12,7 +13,7 @@ export function createCliOccurrenceAction(params: Pick<CliActionDepsParams, 'cre
     return async ({ actionId, input, context }) => {
         const failure = (code: string) => ({ ok: false as const, errorCode: code, error: code });
         if (!params.credentials) return failure('not_authenticated');
-        if (context.serverId && context.serverId !== home.serverId) return failure('server_scope_mismatch');
+        if (context.serverId && !await isServerProfileHomeIdentity(home.serverId, context.serverId)) return failure('server_scope_mismatch');
         const requester = context.externalActionCredential?.accountId
             ?? context.externalActionExecutionAuthorization?.binding.accountId ?? context.runtimeAccountId;
         if (requester && requester !== home.accountId) return failure('credential_scope_denied');

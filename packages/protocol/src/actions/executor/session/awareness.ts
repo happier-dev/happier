@@ -12,12 +12,12 @@ import { hasOwn } from '../../../inputs/inputRecords.js';
 import { SESSION_LIST_AWARENESS_UNSUPPORTED_ERROR_CODE, SESSION_LIST_AWARENESS_VIEW_V1, SESSION_LIST_QUERY_UPDATE_REQUIRED_ERROR_CODE, SessionListViewV1Schema, parseSessionAwarenessListResultV1, parseSessionListQueryActionResultV1 } from '../../../sessions/awareness/action.js';
 import { normalizeId, readNullableString } from '../inputReading.js';
 import { SessionAwarenessProjectionV1Schema } from '../../../sessions/awareness/projectionV1.js';
-import type { CoreInvocation, DispatchFacts, PreparedCoreAdmission } from '../coreInvocation.js';
+import type { ActionHomeEquivalence, CoreInvocation, DispatchFacts, PreparedCoreAdmission } from '../coreInvocation.js';
 import type { ActionExecuteResult, ActionExecutorContext, ActionExecutorDeps } from '../types.js';
 
 
 
-export async function dispatchSessionAwareness(inv: Pick<CoreInvocation, 'actionId' | 'admittedInput' | 'deps' | 'ctx' | 'data'>): Promise<ActionExecuteResult | null> {
+export async function dispatchSessionAwareness(inv: Pick<CoreInvocation, 'actionId' | 'admittedInput' | 'deps' | 'ctx' | 'data'> & Readonly<{ sameHome: ActionHomeEquivalence }>): Promise<ActionExecuteResult | null> {
   const { actionId, admittedInput, deps, ctx, data } = inv;
 
         if (actionId === 'session.update.post') {
@@ -64,7 +64,7 @@ export async function dispatchSessionAwareness(inv: Pick<CoreInvocation, 'action
             return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
           }
           const listRequest = listInput.data;
-          if (listRequest.project && ctx.serverId && ctx.serverId !== listRequest.project.serverId) {
+          if (listRequest.project && ctx.serverId && !inv.sameHome(ctx.serverId, listRequest.project.serverId)) {
             return { ok: false, errorCode: 'server_scope_mismatch', error: 'server_scope_mismatch' };
           }
           const requestedRoot = listRequest.underSessionId ?? listRequest.query?.underSessionId;

@@ -2557,7 +2557,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     let visualAdmission: SessionVisualAdmissionV1 | undefined;
     if (actionId === 'session.board.item.upsert') {
       try {
-        const admission = await readSessionVisualAdmissionV1(deps, admittedInput, ctx, Boolean(existingAdmission) || options?.approvalReplay === true);
+        const admission = await readSessionVisualAdmissionV1(deps, admittedInput, ctx, (left, right) => isSameHome(left, right, ctx), Boolean(existingAdmission) || options?.approvalReplay === true);
         if ('ok' in admission) return admission;
         visualAdmission = admission;
         admittedInput = admission.input;
@@ -4646,7 +4646,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       if (usageSourceActionId !== null) {
         const id = usageSourceActionId;
         const input = USAGE_SOURCE_ACTION_INPUT_SCHEMAS[id].parse(parsed.data);
-        if (ctx.serverId && input.serverId !== ctx.serverId) return { ok: false, errorCode: 'server_target_mismatch', error: 'server_target_mismatch' };
+        if (ctx.serverId && !isSameHome(input.serverId, ctx.serverId, ctx)) return { ok: false, errorCode: 'server_target_mismatch', error: 'server_target_mismatch' };
         if (!deps.usageSourceAction) return id === 'usage.sources.dismiss'
           ? { ok: true, result: { status: 'unavailable' } }
           : { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
@@ -5220,6 +5220,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           }
 
           const dynamic = await resolveInputOptions({
+            sameHome: (left, right) => isSameHome(left, right, ctx),
             readFailure: readActionFailureEnvelope,
             resolveSessionId: resolveSessionIdFromInput,
             reviewScope: reviewScopeForInput,
@@ -5287,7 +5288,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         if (actionId === 'wait') {
           const request = WaitActionInputV1Schema.parse(parsed.data);
           // The target cannot choose credentials: agree with the host's captured Home.
-          if (!ctx.serverId || request.target.serverId !== ctx.serverId) {
+          if (!ctx.serverId || !isSameHome(request.target.serverId, ctx.serverId, ctx)) {
             return { ok: true, result: { target: request.target, condition: request.condition, disposition: 'permission_denied' } };
           }
           const unwrap = (result: ActionExecuteResult) => result.ok ? result.result : result;
@@ -5374,7 +5375,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         if (actionId === 'workflow.events.list') {
           if (!deps.workflowEventsList) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
           const input = WorkflowEventsListInputV1Schema.parse(parsed.data);
-          if (input.serverId && ctx.serverId && input.serverId !== ctx.serverId) {
+          if (input.serverId && ctx.serverId && !isSameHome(input.serverId, ctx.serverId, ctx)) {
             return { ok: false, errorCode: 'server_target_mismatch', error: 'server_target_mismatch' };
           }
           return completeActionResult(await deps.workflowEventsList({ ...input,
@@ -5653,7 +5654,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         }
         const dispatchSessionControls1Result = await dispatchSessionControls1({ actionId, parsed, ctx, deps, data, isSameHome });
         if (dispatchSessionControls1Result !== null) return dispatchSessionControls1Result;
-        const dispatchSessionLifecycle2Result = await dispatchSessionLifecycle2({ actionId, deps, parsed, ctx, data, isDeferredApprovalResult, stopThenArchiveSession, executeHostChild });
+        const dispatchSessionLifecycle2Result = await dispatchSessionLifecycle2({ actionId, deps, parsed, ctx, data, sameHome: (left, right) => isSameHome(left, right, ctx), isDeferredApprovalResult, stopThenArchiveSession, executeHostChild });
         if (dispatchSessionLifecycle2Result !== null) return dispatchSessionLifecycle2Result;
         const dispatchSessionWorkResult = await dispatchSessionWork({ actionId, data, deps, ctx, parsed });
         if (dispatchSessionWorkResult !== null) return dispatchSessionWorkResult;
@@ -5661,7 +5662,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         if (dispatchSessionTranscriptResult !== null) return dispatchSessionTranscriptResult;
         const dispatchSessionControls2Result = await dispatchSessionControls2({ actionId, parsed, ctx, deps, data, isSameHome });
         if (dispatchSessionControls2Result !== null) return dispatchSessionControls2Result;
-        const dispatchSessionAwarenessResult = await dispatchSessionAwareness({ actionId, admittedInput, deps, ctx, data });
+        const dispatchSessionAwarenessResult = await dispatchSessionAwareness({ actionId, admittedInput, deps, ctx, data, sameHome: (left, right) => isSameHome(left, right, ctx) });
         if (dispatchSessionAwarenessResult !== null) return dispatchSessionAwarenessResult;
 
         if (actionId === 'search.conversations') {

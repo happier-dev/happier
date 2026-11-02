@@ -21,6 +21,7 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import type { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import type { StoredCredentials } from '@/persistence';
+import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
 import type { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import type { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
@@ -51,7 +52,7 @@ export function createCliProfileActionExecuteV1(params: Readonly<{
 }>): NonNullable<ActionExecutorDeps['profileActionExecute']> {
   const scopeKey = runWithServerHttpBaseUrl(params.serverHttpBaseUrl, () => resolveAccountSettingsScopeKey(params.credentials));
   return async (request, context) => runWithServerHttpBaseUrl(params.serverHttpBaseUrl, async (): Promise<ActionExecuteResult> => {
-    if (context.serverId && context.serverId !== params.serverId) {
+    if (context.serverId && !await isServerProfileHomeIdentity(params.serverId, context.serverId)) {
       return { ok: false, errorCode: 'server_scope_mismatch', error: 'server_scope_mismatch' };
     }
     let store: CliProfileStore | undefined;

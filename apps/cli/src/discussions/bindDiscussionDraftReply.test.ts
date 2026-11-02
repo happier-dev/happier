@@ -29,7 +29,7 @@ const features = { status: 'ready' as const, features: FeaturesResponseSchema.pa
   features: { sessions: { enabled: true, conversations: { enabled: true } }, sharing: { enabled: true, session: { enabled: true } } },
   capabilities: { serverIdentity: { serverIdentityId: homeIdentityId } },
 }) };
-const readRoster = createDiscussionActionDeps({ credentials: { token: 'token', encryption: null }, serverId: 'home',
+const readRoster = createDiscussionActionDeps({ credentials: { token: 'token', encryption: null }, serverId: 'home', serverIdentityId: homeIdentityId,
   serverHttpBaseUrl: 'https://draft-reply.test', resolveServerFeaturesSnapshot: () => features }).discussionAction!;
 
 beforeEach(() => {
@@ -118,10 +118,10 @@ it.each(['draft', 'informational'] as const)('normalizes the verified daemon Ses
   expect(result).toMatchObject({ ok: false, errorCode: 'action_disabled' });
 });
 
-it.each(['discussion.post', 'discussion.reply'] as const)('binds an addressed %s to the final return identity before approval captures it', async actionId => {
+it.each(['discussion.post', 'discussion.reply'] as const)('binds an addressed %s across the saved profile and canonical Home before approval captures it', async actionId => {
   const result = await bindDiscussionDraftReply({ actionId, input: { ...input,
     ...(actionId === 'discussion.reply' ? { replyTarget: { kind: 'message', messageId: 'question' } } : {}) },
-    context, serverId: 'home', discussionAction: readRoster });
+    context: { ...context, serverId: homeIdentityId }, serverId: 'home', serverIdentityId: homeIdentityId, discussionAction: readRoster });
   const localId = deriveSessionMessageReplyReturnLocalIdV1({ sessionId: 'participant', localId: 'input', acceptedTurnId: 'turn' });
   expect(result).toMatchObject({ actionId: 'discussion.reply', input: { ...input, localId,
     replyTarget: { kind: 'message', messageId: 'question' } }, context: { actionRequestId: localId,
@@ -129,6 +129,14 @@ it.each(['discussion.post', 'discussion.reply'] as const)('binds an addressed %s
   expect(http.request.mock.calls.map(([request]) => new URL(request.url).pathname)).toEqual(['/v1/discussions/discussion/participants']);
   expect(context).not.toHaveProperty('discussionReplyReturn');
   expect(input.localId).toBe('tool-local');
+});
+
+it('does not bind a draft from a foreign Home with a matching identity hint', async () => {
+  const foreign = { ...context, serverId: 'srv_foreign' };
+  expect(await bindDiscussionDraftReply({ actionId: 'discussion.post', input, context: foreign,
+    serverId: 'home', serverIdentityId: homeIdentityId, discussionAction: readRoster }))
+    .toEqual({ actionId: 'discussion.post', input, context: foreign });
+  expect(http.request).not.toHaveBeenCalled();
 });
 
 it.each(['when_addressed', 'reads_only', 'watches_and_speaks_up'] as const)('preserves independent explicit publication under %s', async answerPolicy => {

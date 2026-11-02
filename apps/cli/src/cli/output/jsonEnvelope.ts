@@ -2,6 +2,8 @@ export type SessionControlJsonEnvelope =
   | Readonly<{ v: 1; ok: true; kind: string; data: unknown }>
   | Readonly<{ v: 1; ok: false; kind: string; error: unknown }>;
 
+export type SessionControlExitCode = 0 | 1 | 2 | 3 | 4 | 5;
+
 export function wantsJson(argv: readonly string[]): boolean {
   return argvBeforeOptionTerminator(argv).includes('--json');
 }
@@ -48,12 +50,13 @@ export async function printJsonEnvelope(
   payload:
     | Readonly<{ ok: true; kind: string; data: unknown }>
     | Readonly<{ ok: false; kind: string; error: unknown }>,
-  opts?: Readonly<{ exitCode?: 0 | 1 | 2 }>,
+  opts?: Readonly<{ exitCode?: SessionControlExitCode }>,
 ): Promise<void> {
   // Stable exit codes for automation:
   // - 0: success
   // - 1: expected failure
   // - 2: unexpected failure
+  // Finite Action --wait only: 3 approval held, 4 Machine offline, 5 uncertain.
   const desired =
     typeof opts?.exitCode === 'number'
       ? opts.exitCode

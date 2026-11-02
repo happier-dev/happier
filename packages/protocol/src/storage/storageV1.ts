@@ -25,6 +25,35 @@ const revision = () => z.number().check(z.int(), z.nonnegative());
 const target = () => ({ serverId: z.optional(z.string().check(z.minLength(1))), machineId: z.string().check(z.minLength(1)) });
 const detailFacts = () => z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()]));
 
+const dockerPruneImage = () => z.readonly(z.strictObject({
+  nativeId: z.string().check(z.regex(/^sha256:[a-f0-9]{64}$/u)),
+  configDigest: z.string().check(z.regex(/^sha256:[a-f0-9]{64}$/u)),
+  platform: z.string().check(z.minLength(1)),
+}));
+/** Closed native selectors are expectations, never custody or protection facts. */
+export const MachineStorageDockerPruneInputV1Schema = lazyZodSchema(() => z.readonly(z.union([
+  z.strictObject({ ...target(), expectedEngineId: z.string().check(z.minLength(1)),
+    selection: z.readonly(z.strictObject({ kind: z.literal('explicit'), images: z.readonly(z.array(dockerPruneImage())),
+      buildCacheIds: z.readonly(z.array(z.string().check(z.minLength(1)))) })) }),
+  z.strictObject({ ...target(), expectedEngineId: z.optional(z.string().check(z.minLength(1))),
+    selection: z.readonly(z.strictObject({ kind: z.literal('unusedBuildCacheAndUnreferencedImages') })) }),
+])));
+export type MachineStorageDockerPruneInputV1 = z.infer<typeof MachineStorageDockerPruneInputV1Schema>;
+export const MachineStorageDockerPruneResultV1Schema = lazyZodSchema(() => {
+  const result = { removed: z.readonly(z.array(z.string())), kept: z.readonly(z.array(z.string())) };
+  return z.readonly(z.union([
+    z.strictObject({ ...result, kind: z.literal('completed'), buildCache: z.literal('unsupported') }),
+    z.strictObject({ ...result, kind: z.literal('changed') }),
+    z.strictObject({ ...result, kind: z.literal('failed') }),
+    z.strictObject({ ...result, kind: z.literal('outcome_unknown') }),
+    z.strictObject({ ...result, kind: z.literal('unavailable'),
+      reason: z.enum(['image_custody_unavailable', 'native_inventory_unavailable']), deploymentIds: z.readonly(z.array(z.string())) }),
+    z.strictObject({ ...result, kind: z.literal('unsupported'), reason: z.enum(['build_cache_custody_unavailable', 'image_custody_unavailable', 'native_runtime_unavailable']) }),
+    z.strictObject({ ...result, kind: z.literal('effect_in_progress'), actionOperationId: z.string().check(z.minLength(1)) }),
+  ]));
+});
+export type MachineStorageDockerPruneResultV1 = z.infer<typeof MachineStorageDockerPruneResultV1Schema>;
+
 export const HappierStorageCategoryIdV1Schema = lazyZodSchema(() => z.enum([
   'worktrees', 'caches', 'modelPacks', 'sessionFolders', 'logs', 'agentHomes', 'temporary', 'recordings', 'trash', 'ownData',
 ]));

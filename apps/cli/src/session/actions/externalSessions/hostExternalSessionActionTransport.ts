@@ -1,6 +1,7 @@
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import type { ActionExecutorDeps } from '@happier-dev/protocol';
 import type { StoredCredentials } from '@/persistence';
+import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
 import { resolveExternalActionMachineTarget } from '@/daemon/externalActions/reconcileExternalActionTarget';
 import { callExactMachineRpc } from '@/session/transport/rpc/machineRpc';
 
@@ -17,7 +18,7 @@ export function createHostExternalSessionActionTransport(params: Readonly<{
     if (context.externalActionCredential || context.externalActionExecutionAuthorization) {
       return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
     }
-    if (context.serverId && context.serverId !== params.serverId) {
+    if (context.serverId && !await isServerProfileHomeIdentity(params.serverId, context.serverId)) {
       return { ok: false, errorCode: 'server_scope_mismatch', error: 'server_scope_mismatch' };
     }
     const spec = getActionSpec(actionId);

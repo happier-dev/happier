@@ -78,7 +78,7 @@ export async function readApprovedWorkflowDiscussionPublication(params: Readonly
     if (!('kind' in marker)) return publicationRefusal('discussion_replay_return_invalid');
     if (origin.caller.kind !== 'workflowRun') return publicationRefusal('discussion_replay_caller_mismatch');
     if (origin.caller.runId !== marker.producer.runId) return publicationRefusal('discussion_replay_run_mismatch');
-    if (origin.serverId !== params.serverId) return publicationRefusal('discussion_replay_server_mismatch');
+    if (!await isServerProfileHomeIdentity(params.serverId, origin.serverId)) return publicationRefusal('discussion_replay_server_mismatch');
     if (origin.machineId !== params.machineId) return publicationRefusal('discussion_replay_machine_mismatch');
     if (marker.serverId !== origin.serverIdentityId) return publicationRefusal('discussion_replay_home_mismatch');
     if (origin.accountId !== readAccountIdFromToken(params.credentials.token)) return publicationRefusal('discussion_replay_account_mismatch');
@@ -118,7 +118,7 @@ export async function readApprovedWorkflowDiscussionPublication(params: Readonly
     if (!delivery) return publicationRefusal('discussion_replay_delivery_missing');
     if (delivery.discussion.discussionId !== marker.origin.discussion.discussionId || delivery.messageId !== marker.origin.messageId
       || delivery.throughSeq !== marker.origin.throughSeq || !areServerProfileIdentifiersEquivalent(delivery.discussion.serverId, params.serverId,
-        id => id === params.serverId || id === origin.serverIdentityId ? origin.serverIdentityId : null)) {
+        id => id === params.serverId || id === origin.serverId || id === origin.serverIdentityId ? origin.serverIdentityId : null)) {
       return publicationRefusal('discussion_replay_delivery_mismatch');
     }
     const expectedProducer = projectWorkflowDiscussionProducerV1({ runId: index.runId, invocationRecordId: index.id,
@@ -184,7 +184,7 @@ export async function readApprovedDiscussionPublication(params: Readonly<{
     const terminalReturn = (origin.caller.kind === 'host' || origin.caller.kind === 'workflowRun'
       && origin.caller.runId === origin.discussionReplyReturn?.workflow?.runId) && origin.discussionReplyReturn !== undefined
       && origin.sessionId === params.sessionId && Boolean(origin.machineId);
-    if (origin.serverId !== params.serverId || origin.accountId !== readAccountIdFromToken(params.credentials.token)
+    if (!await isServerProfileHomeIdentity(params.serverId, origin.serverId) || origin.accountId !== readAccountIdFromToken(params.credentials.token)
       || !(origin.caller.kind === 'session' && origin.caller.sessionId === params.sessionId || terminalReturn)
       || origin.sessionId !== undefined && origin.sessionId !== params.sessionId
       || params.request.sessionId !== params.sessionId

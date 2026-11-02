@@ -2927,12 +2927,25 @@ export type ActionExecutorDeps = Readonly<{
    * then returns the canonical unsupported result rather than running without a
    * proven authority and policy path.
    */
-  discussionAction?: (args: Readonly<{
+  discussionAction?: ((args: Readonly<{
     actionId: DiscussionActionIdV1;
     input: unknown;
     context: ActionExecutorContext;
     signal?: AbortSignal;
-  }>) => Promise<unknown>;
+  }>) => Promise<unknown>) & Readonly<{
+    /** Host-local operand binding; the executor alone reads and retains publication policy. */
+    prepareInput?: (args: Readonly<{
+      actionId: 'discussion.post' | 'discussion.reply';
+      input: unknown;
+      context: ActionExecutorContext;
+      readAnswerPolicy: () => Promise<import('../../discussions/participants.js').DiscussionAnswerPolicyV1 | ActionExecuteFailure | null>;
+    }>) => Promise<ActionExecuteFailure | Readonly<{
+      actionId: 'discussion.post' | 'discussion.reply';
+      input: unknown;
+      actionRequestId?: string;
+      discussionReplyReturn?: ActionExecutorContext['discussionReplyReturn'];
+    }>>;
+  }>;
 
   actionOperationAction?: (args: Readonly<{
     actionId: ActionOperationActionIdV1;

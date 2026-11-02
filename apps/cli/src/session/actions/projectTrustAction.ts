@@ -2,6 +2,7 @@ import { PROJECT_ACTION_INPUT_SCHEMAS_V1 } from '@happier-dev/protocol/actions/p
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import type { StoredCredentials } from '@/persistence';
 import { createProjectSetupTrustClient } from '@/workspaces/projectSetup/projectSetupTrust';
+import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
 
 /** Thin exact-Home adapter. The mode-aware Trust client remains the sole row owner. */
 export function createCliProjectTrustAction(params: Readonly<{
@@ -24,8 +25,8 @@ export function createCliProjectTrustAction(params: Readonly<{
     }
     const parsed = PROJECT_ACTION_INPUT_SCHEMAS_V1[actionId].safeParse(input);
     if (!parsed.success) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
-    if ((context.serverId && context.serverId !== params.serverId)
-      || (parsed.data.project && parsed.data.project.serverId !== params.serverId)) {
+    if ((context.serverId && !await isServerProfileHomeIdentity(params.serverId, context.serverId))
+      || (parsed.data.project && !await isServerProfileHomeIdentity(params.serverId, parsed.data.project.serverId))) {
       return { ok: false, errorCode: 'server_scope_mismatch', error: 'server_scope_mismatch' };
     }
     const client = createProjectSetupTrustClient({ credentials, serverHttpBaseUrl: params.serverHttpBaseUrl });
@@ -35,7 +36,7 @@ export function createCliProjectTrustAction(params: Readonly<{
         const request = PROJECT_ACTION_INPUT_SCHEMAS_V1[actionId].parse(input);
         const trust = await client.list(request.project);
         context.signal?.throwIfAborted();
-        if (trust.some(row => row.project.serverId !== params.serverId)) {
+        if ((await Promise.all(trust.map(row => isServerProfileHomeIdentity(params.serverId!, row.project.serverId)))).some(sameHome => !sameHome)) {
           return { ok: false, errorCode: 'project_trust_identity_mismatch', error: 'project_trust_identity_mismatch' };
         }
         return { trust };

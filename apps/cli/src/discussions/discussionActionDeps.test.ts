@@ -496,13 +496,13 @@ describe('Home Discussion resource transport', () => {
     ]);
   });
 
-  it('runs the registered people candidate Action through the captured HTTP boundary and native pager', async () => {
+  it.each(['server-1', 'srv_home'])('runs the registered people candidate Action through captured Home %s and native pager', async requestedServerId => {
     const token = `header.${Buffer.from(JSON.stringify({ sub: 'account-1' })).toString('base64url')}.signature`;
     const profiles = ['account-1', 'candidate'].map(id => ({ id, name: id, username: id, firstName: id,
       lastName: null, avatar: null, bio: null, badges: [], status: 'none', publicKey: null }));
     axiosRequest.mockResolvedValue({ status: 200, data: { users: profiles, nextCursor: 'next-people' } });
-    const executor = discussionExecutor({ discussionAction: action({ credentials: { token, encryption: null } }) });
-    expect(await executor.execute('discussion.candidates.list', { source: 'people', query: 'candidate', cursor: 'previous' }, context))
+    const executor = discussionExecutor({ discussionAction: action({ credentials: { token, encryption: null }, serverIdentityId: 'srv_home' }) });
+    expect(await executor.execute('discussion.candidates.list', { source: 'people', query: 'candidate', cursor: 'previous' }, { ...context, serverId: requestedServerId }))
       .toMatchObject({ ok: true, result: { source: 'people', serverId: 'server-1',
         candidates: [{ kind: 'account', participant: { kind: 'account', accountId: 'candidate' } }], nextCursor: 'next-people' } });
     expect(axiosRequest.mock.calls[0]?.[0]).toMatchObject({ method: 'GET',

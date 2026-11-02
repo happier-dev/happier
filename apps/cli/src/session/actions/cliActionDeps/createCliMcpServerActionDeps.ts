@@ -6,6 +6,7 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { readRpcRequestDisposition } from '@happier-dev/sync-client';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import type { StoredCredentials } from '@/persistence';
+import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
 import type { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import type { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import type { createCliMcpServerStore, createCliMcpServerStoreForOperation } from '@/settings/mcp/mcpServerStore';
@@ -31,7 +32,7 @@ export function createCliMcpServerActionExecuteV1(params: Readonly<{
 }>): NonNullable<ActionExecutorDeps['mcpServerAction']> {
   return request => runWithServerHttpBaseUrl(params.serverHttpBaseUrl, async (): Promise<ActionExecuteResult> => {
     const { context } = request;
-    if (context.serverId && context.serverId !== params.serverId) {
+    if (context.serverId && !await isServerProfileHomeIdentity(params.serverId, context.serverId)) {
       return { ok: false, errorCode: 'server_scope_mismatch', error: 'server_scope_mismatch' };
     }
     try {

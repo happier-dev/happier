@@ -34,6 +34,7 @@ import { executeScmCommitPlanAction } from '../commitPlans/executeScmCommitPlanA
 import { readRepositoryCheckpointBranchEvidence, readRepositoryCheckpointPullRequestEvidence } from '../checkpoints/sessionEvidence';
 import { scmDiffSummaryResultStore } from '@/agent/executionRuns/tasks/scmDiffSummary/results/resultStore';
 import { configuration } from '@/configuration';
+import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
 import { resolveScmHostingRepositoryAddress } from '@/scm/hostingProviders/resolveAddress';
 import { readScmHostingRepository } from '@/scm/hostingProviders/readRepository';
 import type { ResolvedScmHostingProviderRegistry } from '@/scm/hostingProviders/registry';
@@ -84,7 +85,8 @@ export type ExecuteScmActionOperationParams = Readonly<{
 
 async function admitReviewScope(params: ExecuteScmActionOperationParams,
     scope: Readonly<{ cwd: string; sessionId?: string; sourceSessionId?: string }>): Promise<boolean> {
-    if (params.actionContext?.serverId && params.actionContext.serverId !== configuration.activeServerId) return false;
+    if (params.actionContext?.serverId
+        && !await isServerProfileHomeIdentity(configuration.activeServerId, params.actionContext.serverId)) return false;
     if (!resolveCwd(scope.cwd, params.workingDirectory, params.accessPolicy ?? resolveFilesystemAccessPolicy()).ok) return false;
     const sessionIds = new Set([scope.sessionId, scope.sourceSessionId].filter((id): id is string => Boolean(id)));
     // Empty provenance is still protected scope: a Session/shared caller must

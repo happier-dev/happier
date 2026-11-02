@@ -6,6 +6,7 @@ import { readPendingCapabilityApplyV1, readCapabilitySelectionApplyV1 } from '@h
 import type { SkillRulesActionPortV1 } from '@happier-dev/protocol/prompts/library/skillRulesActionsV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import type { StoredCredentials } from '@/persistence';
+import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import type { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
 import type { updateSessionMetadataForTarget } from '@/session/services/updateSessionMetadataForTarget';
@@ -35,7 +36,7 @@ export function createCliSessionCapabilitiesActionDeps(params: Readonly<{
   const withinHome = <T>(run: () => Promise<T>) => runWithServerHttpBaseUrl(params.serverHttpBaseUrl, run);
   const read = async (sessionId: string, context: ActionExecutorContext, actionId: 'session.capabilities.set' | 'session.capabilities.get' = 'session.capabilities.set') => {
     context.signal?.throwIfAborted();
-    if (context.serverId && context.serverId !== params.serverId) return null;
+    if (context.serverId && !await isServerProfileHomeIdentity(params.serverId, context.serverId)) return null;
     const [{ resolveSessionTransportContext }, { tryDecryptSessionOwnerMetadataView }] = await Promise.all([import("@/session/services/resolveSessionTransportContext"), import("@/session/transport/encryption/sessionEncryptionContext")]);
     const transport = await withinHome(() => resolveSessionTransportContext({ reason: 'session-action', credentials: params.credentials, idOrPrefix: sessionId,
       resolveAuthorizationHeaders: request => params.resolveAuthorizationHeaders(actionId, context, request), signal: context.signal }));

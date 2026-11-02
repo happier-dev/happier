@@ -29,6 +29,7 @@ export type ProjectSessionRuntimeFixture = Readonly<{
 export async function createProjectSessionRuntimeFixture(options: Readonly<{
   serverId?: string; serverUrl?: string; accountSettings?: Readonly<Record<string, unknown>>; boundSessionId?: string;
   credentials?: StoredCredentials;
+  homeServerIdentityId?: string;
   machineAccess?: Readonly<{ custodianAccountId: string; role: 'use' | 'manage' }>;
 }> = {}): Promise<ProjectSessionRuntimeFixture> {
   const directory = await mkdtemp(join(tmpdir(), 'project-session-runtime-'));
@@ -64,7 +65,9 @@ export async function createProjectSessionRuntimeFixture(options: Readonly<{
         canManage: (options.machineAccess?.role ?? 'manage') === 'manage', grants: [], ownDirectGrant: false, ownAccessSources: [] })
       : { kind: 'refused', code: 'access_denied' } };
     if (url.endsWith('/v1/machines/machine')) return { status: 200, data: { machine: {
-      id: 'machine', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
+      id: 'machine', installationId: installation.installationId, dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
+      access: { custodian: { accountId: options.machineAccess?.custodianAccountId ?? 'requester', displayName: 'Requester' },
+        role: options.machineAccess?.role ?? 'manage', resourceMode: 'plain', accessState: 'ready' },
       metadataVersion: 1, daemonStateVersion: 0, daemonState: null,
       metadata: encodePlainMachineStoredContent({ host: 'host', platform: 'linux', homeDir: '/home/user',
         happyCliVersion: 'test', happyHomeDir: '/home/user/.happier' }),
@@ -75,8 +78,9 @@ export async function createProjectSessionRuntimeFixture(options: Readonly<{
   const createBootstrap = async () => {
     const prepared = await prepareRequesterSessionBootstrap({ credentials: options.credentials ?? {
       token: `e30.${Buffer.from(JSON.stringify({ sub: 'requester' })).toString('base64url')}.signature`, encryption: null },
-      attribution: { serverId: 'session-home', accountId: 'requester', machineId: 'machine', installationId: installation.installationId },
-      boundary: { serverId: 'session-home', serverHttpBaseUrl: 'https://session-home.test', happyHomeDir: directory },
+      attribution: { serverId: options.serverId ?? 'session-home', accountId: 'requester', machineId: 'machine', installationId: installation.installationId },
+      boundary: { serverId: options.serverId ?? 'session-home', serverHttpBaseUrl: options.serverUrl ?? 'https://session-home.test', happyHomeDir: directory },
+      ...(options.homeServerIdentityId ? { homeServerIdentityId: options.homeServerIdentityId } : {}),
       ...(options.boundSessionId ? { boundSessionId: options.boundSessionId } : {}),
       verifyMachineAdmissionCurrent: async () => current });
     if (!prepared) throw new Error('Session admission failed');

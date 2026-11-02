@@ -1,8 +1,9 @@
 import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol';
+import { areServerProfileIdentifiersEquivalent } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { DiscussionPostInputV1Schema, DiscussionReplyInputV1Schema } from '@happier-dev/protocol/discussions/actions';
-import { DiscussionParticipantsListResponseV1Schema } from '@happier-dev/protocol/discussions/participants';
+import { DiscussionParticipantsListResponseV1Schema, type DiscussionAnswerPolicyV1 } from '@happier-dev/protocol/discussions/participants';
 import { SessionInputSourceSessionV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { deriveSessionMessageReplyReturnLocalIdV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageReplyV1';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -13,7 +14,9 @@ export async function bindDiscussionDraftReply(params: Readonly<{
   input: unknown;
   context: ActionExecutorContext;
   serverId: string;
+  serverIdentityId?: string;
   discussionAction: ActionExecutorDeps['discussionAction'];
+  readAnswerPolicy?: () => Promise<DiscussionAnswerPolicyV1 | ActionExecuteFailure | null>;
   credentials?: Readonly<{ token: string }>;
   serverHttpBaseUrl?: string;
 }>): Promise<Readonly<{ actionId: ActionId; input: unknown; context: ActionExecutorContext }>
@@ -24,7 +27,8 @@ export async function bindDiscussionDraftReply(params: Readonly<{
   const { context } = params;
   if ((params.actionId !== 'discussion.post' && params.actionId !== 'discussion.reply')
     || context.discussionReplyReturn || context.approvedActionReplay || context.signal?.aborted
-    || context.serverId !== undefined && context.serverId !== params.serverId
+    || context.serverId !== undefined && !areServerProfileIdentifiersEquivalent(context.serverId, params.serverId,
+      id => id === params.serverId || id === params.serverIdentityId ? params.serverIdentityId : null)
     || context.surface !== 'agent' && context.actionCaller?.kind !== 'session') return unchanged;
   const source = SessionInputSourceSessionV1Schema.safeParse(context.sessionInputSource);
   const parsed = (params.actionId === 'discussion.reply' ? DiscussionReplyInputV1Schema : DiscussionPostInputV1Schema).safeParse(params.input);
@@ -38,25 +42,34 @@ export async function bindDiscussionDraftReply(params: Readonly<{
     || parsed.data.replyTarget && (parsed.data.replyTarget.kind !== 'message'
       || parsed.data.replyTarget.messageId !== addressing.messageId)
     || !params.discussionAction) return unchanged;
-  // This is an authenticated read of the persisted participant policy. Approval
-  // and publication still independently recheck it at their canonical owners.
-  let rawRoster: unknown;
-  try {
-    rawRoster = await params.discussionAction({ actionId: 'discussion.participants.list',
-      input: { discussionId: addressing.discussionId }, context, ...(context.signal ? { signal: context.signal } : {}) });
-  } catch { return unavailable(); }
-  const roster = DiscussionParticipantsListResponseV1Schema.safeParse(rawRoster);
-  if (!roster.success || roster.data.discussionId !== addressing.discussionId || context.signal?.aborted) return unavailable();
-  const participant = roster.data.participants.find(entry => entry.participant.kind === 'session'
-    ? entry.participant.sessionId === publisherSessionId : 'sessionId' in entry && entry.sessionId === publisherSessionId);
-  const addressedReply = participant?.answerPolicy === 'when_addressed'
+  // Capture persisted policy before the daemon signs this original. Approval
+  // and publication retain their own request admission at the canonical owners.
+  let answerPolicy: DiscussionAnswerPolicyV1 | null | undefined;
+  if (params.readAnswerPolicy) {
+    const policy = await params.readAnswerPolicy();
+    if (policy && typeof policy === 'object') return { failure: policy };
+    answerPolicy = policy;
+  } else {
+    let rawRoster: unknown;
+    try {
+      rawRoster = await params.discussionAction({ actionId: 'discussion.participants.list',
+        input: { discussionId: addressing.discussionId }, context, ...(context.signal ? { signal: context.signal } : {}) });
+    } catch { return unavailable(); }
+    const roster = DiscussionParticipantsListResponseV1Schema.safeParse(rawRoster);
+    if (!roster.success || roster.data.discussionId !== addressing.discussionId || context.signal?.aborted) return unavailable();
+    const participant = roster.data.participants.find(entry => entry.participant.kind === 'session'
+      ? entry.participant.sessionId === publisherSessionId : 'sessionId' in entry && entry.sessionId === publisherSessionId);
+    answerPolicy = participant?.answerPolicy;
+  }
+  if (context.signal?.aborted) return unavailable();
+  const addressedReply = answerPolicy === 'when_addressed'
     && parsed.data.replyTarget?.kind === 'message' && parsed.data.replyTarget.messageId === addressing.messageId;
-  if (participant?.answerPolicy !== 'drafts_for_approval' && !addressedReply) return unchanged;
+  if (answerPolicy !== 'drafts_for_approval' && !addressedReply) return unchanged;
   // The verified daemon binds a real return obligation before signing. An
   // unchanged signed when-addressed reply may instead be an informational input
   // whose policy changed; preserve it without rewriting operands or borrowing
   // ambient credentials. An unbound deliberate draft still fails closed.
-  if (context.externalActionExecutionAuthorization) return participant?.answerPolicy === 'drafts_for_approval'
+  if (context.externalActionExecutionAuthorization) return answerPolicy === 'drafts_for_approval'
     ? unavailable() : unchanged;
   if (!context.serverIdentityId) return unavailable();
   if (addressedReply) {

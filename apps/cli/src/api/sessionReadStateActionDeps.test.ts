@@ -24,7 +24,7 @@ describe('Session read-state HTTP Action adapter', () => {
     expect(() => createSessionReadStateActionDeps(partial)).toThrow('fixed_action_server_target_incomplete');
   });
 
-  it('binds the exact Home, encodes the Session id, and carries only the route body', async () => {
+  it.each(['home-a', 'srv_home_a'])('binds the captured Home through %s, encodes the Session id, and carries only the route body', async requestedServerId => {
     app.post('/v2/sessions/:sessionId/read-state', async (request) => {
       expect(request.params).toEqual({ sessionId: 'session/one' });
       expect(request.body).toEqual({ state: 'unread' });
@@ -39,13 +39,14 @@ describe('Session read-state HTTP Action adapter', () => {
     const deps = createSessionReadStateActionDeps({
       token: 'token',
       serverId: 'home-a',
+      serverIdentityId: 'srv_home_a',
       serverHttpBaseUrl: 'http://read-state.test',
     });
     await expect(deps.sessionReadStateAction!({
       actionId: 'session.read_state.set',
       input: { sessionId: 'session/one', state: 'unread' },
       context: { surface: 'cli', authority: 'present_user' },
-      serverId: 'home-a',
+      serverId: requestedServerId,
     })).resolves.toEqual({
       success: true,
       state: 'unread',
@@ -63,6 +64,7 @@ describe('Session read-state HTTP Action adapter', () => {
     const deps = createSessionReadStateActionDeps({
       token: 'token',
       serverId: 'home-a',
+      serverIdentityId: 'srv_home_a',
       serverHttpBaseUrl: 'http://read-state.test',
     });
 

@@ -3,6 +3,7 @@ import axios from 'axios';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
 import { mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import * as fsPromises from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
@@ -16,6 +17,7 @@ import { createCliActionExecutorHarness } from './createCliActionExecutorHarness
 import { createCliActionExecutorFromCredentials } from './createCliActionExecutorFromCredentials';
 import * as persistence from '@/persistence';
 import * as serverProfiles from '@/server/serverProfiles';
+import { configuration } from '@/configuration';
 import { ApiMachineClient } from '@/api/apiMachine';
 import { authorizeMachineRpcRequest } from '@/api/machine/machineRpcAuthorization';
 import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
@@ -763,17 +765,37 @@ describe('exact-machine filesystem Actions', () => {
     } finally { copySocketBoundary.create.mockReset(); stored.mockRestore(); profiles.mockRestore(); requests.mockRestore(); reads.mockRestore(); }
   });
   it.each([
-    { surface: 'mcp' as const, approval: false }, { surface: 'agent' as const, approval: false },
-    { surface: 'mcp' as const, approval: true },
-  ])('moves real binary copy bytes from public $surface through independently authenticated Homes (blocking approval=$approval)', async ({ surface, approval }) => {
+    { surface: 'mcp' as const, approval: false, prepare: true, portableHomeIds: true },
+    { surface: 'agent' as const, approval: false, prepare: false, portableHomeIds: false },
+    { surface: 'mcp' as const, approval: true, prepare: false, portableHomeIds: true },
+  ])('captures each Home credential once for public $surface binary copy despite saved-file replacement (blocking approval=$approval, portable Home IDs=$portableHomeIds)', async ({ surface, approval, prepare, portableHomeIds }) => {
     const directory = await mkdtemp(join(tmpdir(), 'happier-public-copy-'));
     const sourceCredentials = { token: `header.${Buffer.from(JSON.stringify({ sub: 'source-account' })).toString('base64url')}.signature`,
       encryption: null, credentialProvenance: 'stored_session' as const } satisfies persistence.StoredCredentials;
     const destinationCredentials = { ...sourceCredentials, token: `header.${Buffer.from(JSON.stringify({ sub: 'destination-account' })).toString('base64url')}.signature` };
-    const stored = vi.spyOn(persistence, 'readStoredCredentialsForServerId').mockImplementation(async id => id === 'source' ? sourceCredentials : destinationCredentials);
-    const profiles = vi.spyOn(serverProfiles, 'getServerProfile').mockImplementation(async id => ({
-      id, name: id, serverUrl: `https://${id}.example.test`, webappUrl: `https://${id}.example.test`, createdAt: 0, updatedAt: 0, lastUsedAt: 0,
-    }));
+    for (const [serverId, credentials] of [['source', sourceCredentials], ['destination', destinationCredentials]] as const) {
+      await serverProfiles.adoptServerProfileHomeConnectionDescriptor({ expectedProfileId: serverId, createIfMissing: true, observation: 'exact',
+        descriptor: { v: 1, homeServerIdentityId: `srv_${serverId}`, canonicalServerUrl: `https://${serverId}.example.test`,
+          revision: 1, endpoints: [{ kind: 'https', url: `https://${serverId}.example.test` }] } });
+      await persistence.writeStoredCredentialsForServerId(serverId, credentials);
+    }
+    // Observe actual OS credential reads while keeping the profile, decoder,
+    // transfer orchestration and receiving filesystem owners real.
+    const credentialReads = vi.spyOn(fsPromises, 'readFile');
+    const readHomes = () => credentialReads.mock.calls.flatMap(([path]) => {
+      if (String(path) === join(configuration.serversDir, 'source', 'access.key')) return ['source'];
+      if (String(path) === join(configuration.serversDir, 'destination', 'access.key')) return ['destination'];
+      return [];
+    });
+    let credentialsReplaced = false;
+    const replaceCredentials = async () => {
+      if (credentialsReplaced) return;
+      credentialsReplaced = true;
+      for (const [serverId, credentials] of [['source', sourceCredentials], ['destination', destinationCredentials]] as const) {
+        await persistence.writeStoredCredentialsForServerId(serverId, { ...credentials,
+          token: `header.${Buffer.from(JSON.stringify({ sub: `${serverId}-replacement-account` })).toString('base64url')}.signature` });
+      }
+    };
     const reservation = createServer();
     await new Promise<void>(resolve => reservation.listen(0, '127.0.0.1', resolve));
     const address = reservation.address(); if (!address || typeof address === 'string') throw new Error('Expected loopback port');
@@ -804,6 +826,9 @@ describe('exact-machine filesystem Actions', () => {
       expect(options?.headers).toMatchObject({ Authorization: `Bearer ${token(id)}` });
       if (parsed.pathname === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 0 } };
       if (artifact && parsed.pathname === `/v1/artifacts/${artifact.id}`) return { status: 200, data: artifact };
+      // Approval publication first reads its deterministic id to join an
+      // existing request; the HTTP owner returns 404 before its first create.
+      if (!artifact && parsed.pathname.startsWith('/v1/artifacts/')) return { status: 404, data: { error: 'Artifact not found' } };
       if (parsed.pathname === '/v1/account/profile') return { status: 200, data: { id: account(id) } };
       if (parsed.pathname === '/v1/machines') return { status: 200, data: [{ id: `${id}-machine`, active: true, kind: 'persistent',
         revokedAt: null, replacedByMachineId: null, operationProtocolCapabilitiesRevision: 1,
@@ -843,7 +868,7 @@ describe('exact-machine filesystem Actions', () => {
       } });
       if (parsed.pathname === '/v1/features/authenticated') {
         expect(init?.headers).toMatchObject({ Authorization: `Bearer ${token(home(parsed.href))}` });
-        return Response.json({ features: {}, capabilities: { machines: { peerMediation: { grantSigningKeys: [{ keyId: 'home-key',
+        return Response.json({ features: {}, capabilities: { serverIdentity: { serverIdentityId: `srv_${home(parsed.href)}` }, machines: { peerMediation: { grantSigningKeys: [{ keyId: 'home-key',
           publicKey: Buffer.from(signingKey.publicKey).toString('base64url') }] } } } });
       }
       return await nativeFetch(url, init);
@@ -878,6 +903,7 @@ describe('exact-machine filesystem Actions', () => {
           const actionId = id === 'source' ? 'daemon.filesystem.download' : 'daemon.filesystem.copy';
           expect(admitted.target).toEqual({ kind: 'machine', machineId: `${id}-machine` });
           expect(request.method).toBe(`${id}-machine:${getActionSpec(actionId).bindings?.rpcMethod}`); methods.push(actionId);
+          if (!approval && !prepare) await replaceCredentials();
           const result = await runner.observe({ actionId, scope: { accountId: account(id), machineId: `${id}-machine` },
             execute: context => effect({ actionId, input: admitted.input, context: { ...context, runtimeAccountId: account(id), serverId: id,
               externalActionTarget: { kind: 'machine', machineId: `${id}-machine` } } }).then(projectPreparedFilesystemActionResult) });
@@ -888,24 +914,41 @@ describe('exact-machine filesystem Actions', () => {
     const controller = new AbortController();
     const coordinator = getSharedBlockingApprovalCoordinator();
     let pending: Promise<unknown> | undefined;
+    let settled: unknown;
     let artifactId: string | undefined;
     try {
       const bytes = Buffer.from([0, 255, 128, 10]); await writeFile(join(directory, 'source.bin'), bytes);
-      const executor = createCliActionExecutorFromCredentials({ credentials: destinationCredentials, serverId: 'destination', serverApiUrl: 'https://destination.example.test',
+      const executor = createCliActionExecutorFromCredentials({ credentials: destinationCredentials,
+        readCredentials: () => persistence.readStoredCredentialsForServerId('destination'), serverId: 'destination', serverApiUrl: 'https://destination.example.test',
         serverIdentityId: 'srv_destination', machineId: 'destination-machine', pluginActionExecutionOwner: 'current_process',
         actionsSettingsProvider: createActionSettingsProvider({ accountSettings: accountSettingsParse({ actionsSettingsV1: {
           v: 1, actions: approval ? { 'daemon.filesystem.copy': { approvalRequiredSurfaces: [surface] } } : {},
           ...(approval ? {} : { approvalWaivedSurfaces: { 'daemon.filesystem.copy': [surface] } }),
         } }) }) });
-      const input = { kind: 'prepared_transfer', source: { kind: 'file', serverId: 'source', machineId: 'source-machine', rootPath: directory, path: 'source.bin',
+      const input = { kind: 'prepared_transfer', source: { kind: 'file', serverId: portableHomeIds ? 'srv_source' : 'source', machineId: 'source-machine', rootPath: directory, path: 'source.bin',
         sourceId: 'actual-file', sizeBytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') },
-        destination: { serverId: 'destination', machineId: 'destination-machine', rootPath: directory, path: 'copied.bin' }, overwrite: false, recursive: false };
-      pending = executor.execute('daemon.filesystem.copy', input, { surface, authority: 'account_automation', serverId: 'destination',
+        destination: { serverId: portableHomeIds ? 'srv_destination' : 'destination', machineId: 'destination-machine', rootPath: directory, path: 'copied.bin' }, overwrite: false, recursive: false };
+      const context = { surface, authority: 'account_automation' as const, serverId: portableHomeIds ? 'srv_destination' : 'destination',
         actionRequestId: 'public-binary-copy', signal: controller.signal,
-        externalActionTarget: { kind: 'machine', machineId: 'destination-machine' } });
+        externalActionTarget: { kind: 'machine' as const, machineId: 'destination-machine' } };
+      expect(await executor.execute('daemon.filesystem.copy', { ...input,
+        destination: { ...input.destination, serverId: 'srv_foreign' } }, context))
+        .toMatchObject({ ok: false, errorCode: 'target_unavailable' });
+      expect(await executor.execute('daemon.filesystem.copy', input, { ...context, serverId: 'srv_foreign' }))
+        .toMatchObject({ ok: false, errorCode: 'target_unavailable' });
+      credentialReads.mockClear();
+      if (prepare) {
+        const prepared = await executor.prepare('daemon.filesystem.copy', input, context);
+        expect(prepared.kind).toBe('ready');
+        if (prepared.kind !== 'ready') throw new Error('Copy admission did not produce a concrete invocation');
+        await replaceCredentials();
+        pending = prepared.invocation.run();
+      } else {
+        pending = executor.execute('daemon.filesystem.copy', input, context).then(result => { settled = result; return result; });
+      }
       if (approval) {
         await vi.waitFor(() => {
-          expect(artifact).toBeDefined(); artifactId = String(artifact?.id);
+          expect(artifact, JSON.stringify(settled)).toBeDefined(); artifactId = String(artifact?.id);
           expect(coordinator.getLiveWaiterCount(artifactId)).toBe(1);
         });
         expect(methods).toEqual([]); expect(native.createEndpoint).not.toHaveBeenCalled();
@@ -913,16 +956,19 @@ describe('exact-machine filesystem Actions', () => {
         const content = decodePlainArtifactStoredContent(String(artifact.body));
         if (!content || typeof content !== 'object' || !('body' in content) || typeof content.body !== 'string') throw new Error('Approval body is unavailable');
         const request = StoredApprovalRequestSchema.parse(JSON.parse(content.body));
+        await replaceCredentials();
         expect(await coordinator.resolveBlockingDecision({ artifactId, request, decision: 'approve', decisionAuthority: 'present_user' })).toEqual({ resolved: true });
       }
       const result = await pending;
-      expect(await readFile(join(directory, 'copied.bin'))).toEqual(bytes);
+      expect(readHomes().sort(), JSON.stringify(result)).toEqual(['destination', 'source']);
       expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { success: true, status: 'completed' } });
+      expect(await readFile(join(directory, 'copied.bin'))).toEqual(bytes);
+      expect(credentialsReplaced).toBe(true);
       expect(methods).toEqual(['daemon.filesystem.download', 'daemon.filesystem.copy']);
       expect(native.shutdownEndpoint).toHaveBeenCalledTimes(2);
     } finally {
       controller.abort(); if (artifactId) coordinator.cancelApproval(artifactId); await pending?.catch(() => undefined);
-      copySocketBoundary.create.mockReset(); stored.mockRestore(); profiles.mockRestore(); eligibility.mockRestore(); reads.mockRestore(); writes.mockRestore(); network.mockRestore(); nativeBoundary.mockRestore();
+      copySocketBoundary.create.mockReset(); credentialReads.mockRestore(); eligibility.mockRestore(); reads.mockRestore(); writes.mockRestore(); network.mockRestore(); nativeBoundary.mockRestore();
       await lifecycle.stop(); await rm(directory, { recursive: true, force: true });
     }
   });

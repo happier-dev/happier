@@ -120,6 +120,7 @@ import type { createCredentialedFilesystemTransferClient } from '@/machines/tran
 import type { createPreparedFilesystemTransferClient } from '@/machines/transfer/preparedFilesystemTransferClient';
 import { resolveActionCliCredentialTarget } from '@/cli/actions/actionServerTarget';
 import { getServerProfile } from '@/server/serverProfiles';
+import { areServerProfileIdentifiersEquivalent } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
 import { readSessionMemoryEnabledV1 } from '@happier-dev/protocol/sessions/context/sessionContextV1';
 import type { dispatchRequesterSessionSpawnNewRpc } from '@/session/transport/rpc/machineRpc';
 import { SessionSpawnNewInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
@@ -1979,8 +1980,8 @@ export function createCliActionExecutorFromCredentials(params: Parameters<typeof
         if (pat && parsed.kind === 'target_copy') {
           return { failure: actionFailure('filesystem_transfer_custody_required') };
         }
-        if ((params.serverId && params.serverId !== parsed.destination.serverId)
-          || (context?.serverId && context.serverId !== parsed.destination.serverId)
+        if ((params.serverId && !await isServerProfileHomeIdentity(params.serverId, parsed.destination.serverId))
+          || (context?.serverId && !await isServerProfileHomeIdentity(context.serverId, parsed.destination.serverId))
           || (params.machineId && params.machineId !== parsed.destination.machineId)
           || (context?.externalActionTarget && (context.externalActionTarget.kind !== 'machine'
             || context.externalActionTarget.machineId !== parsed.destination.machineId))) return { failure: actionFailure('target_unavailable') };
@@ -1989,16 +1990,22 @@ export function createCliActionExecutorFromCredentials(params: Parameters<typeof
             deps: { readCredentialsFn: async () => null,
               readCredentialsForServerIdFn: capturedCredentials ? async () => capturedCredentials : readStoredCredentialsForServerId,
               getServerProfileFn: getServerProfile } });
-          if (!target.credentials || !target.fixedServer || target.fixedServer.serverId !== serverId) throw new Error('Exact copy Home credentials are unavailable');
-          return { credentials: target.credentials, ...target.fixedServer };
+          const fixedServer = target.fixedServer;
+          if (!target.credentials || !fixedServer || !areServerProfileIdentifiersEquivalent(fixedServer.serverId, serverId,
+            identifier => identifier === fixedServer.serverId || identifier === fixedServer.serverIdentityId
+              ? fixedServer.serverIdentityId ?? fixedServer.serverId : null)) throw new Error('Exact copy Home credentials are unavailable');
+          return { credentials: target.credentials, ...fixedServer };
         };
         // Capture local custody before policy/approval awaits; the effect never
         // resolves a replacement Account after the containing Action is admitted.
         const destinationHomePromise = resolveHome(parsed.destination.serverId, outerCredentials);
         const [sourceHome, destinationHome] = await Promise.all([
-          parsed.source.serverId === parsed.destination.serverId ? destinationHomePromise : resolveHome(parsed.source.serverId),
+          await isServerProfileHomeIdentity(parsed.source.serverId, parsed.destination.serverId) ? destinationHomePromise : resolveHome(parsed.source.serverId),
           destinationHomePromise,
         ]);
+        const matchesCapturedHome = (home: typeof sourceHome, serverId: string | null | undefined) =>
+          areServerProfileIdentifiersEquivalent(home.serverId, serverId,
+            identifier => identifier === home.serverId || identifier === home.serverIdentityId ? home.serverIdentityId ?? home.serverId : null);
         if (params.serverApiUrl && normalizeServerHttpBaseUrl(params.serverApiUrl) !== normalizeServerHttpBaseUrl(destinationHome.serverApiUrl)) {
           return { failure: actionFailure('not_authenticated') };
         }
@@ -2027,7 +2034,7 @@ export function createCliActionExecutorFromCredentials(params: Parameters<typeof
               await assertCurrent();
               if (deploymentAdmission && id !== 'daemon.filesystem.download' && id !== 'daemon.filesystem.copy'
                 && id !== 'action.operations.get') return actionFailure('action_forbidden');
-              if (targetContext.serverId !== home.serverId || targetContext.externalActionTarget?.kind !== 'machine'
+              if (!matchesCapturedHome(home, targetContext.serverId) || targetContext.externalActionTarget?.kind !== 'machine'
                 || targetContext.externalActionTarget.machineId !== machineId) return actionFailure('target_unavailable');
               const endpointContext = { ...(deploymentAdmission ? admittedContext : {}), ...targetContext,
                 ...(admittedContext.surface ? { surface: admittedContext.surface } : {}), ...(admittedContext.authority ? { authority: admittedContext.authority } : {}),
@@ -2083,11 +2090,11 @@ export function createCliActionExecutorFromCredentials(params: Parameters<typeof
               openMachineTunnel: async request => {
                 await assertCurrent();
                 let transport: typeof sourceTransport;
-                if (request.serverId === parsed.source.serverId && request.targetMachineId === parsed.source.machineId) {
+                if (matchesCapturedHome(sourceHome, request.serverId) && request.targetMachineId === parsed.source.machineId) {
                   sourceTransport ??= await createCredentialedFilesystemTransferClient({ ...sourceHome, executeAction: executeSource,
                     ...(deploymentArchive ? { deploymentArchive } : {}), ...(signal ? { signal } : {}) });
                   transport = sourceTransport;
-                } else if (request.serverId === parsed.destination.serverId && request.targetMachineId === parsed.destination.machineId) {
+                } else if (matchesCapturedHome(destinationHome, request.serverId) && request.targetMachineId === parsed.destination.machineId) {
                   destinationTransport ??= await createCredentialedFilesystemTransferClient({ ...destinationHome, executeAction: executeDestination,
                     ...(deploymentArchive ? { deploymentArchive } : {}), ...(signal ? { signal } : {}) });
                   transport = destinationTransport;
@@ -2098,9 +2105,9 @@ export function createCliActionExecutorFromCredentials(params: Parameters<typeof
                 return tunnel;
               },
               executeAction: async (id, value, targetContext) => {
-                if (targetContext.serverId === parsed.source.serverId && targetContext.externalActionTarget?.kind === 'machine'
+                if (matchesCapturedHome(sourceHome, targetContext.serverId) && targetContext.externalActionTarget?.kind === 'machine'
                   && targetContext.externalActionTarget.machineId === parsed.source.machineId) return await executeSource(id, value, targetContext);
-                if (targetContext.serverId === parsed.destination.serverId && targetContext.externalActionTarget?.kind === 'machine'
+                if (matchesCapturedHome(destinationHome, targetContext.serverId) && targetContext.externalActionTarget?.kind === 'machine'
                   && targetContext.externalActionTarget.machineId === parsed.destination.machineId) return await executeDestination(id, value, targetContext);
                 return actionFailure('target_unavailable');
               },

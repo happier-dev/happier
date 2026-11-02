@@ -37,3 +37,10 @@ export function readActionCliPresentationEnvelopeKind(command: Readonly<{
   const kinds: Readonly<Partial<Record<ActionId, string>>> = ACTION_CLI_ENVELOPE_KINDS;
   return kinds[command.actionId];
 }
+
+/** Actions whose CLI invocation can wait for a finite settlement (`--wait`). */
+export function supportsFiniteActionOutcome(actionId: string): boolean {
+  return actionId === 'deployments.deploy' || actionId === 'deployments.rollback'
+    || actionId === 'deployments.promote' || actionId === 'deployments.teardown'
+    || actionId === 'action.operations.get';
+}

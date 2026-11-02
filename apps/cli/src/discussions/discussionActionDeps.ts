@@ -1,4 +1,5 @@
 import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { bindDiscussionDraftReply } from './bindDiscussionDraftReply';
 import { type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import axios, { type Method } from 'axios';
 import { randomUUID } from 'node:crypto';
@@ -201,7 +202,8 @@ export function createDiscussionActionDeps(options: Readonly<{
 
   const discussionAction = async ({ actionId, input, context, signal }: Parameters<NonNullable<ActionExecutorDeps['discussionAction']>>[0],
     openedAttachment?: OpenedDiscussionAttachment): Promise<unknown> => {
-    if (context.serverId && context.serverId !== serverId) return failure('server_target_mismatch');
+    if (context.serverId && !areServerProfileIdentifiersEquivalent(context.serverId, serverId,
+      id => id === serverId || id === options.serverIdentityId ? options.serverIdentityId : null)) return failure('server_target_mismatch');
     const parsed = DISCUSSION_ACTION_INPUT_SCHEMAS_V1[actionId].safeParse(input);
     if (!parsed.success) return failure('discussion_invalid_content');
     if (signal?.aborted) return failure('cancelled');
@@ -553,7 +555,18 @@ export function createDiscussionActionDeps(options: Readonly<{
       return failure('outcome_unknown');
     }
   };
-  return { discussionAction, readAttachmentContext: async input => {
+  const preparedDiscussionAction = Object.assign(discussionAction, {
+    prepareInput: async ({ actionId, input, context, readAnswerPolicy }: Parameters<NonNullable<NonNullable<ActionExecutorDeps['discussionAction']>['prepareInput']>>[0]) => {
+      const bound = await bindDiscussionDraftReply({ actionId, input, context, serverId, serverIdentityId: options.serverIdentityId,
+        discussionAction, readAnswerPolicy, credentials: options.credentials, serverHttpBaseUrl: serverUrl });
+      if ('failure' in bound) return bound.failure;
+      if (bound.actionId !== 'discussion.post' && bound.actionId !== 'discussion.reply') return failure('invalid_parameters');
+      return { actionId: bound.actionId, input: bound.input,
+        ...(bound.context.actionRequestId ? { actionRequestId: bound.context.actionRequestId } : {}),
+        ...(bound.context.discussionReplyReturn ? { discussionReplyReturn: bound.context.discussionReplyReturn } : {}) };
+    },
+  });
+  return { discussionAction: preparedDiscussionAction, readAttachmentContext: async input => {
     const { getSummary } = createTransport({ actionId: 'discussion.attachment.read',
       context: { surface: 'cli', authority: 'account_automation', serverId }, signal: input.signal });
     return await openKey(await getSummary(input.discussionId));

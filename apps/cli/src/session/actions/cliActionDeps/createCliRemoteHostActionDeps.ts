@@ -2,6 +2,7 @@ import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/
 import { duplicateRemoteHostForActionV1, changeRemoteHostCredentialForActionV1 } from '@happier-dev/protocol/remoteHosts/remoteHostActionsV1';
 import type { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import type { StoredCredentials } from '@/persistence';
+import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
 import type { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import type { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import type { createCliRemoteHostStore, createCliRemoteHostStoreForOperation } from '@/settings/remoteHosts/remoteHostStore';
@@ -15,7 +16,7 @@ export function createCliRemoteHostActionExecuteV1(params: Readonly<{
   return async (request, context) => {
     const { runWithServerHttpBaseUrl } = await import("@/api/client/serverHttpBaseUrl");
     return runWithServerHttpBaseUrl(params.serverHttpBaseUrl, async () => {
-    if (context.serverId && context.serverId !== params.serverId) {
+    if (context.serverId && !await isServerProfileHomeIdentity(params.serverId, context.serverId)) {
       return { ok: false, errorCode: 'server_scope_mismatch', error: 'server_scope_mismatch' };
     }
     const [{ getActiveAccountSettingsSnapshot }, { createCliRemoteHostStoreForOperation, createCliRemoteHostStore }] = await Promise.all([import("@/settings/accountSettings/activeAccountSettingsSnapshot"), import("@/settings/remoteHosts/remoteHostStore")]);

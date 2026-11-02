@@ -3,7 +3,7 @@ import { t } from '@/text';
 import { storage, useArtifact, useMachineDisplayNamesById, useProjectAccountRows, useServerScopedMachine } from '@/sync/domains/state/storage';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
-import { getServerProfileById, resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
+import { areServerProfileIdentifiersEquivalent, getServerProfileById, resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { useProviderCatalogForServer } from '@/sync/store/useProviderCatalog';
 import { readAccountProviderDeclarations } from '@/providers/catalog/accountProviderDeclarations';
 import { presentProviderConnectionIdentity } from '@/providers/connection/presentation';
@@ -58,7 +58,7 @@ function readApprovalArtifactReference(reference: ApprovalReference, artifact: D
 function readApprovalProject(reference: ApprovalReference | undefined, rows: ProjectAccountRowsSnapshot | null,
     viewer: ApprovalReferenceSources['viewer'], approvalServerId: string | null): ProjectOrganizationRow | null {
     return reference?.kind === 'project' && rows && viewer && rows.scope.accountId === viewer.accountId
-        && isSameApprovalHome(viewer.serverId, approvalServerId) && isSameApprovalHome(rows.scope.serverId, approvalServerId)
+        && areServerProfileIdentifiersEquivalent(viewer.serverId, approvalServerId) && areServerProfileIdentifiersEquivalent(rows.scope.serverId, approvalServerId)
         ? rows.organizations.find(row => row.key.projectKey === reference.id) ?? null : null;
 }
 
@@ -120,7 +120,7 @@ export function useApprovalReferenceReading(reference: ApprovalReference | undef
     const sessionReading = useApprovalSessionReading(reference?.kind === 'session' ? serverId : null,
         reference?.kind === 'session' ? reference.id : '', undefined, options);
     const viewer = useAccountSettingsScope();
-    const ownHome = isSameApprovalHome(viewer?.serverId, approvalServerId);
+    const ownHome = areServerProfileIdentifiersEquivalent(viewer?.serverId, approvalServerId);
     const artifact = useArtifact((reference?.kind === 'skill' || reference?.kind === 'artifact') && ownHome ? reference.id : '');
     const machine = useServerScopedMachine(approvalServerId, reference?.kind === 'machine' ? reference.id : '');
     const sessionMachine = useServerScopedMachine(serverId, reference?.kind === 'session' ? sessionReading.machineId : '');
@@ -164,7 +164,7 @@ export function useApprovalReferenceReading(reference: ApprovalReference | undef
 
 /** The managed row and its enrolled Machine behind a managed reference, read in the reference's own Home. */
 function useManagedReferenceSources(reference: ApprovalReference | undefined, approvalServerId: string | null) {
-    const managedServerId = reference?.kind === 'managedMachine' && isSameApprovalHome(reference.homeId, approvalServerId)
+    const managedServerId = reference?.kind === 'managedMachine' && areServerProfileIdentifiersEquivalent(reference.homeId, approvalServerId)
         ? approvalServerId : null;
     const managed = useManagedMachineInventory(managedServerId ? [managedServerId] : [],
         reference?.kind === 'managedMachine' ? reference.id : undefined);
@@ -320,11 +320,11 @@ function resolveApprovalReferenceReading(reference: ApprovalReference | undefine
     }
     if (reference?.kind === 'home') {
         const home = resolveApprovalHomeName(reference.id)
-            ?? (isSameApprovalHome(reference.id, approvalServerId) ? t('settingsAccount.thisHomeTitle') : null);
+            ?? (areServerProfileIdentifiersEquivalent(reference.id, approvalServerId) ? t('settingsAccount.thisHomeTitle') : null);
         return home === null ? { text: literal, named: false } : { text: home, named: true };
     }
     if (reference?.kind === 'account') {
-        const own = viewer !== null && viewer.accountId === reference.id && isSameApprovalHome(viewer.serverId, approvalServerId);
+        const own = viewer !== null && viewer.accountId === reference.id && areServerProfileIdentifiersEquivalent(viewer.serverId, approvalServerId);
         return own ? { text: t('accountDisplay.yours'), named: true } : { text: literal, named: false };
     }
     return { text: literal, named: false };
@@ -339,18 +339,5 @@ function findApprovalProviderSource(reference: Extract<ApprovalReference, { kind
 
 function describeApprovalWorkspaceEndpoint(endpoint: WorkspaceSyncRelationshipEndpoint): string {
     return endpoint.machineName ? `${endpoint.name} · ${endpoint.machineName}` : endpoint.name;
-}
-
-/**
- * Whether two Home ids name one Home on this device. A request may carry the Home's portable identity
- * where this device addresses it by its own profile id; the profile owner resolves both.
- */
-function isSameApprovalHome(left: string | null | undefined, right: string | null | undefined): boolean {
-    const a = left?.trim();
-    const b = right?.trim();
-    if (!a || !b) return false;
-    if (a === b) return true;
-    const profile = getServerProfileById(a);
-    return profile !== null && profile.id === getServerProfileById(b)?.id;
 }
 

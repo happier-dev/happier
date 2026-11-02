@@ -18,6 +18,7 @@ import { PluginDomainChangeEntrySchema } from '@happier-dev/protocol/changes/plu
 import { ManagedMachinePolicyChangeHintV1Schema } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
 import { ManagedWakeTargetV1Schema } from '@happier-dev/protocol/machines/managed/managedIntentV1';
 import { SignedRootActionIdSchema } from '@happier-dev/protocol/actions/actionSpecs';
+import { areServerProfileIdentifiersEquivalent } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
 import { isProjectWorkspaceSyncPreparationActionV1 } from '@happier-dev/protocol/actions/projectActionFamily';
 import { createDiscussionReplyReturnPublisher } from '@/discussions/discussionReplyReturnPublisher';
 import { DISCUSSION_AGENT_POST_EVENT_V1, DiscussionMachinePublicationV2Schema,
@@ -2165,11 +2166,14 @@ export class ApiMachineClient {
     }
 
     /** Device-local profile ids can differ on an approved replay of this same Home. */
-    private async isNativeWorkspaceHomeCurrent(serverId: string, context: RpcActionExecutorContext): Promise<boolean> {
+    private async isNativeWorkspaceHomeCurrent(serverId: string, context: RpcActionExecutorContext,
+        heldHome = this.lifecycleDependencies.resolveCurrentServerIdentityId?.() ?? null): Promise<boolean> {
         const owner = this.externalActionIngressOwner;
         if (!owner || this.projectionSchedulingClosed || owner.currentServerId !== serverId) return false;
         context.signal?.throwIfAborted();
-        if (context.serverId === serverId) return true;
+        if (areServerProfileIdentifiersEquivalent(context.serverId, serverId, id =>
+            id === serverId || id === heldHome ? heldHome : undefined)) return true;
+        if (heldHome) return context.serverIdentityId === heldHome;
         if (!context.serverIdentityId || !owner.resolvePluginExecutionOriginContext) return false;
         try {
             // Reuse the ingress owner's canonical fresh Home/Machine witness,
@@ -2613,12 +2617,14 @@ export class ApiMachineClient {
             resolveActionExecutor: () => ({ execute: async (actionId, input, context) => {
                 const owner = this.externalActionIngressOwner;
                 const signed = SignedRootActionIdSchema.safeParse(actionId);
+                const heldHome = this.lifecycleDependencies.resolveCurrentServerIdentityId?.() ?? null;
                 if (!owner || this.projectionSchedulingClosed || !signed.success
-                    || context?.serverId && context.serverId !== owner.currentServerId
+                    || context?.serverId && !await this.isNativeWorkspaceHomeCurrent(owner.currentServerId, context, heldHome)
                     || !context?.runtimeAccountId) return {
                         ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable',
                     };
                 return owner.executor.execute(signed.data, input, { ...context, serverId: owner.currentServerId,
+                    ...(heldHome ? { serverIdentityId: heldHome } : {}),
                     externalActionTarget: { kind: 'machine', machineId: this.machine.id } });
             } }),
         });

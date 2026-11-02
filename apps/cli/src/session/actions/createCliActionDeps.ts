@@ -651,7 +651,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
   const deploymentStorage = deploymentStorageDeps.deploymentAction!;
   const transcriptDeps = createCliTranscriptActionDeps(params, { resolveServerRequestHeaders });
   const filesystemDeps = createCliFilesystemActionDeps(params, { callMachineAction, isMachineActionServerScopeCurrent, readRecord });
-  const awarenessDeps = createCliAwarenessActionDeps(params, { resolveServerRequestHeaders, readServerFeaturesSnapshot });
+  const awarenessDeps = createCliAwarenessActionDeps(params, { resolveServerRequestHeaders, readServerFeaturesSnapshot, isSameActionHomeId });
   const { actionDeps: executionRunActionDeps, callDetachedExecutionRunRpc, readExecutionRunTransportMachineId } = createCliExecutionRunActionDeps(params, {
     resolveTransportForSession, readCurrentMachineControlIdentity, readTransportSessionOwnerMetadata, resumeInactiveSessionTransport, callMachineAction, isMachineActionServerScopeCurrent, normalizeStringValue, isExecutionRunActionAbort, executionRunActionFailure,
   });

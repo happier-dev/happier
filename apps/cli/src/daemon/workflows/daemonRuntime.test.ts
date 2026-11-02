@@ -11,6 +11,7 @@ import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { bindApiSessionSocketMock, createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
 import { publishServerHttpRuntimeOrigin } from '@/api/client/serverHttpBaseUrl';
 import { configuration } from '@/configuration';
+import { seedTestServerProfile } from '@/testkit/serverProfiles';
 import { createSessionNotificationContextFixture, createSessionRecordFixture, createCompactSessionListRowFixture } from '@/testkit/backends/sessionFixtures';
 import { buildSessionCreationCorrespondence } from '@/session/shared/sessionCreationCorrespondence';
 import { deriveWorkflowSessionInputLocalIdV2 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
@@ -350,9 +351,14 @@ describe('production daemon retained operation target', () => {
     }
   });
 
-  it.each(['observation', 'Stop', 'native Stop'] as const)('keeps daemon retained %s on its original Machine after replacement', async phase => {
+  it.each(['observation', 'Stop', 'native Stop', 'same Home observation', 'foreign Home observation', 'same Home Stop', 'foreign Home Stop'] as const)('keeps daemon retained %s on its original Machine after replacement', async phase => {
     const nativeStop = phase === 'native Stop';
-    const stopping = phase !== 'observation';
+    const stopping = phase.endsWith('Stop');
+    const aliasedHome = phase.startsWith('same Home') || phase.startsWith('foreign Home');
+    const foreignHome = phase.startsWith('foreign Home');
+    const operationHome = aliasedHome ? foreignHome ? 'srv_other_operation' : 'srv_daemon_operation' : 'home';
+    if (aliasedHome) await seedTestServerProfile({ id: 'operation-profile', homeId: 'srv_daemon_operation',
+      serverUrl: 'http://127.0.0.1:43187' });
     const actionId = nativeStop ? 'review.start' : 'projects.script.run';
     const accountId = 'account-1';
     const machineId = 'original-worker';
@@ -384,7 +390,7 @@ describe('production daemon retained operation target', () => {
         rootRecordId: rootId, nextSequence: '2', frontier: { nextBlockOrdinal: 0, paused: false } } }));
     const operation = { version: 1, operationId: 'finite', revision: 1, actionId: 'projects.script.run', state: 'running',
       scope: { accountId, machineId }, title: 'Script', createdAt: 1, startedAt: 2, cancellation: 'supported',
-      domainRef: { kind: 'projectCommand', purpose: 'script', serverId: 'home', machineId,
+      domainRef: { kind: 'projectCommand', purpose: 'script', serverId: operationHome, machineId,
         workspaceRefId: 'workspace', cwd: '/repo' } };
     const seal = (id: string, root: boolean) => serializeWorkflowStoredContentEnvelopeV1(sealWorkflowProgressStoredEnvelopeV1({ mode: 'plain',
       binding: { v: 1, purpose: 'invocation_progress', accountId, runId, recordId: id,
@@ -395,7 +401,7 @@ describe('production daemon retained operation target', () => {
           localInputId: 'original', input: {}, ...(nativeStop
             ? { output: { intent: 'review', sessionId: null, results: [{ key: 'codex', ok: true, result: { runId: 'native-run' } }] },
                 awaitedRuns: [{ key: 'codex', runId: 'native-run' }] }
-            : { output: { operation }, awaitedOperations: [{ key: 'command', serverId: 'home',
+            : { output: { operation }, awaitedOperations: [{ key: 'command', serverId: operationHome,
                 machineId, operationId: operation.operationId }] }) } }) },
     }));
     const storage = createWorkflowRunStorageTestkit({ accountId, runId, machineId, origin: { kind: 'direct' }, acceptedEnvelope });
@@ -439,12 +445,12 @@ describe('production daemon retained operation target', () => {
         await new Promise(resolve => setTimeout(resolve, 28_120));
         return { ok: true, result: { ok: true } };
       }
-      if (phase === 'Stop' && payload.method === `${machineId}:actionOperation.get.v2`) return { ok: true, result: { kind: 'found', operation } };
+      if (stopping && payload.method === `${machineId}:actionOperation.get.v2`) return { ok: true, result: { kind: 'found', operation } };
       if (payload.method.startsWith(`${machineId}:`)) return unavailable;
       return { ok: true, result: payload.method.endsWith('cancel.v1') ? { kind: 'requested' } : { kind: 'not_found' } };
     } });
     bindApiSessionSocketMock(mocks.io, recoverySocket);
-    const runtime = createProductionDaemonWorkflowRuntime({ credentials: { token: 'token', encryption: null }, accountId, serverId: 'home' });
+    const runtime = createProductionDaemonWorkflowRuntime({ credentials: { token: 'token', encryption: null }, accountId, serverId: aliasedHome ? 'operation-profile' : 'home' });
     const recover = runtime.createRecoveryForMachine({ machineId,
       machineAdmissionTransport: async () => { throw new Error('Recovery must not enqueue new work'); },
       machineActionDirectTargetTransport: { machineId, invoke: async (method, request) => {
@@ -474,7 +480,7 @@ describe('production daemon retained operation target', () => {
       }
     } else {
       await recover('startup');
-      expect(new Set(requests)).toEqual(new Set(phase === 'Stop'
+      expect(new Set(requests)).toEqual(new Set(foreignHome ? [] : stopping
         ? [`${machineId}:actionOperation.get.v2`, `${machineId}:actionOperation.cancel.v1`]
         : [`${machineId}:actionOperation.get.v2`]));
     }

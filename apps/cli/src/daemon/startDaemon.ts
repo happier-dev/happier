@@ -59,6 +59,7 @@ import { dispatchMachineVitalsAlertNotificationAsync, readMachineVitalsWorkingSe
 import { buildMachineGuardEpisodeNotificationEvent } from '@/notifications/activity/buildMachineGuardEpisodeNotification';
 import { createDaemonStorageRoutes, type DaemonStorageRoutes } from '@/rpc/handlers/storage';
 import { projectWorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
+import { readMachineProjectWorkspaceRefs } from '@/workspaces/readMachineProjectWorkspaceRefs';
 import type { DaemonPublicVoiceModelPackRuntime } from './voiceInference/publicModelPacks/runtime';
 import type { BrowserRecordingDaemonRuntime } from './browser/recording/runtime';
 import { scmWorktreeMutationActivity } from '@/scm/worktreeMutationActivity';
@@ -1579,20 +1580,21 @@ export async function startDaemon(
       // URL-only predecessor profiles join the existing startup discovery.
       await refreshServerFeaturesSnapshot();
     }
+    const resolveBoundHomeServerIdentityId = () => {
+      if (homeTransportCancellation.signal.aborted) return null;
+      // Home transport authenticates the binding at startup/reconnect.
+      // Origin stamps carry that identity; each real use still admits it.
+      if (homeTarget.homeServerIdentityId) return homeTarget.homeServerIdentityId;
+      const snapshot = serverFeaturesSnapshotStore.getSnapshot();
+      return snapshot?.status === 'ready'
+        ? snapshot.features.capabilities.serverIdentity.serverIdentityId ?? null
+        : null;
+    };
     const resolveCurrentMachineExecutionOriginContext =
       createCurrentMachineExecutionOriginContextResolver({
         serverUrl: resolveServerHttpBaseUrl(),
         resolveCurrentMachineId: () => machineId,
-        resolveCurrentServerIdentityId: () => {
-          if (homeTransportCancellation.signal.aborted) return null;
-          // Home transport authenticates the binding at startup/reconnect.
-          // Origin stamps carry that identity; each real use still admits it.
-          if (homeTarget.homeServerIdentityId) return homeTarget.homeServerIdentityId;
-          const snapshot = serverFeaturesSnapshotStore.getSnapshot();
-          return snapshot?.status === 'ready'
-            ? snapshot.features.capabilities.serverIdentity.serverIdentityId ?? null
-            : null;
-        },
+        resolveCurrentServerIdentityId: resolveBoundHomeServerIdentityId,
       });
     const managedPolicyServerHttpBaseUrl = resolveServerHttpBaseUrl();
     const pluginRemovalOrigin = await resolveCurrentMachineExecutionOriginContext();
@@ -1630,9 +1632,10 @@ export async function startDaemon(
     const isolationWorkspaceScope = `${requesterRuntimeServerId}:${resolveAccountSettingsScopeKey(credentials)}`;
 const readIsolationRoots = () => {
       const workspaces = getActiveProjectAccountRowsSnapshot();
-      return configuration.activeServerId === requesterRuntimeServerId && workspaces?.scopeKey === isolationWorkspaceScope
-        ? workspaces.workspaceRefs.filter(ref => ref.serverId === requesterRuntimeServerId && ref.machineId === machineId)
-          .map(ref => ({ rootId: ref.id, path: ref.rootPath })) : null;
+      if (configuration.activeServerId !== requesterRuntimeServerId) return null;
+      return readMachineProjectWorkspaceRefs(workspaces, { scopeKey: isolationWorkspaceScope,
+        serverId: requesterRuntimeServerId, homeServerIdentityId: resolveBoundHomeServerIdentityId(), machineId })
+        ?.map(ref => ({ rootId: ref.id, path: ref.rootPath })) ?? null;
     };
 
 const agentIsolation: import('./agentIsolation/agentIsolationLaunchPolicy').HostAgentIsolationLaunchContext = {
@@ -2768,10 +2771,11 @@ const pluginRuntimeOwner = createDaemonPluginRuntimeOwner({
         const readProjects = () => {
           const expectedScope = `${target.serverId}:${resolveAccountSettingsScopeKey(capturedCredentials)}`;
           const snapshot = projectRows.getActiveProjectAccountRowsSnapshot();
-          if (snapshot?.scopeKey !== expectedScope) return { status: 'unavailable' as const };
+          const workspaceRefs = readMachineProjectWorkspaceRefs(snapshot, { scopeKey: expectedScope,
+            serverId: target.serverId, homeServerIdentityId: resolveBoundHomeServerIdentityId(), machineId: target.machineId });
+          if (!workspaceRefs) return { status: 'unavailable' as const };
           let unresolvedRoot = false;
-          const projects = snapshot.workspaceRefs.filter(ref => ref.serverId === target.serverId && ref.machineId === target.machineId)
-            .flatMap(ref => {
+          const projects = workspaceRefs.flatMap(ref => {
               const root = resolveCanonicalAbsolutePath(ref.rootPath);
               if (!root) unresolvedRoot = true;
               return root ? [{ repositoryRoot: root.path, projectId: projectWorkspaceRefV1(ref).projectKey }] : [];

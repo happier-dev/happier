@@ -19,6 +19,7 @@ import { readPortableCatalogAccountSettingBindingV1, PORTABLE_SETTING_VALUE_UNAV
   type PortableVoiceSettingsBindingContextV1 } from '@happier-dev/protocol/actions/settings/catalogAccountSettingBindings';
 
 import type { StoredCredentials } from '@/persistence';
+import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import type { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import type { readAccountSettingsV2Raw, updateAccountSettingsV2Once, updateAccountSettingsV2WithRetry } from '@/settings/accountSettings/updateAccountSettingsV2WithRetry';
@@ -182,7 +183,8 @@ export function createCliSettingsDeclarationAction(params: Readonly<{
     const storage = declaration.storage;
     if (!storage) return refuse('setting_not_bound');
     const target = 'target' in parsed ? parsed.target : undefined;
-    if (target && (!declaration.targetKinds.includes(target.kind) || target.serverId !== (params.serverId ?? context.serverId))) {
+    if (target && (!declaration.targetKinds.includes(target.kind)
+      || !await isServerProfileHomeIdentity(params.serverId ?? context.serverId ?? '', target.serverId))) {
       return { ...refuse('setting_target_mismatch'), details: { targetKinds: [...declaration.targetKinds] } };
     }
     if (storage.scope === 'team' && !target) return { ...refuse('setting_target_required'), details: { targetKinds: [...declaration.targetKinds] } };

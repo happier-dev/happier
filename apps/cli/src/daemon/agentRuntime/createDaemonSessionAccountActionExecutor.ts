@@ -259,8 +259,9 @@ export function createDaemonSessionAccountActionExecutor(params: Readonly<{
     if (params.credentials && (operation.actionId === 'discussion.post' || operation.actionId === 'discussion.reply')) {
       context = { ...context, serverIdentityId: readServerIdentityIdFromFeaturesSnapshot(await params.resolveServerFeaturesSnapshot?.()) ?? undefined };
       const bound = await bindDiscussionDraftReply({ actionId: operation.actionId, input: operation.input, context,
-        serverId: params.serverId, discussionAction: createDiscussionActionDeps({ credentials: params.credentials,
-          serverId: params.serverId, serverHttpBaseUrl: params.serverHttpBaseUrl }).discussionAction,
+        serverId: params.serverId, serverIdentityId: context.serverIdentityId,
+        discussionAction: createDiscussionActionDeps({ credentials: params.credentials,
+          serverId: params.serverId, serverIdentityId: context.serverIdentityId, serverHttpBaseUrl: params.serverHttpBaseUrl }).discussionAction,
         credentials: params.credentials, serverHttpBaseUrl: params.serverHttpBaseUrl });
       if ('failure' in bound) return bound.failure;
       if (bound.context.discussionReplyReturn && bound.context.actionRequestId) {

@@ -13,6 +13,7 @@ import { FilesystemUploadInputSchema, FilesystemDownloadInputSchema } from '@hap
 import { createCredentialedFilesystemTransferClient } from '@/machines/transfer/createCredentialedFilesystemTransferClient';
 import { tryHandleApprovalRequestCreated } from '@/cli/commands/session/shared/tryHandleApprovalRequestCreated';
 import { expandHomeDirPath } from '@/utils/path/expandHomeDirPath';
+import { finiteActionExitCode, supportsFiniteActionOutcome, readFiniteActionOutcome, readFiniteActionOperationAddress } from '@/cli/actions/finiteOutcome';
 import {
   isPrivateSecretCliWrite, needsSavedSecretsInputPreparation, prepareSavedSecretsCliInput,
   SavedSecretsInputFailure, SavedSecretsInputReadApproval,
@@ -62,7 +63,8 @@ const ACTION_CLI_PROJECT_DIRECTORY_FLAG = '--project-directory' as const;
 const ACTION_CLI_WORKSPACE_REF_ID_FLAG = '--workspace-ref-id' as const;
 const ACTION_CLI_SOURCE_PATH_FLAG = '--source-path' as const;
 const ACTION_CLI_DESTINATION_PATH_FLAG = '--destination-path' as const;
-const INVOKE_USAGE = 'Usage: happier actions invoke <action-id> [--<field> <value>...] [--input-json <json>] [--request-id <id>] [--server-id <id>] [--machine-id <id>] [--project-directory <path>] [--workspace-ref-id <id>] [--json]';
+const INVOKE_USAGE = 'Usage: happier actions invoke <action-id> [--<field> <value>...] [--input-json <json>] [--request-id <id>] [--server-id <id>] [--machine-id <id>] [--project-directory <path>] [--workspace-ref-id <id>] [--wait] [--json]';
+const INVOKE_WAIT_FLAG = '--wait' as const;
 
 /** CLI-owned transport flags; they never become Action input. */
 const INVOKE_TRANSPORT_VALUE_FLAGS = [
@@ -140,17 +142,18 @@ function resolveInvokeActionInput(
   }
   const target = { fields: compiled.fields, positionals: [] as const };
   const flags = describeActionCliCommandFlags(target);
+  const finiteFlags = compiled.kind === 'local' && supportsFiniteActionOutcome(compiled.actionId) ? [INVOKE_WAIT_FLAG] : [];
   // Unknown flags, missing values and surplus positionals fail here, before any
   // credential read or executor construction.
   assertCommandArguments(args, {
     usage: INVOKE_USAGE,
     startIndex: 1,
-    booleanFlags: [ACTION_CLI_JSON_OUTPUT_FLAG, ...flags.booleanFlags],
+    booleanFlags: [ACTION_CLI_JSON_OUTPUT_FLAG, ...finiteFlags, ...flags.booleanFlags],
     valueFlags: [...INVOKE_TRANSPORT_VALUE_FLAGS, ACTION_CLI_WHOLE_INPUT_FLAG, ...flags.valueFlags],
     literalValueFlags: [ACTION_CLI_SOURCE_PATH_FLAG, ACTION_CLI_DESTINATION_PATH_FLAG],
     maxPositionals: 1,
   });
-  const stripped = stripCliOwnedFlags(args.slice(1), { valueFlags: [...INVOKE_TRANSPORT_VALUE_FLAGS] });
+  const stripped = stripCliOwnedFlags(args.slice(1), { booleanFlags: finiteFlags, valueFlags: [...INVOKE_TRANSPORT_VALUE_FLAGS] });
   // The exact Action id is the first positional after `invoke`. Removing that
   // exact slot, rather than searching by value, preserves a field value that
   // happens to equal the Action id.
@@ -293,6 +296,7 @@ async function execute(args: string[], deps: ActionsDeps, signal?: AbortSignal):
   if (subcommand !== 'invoke') throw Object.assign(new Error(`Unknown actions subcommand: ${subcommand}\n${INVOKE_USAGE}`), { code: 'unknown_subcommand' });
   const requested = args[1];
   if (!requested || requested.startsWith('-')) throw Object.assign(new Error(INVOKE_USAGE), { code: 'invalid_arguments' });
+  const wait = supportsFiniteActionOutcome(requested) && hasInvokeOption(args, INVOKE_WAIT_FLAG);
 
   // The invoked Action, its request identity and its input are resolved before
   // authentication so an argument defect never constructs an executor.
@@ -308,7 +312,7 @@ async function execute(args: string[], deps: ActionsDeps, signal?: AbortSignal):
         if (!signedRootActionId.success) throw Object.assign(new Error(`Unknown Action id: ${requested}`), { code: 'invalid_arguments' });
         const spec = getActionSpec(signedRootActionId.data);
         const compiled = compileActionCliFields(spec, {
-          reservedFlags: INVOKE_TRANSPORT_VALUE_FLAGS,
+          reservedFlags: [...INVOKE_TRANSPORT_VALUE_FLAGS, ...(supportsFiniteActionOutcome(signedRootActionId.data) ? [INVOKE_WAIT_FLAG] : [])],
         });
         const invokeFields: InvokeCompiledFields = {
           kind: 'local',
@@ -336,7 +340,8 @@ async function execute(args: string[], deps: ActionsDeps, signal?: AbortSignal):
         }
         return {
           actionId: signedRootActionId.data,
-          input,
+          input: wait && signedRootActionId.data === 'action.operations.get'
+            ? { ...(input as Readonly<Record<string, unknown>>), waitForTerminal: true } : input,
           requestId,
           requiresServerId: spec.cli?.requiresServerId === true,
         };
@@ -518,6 +523,21 @@ async function execute(args: string[], deps: ActionsDeps, signal?: AbortSignal):
   } else {
     data = unwrapOuterActionResult(await executor.execute(invocation.actionId, resolvedInput, invocationOptions));
   }
+  if (wait) {
+    const address = invocation.actionId === 'action.operations.get' ? null : await readFiniteActionOperationAddress(resolvedInput, data);
+    if (address) {
+      // Environment-token admission consumes the submitted protected scope;
+      // operation custody remains the exact returned address, not placement.
+      const environmentId = invocation.actionId === 'deployments.deploy'
+        && resolvedInput && typeof resolvedInput === 'object' && 'environmentId' in resolvedInput
+        ? resolvedInput.environmentId : undefined;
+      const observationInput = { ...address,
+        ...(typeof environmentId === 'string' ? { environmentId } : {}), waitForTerminal: true };
+      const observed = unwrapOuterActionResult(await executor.execute('action.operations.get', observationInput,
+        { ...invocationOptions, actionRequestId: randomUUID() }));
+      data = readFiniteActionOutcome({ actionId: 'action.operations.get', input: observationInput, result: observed });
+    } else data = readFiniteActionOutcome({ actionId: invocation.actionId, input: resolvedInput, result: data });
+  }
   if (await tryHandleApprovalRequestCreated({ envelopeKind: 'actions_invoke', json, result: data,
     executionPlacement: localInvocation ? resolveActionExecutionPlacementForInput(
       getActionSpec(localInvocation.actionId), resolvedInput) : contributedExecutionPlacement,
@@ -559,14 +579,16 @@ export async function handleActionsCommand(
       ...(candidate?.actionFailure === true && candidate.details !== undefined ? { details: candidate.details } : {}),
       ...(candidate?.actionFailure === true && goalControlFailure.success ? { goalControlFailure: goalControlFailure.data } : {}),
     };
-    if (wantsJson(args)) await printJsonEnvelope({ ok: false, kind: `actions_${args[0] ?? 'help'}`, error: structured }, { exitCode: mapped.unexpected ? 2 : 1 });
+    const exitCode = hasInvokeOption(args, INVOKE_WAIT_FLAG) && supportsFiniteActionOutcome(args[1] ?? '')
+      ? finiteActionExitCode(mapped.code, mapped.unexpected) : mapped.unexpected ? 2 : 1;
+    if (wantsJson(args)) await printJsonEnvelope({ ok: false, kind: `actions_${args[0] ?? 'help'}`, error: structured }, { exitCode });
     else {
       console.error(fail(mapped.message ?? mapped.code));
       if ('candidates' in structured && Array.isArray(structured.candidates)) {
         console.error(`Candidates: ${structured.candidates.join(', ')}`);
       }
       if (mapped.code === 'invalid_arguments' || mapped.code === 'unknown_subcommand') showHelp();
-      process.exitCode = mapped.unexpected ? 2 : 1;
+      process.exitCode = exitCode;
     }
   }
 }

@@ -146,10 +146,16 @@ describe('CLI activity compatibility awareness', () => {
     });
     const socket = new EventEmitter();
     socketBoundary.socket = socket;
-    const owner = createCliActionDeps({ token: credentials.token, credentials, sessionId, mode: 'plain', ctx: null, serverId: 'home', serverHttpBaseUrl: 'https://home.example' });
+    const owner = createCliActionDeps({ token: credentials.token, credentials, sessionId, mode: 'plain', ctx: null,
+      serverId: 'local-profile', serverIdentityId: 'srv_awareness_home', serverHttpBaseUrl: 'https://home.example' });
+    expect(await owner.sessionAwarenessWait!({ context,
+      input: { target: { kind: 'session', serverId: 'srv_foreign', sessionId }, condition: { kind } },
+      options: { condition: { kind }, timeoutMs: 10_000, deadlineMs: now + 10_000 },
+      readAwareness: () => owner.sessionActivityGet({ context, sessionId, view: 'awareness' }),
+    })).toMatchObject({ disposition: 'permission_denied' });
     const settled = vi.fn();
     const waiting = owner.sessionAwarenessWait!({ context,
-      input: { target: { kind: 'session', serverId: 'home', sessionId }, condition: { kind } },
+      input: { target: { kind: 'session', serverId: 'srv_awareness_home', sessionId }, condition: { kind } },
       options: { condition: { kind }, timeoutMs: 10_000, deadlineMs: now + 10_000 },
       readAwareness: () => owner.sessionActivityGet({ context, sessionId, view: 'awareness' }),
     }).then((result) => { settled(result); return result; });

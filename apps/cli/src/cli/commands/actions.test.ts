@@ -24,11 +24,31 @@ import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportD
 import { createClientActionReverseDispatcher } from '@/session/actions/clientActionReverseDispatch';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
+import { createDeploymentApprovalScopeResolverV1, DeploymentEnvironmentGetResultV1Schema, type ActionExecutorDeps } from '@happier-dev/protocol';
+import { executeActionOperationActionV1, type ActionOperationMachineTransportV1 } from '@happier-dev/protocol/actions/executor/actionOperationActions';
+import { createActionOperationStore } from '@/daemon/actionOperations/actionOperationStore';
+
 afterEach(() => { vi.restoreAllMocks(); process.exitCode = undefined; });
 
 function credentials(provenance: 'api_token' | 'stored_session'): StoredCredentials {
   return { token: 'token', encryption: null, credentialProvenance: provenance };
 }
+
+function finiteDeploymentTransport(submit: NonNullable<ActionExecutorDeps['deploymentAction']>) {
+  const transport: NonNullable<ActionExecutorDeps['deploymentAction']> = async (actionId, input, context) => {
+    if (actionId !== 'deployments.environments.get') return submit(actionId, input, context);
+    if (!('environmentId' in input)) throw new Error('Expected Environment');
+    return DeploymentEnvironmentGetResultV1Schema.parse({ ok: true,
+      environment: { v: 1, id: input.environmentId, serverId: 'home', projectSourceId: 'source', revision: 1,
+        owner: { kind: 'account', accountId: 'account' }, protection: 'nonProduction', purpose: 'standard',
+        deployerMode: 'managers', controllerMachineId: 'controller', createdByAccountId: 'account',
+        contentArtifactId: 'content', contentHeaderVersion: 1, contentBodyVersion: 1,
+        capabilities: { role: 'manager', read: true, deploy: true, manage: true,
+          manageBindings: true, manageTargets: true, delete: true }, createdAtMs: 1, updatedAtMs: 1 }, targetLinks: [] });
+  };
+  return transport;
+}
+
 
 function contributedActionDefinition() {
   return {
@@ -78,6 +98,62 @@ function contributedActionDefinition() {
 }
 
 describe('actions root command', () => {
+  it.each(['succeeded', 'held', 'missing', 'mismatched', 'home-alias', 'foreign-home'] as const)('finite pending submission observes its recorded host for %s', async outcome => {
+    let output = '';
+    vi.spyOn(process.stdout, 'write').mockImplementation((chunk, ...args) => {
+      output += String(chunk);
+      const callback = args.find(argument => typeof argument === 'function');
+      if (typeof callback === 'function') callback();
+      return true;
+    });
+    const addressHome = outcome === 'home-alias' ? 'srv_finite_home' : outcome === 'foreign-home' ? 'srv_foreign_home' : 'home';
+    if (outcome === 'home-alias' || outcome === 'foreign-home') await seedTestServerProfile({
+      id: 'home', homeId: 'srv_finite_home', serverUrl: 'https://finite-home.example',
+    });
+    const scope = { accountId: 'account', machineId: 'original-host' };
+    const store = createActionOperationStore();
+    store.create({ operationId: 'operation', actionId: 'deployments.deploy', scope,
+      title: 'Deploy', cancellation: 'unsupported', inputIdentity: 'reviewed' });
+    store.markRunning('operation');
+    const receipt = { ok: true as const, environmentId: 'staging', revision: 2,
+      deploymentId: 'deployment', deploymentRevision: 1, state: 'succeeded' as const };
+    const submit = vi.fn(async () => ({ ok: true as const, environmentId: 'staging', revision: 2,
+      kind: 'pending' as const, actionOperationId: 'operation', ...(outcome !== 'missing' ? { operation: {
+        serverId: addressHome, machineId: 'original-host', operationId: outcome === 'mismatched' ? 'another-operation' : 'operation',
+      } } : {}) }));
+    const deployment = finiteDeploymentTransport(submit);
+    const rpc = vi.fn<ActionOperationMachineTransportV1>(async request => {
+      expect(request).toMatchObject({ serverId: addressHome, machineId: 'original-host',
+        payload: { operationId: 'operation', waitForTerminal: true } });
+      if (outcome === 'held') store.updateProgress('operation', { kind: 'phase', phase: 'waiting_for_approval', label: 'Waiting' });
+      else store.succeed('operation', receipt);
+      return { kind: 'found', operation: store.get(scope, 'operation') };
+    });
+    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(),
+      // Current Environment metadata names a different controller. Only the
+      // original returned operation address may select the observation host.
+      deploymentAction: deployment,
+      resolveEnvironmentApprovalScope: createDeploymentApprovalScopeResolverV1(deployment),
+      actionOperationAction: args => executeActionOperationActionV1({ ...args, transport: rpc }),
+      isActionApprovalRequired: () => false });
+    await handleActionsCommand(['invoke', 'deployments.deploy', '--input-json', JSON.stringify({
+      serverId: 'home', environmentId: 'staging', expectedRevision: 1, targetLinkId: 'target',
+      expectedTargetLinkRevision: 1, contentArtifactId: 'content', contentHeaderVersion: 1,
+      contentBodyVersion: 1, requestKey: 'run-1',
+    }), '--wait', '--json'], {
+      readCredentialsFn: async () => credentials('api_token'),
+      createExecutorFn: () => ({ ...executor,
+        resolveSessionTarget: async () => { throw new Error('No Session'); } }),
+    });
+    const successful = outcome === 'succeeded' || outcome === 'home-alias';
+    expect(process.exitCode ?? 0, output).toBe(successful ? 0 : outcome === 'held' ? 3 : 5);
+    expect(JSON.parse(output)).toMatchObject(successful ? { ok: true, data: receipt }
+      : { ok: false, error: { code: outcome === 'held' ? 'approval_waiting' : 'outcome_unknown' } });
+    expect(submit).toHaveBeenCalledOnce();
+    expect(rpc).toHaveBeenCalledTimes(outcome === 'missing' || outcome === 'mismatched' || outcome === 'foreign-home' ? 0 : 1);
+  });
+
+
   it.each([false, true])('opens a Session not already viewed by the signed-in client (exact Machine: %s)', async exactMachine => {
     vi.spyOn(console, 'log').mockImplementation(() => undefined);
     const sessionId = `c${'a'.repeat(24)}`;

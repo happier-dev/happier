@@ -42,6 +42,7 @@ import {
   runWithServerHttpBaseUrl,
 } from '@/api/client/serverHttpBaseUrl';
 import { configuration } from '@/configuration';
+import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
 import { fetchServerFeaturesSnapshot, type CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import { createSessionFollowSourceKeyPreparationAfterSet } from '@/agent/runtime/session/follow/createSessionFollowSourceKeyPreparationAfterSet';
 import { logger } from '@/ui/logger';
@@ -262,7 +263,8 @@ export function createExternalMcpServer(params: Readonly<{
                 && 'ok' in cursor && cursor.ok === true && 'status' in cursor && cursor.status === 'ok'
                 && 'sessionId' in cursor && 'serverId' in cursor) {
                 if (cursor.sessionId === null && cursor.serverId === null) defaultSessionAddress = null;
-                else if (cursor.serverId === serverId && typeof cursor.sessionId === 'string' && cursor.sessionId.trim()) {
+                else if (typeof cursor.serverId === 'string' && await isServerProfileHomeIdentity(serverId, cursor.serverId)
+                  && typeof cursor.sessionId === 'string' && cursor.sessionId.trim()) {
                   defaultSessionAddress = { serverId, sessionId: cursor.sessionId.trim() };
                 }
               }

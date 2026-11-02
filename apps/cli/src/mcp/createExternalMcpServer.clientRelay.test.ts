@@ -14,6 +14,7 @@ import { createDaemonExternalActionTargetResolver } from '@/daemon/externalActio
 import { createCliActionExecutorHarness } from '@/session/actions/createCliActionExecutorHarness';
 import { createClientActionReverseDispatcher } from '@/session/actions/clientActionReverseDispatch';
 import { configuration } from '@/configuration';
+import { adoptServerProfileHomeConnectionDescriptor, getServerProfile } from '@/server/serverProfiles';
 import { writeStoredCredentialsForServerId } from '@/persistence';
 import { createExternalMcpServer } from './createExternalMcpServer';
 
@@ -54,6 +55,8 @@ describe('standalone MCP client Action admission', () => {
     await writeStoredCredentialsForServerId(configuration.activeServerId, credentials);
     let clientAvailable = connected;
     let primarySessionId: string | null = 'canonical-session';
+    const portableHomeId = 'srv_mcp_cursor';
+    let primaryServerId = portableHomeId;
     // The Home HTTP service is a network boundary. Session parsing, Account
     // mode and daemon locality resolution use their real canonical owners.
     const home = createServer((request, response) => {
@@ -77,6 +80,11 @@ describe('standalone MCP client Action admission', () => {
     await once(home, 'listening');
     const homeAddress = home.address();
     if (!homeAddress || typeof homeAddress === 'string') throw new Error('Missing Home address');
+    const previousProfile = await getServerProfile(configuration.activeServerId).catch(() => null);
+    await adoptServerProfileHomeConnectionDescriptor({ expectedProfileId: configuration.activeServerId,
+      createIfMissing: true, observation: 'exact', descriptor: { v: 1, homeServerIdentityId: portableHomeId,
+        canonicalServerUrl: `http://127.0.0.1:${homeAddress.port}`, revision: (previousProfile?.homeConnectionDescriptor?.revision ?? 0) + 1,
+        endpoints: [{ kind: 'https', url: `http://127.0.0.1:${homeAddress.port}` }] } });
     // The connected-client RPC is the network boundary. Admission, placement,
     // reverse dispatch, daemon HTTP and MCP SDK execution remain real.
     const clientActionExecute = createClientActionReverseDispatcher(() => ({
@@ -94,8 +102,8 @@ describe('standalone MCP client Action admission', () => {
           : request.actionId === 'session.pending.next' ? { status: 'none' }
           : request.actionId === 'usage.coach.dismiss' ? coachResult
           : request.actionId === 'session.target.primary.set' ? { ok: true, status: 'ok',
-            sessionId: primarySessionId, serverId: primarySessionId ? configuration.activeServerId : null,
-            address: primarySessionId ? { sessionId: primarySessionId, serverId: configuration.activeServerId } : null } : workspace;
+            sessionId: primarySessionId, serverId: primarySessionId ? primaryServerId : null,
+            address: primarySessionId ? { sessionId: primarySessionId, serverId: primaryServerId } : null } : workspace;
         return { ok: true, result: { v: 1, execution: { ok: true, result } } };
       },
     }));
@@ -206,6 +214,15 @@ describe('standalone MCP client Action admission', () => {
         expect(admitted.at(-1)).toMatchObject({ actionId: 'session.target.primary.set', context: { defaultSessionId: 'requested-session' } });
         await client.callTool({ name: 'action_execute', arguments: { actionId: 'ui.find', input: { op: 'read' } } });
         expect(admitted.at(-1)).toMatchObject({ actionId: 'ui.find', context: { defaultSessionId: 'canonical-session' } });
+        primarySessionId = 'foreign-session';
+        primaryServerId = 'srv_foreign';
+        await client.callTool({ name: 'action_execute', arguments: { actionId: 'session.target.primary.set', input: {
+          sessionId: 'foreign-session', serverId: configuration.activeServerId,
+        } } });
+        await client.callTool({ name: 'action_execute', arguments: { actionId: 'ui.find', input: { op: 'read' } } });
+        expect(admitted.at(-1)).toMatchObject({ actionId: 'ui.find', context: { defaultSessionId: 'canonical-session' } });
+        primarySessionId = 'canonical-session';
+        primaryServerId = portableHomeId;
         clientAvailable = false;
         await client.callTool({ name: 'action_execute', arguments: { actionId: 'session.target.primary.set', input: {
           sessionId: 'unaccepted-session', serverId: configuration.activeServerId,

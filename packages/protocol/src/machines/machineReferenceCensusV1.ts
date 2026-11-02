@@ -29,7 +29,35 @@ export type MachineReferenceCensusPortsV1 = Readonly<{
   readProfileCatalog?(settings: Readonly<Record<string, unknown>>): Promise<ProfileCatalogSnapshotV1>;
   readPools(): Promise<MachinePoolListOutputV1>;
   readAssignments(cursor?: string): Promise<AutomationDefinitionListResponse>;
+  readDeployments?(input: MachineDeploymentReferencesInputV1): Promise<MachineDeploymentReferencesPageV1>;
 }>;
+
+/** The exact deployment-family page reader, shared by census and reboot review. */
+export async function readMachineDeploymentReferencesV1(input: Readonly<{
+  homeId: string; machineId: string; signal?: AbortSignal;
+}>, readPage: NonNullable<MachineReferenceCensusPortsV1['readDeployments']>): Promise<MachineDeploymentReferencesPageV1> {
+  const references: MachineReferenceV1[] = [];
+  let coverage: MachineDeploymentReferencesPageV1['coverage'] = 'complete';
+  try {
+    let cursor: string | undefined;
+    do {
+      input.signal?.throwIfAborted();
+      const page = MachineDeploymentReferencesPageV1Schema.parse(await readPage({
+        homeId: input.homeId, machineId: input.machineId, ...(cursor ? { cursor } : {}),
+      }));
+      if (page.homeId !== input.homeId || page.machineId !== input.machineId
+        || page.references.some(reference => reference.kind !== 'deployment_environment')) throw new Error('deployment_references_target_invalid');
+      if (page.coverage !== 'complete') coverage = 'partial';
+      references.push(...page.references);
+      if (page.nextCursor !== null && page.nextCursor === cursor) throw new Error('deployment_references_cursor_invalid');
+      cursor = page.nextCursor ?? undefined;
+    } while (cursor);
+  } catch {
+    input.signal?.throwIfAborted();
+    coverage = 'partial';
+  }
+  return { homeId: input.homeId, machineId: input.machineId, coverage, references, nextCursor: null };
+}
 
 /** A disclosure-only projection of current owners. It never removes, repairs or retargets a reference. */
 export async function readMachineReferenceCensusV1(input: Readonly<{

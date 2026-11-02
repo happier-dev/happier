@@ -1,3 +1,5 @@
+import { areServerProfileIdentifiersEquivalent } from '../features/payload/capabilities/serverIdentityCapabilities.js';
+import type { ActionHomeEquivalence } from '../actions/executor/coreInvocation.js';
 import type { ActionExecutorDeps, ActionExecutorContext } from '../actions/executor/types.js';
 import { resolveReviewEngineInventoryTarget } from '../actions/executor/reviewEngineInventoryTarget.js';
 import type { ActionExecuteFailure, ActionExecuteResult } from '../actions/actionExecutionResult.js';
@@ -213,12 +215,13 @@ async function readSessionOptionsForValues(params: Readonly<{
   ctx: ActionExecutorContext;
   serverId: string;
   values: readonly JsonValue[];
+  sameHome: ActionHomeEquivalence;
 }>): Promise<Extract<ActionExecuteResult, { ok: false }> | readonly InputOption[]> {
   const options: InputOption[] = [];
   for (const value of params.values) {
     const address = VoiceTrackedSessionAddressV1Schema.safeParse(value);
     // The inventory only ever offers this Home's Sessions, so any other pick has no option there either.
-    if (!address.success || address.data.serverId !== params.serverId) continue;
+    if (!address.success || !params.sameHome(address.data.serverId, params.serverId)) continue;
     params.ctx.signal?.throwIfAborted();
     const result = await params.executor.execute('session.status.get', { sessionId: address.data.sessionId }, params.ctx);
     if (!result.ok) return result;
@@ -271,6 +274,7 @@ export async function resolveTypedInputFieldOptions(params: Omit<Parameters<type
 export async function resolveInputOptions(params: Readonly<{
   deps: ActionExecutorDeps;
   ctx: ActionExecutorContext;
+  sameHome?: ActionHomeEquivalence;
   actionId: ActionId | null;
   optionsSourceId: string;
   input: Record<string, unknown>;
@@ -288,6 +292,7 @@ export async function resolveInputOptions(params: Readonly<{
   modelCatalog?: NonNullable<PublicActionResultById['action.options.resolve']['modelCatalog']>;
 }>> {
   const { deps, ctx, actionId, optionsSourceId } = params;
+  const sameHome = params.sameHome ?? areServerProfileIdentifiersEquivalent;
   const input = projectInputOptionsDependencies(params.input);
   const machineId = readDynamicOptionMachineId(input, actionId, ctx);
   const serverId = actionId === 'session.spawn_new'
@@ -388,7 +393,7 @@ export async function resolveInputOptions(params: Readonly<{
       if (typeof machine.revokedAt === 'number' && machine.revokedAt > 0 || readNonEmptyString(machine.replacedByMachineId)) continue;
       const target = MachineTargetV1Schema.safeParse({ serverId: readNonEmptyString(machine.serverId) ?? selectedServerId,
         machineId: readNonEmptyString(machine.machineId) ?? readNonEmptyString(machine.id) });
-      if (!target.success || target.data.serverId !== selectedServerId) return { ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output' };
+      if (!target.success || !sameHome(target.data.serverId, selectedServerId)) return { ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output' };
       const online = machine.presence === 'online' || (machine.presence === undefined && machine.active === true);
       (online ? options : offline).push({ value: target.data, label: readNonEmptyString(machine.label) ?? target.data.machineId,
         description: online ? 'Online' : 'Offline' });
@@ -431,14 +436,14 @@ export async function resolveInputOptions(params: Readonly<{
     // The admitted consumer owns the qualified values it compares with a saved pin.
     // Transport still uses ctx's captured profile; profile aliases are not input identity.
     const sessionServerId = readNonEmptyString(params.consumer?.kind === 'widget'
-      ? params.consumer.selectedSession?.serverId ?? params.consumer.surface.serverId : ctx.serverId);
+      ? params.consumer.selectedSession?.serverId ?? params.consumer.surface.serverId : ctx.serverIdentityId ?? ctx.serverId);
     if (!sessionServerId) return { ok: false, errorCode: 'server_not_selected', error: 'server_not_selected' };
     // Enter through the existing Action owner so credential grants, the caller's
     // admitted corpus and marked-query admission also govern option discovery.
     const { createActionExecutor } = await import('../actions/actionExecutor.js');
     const executor = createActionExecutor(deps);
     if (params.values) {
-      const direct = await readSessionOptionsForValues({ executor, ctx, serverId: sessionServerId, values: params.values });
+      const direct = await readSessionOptionsForValues({ executor, ctx, serverId: sessionServerId, values: params.values, sameHome });
       return 'ok' in direct ? direct : { ok: true, result: direct };
     }
     const groups: Record<'needsYou' | 'working' | 'recent', InputOption[]> = { needsYou: [], working: [], recent: [] };

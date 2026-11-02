@@ -14,15 +14,19 @@ import { createDaemonMachineIrohRuntime } from '@/daemon/peer/iroh/daemonMachine
 import { awaitMachineCarrierTunnelOpen } from '@/daemon/peer/iroh/machineCarrier';
 import { verifyDirectRouteGrantV2 } from '@/daemon/peer/mediation/verifyDirectRouteGrant';
 import { createPreparedFilesystemTransferClient } from './preparedFilesystemTransferClient';
+import { resolveServerProfileHomeIdentityId } from '@/server/serverProfiles';
+import { areServerProfileIdentifiersEquivalent } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
 
 /** Finite CLI ingress: local custody, authenticated Home, and the same native carrier owner. */
 export async function createCredentialedFilesystemTransferClient(input: Readonly<{
   credentials: StoredCredentials;
   serverId: string;
+  serverIdentityId?: string;
   serverApiUrl: string;
   executeAction: (actionId: FilesystemTransferActionId | 'daemon.filesystem.copy' | 'action.operations.get', input: unknown, context: ActionExecutorContext) => Promise<ActionExecuteResult>;
   signal?: AbortSignal;
 }>) {
+  const serverIdentityId = input.serverIdentityId ?? await resolveServerProfileHomeIdentityId(input.serverId);
   const [profile, features] = await runWithServerHttpBaseUrl(input.serverApiUrl, () => Promise.all([
     fetchAccountProfile({ token: input.credentials.token, ...(input.signal ? { signal: input.signal } : {}) }),
     fetchServerFeaturesSnapshot({ serverUrl: input.serverApiUrl, token: input.credentials.token, ...(input.signal ? { signal: input.signal } : {}) }),
@@ -36,7 +40,8 @@ export async function createCredentialedFilesystemTransferClient(input: Readonly
     identity: 'ephemeral', relayConfig: readIrohRelayConfigFromEnv(process.env) });
   if (!runtime.available) { await runtime.shutdown(); throw new Error('Native machine carrier is unavailable'); }
   const openMachineTunnel: Parameters<typeof createPreparedFilesystemTransferClient>[0]['openMachineTunnel'] = async request => {
-      if (request.serverId && request.serverId !== input.serverId) throw new Error('server_scope_mismatch');
+      if (request.serverId && !areServerProfileIdentifiersEquivalent(input.serverId, request.serverId,
+        identifier => identifier === input.serverId || identifier === serverIdentityId ? serverIdentityId ?? input.serverId : null)) throw new Error('server_scope_mismatch');
       const minted = await mintFiniteAccountClientTransferHandshake({ accountId: profile.id, machineId: request.targetMachineId,
         randomBytes: length => new Uint8Array(randomBytes(length)), signal: request.signal,
         resolveInitiatorEndpointId: async () => runtime.endpoint.endpointId,

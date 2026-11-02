@@ -12,6 +12,7 @@ import { readSessionVisualHtmlBodyV1 as readHtmlBody, usesInheritedSessionWidget
 import { SessionBoardGetResultV1Schema, SessionBoardItemUpsertInputV1Schema, SessionBoardAuthoredItemUpsertInputV1Schema,
   type SessionBoardItemUpsertInputV1, type SessionVisualReviewedAdmissionV1 } from '../../sessions/board/actions.js';
 import type { ActionExecutorContext, ActionExecutorDeps } from './types.js';
+import type { ActionHomeEquivalence } from './coreInvocation.js';
 import type { ActionExecuteFailure } from '../actionExecutionResult.js';
 
 export type SessionVisualAdmissionV1 = Readonly<{
@@ -40,7 +41,7 @@ function executableFingerprint(item: SessionSurfaceItemV1 | null, capabilities: 
 
 /** Consequence facts for the existing contextualSafety seam, not an approval dispatcher. */
 export async function readSessionVisualAdmissionV1(
-  deps: ActionExecutorDeps, input: unknown, context: ActionExecutorContext, hostReviewedInput = false,
+  deps: ActionExecutorDeps, input: unknown, context: ActionExecutorContext, sameHome: ActionHomeEquivalence, hostReviewedInput = false,
 ): Promise<SessionVisualAdmissionV1 | ActionExecuteFailure> {
   const incoming = SessionBoardItemUpsertInputV1Schema.parse(input);
   const copySource = 'copySource' in incoming ? incoming.copySource
@@ -50,14 +51,14 @@ export async function readSessionVisualAdmissionV1(
     const source = incoming.copySource;
     const sessionId = incoming.sessionId ?? context.defaultSessionId;
     if (!sessionId || source.sessionId === sessionId) return { ok: false, errorCode: 'session_board_invalid', error: 'Same-Session visuals use layout Pin instead of a copy' };
-    if (!context.serverId || source.serverId !== context.serverId) return { ok: false, errorCode: 'server_target_mismatch', error: 'server_target_mismatch' };
+    if (!context.serverId || !sameHome(source.serverId, context.serverId)) return { ok: false, errorCode: 'server_target_mismatch', error: 'server_target_mismatch' };
     if (!deps.sessionBoardAction) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
     const raw = await deps.sessionBoardAction({ actionId: 'session.board.get',
       input: { sessionId: source.sessionId, itemIds: [source.itemId] }, context,
       ...(context.signal ? { signal: context.signal } : {}) });
     if ('ok' in raw && raw.ok === false) return raw;
     const read = SessionBoardGetResultV1Schema.safeParse(raw);
-    if (!read.success || read.data.serverId !== source.serverId || read.data.sessionId !== source.sessionId
+    if (!read.success || !sameHome(read.data.serverId, source.serverId) || read.data.sessionId !== source.sessionId
       || !read.data.capabilities.readTranscript || read.data.incomplete) return { ok: false, errorCode: 'session_board_invalid', error: 'session_board_invalid' };
     const row = read.data.items.find(entry => entry.itemId === source.itemId);
     if (!row?.item || !isSessionSurfaceItemIdentityCorrespondingV1(source.itemId, row.item)) return { ok: false, errorCode: 'session_board_item_not_found', error: 'session_board_item_not_found' };
@@ -103,7 +104,7 @@ export async function readSessionVisualAdmissionV1(
       ...(context.signal ? { signal: context.signal } : {}) });
     if ('ok' in raw && raw.ok === false) return raw;
     const read = SessionBoardGetResultV1Schema.safeParse(raw);
-    if (!read.success || read.data.sessionId !== sessionId || read.data.serverId !== context.serverId || read.data.incomplete) {
+    if (!read.success || read.data.sessionId !== sessionId || !sameHome(read.data.serverId, context.serverId) || read.data.incomplete) {
       return { ok: false, errorCode: 'session_board_invalid', error: 'session_board_invalid' };
     }
     previous = read.data.items.find(entry => entry.itemId === request.itemId);

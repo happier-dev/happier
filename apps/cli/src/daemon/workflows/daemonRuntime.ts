@@ -26,6 +26,7 @@ import {
 import { createAccountServerActionDeps } from '@/api/accountServerActionDeps';
 import { resolveServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { configuration } from '@/configuration';
+import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
 import { resolveAutomationWorkerAccountEncryption } from '@/daemon/automation/automationWorker';
 import {
   acquireAuthoritativePluginRuntimeRegistryLease,
@@ -306,7 +307,7 @@ export function createProductionDaemonWorkflowRuntime(params: Readonly<{
   const operationRpc = async (transport: import('@/session/actions/createCliActionDeps').MachineActionDirectTargetTransport,
     operation: ActionCompletionOperation, kind: 'get' | 'cancel' | 'wait', signal?: AbortSignal,
     includeSetupReview?: true) => {
-    if (operation.serverId !== serverId) throw new Error('action_operation_home_mismatch');
+    if (!await isServerProfileHomeIdentity(serverId, operation.serverId)) throw new Error('action_operation_home_mismatch');
     const method = kind === 'cancel' ? ACTION_OPERATION_RPC_METHODS_V1.cancel : ACTION_OPERATION_RPC_METHODS_V2.get;
     const request = { operationId: operation.operationId, ...(kind === 'wait' ? { waitForTerminal: true,
       ...(includeSetupReview ? { includeSetupReview } : {}) } : {}) };

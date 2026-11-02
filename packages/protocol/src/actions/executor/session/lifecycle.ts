@@ -177,6 +177,7 @@ export async function dispatchSessionLifecycle1(inv: Pick<CoreInvocation, 'actio
 }
 
 export async function dispatchSessionLifecycle2(inv: Pick<CoreInvocation, 'actionId' | 'deps' | 'parsed' | 'ctx' | 'data'> & Readonly<{
+  sameHome: import('../coreInvocation.js').ActionHomeEquivalence;
   isDeferredApprovalResult: (result: ActionExecuteResult) => boolean;
   stopThenArchiveSession: (sessionId: string, childContext: ActionExecutorContext) => Promise<ActionExecuteResult>;
   executeHostChild: (childId: ActionId, childInput: unknown, childContext: ActionExecutorContext) => Promise<ActionExecuteResult>;
@@ -247,7 +248,7 @@ export async function dispatchSessionLifecycle2(inv: Pick<CoreInvocation, 'actio
               if (ctx.signal?.aborted) { reportsError = { errorCode: 'cancelled', error: 'cancelled' }; break; }
               if (report.id === archivedSessionId || seenReports.has(report.id)
                 || readSessionManagerSessionIdV1(report) !== archivedSessionId || ('archivedAt' in report && report.archivedAt != null)
-                || (serverId && typeof report.serverId === 'string' && report.serverId !== serverId)) continue;
+                || (serverId && typeof report.serverId === 'string' && !inv.sameHome(report.serverId, serverId))) continue;
               seenReports.add(report.id);
               const identity = { sessionId: report.id, ...(typeof report.title === 'string' ? { title: report.title } : {}) };
               const childContext = { ...ctx, ...(serverId ? { serverId } : {}),

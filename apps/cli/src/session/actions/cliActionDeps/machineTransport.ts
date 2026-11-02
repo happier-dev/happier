@@ -18,6 +18,7 @@ import type { callExactMachineRpc, callMachineRpc } from '@/session/transport/rp
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { RpcError } from '@happier-dev/protocol/rpcErrors';
 import { readMachineActionRpcResult } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
+import { areServerProfileIdentifiersEquivalent } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
 export function executionRunAuthorityCeiling(opts?: Pick<ActionExecutorContext, 'authority'>): Readonly<{
     authorityCeiling?: 'account_automation';
   }> {
@@ -57,20 +58,30 @@ export function createCliMachineActionTransport(
     context?: ActionExecutorContext;
     signal?: AbortSignal;
   }>): Promise<boolean> => {
-    const [{ isServerProfileHomeIdentity }, { createCurrentMachineExecutionOriginContextResolver }] = await Promise.all([import("@/server/serverProfiles"), import("@/api/machine/resolveCurrentMachineExecutionOriginContext")]);
-    if (!input.serverId || await isServerProfileHomeIdentity(params.serverId ?? configuration.activeServerId, input.serverId)) return true;
+    if (!input.serverId) return true;
     const context = input.context;
+    const replayHomeIdentityId = input.machineId && context?.bypassApprovals
+      && context.serverId === input.serverId && context.serverIdentityId
+      && context.executionRunTargetMachineId === input.machineId
+      && params.machineActionDirectTargetTransport?.machineId === input.machineId
+      ? context.serverIdentityId : null;
+    if (params.serverIdentityId) {
+      const profileId = params.serverId ?? configuration.activeServerId;
+      return areServerProfileIdentifiersEquivalent(profileId, input.serverId, identifier =>
+        identifier === profileId || identifier === params.serverIdentityId ? params.serverIdentityId
+          : identifier === context?.serverId ? replayHomeIdentityId : undefined);
+    }
+    const [{ isServerProfileHomeIdentity }, { createCurrentMachineExecutionOriginContextResolver }] = await Promise.all([import("@/server/serverProfiles"), import("@/api/machine/resolveCurrentMachineExecutionOriginContext")]);
+    if (await isServerProfileHomeIdentity(params.serverId ?? configuration.activeServerId, input.serverId)) return true;
     // Exact daemon replay retains the creator's profile label in its signed
     // proposal. Only that verified origin's current Home/Machine can interpret
     // the label; another input, Home or target is not a routing alias.
-    if (!input.machineId || !context?.bypassApprovals || context.serverId !== input.serverId || !context.serverIdentityId
-      || context.executionRunTargetMachineId !== input.machineId
-      || params.machineActionDirectTargetTransport?.machineId !== input.machineId) return false;
+    if (!replayHomeIdentityId) return false;
     const current = await createCurrentMachineExecutionOriginContextResolver({
       serverUrl: params.serverHttpBaseUrl ?? resolveServerHttpBaseUrl(),
       resolveCurrentMachineId: () => params.machineActionDirectTargetTransport?.machineId ?? null,
     })(input.signal);
-    return current?.machineId === input.machineId && current.serverIdentityId === context.serverIdentityId;
+    return current?.machineId === input.machineId && current?.serverIdentityId === replayHomeIdentityId;
   };
   // Resource handlers require current Machine admission even on this daemon.
   // Derive every Action method from the canonical families; watches share that ingress.

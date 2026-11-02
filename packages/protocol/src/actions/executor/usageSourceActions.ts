@@ -23,7 +23,8 @@ export function createUsageSourceActionPort(host: Readonly<{
 }>): UsageSourceActionPort {
   return async (request, context) => {
     await host.assertCurrent(context);
-    if (host.serverId !== request.input.serverId || (context.serverId && context.serverId !== host.serverId)) return failure('server_target_mismatch');
+    // Core already admitted the caller's Home; this port binds the captured transport target.
+    if (host.serverId !== request.input.serverId) return failure('server_target_mismatch');
     if (request.actionId === 'usage.sources.dismiss') {
       if (!host.dismiss) return { status: 'unavailable' };
       const result = USAGE_SOURCE_ACTION_OUTPUT_SCHEMAS[request.actionId].parse(await host.dismiss(request.input, context));
