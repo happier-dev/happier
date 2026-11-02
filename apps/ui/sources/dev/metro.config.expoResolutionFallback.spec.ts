@@ -1,5 +1,8 @@
 import { resolveEnrichedMarkdownPackageFile } from '@/dev/testkit/harness/enrichedMarkdownPackage';
 import fs from 'node:fs';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { pathToFileURL } from 'node:url';
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
@@ -475,6 +478,45 @@ describe('apps/ui/metro.config.js (Expo resolution fallbacks)', () => {
             filePath: path.resolve(__dirname, '../../../../packages/protocol/src/rpc/socket.ts'),
         });
 
+    });
+
+    it('resolves a newly generated Protocol leaf through the same loaded Metro config', async () => {
+        const fixture = await mkdtemp(path.join(tmpdir(), 'protocol-metro-exports-'));
+        const packageRoot = path.resolve(__dirname, '../../../../packages/protocol');
+        const manifestPath = path.join(packageRoot, 'package.json');
+        const sourcePath = path.join(packageRoot, 'src/newGeneratedMarker.ts');
+        const realReadFileSync = fs.readFileSync.bind(fs);
+        const realExistsSync = fs.existsSync.bind(fs);
+        const restoreSpies: (() => void)[] = [];
+        try {
+            await fs.promises.mkdir(path.join(fixture, 'src'));
+            await writeFile(path.join(fixture, 'package.json'), JSON.stringify({ name: '@happier-dev/protocol', exports: {} }));
+            await writeFile(path.join(fixture, 'tsconfig.json'), JSON.stringify({ include: ['src/**/*.ts'] }));
+            await writeFile(path.join(fixture, 'export-aliases.json'), '{}');
+            const config = requireFreshMetroConfig();
+            // Redirect only filesystem boundaries; keep the real UI resolver and generator.
+            const manifestSpy = vi.spyOn(fs, 'readFileSync').mockImplementation((file, options) =>
+                realReadFileSync(String(file) === manifestPath ? path.join(fixture, 'package.json') : file, options));
+            restoreSpies.push(() => manifestSpy.mockRestore());
+            const existsSpy = vi.spyOn(fs, 'existsSync').mockImplementation(file =>
+                String(file) === sourcePath ? realExistsSync(path.join(fixture, 'src/newGeneratedMarker.ts')) : realExistsSync(file));
+            restoreSpies.push(() => existsSpy.mockRestore());
+            const context = { resolveRequest: () => ({ type: 'empty' }) };
+            const specifier = '@happier-dev/protocol/newGeneratedMarker';
+            expect(config.resolver.resolveRequest(context, specifier, 'web')).toEqual({ type: 'empty' });
+            await writeFile(path.join(fixture, 'src/newGeneratedMarker.ts'), 'export const value = 43;');
+            const generator = pathToFileURL(path.join(packageRoot, 'scripts/generate-exports.mjs')).href;
+            await promisify(execFile)(process.execPath, ['--input-type=module', '-e',
+                'const { generateProtocolExports } = await import(process.argv[1]); await generateProtocolExports({ packageRoot: process.argv[2] });',
+                generator, fixture], { env: { ...process.env, NODE_OPTIONS: '' } });
+            for (const platform of ['web', 'android']) {
+                expect(config.resolver.resolveRequest(context, specifier, platform))
+                    .toEqual({ type: 'sourceFile', filePath: sourcePath });
+            }
+        } finally {
+            for (const restore of restoreSpies.reverse()) restore();
+            await fs.promises.rm(fixture, { recursive: true, force: true });
+        }
     });
 
     it('falls back from missing internal workspace dist subpath exports to source files', () => {
