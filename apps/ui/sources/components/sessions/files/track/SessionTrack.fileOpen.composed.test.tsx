@@ -20,6 +20,7 @@ const { createWorkspaceState } = await import('@/components/appShell/workspace/w
 const { createWorkspaceNavigationAdapter } = await import('@/components/appShell/workspace/workspaceNavigationAdapter');
 const { resolveCompactAppDestinations } = await import('@/components/appShell/destinations/compactAppDestinationCatalog');
 const { createWorkspaceFileDetailsTab } = await import('@/components/appShell/panes/details/fileDetailsTab');
+const { useWorkspaceFileOpener } = await import('@/components/workspaces/files/useWorkspaceFileOpener');
 const { createSessionPaneScopeId } = await import('@/components/sessions/panes/sessionPaneScopeId');
 const { readWorkspaceFileLinkView } = await import('@/utils/url/sessionFileDeepLink');
 const { SessionFileDetailsView } = await import('../views/SessionFileDetailsView');
@@ -41,14 +42,13 @@ afterEach(async () => {
 
 describe('Track/Watch file opening through the Session file owner', () => {
     it.each([
-        { entry: 'track', root: '/repo', cwd: '/repo/nested', path: 'nested/tracking.ts', absolute: '/repo/nested/tracking.ts' },
-        { entry: 'watch', root: '/repo', cwd: '/repo/nested', path: 'nested/tracking.ts', absolute: '/repo/nested/tracking.ts' },
-        { entry: 'watchRoute', root: '/repo', cwd: '/repo/nested', path: 'nested/tracking.ts', absolute: '/repo/nested/tracking.ts' },
+        { entry: 'captured', root: '/repo', cwd: '/repo/nested', path: 'nested/tracking.ts', absolute: '/repo/nested/tracking.ts' },
+        { entry: 'captured', root: 'C:\\Users\\alice\\repo', cwd: 'C:\\Users\\alice\\repo\\nested', path: 'nested/tracking.ts', absolute: 'c:/users/alice/repo/nested/tracking.ts' },
         { entry: 'track', root: '/repo/nested', cwd: '/repo/nested', path: 'tracking.ts', absolute: '/repo/nested/tracking.ts' },
         { entry: 'watch', root: '/repo/nested', cwd: '/repo/nested', path: 'tracking.ts', absolute: '/repo/nested/tracking.ts' },
         { entry: 'watchRoute', root: '/repo/nested', cwd: '/repo/nested', path: 'tracking.ts', absolute: '/repo/nested/tracking.ts' },
         { entry: 'track', root: '/Users/alice/repo', cwd: '/Users/alice/repo', path: 'tracking.ts', absolute: '/Users/alice/repo/tracking.ts' },
-        { entry: 'watch', root: 'C:\\Users\\alice\\repo', cwd: 'C:\\Users\\alice\\repo\\nested', path: 'nested/tracking.ts', absolute: 'c:/users/alice/repo/nested/tracking.ts' },
+        { entry: 'watch', root: 'C:\\Users\\alice\\repo\\nested', cwd: 'C:\\Users\\alice\\repo\\nested', path: 'tracking.ts', absolute: 'c:/users/alice/repo/nested/tracking.ts' },
     ])('$entry reads actual content at $absolute from cwd $cwd', async ({ entry, root, cwd, path, absolute }) => {
         const content = 'export const tracking = "the actual file";\n';
         const openedPaths: string[] = [];
@@ -113,11 +113,15 @@ describe('Track/Watch file opening through the Session file owner', () => {
                     } });
                 return registerMountedWorkspaceAction(async request => execute(request.actionId, request.input));
             }, []);
-            useSessionTrack({ scopeId, sessionAddress: address, workspaceRoot: root, active: true });
+            useSessionTrack({ scopeId, sessionAddress: address, workspaceRoot: cwd, active: entry !== 'captured' });
+            const opener = useWorkspaceFileOpener();
+            React.useEffect(() => {
+                if (entry === 'captured') void opener.open({ kind: 'session', ...address, path }, { rootPath: root, present: false });
+            }, [opener.open]);
             const tab = pane.scopeState?.details.tabs.find(candidate => candidate.key === pane.scopeState?.details.activeTabKey);
             const resource = tab?.resource;
             return <>
-                {entry !== 'track' ? <PhoneTrackWatchCapsule sessionAddress={address} workspaceRoot={root} /> : null}
+                {entry === 'watch' || entry === 'watchRoute' ? <PhoneTrackWatchCapsule sessionAddress={address} workspaceRoot={cwd} /> : null}
                 {resource?.kind === 'file' ? <SessionFileDetailsView sessionId={session.id} serverId={scope.serverId} scopeId={scopeId}
                     filePath={resource.path} initialView={{ ...readWorkspaceFileLinkView(resource), view: 'view' }} /> : null}
             </>;
@@ -131,7 +135,7 @@ describe('Track/Watch file opening through the Session file owner', () => {
                 <Scene />
             </WorkspaceNavigationProvider>
         </PanePresentationProvider>);
-        if (entry !== 'track') {
+        if (entry === 'watch' || entry === 'watchRoute') {
             const { HappierStatusCapsule } = await import('@happier-dev/plugin-ui/presentation');
             await act(async () => { screen.tree.root.findByType(HappierStatusCapsule).props.action.onPress(); });
         }
@@ -145,13 +149,16 @@ describe('Track/Watch file opening through the Session file owner', () => {
             const tab = createSessionPaneDetailsTab(details);
             if (tab?.resource?.kind !== 'file') throw new Error('Watch did not route to a file');
             const view = readWorkspaceFileLinkView(tab.resource);
-            expect(view?.rootPath).toBe(root);
+            expect(view?.rootPath).toBeUndefined();
             await act(async () => { screen.tree.update(currentFixture.wrap(<SessionFileDetailsView sessionId={session.id}
                 serverId={scope.serverId} scopeId={scopeId} filePath={path} initialView={{ ...view, view: 'view' }} />)); });
         }
         await vi.waitFor(() => expect(screen.tree.root.findAllByType(FileContentPanel)[0]?.props.fileContent,
             `Track/Watch read paths: ${openedPaths.join(', ')}`).toBe(content));
         expect(openedPaths).toContain(absolute);
-        if (entry === 'watch') expect(presentedTab?.resource).toMatchObject({ path, rootPath: root });
+        if (entry === 'watch') {
+            expect(presentedTab?.resource).toMatchObject({ path });
+            expect(presentedTab?.key).toBe(`file:${path}`);
+        }
     });
 });

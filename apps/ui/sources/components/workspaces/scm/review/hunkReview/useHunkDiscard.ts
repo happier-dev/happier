@@ -12,6 +12,7 @@ import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScop
 import { t } from '@/text';
 import type { HunkReviewActionTarget } from './useHunkReviewController';
 import { readPresentationNotice, subscribePresentationNotices } from '@/components/sessions/presentation/presentationNotices';
+import { fileBaseOfReviewSource } from '../reviewSource';
 
 function decodeUtf8(base64: string): string {
   return new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(
@@ -149,9 +150,8 @@ export function useHunkDiscard(
       const range = describeDiffHunkRange(rangeOfReviewUnit(hunkTarget));
       const fileTarget = {
         ...target,
-        rootPath: hunkTarget.source.kind === 'captured'
-          ? hunkTarget.source.comparison.repository.rootPath
-          : hunkTarget.source.root,
+        rootPath: fileBaseOfReviewSource(hunkTarget.source.kind === 'captured' ? hunkTarget.source.comparison : null,
+          hunkTarget.source.kind === 'live' ? hunkTarget.source.root : target.rootPath),
       };
       const result = await discardChange({
         target: fileTarget,

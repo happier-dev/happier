@@ -21,6 +21,7 @@ import { buildCodeLinesFromUnifiedDiff } from '@/components/ui/code/model/buildC
 import { useAskSessionReveal } from '@/components/ui/code/selection/useAskSessionReveal';
 import { resolveMachineAbsolutePath } from '@/sync/domains/fileSystem/resolveMachineAbsolutePath';
 import { resolvePathRelativeToRoot } from '@/utils/path/resolvePathRelativeToRoot';
+import { fileBaseOfReviewSource } from '@/components/workspaces/scm/review/reviewSource';
 import {
   useFileChangesScope,
   type FileChangesScopeView,
@@ -107,8 +108,8 @@ export function useFileChangesReview(params: FileChangesReviewParams) {
     preservePathSpelling: true,
   }) : null;
   const reviewPath = live ? filePath : capturedPath ?? filePath;
-  const reviewScope = React.useMemo(() => captured && !live
-    ? { ...scope, rootPath: captured.repository.rootPath } : scope, [scope, captured?.repository.rootPath, live]);
+  const reviewRoot = fileBaseOfReviewSource(live ? null : captured, scope.rootPath);
+  const reviewScope = React.useMemo(() => ({ ...scope, rootPath: reviewRoot }), [scope, reviewRoot]);
   const capturedFile =
     captured?.inventory.files.find((file) => file.path === capturedPath) ?? null;
   const capturedDiff =
@@ -191,7 +192,7 @@ export function useFileChangesReview(params: FileChangesReviewParams) {
     onReviewAction: retireUndo,
     onNavigate: (cursor) => {
       if (cursor.path === reviewPath) return;
-      const rootPath = live ? undefined : captured?.repository.rootPath;
+      const rootPath = reviewRoot;
       if (params.onOpenFile) { params.onOpenFile(cursor.path, rootPath); return; }
       if (sessionId) void opener.open({ kind: 'session', sessionId, serverId: scope.serverId, path: cursor.path },
         { ...(rootPath ? { rootPath } : {}), view: 'changes', changesScope: current, intent: 'preview' });

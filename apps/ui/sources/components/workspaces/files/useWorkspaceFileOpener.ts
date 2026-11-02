@@ -16,7 +16,7 @@ import { useDestinationRouter } from '@/components/appShell/workspace/Destinatio
 import { createSessionPaneScopeId } from '@/components/sessions/panes/sessionPaneScopeId';
 import { areSessionAddressesEqual, normalizeSessionAddress } from '@/sync/domains/session/sessionAddress';
 import { fireAndForget } from '@/utils/system/fireAndForget';
-import { workspaceFileDetailsTabKey } from '@/components/appShell/panes/details/fileDetailsTab';
+import { resolveFileDetailsRootPath, workspaceFileDetailsTabKey } from '@/components/appShell/panes/details/fileDetailsTab';
 
 export type WorkspaceFileOpenTarget = WorkspaceFileTarget & Readonly<{ path: string }>;
 export type WorkspaceFileOpenOrigin = Readonly<{
@@ -53,6 +53,11 @@ export function useWorkspaceFileOpener() {
     }, [destinationNavigation, router]);
     const open = React.useCallback(async (target: WorkspaceFileOpenTarget, options?: WorkspaceFileOpenOptions): Promise<boolean | null> => {
         if (options?.signal?.aborted) return null;
+        if (options?.rootPath) {
+            const scopeId = target.kind === 'session' ? createSessionPaneScopeId(target.sessionId, target.serverId)
+                : buildProjectPaneScopeId(target.workspaceRefId, target.serverId);
+            options = { ...options, rootPath: resolveFileDetailsRootPath(options.rootPath, scopeId) };
+        }
         if (!canOpen) return false;
         const { path, ...address } = target;
         if (paneDispatch && options?.present !== false && (paneRegion === 'main' || paneRegion === 'side')) {

@@ -652,7 +652,7 @@ function WorkspaceFileDetailsPage(props: WorkspaceFileDetailsViewProps & Readonl
     });
     const [copyContentBusy, setCopyContentBusy] = React.useState(false);
 
-    const tabKey = workspaceFileDetailsTabKey(filePath, props.initialView?.rootPath);
+    const tabKey = workspaceFileDetailsTabKey(filePath, props.initialView?.rootPath, props.scopeId);
     const { view: fileView, initialChanges, patchView: patchFileView } = useWorkspaceFileView(pane, tabKey);
     const isActive = props.openableContentViewer?.details.active ?? (presentation === 'screen' || (pane.scopeState?.details?.isOpen === true && pane.scopeState.details.activeTabKey === tabKey));
     const rememberFind = React.useCallback((find: FileViewerFindMemory) => patchFileView({ findQuery: find.query, findOpen: find.open }), [patchFileView]);
@@ -1321,7 +1321,6 @@ function WorkspaceFileDetailsPage(props: WorkspaceFileDetailsViewProps & Readonl
     // P7: one controller per File page; regions handed to this page (header fact, note, card, ⋯ commands).
     const codeIntelligence = useFilePageCodeIntelligence({
         scopeId: props.scopeId, scope, filePath, language,
-        fileRootPath: props.initialView?.rootPath,
         enabled: fileViewer.kind === 'code' && !fileContent?.isBinary && !fileContent?.partial && fileEntry?.kind !== 'deleted' && Boolean(fileContent),
         outlineEnabled: (fileViewer.kind === 'code' || fileViewer.kind === 'markdown') && !fileContent?.isBinary
             && !fileContent?.partial && fileEntry?.kind !== 'deleted' && Boolean(fileContent),

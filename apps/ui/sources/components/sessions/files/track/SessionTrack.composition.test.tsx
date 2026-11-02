@@ -2,10 +2,11 @@ import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createReducer } from '@happier-dev/session-core/reducer';
 import { V2SessionListResponseSchema } from '@happier-dev/protocol/sessions/control/contract';
-import { act, createSessionFixture, createToolCallMessageFixture, renderHook, standardCleanup } from '@/dev/testkit';
+import { act, createMachineFixture, createSessionFixture, createToolCallMessageFixture, renderHook, standardCleanup } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { replacePersistentUiStateForTest } from '@/dev/testkit/harness/persistentUiState';
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
@@ -19,6 +20,7 @@ const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
 await loadSyncSingletonForTests();
 const { storage } = await import('@/sync/domains/state/storage');
+const { paneUiState } = await import('@/sync/domains/state/filePaneUiState');
 const { useSessionTrack, readTrackPresence } = await import('./SessionTrack');
 const { AppPaneProvider } = await import('@/components/appShell/panes/AppPaneProvider');
 const { useAppPaneScope } = await import('@/components/appShell/panes/hooks/useAppPaneScope');
@@ -32,16 +34,21 @@ const { resolveCompactAppDestinations } = await import('@/components/appShell/de
 const { createWorkspaceFileDetailsTab, workspaceFileDetailsTabKey } = await import('@/components/appShell/panes/details/fileDetailsTab');
 const { readWorkspaceFileLinkView } = await import('@/utils/url/sessionFileDeepLink');
 const { createSessionPaneScopeId } = await import('@/components/sessions/panes/sessionPaneScopeId');
+const { useWorkspaceFileOpener } = await import('@/components/workspaces/files/useWorkspaceFileOpener');
+const { useFileTabFront } = await import('@/components/appShell/panes/details/useFileTabFront');
+const { resolveWorkspaceTargetForSessionFromState } = await import('@/sync/domains/session/resolveWorkspaceTargetForSessionFromState');
 const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
 const { publishAppliedActiveServerSnapshot, publishAppliedActiveServerRuntimeAvailability } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
 
 const original = storage.getState();
+const originalPanes = paneUiState.readAll();
 let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefined;
 let unregister: (() => void) | undefined;
 afterEach(async () => {
     unregister?.();
     unregister = undefined;
     await standardCleanup();
+    replacePersistentUiStateForTest(paneUiState, originalPanes);
     await connection?.dispose();
     connection = undefined;
     publishAppliedActiveServerRuntimeAvailability(false);
@@ -71,7 +78,9 @@ async function renderSessionTrack(tool: ScriptedWrite) {
         ...tool, state: 'running', createdAt: 1, startedAt: 2, completedAt: null, description: null,
     } });
     const messagesById = { [message.id]: message };
-    storage.setState({ sessions: { [sessionId]: session },
+    const machine = createMachineFixture({ id: 'machine' });
+    storage.setState({ sessions: { [sessionId]: session }, machines: { [machine.id]: machine },
+        machineListByServerId: { [serverId]: [machine] },
         localSettings: { ...storage.getState().localSettings, filesTrackAgentEdits: true, detailsPaneTabsBehavior: 'preview' },
         sessionMessages: { [sessionId]: { messageIdsOldestFirst: [message.id], messagesById, messagesMap: messagesById,
             reducerState: createReducer(), messagesVersion: 1, isLoaded: true,
@@ -97,7 +106,9 @@ async function renderSessionTrack(tool: ScriptedWrite) {
             return unregister;
         }, []);
         const track = useSessionTrack({ scopeId, sessionAddress: { serverId, sessionId }, workspaceRoot: '/repo', active: true });
-        return { pane, track };
+        const opener = useWorkspaceFileOpener();
+        const front = useFileTabFront(scopeId, 'a.ts', '/repo/');
+        return { pane, track, opener, front, address: { serverId, sessionId } };
     }, { wrapper: ({ children }) => <AppPaneProvider><PanePresentationProvider value={present}>
         <WorkspaceNavigationProvider value={{ active: true, state, canGoBack: false, canGoForward: false,
             openHref: () => false, activateTab() {}, closeTab() {}, closeTabs() {}, dispatch() {},
@@ -109,23 +120,39 @@ async function renderSessionTrack(tool: ScriptedWrite) {
 }
 
 describe('Session Track composition', () => {
+    it('shares one pinned tab for tree, Track and an equal-root captured open', async () => {
+        const { hook } = await renderSessionTrack({ id: 'same-file', name: 'Write', input: { file_path: '/repo/a.ts', content: 'hello' } });
+        await act(async () => { await waitForHomeGovernance(() => expect(hook.getCurrent().track.target?.path).toBe('a.ts')); });
+        expect(resolveWorkspaceTargetForSessionFromState(storage.getState(), hook.getCurrent().address)?.rootPath).toBe('/repo');
+        await act(async () => {
+            hook.getCurrent().pane.openDetailsTab(createWorkspaceFileDetailsTab('a.ts'), { intent: 'pinned', present: false });
+            hook.getCurrent().pane.openDetailsTab(createWorkspaceFileDetailsTab('a.ts', undefined, undefined, { rootPath: '/repo/' }),
+                { intent: 'pinned', present: false });
+            await hook.getCurrent().opener.open({ kind: 'session', ...hook.getCurrent().address, path: 'a.ts' },
+                { rootPath: '/repo/', intent: 'pinned', present: false });
+        });
+        expect(hook.getCurrent().pane.scopeState?.details.tabs.map(tab => tab.key)).toEqual(['file:a.ts']);
+        expect(hook.getCurrent().front).toBe(true);
+        await hook.unmount();
+    });
+
     it('pauses following when the current file acquires an Account-owned draft in its actual Session pane', async () => {
         const { hook } = await renderSessionTrack({ id: 'write-dirty', name: 'Write', input: { file_path: '/repo/a.ts', content: 'hello' } });
         await act(async () => { await waitForHomeGovernance(() => {
-            expect(hook.getCurrent().pane.scopeState?.details.tabs).toEqual([expect.objectContaining({ key: workspaceFileDetailsTabKey('a.ts', '/repo') })]);
+            expect(hook.getCurrent().pane.scopeState?.details.tabs).toEqual([expect.objectContaining({ key: workspaceFileDetailsTabKey('a.ts') })]);
         }); });
-        await act(async () => hook.getCurrent().pane.patchDetailsTabState(workspaceFileDetailsTabKey('a.ts', '/repo'), {
+        await act(async () => hook.getCurrent().pane.patchDetailsTabState(workspaceFileDetailsTabKey('a.ts'), {
             accountId: 'alice', isEditingFile: true, editorOriginalHash: 'base', editorText: 'unsaved draft',
         }));
         expect(hook.getCurrent().track).toMatchObject({ paused: true, pauseReason: 'dirtyEditor', target: { path: 'a.ts' } });
-        expect(hook.getCurrent().pane.scopeState?.details.tabState[workspaceFileDetailsTabKey('a.ts', '/repo')]).toMatchObject({ editorText: 'unsaved draft' });
+        expect(hook.getCurrent().pane.scopeState?.details.tabState[workspaceFileDetailsTabKey('a.ts')]).toMatchObject({ editorText: 'unsaved draft' });
         await hook.unmount();
     });
 
     it('follows the current writing file through the real opener without navigating or presenting Details', async () => {
         const { hook, hrefs, present } = await renderSessionTrack({ id: 'write-a', name: 'Write', input: { file_path: '/repo/a.ts', content: 'hello' } });
         await act(async () => { await waitForHomeGovernance(() => {
-            expect(hook.getCurrent().pane.scopeState?.details.tabs).toEqual([expect.objectContaining({ key: workspaceFileDetailsTabKey('a.ts', '/repo'), isPreview: true, isPinned: false })]);
+            expect(hook.getCurrent().pane.scopeState?.details.tabs).toEqual([expect.objectContaining({ key: workspaceFileDetailsTabKey('a.ts'), isPreview: true, isPinned: false })]);
         }); });
         expect(hook.getCurrent().track.target?.path).toBe('a.ts');
         expect(hrefs).toEqual([]);

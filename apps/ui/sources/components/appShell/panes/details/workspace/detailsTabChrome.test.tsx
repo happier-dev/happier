@@ -9,6 +9,30 @@ import type { PaneScopeState } from '@/components/appShell/panes/model/appPaneRe
 import { storage } from '@/sync/domains/state/storage';
 
 describe('Details unsaved tab chrome', () => {
+    it('projects each dirty file from its captured root into the requested workspace', () => {
+        const draft = { accountId: 'alice', isEditingFile: true, editorOriginalHash: 'base', editorText: 'draft' };
+        const tabs: DetailsTabState[] = ['/repo', '/repo/nested', '/repo-other'].map((rootPath, index) => ({
+            key: `file-${index}`, kind: 'file', title: 'a.ts', resource: { path: 'a.ts', rootPath }, isPinned: true, isPreview: false,
+        }));
+        expect(unsavedWorkspaceFilePaths({ accountId: 'alice', rootPath: '/repo', details: {
+            tabs, tabState: Object.fromEntries(tabs.map(tab => [tab.key, draft])),
+        } })).toEqual(['a.ts', 'nested/a.ts']);
+        let details = createEmptyPaneDetailsState();
+        for (const tab of tabs) {
+            details = applyOpenDetailsTab(details, { tab, openAs: 'pinned' });
+            details = applySetDetailsTabState(details, tab.key, draft);
+        }
+        const workspaceScope = { serverId: 'home', machineId: 'machine', rootPath: '/repo' };
+        const pane: PaneScopeState = { details, mainHidden: false,
+            right: { isOpen: false, activeTabId: null, selectedDestination: null, tabState: {} },
+            bottom: { isOpen: false, activeTabId: null, selectedDestination: null, tabState: {} } };
+        expect(unsavedWorkspaceFilePaths({ accountId: 'alice', workspaceScope,
+            paneScopes: { [buildProjectPaneScopeId('project', 'home')]: pane },
+            workspaceRefs: [{ ...workspaceScope, id: 'project', label: 'Project', createdAtMs: 1 }],
+            sessionState: storage.getState(),
+        })).toEqual(['a.ts', 'nested/a.ts']);
+    });
+
     it('lists persisted drafts for inactive, unmounted and other-group file tabs while checking Account ownership', () => {
         const tab = (key: string): DetailsTabState => ({ key, kind: 'file', title: key, resource: { path: `/repo/${key}.ts` }, isPinned: true, isPreview: false });
         const a = tab('a'); const b = tab('b'); const c = tab('c');

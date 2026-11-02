@@ -11,12 +11,12 @@ import { resolveWorkspaceTargetForSessionFromState, type WorkspaceTargetForSessi
 import { resolveMachineAbsolutePath } from '@/sync/domains/fileSystem/resolveMachineAbsolutePath';
 import { resolvePathRelativeToRoot } from '@/utils/path/resolvePathRelativeToRoot';
 
-function dirtyFilePaths(accountId: string, tabs: readonly DetailsTabState[], tabState: Readonly<Record<string, unknown>>): string[] {
+function dirtyFiles(accountId: string, tabs: readonly DetailsTabState[], tabState: Readonly<Record<string, unknown>>): Readonly<{ path: string; rootPath?: string }>[] {
     return tabs.flatMap(tab => {
         if (tab.kind !== 'file' || !readWorkspaceFileEditorDraft(getOwnDetailsWorkspaceRecordEntry(tabState, tab.key), accountId)?.isEditingFile
             || !tab.resource || typeof tab.resource !== 'object') return [];
-        const path = (tab.resource as Readonly<{ path?: unknown }>).path;
-        return typeof path === 'string' && path ? [path] : [];
+        const { path, rootPath } = tab.resource as Readonly<{ path?: unknown; rootPath?: unknown }>;
+        return typeof path === 'string' && path ? [{ path, ...(typeof rootPath === 'string' ? { rootPath } : {}) }] : [];
     });
 }
 
@@ -35,10 +35,10 @@ export function unsavedWorkspaceFilePaths(scope: Readonly<{ accountId: string | 
     if ('details' in scope) {
         if (!scope.details) return [];
         const tabs = [...scope.details.tabs, ...(scope.details.groups?.flatMap(group => group.tabs) ?? [])];
-        const paths = dirtyFilePaths(scope.accountId, tabs, scope.details.tabState);
-        return [...new Set(paths.flatMap(path => {
+        const files = dirtyFiles(scope.accountId, tabs, scope.details.tabState);
+        return [...new Set(files.flatMap(({ path, rootPath }) => {
             if (!scope.rootPath) return [path];
-            const absolute = resolveMachineAbsolutePath({ rootPath: scope.rootPath, requestPath: path, pathKind: 'workspace_entry' });
+            const absolute = resolveMachineAbsolutePath({ rootPath: rootPath ?? scope.rootPath, requestPath: path, pathKind: 'workspace_entry' });
             const relative = resolvePathRelativeToRoot({ path: absolute, root: scope.rootPath, preservePathSpelling: true });
             return relative && relative !== '.' ? [relative] : [];
         }))];
@@ -47,8 +47,8 @@ export function unsavedWorkspaceFilePaths(scope: Readonly<{ accountId: string | 
     if (!target || !scope.paneScopes) return [];
     const paths = new Set<string>();
     for (const [scopeId, pane] of Object.entries(scope.paneScopes)) {
-        const dirtyPaths = dirtyFilePaths(scope.accountId, Object.values(pane.details.tabsByKey), pane.details.tabState);
-        if (!dirtyPaths.length) continue;
+        const files = dirtyFiles(scope.accountId, Object.values(pane.details.tabsByKey), pane.details.tabState);
+        if (!files.length) continue;
         // Destination instances share file identity, not tab state. Resolve each
         // actual pane through the existing Project/Session target owners.
         const project = parseProjectPaneScopeId(scopeId);
@@ -57,8 +57,8 @@ export function unsavedWorkspaceFilePaths(scope: Readonly<{ accountId: string | 
         const source = ref?.kind === 'resolved' ? normalizeWorkspaceScopeBase(ref.ref)
             : session?.address ? resolveWorkspaceTargetForSessionFromState(scope.sessionState, session.address) : null;
         if (!source || source.serverId !== target.serverId || source.machineId !== target.machineId) continue;
-        for (const path of dirtyPaths) {
-            const absolute = resolveMachineAbsolutePath({ rootPath: source.rootPath, requestPath: path, pathKind: 'workspace_entry' });
+        for (const { path, rootPath } of files) {
+            const absolute = resolveMachineAbsolutePath({ rootPath: rootPath ?? source.rootPath, requestPath: path, pathKind: 'workspace_entry' });
             const relative = resolvePathRelativeToRoot({ path: absolute, root: target.rootPath, preservePathSpelling: true });
             if (relative && relative !== '.') paths.add(relative);
         }

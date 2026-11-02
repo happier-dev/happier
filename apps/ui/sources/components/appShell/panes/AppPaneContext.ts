@@ -61,7 +61,7 @@ export function createFileTabFrontSubscription(readState: () => AppPaneState): F
         read(scopeId, path, rootPath) {
             const details = readState().scopes[scopeId]?.details;
             return details?.isOpen === true && details.focusedGroupId !== null
-                && details.groupsById[details.focusedGroupId]?.activeTabKey === workspaceFileDetailsTabKey(path, rootPath);
+                && details.groupsById[details.focusedGroupId]?.activeTabKey === workspaceFileDetailsTabKey(path, rootPath, scopeId);
         },
         readActiveDetailsOpen(resourceScopeId) {
             const state = readState();

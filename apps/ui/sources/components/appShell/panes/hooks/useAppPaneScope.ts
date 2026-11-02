@@ -1,5 +1,6 @@
 import type { DetailsOpenerRegion } from '@/components/ui/panels/paneBreakpoints';
 import { usePaneRegion } from '../paneRegion';
+import { normalizeFileDetailsTab } from '../details/fileDetailsTab';
 import { usePanePresentation } from '../panePresentation';
 import { createBuiltinPaneDestination } from '../model/selectedPaneDestination';
 import * as React from 'react';
@@ -128,6 +129,7 @@ export function useOptionalDetailsTabOpener(scopeId: string): AppPaneScopeApi['o
     const lastPreviewOpenRef = React.useRef<LastPreviewOpen | null>(null);
     const openDetailsTab = React.useCallback<AppPaneScopeApi['openDetailsTab']>((tab, options) => {
         if (!dispatch) return;
+        tab = normalizeFileDetailsTab(tab, scopeId);
         const intent = options?.intent ?? 'default';
         const behavior = detailsPaneTabsBehavior === 'persistent' ? 'persistent' : 'preview';
         const details = subscription?.getSnapshot().state.scopes[scopeId]?.details;
@@ -236,6 +238,7 @@ export function useAppPaneScope<T>(scopeId: string, selector?: (scope: PaneScope
         intent?: 'default' | 'pinned' | 'preview';
         restoreSourceOnRehydrate?: boolean;
     }>) => {
+        tab = normalizeFileDetailsTab(tab, scopeId);
         const intent = options?.intent ?? 'default';
         const openAs = intent === 'pinned' || intent === 'preview' ? intent : undefined;
         dispatch({

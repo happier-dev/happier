@@ -131,6 +131,12 @@ rejects oversized or failed reads rather than publishing a truncated prefix.
 Unavailable file content or history therefore remains unavailable, not an empty
 file or a claim that no commit exists.
 
+The shared file opener and pane tab owner drop an explicit root when it equals
+the destination scope root, so tree, Track and captured opens share one tab and
+front-file indicator. A different captured root remains part of file identity.
+Review sources select the captured repository base, falling back to the live
+workspace base, through `fileBaseOfReviewSource`.
+
 Cross-machine commit counts require actual common Git objects at the comparison
 owner. A remote tip not present locally cannot supply a merge base; unrelated
 histories cannot supply one either. Per-checkout upstream ahead/behind counters

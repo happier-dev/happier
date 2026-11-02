@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
+import { act, createMachineFixture, createSessionFixture, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
 import { installBrowserRuntimeForTests } from '@/dev/testkit/harness/browserRuntimeHarness';
 import { installReactDomPortalBoundaryForTests } from '@/dev/testkit/mocks/reactDom';
 import {
@@ -267,7 +267,12 @@ describe('File-page intelligence composition', () => {
       locations: [{ serverId: 'ts', path, outsideWorkspace: false,
         range: { start: { line: 2, character: 0 }, end: { line: 2, character: 7 } } }],
     });
-    storage.setState({ isDataReady: true });
+    const session = createSessionFixture({ id: 'session-nested', serverId: scope.serverId,
+      metadata: { machineId: scope.machineId, path: '/repo/nested', host: 'test' } });
+    const sessionMachine = createMachineFixture({ id: scope.machineId });
+    storage.setState({ isDataReady: true, sessions: { ...storage.getState().sessions, [session.id]: session },
+      machines: { ...storage.getState().machines, [sessionMachine.id]: sessionMachine },
+      machineListByServerId: { ...storage.getState().machineListByServerId, [scope.serverId]: [sessionMachine] } });
     const catalog = resolveCompactAppDestinations({ pages: [], builtins: {
       externalSessions: false, inbox: true, workflows: false, friends: false,
     } });
@@ -286,7 +291,6 @@ describe('File-page intelligence composition', () => {
           getCursorPosition: () => ({ line: 1, character: 16 }),
         } },
       }),
-      fileRootPath,
     };
     const hook = await renderHook(() => useFilePageCodeIntelligence(pageInput), { wrapper: DefinitionWrapper });
     await act(async () => { hook.getCurrent().menuCommands?.['code.goToDefinition'](); });
