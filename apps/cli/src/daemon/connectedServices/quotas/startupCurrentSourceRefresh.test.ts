@@ -8,6 +8,9 @@ import {
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { invalidateConnectedServiceAccountMode } from '@/cloud/connectedServices/resolveConnectedServiceAccountMode';
+import { createOpenAiCodexQuotaFetcher } from '@/backends/codex/connectedServices/quotaFetcher';
+import { createProviderAccountUsagePersistenceScheduler } from '../accountUsage/persistence';
+import { createProviderAccountUsageStore } from '../accountUsage/store';
 
 import { ConnectedServiceQuotasCoordinator } from './ConnectedServiceQuotasCoordinator';
 import type { ConnectedServiceQuotaFetcher } from './types';
@@ -16,7 +19,83 @@ type QuotaApi = ConstructorParameters<typeof ConnectedServiceQuotasCoordinator>[
 
 describe('ConnectedServiceQuotasCoordinator startup current-source refresh scheduling', () => {
   afterEach(() => {
+    vi.unstubAllGlobals();
     invalidateConnectedServiceAccountMode();
+  });
+
+  it.each([
+    { scheduler: false, providerStatus: 429, renewDuringWrite: false },
+    { scheduler: false, providerStatus: 429, renewDuringWrite: true },
+    { scheduler: false, providerStatus: 200, renewDuringWrite: false },
+    { scheduler: true, providerStatus: 429, renewDuringWrite: false },
+  ])('retains startup-only refresh work until persistence accepts it (scheduler=$scheduler, provider=$providerStatus, renewed=$renewDuringWrite)', async ({ scheduler, providerStatus, renewDuringWrite }) => {
+    const now = 1_000_000;
+    let serverUnavailable = true;
+    const record = buildConnectedServiceCredentialRecord({
+      now, serviceId: 'openai-codex', profileId: 'cold-profile', kind: 'oauth', expiresAt: now + 3_600_000,
+      oauth: { accessToken: 'access', refreshToken: 'refresh', idToken: null, scope: null, tokenType: null,
+        providerAccountId: 'acct-cold', providerEmail: null },
+    });
+    type Write = Parameters<NonNullable<QuotaApi['registerProviderAccountUsageSnapshotPlain']>>[0];
+    const writes: Write[] = [];
+    const registerProviderAccountUsageSnapshotPlain = vi.fn(async (write: Write) => {
+      if (serverUnavailable) throw new Error('server unavailable');
+      writes.push(write);
+      if (renewDuringWrite) coordinator.scheduleCurrentSourceRefresh([source]);
+    });
+    const api = {
+      getAccountEncryptionMode: async () => 'plain' as const,
+      getConnectedServiceQuotaSnapshotPlain: async () => null,
+      getConnectedServiceCredentialPlain: async () => ({ content: { t: 'plain' as const, v: record } }),
+      getConnectedServiceQuotaSnapshotSealed: async () => null,
+      getConnectedServiceCredentialSealed: async () => null,
+      registerProviderAccountUsageSnapshotPlain,
+    } satisfies QuotaApi;
+    const persistence = scheduler ? createProviderAccountUsagePersistenceScheduler({
+      api, now: () => now, fingerprintKey: new Uint8Array(32),
+    }) : null;
+    const store = createProviderAccountUsageStore();
+    const providerHttp = vi.fn(async () => new Response('{}', { status: providerStatus, headers: { 'retry-after': '120' } }));
+    vi.stubGlobal('fetch', providerHttp);
+    const coordinator = new ConnectedServiceQuotasCoordinator({
+      api, credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array(32) } },
+      quotaFetchers: [createOpenAiCodexQuotaFetcher({ usageUrl: 'https://quota.example/usage', resetCreditsUrl: null })],
+      accountUsageStore: store, ...(persistence ? { accountUsagePersistence: persistence } : {}),
+      discoveryEnabled: false, now: () => now, randomBytes,
+    });
+    const source = { serviceId: 'openai-codex', profileId: 'cold-profile', bindingKind: 'profile' } as const;
+    try {
+      coordinator.scheduleCurrentSourceRefresh([source]);
+      await coordinator.tickOnce();
+      await vi.waitFor(() => expect(registerProviderAccountUsageSnapshotPlain).toHaveBeenCalled());
+      const state = providerStatus === 200 ? 'loaded_empty' : 'error_last_known_good';
+      const fetchedAtMs = providerStatus === 200 ? now : 0;
+      expect(store.resolveBySource(source)).toMatchObject({ state, fetchedAtMs });
+      if (persistence) {
+        // Successful intake transfers retries to the scheduler even while HTTP is failing.
+        await coordinator.tickOnce();
+        expect(providerHttp).toHaveBeenCalledTimes(1);
+        serverUnavailable = false;
+        await persistence.flush(1_000);
+        expect(writes).toEqual(expect.arrayContaining([expect.objectContaining({
+          source, content: { t: 'plain', v: expect.objectContaining({ state, fetchedAtMs }) },
+        })]));
+        expect(coordinator.scheduleCurrentSourceRefresh([source])).toEqual({ accepted: 1, ignored: 0 });
+        return;
+      }
+      // Renew the request while its previous outcome is still unavailable on the server.
+      expect(coordinator.scheduleCurrentSourceRefresh([source])).toEqual({ accepted: 0, ignored: 1 });
+      await coordinator.tickOnce();
+      serverUnavailable = false;
+      // The same clock/data now produce a duplicate local-store mutation; persistence still needs retrying.
+      await coordinator.tickOnce();
+      expect(writes).toEqual(expect.arrayContaining([expect.objectContaining({
+        source, content: { t: 'plain', v: expect.objectContaining({ state, fetchedAtMs }) },
+      })]));
+      expect(providerHttp).toHaveBeenCalledTimes(providerStatus === 200 ? 3 : 1);
+      expect(coordinator.scheduleCurrentSourceRefresh([source])).toEqual(renewDuringWrite
+        ? { accepted: 0, ignored: 1 } : { accepted: 1, ignored: 0 });
+    } finally { persistence?.dispose(); }
   });
 
   it('deduplicates and bounds startup refresh work inside the quota coordinator', () => {

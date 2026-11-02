@@ -59,6 +59,7 @@ export async function recordFetchedQuotaSnapshotAsAccountUsage(
     groupTargets?: ReadonlyArray<ActiveGroupQuotaSwitchTarget> | null;
     persistDurably?: boolean;
     refreshError?: ProviderAccountUsageDiagnosticV1;
+    onPersistenceAccepted?: () => void;
   }>,
 ): Promise<ProviderAccountUsageSnapshotV1 | null> {
     const store = context.accountUsageStore;
@@ -176,12 +177,14 @@ export async function recordFetchedQuotaSnapshotAsAccountUsage(
       }
     }
 
-    if (latest && effectiveMutationRecorded && input.persistDurably !== false) {
+    if (latest && (effectiveMutationRecorded || input.onPersistenceAccepted) && input.persistDurably !== false) {
       try {
         if (context.accountUsagePersistence) {
-          await context.accountUsagePersistence.recordInBandSnapshot(latest, {
+          const result = await context.accountUsagePersistence.recordInBandSnapshot(latest, {
             sources: [...persistenceSourcesByKey.values()],
           });
+          // Enqueue transfers retry ownership; a rejected intake leaves the source scheduled.
+          if (result.status === 'enqueued' || result.reason === 'unchanged') input.onPersistenceAccepted?.();
         } else if (input.accountMode === 'plain' || input.accountMode === 'e2ee') {
           await context.persistQuotaSnapshotWithServerWork({
             accountMode: input.accountMode,
@@ -192,6 +195,7 @@ export async function recordFetchedQuotaSnapshotAsAccountUsage(
             ...(input.sourceProviderAccountId ? { sourceProviderAccountId: input.sourceProviderAccountId } : {}),
             materialFingerprint: computeProviderAccountUsageSnapshotFingerprint(latest, context.quotaFingerprintHmacKey),
           });
+          input.onPersistenceAccepted?.();
         }
       } catch {
         // Persistence is best effort; its failure must not suppress local quota policy.

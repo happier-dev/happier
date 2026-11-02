@@ -788,13 +788,16 @@ describe('createClaudeSubscriptionQuotaFetcher', () => {
   });
 
   it.each([
-    { firstStatus: 429, retryAfterSeconds: 120, remainingBackoffMs: 840_000 },
-    { firstStatus: 503, retryAfterSeconds: 1_800, remainingBackoffMs: 1_740_000 },
-  ])('preserves provider Retry-After for a forced refresh attempt after HTTP $firstStatus', async ({ firstStatus, retryAfterSeconds, remainingBackoffMs }) => {
+    { scenario: 'initial 429', firstStatus: 429, finalStatus: 429, initialRetryAfter: true, requestCount: 1, retryAfterSeconds: 120, remainingBackoffMs: 840_000 },
+    { scenario: 'retried 429', firstStatus: 503, finalStatus: 429, initialRetryAfter: false, requestCount: 2, retryAfterSeconds: 1_800, remainingBackoffMs: 1_740_000 },
+    { scenario: 'retried 503', firstStatus: 503, finalStatus: 503, initialRetryAfter: false, requestCount: 2, retryAfterSeconds: 1_800, remainingBackoffMs: 1_740_000 },
+    { scenario: 'initial 503', firstStatus: 503, finalStatus: 503, initialRetryAfter: true, requestCount: 1, retryAfterSeconds: 1_800, remainingBackoffMs: 1_740_000 },
+    { scenario: 'short initial 503', firstStatus: 503, finalStatus: 503, initialRetryAfter: true, requestCount: 1, retryAfterSeconds: 30, advanceBeforeRetryMs: 29_999, remainingBackoffMs: 1 },
+  ])('preserves provider Retry-After for a forced refresh attempt after $scenario', async ({ firstStatus, finalStatus, initialRetryAfter, requestCount, retryAfterSeconds, advanceBeforeRetryMs = 60_000, remainingBackoffMs }) => {
     const now = 5_100_000;
     const fetchMock429 = vi.fn()
-      .mockResolvedValueOnce(new Response('', { status: firstStatus, headers: { 'retry-after': String(retryAfterSeconds) } }))
-      .mockResolvedValue(new Response('', { status: 429, headers: { 'retry-after': String(retryAfterSeconds) } }));
+      .mockResolvedValueOnce(new Response('', { status: firstStatus, headers: initialRetryAfter ? { 'retry-after': String(retryAfterSeconds) } : {} }))
+      .mockResolvedValue(new Response('', { status: finalStatus, headers: { 'retry-after': String(retryAfterSeconds) } }));
     const fetchMock = vi.fn(async (_input: unknown) => ({
       ok: true,
       status: 200,
@@ -827,18 +830,24 @@ describe('createClaudeSubscriptionQuotaFetcher', () => {
     });
 
     vi.stubGlobal('fetch', fetchMock429 as unknown as typeof fetch);
-    await expect(fetcher.fetch({ record, now: clock, signal: new AbortController().signal })).rejects.toMatchObject({
+    const failure = await fetcher.fetch({ record, now: clock, signal: new AbortController().signal }).catch((error: unknown) => error);
+    expect(fetchMock429).toHaveBeenCalledTimes(requestCount);
+    expect(failure).toMatchObject({
       quotaFetchErrorCode: 'provider_backoff',
-      status: 429,
+      status: finalStatus,
       retryAfterMs: retryAfterSeconds * 1_000,
     });
-    expect(fetchMock429).toHaveBeenCalledTimes(firstStatus === 503 ? 2 : 1);
-    clock += 60_000;
+    clock += advanceBeforeRetryMs;
 
     vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
     await expect(fetcher.fetch({ record, now: clock, signal: new AbortController().signal, force: true }))
       .rejects.toMatchObject({ quotaFetchErrorCode: 'provider_backoff', retryAfterMs: remainingBackoffMs });
     expect(fetchMock).not.toHaveBeenCalled();
+    if (retryAfterSeconds === 30) {
+      clock += 1;
+      await expect(fetcher.fetch({ record, now: clock, signal: new AbortController().signal, force: true }))
+        .resolves.toMatchObject({ meters: expect.arrayContaining([expect.objectContaining({ utilizationPct: 10 })]) });
+    }
   });
 
   it('records cooldown before fetching so repeated provider failures do not immediately refetch', async () => {

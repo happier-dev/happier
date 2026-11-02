@@ -2406,6 +2406,7 @@ export class ConnectedServiceQuotasCoordinator {
     groupTargets?: ReadonlyArray<ActiveGroupQuotaSwitchTarget> | null;
     persistDurably?: boolean;
     refreshError?: ProviderAccountUsageDiagnosticV1;
+    onPersistenceAccepted?: () => void;
   }>): Promise<ProviderAccountUsageSnapshotV1 | null> {
     return await recordFetchedQuotaSnapshotAsAccountUsage({
       accountUsageStore: this.accountUsageStore,
@@ -4427,6 +4428,7 @@ export class ConnectedServiceQuotasCoordinator {
         let failureCredential: ConnectedServiceCredentialRecordV1 | null = null;
         let quotaAttemptStarted = false;
         let recordsRefreshOutcome = false;
+        let completeScheduledRefresh: (() => void) | undefined;
         try {
           const bindingKey = this.makeBindingKey({ serviceId, profileId });
           const directGroupTargets = groupSwitchTargetsByBindingKey.get(bindingKey) ?? [];
@@ -4437,6 +4439,8 @@ export class ConnectedServiceQuotasCoordinator {
           });
           const existing = await this.readExistingQuotaSnapshot({ accountMode, serviceId, profileId });
           const scheduledRefreshes = this.listScheduledCurrentSourceRefreshesForBinding({ serviceId, profileId });
+          completeScheduledRefresh = scheduledRefreshes.length > 0
+            ? () => this.clearScheduledCurrentSourceRefreshes(scheduledRefreshes) : undefined;
           const forcedRefresh = this.shouldForceQuotaRefresh(existing.existing, existing.preopenedSnapshot)
             || scheduledRefreshes.length > 0;
           recordsRefreshOutcome = forcedRefresh;
@@ -4499,10 +4503,10 @@ export class ConnectedServiceQuotasCoordinator {
                 accountMode,
                 groupContexts,
                 groupTargets: directGroupTargets,
+                onPersistenceAccepted: completeScheduledRefresh,
               });
               pendingSoftSwitchTargets.push(...directGroupTargets);
               this.failureStateByBindingKey.delete(bindingKey);
-              this.clearScheduledCurrentSourceRefreshes(scheduledRefreshes);
             }
             continue;
           }
@@ -4569,11 +4573,11 @@ export class ConnectedServiceQuotasCoordinator {
             sourceProviderAccountId: readCredentialAccountIdentity(record)?.providerAccountId ?? null,
             groupContexts,
             groupTargets: directGroupTargets,
+            onPersistenceAccepted: completeScheduledRefresh,
           });
           pendingSoftSwitchTargets.push(...directGroupTargets);
           void recordedAccountUsage;
           this.failureStateByBindingKey.delete(bindingKey);
-          this.clearScheduledCurrentSourceRefreshes(scheduledRefreshes);
         } catch (error) {
           const bindingKey = this.makeBindingKey({ serviceId, profileId });
           const credentialHealthStatus = await this.persistCredentialHealthForQuotaFailure({
@@ -4627,10 +4631,8 @@ export class ConnectedServiceQuotasCoordinator {
                   ...(status !== null ? { status } : {}),
                   ...(retryAt !== undefined ? { headers: { 'retry-after': new Date(retryAt).toUTCString() } } : {}),
                 },
+                onPersistenceAccepted: completeScheduledRefresh,
               });
-              this.clearScheduledCurrentSourceRefreshes(
-                this.listScheduledCurrentSourceRefreshesForBinding({ serviceId, profileId }),
-              );
             } catch {
               logger.infoFile('[ConnectedServices] Quota refresh outcome persistence unavailable', { serviceId, profileId });
             }
