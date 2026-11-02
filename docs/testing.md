@@ -1065,6 +1065,57 @@ When introducing or moving a lane/pattern, update all relevant places in the sam
 2. root `package.json` lane scripts,
 3. CI workflow wiring.
 
+## Native development-client load
+
+Use the existing QA server and explicitly claim the simulator, emulator and a free
+Metro port. Keep other stacks and Metros with their lifecycle owners. Run these
+commands from the controller checkout; the app and APK paths refer to matching
+native development builds on the Mac. Rebuild native dependencies through
+`hstack mobile` when they change; a JavaScript reload cannot update a native build.
+
+Start the canonical source UI preparation and Metro in one retained terminal:
+
+```sh
+./apps/stack/bin/hstack-exec --target=mac-host --cwd=apps/ui -- \
+  env APP_ENV=development EXPO_PUBLIC_HAPPY_SERVER_URL="$QA_SERVER_URL" \
+  node scripts/ensureWorkspacePackagesBuilt.mjs --expo start --dev-client \
+  --host lan --port "$METRO_PORT" --scheme happier-dev
+```
+
+Install the matching builds without removing device data, then open the explicit
+development-client URL. `IOS_APP`, `IOS_BUNDLE_ID`, `ANDROID_APK` and
+`ANDROID_PACKAGE` identify those builds; `IOS_UDID` and `ANDROID_SERIAL` identify
+the claimed devices. Terminate an already running iOS app by its bundle ID before
+each cold-load observation.
+
+```sh
+./apps/stack/bin/hstack-exec --target=mac-host -- \
+  xcrun simctl install "$IOS_UDID" "$IOS_APP"
+./apps/stack/bin/hstack-exec --target=mac-host -- \
+  adb -s "$ANDROID_SERIAL" install -r "$ANDROID_APK"
+./apps/stack/bin/hstack-exec --target=mac-host -- \
+  adb -s "$ANDROID_SERIAL" reverse "tcp:$METRO_PORT" "tcp:$METRO_PORT"
+DEV_CLIENT_URL="happier-dev://expo-development-client/?url=http%3A%2F%2F127.0.0.1%3A${METRO_PORT}"
+./apps/stack/bin/hstack-exec --target=mac-host -- \
+  xcrun simctl openurl "$IOS_UDID" "$DEV_CLIENT_URL"
+./apps/stack/bin/hstack-exec --target=mac-host -- \
+  adb -s "$ANDROID_SERIAL" shell am force-stop "$ANDROID_PACKAGE"
+./apps/stack/bin/hstack-exec --target=mac-host -- \
+  adb -s "$ANDROID_SERIAL" shell am start -W -a android.intent.action.VIEW \
+  -d "$DEV_CLIENT_URL" -p "$ANDROID_PACKAGE"
+```
+
+The native intent owner sends Expo's launcher URL to the app root. `/status`
+confirms the listener only: observe native bundling progress and the resulting
+screen. Record launch-to-Home time twice per platform, the selected QA Home and
+its connection state. An onboarding screen requires the existing approved QA
+account/Home restore flow before it proves an authenticated Home load. Keep
+credentials and recovery material out of tool output. If a missing-file error
+survives completed source synchronization while the file exists, retain that
+evidence and have the owner restart only that Metro; do not clear app data or
+introduce another artifact generator. Restore borrowed device Home selections,
+remove only the reverse mapping added above, and stop the owned Metro afterward.
+
 ## UI e2e authoring
 
 - Prefer stable React Native `testID` selectors, queried in Playwright with `getByTestId(...)`.

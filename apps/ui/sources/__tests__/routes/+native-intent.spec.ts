@@ -5,6 +5,12 @@ import { buildHomeQrInviteDeepLink, consumeHomeQrInviteRestoreHandoff } from '@/
 import { encodeBase64 } from '@/encryption/base64';
 
 describe('native system URL routing', () => {
+    it.each([true, false])('opens Home for a development-client launch with initial=%s', (initial) => {
+        const path = 'happier-dev://expo-development-client/?url=http%3A%2F%2F127.0.0.1%3A8098';
+
+        expect(redirectSystemPath({ path, initial })).toBe('/');
+    });
+
     it.each([true, false])(
         'replaces a provenance-pinned released V1 invite with a secret-free update-required route for initial=%s',
         (initial) => {
