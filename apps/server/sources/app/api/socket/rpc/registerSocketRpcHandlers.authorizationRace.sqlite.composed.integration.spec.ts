@@ -438,7 +438,7 @@ describe("Session RPC final access admission on SQLite", () => {
         expect(effect).not.toHaveBeenCalled();
     });
 
-    it('cleans lost requester Sessions through custody only and refuses delayed rejoin or installation replacement', async () => {
+    it('finishes admitted custody cleanup without final rechecks and refuses the next replaced-installation request', async () => {
         const owner = await db.account.create({ data: { publicKey: `cleanup-owner-${randomUUID()}`, encryptionMode: 'plain' } });
         const actor = await db.account.create({ data: { publicKey: `cleanup-actor-${randomUUID()}`, encryptionMode: 'plain' } });
         const machine = await db.machine.create({ data: { id: randomUUID(), accountId: owner.id,
@@ -451,9 +451,13 @@ describe("Session RPC final access admission on SQLite", () => {
         const target = { id: 'custody-cleanup-daemon', data: { clientType: 'machine-scoped', userId: owner.id,
             machineId: machine.id, verifiedMachineInstallationId: machine.installationId, accountStoredContentCompatibility },
             timeout: () => ({ emitWithAck: effect }) };
-        let duringLatest: (() => Promise<void>) | undefined;
+        let duringDiscovery: (() => Promise<void>) | undefined;
+        const latestTargetRead = vi.fn();
         const read = async (room: string) => {
-            if (room === target.id && duringLatest) { const mutation = duringLatest; duringLatest = undefined; await mutation(); }
+            if (room === target.id) latestTargetRead();
+            if (room === `rpc:${owner.id}:${method}` && duringDiscovery) {
+                const mutation = duringDiscovery; duringDiscovery = undefined; await mutation();
+            }
             return room === target.id || room === `rpc:${owner.id}:${method}` ? [target] : [];
         };
         const io = createSocketRoomDiscoveryHarness(read);
@@ -467,18 +471,32 @@ describe("Session RPC final access admission on SQLite", () => {
                 machineAdmission: expect.objectContaining({ actorAccountId: owner.id, custodianAccountId: owner.id }),
             }));
             effect.mockClear();
-            duringLatest = () => db.machineAccountGrant.create({ data: { machineId: machine.id, accountId: actor.id,
+            duringDiscovery = () => db.machineAccountGrant.create({ data: { machineId: machine.id, accountId: actor.id,
                 accessLevel: 'view', createdByAccountId: owner.id } }).then(() => undefined);
             expect(await dispatchMachineAccessLossCustody(input)).toEqual({ kind: 'settled' });
-            expect(effect).not.toHaveBeenCalled();
+            expect(effect).toHaveBeenCalledOnce();
+            expect(effect).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.REQUEST, expect.objectContaining({
+                params: { v: 1, subjectAccountId: actor.id },
+            }));
+            effect.mockClear();
+            expect(await dispatchMachineAccessLossCustody(input)).toEqual({ kind: 'settled' });
+            expect(effect).toHaveBeenCalledOnce();
+            expect(effect).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.REQUEST, expect.objectContaining({
+                params: { v: 1, subjectAccountId: actor.id, remainingRole: 'use' },
+            }));
+            effect.mockClear();
             await db.machineAccountGrant.delete({ where: { machineId_accountId: { machineId: machine.id, accountId: actor.id } } });
-            duringLatest = () => db.machine.update({ where: { id: machine.id }, data: { installationId: randomUUID() } }).then(() => undefined);
-            expect(await dispatchMachineAccessLossCustody(input)).toEqual({ kind: 'incomplete' });
+            duringDiscovery = () => db.machine.update({ where: { id: machine.id }, data: { installationId: randomUUID() } }).then(() => undefined);
+            expect(await dispatchMachineAccessLossCustody(input)).toEqual({ kind: 'settled' });
+            expect(effect).toHaveBeenCalledOnce();
+            effect.mockClear();
+            expect(await dispatchMachineAccessLossCustody(input)).toEqual({ kind: 'incomplete', reason: 'installation_mismatch' });
             expect(effect).not.toHaveBeenCalled();
+            expect(latestTargetRead).not.toHaveBeenCalled();
         } finally { eventRouter.clearIo(); }
     });
 
-    it('recovers offline sessionless requester cleanup from the daemon census while surviving grants and history remain intact', async () => {
+    it('recovers offline requester cleanup with surviving Use access and refuses the next request after withdrawal', async () => {
         const owner = await db.account.create({ data: { publicKey: `reconnect-owner-${randomUUID()}`, encryptionMode: 'plain' } });
         const actor = await db.account.create({ data: { publicKey: `reconnect-actor-${randomUUID()}`, encryptionMode: 'plain' } });
         const survivor = await db.account.create({ data: { publicKey: `reconnect-survivor-${randomUUID()}`, encryptionMode: 'plain' } });
@@ -498,16 +516,21 @@ describe("Session RPC final access admission on SQLite", () => {
             accessLevel: 'view', createdByAccountId: owner.id } });
         const method = `${machine.id}:${RPC_METHODS.DAEMON_MACHINE_ACCESS_LOSS}`;
         let online = false;
-        const cleaned = new Set<string>();
-        const effect = async (_event: string, request: { params: { kind?: string; subjectAccountId?: string } }) => {
+        const cleaned = new Map<string, string | undefined>();
+        const effect = vi.fn(async (_event: string, request: { params: { kind?: string; subjectAccountId?: string; remainingRole?: string } }) => {
             // Genuine daemon transport boundary: the receiver's real inventory/native cleanup is covered in its owner suite.
             if (request.params.kind === 'requesters') return { kind: 'requesters', accountIds: [actor.id, survivor.id], coverage: 'complete' };
-            if (request.params.subjectAccountId) cleaned.add(request.params.subjectAccountId);
-            return { kind: 'settled' };
-        };
+            if (request.params.subjectAccountId) {
+                cleaned.set(request.params.subjectAccountId, request.params.remainingRole);
+                return { kind: 'settled' };
+            }
+            return { status: 'ready' };
+        });
         const target = { id: 'reconnect-custody-daemon', data: { clientType: 'machine-scoped', userId: owner.id,
             machineId: machine.id, verifiedMachineInstallationId: machine.installationId, accountStoredContentCompatibility }, timeout: () => ({ emitWithAck: effect }) };
-        const read = async (room: string) => online && (room === target.id || room === `rpc:${owner.id}:${method}`) ? [target] : [];
+        const statusMethod = `${machine.id}:${RPC_METHODS.DAEMON_VOICE_INFERENCE_STATUS}`;
+        const read = async (room: string) => online && (room === target.id || room === `rpc:${owner.id}:${method}`
+            || room === `rpc:${owner.id}:${statusMethod}`) ? [target] : [];
         const io = createSocketRoomDiscoveryHarness(read);
         eventRouter.setIo(io, { forwardRpc: request => forwardRpcCall({ io, ...request }) });
         const custody = { machineId: machine.id, expectedCustodianAccountId: owner.id, expectedInstallationId: machine.installationId! };
@@ -515,15 +538,27 @@ describe("Session RPC final access admission on SQLite", () => {
             for (const accountId of [actor.id, survivor.id]) expect(await inTx(tx => removeMachineAccessGrantInTx(tx, {
                 actorAccountId: owner.id, machineId: machine.id, principal: { kind: 'account', accountId },
             }))).toMatchObject({ kind: 'removed' });
-            expect(await dispatchMachineAccessLossCustody({ ...custody, subjectAccountId: actor.id })).toEqual({ kind: 'incomplete' });
+            expect(await dispatchMachineAccessLossCustody({ ...custody, subjectAccountId: actor.id })).toEqual({ kind: 'incomplete', reason: 'target_not_found' });
             expect(await db.accessKey.count({ where: { machineId: machine.id } })).toBe(0);
             online = true;
             const publisher = { ...createAuthenticatedFakeSocket({ id: target.id, data: target.data }), join: async () => {} };
             registerSocketRpcHandlers({ userId: owner.id, socket: publisher as unknown as Socket, io });
             await triggerSocketHandler(publisher, SOCKET_RPC_EVENTS.REGISTER, { method });
             expect(publisher.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.REGISTERED, { method });
-            expect([...cleaned]).toEqual([actor.id]);
+            expect([...cleaned]).toEqual([[actor.id, undefined], [survivor.id, 'use']]);
             expect(await db.session.findUnique({ where: { id: history.id } })).toEqual(history);
+            const caller = createCaller();
+            registerSocketRpcHandlers({ userId: survivor.id, socket: caller as unknown as Socket, io });
+            const call = async () => {
+                const callback = vi.fn();
+                await triggerSocketHandler(caller, SOCKET_RPC_EVENTS.CALL, { method: statusMethod, params: {} }, callback);
+                return callback;
+            };
+            expect(await call()).toHaveBeenCalledWith({ ok: true, result: { status: 'ready' } });
+            effect.mockClear();
+            await db.machineTeamGrant.delete({ where: { machineId_teamId: { machineId: machine.id, teamId: team.id } } });
+            expect(await call()).toHaveBeenCalledWith(expect.objectContaining({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN }));
+            expect(effect).not.toHaveBeenCalled();
         } finally { eventRouter.clearIo(); }
     });
 
