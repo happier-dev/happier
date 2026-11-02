@@ -6,7 +6,8 @@ import { buildUniversalPluginUiArtifacts } from '../../../packages/plugin-sdk/sr
 import { generateBundledPluginUiArtifacts, resolveBundledPluginUiArtifactsRetainedRoots,
   resolveBundledPluginUiArtifactsOutputPath, collectBundledPluginUiArtifactSources } from './generateBundledPluginUiArtifacts.mjs';
 import { createBundledPluginPublicationFailure } from '../../../scripts/workspaces/bundledPluginPublicationFailure.mjs';
-import { packageNameOfSpecifier, readWorkspacePackages, resolveWorkspaceSource } from '../../../packages/cli-common/sourceRuntimeEntries.mjs';
+import { readWorkspacePackages, SOURCE_CONDITION } from '../../../packages/cli-common/sourceRuntimeEntries.mjs';
+import { sourcePluginUiBuildOptions, SOURCE_PLUGIN_UI_IMPORT_CONDITIONS } from '../../../scripts/workspaces/sourcePluginUiBuildOptions.mjs';
 import { readSourcePluginUiBuildInputs } from '../../stack/scripts/utils/fs/workspaceBuildInputs.mjs';
 import { readBuildInputIdentity } from '../../../scripts/workspaces/buildInputConvergence.mjs';
 import { WORKSPACE_PACKAGE_BUILD_INPUT_RECORD } from '../../../packages/cli-common/packageBuildOutputTargets.mjs';
@@ -16,7 +17,7 @@ import { resolveDependencyRefreshMarkerPath } from '../../stack/scripts/utils/pr
 /** Reuse the universal UI artifact compiler and inventory owner without publishing
  * package dist or compiler projections. Callers publish a consumer-owned inventory
  * beside retained input roots, never the shared source-tree projection. */
-export async function prepareSourcePluginUiArtifacts({ repoRoot, outputDir, plugins, resolveSourceImport, sourceImportConditions = [], artifactOutputDirs = {}, artifactStoreDir, outputPath = join(outputDir, 'inventory.js'), retainedInventoryPath = outputPath }) {
+export async function prepareSourcePluginUiArtifacts({ repoRoot, outputDir, plugins, resolveSourceImport, sourceImportConditions: conditions = SOURCE_PLUGIN_UI_IMPORT_CONDITIONS, artifactOutputDirs = {}, artifactStoreDir, outputPath = join(outputDir, 'inventory.js'), retainedInventoryPath = outputPath }) {
   const artifactRoots = {};
   const pluginManifests = {};
   const compilationFailures = [];
@@ -28,6 +29,8 @@ export async function prepareSourcePluginUiArtifacts({ repoRoot, outputDir, plug
   const esbuildVersion = createRequire(join(compilerRepo, 'packages/plugin-sdk/package.json'))('esbuild/package.json').version;
   const dependencyInputs = await readJsonIfExists(resolveDependencyRefreshMarkerPath(compilerRepo));
   const packages = await readWorkspacePackages(repoRoot);
+  const buildOptions = await sourcePluginUiBuildOptions({ repoRoot, packages, resolveSourceImport,
+    sourceImportConditions: conditions });
   const successfulInputs = new Map();
   // The successful compiler-input record travels with the retained graph. Its
   // manifest is needed when evaluating the next declaration itself fails;
@@ -40,6 +43,7 @@ export async function prepareSourcePluginUiArtifacts({ repoRoot, outputDir, plug
     }
   }
   await mkdir(outputDir, { recursive: true });
+  const packageInputs = new Map();
   for (const { directory, manifest: suppliedManifest, loadManifest, uiArtifacts = true } of plugins) {
     let manifest;
     let candidates = [];
@@ -50,12 +54,11 @@ export async function prepareSourcePluginUiArtifacts({ repoRoot, outputDir, plug
       manifest = loadManifest ? await loadManifest() : suppliedManifest;
       pluginManifests[directory] = manifest;
       if (!uiArtifacts) continue;
-      const manifestPath = join(outputDir, `${directory}.json`);
-      await writeFile(manifestPath, JSON.stringify(manifest));
       candidates = [...new Set([artifactOutputDir, retainedRoots.get(manifest.id),
         producerRoots.get(manifest.id), join(projectRoot, 'dist/happier-plugin-ui')].filter(Boolean))];
-      const files = await readSourcePluginUiBuildInputs({ repoDir: repoRoot, pluginDirectory: directory, packages });
-      const options = [manifest, compilerIdentity, esbuildVersion, dependencyInputs, sourceImportConditions, 'happier-source', process.version, process.platform, process.arch];
+      const files = await readSourcePluginUiBuildInputs({ repoDir: repoRoot, pluginDirectory: directory, packages, packageInputs,
+        resolveSourceImport: buildOptions.resolveSourceImport });
+      const options = [manifest, compilerIdentity, esbuildVersion, dependencyInputs, conditions, SOURCE_CONDITION, process.version, process.platform, process.arch];
       const inputFingerprint = await readBuildInputIdentity({ sourceDir: repoRoot, files, options });
       for (const root of candidates) {
         const record = await readJsonIfExists(join(root, WORKSPACE_PACKAGE_BUILD_INPUT_RECORD));
@@ -69,8 +72,10 @@ export async function prepareSourcePluginUiArtifacts({ repoRoot, outputDir, plug
         successfulInputs.set(directory, { options, inputFingerprint, reusedRoot: artifactRoots[directory] });
         continue;
       }
+      const manifestPath = join(outputDir, `${directory}.json`);
+      await writeFile(manifestPath, JSON.stringify(manifest));
       const { artifactsRoot } = await buildUniversalPluginUiArtifacts(projectRoot, manifestPath,
-        { outputDir: artifactOutputDir, exportConditions: ['happier-source'], resolveSourceImport });
+        { ...buildOptions, outputDir: artifactOutputDir });
       artifactRoots[directory] = artifactsRoot;
       successfulInputs.set(directory, { options, inputFingerprint });
     } catch (error) {
@@ -97,11 +102,13 @@ export async function prepareSourcePluginUiArtifacts({ repoRoot, outputDir, plug
     repoRoot, outputPath, artifactRoots, artifactOutputDirs, artifactStoreDir,
     pluginManifests, compilationFailures, publicationMode: 'source',
   });
+  const publicationPackageInputs = new Map();
   for (const [directory, input] of successfulInputs) {
     if (result.pluginFailures.some((failure) => failure.packageName === `@happier-dev/plugins-${directory}`)) continue;
     // An interactive source edit during compilation does not make the served
     // graph unusable, but it cannot certify unchanged-input reuse next time.
-    const files = await readSourcePluginUiBuildInputs({ repoDir: repoRoot, pluginDirectory: directory, packages });
+    const files = await readSourcePluginUiBuildInputs({ repoDir: repoRoot, pluginDirectory: directory, packages,
+      packageInputs: publicationPackageInputs, resolveSourceImport: buildOptions.resolveSourceImport });
     if (await readBuildInputIdentity({ sourceDir: repoRoot, files, options: input.options }) !== input.inputFingerprint) continue;
     const root = result.artifactRoots[directory] ?? artifactOutputDirs[directory] ?? artifactRoots[directory];
     // Borrowed producer roots stay read-only. Consumer-owned graphs can retain
@@ -125,10 +132,5 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   let input = '';
   for await (const chunk of process.stdin) input += chunk;
   const options = JSON.parse(input);
-  const packages = await readWorkspacePackages(options.repoRoot);
-  const sourceImportConditions = ['react-native', 'browser'];
-  await prepareSourcePluginUiArtifacts({...options,sourceImportConditions,resolveSourceImport(specifier) {
-    return packages.has(packageNameOfSpecifier(specifier))
-      ? resolveWorkspaceSource(packages,specifier,{conditions:sourceImportConditions}) : undefined;
-  }});
+  await prepareSourcePluginUiArtifacts(options);
 }

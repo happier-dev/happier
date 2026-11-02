@@ -1157,6 +1157,10 @@ private, bundle-owned package closure. The source-runtime producer uses the exis
 compiler and workspace materializer with the source condition, without preparing workspace
 `dist` or requiring semantic typechecking. Plugin authoring resolves that physical closure;
 the CLI's source-runtime provenance and published SDK contracts are unchanged.
+Plugin UI preparation fingerprints its resolved executable import graph and
+declared shipped resources, including hosted-static inputs. An unconsumed plugin
+daemon source edit does not recompile its unchanged UI; a consumed UI edit still
+rebuilds that plugin through the same compiler and inventory owner.
 Development TSX subprocesses select `apps/cli/tsconfig.runtime.json` through
 `resolveCliTsxTsconfigPath`. It retains the compiler project's strict options but
 limits path aliases to the CLI's source alias: compiler-only SDK declaration

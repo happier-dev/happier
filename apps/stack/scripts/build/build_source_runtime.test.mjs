@@ -656,7 +656,10 @@ test('source plugin UI preparation isolates manifest evaluation and syntax failu
   const outputPath = fixture.path('consumer/inventory.js');
   const artifactStoreDir = fixture.path('consumer/artifacts');
   const { prepareSourcePluginUiInventory } = await import('./build_source_web_ui.mjs');
-  const { resolveBundledPluginUiArtifactsRetainedRoots } = await import('../../../ui/scripts/generateBundledPluginUiArtifacts.mjs');
+  const { resolveBundledPluginUiArtifactsRetainedRoots, resolveBundledPluginUiArtifactsOutputPath } = await import('../../../ui/scripts/generateBundledPluginUiArtifacts.mjs');
+  // A source capture can inherit the checkout's producer inventory. This case
+  // starts cold; warm retained-graph recovery is exercised below instead.
+  await rm(resolveBundledPluginUiArtifactsOutputPath(repoRoot), { force: true });
   let attempt = 0;
   const prepare = async () => {
     const chunks = [];
@@ -757,9 +760,23 @@ test('source plugin UI preparation isolates cold failure, retains green bytes an
 
 test('source plugin UI preparation reuses unchanged plugins and rebuilds only changed inputs', async t => {
   await import('../../../../packages/cli-common/registerSourceRuntime.mjs');
-  const { prepareSourcePluginUiArtifacts } = await import('../../../ui/scripts/prepareSourcePluginUiArtifacts.mjs');
   const { resolveBundledPluginUiArtifactsInputPaths } = await import('../../../ui/scripts/generateBundledPluginUiArtifacts.mjs');
   const { fixture, repoRoot, plugins, entry } = await createSourcePluginUiFixture(t, ['alpha', 'beta']);
+  // This test changes plugin inputs while holding compiler inputs constant.
+  // Bundle the real compiler into the fixture: unrelated shared-checkout tool
+  // edits must not turn a zero-work case into a legitimate compiler rebuild.
+  const compilerRoot = fixture.path('compiler');
+  const compilerPath = join(compilerRoot, 'apps/ui/scripts/prepareSourcePluginUiArtifacts.mjs');
+  const sourceRepo = fileURLToPath(new URL('../../../../', import.meta.url));
+  await mkdir(dirname(compilerPath), { recursive: true });
+  await symlink(join(sourceRepo, 'node_modules'), join(compilerRoot, 'node_modules'), process.platform === 'win32' ? 'junction' : 'dir');
+  await createRequire(import.meta.url)('esbuild').build({
+    entryPoints: [join(sourceRepo, 'apps/ui/scripts/prepareSourcePluginUiArtifacts.mjs')],
+    outfile: compilerPath, bundle: true, platform: 'node', format: 'esm', packages: 'external',
+    conditions: ['happier-source'], logLevel: 'silent',
+    banner: { js: "import { createRequire as fixtureCreateRequire } from 'node:module'; const require = fixtureCreateRequire(import.meta.url);" },
+  });
+  const { prepareSourcePluginUiArtifacts } = await import(pathToFileURL(compilerPath));
   const betaPackagePath = join(repoRoot, 'packages/plugins/beta/package.json');
   const betaPackage = JSON.parse(await readFile(betaPackagePath, 'utf8'));
   betaPackage.devDependencies = { '@happier-dev/cli': '0.0.0', '@fixture/ui-helper': '0.0.0' };
@@ -769,6 +786,16 @@ test('source plugin UI preparation reuses unchanged plugins and rebuilds only ch
   await writeFile(join(helperRoot, 'package.json'), JSON.stringify({ name: '@fixture/ui-helper', version: '0.0.0' }));
   await writeFile(join(helperRoot, 'src/value.ts'), 'export const value = "v1";');
   const compiled = [];
+  const originalWriteFile = fs.promises.writeFile;
+  t.mock.method(fs.promises, 'writeFile', (path, ...args) => {
+    const match = String(path).startsWith(fixture.path('preparation-')) && String(path).match(/[\\/](alpha|beta)\.json$/u);
+    if (match) {
+      compiled.push(match[1]);
+    }
+    return originalWriteFile(path, ...args);
+  });
+  syncBuiltinESMExports();
+  t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); });
   for (const { directory } of plugins) {
     await writeFile(entry(directory), `import {value} from "fixture-ui-${directory}"; export function renderSurface(){return value;}`);
     await writeFile(join(repoRoot, 'packages/plugins', directory, 'src/value.ts'), 'export const value = "v1";');
@@ -782,9 +809,6 @@ test('source plugin UI preparation reuses unchanged plugins and rebuilds only ch
       if (specifier === '@fixture/ui-helper') return join(helperRoot, 'src/value.ts');
       if (!specifier.startsWith('fixture-ui-')) return undefined;
       const directory = specifier.slice('fixture-ui-'.length);
-      // This real compiler callback resolves fixture source files. Observing
-      // it proves which artifacts esbuild consumed without mocking the SDK.
-      compiled.push(directory);
       return join(repoRoot, 'packages/plugins', directory, 'src/value.ts');
     } });
   await prepare();
@@ -811,7 +835,7 @@ test('source plugin UI preparation reuses unchanged plugins and rebuilds only ch
   }
   await writeFile(join(repoRoot, 'packages/plugins/alpha/src/notImported.ts'), 'export const unused = true;');
   await prepare();
-  assert.deepEqual(compiled, ['alpha'], 'a changed declared input still enters the canonical compiler');
+  assert.deepEqual(compiled, [], 'an unconsumed plugin source addition must compile zero unchanged UI graphs');
   assert.deepEqual(resolveBundledPluginUiArtifactsInputPaths(outputPath).slice(1), firstPaths,
     'recompiled identical byte graphs must reuse their content paths');
   assert.deepEqual((await Promise.all(firstPaths.map(path => stat(path)))).map(value => value.mtimeMs), firstStats.map(value => value.mtimeMs));

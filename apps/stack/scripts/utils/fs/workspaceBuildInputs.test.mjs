@@ -7,6 +7,40 @@ import { createTempFixture } from '../../testkit/core/temp_fixture.mjs';
 import { readBuildInputIdentity } from '../../../../../scripts/workspaces/buildInputConvergence.mjs';
 import { readSourceComponentBuildInputs, readSourcePluginUiBuildInputs, readWorkspaceBuildInputs, resolveWorkspaceBuildInputWatchPaths } from './workspaceBuildInputs.mjs';
 
+test('plugin UI inputs follow consumed workspace files instead of dependency package membership', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'happier-ui-graph-inputs-' });
+  for (const [directory, manifest, sources] of [
+    ['packages/plugins/fixture', { name: '@happier-dev/plugins-fixture',
+      dependencies: { '@fixture/shared': '*' }, exports: { './happier-plugin-ui/panel': './src/panel.ts' } },
+    { 'src/panel.ts': 'export { value } from "@fixture/shared/ui";', 'src/daemon.ts': 'export const backend = true;' }],
+    ['packages/shared', { name: '@fixture/shared', exports: {
+      './ui': { 'happier-source': './src/ui.ts' } } },
+    { 'src/ui.ts': 'export const value = true;', 'src/machines/managed/provisioners.ts': 'export const unrelated = true;' }],
+  ]) {
+    await mkdir(fixture.path(directory), { recursive: true });
+    await writeFile(fixture.path(`${directory}/package.json`), JSON.stringify(manifest));
+    for (const [path, source] of Object.entries(sources)) {
+      await mkdir(dirname(fixture.path(`${directory}/${path}`)), { recursive: true });
+      await writeFile(fixture.path(`${directory}/${path}`), source);
+    }
+  }
+  const options = { repoDir: fixture.root, pluginDirectory: 'fixture' };
+  const files = await readSourcePluginUiBuildInputs(options);
+  assert.ok(files.includes('packages/shared/src/ui.ts'), 'a real shared UI input remains observable');
+  assert.ok(files.includes('packages/shared/package.json'), 'consumed export resolution remains an input');
+  assert.equal(files.includes('packages/shared/src/machines/managed/provisioners.ts'), false,
+    'an unrelated file in a consumed package must not invalidate plugin UI');
+  const initial = await readBuildInputIdentity({ sourceDir: fixture.root, files });
+  await writeFile(fixture.path('packages/plugins/fixture/src/daemon.ts'), 'export const backend = false;');
+  const afterBackendEdit = await readSourcePluginUiBuildInputs(options);
+  assert.equal(await readBuildInputIdentity({ sourceDir: fixture.root, files: afterBackendEdit }), initial,
+    'a plugin daemon-only edit must not invalidate its unchanged UI graph');
+  await writeFile(fixture.path('packages/shared/src/machines/managed/provisioners.ts'), 'export const unrelated = false;');
+  assert.equal(await readBuildInputIdentity({ sourceDir: fixture.root, files }), initial);
+  await writeFile(fixture.path('packages/shared/src/ui.ts'), 'export const value = false;');
+  assert.notEqual(await readBuildInputIdentity({ sourceDir: fixture.root, files }), initial);
+});
+
 test('source web inputs retain dependency patches required by the captured UI preflight', async t => {
   const fixture = await createTempFixture(t, { prefix: 'happier-source-web-patch-inputs-' });
   await writeFile(fixture.path('package.json'), '{}');
