@@ -38,34 +38,44 @@ async function readQaBrowserEndpoint(profile) {
   return { port, debuggerPath };
 }
 
-async function readQaBrowserExecutable(profile, signal) {
-  const { port, debuggerPath } = await readQaBrowserEndpoint(profile);
-  const socket = new WebSocket(`ws://127.0.0.1:${port}${debuggerPath}`);
+function unavailableCdp() {
+  return Object.assign(new Error('[dev-targets] QA browser did not answer CDP during acquisition'), { code: 'qa-browser-cdp-unavailable' });
+}
+
+async function requestQaBrowserCdp({ port, debuggerPath, method, signal, WebSocketImpl = WebSocket }) {
+  const socket = new WebSocketImpl(`ws://127.0.0.1:${port}${debuggerPath}`);
   let abort;
   try {
-    return await new Promise((resolveExecutable, reject) => {
+    return await new Promise((resolveResult, reject) => {
       abort = () => reject(signal.reason);
       signal.addEventListener('abort', abort, { once: true });
       if (signal.aborted) return abort();
-      socket.addEventListener('open', () => socket.send(JSON.stringify({ id: 1, method: 'Browser.getBrowserCommandLine' })), { once: true });
-      socket.addEventListener('error', () => reject(new Error('[dev-targets] browser executable discovery CDP connection failed')), { once: true });
-      socket.addEventListener('close', () => reject(new Error('[dev-targets] browser executable discovery CDP connection closed')), { once: true });
+      socket.addEventListener('open', () => socket.send(JSON.stringify({ id: 1, method })), { once: true });
+      socket.addEventListener('error', () => reject(unavailableCdp()), { once: true });
+      socket.addEventListener('close', () => reject(unavailableCdp()), { once: true });
       socket.addEventListener('message', event => {
         try {
           const response = JSON.parse(event.data);
           if (response.id !== 1) return;
-          const executable = response.result?.arguments?.[0];
-          if (response.error || typeof executable !== 'string' || !isAbsolute(executable)) {
-            throw new Error('[dev-targets] browser did not report its executable through CDP');
-          }
-          resolveExecutable(executable);
-        } catch (error) { reject(error); }
+          if (response.error || !response.result) throw unavailableCdp();
+          resolveResult(response.result);
+        } catch { reject(unavailableCdp()); }
       });
     });
   } finally {
     signal.removeEventListener('abort', abort);
     socket.close();
   }
+}
+
+async function readQaBrowserExecutable(profile, signal) {
+  const endpoint = await readQaBrowserEndpoint(profile);
+  const result = await requestQaBrowserCdp({ ...endpoint, method: 'Browser.getBrowserCommandLine', signal });
+  const executable = result.arguments?.[0];
+  if (typeof executable !== 'string' || !isAbsolute(executable)) {
+    throw new Error('[dev-targets] browser did not report its executable through CDP');
+  }
+  return executable;
 }
 
 async function cleanupQaBrowserProfile({ session, profile, env = process.env }, { capture = runCaptureResult } = {}) {
@@ -309,11 +319,30 @@ export async function stopStackQaBrowsers({ stackName, baseDir, sourceDir, env }
     warnings: results.filter(result => result.value.warning).map(result => result.value.warning) };
 }
 
-export async function runQaBrowserSession({ target, stackName, stackBaseDir, sessionName, url, extraUrls = [], workerLoopbackUrl, trustCertPath, fakeAudio = false, gpu = false,
-  env = process.env, onReady = value => process.stdout.write(`${JSON.stringify(value)}\n`),
+// Acquisition owns the only replacement. No consumer receives a failed handle,
+// and the failed worker's cleanup settles before a new profile is allocated.
+export async function runQaBrowserSession(input, boundaries = {}) {
+  for (let attempt = 0; ; attempt++) {
+    let admitted = false;
+    try {
+      await runQaBrowserAttempt({ ...input, onReady: value => {
+        admitted = true;
+        if (input.onReady) input.onReady(value);
+        else process.stdout.write(`${JSON.stringify(value)}\n`);
+      } }, boundaries);
+      return;
+    } catch (error) {
+      if (admitted || attempt !== 0 || error.code !== 'qa-browser-cdp-unavailable') throw error;
+      process.stderr.write('[dev-targets] retired unresponsive QA browser; acquiring its one replacement\n');
+    }
+  }
+}
+
+async function runQaBrowserAttempt({ target, stackName, stackBaseDir, sessionName, url, extraUrls = [], workerLoopbackUrl, trustCertPath, fakeAudio = false, gpu = false,
+  env = process.env, onReady,
 }, { signalSource = process, capture = runCaptureResult, spawnProcess = spawnProc,
   stopProcess = child => killProcessTree(child, 'SIGINT', { graceMs: 2_000 }),
-  fetchImpl = fetch,
+  fetchImpl = fetch, WebSocketImpl = WebSocket,
 } = {}) {
   requireSessionName(sessionName);
   if (!target || target.platform !== 'posix') throw new Error('[dev-targets] QA browser requires a selected remote POSIX host');
@@ -419,6 +448,11 @@ export async function runQaBrowserSession({ target, stackName, stackBaseDir, ses
         const readinessAbort = new AbortController();
         const readinessSignal = AbortSignal.any([signal, readinessAbort.signal]);
         let readinessExit;
+        // Match Playwright connectOverCDP's documented default connection window:
+        // https://playwright.dev/docs/api/class-browsertype#browser-type-connect-over-cdp
+        // Bound the admission probe, not the browser's later rendering lifetime.
+        const admissionTimeout = readiness ? [] : [timers.setTimeout(30_000, undefined, { signal: readinessAbort.signal })
+          .then(() => { throw unavailableCdp(); })];
         // HTTP can remain pending after its SSH stream disappears. Observe
         // transport completion throughout readiness, as during the live session.
         try {
@@ -428,11 +462,14 @@ export async function runQaBrowserSession({ target, stackName, stackBaseDir, ses
                 readinessSignal.throwIfAborted();
                 try {
                   const response = await fetchImpl(`http://127.0.0.1:${localPort}/json/version`, { signal: readinessSignal });
-                  if (response.ok && (await response.json()).webSocketDebuggerUrl) return;
+                  if (response.ok && (await response.json()).webSocketDebuggerUrl) break;
                 } catch { /* Forward establishment is observed before declaring readiness. */ }
                 await timers.setTimeout(100, undefined, { signal: readinessSignal });
               }
+              if (!readiness) await requestQaBrowserCdp({ port: localPort, debuggerPath: ready.debuggerPath,
+                method: 'Browser.getVersion', signal: readinessSignal, WebSocketImpl });
             })(),
+            ...admissionTimeout,
             forward.completion.then(result => {
               readinessExit = result;
               throw forwardFailure(result);
@@ -447,6 +484,9 @@ export async function runQaBrowserSession({ target, stackName, stackBaseDir, ses
             process.stderr.write(`[dev-targets] QA browser SSH forward unavailable: ${error.code}; restoring its CDP and SOCKS listeners after retry wait\n`);
             retryAttempt++;
             continue;
+          }
+          if (!readiness && readinessExit && error.code !== 'ssh-authentication-failed') {
+            throw Object.assign(unavailableCdp(), { cause: error });
           }
           throw error;
         } finally {
@@ -521,6 +561,9 @@ export async function runQaBrowserSession({ target, stackName, stackBaseDir, ses
     });
     workerFinished = true;
     abort.abort();
+    if (failure?.code === 'qa-browser-cdp-unavailable' && result.code !== 0) {
+      throw new Error(`[dev-targets] QA browser retirement is unconfirmed (${result.code ?? result.signal}); replacement refused`);
+    }
     if (failure) throw failure;
     if (result.code !== 0) throw new Error(`[dev-targets] remote QA browser worker failed (${result.code ?? result.signal})`);
     await readyTask;

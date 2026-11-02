@@ -223,7 +223,7 @@ node ./apps/stack/scripts/repo_local.mjs stack env exp1 set HAPPIER_STACK_QA_BRO
 node ./apps/stack/scripts/repo_local.mjs dev-targets browser start qa1 --stack=exp1 --url=<qa-ui-url>
 ```
 
-The browser selector compares current unreserved memory among those configured hosts for each browser lifetime. It writes no Machine pin and fails closed if no pool host is usable. When the browser setting is absent or empty, it retains the existing daemon-pool/default selection. Keep the foreground browser handle and interrupt it after QA to retire its browser, profile, and forwards.
+The browser selector compares current unreserved memory among those configured hosts for each browser lifetime. It writes no Machine pin and fails closed if no pool host is usable. When the browser setting is absent or empty, it retains the existing daemon-pool/default selection. Keep the foreground browser handle and interrupt it after QA to retire its browser, profile, and forwards. In 0.3 development, acquisition also requires a CDP WebSocket command response through the returned forward. A silent endpoint is retired after the default 30-second CDP attach window and replaced once before a handle is returned. Failed retirement stops acquisition; it never allocates a replacement beside an unconfirmed old browser.
 
 ## Edit a stack (interactive)
 
