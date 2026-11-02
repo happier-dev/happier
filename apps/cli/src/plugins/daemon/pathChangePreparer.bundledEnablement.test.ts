@@ -71,11 +71,10 @@ describe('bundled Machine desired enablement', () => {
       const disabledEntry = (await readCurrentDaemonPluginCatalog({ happyHomeDir, reloadController }))
         .find(entry => entry.pluginId === pluginId);
       expect(disabledEntry).toMatchObject({ accountEnabled: true, machineEnabled: false, enabled: false });
-      expect(disabledEntry?.contributionIntrospection.contributions.length).toBeGreaterThan(0);
-      expect(disabledEntry?.contributionIntrospection.contributions.every(contribution => (
-        contribution.projection.state === 'unavailable'
-        && contribution.activation.state === (contribution.registration.requirement === 'required' ? 'unavailable' : 'notRequired')
-      ))).toBe(true);
+      // Cold disabled rows come from generated metadata: acquiring their
+      // declarations just to enumerate withdrawn contributions would load them.
+      expect(disabledEntry?.manifest).toBeNull();
+      expect(disabledEntry?.contributionIntrospection.contributions).toEqual([]);
       const noLeaseController = createPluginReloadController();
       try {
         expect((await readCurrentDaemonPluginCatalog({ happyHomeDir, reloadController: noLeaseController }))

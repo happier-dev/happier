@@ -7,6 +7,7 @@ import {
 } from '@/plugins/projection/catalog/installed';
 import { loadCurrentBundledPluginLocatorResult } from '@/plugins/projection/registry/builtIn/locators';
 import { readCurrentBundledPluginEnablement } from '@/plugins/projection/registry/builtIn/snapshot';
+import { BUNDLED_FIRST_PARTY_PLUGIN_METADATA } from '@/plugins/projection/registry/sources/generatedBundledPluginManifests';
 import type { ResolvedPluginEnablement } from '@/plugins/projection/registry/types';
 import { joinInstalledCatalogRuntimeIntrospection } from '@/plugins/projection/introspection/catalogSnapshot';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
@@ -20,7 +21,10 @@ export type CurrentDaemonPluginCatalogSnapshot = Readonly<{
   tools: readonly ProjectedPluginToolCatalogEntry[];
 }>;
 
-let bundledCatalogEntries: readonly PluginCatalogEntry[] | undefined;
+let bundledCatalog: Readonly<{
+  enablementById: Readonly<Record<string, ResolvedPluginEnablement>>;
+  entries: readonly PluginCatalogEntry[];
+}> | undefined;
 
 function projectCurrentDaemonPluginCatalogEntries(
   installedEntries: readonly PluginCatalogEntry[],
@@ -30,18 +34,22 @@ function projectCurrentDaemonPluginCatalogEntries(
   // Session runners import shared daemon services but do not read this catalog.
   // Admit bundled declarations only for an actual catalog projection; the
   // locator owner already retains the immutable process-local admission.
-  if (!bundledCatalogEntries) {
-    const bundledPlugins = loadCurrentBundledPluginLocatorResult();
-    // Bundled admission is immutable for this process. Retain its declaration
-    // projection, not the changing installed state or serving runtime facts.
-    bundledCatalogEntries = projectBundledPluginCatalogEntries(bundledPlugins);
+  if (!bundledCatalog || BUNDLED_FIRST_PARTY_PLUGIN_METADATA.some(({ pluginId }) =>
+    bundledCatalog!.enablementById[pluginId]?.enabled !== pluginEnablementById[pluginId]?.enabled)) {
+    const bundledPlugins = loadCurrentBundledPluginLocatorResult({ pluginEnablementById });
+    // Reuse the declaration projection until admission changes. Disabled rows
+    // come from generated metadata without acquiring their files.
+    bundledCatalog = { enablementById: pluginEnablementById,
+      entries: projectBundledPluginCatalogEntries({ ...bundledPlugins, pluginEnablementById,
+        bundledPluginMetadata: BUNDLED_FIRST_PARTY_PLUGIN_METADATA }),
+    };
   }
   const installedPluginIds = new Set(installedEntries.map((entry) => entry.pluginId));
   return Object.freeze([
     ...installedEntries.map(entry => pluginEnablementById[entry.pluginId]
       ? { ...entry, ...pluginEnablementById[entry.pluginId] }
       : entry),
-    ...bundledCatalogEntries.filter((entry) => !installedPluginIds.has(entry.pluginId)).map((entry) => {
+    ...bundledCatalog.entries.filter((entry) => !installedPluginIds.has(entry.pluginId)).map((entry) => {
       const current = entry.manifest
         ? currentRuntimes?.get(entry.pluginId)
         : undefined;

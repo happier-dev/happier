@@ -31,6 +31,7 @@ import { resolveCliRuntimeAssetPath } from '@/packagedRuntime/assets/resolveCliR
 import { projectPluginCatalogEntryIntrospection } from '@/plugins/projection/introspection/catalogEntry';
 import { projectPluginCatalogEntrySnapshot } from '@/plugins/projection/introspection/catalogSnapshot';
 import type { PluginContributionIntrospectionProjectionV1 } from '@happier-dev/protocol';
+import type { BundledFirstPartyPluginMetadata } from '@/plugins/projection/registry/sources/generatedBundledPluginManifests';
 
 export type PluginCatalogEntry = Readonly<{
   pluginId: string;
@@ -208,6 +209,8 @@ function buildCatalogEntry(params: Readonly<{
 
 export function projectBundledPluginCatalogEntries(params: Readonly<{
   loadedPlugins: readonly LoadedPlugin[];
+  /** Data-only rows retain management of declarations withdrawn before acquisition. */
+  bundledPluginMetadata?: readonly BundledFirstPartyPluginMetadata[];
   pluginFailures?: readonly BundledPluginAdmissionFailure[];
   desiredGenerationByPluginId?: Readonly<Record<string, string>>;
   excludedPluginIds?: ReadonlySet<string>;
@@ -269,6 +272,26 @@ export function projectBundledPluginCatalogEntries(params: Readonly<{
       enablement: params.pluginEnablementById?.[failure.pluginId]
         ? { ...params.pluginEnablementById[failure.pluginId], enabled: false }
         : undefined,
+    }));
+  }
+  const projectedPluginIds = new Set(entries.map(entry => entry.pluginId));
+  for (const metadata of params.bundledPluginMetadata ?? []) {
+    const enablement = params.pluginEnablementById?.[metadata.pluginId];
+    if (projectedPluginIds.has(metadata.pluginId) || params.excludedPluginIds?.has(metadata.pluginId)
+      || !enablement || enablement.enabled) continue;
+    entries.push(buildCatalogEntry({
+      pluginId: metadata.pluginId, desiredGeneration: null, admittedIntegrity: null,
+      rollbackAvailability: 'unavailable', manifest: null, manifestPath: metadata.manifestPath,
+      diagnostics: [], enablement,
+      record: {
+        source: { kind: 'bundled', locator: metadata.packageName, trustPolicy: 'local_trusted',
+          installPolicy: 'link', resolvedVersion: metadata.packageVersion,
+          resolvedPath: resolveCliRuntimeAssetPath('node_modules', ...metadata.packageName.split('/')),
+          manifestPath: metadata.manifestPath },
+        compatibility: { status: 'compatible', diagnostics: [] },
+        install: { mode: 'link', manifestVersion: metadata.packageVersion },
+        state: { enabled: false },
+      },
     }));
   }
   return Object.freeze(entries.sort((a, b) => a.pluginId.localeCompare(b.pluginId)));

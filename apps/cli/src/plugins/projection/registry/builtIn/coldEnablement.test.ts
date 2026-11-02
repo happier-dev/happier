@@ -7,6 +7,7 @@ import { loadEnabledBundledPluginLocatorResult } from './locators';
 import { getResolvedContributionRegistry } from './snapshot';
 import { BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS } from '../sources/generatedBundledPluginManifests';
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
+import { ingestCanonicalPluginManifest } from '@/plugins/manifest/ingest';
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -23,7 +24,7 @@ describe('cold bundled enablement', () => {
                 if (!('manifestRelativePath' in locator)) throw new Error('Expected a file-backed bundled declaration');
                 const path = join(root, locator.manifestRelativePath);
                 fs.mkdirSync(dirname(path), { recursive: true });
-                fs.writeFileSync(path, JSON.stringify(createPluginManifestV2Fixture({ id: pluginId,
+                const admission = ingestCanonicalPluginManifest(createPluginManifestV2Fixture({ id: pluginId,
                     entrypoints: locator.daemonEntryPath ? { daemon: './daemon.mjs' } : {},
                     contributes: pluginId === producerId ? { actions: [{ id: 'run', title: 'Run',
                         scopes: ['session'], surfaces: ['agent'], execution: { target: 'daemon' },
@@ -31,7 +32,9 @@ describe('cold bundled enablement', () => {
                         : { browserTargets: [{ id: 'page', title: 'Page', url: 'https://example.com' }],
                             browserActions: [{ id: 'runner', title: 'Runner', target: 'page',
                                 action: { pluginId: producerId, localId: 'run' } }] },
-                })));
+                }), { manifestAuthority: 'bundled_first_party', sourceProvenance: 'localSource' });
+                if (!admission.ok) throw new Error('Invalid bundled publication fixture');
+                fs.writeFileSync(path, JSON.stringify(admission.manifest));
             }
             Object.defineProperty(process, 'execPath', { ...executable, value: join(root, 'happier') });
             const reads = vi.spyOn(fs, 'readFileSync');

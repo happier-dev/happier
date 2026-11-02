@@ -180,6 +180,7 @@ import { createProjectNativeIo } from '@/workspaces/projectSetup/projectNativeIo
 
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { readInstallationIdentityIfExistsSync } from './identity/store';
+import { prepareDaemonPluginRemoval } from './startup/prepareDaemonPluginRemoval';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { cleanupDaemonHomeMachineWorkspace } from './startup/daemonHomeMachineWorkspaceCleanup';
 import { createSshTunnelSupervisor } from './ssh/tunnels';
@@ -1601,11 +1602,10 @@ export async function startDaemon(
     const managedPolicyServerHttpBaseUrl = resolveServerHttpBaseUrl();
     const pluginRemovalOrigin = await resolveCurrentMachineExecutionOriginContext();
     const managedPolicyHomeId = pluginRemovalOrigin?.serverIdentityId ?? null;
-    const pluginRemovalInstallation = readInstallationIdentityIfExistsSync();
-    const managedResourcePreflight = pluginRemovalOrigin?.machineId === machineId && pluginRemovalInstallation
-      ? { credentials, serverUrl: managedPolicyServerHttpBaseUrl, homeId: pluginRemovalOrigin.serverIdentityId,
-          controller: { machineId, installationId: pluginRemovalInstallation.installationId }, signal: homeTransportCancellation.signal }
-      : undefined;
+    const { installation: pluginRemovalInstallation, managedResourcePreflight } = await prepareDaemonPluginRemoval({
+      credentials, machineId, origin: pluginRemovalOrigin, readServerUrl: () => managedPolicyServerHttpBaseUrl,
+      signal: homeTransportCancellation.signal,
+    });
     const readCurrentManagedPolicyController = () => {
       const installation = readInstallationIdentityIfExistsSync();
       if (!managedPolicyHomeId || !installation || !externalActionAccountId) return null;
