@@ -15,6 +15,8 @@ import * as PluginUiAdvanced from '@happier-dev/plugin-ui/advanced';
 import * as PluginUiAnsi from '@happier-dev/plugin-ui/ansi';
 import * as PluginUiClient from '@happier-dev/plugin-sdk/ui/client';
 
+import * as ZodMini from 'zod/mini';
+
 import type { PluginUiHostRuntimeExternalModulesV1 } from '@happier-dev/protocol/plugins/ui';
 
 /**
@@ -44,4 +46,10 @@ export const PLUGIN_UI_COMMON_JS_HOST_MODULES: PluginUiHostRuntimeExternalModule
     '@happier-dev/plugin-ui/ansi': PluginUiAnsi,
     get '@happier-dev/plugin-sdk/machine-provisioners'(): unknown { return require('@happier-dev/plugin-sdk/machine-provisioners'); },
     '@happier-dev/plugin-sdk/ui/client': PluginUiClient,
+    get '@happier-dev/plugin-sdk'(): unknown { return require('@happier-dev/plugin-sdk'); },
+    get '@happier-dev/plugin-sdk/protocol'(): unknown { return require('@happier-dev/plugin-sdk/protocol'); },
+    get zod(): unknown { return require('zod'); },
+    'zod/mini': ZodMini,
+    get 'zod/v4/core'(): unknown { return require('zod/v4/core'); },
+    get 'zod/v4/locales/en.js'(): unknown { return require('zod/v4/locales/en.js'); },
 });

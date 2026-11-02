@@ -24,6 +24,12 @@ export const PLUGIN_UI_HOST_RUNTIME_EXTERNAL_SPECIFIERS = Object.freeze([
     '@happier-dev/plugin-ui/ansi',
     '@happier-dev/plugin-sdk/machine-provisioners',
     '@happier-dev/plugin-sdk/ui/client',
+    '@happier-dev/plugin-sdk',
+    '@happier-dev/plugin-sdk/protocol',
+    'zod',
+    'zod/mini',
+    'zod/v4/core',
+    'zod/v4/locales/en.js',
 ] as const);
 
 export type PluginUiHostRuntimeExternalSpecifierV1 =
