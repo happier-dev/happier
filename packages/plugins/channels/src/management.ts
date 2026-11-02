@@ -235,7 +235,7 @@ type ConversationConnectionWebhookEndpoint = Readonly<{
 type ConversationConnectionTransferResult = ConversationConnectionTransferResultV1;
 type ConversationConnectionSetupAndTestInput = Pick<
   ConversationConnectionCreateInputV1,
-  'providerSetupInput' | 'credentialRef' | 'selectedTransport'
+  'providerSelection' | 'providerSetupInput' | 'credentialRef' | 'selectedTransport'
 >;
 type CurrentProvider = Readonly<{
   pluginId: string;
