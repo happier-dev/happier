@@ -24,6 +24,7 @@ test('daemon support identity ignores unshipped tests while retaining shipped re
   await writeFile(join(packageDir, 'resources/tests/runtime.json'), '{"value":1}');
   await writeFile(join(cliDir, 'src/index.ts'), 'export const value = 1;');
   await writeFile(join(packageDir, 'src/ui.ts'), 'export const view = 1;');
+  await writeFile(join(packageDir, 'export-aliases.json'), '{"./view":"./src/ui.ts"}');
   for (const app of ['ui', 'server']) {
     const hostDir = join(repoDir, 'apps', app);
     await mkdir(join(hostDir, 'sources'), { recursive: true });
@@ -56,8 +57,11 @@ test('daemon support identity ignores unshipped tests while retaining shipped re
   await writeFile(join(packageDir, 'src/ui.ts'), 'export const view = 2;');
   for (const [index, value] of (await fingerprint()).entries()) assert.notEqual(value, before[index], 'exported UI remains a support input');
   const runtimeChanged = await fingerprint();
+  await writeFile(join(packageDir, 'export-aliases.json'), '{"./surface":"./src/ui.ts"}');
+  for (const [index, value] of (await fingerprint()).entries()) assert.notEqual(value, runtimeChanged[index], 'export aliases are shared capture and runtime preparation inputs');
+  const aliasesChanged = await fingerprint();
   await writeFile(join(packageDir, 'resources/tests/runtime.json'), '{"value":2}');
-  for (const [index, value] of (await fingerprint()).entries()) assert.notEqual(value, runtimeChanged[index], 'explicit shipped resources override test naming');
+  for (const [index, value] of (await fingerprint()).entries()) assert.notEqual(value, aliasesChanged[index], 'explicit shipped resources override test naming');
 });
 
 test('daemon support identity retains runtime inputs under test-named checkout parents and opaque host paths', async (t) => {
@@ -389,6 +393,7 @@ test('workspace capture includes authored root declarations without admitting te
   await writeFile(join(sourceDir, 'package.json'), JSON.stringify({ files: ['dist', 'resources'] }));
   const files = {
     'README.md': 'authored SDK documentation',
+    'export-aliases.json': '{".":"./src/index.ts"}',
     'resources/testkit/sample.json': '{"shipped":true}',
     'workspaceBundleLock.mjs': 'export const lock = true;',
     'workspaceBundleLock.d.mts': 'export declare const lock: boolean;',
@@ -416,7 +421,8 @@ test('workspace capture includes authored root declarations without admitting te
   });
   assert.deepEqual(captured, [
     'README.md',
-    'cliDistBuildManifest.cjs', 'cliDistBuildManifest.d.cts', 'package.json',
+    'cliDistBuildManifest.cjs', 'cliDistBuildManifest.d.cts',
+    'export-aliases.json', 'package.json',
     'resources/testkit/sample.json',
     'runtime.d.ts', 'runtime.js', 'src/index.ts',
     'workspaceBundleLock.d.mts', 'workspaceBundleLock.mjs',

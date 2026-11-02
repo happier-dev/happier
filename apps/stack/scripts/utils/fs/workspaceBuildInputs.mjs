@@ -234,7 +234,7 @@ export function createWorkspaceBuildInputIgnorePath(packageDirs, { repoDir, host
 }
 
 function isWorkspaceBuildConfigFile(name) {
-  if (name === 'package.json') return true;
+  if (name === 'package.json' || name === 'export-aliases.json') return true;
   if (/^tsconfig(?:\.[^.]+)*\.json$/.test(name)) {
     return !/\.(?:test|tests|type-tests)\.json$/.test(name);
   }
