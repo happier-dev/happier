@@ -13354,16 +13354,17 @@ class Sync {
                 const currentDemand = () => isCurrent()
                     && resolveSessionLiveConsumption(sessionId, serverId).isFullContentConsumer;
                 if (!currentDemand()) return;
-                if (!areServerProfileIdentifiersEquivalent(storage.getState().sessions[sessionId]?.serverId, serverId)) {
-                    const authority = await captureServerRequestAuthorityForServerAccountScope({
-                        serverId, activeRequest: this.requestViaConfiguredSocket,
-                    });
-                    try {
-                        if (!currentDemand()) return;
-                        await this.ensureSessionVisibleForMessageRoute(sessionId, { serverId, forceRefresh: true,
-                            authority, scopeCurrentness: currentDemand });
-                    } finally { await authority.release(); }
-                }
+                // Admission needs the current snapshot even for a retained same-Home
+                // carrier. A read begun before reconnect cannot satisfy this demand.
+                const authority = await captureServerRequestAuthorityForServerAccountScope({
+                    serverId, activeRequest: this.requestViaConfiguredSocket,
+                });
+                try {
+                    if (!currentDemand()) return;
+                    await this.ensureSessionVisibleForMessageRoute(sessionId, { serverId, fresh: true,
+                        hydrateMessages: false, includeTurnsProjection: false,
+                        authority, scopeCurrentness: currentDemand });
+                } finally { await authority.release(); }
                 if (currentDemand() && areServerProfileIdentifiersEquivalent(storage.getState().sessions[sessionId]?.serverId, serverId)) {
                     this.onSessionVisible(sessionId);
                 }
