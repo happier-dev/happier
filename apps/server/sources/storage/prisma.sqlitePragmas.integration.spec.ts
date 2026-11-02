@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { renderPrismaCompatibleSqliteDatabaseUrl } from "@happier-dev/cli-common/firstPartyRuntime";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { db, resolveSqliteRuntimePragmasFromEnv, resolveSqliteStartupDiagnosticsFromEnv } from "@/storage/db";
+import { db, prismaRuntime, resolveSqliteRuntimePragmasFromEnv, resolveSqliteStartupDiagnosticsFromEnv } from "@/storage/db";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 import { resolveSqliteDatabaseFilePath } from "@/flavors/light/sqliteMigrations";
 
@@ -17,6 +17,20 @@ describe("storage/prisma sqlite pragmas", () => {
             await harness.close();
             harness = null;
         }
+    });
+
+    it("uses the active generated client's JSON null values for writes and filters", async () => {
+        harness = await createLightSqliteHarness({ tempDirPrefix: "happier-sqlite-json-null-" });
+        const account = await db.account.create({ data: { publicKey: null, encryptionMode: "plain" } });
+        const row = await db.providerAccountUsageRecord.create({ data: {
+            accountId: account.id, recordId: "null-runtime-contract", providerId: "codex",
+            accountSubjectId: "null-runtime-account", subjectKind: "account", quotaScope: "account", quotaScopeIdKey: "",
+            recordKeyJson: {}, payloadMode: "plain_json_v1", status: "ok", metadata: { present: true },
+        } });
+        await db.providerAccountUsageRecord.update({ where: { id: row.id }, data: { metadata: prismaRuntime.DbNull } });
+        expect(await db.providerAccountUsageRecord.count({ where: { id: row.id, metadata: { equals: prismaRuntime.DbNull } } })).toBe(1);
+        expect(await db.$queryRawUnsafe<Array<{ metadata: unknown }>>('SELECT metadata FROM "ProviderAccountUsageRecord" WHERE id = ?', row.id))
+            .toEqual([{ metadata: null }]);
     });
 
     it("configures WAL and URL busy_timeout for sqlite connections (stack stability)", async () => {
