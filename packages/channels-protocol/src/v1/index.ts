@@ -70,3 +70,4 @@ export {
 } from './core/declarations.js';
 export * from './management/index.js';
 export * from './provider/index.js';
+export * from './sessionPullRequestLinkCompletions.js';
