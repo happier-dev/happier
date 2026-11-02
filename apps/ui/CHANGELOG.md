@@ -4,11 +4,13 @@
 
 <!-- happier-release-note-projections:v1
 {
-  "expo": { "message": "CLI 0.2.19 corrects Linux terminal support for x64 and arm64." },
-  "appStore": { "whatsNew": "CLI maintenance release for Linux terminal support." },
-  "playStore": { "whatsNew": "CLI maintenance release for Linux terminal support." }
+  "expo": { "message": "Answer Agent questions and permission requests from notifications, quote selected chat text, choose how to send your next message, and organize sessions with synced colors. Custom themes sync across devices. Session reconnects, queued messages, updates and voice handoffs are more dependable. Install the new native app for this release." },
+  "appStore": { "whatsNew": "Answer Agent questions and permission requests from notifications. Quote selected chat text and choose whether to queue, steer or interrupt when the Agent supports it. Give sessions colors that sync across devices, and sync your custom theme library while keeping each device's appearance choice. Optional system navigation on iOS and better foldable layouts make more room for your sessions. Fixes improve reconnects, older transcript loading, session deletion, update progress and voice handoffs. Install this native update to receive the refreshed runtime." },
+  "playStore": { "whatsNew": "Answer Agent questions and permission requests from notifications, including while the app is in the background. Quote selected chat text, choose how to send a message, and sync session colors and custom themes. Better foldable layouts, reconnects, transcript scrolling and update progress. Install this native update for the refreshed runtime." }
 }
 -->
+
+This release ships everything listed under release 2026-11-01.1 below, which had not reached production yet, plus these fixes:
 
 - CLI 0.2.19 ships the corrected Linux terminal support: the packaged CLI now includes the terminal (PTY) module that matches each Linux platform (x64 and arm64).
 - Server and stack 0.2.19 ship together with CLI 0.2.19.
