@@ -20,6 +20,7 @@ export const UiPromptPickerOpenOutputSchema = lazyZodSchema(() => z.discriminate
 /** Display intent only; the mounted composer owns prompt selection, edits and submission. */
 export const PROMPT_PICKER_ACTION_SPECS = [{
   id: 'ui.prompts.picker.open', approval: {result: 'required'},
+  clientPresenter: 'session',
   title: 'Open the prompt picker',
   description: 'Open Prompts on an addressed mounted composer, the invoking Session composer, or the focused composer. Returns its address or noEligibleComposer, never draft or prompt text.',
   safety: 'safe', sideEffectClass: 'external', executionPlacement: 'client', placements: [],

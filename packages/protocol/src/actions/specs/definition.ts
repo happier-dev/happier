@@ -311,6 +311,8 @@ machineRuntimeDemandForInput: z.optional(z.custom<(input: unknown, context: Acti
   requiredAuthority: z.optional(ActionRequiredAuthoritySchema),
   /** Host-owned routing placement; public callers never supply this in Action input. */
   executionPlacement: z.optional(ActionExecutionPlacementSchema),
+  /** Mounted Session effects follow its presenting renderer; navigation remains client-owned. Never serialized. */
+  clientPresenter: z.optional(z.literal('session')),
   /** Host-only selector for an admitted input whose owner varies; never serialized as caller authority. */
   executionPlacementForInput: z.optional(z.custom<(input: unknown) => ActionExecutionPlacement>((value) => typeof value === 'function')),
   /** Host-private Home projection; domain schemas admit its operands before Account capture. Never serialized. */
@@ -576,6 +578,7 @@ machineRuntimeDemandForInput?: ParsedActionSpec['machineRuntimeDemandForInput'];
   operationReentry?: ParsedActionSpec['operationReentry'];
   requiredAuthority?: ParsedActionSpec['requiredAuthority'];
   executionPlacement?: ParsedActionSpec['executionPlacement'];
+  clientPresenter?: ParsedActionSpec['clientPresenter'];
   executionPlacementForInput?: ParsedActionSpec['executionPlacementForInput'];
   invocationServerIdForInput?: ParsedActionSpec['invocationServerIdForInput'];
   executionPlacements?: ParsedActionSpec['executionPlacements'];

@@ -4815,6 +4815,18 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         return readActionFailureEnvelope(result) ?? { ok: true, result };
       }
 
+      if (actionId === 'desktop.notch.set') {
+        if (!deps.desktopNotchSet) return clientActionUnavailable(actionId);
+        return completeActionResult(await deps.desktopNotchSet({
+          input: parsed.data as import('./specs/desktopShell.js').DesktopNotchSetInput, context: ctx,
+        }));
+      }
+
+      if (actionId === 'desktop.displays.list') {
+        if (!deps.desktopDisplaysList) return clientActionUnavailable(actionId);
+        return completeActionResult(await deps.desktopDisplaysList({ context: ctx }));
+      }
+
       if (isNotificationConfigurationActionId(actionId)) {
         if (!deps.notificationConfigurationAction) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
         const result = await deps.notificationConfigurationAction({ actionId, input: parsed.data, context: ctx });
@@ -4842,6 +4854,14 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         const input = ExternalUrlOpenInputSchema.parse(parsed.data);
         const result = await deps.externalUrlOpen({ url: input.url, ...(ctx.signal ? { signal: ctx.signal } : {}) });
         return readActionFailureEnvelope(result) ?? { ok: true, result };
+      }
+
+      if (actionId === 'desktop.windows.open') {
+        if (!deps.desktopWindowsOpen) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
+        ctx.signal?.throwIfAborted();
+        return completeActionResult(await deps.desktopWindowsOpen({
+          input: parsed.data as import('./desktopWindowsAction.js').DesktopWindowsOpenInput, context: ctx,
+        }));
       }
 
       if (actionId === 'clipboard.write') {

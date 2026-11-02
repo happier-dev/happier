@@ -39,6 +39,7 @@ const addressHints = [
 ] as const;
 export const COMPOSER_INGRESS_ACTION_SPECS = [{
   ...client, id: 'composer.transaction.apply', approval: {result: 'required'}, title: 'Apply composer transaction',
+  clientPresenter: 'session',
   cli: { commands: [{ path: ['composer', 'transaction', 'apply'], visibility: 'canonical' }] },
   description: 'Apply a revision-bound transaction to the exact mounted editable composer. Mention in composer uses the text insertion and reference.insert operations from the shared composer reference insertion owner, at the current caret or the end without a selection. reviewComment.add adds anchored review context to the Session workspace draft; attachment selection is validated against its current composition. Never submits input or grants staged-media custody.',
   safety: 'safe', sideEffectClass: 'external', bindings: { mcpToolName: 'composer_transaction_apply' },
@@ -50,6 +51,7 @@ export const COMPOSER_INGRESS_ACTION_SPECS = [{
   examples: { mcp: { argsExample: '{"scope":{"serverId":"home-a","accountId":"account-a"},"ref":{"kind":"newSession","instanceId":"composer-a"},"transaction":{"expectedRevision":1,"operations":[{"kind":"text.insert","position":{"offset":0},"text":"Context"}]}}' } },
 }, {
   ...client, id: 'composer.attachments.pick', approval: {result: 'required'}, title: 'Pick composer attachments',
+  clientPresenter: 'session',
   cli: { commands: [{ path: ['composer', 'attachments', 'pick'], visibility: 'canonical' }] },
   description: 'Open the exact mounted composer file picker. Selected files use its existing staging custody and never auto-send. OS file handles and bytes cannot be authored in Action input.',
   safety: 'safe', sideEffectClass: 'external', bindings: { mcpToolName: 'composer_attachments_pick' },

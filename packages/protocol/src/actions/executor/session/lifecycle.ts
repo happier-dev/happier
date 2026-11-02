@@ -1,5 +1,5 @@
 import { isSessionTerminalActionId } from '../../sessionTerminalActionFamily.js';
-import { normalizeActionExecutorThrownError, completeActionResult } from '../resultProjection.js';
+import { normalizeActionExecutorThrownError, completeActionResult, settleActionOutput } from '../resultProjection.js';
 import { resolveActionSessionAddress } from '../sessionTargets.js';
 import { resolveSessionIdFromInput, projectSessionReferenceFailure, resolveServerIdForSession } from '../sessionScope.js';
 import type { PublicActionInputById } from '../../actionSpecs.js';
@@ -42,7 +42,7 @@ export async function dispatchSessionLifecycle1(inv: Pick<CoreInvocation, 'actio
 
         if (actionId === 'session.open') {
           // A headless Session-open owner can resume Sessions, but cannot target a client tab.
-          if ((typeof data.tabId === 'string' || data.destination !== undefined) && !deps.workspaceAction) {
+          if (data.presentation !== 'window' && (typeof data.tabId === 'string' || data.destination !== undefined) && !deps.workspaceAction) {
             return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.open' };
           }
           const resolution = await resolveActionSessionAddress(deps, data, ctx, 'session.open');
@@ -53,9 +53,21 @@ export async function dispatchSessionLifecycle1(inv: Pick<CoreInvocation, 'actio
             && destination.comparison.sessionId !== sessionId) {
             return { ok: false, errorCode: 'invalid_parameters', error: 'comparison_session_mismatch' };
           }
+          if (data.presentation === 'window') {
+            if (!deps.desktopWindowsOpen) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:desktop.windows.open' };
+            const accountId = ctx.runtimeAccountId;
+            if (!accountId) return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
+            return settleActionOutput('desktop.windows.open', completeActionResult(await deps.desktopWindowsOpen({
+              input: { target: typeof data.tabId === 'string'
+                ? { kind: 'workspaceTab', accountId, serverId, tabId: data.tabId, ...(destination ? { destination } : {}) }
+                : { kind: 'session', accountId, serverId, sessionId, ...(destination ? { destination } : {}) } }, context: ctx,
+            })));
+          }
+          if (!deps.sessionOpen) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
           const res = await deps.sessionOpen({
             sessionId,
             serverId,
+            ...(data.presentation === 'main' || data.presentation === 'overlay' ? { presentation: data.presentation } : {}),
             ...(data.intent === 'resume' ? { intent: 'resume' as const } : {}),
             ...(data.resumeRequest ? { resumeRequest: data.resumeRequest as SessionResumeRequestV1 } : {}),
             ...(destination ? { destination } : {}),

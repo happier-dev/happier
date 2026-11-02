@@ -1674,6 +1674,7 @@ export type ActionExecutorDeps = Readonly<{
     signal?: AbortSignal;
   }>) => Promise<Readonly<{ kind: 'manager'; address: ActionSessionAddress | null }> | Readonly<{ kind: 'unavailable' }>>;
   sessionOpen: (args: ActionSessionAddress & Readonly<{
+    presentation?: PublicActionInputById['session.open']['presentation'];
     tabId?: string;
     destination?: PublicActionInputById['session.open']['destination'];
     actionRequestId?: string | null;
@@ -2865,6 +2866,21 @@ export type ActionExecutorDeps = Readonly<{
   clipboardWrite?: (args: Readonly<{ text: string; signal?: AbortSignal }>) => Promise<
     z.infer<typeof ClipboardWriteResultSchema> | ActionExecuteFailure
   >;
+
+  /** The desktop app-window lifecycle owns qualified destination presentation. */
+  desktopWindowsOpen?: (args: Readonly<{
+    input: import('../desktopWindowsAction.js').DesktopWindowsOpenInput;
+    context: ActionExecutorContext;
+  }>) => Promise<unknown>;
+
+  /** The native desktop display-choice owner supplies inventory and Automatic resolution. */
+  desktopDisplaysList?: (args: Readonly<{ context: ActionExecutorContext }>) => Promise<unknown>;
+
+  /** The route owns presentation; the native position owner owns movement. */
+  desktopNotchSet?: (args: Readonly<{
+    input: import('../specs/desktopShell.js').DesktopNotchSetInput;
+    context: ActionExecutorContext;
+  }>) => Promise<unknown>;
 
   /** App-shell owners, including the CLI's notice-backed partial Inbox source when no app can answer. */
   appShellAction?: (args: Readonly<{

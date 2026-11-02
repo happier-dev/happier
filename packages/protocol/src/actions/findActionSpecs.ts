@@ -29,6 +29,7 @@ export const UiFindOutputSchema = lazyZodSchema(() => z.union([
 /** Additive client Action: no persistence, remote corpus or second Find decision owner. */
 export const FIND_ACTION_SPECS = [{
   id: 'ui.find', approval: {result: 'required'}, title: 'Find in the current surface',
+  clientPresenter: 'session',
   description: 'Read or control Find on a mounted client surface. Every operation may address a mounted surface id; omission uses the focused surface. Returns coverage/counts when available, or host-known query/options with typed engine-owned count status. Never returns corpus text.',
   safety: 'safe', sideEffectClass: 'external', executionPlacement: 'client', placements: [],
   surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: false, rpc: false },

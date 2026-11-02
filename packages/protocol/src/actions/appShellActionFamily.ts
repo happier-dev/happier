@@ -162,6 +162,7 @@ export const APP_SHELL_ACTION_SPECS = [
   },
   {
     id: 'session.draft.append', approval: {result: 'required'}, title: 'Append to a Session draft',
+    clientPresenter: 'session',
     description: 'Persist an append handoff for the exact Session composer on the invoking Home. Preserves existing draft text and never submits a message.',
     safety: 'safe', sideEffectClass: 'write', requiredAuthority: 'account_automation', executionPlacement: 'client',
     placements: [], bindings: { mcpToolName: 'session_draft_append' },
@@ -175,6 +176,7 @@ export const APP_SHELL_ACTION_SPECS = [
   },
   {
     id: 'session.work.get', approval: {result: 'required'}, title: 'Read Session Work',
+    clientPresenter: 'session',
     description: 'Read the answering client’s mounted canonical Work projection for one exact Session. Unavailable without its mounted owner; never loads a second projection.',
     safety: 'safe', sideEffectClass: 'read', requiredAuthority: 'account_automation', executionPlacement: 'client',
     placements: [], bindings: { mcpToolName: 'session_work_get', voiceClientToolName: 'session_work_get' },

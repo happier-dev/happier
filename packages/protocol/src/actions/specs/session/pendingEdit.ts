@@ -25,6 +25,7 @@ export type SessionPendingEditResultV1 = z.infer<typeof SessionPendingEditResult
 
 export const SESSION_PENDING_EDIT_ACTION_SPECS = [{
   id: 'session.pending.edit', approval: { result: 'required' },
+  clientPresenter: 'session',
   title: 'Edit queued message',
   description: 'Replace an exact queued message through the answering client’s existing Composer admission and Pending writer. Requires a connected client with the pending input loaded.',
   safety: 'safe', sideEffectClass: 'write', executionPlacement: 'client',

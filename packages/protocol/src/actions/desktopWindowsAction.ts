@@ -10,6 +10,7 @@ const scope = { accountId: id, serverId: id };
 
 /** Closed device-local presentation addresses; pane identity stays opaque to Actions. */
 export const DesktopWindowTargetSchema = lazyZodSchema(() => z.discriminatedUnion('kind', [
+  z.strictObject({ kind: z.literal('home'), ...scope }),
   z.strictObject({ kind: z.literal('session'), ...scope, sessionId: id, destination: z.optional(SessionOpenDestinationSchema) }),
   z.extend(z.partial(WorkspaceOwnedTabAddressSchema, { layoutId: true }), { destination: z.optional(SessionOpenDestinationSchema) }),
   z.strictObject({ kind: z.literal('destination'), ...scope, layoutId: z.optional(id), href: id }),
@@ -18,7 +19,10 @@ export const DesktopWindowTargetSchema = lazyZodSchema(() => z.discriminatedUnio
 export const DesktopWindowsOpenInputSchema = lazyZodSchema(() => z.strictObject({
   target: DesktopWindowTargetSchema,
   windowId: z.optional(id),
-}));
+  chrome: z.optional(z.literal('full')),
+}).check(z.refine(input => input.chrome === 'full'
+  ? input.target.kind !== 'workspaceTab' && input.target.kind !== 'paneTab'
+  : input.target.kind !== 'home', { message: 'Full windows accept Home, Session or destination targets; Home requires full chrome' })));
 export const DesktopWindowsOpenResultSchema = lazyZodSchema(() => z.union([
   z.strictObject({ status: z.enum(['opened', 'focused']), windowId: id,
     rect: z.optional(z.strictObject({ x: z.number(), y: z.number(), width: z.number(), height: z.number() })),
@@ -32,7 +36,7 @@ export type DesktopWindowsOpenResult = z.infer<typeof DesktopWindowsOpenResultSc
 export const DESKTOP_WINDOWS_ACTION_SPECS = [{
   id: 'desktop.windows.open', approval: { result: 'optional' },
   title: 'Open in a desktop window',
-  description: 'Move a qualified workspace or pane tab, or open a destination in the answering desktop. Reuses an existing target window; an optional window id retargets it.',
+  description: 'Move a qualified workspace or pane tab, or open a destination in the answering desktop. Full chrome opens an independent workspace; an explicit window id retargets it.',
   safety: 'safe', sideEffectClass: 'external', requiredAuthority: 'account_automation', executionPlacement: 'client',
   invocationServerIdForInput: actionInputServerId(DesktopWindowsOpenInputSchema, (input) => input.target.serverId),
   placements: [], bindings: { mcpToolName: 'desktop_windows_open', voiceClientToolName: 'openDesktopWindow' },

@@ -27,6 +27,7 @@ import { StrictJsonValueSchema } from '../../../json/strictJsonValue.js';
 
 
 export const SessionOpenInputSchema = lazyZodSchema(() => z.strictObject({
+  presentation: z.optional(z.enum(['main', 'overlay', 'window'])),
   tabId: z.optional(z.string().check(z.trim(), z.minLength(1))),
   sessionId: z.optional(SessionTargetV1Schema),
   sessionTitle: z.optional(z.string().check(z.trim(), z.minLength(1))),
@@ -42,7 +43,7 @@ export const SessionOpenInputSchema = lazyZodSchema(() => z.strictObject({
     comparisonId: z.optional(z.string().check(z.regex(/^[a-f0-9]{64}$/))),
   })),
 }).check(z.superRefine((value, ctx) => {
-  if (value.resumeRequest && (value.intent !== 'resume' || value.tabId || value.destination
+  if (value.resumeRequest && (value.intent !== 'resume' || value.tabId || value.destination || value.presentation
     || value.resumeRequest.sessionId !== value.sessionId)) ctx.addIssue({
       code: 'custom', path: ['resumeRequest'], message: 'Resume request requires its exact headless Session address',
     });
@@ -226,7 +227,7 @@ export const SESSION_LIFECYCLE_ACTION_SPECS = Object.freeze([
     // Only explicit resume without a Workspace destination is headless.
     executionPlacementForInput: (input: unknown) =>
       typeof input === 'object' && input !== null && 'intent' in input && input.intent === 'resume'
-        && !('destination' in input) && !('tabId' in input) ? 'session' : 'client',
+        && !('destination' in input) && !('tabId' in input) && !('presentation' in input) ? 'session' : 'client',
     title: 'Open session',
     description: 'Open or resume a session, including Files, Walkthrough or pending-only Commits for an SCM comparison. Explicit fresh-folder consent lets the daemon recover a missing managed folder.',
     sideEffectClass: 'external',
@@ -251,6 +252,9 @@ export const SESSION_LIFECYCLE_ACTION_SPECS = Object.freeze([
         { path: 'tabId', title: 'Workspace tab id (optional)', widget: 'text' },
         { path: 'sessionId', title: 'Session id', prompt: 'Which session?', widget: 'text' },
         { path: 'sessionTitle', title: 'Session title', widget: 'text' },
+        { path: 'presentation', title: 'Presentation', widget: 'select', options: [
+          { value: 'main', label: 'In Happier' }, { value: 'overlay', label: 'In the overlay' }, { value: 'window', label: 'In a window' },
+        ] },
         { path: 'approvedNewDirectoryCreation', title: 'Continue in a fresh folder if the private folder is missing', widget: 'boolean' },
       ],
     },

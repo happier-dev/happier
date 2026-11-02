@@ -20,6 +20,11 @@ import { NpmRegistryProfileActionInputSchemasV1, NpmRegistryProfileActionOutputS
 import { PluginExecutionOriginActionInputSchemas, PluginExecutionOriginActionOutputSchemas,
   type PluginExecutionOriginActionId } from './pluginExecutionOriginActionFamily.js';
 export { ActionPromptingSchema, type ActionPrompting } from './metadata.js';
+export type { DesktopWindowTarget, DesktopWindowsOpenInput, DesktopWindowsOpenResult } from './desktopWindowsAction.js';
+export { DesktopWindowTargetSchema, DesktopWindowsOpenInputSchema, DesktopWindowsOpenResultSchema } from './desktopWindowsAction.js';
+export type { DesktopDisplaysList } from './specs/desktopShell.js';
+export { DesktopDisplaysListResultSchema } from './specs/desktopShell.js';
+export { SessionOpenDestinationSchema, type SessionOpenDestination } from './sessionOpenDestination.js';
 import { SessionPendingWithdrawInputV1Schema, SessionPendingWithdrawResultV1Schema } from '../sessions/control/pendingWithdrawV1.js';
 import { SessionPendingMarkHandledInputV1Schema, SessionPendingDeliveryRecoveryInputV1Schema,
   SessionPendingDeliveryRecoveryResultV1Schema, SessionPendingSendAsNewResultV1Schema } from '../sessions/control/pendingDeliveryRecoveryV1.js';
@@ -583,6 +588,8 @@ const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX_LEAD_OPENING = Object.freeze(defineAc
   ...(APP_UPDATE_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
   ...(UPDATES_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
   ...(CLIPBOARD_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
+  ...(DESKTOP_WINDOWS_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
+  ...(DESKTOP_SHELL_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
   ...(EXTERNAL_LINK_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
   ...(CODE_INTELLIGENCE_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
   ...(VOICE_CONVERSATION_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
