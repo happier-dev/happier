@@ -99,7 +99,7 @@ async function createSourceGeneratorFixture() {
       writeFileSync(join(unrelatedRoot, 'src/manifest.ts'), `export const PLUGIN_MANIFEST = ${JSON.stringify({ ...unrelatedManifest, id: 'happier.unrelated', contributes: {} })};`);
       const generator = join(happyCliDir, 'scripts/build-owned/generateBundledPluginEntries.ts');
       const run = (mode: 'write' | 'check', options: Readonly<{ packageArtifacts?: boolean; workspace?: string; preload?: string }> = {}) => promisify(execFile)(process.execPath,
-        ['--conditions=happier-source', '--import', sourceOnlyLoader, ...(options.preload ? ['--import', options.preload] : []),
+        ['--import', join(repoRoot, 'packages/cli-common/registerSourceRuntime.mjs'), '--conditions=happier-source', '--import', sourceOnlyLoader, ...(options.preload ? ['--import', options.preload] : []),
           '--experimental-strip-types', generator, '--root', repoRoot,
           ...(mode === 'check' && !options.packageArtifacts ? ['--scope', 'projections'] : []),
           ...(options.packageArtifacts ? ['--package-artifacts'] : []),

@@ -1938,6 +1938,26 @@ remain part of that same watcher lifecycle, rather than separate polling owners.
 
 The lifecycle owner consumes validated `AgentSessionRuntimeEvent` evidence, projects turn/transcript facts and supplies the prompt loop's thinking setter. The strict event union is owned by [`runtime/agentSessionV1.ts`](../packages/protocol/src/runtime/agentSessionV1.ts); [`plugins/events/hostV1.ts`](../packages/protocol/src/plugins/events/hostV1.ts) validates Host Event payloads through that same schema. Native callbacks do not become a second host state machine. Historical replay/follow and external-session discovery remain distinct from live input and transcript publication; they must not start another prompt loop or durable transcript writer.
 
+In 0.3 development source, a runtime with a live continuation observer publishes
+`runtimeCapabilities.providerContinuations: { supported: true }`. The existing
+turn invariant retains the host context of admitted main-agent tool calls.
+`provider-continuation-registered` associates a continuation id with that
+parent turn and tool; it carries correlation facts, never permission authority.
+A provider-started turn consumes that registration using `continuationId` and
+the original `causedByTurnId`. Its operations use the retained original input
+context, even after another foreground input has completed. Unknown, released,
+sidechain, and unadvertised origins cannot acquire that context. Ordinary
+provider starts keep their existing admission path.
+
+`provider-continuation-released` retires a registration;
+`provider-tool-contexts-released` retires parent tool contexts after the native
+observer has crossed their registration boundary. Session disposal retires
+both. Historical replay never creates continuation authority. The shared ACP
+composer translates provider-owned evidence into this same host lifecycle;
+transcript, plan, activity, approval, and terminal publication keep their
+existing owners. See the [compatibility ruling](compatibility.md#provider-continuation-authority-03-development-source)
+for the coordinated host/SDK update.
+
 In 0.3 development source, assistant deltas and authoritative committed snapshots
 share an exact message identity and host turn. The Session-owned Run adapter
 projects those snapshots into the strict Run event union; foreground Run results

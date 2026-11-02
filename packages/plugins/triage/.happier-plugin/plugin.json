@@ -5681,6 +5681,28 @@
                     {
                       "additionalProperties": false,
                       "properties": {
+                        "baseOid": {
+                          "pattern": "^[a-f0-9]{40}(?:[a-f0-9]{24})?$",
+                          "type": "string"
+                        },
+                        "headOid": {
+                          "pattern": "^[a-f0-9]{40}(?:[a-f0-9]{24})?$",
+                          "type": "string"
+                        },
+                        "kind": {
+                          "const": "revisionRange"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "baseOid",
+                        "headOid"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
                         "kind": {
                           "const": "pullRequest"
                         },
@@ -5732,6 +5754,10 @@
                                     "localId"
                                   ],
                                   "type": "object"
+                                },
+                                "clientId": {
+                                  "minLength": 1,
+                                  "type": "string"
                                 },
                                 "input": {},
                                 "messageActionReference": {
@@ -31386,6 +31412,48 @@
                       },
                       {
                         "const": "filter"
+                      },
+                      {
+                        "const": "watch"
+                      },
+                      {
+                        "const": "link"
+                      },
+                      {
+                        "const": "tag"
+                      },
+                      {
+                        "const": "asset"
+                      },
+                      {
+                        "const": "branch"
+                      },
+                      {
+                        "const": "commit"
+                      },
+                      {
+                        "const": "download"
+                      },
+                      {
+                        "const": "locked"
+                      },
+                      {
+                        "const": "run"
+                      },
+                      {
+                        "const": "stop"
+                      },
+                      {
+                        "const": "send"
+                      },
+                      {
+                        "const": "generate"
+                      },
+                      {
+                        "const": "workflow"
+                      },
+                      {
+                        "const": "neutral"
                       }
                     ]
                   },
@@ -34103,28 +34171,6 @@
                                     {
                                       "additionalProperties": false,
                                       "properties": {
-                                        "bundleId": {
-                                          "minLength": 1,
-                                          "pattern": ".*\\S.*",
-                                          "type": "string"
-                                        },
-                                        "kind": {
-                                          "const": "app_bundle"
-                                        }
-                                      },
-                                      "required": [
-                                        "kind",
-                                        "bundleId"
-                                      ],
-                                      "type": "object"
-                                    },
-                                    {
-                                      "additionalProperties": false,
-                                      "properties": {
-                                        "declarationDigest": {
-                                          "pattern": "^sha256:[a-f0-9]{64}$",
-                                          "type": "string"
-                                        },
                                         "kind": {
                                           "const": "source_declaration"
                                         },
@@ -34136,8 +34182,7 @@
                                       },
                                       "required": [
                                         "kind",
-                                        "packageName",
-                                        "declarationDigest"
+                                        "packageName"
                                       ],
                                       "type": "object"
                                     }
@@ -34335,28 +34380,6 @@
                                     {
                                       "additionalProperties": false,
                                       "properties": {
-                                        "bundleId": {
-                                          "minLength": 1,
-                                          "pattern": ".*\\S.*",
-                                          "type": "string"
-                                        },
-                                        "kind": {
-                                          "const": "app_bundle"
-                                        }
-                                      },
-                                      "required": [
-                                        "kind",
-                                        "bundleId"
-                                      ],
-                                      "type": "object"
-                                    },
-                                    {
-                                      "additionalProperties": false,
-                                      "properties": {
-                                        "declarationDigest": {
-                                          "pattern": "^sha256:[a-f0-9]{64}$",
-                                          "type": "string"
-                                        },
                                         "kind": {
                                           "const": "source_declaration"
                                         },
@@ -34368,8 +34391,7 @@
                                       },
                                       "required": [
                                         "kind",
-                                        "packageName",
-                                        "declarationDigest"
+                                        "packageName"
                                       ],
                                       "type": "object"
                                     }
@@ -36847,6 +36869,28 @@
                 {
                   "additionalProperties": false,
                   "properties": {
+                    "baseOid": {
+                      "pattern": "^[a-f0-9]{40}(?:[a-f0-9]{24})?$",
+                      "type": "string"
+                    },
+                    "headOid": {
+                      "pattern": "^[a-f0-9]{40}(?:[a-f0-9]{24})?$",
+                      "type": "string"
+                    },
+                    "kind": {
+                      "const": "revisionRange"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "baseOid",
+                    "headOid"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
                     "kind": {
                       "const": "pullRequest"
                     },
@@ -36898,6 +36942,10 @@
                                 "localId"
                               ],
                               "type": "object"
+                            },
+                            "clientId": {
+                              "minLength": 1,
+                              "type": "string"
                             },
                             "input": {},
                             "messageActionReference": {
@@ -40740,28 +40788,6 @@
                                                     {
                                                       "additionalProperties": false,
                                                       "properties": {
-                                                        "bundleId": {
-                                                          "minLength": 1,
-                                                          "pattern": ".*\\S.*",
-                                                          "type": "string"
-                                                        },
-                                                        "kind": {
-                                                          "const": "app_bundle"
-                                                        }
-                                                      },
-                                                      "required": [
-                                                        "kind",
-                                                        "bundleId"
-                                                      ],
-                                                      "type": "object"
-                                                    },
-                                                    {
-                                                      "additionalProperties": false,
-                                                      "properties": {
-                                                        "declarationDigest": {
-                                                          "pattern": "^sha256:[a-f0-9]{64}$",
-                                                          "type": "string"
-                                                        },
                                                         "kind": {
                                                           "const": "source_declaration"
                                                         },
@@ -40773,8 +40799,7 @@
                                                       },
                                                       "required": [
                                                         "kind",
-                                                        "packageName",
-                                                        "declarationDigest"
+                                                        "packageName"
                                                       ],
                                                       "type": "object"
                                                     }
@@ -40972,28 +40997,6 @@
                                                     {
                                                       "additionalProperties": false,
                                                       "properties": {
-                                                        "bundleId": {
-                                                          "minLength": 1,
-                                                          "pattern": ".*\\S.*",
-                                                          "type": "string"
-                                                        },
-                                                        "kind": {
-                                                          "const": "app_bundle"
-                                                        }
-                                                      },
-                                                      "required": [
-                                                        "kind",
-                                                        "bundleId"
-                                                      ],
-                                                      "type": "object"
-                                                    },
-                                                    {
-                                                      "additionalProperties": false,
-                                                      "properties": {
-                                                        "declarationDigest": {
-                                                          "pattern": "^sha256:[a-f0-9]{64}$",
-                                                          "type": "string"
-                                                        },
                                                         "kind": {
                                                           "const": "source_declaration"
                                                         },
@@ -41005,8 +41008,7 @@
                                                       },
                                                       "required": [
                                                         "kind",
-                                                        "packageName",
-                                                        "declarationDigest"
+                                                        "packageName"
                                                       ],
                                                       "type": "object"
                                                     }
@@ -42770,28 +42772,6 @@
                                                           {
                                                             "additionalProperties": false,
                                                             "properties": {
-                                                              "bundleId": {
-                                                                "minLength": 1,
-                                                                "pattern": ".*\\S.*",
-                                                                "type": "string"
-                                                              },
-                                                              "kind": {
-                                                                "const": "app_bundle"
-                                                              }
-                                                            },
-                                                            "required": [
-                                                              "kind",
-                                                              "bundleId"
-                                                            ],
-                                                            "type": "object"
-                                                          },
-                                                          {
-                                                            "additionalProperties": false,
-                                                            "properties": {
-                                                              "declarationDigest": {
-                                                                "pattern": "^sha256:[a-f0-9]{64}$",
-                                                                "type": "string"
-                                                              },
                                                               "kind": {
                                                                 "const": "source_declaration"
                                                               },
@@ -42803,8 +42783,7 @@
                                                             },
                                                             "required": [
                                                               "kind",
-                                                              "packageName",
-                                                              "declarationDigest"
+                                                              "packageName"
                                                             ],
                                                             "type": "object"
                                                           }
@@ -43002,28 +42981,6 @@
                                                           {
                                                             "additionalProperties": false,
                                                             "properties": {
-                                                              "bundleId": {
-                                                                "minLength": 1,
-                                                                "pattern": ".*\\S.*",
-                                                                "type": "string"
-                                                              },
-                                                              "kind": {
-                                                                "const": "app_bundle"
-                                                              }
-                                                            },
-                                                            "required": [
-                                                              "kind",
-                                                              "bundleId"
-                                                            ],
-                                                            "type": "object"
-                                                          },
-                                                          {
-                                                            "additionalProperties": false,
-                                                            "properties": {
-                                                              "declarationDigest": {
-                                                                "pattern": "^sha256:[a-f0-9]{64}$",
-                                                                "type": "string"
-                                                              },
                                                               "kind": {
                                                                 "const": "source_declaration"
                                                               },
@@ -43035,8 +42992,7 @@
                                                             },
                                                             "required": [
                                                               "kind",
-                                                              "packageName",
-                                                              "declarationDigest"
+                                                              "packageName"
                                                             ],
                                                             "type": "object"
                                                           }
@@ -45893,6 +45849,28 @@
                     {
                       "additionalProperties": false,
                       "properties": {
+                        "baseOid": {
+                          "pattern": "^[a-f0-9]{40}(?:[a-f0-9]{24})?$",
+                          "type": "string"
+                        },
+                        "headOid": {
+                          "pattern": "^[a-f0-9]{40}(?:[a-f0-9]{24})?$",
+                          "type": "string"
+                        },
+                        "kind": {
+                          "const": "revisionRange"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "baseOid",
+                        "headOid"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
                         "kind": {
                           "const": "pullRequest"
                         },
@@ -45944,6 +45922,10 @@
                                     "localId"
                                   ],
                                   "type": "object"
+                                },
+                                "clientId": {
+                                  "minLength": 1,
+                                  "type": "string"
                                 },
                                 "input": {},
                                 "messageActionReference": {
@@ -47305,28 +47287,6 @@
                                                     {
                                                       "additionalProperties": false,
                                                       "properties": {
-                                                        "bundleId": {
-                                                          "minLength": 1,
-                                                          "pattern": ".*\\S.*",
-                                                          "type": "string"
-                                                        },
-                                                        "kind": {
-                                                          "const": "app_bundle"
-                                                        }
-                                                      },
-                                                      "required": [
-                                                        "kind",
-                                                        "bundleId"
-                                                      ],
-                                                      "type": "object"
-                                                    },
-                                                    {
-                                                      "additionalProperties": false,
-                                                      "properties": {
-                                                        "declarationDigest": {
-                                                          "pattern": "^sha256:[a-f0-9]{64}$",
-                                                          "type": "string"
-                                                        },
                                                         "kind": {
                                                           "const": "source_declaration"
                                                         },
@@ -47338,8 +47298,7 @@
                                                       },
                                                       "required": [
                                                         "kind",
-                                                        "packageName",
-                                                        "declarationDigest"
+                                                        "packageName"
                                                       ],
                                                       "type": "object"
                                                     }
@@ -47537,28 +47496,6 @@
                                                     {
                                                       "additionalProperties": false,
                                                       "properties": {
-                                                        "bundleId": {
-                                                          "minLength": 1,
-                                                          "pattern": ".*\\S.*",
-                                                          "type": "string"
-                                                        },
-                                                        "kind": {
-                                                          "const": "app_bundle"
-                                                        }
-                                                      },
-                                                      "required": [
-                                                        "kind",
-                                                        "bundleId"
-                                                      ],
-                                                      "type": "object"
-                                                    },
-                                                    {
-                                                      "additionalProperties": false,
-                                                      "properties": {
-                                                        "declarationDigest": {
-                                                          "pattern": "^sha256:[a-f0-9]{64}$",
-                                                          "type": "string"
-                                                        },
                                                         "kind": {
                                                           "const": "source_declaration"
                                                         },
@@ -47570,8 +47507,7 @@
                                                       },
                                                       "required": [
                                                         "kind",
-                                                        "packageName",
-                                                        "declarationDigest"
+                                                        "packageName"
                                                       ],
                                                       "type": "object"
                                                     }
@@ -49335,28 +49271,6 @@
                                                           {
                                                             "additionalProperties": false,
                                                             "properties": {
-                                                              "bundleId": {
-                                                                "minLength": 1,
-                                                                "pattern": ".*\\S.*",
-                                                                "type": "string"
-                                                              },
-                                                              "kind": {
-                                                                "const": "app_bundle"
-                                                              }
-                                                            },
-                                                            "required": [
-                                                              "kind",
-                                                              "bundleId"
-                                                            ],
-                                                            "type": "object"
-                                                          },
-                                                          {
-                                                            "additionalProperties": false,
-                                                            "properties": {
-                                                              "declarationDigest": {
-                                                                "pattern": "^sha256:[a-f0-9]{64}$",
-                                                                "type": "string"
-                                                              },
                                                               "kind": {
                                                                 "const": "source_declaration"
                                                               },
@@ -49368,8 +49282,7 @@
                                                             },
                                                             "required": [
                                                               "kind",
-                                                              "packageName",
-                                                              "declarationDigest"
+                                                              "packageName"
                                                             ],
                                                             "type": "object"
                                                           }
@@ -49567,28 +49480,6 @@
                                                           {
                                                             "additionalProperties": false,
                                                             "properties": {
-                                                              "bundleId": {
-                                                                "minLength": 1,
-                                                                "pattern": ".*\\S.*",
-                                                                "type": "string"
-                                                              },
-                                                              "kind": {
-                                                                "const": "app_bundle"
-                                                              }
-                                                            },
-                                                            "required": [
-                                                              "kind",
-                                                              "bundleId"
-                                                            ],
-                                                            "type": "object"
-                                                          },
-                                                          {
-                                                            "additionalProperties": false,
-                                                            "properties": {
-                                                              "declarationDigest": {
-                                                                "pattern": "^sha256:[a-f0-9]{64}$",
-                                                                "type": "string"
-                                                              },
                                                               "kind": {
                                                                 "const": "source_declaration"
                                                               },
@@ -49600,8 +49491,7 @@
                                                             },
                                                             "required": [
                                                               "kind",
-                                                              "packageName",
-                                                              "declarationDigest"
+                                                              "packageName"
                                                             ],
                                                             "type": "object"
                                                           }
@@ -63653,6 +63543,7 @@
     "composerRegions": [],
     "connectedAccountDescriptors": [],
     "daemonDatabases": [],
+    "deploymentTargets": [],
     "dragSources": [
       {
         "client": {
@@ -63868,6 +63759,7 @@
     ],
     "events": [],
     "executionRunProfiles": [],
+    "healthCheckKinds": [],
     "hooks": [],
     "inputTypes": [
       {
@@ -63995,6 +63887,28 @@
                 {
                   "additionalProperties": false,
                   "properties": {
+                    "baseOid": {
+                      "pattern": "^[a-f0-9]{40}(?:[a-f0-9]{24})?$",
+                      "type": "string"
+                    },
+                    "headOid": {
+                      "pattern": "^[a-f0-9]{40}(?:[a-f0-9]{24})?$",
+                      "type": "string"
+                    },
+                    "kind": {
+                      "const": "revisionRange"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "baseOid",
+                    "headOid"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
                     "kind": {
                       "const": "pullRequest"
                     },
@@ -64046,6 +63960,10 @@
                                 "localId"
                               ],
                               "type": "object"
+                            },
+                            "clientId": {
+                              "minLength": 1,
+                              "type": "string"
                             },
                             "input": {},
                             "messageActionReference": {
@@ -64121,6 +64039,8 @@
     ],
     "languageServers": [],
     "machineProvisioners": [],
+    "machineRecipes": [],
+    "machineSetupPresets": [],
     "managedDependencies": [],
     "mcp": {
       "discoverySources": [],
@@ -70078,6 +69998,28 @@
                             {
                               "additionalProperties": false,
                               "properties": {
+                                "baseOid": {
+                                  "pattern": "^[a-f0-9]{40}(?:[a-f0-9]{24})?$",
+                                  "type": "string"
+                                },
+                                "headOid": {
+                                  "pattern": "^[a-f0-9]{40}(?:[a-f0-9]{24})?$",
+                                  "type": "string"
+                                },
+                                "kind": {
+                                  "const": "revisionRange"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "baseOid",
+                                "headOid"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
                                 "kind": {
                                   "const": "pullRequest"
                                 },
@@ -70129,6 +70071,10 @@
                                             "localId"
                                           ],
                                           "type": "object"
+                                        },
+                                        "clientId": {
+                                          "minLength": 1,
+                                          "type": "string"
                                         },
                                         "input": {},
                                         "messageActionReference": {
@@ -82871,6 +82817,7 @@
         "id": "entry-search"
       }
     ],
+    "secretSources": [],
     "sessionHeaderActions": [],
     "sessionInfoSections": [],
     "settings": [],
@@ -83397,6 +83344,8 @@
             "plugins.triage.surface.detail.sessions": "Sessions",
             "plugins.triage.surface.detail.sessionsLoadFailed": "More linked Sessions could not be loaded.",
             "plugins.triage.surface.detail.source": "Source",
+            "plugins.triage.surface.detail.sourceChanges": "Change on {source}",
+            "plugins.triage.surface.detail.sourceFallback": "the source",
             "plugins.triage.surface.detail.state": "State",
             "plugins.triage.surface.detail.story.agent": "Agent work",
             "plugins.triage.surface.detail.tab.activity": "Activity",
@@ -84015,6 +83964,8 @@
             "plugins.triage.surface.detail.sessions": "Sessions",
             "plugins.triage.surface.detail.sessionsLoadFailed": "Weitere verknüpfte Sessions konnten nicht geladen werden.",
             "plugins.triage.surface.detail.source": "Quelle",
+            "plugins.triage.surface.detail.sourceChanges": "Auf {source} ändern",
+            "plugins.triage.surface.detail.sourceFallback": "der Quelle",
             "plugins.triage.surface.detail.state": "Status",
             "plugins.triage.surface.detail.story.agent": "Arbeit des Agenten",
             "plugins.triage.surface.detail.tab.activity": "Aktivität",
@@ -84633,6 +84584,8 @@
             "plugins.triage.surface.detail.sessions": "Сессии",
             "plugins.triage.surface.detail.sessionsLoadFailed": "Не удалось загрузить другие связанные сеансы.",
             "plugins.triage.surface.detail.source": "Источник",
+            "plugins.triage.surface.detail.sourceChanges": "Изменить в {source}",
+            "plugins.triage.surface.detail.sourceFallback": "источнике",
             "plugins.triage.surface.detail.state": "Состояние",
             "plugins.triage.surface.detail.story.agent": "Работа агента",
             "plugins.triage.surface.detail.tab.activity": "Активность",
@@ -85251,6 +85204,8 @@
             "plugins.triage.surface.detail.sessions": "Sesje",
             "plugins.triage.surface.detail.sessionsLoadFailed": "Nie udało się załadować kolejnych powiązanych sesji.",
             "plugins.triage.surface.detail.source": "Źródło",
+            "plugins.triage.surface.detail.sourceChanges": "Zmień w {source}",
+            "plugins.triage.surface.detail.sourceFallback": "źródle",
             "plugins.triage.surface.detail.state": "Stan",
             "plugins.triage.surface.detail.story.agent": "Praca agenta",
             "plugins.triage.surface.detail.tab.activity": "Aktywność",
@@ -85869,6 +85824,8 @@
             "plugins.triage.surface.detail.sessions": "Sesiones",
             "plugins.triage.surface.detail.sessionsLoadFailed": "No se pudieron cargar más sesiones vinculadas.",
             "plugins.triage.surface.detail.source": "Fuente",
+            "plugins.triage.surface.detail.sourceChanges": "Cambiar en {source}",
+            "plugins.triage.surface.detail.sourceFallback": "la fuente",
             "plugins.triage.surface.detail.state": "Estado",
             "plugins.triage.surface.detail.story.agent": "Trabajo del agente",
             "plugins.triage.surface.detail.tab.activity": "Actividad",
@@ -86487,6 +86444,8 @@
             "plugins.triage.surface.detail.sessions": "Sessions",
             "plugins.triage.surface.detail.sessionsLoadFailed": "Impossible de charger d’autres sessions liées.",
             "plugins.triage.surface.detail.source": "Source",
+            "plugins.triage.surface.detail.sourceChanges": "Modifier sur {source}",
+            "plugins.triage.surface.detail.sourceFallback": "la source",
             "plugins.triage.surface.detail.state": "État",
             "plugins.triage.surface.detail.story.agent": "Travail de l'agent",
             "plugins.triage.surface.detail.tab.activity": "Activité",
@@ -87105,6 +87064,8 @@
             "plugins.triage.surface.detail.sessions": "Sessioni",
             "plugins.triage.surface.detail.sessionsLoadFailed": "Non è stato possibile caricare altre sessioni collegate.",
             "plugins.triage.surface.detail.source": "Origine",
+            "plugins.triage.surface.detail.sourceChanges": "Modifica su {source}",
+            "plugins.triage.surface.detail.sourceFallback": "la fonte",
             "plugins.triage.surface.detail.state": "Stato",
             "plugins.triage.surface.detail.story.agent": "Lavoro dell'agente",
             "plugins.triage.surface.detail.tab.activity": "Attività",
@@ -87723,6 +87684,8 @@
             "plugins.triage.surface.detail.sessions": "Sessões",
             "plugins.triage.surface.detail.sessionsLoadFailed": "Não foi possível carregar mais sessões associadas.",
             "plugins.triage.surface.detail.source": "Fonte",
+            "plugins.triage.surface.detail.sourceChanges": "Alterar no {source}",
+            "plugins.triage.surface.detail.sourceFallback": "a origem",
             "plugins.triage.surface.detail.state": "Estado",
             "plugins.triage.surface.detail.story.agent": "Trabalho do agente",
             "plugins.triage.surface.detail.tab.activity": "Atividade",
@@ -88341,6 +88304,8 @@
             "plugins.triage.surface.detail.sessions": "Sessions",
             "plugins.triage.surface.detail.sessionsLoadFailed": "No s’han pogut carregar més sessions enllaçades.",
             "plugins.triage.surface.detail.source": "Font",
+            "plugins.triage.surface.detail.sourceChanges": "Canvia a {source}",
+            "plugins.triage.surface.detail.sourceFallback": "la font",
             "plugins.triage.surface.detail.state": "Estat",
             "plugins.triage.surface.detail.story.agent": "Feina de l'agent",
             "plugins.triage.surface.detail.tab.activity": "Activitat",
@@ -88959,6 +88924,8 @@
             "plugins.triage.surface.detail.sessions": "会话",
             "plugins.triage.surface.detail.sessionsLoadFailed": "无法加载更多已关联的会话。",
             "plugins.triage.surface.detail.source": "来源",
+            "plugins.triage.surface.detail.sourceChanges": "在 {source} 上更改",
+            "plugins.triage.surface.detail.sourceFallback": "来源",
             "plugins.triage.surface.detail.state": "状态",
             "plugins.triage.surface.detail.story.agent": "代理的工作",
             "plugins.triage.surface.detail.tab.activity": "动态",
@@ -89577,6 +89544,8 @@
             "plugins.triage.surface.detail.sessions": "會話",
             "plugins.triage.surface.detail.sessionsLoadFailed": "無法載入更多已連結的工作階段。",
             "plugins.triage.surface.detail.source": "來源",
+            "plugins.triage.surface.detail.sourceChanges": "在 {source} 上變更",
+            "plugins.triage.surface.detail.sourceFallback": "來源",
             "plugins.triage.surface.detail.state": "狀態",
             "plugins.triage.surface.detail.story.agent": "代理的工作",
             "plugins.triage.surface.detail.tab.activity": "動態",
@@ -90195,6 +90164,8 @@
             "plugins.triage.surface.detail.sessions": "セッション",
             "plugins.triage.surface.detail.sessionsLoadFailed": "ほかのリンク済みセッションを読み込めませんでした。",
             "plugins.triage.surface.detail.source": "ソース",
+            "plugins.triage.surface.detail.sourceChanges": "{source} で変更",
+            "plugins.triage.surface.detail.sourceFallback": "ソース",
             "plugins.triage.surface.detail.state": "状態",
             "plugins.triage.surface.detail.story.agent": "エージェントの作業",
             "plugins.triage.surface.detail.tab.activity": "アクティビティ",

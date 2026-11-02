@@ -3788,6 +3788,23 @@ and `RPC_OUTCOME_UNKNOWN` values remain accepted.
 
 ## Plugin Platform direct-cut frontier
 
+### Provider continuation authority (0.3 development source)
+
+The continuation capability and correlation events extend the strict
+`AgentSessionRuntimeEventV1` contract. They require a matching development
+host and SDK: an older strict consumer cannot safely ignore events that
+establish turn ownership. This is a coordinated change within the unreleased
+Plugin Platform direct-cut frontier, not an independently negotiated deployed
+protocol version. No persisted authority, historical replay grant, 0.2 rollback
+adapter, or compatibility alias is introduced.
+
+The 0.2 implementation retains permission context inside its shared ACP owner.
+The 0.3 implementation uses the existing host turn invariant and native Session
+composition instead; the plugin supplies native correlation only. Both use
+Kimi Code 2.4.1's journal protocol 1.5 alongside the same executing ACP session.
+Unknown journal versions fail the session rather than admitting late work
+without an understood causal origin.
+
 ### Project page author contract (0.3 development source)
 
 Source repository admission canonicalizes the known legacy SCM hosting-provider

@@ -1,10 +1,10 @@
+import { createKimiAgentRuntime } from './agent/runtime/factory.js';
 import { projectAgentCapabilitiesV2FromDefinition } from '@happier-dev/plugin-sdk/agents';
 import { definePlugin } from '@happier-dev/plugin-sdk';
 
 import { AGENT_DEFINITION } from './agent/definition.js';
 import { KIMI_ACP_COMMAND } from './agent/acp/preflight.js';
 import { KIMI_SYSTEM_TOOL_READINESS } from './agent/readiness/declaration.js';
-import { KIMI_TERMINAL_CONTRIBUTION } from './agent/terminal/contribution.js';
 import { kimiExternalSessionsContribution } from './agent/externalSessions/contribution.js';
 import { KIMI_UI_TRANSLATION_BUNDLES } from './ui/translations.js';
 
@@ -34,22 +34,7 @@ export const KIMI_PLUGIN = definePlugin({
       declaration: {
         title: { key: 'agentInput.agent.kimi', fallback: 'Kimi' },
         description: { key: 'profiles.aiBackend.kimiSubtitleExperimental', fallback: 'Kimi coding agent (experimental)' },
-        runtime: {
-          kind: 'acp',
-          transport: {
-            kind: 'stdio',
-            executable: { kind: 'systemTool', id: 'kimi-cli' },
-            args: [...KIMI_ACP_COMMAND.args],
-            timeouts: { initializeMs: 90_000, idleMs: 500, toolCallMs: 120_000 },
-          },
-          definition: {
-            modelConfigOptionId: 'model',
-            mcp: { policy: 'pass_through' },
-            stderrRules: {
-              authenticationErrorDetail: 'Authentication error. Run `kimi login` to re-authenticate, then retry.',
-            },
-          },
-        },
+        runtime: { kind: 'custom' },
         cli: {
           displayName: 'Kimi Code CLI',
           executable: {
@@ -118,8 +103,12 @@ export const KIMI_PLUGIN = definePlugin({
           },
         }),
       },
-      terminal: KIMI_TERMINAL_CONTRIBUTION,
+      factory: createKimiAgentRuntime,
       externalSessions: kimiExternalSessionsContribution,
+      sessionRunnerFactory: {
+        module: './agent/runtime/factory', export: 'createKimiAgentRuntime',
+        externalSessionsExport: 'kimiExternalSessionsContribution', runtimeApiVersion: 1,
+      },
     },
   },
   systemTools: {

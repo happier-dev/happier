@@ -5,6 +5,22 @@
     "agents": [
       {
         "capabilities": {
+          "providerStateSharing": {
+            "config": {
+              "modes": [
+                "isolated"
+              ],
+              "supported": false,
+              "unavailableReason": "not_implemented"
+            },
+            "state": {
+              "modes": [
+                "isolated"
+              ],
+              "supported": false,
+              "unavailableReason": "not_implemented"
+            }
+          },
           "sessions": {
             "cancel": true,
             "catalog": {
@@ -13,7 +29,13 @@
               ]
             },
             "compaction": {
-              "events": true
+              "events": true,
+              "idle": {
+                "defaultEnabled": false,
+                "defaultMinContextTokens": 100000,
+                "mode": "host"
+              },
+              "manual": true
             },
             "configuration": true,
             "delivery": [
@@ -351,13 +373,18 @@
     "composerRegions": [],
     "connectedAccountDescriptors": [],
     "daemonDatabases": [],
+    "deploymentTargets": [],
     "dragSources": [],
     "dropTargets": [],
     "events": [],
     "executionRunProfiles": [],
+    "healthCheckKinds": [],
     "hooks": [],
     "inputTypes": [],
+    "languageServers": [],
     "machineProvisioners": [],
+    "machineRecipes": [],
+    "machineSetupPresets": [],
     "managedDependencies": [],
     "mcp": {
       "discoverySources": [
@@ -386,6 +413,7 @@
     "scmBackends": [],
     "scmHostingProviders": [],
     "searchProviders": [],
+    "secretSources": [],
     "sessionHeaderActions": [],
     "sessionInfoSections": [],
     "settings": [

@@ -5,6 +5,24 @@
     "agents": [
       {
         "capabilities": {
+          "providerStateSharing": {
+            "config": {
+              "modes": [
+                "linked",
+                "copied",
+                "isolated"
+              ],
+              "supported": true
+            },
+            "state": {
+              "modes": [
+                "isolated",
+                "shared"
+              ],
+              "sharedStatePrivacyRiskAcknowledgementRequired": true,
+              "supported": true
+            }
+          },
           "sessions": {
             "cancel": true,
             "delivery": [
@@ -312,13 +330,18 @@
       }
     ],
     "daemonDatabases": [],
+    "deploymentTargets": [],
     "dragSources": [],
     "dropTargets": [],
     "events": [],
     "executionRunProfiles": [],
+    "healthCheckKinds": [],
     "hooks": [],
     "inputTypes": [],
+    "languageServers": [],
     "machineProvisioners": [],
+    "machineRecipes": [],
+    "machineSetupPresets": [],
     "managedDependencies": [
       {
         "architectures": [
@@ -411,6 +434,7 @@
     "scmBackends": [],
     "scmHostingProviders": [],
     "searchProviders": [],
+    "secretSources": [],
     "sessionHeaderActions": [],
     "sessionInfoSections": [],
     "settings": [],

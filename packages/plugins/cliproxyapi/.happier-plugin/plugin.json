@@ -19,13 +19,18 @@
     "composerRegions": [],
     "connectedAccountDescriptors": [],
     "daemonDatabases": [],
+    "deploymentTargets": [],
     "dragSources": [],
     "dropTargets": [],
     "events": [],
     "executionRunProfiles": [],
+    "healthCheckKinds": [],
     "hooks": [],
     "inputTypes": [],
+    "languageServers": [],
     "machineProvisioners": [],
+    "machineRecipes": [],
+    "machineSetupPresets": [],
     "managedDependencies": [],
     "mcp": {
       "discoverySources": [],
@@ -49,7 +54,7 @@
             }
           ],
           "source": "probe",
-          "sourceRegistryVersion": "v7.2.95"
+          "sourceRegistryVersion": "v7.2.95:reasoning-image-capabilities-v2"
         },
         "credential": {
           "kind": "apiKey",
@@ -160,6 +165,308 @@
                 "localId": "openai-codex",
                 "pluginId": "happier.agent.codex"
               },
+              "staticModels": [
+                {
+                  "capabilities": {
+                    "reasoningControls": "unknown",
+                    "toolRoundTrips": "unknown"
+                  },
+                  "id": "codex-auto-review",
+                  "modelOptions": [
+                    {
+                      "currentValue": "low",
+                      "id": "reasoning_effort",
+                      "name": "Thinking",
+                      "options": [
+                        {
+                          "name": "Low",
+                          "value": "low"
+                        },
+                        {
+                          "name": "Medium",
+                          "value": "medium"
+                        },
+                        {
+                          "name": "High",
+                          "value": "high"
+                        },
+                        {
+                          "name": "XHigh",
+                          "value": "xhigh"
+                        }
+                      ],
+                      "type": "select"
+                    }
+                  ],
+                  "name": "codex-auto-review"
+                },
+                {
+                  "capabilities": {
+                    "reasoningControls": "unknown",
+                    "toolRoundTrips": "unknown"
+                  },
+                  "id": "gpt-5.3-codex-spark",
+                  "modelOptions": [
+                    {
+                      "currentValue": "low",
+                      "id": "reasoning_effort",
+                      "name": "Thinking",
+                      "options": [
+                        {
+                          "name": "Low",
+                          "value": "low"
+                        },
+                        {
+                          "name": "Medium",
+                          "value": "medium"
+                        },
+                        {
+                          "name": "High",
+                          "value": "high"
+                        },
+                        {
+                          "name": "XHigh",
+                          "value": "xhigh"
+                        }
+                      ],
+                      "type": "select"
+                    }
+                  ],
+                  "name": "gpt-5.3-codex-spark"
+                },
+                {
+                  "capabilities": {
+                    "reasoningControls": "unknown",
+                    "toolRoundTrips": "unknown"
+                  },
+                  "id": "gpt-5.4",
+                  "modelOptions": [
+                    {
+                      "currentValue": "low",
+                      "id": "reasoning_effort",
+                      "name": "Thinking",
+                      "options": [
+                        {
+                          "name": "Low",
+                          "value": "low"
+                        },
+                        {
+                          "name": "Medium",
+                          "value": "medium"
+                        },
+                        {
+                          "name": "High",
+                          "value": "high"
+                        },
+                        {
+                          "name": "XHigh",
+                          "value": "xhigh"
+                        }
+                      ],
+                      "type": "select"
+                    }
+                  ],
+                  "name": "gpt-5.4"
+                },
+                {
+                  "capabilities": {
+                    "reasoningControls": "unknown",
+                    "toolRoundTrips": "unknown"
+                  },
+                  "id": "gpt-5.4-mini",
+                  "modelOptions": [
+                    {
+                      "currentValue": "low",
+                      "id": "reasoning_effort",
+                      "name": "Thinking",
+                      "options": [
+                        {
+                          "name": "Low",
+                          "value": "low"
+                        },
+                        {
+                          "name": "Medium",
+                          "value": "medium"
+                        },
+                        {
+                          "name": "High",
+                          "value": "high"
+                        },
+                        {
+                          "name": "XHigh",
+                          "value": "xhigh"
+                        }
+                      ],
+                      "type": "select"
+                    }
+                  ],
+                  "name": "gpt-5.4-mini"
+                },
+                {
+                  "capabilities": {
+                    "reasoningControls": "unknown",
+                    "toolRoundTrips": "unknown"
+                  },
+                  "id": "gpt-5.5",
+                  "modelOptions": [
+                    {
+                      "currentValue": "low",
+                      "id": "reasoning_effort",
+                      "name": "Thinking",
+                      "options": [
+                        {
+                          "name": "Low",
+                          "value": "low"
+                        },
+                        {
+                          "name": "Medium",
+                          "value": "medium"
+                        },
+                        {
+                          "name": "High",
+                          "value": "high"
+                        },
+                        {
+                          "name": "XHigh",
+                          "value": "xhigh"
+                        }
+                      ],
+                      "type": "select"
+                    }
+                  ],
+                  "name": "gpt-5.5"
+                },
+                {
+                  "capabilities": {
+                    "reasoningControls": "unknown",
+                    "toolRoundTrips": "unknown"
+                  },
+                  "id": "gpt-5.6-luna",
+                  "modelOptions": [
+                    {
+                      "currentValue": "low",
+                      "id": "reasoning_effort",
+                      "name": "Thinking",
+                      "options": [
+                        {
+                          "name": "Low",
+                          "value": "low"
+                        },
+                        {
+                          "name": "Medium",
+                          "value": "medium"
+                        },
+                        {
+                          "name": "High",
+                          "value": "high"
+                        },
+                        {
+                          "name": "XHigh",
+                          "value": "xhigh"
+                        },
+                        {
+                          "name": "Max",
+                          "value": "max"
+                        }
+                      ],
+                      "type": "select"
+                    }
+                  ],
+                  "name": "gpt-5.6-luna"
+                },
+                {
+                  "capabilities": {
+                    "reasoningControls": "unknown",
+                    "toolRoundTrips": "unknown"
+                  },
+                  "id": "gpt-5.6-sol",
+                  "modelOptions": [
+                    {
+                      "currentValue": "low",
+                      "id": "reasoning_effort",
+                      "name": "Thinking",
+                      "options": [
+                        {
+                          "name": "Low",
+                          "value": "low"
+                        },
+                        {
+                          "name": "Medium",
+                          "value": "medium"
+                        },
+                        {
+                          "name": "High",
+                          "value": "high"
+                        },
+                        {
+                          "name": "XHigh",
+                          "value": "xhigh"
+                        },
+                        {
+                          "name": "Max",
+                          "value": "max"
+                        }
+                      ],
+                      "type": "select"
+                    }
+                  ],
+                  "name": "gpt-5.6-sol"
+                },
+                {
+                  "capabilities": {
+                    "reasoningControls": "unknown",
+                    "toolRoundTrips": "unknown"
+                  },
+                  "id": "gpt-5.6-terra",
+                  "modelOptions": [
+                    {
+                      "currentValue": "low",
+                      "id": "reasoning_effort",
+                      "name": "Thinking",
+                      "options": [
+                        {
+                          "name": "Low",
+                          "value": "low"
+                        },
+                        {
+                          "name": "Medium",
+                          "value": "medium"
+                        },
+                        {
+                          "name": "High",
+                          "value": "high"
+                        },
+                        {
+                          "name": "XHigh",
+                          "value": "xhigh"
+                        },
+                        {
+                          "name": "Max",
+                          "value": "max"
+                        }
+                      ],
+                      "type": "select"
+                    }
+                  ],
+                  "name": "gpt-5.6-terra"
+                },
+                {
+                  "capabilities": {
+                    "reasoningControls": "unknown",
+                    "toolRoundTrips": "unsupported"
+                  },
+                  "id": "gpt-image-1.5",
+                  "name": "gpt-image-1.5"
+                },
+                {
+                  "capabilities": {
+                    "reasoningControls": "unknown",
+                    "toolRoundTrips": "unsupported"
+                  },
+                  "id": "gpt-image-2",
+                  "name": "gpt-image-2"
+                }
+              ],
               "title": {
                 "fallback": "ChatGPT account or pool",
                 "key": "managedPurpose.openai.title"
@@ -180,6 +487,292 @@
                 "localId": "claude-subscription",
                 "pluginId": "happier.agent.claude"
               },
+              "staticModels": [
+                {
+                  "capabilities": {
+                    "reasoningControls": "unknown",
+                    "toolRoundTrips": "unknown"
+                  },
+                  "id": "claude-3-5-haiku-20241022",
+                  "name": "claude-3-5-haiku-20241022"
+                },
+                {
+                  "capabilities": {
+                    "reasoningControls": "unknown",
+                    "toolRoundTrips": "unknown"
+                  },
+                  "id": "claude-3-7-sonnet-20250219",
+                  "name": "claude-3-7-sonnet-20250219"
+                },
+                {
+                  "capabilities": {
+                    "reasoningControls": "unknown",
+                    "toolRoundTrips": "unknown"
+                  },
+                  "id": "claude-fable-5",
+                  "modelOptions": [
+                    {
+                      "currentValue": "low",
+                      "id": "reasoning_effort",
+                      "name": "Thinking",
+                      "options": [
+                        {
+                          "name": "Low",
+                          "value": "low"
+                        },
+                        {
+                          "name": "Medium",
+                          "value": "medium"
+                        },
+                        {
+                          "name": "High",
+                          "value": "high"
+                        },
+                        {
+                          "name": "XHigh",
+                          "value": "xhigh"
+                        },
+                        {
+                          "name": "Max",
+                          "value": "max"
+                        }
+                      ],
+                      "type": "select"
+                    }
+                  ],
+                  "name": "claude-fable-5"
+                },
+                {
+                  "capabilities": {
+                    "reasoningControls": "unknown",
+                    "toolRoundTrips": "unknown"
+                  },
+                  "id": "claude-haiku-4-5-20251001",
+                  "name": "claude-haiku-4-5-20251001"
+                },
+                {
+                  "capabilities": {
+                    "reasoningControls": "unknown",
+                    "toolRoundTrips": "unknown"
+                  },
+                  "id": "claude-opus-4-1-20250805",
+                  "name": "claude-opus-4-1-20250805"
+                },
+                {
+                  "capabilities": {
+                    "reasoningControls": "unknown",
+                    "toolRoundTrips": "unknown"
+                  },
+                  "id": "claude-opus-4-20250514",
+                  "name": "claude-opus-4-20250514"
+                },
+                {
+                  "capabilities": {
+                    "reasoningControls": "unknown",
+                    "toolRoundTrips": "unknown"
+                  },
+                  "id": "claude-opus-4-5-20251101",
+                  "name": "claude-opus-4-5-20251101"
+                },
+                {
+                  "capabilities": {
+                    "reasoningControls": "unknown",
+                    "toolRoundTrips": "unknown"
+                  },
+                  "id": "claude-opus-4-6",
+                  "modelOptions": [
+                    {
+                      "currentValue": "low",
+                      "id": "reasoning_effort",
+                      "name": "Thinking",
+                      "options": [
+                        {
+                          "name": "Low",
+                          "value": "low"
+                        },
+                        {
+                          "name": "Medium",
+                          "value": "medium"
+                        },
+                        {
+                          "name": "High",
+                          "value": "high"
+                        },
+                        {
+                          "name": "Max",
+                          "value": "max"
+                        }
+                      ],
+                      "type": "select"
+                    }
+                  ],
+                  "name": "claude-opus-4-6"
+                },
+                {
+                  "capabilities": {
+                    "reasoningControls": "unknown",
+                    "toolRoundTrips": "unknown"
+                  },
+                  "id": "claude-opus-4-7",
+                  "modelOptions": [
+                    {
+                      "currentValue": "low",
+                      "id": "reasoning_effort",
+                      "name": "Thinking",
+                      "options": [
+                        {
+                          "name": "Low",
+                          "value": "low"
+                        },
+                        {
+                          "name": "Medium",
+                          "value": "medium"
+                        },
+                        {
+                          "name": "High",
+                          "value": "high"
+                        },
+                        {
+                          "name": "XHigh",
+                          "value": "xhigh"
+                        },
+                        {
+                          "name": "Max",
+                          "value": "max"
+                        }
+                      ],
+                      "type": "select"
+                    }
+                  ],
+                  "name": "claude-opus-4-7"
+                },
+                {
+                  "capabilities": {
+                    "reasoningControls": "unknown",
+                    "toolRoundTrips": "unknown"
+                  },
+                  "id": "claude-opus-4-8",
+                  "modelOptions": [
+                    {
+                      "currentValue": "low",
+                      "id": "reasoning_effort",
+                      "name": "Thinking",
+                      "options": [
+                        {
+                          "name": "Low",
+                          "value": "low"
+                        },
+                        {
+                          "name": "Medium",
+                          "value": "medium"
+                        },
+                        {
+                          "name": "High",
+                          "value": "high"
+                        },
+                        {
+                          "name": "XHigh",
+                          "value": "xhigh"
+                        },
+                        {
+                          "name": "Max",
+                          "value": "max"
+                        }
+                      ],
+                      "type": "select"
+                    }
+                  ],
+                  "name": "claude-opus-4-8"
+                },
+                {
+                  "capabilities": {
+                    "reasoningControls": "unknown",
+                    "toolRoundTrips": "unknown"
+                  },
+                  "id": "claude-sonnet-4-20250514",
+                  "name": "claude-sonnet-4-20250514"
+                },
+                {
+                  "capabilities": {
+                    "reasoningControls": "unknown",
+                    "toolRoundTrips": "unknown"
+                  },
+                  "id": "claude-sonnet-4-5-20250929",
+                  "name": "claude-sonnet-4-5-20250929"
+                },
+                {
+                  "capabilities": {
+                    "reasoningControls": "unknown",
+                    "toolRoundTrips": "unknown"
+                  },
+                  "id": "claude-sonnet-4-6",
+                  "modelOptions": [
+                    {
+                      "currentValue": "low",
+                      "id": "reasoning_effort",
+                      "name": "Thinking",
+                      "options": [
+                        {
+                          "name": "Low",
+                          "value": "low"
+                        },
+                        {
+                          "name": "Medium",
+                          "value": "medium"
+                        },
+                        {
+                          "name": "High",
+                          "value": "high"
+                        },
+                        {
+                          "name": "Max",
+                          "value": "max"
+                        }
+                      ],
+                      "type": "select"
+                    }
+                  ],
+                  "name": "claude-sonnet-4-6"
+                },
+                {
+                  "capabilities": {
+                    "reasoningControls": "unknown",
+                    "toolRoundTrips": "unknown"
+                  },
+                  "id": "claude-sonnet-5",
+                  "modelOptions": [
+                    {
+                      "currentValue": "low",
+                      "id": "reasoning_effort",
+                      "name": "Thinking",
+                      "options": [
+                        {
+                          "name": "Low",
+                          "value": "low"
+                        },
+                        {
+                          "name": "Medium",
+                          "value": "medium"
+                        },
+                        {
+                          "name": "High",
+                          "value": "high"
+                        },
+                        {
+                          "name": "XHigh",
+                          "value": "xhigh"
+                        },
+                        {
+                          "name": "Max",
+                          "value": "max"
+                        }
+                      ],
+                      "type": "select"
+                    }
+                  ],
+                  "name": "claude-sonnet-5"
+                }
+              ],
               "title": {
                 "fallback": "Claude account or pool",
                 "key": "managedPurpose.anthropic.title"
@@ -215,7 +808,8 @@
               "purpose": "anthropic-upstream"
             }
           ],
-          "sharing": "connectionMachine"
+          "sharing": "connectionMachine",
+          "sourceEnvelopeTransport": "cpx-v1"
         },
         "name": "CLIProxyAPI",
         "v": 1,
@@ -236,6 +830,7 @@
     "scmBackends": [],
     "scmHostingProviders": [],
     "searchProviders": [],
+    "secretSources": [],
     "sessionHeaderActions": [],
     "sessionInfoSections": [],
     "settings": [],
@@ -352,7 +947,22 @@
   },
   "hostAccess": {
     "optional": [],
-    "required": []
+    "required": [
+      {
+        "capability": "environment",
+        "id": "managed-gateway-environment",
+        "reason": "Configure the managed CLIProxyAPI gateway and its host-owned access bindings.",
+        "scope": {
+          "keys": [
+            "HOST",
+            "PORT",
+            "HAPPIER_CLIPROXYAPI_CONSUMER_ACCESS_PATH",
+            "HAPPIER_CLIPROXYAPI_DOWNSTREAM_BEARER",
+            "HAPPIER_CLIPROXYAPI_MANAGED_PURPOSE_CONFIGURATION"
+          ]
+        }
+      }
+    ]
   },
   "id": "happier.provider.cliproxyapi",
   "runtime": {

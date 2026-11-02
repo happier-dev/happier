@@ -28,6 +28,24 @@ an unknown or unavailable target stays absent.
 
 ---
 
+## Kimi background continuations (0.3 development)
+
+Kimi's custom runtime leaf composes the shared ACP runtime with the host's
+existing file-follow service through an exact journal-path grant scoped to the
+active ACP source lifetime. ACP remains the execution, filesystem, and
+permission transport; the plugin decodes the same session's versioned wire
+journal to supply task-origin continuations omitted by Kimi 2.4.1's ACP stream.
+Journal protocol 1.5 is supported. Unknown protocols, replacement, truncation,
+and read errors fail the session; historical records are skipped on load.
+
+The shared ACP and [host turn owners](runtime-core.md) correlate exact task
+descendants to admitted parent tool calls. A continuation retains its original
+permission context across intervening foreground turns. New, loaded, and
+forked sessions are put in native `default` (manual approval) mode before
+exposure, and native permission-mode controls remain hidden. Cancellation
+closes and reloads the native session to stop pending tasks as well as active
+continuations. A detached idle shell creates no second activity owner.
+
 ## Session compaction capabilities and preferences (0.3 development)
 
 The Agent definition owns `capabilities.sessions.compaction`: `events: true`,

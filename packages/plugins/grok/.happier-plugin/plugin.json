@@ -34,7 +34,7 @@
             ]
           },
           "skills": {
-            "delivery": "none",
+            "delivery": "session_dir",
             "liveReload": "unsupported",
             "nativeDisable": "unsupported",
             "nativeRoots": {
@@ -72,6 +72,9 @@
               ]
             }
           },
+          "surfaces": [
+            "externalSessions"
+          ],
           "tools": {
             "delivery": "native_mcp"
           }
@@ -166,6 +169,39 @@
         "runtime": {
           "kind": "custom"
         },
+        "surfaces": {
+          "externalSession": {
+            "sources": [
+              {
+                "contentSearch": true,
+                "instances": [
+                  {
+                    "constants": {},
+                    "kind": "default"
+                  }
+                ],
+                "key": {
+                  "segments": [
+                    {
+                      "kind": "literal",
+                      "value": "grokHome"
+                    }
+                  ]
+                },
+                "schema": {
+                  "fields": [
+                    {
+                      "kind": "literal",
+                      "name": "kind",
+                      "value": "grokHome"
+                    }
+                  ]
+                },
+                "sourceKind": "grokHome"
+              }
+            ]
+          }
+        },
         "title": {
           "fallback": "Grok",
           "key": "agentInput.agent.grok"
@@ -184,13 +220,18 @@
     "composerRegions": [],
     "connectedAccountDescriptors": [],
     "daemonDatabases": [],
+    "deploymentTargets": [],
     "dragSources": [],
     "dropTargets": [],
     "events": [],
     "executionRunProfiles": [],
+    "healthCheckKinds": [],
     "hooks": [],
     "inputTypes": [],
+    "languageServers": [],
     "machineProvisioners": [],
+    "machineRecipes": [],
+    "machineSetupPresets": [],
     "managedDependencies": [],
     "mcp": {
       "discoverySources": [],
@@ -210,6 +251,7 @@
     "scmBackends": [],
     "scmHostingProviders": [],
     "searchProviders": [],
+    "secretSources": [],
     "sessionHeaderActions": [],
     "sessionInfoSections": [],
     "settings": [],
@@ -384,6 +426,7 @@
         "localAgentId": "grok",
         "locator": {
           "export": "createGrokAgentRuntime",
+          "externalSessionsExport": "grokExternalSessionsContribution",
           "module": "./agent/runtime/factory",
           "runtimeApiVersion": 1
         },

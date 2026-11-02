@@ -31,7 +31,7 @@
             ]
           },
           "skills": {
-            "delivery": "none",
+            "delivery": "session_dir",
             "liveReload": "unsupported",
             "nativeDisable": "unsupported",
             "nativeRoots": {
@@ -73,6 +73,9 @@
               ]
             }
           },
+          "surfaces": [
+            "externalSessions"
+          ],
           "tools": {
             "delivery": "native_mcp"
           }
@@ -163,6 +166,53 @@
         "runtime": {
           "kind": "custom"
         },
+        "surfaces": {
+          "externalSession": {
+            "externalLinkedTakeover": {
+              "writerSafety": "unsupported"
+            },
+            "sources": [
+              {
+                "contentSearch": true,
+                "instances": [
+                  {
+                    "constants": {},
+                    "kind": "default"
+                  }
+                ],
+                "key": {
+                  "segments": [
+                    {
+                      "kind": "literal",
+                      "value": "cursorHome"
+                    },
+                    {
+                      "field": "homeDir",
+                      "kind": "field"
+                    }
+                  ]
+                },
+                "schema": {
+                  "fields": [
+                    {
+                      "kind": "literal",
+                      "name": "kind",
+                      "value": "cursorHome"
+                    },
+                    {
+                      "kind": "string",
+                      "max": 10000,
+                      "min": 1,
+                      "name": "homeDir",
+                      "nullish": true
+                    }
+                  ]
+                },
+                "sourceKind": "cursorHome"
+              }
+            ]
+          }
+        },
         "title": "Cursor"
       }
     ],
@@ -178,13 +228,18 @@
     "composerRegions": [],
     "connectedAccountDescriptors": [],
     "daemonDatabases": [],
+    "deploymentTargets": [],
     "dragSources": [],
     "dropTargets": [],
     "events": [],
     "executionRunProfiles": [],
+    "healthCheckKinds": [],
     "hooks": [],
     "inputTypes": [],
+    "languageServers": [],
     "machineProvisioners": [],
+    "machineRecipes": [],
+    "machineSetupPresets": [],
     "managedDependencies": [],
     "mcp": {
       "discoverySources": [],
@@ -204,6 +259,7 @@
     "scmBackends": [],
     "scmHostingProviders": [],
     "searchProviders": [],
+    "secretSources": [],
     "sessionHeaderActions": [],
     "sessionInfoSections": [],
     "settings": [
@@ -334,9 +390,6 @@
     "workflows": []
   },
   "displayName": "Cursor",
-  "engines": {
-    "happier": "^0.0.0"
-  },
   "entrypoints": {
     "daemon": "./.happier-plugin/daemon.js"
   },
@@ -383,6 +436,7 @@
         "localAgentId": "cursor",
         "locator": {
           "export": "createCursorAgentRuntime",
+          "externalSessionsExport": "cursorExternalSessionsContribution",
           "module": "./agent/runtime/engine",
           "runtimeApiVersion": 1
         },

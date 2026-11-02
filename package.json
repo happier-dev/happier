@@ -138,7 +138,7 @@
     "test:migration:inventory": "node --experimental-strip-types ./scripts/testing/migrations/validateMigrationInventory.ts",
     "test:migration:v2-zero:enforce": "node --experimental-strip-types ./scripts/testing/migrations/validateV2ZeroInventory.ts --enforce",
     "test:migration:wire-compat": "node --experimental-strip-types ./scripts/testing/migrations/validateProtocolWireCompatibilityInventory.ts",
-    "test:migration:bundled-plugin-projections": "node apps/cli/scripts/withNodeHeapLimit.mjs node --conditions=happier-source --experimental-strip-types apps/cli/scripts/build-owned/generateBundledPluginEntries.ts --mode check --scope projections",
+    "test:migration:bundled-plugin-projections": "node apps/cli/scripts/withNodeHeapLimit.mjs node --import ./packages/cli-common/registerSourceRuntime.mjs --conditions=happier-source --experimental-strip-types apps/cli/scripts/build-owned/generateBundledPluginEntries.ts --mode check --scope projections",
     "test:migration:governance": "pnpm --silent run test:migration:v2-zero:enforce && pnpm --silent run test:migration:wire-compat && pnpm --silent run test:migration:bundled-plugin-projections && node --experimental-strip-types scripts/testing/migrations/runtimeUnification/validateReleaseContract.ts",
     "test:extended-db:postgres:docker": "node packages/tests/scripts/run-extended-db-docker.mjs --db postgres --mode extended",
     "test:extended-db:mysql:docker": "node packages/tests/scripts/run-extended-db-docker.mjs --db mysql --mode extended",

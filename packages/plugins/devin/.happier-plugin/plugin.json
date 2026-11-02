@@ -23,13 +23,17 @@
             ]
           },
           "skills": {
-            "delivery": "none",
+            "delivery": "session_dir",
             "liveReload": "unsupported",
             "nativeDisable": "unsupported",
             "nativeRoots": {
               "project": [
                 [
                   ".devin",
+                  "skills"
+                ],
+                [
+                  ".cognition",
                   "skills"
                 ],
                 [
@@ -48,6 +52,11 @@
                   "skills"
                 ],
                 [
+                  ".config",
+                  "cognition",
+                  "skills"
+                ],
+                [
                   ".agents",
                   "skills"
                 ]
@@ -55,7 +64,8 @@
             }
           },
           "surfaces": [
-            "terminal"
+            "terminal",
+            "externalSessions"
           ],
           "tools": {
             "delivery": "native_mcp"
@@ -213,6 +223,12 @@
               "read-only": "ask",
               "safe-yolo": "smart",
               "yolo": "bypass"
+            },
+            "skills": {
+              "sessionDelivery": {
+                "kind": "native_config_skills_dir",
+                "subdirectory": "skills"
+              }
             }
           },
           "kind": "acp",
@@ -225,6 +241,52 @@
               "kind": "systemTool"
             },
             "kind": "stdio"
+          }
+        },
+        "surfaces": {
+          "externalSession": {
+            "externalLinkedTakeover": {
+              "writerSafety": "unsupported"
+            },
+            "sources": [
+              {
+                "contentSearch": true,
+                "instances": [
+                  {
+                    "constants": {},
+                    "kind": "default"
+                  }
+                ],
+                "key": {
+                  "segments": [
+                    {
+                      "kind": "literal",
+                      "value": "devinHome"
+                    },
+                    {
+                      "field": "devinHome",
+                      "kind": "field"
+                    }
+                  ]
+                },
+                "schema": {
+                  "fields": [
+                    {
+                      "kind": "literal",
+                      "name": "kind",
+                      "value": "devinHome"
+                    },
+                    {
+                      "kind": "string",
+                      "min": 1,
+                      "name": "devinHome",
+                      "nullish": true
+                    }
+                  ]
+                },
+                "sourceKind": "devinHome"
+              }
+            ]
           }
         },
         "title": {
@@ -245,13 +307,18 @@
     "composerRegions": [],
     "connectedAccountDescriptors": [],
     "daemonDatabases": [],
+    "deploymentTargets": [],
     "dragSources": [],
     "dropTargets": [],
     "events": [],
     "executionRunProfiles": [],
+    "healthCheckKinds": [],
     "hooks": [],
     "inputTypes": [],
+    "languageServers": [],
     "machineProvisioners": [],
+    "machineRecipes": [],
+    "machineSetupPresets": [],
     "managedDependencies": [],
     "mcp": {
       "discoverySources": [],
@@ -271,6 +338,7 @@
     "scmBackends": [],
     "scmHostingProviders": [],
     "searchProviders": [],
+    "secretSources": [],
     "sessionHeaderActions": [],
     "sessionInfoSections": [],
     "settings": [
@@ -471,6 +539,21 @@
             {
               "id": "devin-cli",
               "kind": "systemTool"
+            }
+          ]
+        }
+      },
+      {
+        "capability": "filesystem",
+        "id": "devin-native-history",
+        "reason": "Read native Devin history as bytes and query a private disposable copy.",
+        "scope": {
+          "access": [
+            "read"
+          ],
+          "locations": [
+            {
+              "root": "workspace"
             }
           ]
         }

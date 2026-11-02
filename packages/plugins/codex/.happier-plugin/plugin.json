@@ -5,6 +5,24 @@
     "agents": [
       {
         "capabilities": {
+          "providerStateSharing": {
+            "config": {
+              "modes": [
+                "linked",
+                "copied",
+                "isolated"
+              ],
+              "supported": true
+            },
+            "state": {
+              "modes": [
+                "isolated",
+                "shared"
+              ],
+              "sharedStatePrivacyRiskAcknowledgementRequired": true,
+              "supported": true
+            }
+          },
           "sessions": {
             "cancel": true,
             "catalog": {
@@ -16,6 +34,15 @@
                 "vendorPlugins",
                 "skills"
               ]
+            },
+            "compaction": {
+              "events": true,
+              "idle": {
+                "defaultEnabled": false,
+                "defaultMinContextTokens": 180000,
+                "mode": "host"
+              },
+              "manual": true
             },
             "configuration": true,
             "continuationVerification": {
@@ -144,6 +171,7 @@
           ],
           "tools": {
             "delivery": "native_mcp",
+            "mcpToolCallIdMetaKey": "callId",
             "mcpToolControl": {
               "approval": "host",
               "off": "hidden"
@@ -328,7 +356,8 @@
             "streaming": true,
             "toolRoundTrips": true
           },
-          "supportsFreeformModelIds": true
+          "supportsFreeformModelIds": true,
+          "supportsReasoningEffort": true
         },
         "runtime": {
           "kind": "custom"
@@ -539,14 +568,19 @@
         "recoveryCredits": {
           "supported": true
         },
-        "title": "ChatGPT"
+        "title": "ChatGPT",
+        "usageIdentity": {
+          "providerId": "openai-codex"
+        }
       }
     ],
     "daemonDatabases": [],
+    "deploymentTargets": [],
     "dragSources": [],
     "dropTargets": [],
     "events": [],
     "executionRunProfiles": [],
+    "healthCheckKinds": [],
     "hooks": [
       {
         "category": "decision",
@@ -572,7 +606,10 @@
       }
     ],
     "inputTypes": [],
+    "languageServers": [],
     "machineProvisioners": [],
+    "machineRecipes": [],
+    "machineSetupPresets": [],
     "managedDependencies": [
       {
         "description": "Codex ACP dependency used by the Codex ACP backend",
@@ -634,6 +671,7 @@
     "scmBackends": [],
     "scmHostingProviders": [],
     "searchProviders": [],
+    "secretSources": [],
     "sessionHeaderActions": [],
     "sessionInfoSections": [],
     "settings": [
@@ -1025,10 +1063,10 @@
         "locator": {
           "export": "createCodexAgentRuntime",
           "externalSessionsExport": "codexExternalSessionsContribution",
-          "module": "./agent/runtime/engine",
+          "module": "./agent/runtime/factory",
           "runtimeApiVersion": 1
         },
-        "normalizedModulePath": ".happier-plugin/agent/runtime/engine.js"
+        "normalizedModulePath": ".happier-plugin/agent/runtime/factory.js"
       }
     ],
     "apiVersion": 1

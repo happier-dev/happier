@@ -923,6 +923,9 @@
                 "outboundTextLimit": {
                   "additionalProperties": false,
                   "properties": {
+                    "formatting": {
+                      "const": "preservesNativeUnits"
+                    },
                     "maximum": {
                       "maximum": 9007199254740991,
                       "minimum": 1,
@@ -1022,6 +1025,53 @@
                       "maxLength": 256,
                       "minLength": 1,
                       "type": "string"
+                    },
+                    "steps": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "copyableValues": {
+                            "items": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "label": {
+                                  "maxLength": 256,
+                                  "minLength": 1,
+                                  "type": "string"
+                                },
+                                "value": {
+                                  "minLength": 1,
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "label",
+                                "value"
+                              ],
+                              "type": "object"
+                            },
+                            "minItems": 1,
+                            "type": "array"
+                          },
+                          "externalUrl": {
+                            "minLength": 1,
+                            "pattern": "^https://[^\\s]+$",
+                            "type": "string",
+                            "x-happier-max-utf8-bytes": 2048
+                          },
+                          "title": {
+                            "maxLength": 256,
+                            "minLength": 1,
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "title"
+                        ],
+                        "type": "object"
+                      },
+                      "minItems": 1,
+                      "type": "array"
                     }
                   },
                   "required": [
@@ -2699,6 +2749,94 @@
             {
               "additionalProperties": false,
               "properties": {
+                "code": {
+                  "anyOf": [
+                    {
+                      "const": "invalidConfiguration"
+                    },
+                    {
+                      "const": "invalidEndpoint"
+                    },
+                    {
+                      "const": "replyContextMissing"
+                    },
+                    {
+                      "const": "replyMessageMismatch"
+                    },
+                    {
+                      "const": "replyThreadMismatch"
+                    },
+                    {
+                      "const": "senderUntrusted"
+                    },
+                    {
+                      "const": "senderNotHuman"
+                    },
+                    {
+                      "const": "integrationSelf"
+                    },
+                    {
+                      "const": "recipientInvalid"
+                    },
+                    {
+                      "const": "credentialInvalid"
+                    },
+                    {
+                      "const": "permissionMissing"
+                    },
+                    {
+                      "const": "network"
+                    },
+                    {
+                      "const": "rateLimited"
+                    },
+                    {
+                      "const": "providerConflict"
+                    },
+                    {
+                      "const": "unsupported"
+                    },
+                    {
+                      "const": "submissionNotStarted"
+                    },
+                    {
+                      "const": "submissionOutcomeUnknown"
+                    },
+                    {
+                      "const": "noRecipientsAccepted"
+                    },
+                    {
+                      "const": "submissionRejected"
+                    },
+                    {
+                      "const": "submissionTemporarilyRejected"
+                    },
+                    {
+                      "const": "sentCopyUnconfirmed"
+                    },
+                    {
+                      "const": "reconciliationUnsupported"
+                    },
+                    {
+                      "const": "reconciliationNotFound"
+                    },
+                    {
+                      "const": "reconciliationMismatch"
+                    },
+                    {
+                      "const": "providerResultInvalid"
+                    },
+                    {
+                      "const": "providerInvocationFailed"
+                    },
+                    {
+                      "const": "providerInvocationUnavailable"
+                    },
+                    {
+                      "const": "contentUnrepresentable"
+                    }
+                  ]
+                },
                 "kind": {
                   "const": "notDelivered"
                 },
@@ -2753,6 +2891,94 @@
             {
               "additionalProperties": false,
               "properties": {
+                "code": {
+                  "anyOf": [
+                    {
+                      "const": "invalidConfiguration"
+                    },
+                    {
+                      "const": "invalidEndpoint"
+                    },
+                    {
+                      "const": "replyContextMissing"
+                    },
+                    {
+                      "const": "replyMessageMismatch"
+                    },
+                    {
+                      "const": "replyThreadMismatch"
+                    },
+                    {
+                      "const": "senderUntrusted"
+                    },
+                    {
+                      "const": "senderNotHuman"
+                    },
+                    {
+                      "const": "integrationSelf"
+                    },
+                    {
+                      "const": "recipientInvalid"
+                    },
+                    {
+                      "const": "credentialInvalid"
+                    },
+                    {
+                      "const": "permissionMissing"
+                    },
+                    {
+                      "const": "network"
+                    },
+                    {
+                      "const": "rateLimited"
+                    },
+                    {
+                      "const": "providerConflict"
+                    },
+                    {
+                      "const": "unsupported"
+                    },
+                    {
+                      "const": "submissionNotStarted"
+                    },
+                    {
+                      "const": "submissionOutcomeUnknown"
+                    },
+                    {
+                      "const": "noRecipientsAccepted"
+                    },
+                    {
+                      "const": "submissionRejected"
+                    },
+                    {
+                      "const": "submissionTemporarilyRejected"
+                    },
+                    {
+                      "const": "sentCopyUnconfirmed"
+                    },
+                    {
+                      "const": "reconciliationUnsupported"
+                    },
+                    {
+                      "const": "reconciliationNotFound"
+                    },
+                    {
+                      "const": "reconciliationMismatch"
+                    },
+                    {
+                      "const": "providerResultInvalid"
+                    },
+                    {
+                      "const": "providerInvocationFailed"
+                    },
+                    {
+                      "const": "providerInvocationUnavailable"
+                    },
+                    {
+                      "const": "contentUnrepresentable"
+                    }
+                  ]
+                },
                 "endpoint": {
                   "anyOf": [
                     {
@@ -3250,6 +3476,232 @@
           "plugin"
         ],
         "title": "Stop Discord Gateway connection"
+      },
+      {
+        "connectedAccountPurposeBindings": [
+          {
+            "path": "credentialRef",
+            "purpose": "discord-bot-credential"
+          }
+        ],
+        "dangerLevel": "safe",
+        "description": "Fetches native files for an admitted Discord message at Session materialization.",
+        "execution": {
+          "target": "daemon"
+        },
+        "hostAccess": [
+          "discord-rest",
+          "discord-attachments",
+          "discord-bot-credential"
+        ],
+        "id": "discord/fetch-attachment",
+        "inputSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "additionalProperties": false,
+          "properties": {
+            "attachmentIds": {
+              "items": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "minItems": 1,
+              "type": "array"
+            },
+            "connectionId": {
+              "maxLength": 96,
+              "minLength": 1,
+              "pattern": "^[\\x21-\\x7E]+$",
+              "type": "string"
+            },
+            "credentialRef": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "accountId": {
+                      "maxLength": 256,
+                      "minLength": 1,
+                      "pattern": "^(?!\\s)[\\s\\S]*\\S$(?![\\s\\S])",
+                      "type": "string"
+                    },
+                    "service": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "localId": {
+                              "maxLength": 256,
+                              "minLength": 1,
+                              "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$(?![\\s\\S])",
+                              "type": "string"
+                            },
+                            "pluginId": {
+                              "maxLength": 256,
+                              "minLength": 3,
+                              "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$(?![\\s\\S])",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "pluginId",
+                            "localId"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "localId": {
+                              "const": "mcp-sign-in"
+                            },
+                            "pluginId": {
+                              "const": "happier"
+                            }
+                          },
+                          "required": [
+                            "pluginId",
+                            "localId"
+                          ],
+                          "type": "object"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "service",
+                    "accountId"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "messageId": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "providerConfig": {
+              "x-happier-max-serialized-utf8-bytes": 49152
+            },
+            "providerConfigVersion": {
+              "const": 1
+            },
+            "providerConnectionKey": {
+              "minLength": 1,
+              "type": "string",
+              "x-happier-max-utf8-bytes": 512
+            },
+            "v": {
+              "const": 1
+            }
+          },
+          "required": [
+            "v",
+            "connectionId",
+            "providerConnectionKey",
+            "providerConfigVersion",
+            "providerConfig",
+            "credentialRef",
+            "messageId",
+            "attachmentIds"
+          ],
+          "type": "object"
+        },
+        "resultSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "attachments": {
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "attachmentId": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "base64": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "attachmentId",
+                      "base64"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                },
+                "kind": {
+                  "const": "fetched"
+                }
+              },
+              "required": [
+                "kind",
+                "attachments"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "diagnostic": {
+                  "minLength": 1,
+                  "type": "string",
+                  "x-happier-max-utf8-bytes": 1024
+                },
+                "kind": {
+                  "const": "notReady"
+                },
+                "reason": {
+                  "anyOf": [
+                    {
+                      "const": "credentialInvalid"
+                    },
+                    {
+                      "const": "permissionMissing"
+                    },
+                    {
+                      "const": "network"
+                    },
+                    {
+                      "const": "rateLimited"
+                    },
+                    {
+                      "const": "providerConflict"
+                    },
+                    {
+                      "const": "unsupported"
+                    },
+                    {
+                      "const": "invalidConfiguration"
+                    }
+                  ]
+                },
+                "retryAfterMs": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "kind",
+                "reason"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "scopes": [
+          "global"
+        ],
+        "surfaces": [
+          "plugin"
+        ],
+        "title": "Fetch Discord attachments"
       }
     ],
     "agents": [],
@@ -3302,6 +3754,7 @@
       }
     ],
     "daemonDatabases": [],
+    "deploymentTargets": [],
     "dragSources": [],
     "dropTargets": [],
     "events": [
@@ -3456,9 +3909,13 @@
       }
     ],
     "executionRunProfiles": [],
+    "healthCheckKinds": [],
     "hooks": [],
     "inputTypes": [],
+    "languageServers": [],
     "machineProvisioners": [],
+    "machineRecipes": [],
+    "machineSetupPresets": [],
     "managedDependencies": [],
     "mcp": {
       "discoverySources": [],
@@ -3485,6 +3942,7 @@
     "scmBackends": [],
     "scmHostingProviders": [],
     "searchProviders": [],
+    "secretSources": [],
     "sessionHeaderActions": [],
     "sessionInfoSections": [],
     "settings": [],
@@ -3492,8 +3950,13 @@
     "systemTools": [],
     "targetedPluginContributions": [
       {
+        "descriptor": {
+          "displayName": "Discord",
+          "v": 1
+        },
         "id": "discord-provider",
         "operations": {
+          "attachmentFetch": "discord/fetch-attachment",
           "automationEventAdmit": "discord/admit-automation-event",
           "connectionStop": "discord/halt-gateway",
           "connectionTest": "discord/inspect-connection",
@@ -3755,6 +4218,22 @@
             {
               "kind": "fixedOrigin",
               "origin": "https://discord.com"
+            }
+          ]
+        }
+      },
+      {
+        "capability": "network",
+        "id": "discord-attachments",
+        "reason": "Download admitted Discord files from refreshed native attachment URLs.",
+        "scope": {
+          "methods": [
+            "GET"
+          ],
+          "targets": [
+            {
+              "kind": "fixedOrigin",
+              "origin": "https://cdn.discordapp.com"
             }
           ]
         }

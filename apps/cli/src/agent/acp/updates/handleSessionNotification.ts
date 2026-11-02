@@ -80,6 +80,7 @@ export async function handleAcpSessionNotification(params: Readonly<{
   getToolCallCountSincePrompt?: () => number;
   emit: (message: AgentMessage) => void;
   sessionModeState: SessionModeState | null;
+  disableSessionModeUpdates?: boolean;
   setSessionModeState: (state: SessionModeState) => void;
   sessionModelState: SessionModelState | null;
   setSessionModelState: (state: SessionModelState) => void;
@@ -246,6 +247,7 @@ export async function handleAcpSessionNotification(params: Readonly<{
     }
 
     if (sessionUpdateType === 'current_mode_update') {
+      if (params.disableSessionModeUpdates) return;
       const modeId = typeof update.currentModeId === 'string' ? update.currentModeId : null;
       if (modeId && sessionModeState) {
         sessionModeState = {
@@ -287,7 +289,7 @@ export async function handleAcpSessionNotification(params: Readonly<{
       const configOptionsCandidate = (update as { configOptions?: unknown }).configOptions;
       const configOptionsRaw = Array.isArray(configOptionsCandidate) ? configOptionsCandidate : null;
       if (configOptionsRaw) {
-        sessionConfigOptionsState = normalizeSessionConfigOptions(configOptionsRaw);
+        sessionConfigOptionsState = normalizeSessionConfigOptions(configOptionsRaw, params.disableSessionModeUpdates);
         params.setSessionConfigOptionsState(sessionConfigOptionsState);
         const projectedModelState = params.deriveSessionModelState?.(sessionConfigOptionsState) ?? null;
         if (projectedModelState) {

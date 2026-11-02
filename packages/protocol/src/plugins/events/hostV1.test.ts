@@ -9,6 +9,7 @@ import {
   AutomationRunStateChangedHostEventV1Schema,
   HOST_EVENT_CATALOG_V1,
   HAPPIER_AUTOMATION_RUN_STATE_CHANGED_HOST_EVENT_ID_V1,
+  HAPPIER_HEALTH_CHECK_HEARTBEAT_RECEIVED_HOST_EVENT_ID_V1,
   isAuthoritativeAutomationRunCancellationCauseV1,
   type HostEventEnvelopeV1,
   type HostEventPayloadByIdV1,
@@ -37,9 +38,10 @@ describe('Host Events V1 catalog', () => {
       ...expected,
       HAPPIER_AUTOMATION_RUN_STATE_CHANGED_HOST_EVENT_ID_V1,
       '@happier/automation/event-sources-invalidated',
+      HAPPIER_HEALTH_CHECK_HEARTBEAT_RECEIVED_HOST_EVENT_ID_V1,
     ]);
-    expect(new Set(HOST_EVENT_CATALOG_V1.map((entry) => entry.id)).size).toBe(expected.length + 2);
-    expect(HOST_EVENT_CATALOG_V1).toHaveLength(AGENT_SESSION_RUNTIME_EVENT_KINDS_V1.length + 2);
+    expect(new Set(HOST_EVENT_CATALOG_V1.map((entry) => entry.id)).size).toBe(expected.length + 3);
+    expect(HOST_EVENT_CATALOG_V1).toHaveLength(AGENT_SESSION_RUNTIME_EVENT_KINDS_V1.length + 3);
     const runtimeEntries = HOST_EVENT_CATALOG_V1.filter((entry) => entry.id.startsWith('@happier/runtime/'));
     expect(runtimeEntries.every((entry) => (
       entry.canonicalProducer === 'centralized-host-session-runtime'

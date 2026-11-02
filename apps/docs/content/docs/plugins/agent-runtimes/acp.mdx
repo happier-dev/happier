@@ -92,3 +92,24 @@ factories. Only a genuinely execution-only Agent registers a standalone
 `executionRuns` factory. Do not create a second
 public session or run state machine. [Add an Agent](/plugins/guides/agent-modes)
 maps the four valid Agent modes.
+
+## Native background continuations
+
+In development source, a custom ACP composition can supply a
+`providerTurnSource` when the Agent exposes exact native task and turn
+correlation outside its ACP stream. The source registers each continuation
+against an admitted parent tool call, supplies ordered updates through the
+returned turn sink, and finishes with the native terminal outcome. A late
+assistant chunk alone cannot open a turn.
+
+Use the source host's `followJournal` method for the exact native journal
+validated by the adapter. It uses the existing transcript follower with a path
+grant that ends with the ACP source lifetime. Resolve the journal from the
+source host's finalized process environment. Release parent tool contexts after
+their registration boundary and dispose the observer with its Session. Historical replay cannot establish a new live continuation.
+The composer and host retain permission authority; the source supplies
+correlation evidence only. Kimi's journal observer is the current consumer.
+
+This seam requires matching development host and SDK versions. It does not
+change the declarative ACP manifest or authorize a plugin to create its own
+permission or activity owner.

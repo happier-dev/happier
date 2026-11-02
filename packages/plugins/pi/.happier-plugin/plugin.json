@@ -5,10 +5,32 @@
     "agents": [
       {
         "capabilities": {
+          "providerStateSharing": {
+            "config": {
+              "modes": [
+                "isolated"
+              ],
+              "supported": false,
+              "unavailableReason": "not_implemented"
+            },
+            "state": {
+              "modes": [
+                "isolated",
+                "shared"
+              ],
+              "sharedStatePrivacyRiskAcknowledgementRequired": true,
+              "supported": true
+            }
+          },
           "sessions": {
             "cancel": true,
             "compaction": {
               "events": true,
+              "idle": {
+                "defaultEnabled": false,
+                "defaultMinContextTokens": 100000,
+                "mode": "host"
+              },
               "manual": true
             },
             "configuration": true,
@@ -271,13 +293,18 @@
     "composerRegions": [],
     "connectedAccountDescriptors": [],
     "daemonDatabases": [],
+    "deploymentTargets": [],
     "dragSources": [],
     "dropTargets": [],
     "events": [],
     "executionRunProfiles": [],
+    "healthCheckKinds": [],
     "hooks": [],
     "inputTypes": [],
+    "languageServers": [],
     "machineProvisioners": [],
+    "machineRecipes": [],
+    "machineSetupPresets": [],
     "managedDependencies": [],
     "mcp": {
       "discoverySources": [],
@@ -297,6 +324,7 @@
     "scmBackends": [],
     "scmHostingProviders": [],
     "searchProviders": [],
+    "secretSources": [],
     "sessionHeaderActions": [],
     "sessionInfoSections": [],
     "settings": [

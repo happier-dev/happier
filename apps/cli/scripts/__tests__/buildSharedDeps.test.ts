@@ -452,6 +452,43 @@ describe('buildSharedDeps', () => {
     }
   });
 
+  it('preloads source resolution before linking the canonical publisher graph', async () => {
+    const { repoRoot, happyCliDir, cleanup } = createPackageLayoutSandbox('happier-publisher-source-preload-');
+    try {
+      writeFileSync(join(repoRoot, 'package.json'), JSON.stringify({ name: 'fixture', private: true, type: 'module' }));
+      const scriptDir = join(happyCliDir, 'scripts');
+      const generatorDir = join(scriptDir, 'build-owned');
+      const dependencyDir = join(repoRoot, 'packages', 'publisher-source-fixture');
+      mkdirSync(generatorDir, { recursive: true });
+      mkdirSync(join(dependencyDir, 'src'), { recursive: true });
+      mkdirSync(join(repoRoot, 'packages'), { recursive: true });
+      symlinkSync(join(sourceRepoRoot, 'packages', 'cli-common'), join(repoRoot, 'packages', 'cli-common'), 'dir');
+      mkdirSync(join(repoRoot, 'node_modules'), { recursive: true });
+      symlinkSync(dependencyDir, join(repoRoot, 'node_modules', 'publisher-source-fixture'), 'dir');
+      mkdirSync(join(repoRoot, 'scripts', 'testing'), { recursive: true });
+      symlinkSync(join(sourceRepoRoot, 'scripts', 'testing', 'process'), join(repoRoot, 'scripts', 'testing', 'process'), 'dir');
+      cpSync(join(cliScriptsSourceDir, 'withNodeHeapLimit.mjs'), join(scriptDir, 'withNodeHeapLimit.mjs'));
+      writeFileSync(join(dependencyDir, 'package.json'), JSON.stringify({
+        name: 'publisher-source-fixture', type: 'module',
+        exports: { 'happier-source': './src/index.ts', default: './missing-dist.js' },
+      }));
+      writeFileSync(join(dependencyDir, 'src/index.ts'), "export { value } from './value.js';\n");
+      writeFileSync(join(dependencyDir, 'src/value.ts'), "export const value: string = 'authored-source';\n");
+      writeFileSync(join(generatorDir, 'generateBundledPluginEntries.ts'), [
+        "import '../../../../packages/cli-common/registerSourceRuntime.mjs';",
+        "import { value } from 'publisher-source-fixture';",
+        "import { writeFileSync } from 'node:fs';",
+        "writeFileSync(process.env.PUBLISHER_RESULT_PATH, value);",
+      ].join('\n'));
+      const resultPath = join(repoRoot, 'publisher-result.txt');
+      await expect(runCanonicalBundledPluginArtifactPublisher({
+        repoRoot, mode: 'check', quiet: true,
+        env: { ...process.env, NODE_OPTIONS: '', PUBLISHER_RESULT_PATH: resultPath },
+      })).resolves.toBe(true);
+      expect(readFileSync(resultPath, 'utf8')).toBe('authored-source');
+    } finally { cleanup(); }
+  });
+
   it('retains a quiet bundled Plugin publisher failure diagnostic', async () => {
     const repoRoot = createTempDirSync('happier-cli-bundled-publisher-diagnostic-');
     try {

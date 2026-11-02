@@ -1,3 +1,5 @@
+import { createAcpProviderJournalFollower } from '@/plugins/runtime/context/transcripts/acpProviderJournal';
+import { createPublicProviderTurns } from './providerTurns';
 import { redactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports/redaction';
 import { PluginAgentAcpTransportSchema } from '@happier-dev/protocol/plugins/contributions/agentAcpTransport';
 import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
@@ -981,6 +983,7 @@ async function createPublicAcpConversationFromAwaitableAdapter(
             toolName,
             input: sidechainId && isRecord(input.data) ? { ...input.data, sidechainId } : input.data,
           });
+          providerTurns?.capture(message.callId, Object.freeze({ ...turn }));
         }
         return;
       }
@@ -1014,6 +1017,8 @@ async function createPublicAcpConversationFromAwaitableAdapter(
                 replayBackend = createAcpBackend({
                   ...backendOptions,
                   extensions: [],
+                  providerTurnSource: undefined,
+                  providerTurnLifecycle: undefined,
                   createExtensionContext: undefined,
                   onProcessExit: undefined,
                   onConnectionLost: undefined,
@@ -1162,6 +1167,110 @@ async function createPublicAcpConversationFromAwaitableAdapter(
     observeTransportTermination({ kind: 'connectionLost', detail: loss.detail });
   };
 
+  function observeTurnCompletion(turn: ActiveTurn): void {
+      void backend.waitForResponseComplete().then(async () => {
+        await backendMessageProjectionTail;
+        const outcome = backend.getLastTurnOutcome();
+        const current = activeTurn;
+        if (!current || current.turnId !== turn.turnId || disposed || runtimeEnded) return;
+        const usageLimitFailure = !current.cancelCause
+          && (!outcome || outcome.kind === 'completed' || outcome.kind === 'refused')
+          ? classifyDeclaredUsageLimitDiagnostic(current) : null;
+        if (usageLimitFailure) {
+          publish({ kind: 'turn-failed', turnId: turn.turnId, diagnostic: usageLimitFailure });
+        } else if (outcome?.kind === 'aborted') {
+          publish({
+            kind: 'turn-cancelled',
+            turnId: turn.turnId,
+            cause: current.cancelCause ?? 'providerCancelled',
+          });
+        } else if (outcome?.kind === 'refused') {
+          publish({
+            kind: 'turn-failed',
+            turnId: turn.turnId,
+            diagnostic: diagnostic('acp_turn_refused'),
+          });
+        } else if (outcome?.kind === 'failed' || outcome?.kind === 'timed_out') {
+          publish({
+            kind: 'turn-failed',
+            turnId: turn.turnId,
+            diagnostic: diagnostic(
+              outcome.kind === 'timed_out'
+                ? 'acp_turn_timed_out'
+                : isWorkflowInteractionCapacityError(outcome.error)
+                  ? WORKFLOW_INTERACTION_CAPACITY_EXCEEDED
+                  : 'acp_turn_failed',
+              outcome.kind === 'failed' ? outcome.error.message : undefined,
+              outcome.kind === 'failed' ? outcome.error : undefined,
+            ),
+          });
+        } else {
+          if (current.providerCheckpoint !== null && !current.providerCheckpointAmbiguous) {
+            publish({
+              kind: 'turn-rollback-boundary',
+              turnId: turn.turnId,
+              providerCheckpoint: current.providerCheckpoint,
+            });
+          }
+          publish({ kind: 'turn-complete', turnId: turn.turnId });
+        }
+        activeTurn = null;
+        await backend.catchUpProviderTurns();
+      }).catch(async (error) => {
+        await backendMessageProjectionTail;
+        const current = activeTurn;
+        if (!current || current.turnId !== turn.turnId || disposed || runtimeEnded) return;
+        publish({
+          kind: current.cancelCause || (error instanceof Error && error.name === 'AbortError') ? 'turn-cancelled' : 'turn-failed',
+          turnId: turn.turnId,
+          ...(current.cancelCause || (error instanceof Error && error.name === 'AbortError')
+            ? { cause: current.cancelCause ?? 'providerCancelled' }
+            : {
+                diagnostic: diagnostic(
+                  isWorkflowInteractionCapacityError(error)
+                    ? WORKFLOW_INTERACTION_CAPACITY_EXCEEDED
+                    : 'acp_turn_failed',
+                  error instanceof Error ? error.message : undefined,
+                  error,
+                ),
+              }),
+        } as UnsequencedAgentSessionRuntimeEvent);
+        activeTurn = null;
+        await backend.catchUpProviderTurns();
+      }).finally(() => {
+        if (pendingTransportTermination) {
+          const termination = pendingTransportTermination;
+          pendingTransportTermination = null;
+          observeTransportTermination(termination);
+        }
+      }).catch((error) => {
+        // A source can retire while the already-published terminal drains its journal.
+        if (!disposed && !runtimeEnded) {
+          logger.debug(`[${dependencies.agentId}] ACP terminal follow-up failed`, error);
+        }
+      });
+  }
+
+  const providerTurns = options.providerTurnSource ? createPublicProviderTurns<ActiveTurn>({
+    isCurrent: () => !disposed && !runtimeEnded && !dependencies.signal.aborted && dependencies.isCurrent(),
+    canBegin: () => activeTurn === null,
+    flush: async () => { await backendMessageProjectionTail; await publishTail; },
+    publish,
+    begin: ({ parent, continuationId, agentTurnId }) => {
+      const turn: ActiveTurn = {
+        ...parent, turnId: randomUUID(), cancelCause: null, submissionSettled: true,
+        assistantSegmentText: '', lastModelOutputText: '', providerCheckpoint: null,
+        providerCheckpointAmbiguous: false,
+      };
+      activeTurn = turn;
+      emittedToolCallIds = new Map();
+      publish({ kind: 'turn-start', turnId: turn.turnId, agentTurnId, startedBy: 'provider',
+        causedByTurnId: parent.turnId, continuationId });
+      // The low-level source driver initializes its generation in this same call stack.
+      queueMicrotask(() => observeTurnCompletion(turn));
+    },
+  }) : null;
+
   const authMethodId = readAuthMethodId(options);
   const authSelector = readAuthSelector(options);
   const parameterizedModelPicker = readParameterizedModelPicker(options);
@@ -1277,6 +1386,17 @@ async function createPublicAcpConversationFromAwaitableAdapter(
   );
   const authenticationSetupFailure = options.definition?.auth?.setupFailure;
   const backendOptions: CreateAcpBackendOptions = {
+    ...(options.providerTurnSource && providerTurns ? {
+      providerTurnSource: options.providerTurnSource,
+      providerTurnLifecycle: providerTurns.lifecycle,
+      providerJournalFollower: createAcpProviderJournalFollower({
+        pluginId: dependencies.pluginId, runtimeId: `acp-observer:${randomUUID()}`,
+        scope: 'sessionId' in request ? { kind: 'session', sessionId: request.sessionId }
+          : { kind: 'execution_run', executionRunId: request.runId },
+      }),
+    } : {}),
+    initialSessionModeId: options.initialSessionModeId,
+    disableSessionModeUpdates: options.disableSessionModeUpdates,
     agentName: dependencies.agentId,
     cwd: launch.kind === 'stdio' ? launch.cwd ?? request.cwd : request.cwd,
     ...(launch.kind === 'stdio'
@@ -1828,6 +1948,7 @@ async function createPublicAcpConversationFromAwaitableAdapter(
       const capabilities = backend.getNegotiatedSessionCapabilities();
       return {
         localControl: null,
+        ...(options.providerTurnSource ? { providerContinuations: { supported: true } } : {}),
         sessionCapabilities: {
           sessionListing: capabilities.listSessions ? 'supported' : 'unsupported',
           sessionFork: {
@@ -2046,6 +2167,10 @@ async function createPublicAcpConversationFromAwaitableAdapter(
         }
         throw error;
       }
+      // Prompt projection can yield while the native source admits a continuation.
+      if (activeTurn) {
+        return { status: 'rejected' as const, diagnostic: diagnostic('acp_turn_already_active'), retryable: true };
+      }
       const turn: ActiveTurn = {
         turnId: sendRequest.delivery.turnId,
         inputIds: sendRequest.inputIds,
@@ -2192,84 +2317,7 @@ async function createPublicAcpConversationFromAwaitableAdapter(
           async () => await emitBackendMessage(message, turn),
         );
       }
-      void backend.waitForResponseComplete().then(async () => {
-        await backendMessageProjectionTail;
-        const outcome = backend.getLastTurnOutcome();
-        const current = activeTurn;
-        if (!current || current.turnId !== turn.turnId || disposed || runtimeEnded) return;
-        const usageLimitFailure = !current.cancelCause
-          && (!outcome || outcome.kind === 'completed' || outcome.kind === 'refused')
-          ? classifyDeclaredUsageLimitDiagnostic(current) : null;
-        if (usageLimitFailure) {
-          publish({ kind: 'turn-failed', turnId: turn.turnId, diagnostic: usageLimitFailure });
-        } else if (outcome?.kind === 'aborted') {
-          publish({
-            kind: 'turn-cancelled',
-            turnId: turn.turnId,
-            cause: current.cancelCause ?? 'providerCancelled',
-          });
-        } else if (outcome?.kind === 'refused') {
-          publish({
-            kind: 'turn-failed',
-            turnId: turn.turnId,
-            diagnostic: diagnostic('acp_turn_refused'),
-          });
-        } else if (outcome?.kind === 'failed' || outcome?.kind === 'timed_out') {
-          publish({
-            kind: 'turn-failed',
-            turnId: turn.turnId,
-            diagnostic: diagnostic(
-              outcome.kind === 'timed_out'
-                ? 'acp_turn_timed_out'
-                : isWorkflowInteractionCapacityError(outcome.error)
-                  ? WORKFLOW_INTERACTION_CAPACITY_EXCEEDED
-                  : 'acp_turn_failed',
-              outcome.kind === 'failed' ? outcome.error.message : undefined,
-              outcome.kind === 'failed' ? outcome.error : undefined,
-            ),
-          });
-        } else {
-          if (current.providerCheckpoint !== null && !current.providerCheckpointAmbiguous) {
-            publish({
-              kind: 'turn-rollback-boundary',
-              turnId: turn.turnId,
-              providerCheckpoint: current.providerCheckpoint,
-            });
-          }
-          publish({ kind: 'turn-complete', turnId: turn.turnId });
-        }
-        activeTurn = null;
-        if (pendingTransportTermination) {
-          const termination = pendingTransportTermination;
-          pendingTransportTermination = null;
-          observeTransportTermination(termination);
-        }
-      }).catch(async (error) => {
-        await backendMessageProjectionTail;
-        const current = activeTurn;
-        if (!current || current.turnId !== turn.turnId || disposed || runtimeEnded) return;
-        publish({
-          kind: current.cancelCause ? 'turn-cancelled' : 'turn-failed',
-          turnId: turn.turnId,
-          ...(current.cancelCause
-            ? { cause: current.cancelCause }
-            : {
-                diagnostic: diagnostic(
-                  isWorkflowInteractionCapacityError(error)
-                    ? WORKFLOW_INTERACTION_CAPACITY_EXCEEDED
-                    : 'acp_turn_failed',
-                  error instanceof Error ? error.message : undefined,
-                  error,
-                ),
-              }),
-        } as UnsequencedAgentSessionRuntimeEvent);
-        activeTurn = null;
-        if (pendingTransportTermination) {
-          const termination = pendingTransportTermination;
-          pendingTransportTermination = null;
-          observeTransportTermination(termination);
-        }
-      });
+      observeTurnCompletion(turn);
       };
       if (submissionResult.kind === 'submitted_to_transport') {
         void submissionResult.settlement.then(finalizeSubmission);
