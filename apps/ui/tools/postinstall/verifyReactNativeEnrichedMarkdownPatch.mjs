@@ -34,6 +34,13 @@ export function verifyReactNativeEnrichedMarkdownPatch({ packageDir }) {
         'text',
         'TailFadeInAnimator.kt',
     );
+    const androidMarkdownDirectory = path.resolve(packageDir, 'android/src/main/java/com/swmansion/enriched/markdown');
+    const androidSpanIndexFiles = [
+        ['renderer/Renderer.kt', 'MarkdownSpannableFactory.newSpannable(builder)'],
+        ['utils/text/MarkdownSpannableFactory.kt', 'is SpannableStringBuilder -> InsertionOrderedSpannable(source)'],
+        ['utils/text/view/TextViewSetup.kt', 'setSpannableFactory(MarkdownSpannableFactory)'],
+        ['views/TableContainerView.kt', 'setSpannableFactory(MarkdownSpannableFactory)'],
+    ].map(([relativePath, marker]) => ({ filePath: path.join(androidMarkdownDirectory, relativePath), marker }));
 
     const requiredPaths = [
         enrichedMarkdownTextPath,
@@ -48,6 +55,7 @@ export function verifyReactNativeEnrichedMarkdownPatch({ packageDir }) {
         iosTailFadeAnimatorPath,
         iosRendererDirectory,
         androidTailFadeAnimatorPath,
+        ...androidSpanIndexFiles.map(({ filePath }) => filePath),
     ];
     if (requiredPaths.some((filePath) => !fs.existsSync(filePath))) return false;
 
@@ -76,6 +84,7 @@ export function verifyReactNativeEnrichedMarkdownPatch({ packageDir }) {
 
     return (
         nativeRendererOwnershipPatched
+        && androidSpanIndexFiles.every(({ filePath, marker }) => fs.readFileSync(filePath, 'utf8').includes(marker))
         && enrichedMarkdownTextContents.includes('markStreamingRevealOffsets')
         && enrichedMarkdownTextContents.includes('streamingAnimation')
         && enrichedMarkdownTextContents.includes('updateStreamingRevealRanges')

@@ -72,18 +72,26 @@ index 16137fa..0eb4004 100644
          if (permissiveAutolinksField) {
            md4cFlags.permissiveAutolinks = env->GetBooleanField(flags, permissiveAutolinksField) == JNI_TRUE;
 diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/MeasurementStore.kt b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/MeasurementStore.kt
-index 0abbba9..e101f37 100644
 --- a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/MeasurementStore.kt
 +++ b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/MeasurementStore.kt
-@@ -245,6 +245,7 @@ object MeasurementStore {
+@@ -4,7 +4,7 @@
+ import android.graphics.Typeface
+ import android.graphics.text.LineBreaker
+ import android.os.Build
+-import android.text.SpannableString
++import android.text.Spannable
+ import android.text.StaticLayout
+ import android.text.TextPaint
+ import android.util.Log
+@@ -245,6 +245,7 @@
        Md4cFlags(
          underline = props.getMapOrNull("md4cFlags").getBooleanOrDefault("underline", false),
          latexMath = FeatureFlags.IS_MATH_ENABLED && props.getMapOrNull("md4cFlags").getBooleanOrDefault("latexMath", true),
 +        texMathBackslashDelimiters = FeatureFlags.IS_MATH_ENABLED && props.getMapOrNull("md4cFlags").getBooleanOrDefault("texMathBackslashDelimiters", false),
        )
- 
+
      val fontSize = getInitialFontSize(styleMap, context, allowFontScaling, fontScale, maxFontSizeMultiplier)
-@@ -295,6 +296,7 @@ object MeasurementStore {
+@@ -295,6 +296,7 @@
        Md4cFlags(
          underline = props.getMapOrNull("md4cFlags").getBooleanOrDefault("underline", false),
          latexMath = FeatureFlags.IS_MATH_ENABLED && props.getMapOrNull("md4cFlags").getBooleanOrDefault("latexMath", true),
@@ -91,6 +99,15 @@ index 0abbba9..e101f37 100644
        )
      val allowTrailingMargin = props.getBooleanOrDefault("allowTrailingMargin", false)
      val propsHash = computePropsHash(props, allowFontScaling, fontScale, maxFontSizeMultiplier)
+@@ -418,7 +420,7 @@
+     md4cFlags: Md4cFlags,
+     allowFontScaling: Boolean,
+     maxFontSizeMultiplier: Float,
+-  ): SpannableString? {
++  ): Spannable? {
+     if (styleMap == null) return null
+
+     return try {
 diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/parser/Parser.kt b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/parser/Parser.kt
 index 08b031d..d817f1b 100644
 --- a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/parser/Parser.kt
@@ -3384,3 +3401,181 @@ diff --git a/node_modules/react-native-enriched-markdown/ios/renderer/UnderlineR
 +  __weak RendererFactory *_rendererFactory;
    StyleConfig *_config;
  }
+diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/Renderer.kt b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/Renderer.kt
+--- a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/Renderer.kt
++++ b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/Renderer.kt
+@@ -1,12 +1,13 @@
+ package com.swmansion.enriched.markdown.renderer
+
+ import android.content.Context
+-import android.text.SpannableString
++import android.text.Spannable
+ import android.text.SpannableStringBuilder
+ import com.swmansion.enriched.markdown.parser.MarkdownASTNode
+ import com.swmansion.enriched.markdown.spans.ImageSpan
+ import com.swmansion.enriched.markdown.spans.MarginBottomSpan
+ import com.swmansion.enriched.markdown.styles.StyleConfig
++import com.swmansion.enriched.markdown.utils.text.MarkdownSpannableFactory
+
+ class Renderer {
+   private var cachedFactory: RendererFactory? = null
+@@ -35,7 +36,7 @@
+     document: MarkdownASTNode,
+     onLinkPress: ((String) -> Unit)? = null,
+     onLinkLongPress: ((String) -> Unit)? = null,
+-  ): SpannableString {
++  ): Spannable {
+     val factory =
+       requireNotNull(cachedFactory) {
+         "Renderer must be configured with a style before calling renderDocument."
+@@ -52,7 +53,8 @@
+     // Remove trailing margin from last block element
+     removeTrailingMargin(builder)
+
+-    return SpannableString(builder)
++    // Hand off this render's fresh buffer without flattening its span index.
++    return MarkdownSpannableFactory.newSpannable(builder)
+   }
+
+   /** Removes trailing newlines and captures the margin of the final element. */
+diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/utils/common/RenderedSegment.kt b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/utils/common/RenderedSegment.kt
+--- a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/utils/common/RenderedSegment.kt
++++ b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/utils/common/RenderedSegment.kt
+@@ -1,7 +1,7 @@
+ package com.swmansion.enriched.markdown.utils.common
+
+ import android.content.Context
+-import android.text.SpannableString
++import android.text.Spannable
+ import com.swmansion.enriched.markdown.parser.MarkdownASTNode
+ import com.swmansion.enriched.markdown.renderer.Renderer
+ import com.swmansion.enriched.markdown.spans.ImageSpan
+@@ -9,7 +9,7 @@
+
+ sealed interface RenderedSegment {
+   data class Text(
+-    val styledText: SpannableString,
++    val styledText: Spannable,
+     val imageSpans: List<ImageSpan>,
+     val needsJustify: Boolean,
+     val lastElementMarginBottom: Float,
+diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/utils/text/extensions/SpannableExtensions.kt b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/utils/text/extensions/SpannableExtensions.kt
+--- a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/utils/text/extensions/SpannableExtensions.kt
++++ b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/utils/text/extensions/SpannableExtensions.kt
+@@ -1,7 +1,7 @@
+ package com.swmansion.enriched.markdown.utils.text.extensions
+
+ import android.content.Context
+-import android.text.SpannableString
++import android.text.Spannable
+ import android.text.SpannableStringBuilder
+ import android.util.Log
+ import com.swmansion.enriched.markdown.spans.MathMeasureRequest
+@@ -15,7 +15,7 @@
+ }
+
+ /** Swaps MathInlineSpans for MathInlinePlaceholderSpans safe for background-thread measurement. */
+-fun SpannableString.replaceMathSpansWithPlaceholders(context: Context) {
++fun Spannable.replaceMathSpansWithPlaceholders(context: Context) {
+   if (!FeatureFlags.IS_MATH_ENABLED) return
+
+   try {
+diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/utils/text/view/TextViewSetup.kt b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/utils/text/view/TextViewSetup.kt
+--- a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/utils/text/view/TextViewSetup.kt
++++ b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/utils/text/view/TextViewSetup.kt
+@@ -6,9 +6,11 @@
+ import androidx.appcompat.widget.AppCompatTextView
+ import androidx.core.view.ViewCompat
+ import com.swmansion.enriched.markdown.accessibility.AccessibleMarkdownTextView
++import com.swmansion.enriched.markdown.utils.text.MarkdownSpannableFactory
+
+ fun AccessibleMarkdownTextView.setupAsMarkdownTextView() {
+   setBackgroundColor(Color.TRANSPARENT)
++  setSpannableFactory(MarkdownSpannableFactory)
+   includeFontPadding = false
+   movementMethod = LinkLongPressMovementMethod.createInstance()
+   setTextIsSelectable(true)
+diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/views/TableContainerView.kt b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/views/TableContainerView.kt
+--- a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/views/TableContainerView.kt
++++ b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/views/TableContainerView.kt
+@@ -9,7 +9,7 @@
+ import android.graphics.RectF
+ import android.graphics.Typeface
+ import android.text.Layout
+-import android.text.SpannableString
++import android.text.Spannable
+ import android.text.StaticLayout
+ import android.text.TextPaint
+ import android.text.style.AlignmentSpan
+@@ -25,6 +25,7 @@
+ import com.swmansion.enriched.markdown.styles.TableStyle
+ import com.swmansion.enriched.markdown.utils.common.layout.isLayoutRTL
+ import com.swmansion.enriched.markdown.utils.common.serialization.MarkdownASTSerializer
++import com.swmansion.enriched.markdown.utils.text.MarkdownSpannableFactory
+ import com.swmansion.enriched.markdown.utils.text.conversion.HTMLGenerator
+ import com.swmansion.enriched.markdown.utils.text.extensions.replaceMathSpansWithPlaceholders
+ import com.swmansion.enriched.markdown.utils.text.view.LinkLongPressMovementMethod
+@@ -105,7 +106,7 @@
+     node: MarkdownASTNode,
+     isHeader: Boolean,
+     alignment: Layout.Alignment,
+-  ): SpannableString {
++  ): Spannable {
+     val root = MarkdownASTNode(NodeType.Document, children = listOf(MarkdownASTNode(NodeType.Paragraph, children = node.children)))
+     val cellParagraphStyle = styleConfig.tableCellParagraphStyle(tableStyle, isHeader)
+     return styleConfig
+@@ -457,6 +458,7 @@
+     context: Context,
+   ) : androidx.appcompat.widget.AppCompatTextView(context) {
+     init {
++      setSpannableFactory(MarkdownSpannableFactory)
+       setPadding(0, 0, 0, 0)
+       includeFontPadding = false
+       movementMethod = LinkLongPressMovementMethod.createInstance()
+@@ -466,7 +468,7 @@
+   }
+
+   private data class TableCellData(
+-    val attributedText: SpannableString,
++    val attributedText: Spannable,
+     val plainText: String,
+     val markdownText: String,
+     val isHeader: Boolean,
+diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/utils/text/MarkdownSpannableFactory.kt b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/utils/text/MarkdownSpannableFactory.kt
+new file mode 100644
+--- /dev/null
++++ b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/utils/text/MarkdownSpannableFactory.kt
+@@ -0,0 +1,33 @@
++package com.swmansion.enriched.markdown.utils.text
++
++import android.text.GetChars
++import android.text.Spannable
++import android.text.SpannableString
++import android.text.SpannableStringBuilder
++
++/**
++ * Keeps the renderer's span index through measurement and TextView adoption.
++ * Each render owns a fresh buffer; callers must not edit its characters after handing it off.
++ */
++object MarkdownSpannableFactory : Spannable.Factory() {
++  override fun newSpannable(source: CharSequence): Spannable =
++    when (source) {
++      is SpannableStringBuilder -> InsertionOrderedSpannable(source)
++      is Spannable -> source
++      else -> SpannableString(source)
++    }
++}
++
++/**
++ * Layout special-cases bare builders and queries paragraph spans in position order.
++ * Hide that type to preserve priority/insertion order for nested list margins while
++ * delegating span queries to the builder's index (as in upstream v1.1.1).
++ */
++private class InsertionOrderedSpannable(
++  private val buffer: SpannableStringBuilder,
++) : Spannable by buffer,
++  GetChars {
++  override fun getChars(start: Int, end: Int, dest: CharArray, destoff: Int) = buffer.getChars(start, end, dest, destoff)
++
++  override fun toString(): String = buffer.toString()
++}

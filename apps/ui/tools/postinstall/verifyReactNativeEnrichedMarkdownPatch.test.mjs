@@ -81,7 +81,30 @@ test('DISCRIMINATES: restoring the obsolete global cache reset fails verificatio
     assert.equal(verifyReactNativeEnrichedMarkdownPatch({ packageDir }), false);
 });
 
-for (const scenario of ['missing streaming module', 'stale streaming renderer', 'stale native renderer ownership']) {
+test('DISCRIMINATES: Android span index and view adoption must survive installed-patch verification', (t) => {
+    assert.ok(fs.existsSync(INSTALLED_PACKAGE_DIR), 'the installed vendor is the recovery fixture');
+    assert.equal(verifyReactNativeEnrichedMarkdownPatch({ packageDir: INSTALLED_PACKAGE_DIR }), true);
+    const packageDir = fs.mkdtempSync(path.join(os.tmpdir(), 'enriched-markdown-android-patch-'));
+    t.after(() => fs.rmSync(packageDir, { recursive: true, force: true }));
+    fs.cpSync(INSTALLED_PACKAGE_DIR, packageDir, { recursive: true });
+    const androidDir = path.join(packageDir, 'android/src/main/java/com/swmansion/enriched/markdown');
+    for (const [relativePath, marker] of [
+        ['renderer/Renderer.kt', 'MarkdownSpannableFactory.newSpannable(builder)'],
+        ['utils/text/view/TextViewSetup.kt', 'setSpannableFactory(MarkdownSpannableFactory)'],
+        ['views/TableContainerView.kt', 'setSpannableFactory(MarkdownSpannableFactory)'],
+    ]) {
+        const filePath = path.join(androidDir, relativePath);
+        const current = fs.readFileSync(filePath, 'utf8');
+        assert.ok(current.includes(marker), 'the fixture must include the current native patch');
+        fs.writeFileSync(filePath, current.replace(marker, '/* stale installed native path */'));
+        assert.equal(verifyReactNativeEnrichedMarkdownPatch({ packageDir }), false, relativePath);
+        fs.writeFileSync(filePath, current);
+    }
+    fs.rmSync(path.join(androidDir, 'utils/text/MarkdownSpannableFactory.kt'));
+    assert.equal(verifyReactNativeEnrichedMarkdownPatch({ packageDir }), false);
+});
+
+for (const scenario of ['missing streaming module', 'stale streaming renderer', 'stale native renderer ownership', 'missing Android span factory']) {
     const repairable = scenario !== 'stale streaming renderer';
     test(`${repairable ? 'repairs' : 'rejects incompatible'} ${scenario} when the remaining patch is already applied`, (t) => {
         if (!fs.existsSync(INSTALLED_PACKAGE_DIR)) {
@@ -108,6 +131,8 @@ for (const scenario of ['missing streaming module', 'stale streaming renderer', 
         fs.writeFileSync(path.join(fixtureDir, 'package.json'), '{"name":"partial-repair-fixture","private":true}\n');
         if (scenario === 'missing streaming module') {
             fs.rmSync(path.join(packageDir, 'lib', 'module', 'web', 'streamingReveal.js'));
+        } else if (scenario === 'missing Android span factory') {
+            fs.rmSync(path.join(packageDir, 'android/src/main/java/com/swmansion/enriched/markdown/utils/text/MarkdownSpannableFactory.kt'));
         } else if (scenario === 'stale native renderer ownership') {
             // A tracked patch update does not update an already installed dependency.
             const rendererPath = path.join(packageDir, 'ios', 'renderer', 'StrongRenderer.m');
