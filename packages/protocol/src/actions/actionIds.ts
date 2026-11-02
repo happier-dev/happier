@@ -557,6 +557,7 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
     'bugreport.uploadArtifact',
   ],
   browser_control: [
+    ...BROWSER_EXTENSION_ACTION_IDS,
     'browser.profile.logins.import',
     'browser.workspace.open',
     'browser.sandbox.install',

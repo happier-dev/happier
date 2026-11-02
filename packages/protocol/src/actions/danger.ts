@@ -1,4 +1,4 @@
-import type { RuntimeActionIdV1 } from './actionIds.js';
+import { BROWSER_EXTENSION_MUTATION_ACTION_IDS, type RuntimeActionIdV1 } from './actionIds.js';
 
 // Side-effect danger SSOT: the actions whose `sideEffectClass` is `'danger'` (the highest
 // host-effect class). This is intentionally NARROWER than the SAFETY danger SSOT below: navigation
@@ -6,6 +6,7 @@ import type { RuntimeActionIdV1 } from './actionIds.js';
 // their `external`/`externalNavigation`/`write` host-effect semantics (a navigate is not a
 // `destructive` host effect). Do not widen this set to drive the consent floor - use the safety set.
 export const RUNTIME_SIDE_EFFECT_DANGER_ACTION_IDS: ReadonlySet<RuntimeActionIdV1> = new Set<RuntimeActionIdV1>([
+  ...BROWSER_EXTENSION_MUTATION_ACTION_IDS,
   'browser.profile.logins.import',
   'projects.service.relocate',
   'browser.sandbox.install',

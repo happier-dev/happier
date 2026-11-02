@@ -1,5 +1,6 @@
 import { BrowserProfileLoginsImportV1Schema, BrowserProfileLoginsImportResultV1Schema } from '../../browser/profile/loginsV1.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
+import { BROWSER_EXTENSION_ACTION_INPUT_SCHEMAS, BROWSER_EXTENSION_ACTION_OUTPUT_SCHEMAS } from '../browserExtensionActions.js';
 import { z } from 'zod/mini';
 
 import type { RuntimeActionIdV1 } from '../actionIds.js';
@@ -183,6 +184,14 @@ export const BROWSER_RUNTIME_ACTION_INPUT_HINT_FIELDS: Readonly<Partial<Record<R
 };
 
 export const BROWSER_RUNTIME_ACTION_TITLES: Readonly<Partial<Record<RuntimeActionIdV1, string>>> = Object.freeze({
+  'browser.extensions.list': 'List browser extensions',
+  'browser.extensions.install': 'Install browser extension',
+  'browser.extensions.update': 'Update browser extension',
+  'browser.extensions.enable': 'Enable browser extension',
+  'browser.extensions.disable': 'Disable browser extension',
+  'browser.extensions.remove': 'Remove browser extension',
+  'browser.extensions.openActionPopup': 'Open extension popup',
+  'browser.extensions.openOptions': 'Open extension options',
   'browser.profile.logins.import': 'Import browser logins',
   'browser.sandbox.install': 'Install managed browser sandbox permission',
   'browser.control.takeControl': 'Yield browser control to the human',
@@ -254,6 +263,14 @@ export const BROWSER_RUNTIME_ACTION_TITLES: Readonly<Partial<Record<RuntimeActio
 });
 
 export const BROWSER_RUNTIME_ACTION_DESCRIPTIONS: Readonly<Partial<Record<RuntimeActionIdV1, string>>> = Object.freeze({
+  'browser.extensions.list': 'List installed extensions in a managed persistent browser profile, or all persistent profiles on this Machine.',
+  'browser.extensions.install': 'Install or update an extension in a managed persistent browser profile after reviewing added permissions. Changes apply when the profile restarts.',
+  'browser.extensions.update': 'Apply the extension version selected by Store update discovery, reviewing added permissions before the managed browser profile restarts.',
+  'browser.extensions.enable': 'Enable an installed extension when the managed browser profile restarts.',
+  'browser.extensions.disable': 'Disable an installed extension when the managed browser profile restarts.',
+  'browser.extensions.remove': 'Remove an installed extension from its managed browser profile. Changes apply when the profile restarts.',
+  'browser.extensions.openActionPopup': 'Open an installed extension popup as a normal managed browser view.',
+  'browser.extensions.openOptions': 'Open an installed extension options page as a normal managed browser view.',
   'browser.profile.logins.import': 'Copy selected logins into a managed browser profile. The Session agent and anyone who can drive this browser can use these logins.',
   'browser.sandbox.install': 'Install an executable-scoped AppArmor userns profile for this machine’s managed Chromium. Approval is required by default; the human must separately authorize sudo on that machine.',
   'browser.control.takeControl': 'Interrupt browser automation and yield control to the human through the existing controller owner.',
@@ -330,6 +347,7 @@ export const BROWSER_RUNTIME_ACTION_DESCRIPTIONS: Readonly<Partial<Record<Runtim
  * its exact Zod input/output carrier in generated API and Plugin maps.
  */
 export const BROWSER_RUNTIME_ACTION_INPUT_SCHEMAS = Object.freeze({
+  ...BROWSER_EXTENSION_ACTION_INPUT_SCHEMAS,
   'browser.profile.logins.import': BrowserProfileLoginsImportV1Schema,
   'browser.sandbox.install': BrowserSandboxInstallInputV1Schema,
   'browser.control.takeControl': BrowserTakeControlCommandV1Schema,
@@ -408,7 +426,7 @@ export const BROWSER_RUNTIME_ACTION_INPUT_SCHEMAS = Object.freeze({
 
 // Keep declaration emission tied to the named schemas rather than expanding
 // every nested Browser context/diagnostic schema into this lookup's declaration.
-const browserRuntimeOutputGeneralSchemas: Readonly<{
+const browserRuntimeOutputGeneralSchemas: Readonly<typeof BROWSER_EXTENSION_ACTION_OUTPUT_SCHEMAS & {
   'browser.profile.logins.import': typeof BrowserProfileLoginsImportResultV1Schema;
   'browser.sandbox.install': typeof BrowserSandboxInstallResultV1Schema;
   'browser.control.takeControl': z.ZodMiniUnion<readonly [typeof BrowserCommandDispatchResultV1Schema, typeof BrowserAutomationInterruptedResultV1Schema]>;
@@ -447,6 +465,7 @@ const browserRuntimeOutputGeneralSchemas: Readonly<{
   'browser.context.attachToAgentTurn': typeof BrowserContextAttachmentV1Schema;
   'browser.context.clear': typeof BrowserContextRouteResultV1Schema;
 }> = {
+  ...BROWSER_EXTENSION_ACTION_OUTPUT_SCHEMAS,
   'browser.profile.logins.import': BrowserProfileLoginsImportResultV1Schema,
   'browser.sandbox.install': BrowserSandboxInstallResultV1Schema,
   'browser.control.takeControl': z.union([BrowserCommandDispatchResultV1Schema, BrowserAutomationInterruptedResultV1Schema]),
@@ -562,6 +581,11 @@ export const BROWSER_RUNTIME_ACTION_SPEC_FAMILY: Readonly<{
     'browser.recording.discard': { confirmVerb: { key: 'common.discard', fallback: 'Discard' }, irreversible: true },
   },
   approvalPolicies: {
+    'browser.extensions.install': { agentDefault: 'authority' },
+    'browser.extensions.update': { agentDefault: 'authority' },
+    'browser.extensions.enable': { agentDefault: 'authority' },
+    'browser.extensions.disable': { agentDefault: 'authority' },
+    'browser.extensions.remove': { agentDefault: 'authority' },
     'browser.profile.logins.import': { agentDefault: 'authority' },
     'browser.view.openDevtools': { agentDefault: 'authority' },
     'browser.workspace.open': { uiConfirmation: 'direct' },

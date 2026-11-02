@@ -1,4 +1,5 @@
 export * from './invocationAuthority.js';
+export * from './browserExtensionActions.js';
 export { requiredMachineRoleForBrowserAction } from './browserMachineRole.js';
 export { BROWSER_EXTENSION_ACTION_IDS, BROWSER_EXTENSION_MUTATION_ACTION_IDS, isBrowserExtensionActionIdV1,
   isBrowserExtensionMutationActionIdV1, type BrowserExtensionActionIdV1 } from './actionIds.js';
