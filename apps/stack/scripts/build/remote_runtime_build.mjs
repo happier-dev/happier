@@ -3,7 +3,6 @@ import { join, posix, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { getCliBinaryArtifactSupportTargetUnavailableReason, getComponentArtifactBuildTargetUnavailableReason } from '../../../../packages/cli-common/componentArtifactTarget.mjs';
 import { WORKSPACE_BUILD_MODE_ENV } from '../../../../scripts/workspaces/workspaceChildBuildEnv.mjs';
-import { writeRuntimeAdmissionPhase } from '../utils/proc/service_memory.mjs';
 import { createHappierTempDir, removeHappierTempDirAsync } from '@happier-dev/cli-common/tempDirs';
 
 const WORKER_ENTRY = 'apps/stack/scripts/build/remote_runtime_build.mjs';
@@ -181,7 +180,6 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
     });
     input.once('close', () => resolveRequest(null));
   });
-  writeRuntimeAdmissionPhase('awaiting-runtime-request');
   process.stdout.write('HAPPIER_RUNTIME_BUILD_READY=' + JSON.stringify({
     worker: process.env.HAPPIER_RUNTIME_BUILD_WORKER_NAME,
     runtimeTarget: { platform: process.platform, arch: process.arch },
@@ -190,7 +188,6 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
   const admitted = await request;
   input.close();
   if (admitted) {
-    writeRuntimeAdmissionPhase('building-runtime');
     await executeWorkerRequest(admitted);
   }
 }

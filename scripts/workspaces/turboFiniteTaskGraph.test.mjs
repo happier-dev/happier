@@ -3,7 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { resolvePnpmCommandInvocation } from './execPnpmCommand.mjs';
 import { readWorkspacePatterns } from '../../apps/stack/scripts/utils/proc/workspace_package_manifests.mjs';
@@ -265,20 +265,29 @@ esac
     await writeFile(fixture.path('packages', 'leaf', 'leaf.mjs'), `
 import { writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
+import { requestAdmissionSample } from ${JSON.stringify(pathToFileURL(native.admissionClientPath).href)};
 const env = process.env;
+const before = await requestAdmissionSample(env.HAPPIER_HEAVYWEIGHT_ADMISSION_ROOT);
 writeFileSync(${JSON.stringify(observation)}, JSON.stringify({
-  token: env.HAPPIER_HEAVYWEIGHT_ADMISSION_TOKEN,
   root: env.HAPPIER_HEAVYWEIGHT_ADMISSION_ROOT,
   machine: env.HAPPIER_HEAVYWEIGHT_ADMISSION_MACHINE,
+  slot: env.HAPPIER_HEAVYWEIGHT_ADMISSION_SLOT,
+  floor: Number(env.HAPPIER_HEAVYWEIGHT_ADMISSION_FLOOR_KIB),
+  sampleCount: before.sampleCount,
   worker: env.HAPPIER_DEV_TARGET_EXECUTION,
   unrelated: env.HAPPIER_UNRELATED_ADMISSION_FIXTURE,
 }));
 const result = spawnSync(${JSON.stringify(native.launcher)}, [
   '--heavyweight-admission', '--class=compilation', '--machine=local', '--no-wait', '--',
-  process.execPath, '-e', ${JSON.stringify(`const fs = require('fs'); const path = require('path');
+  process.execPath, '--input-type=module', '-e', ${JSON.stringify(`import fs from 'node:fs';
+import { requestAdmissionSample } from ${JSON.stringify(pathToFileURL(native.admissionClientPath).href)};
+const status = await requestAdmissionSample(process.env.HAPPIER_HEAVYWEIGHT_ADMISSION_ROOT);
 fs.writeFileSync(${JSON.stringify(payload)}, JSON.stringify({
-  token: process.env.HAPPIER_HEAVYWEIGHT_ADMISSION_TOKEN,
-  owners: fs.readdirSync(path.join(process.env.HAPPIER_HEAVYWEIGHT_ADMISSION_ROOT, 'owners')),
+  slot: process.env.HAPPIER_HEAVYWEIGHT_ADMISSION_SLOT,
+  floor: Number(process.env.HAPPIER_HEAVYWEIGHT_ADMISSION_FLOOR_KIB),
+  activeCount: status.activeCount,
+  waitingCount: status.waitingCount,
+  sampleCount: status.sampleCount,
 }));`)},
 ], { env, stdio: 'inherit' });
 if (result.error) throw result.error;
@@ -296,17 +305,24 @@ process.exit(result.status ?? 1);
       process.execPath, path.join(repoRoot, 'node_modules/turbo/bin/turbo'),
       'run', 'build:finite', '--filter=admission-leaf', '--env-mode=strict', '--force', '--no-daemon',
     ], { cwd: fixture.root, env, encoding: 'utf8' });
-    const observed = JSON.parse(await readFile(observation, 'utf8'));
     assert.ifError(result.error);
-    assert.equal(result.status, 0, `${JSON.stringify(observed)}\n${result.stdout}\n${result.stderr}`);
-    assert.match(observed.token, /^\d+:\d+$/u);
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    const observed = JSON.parse(await readFile(observation, 'utf8'));
     assert.equal(observed.root, native.admissionRoot);
     assert.equal(observed.worker, '1');
     assert.equal(typeof observed.machine, 'string');
     assert.equal(observed.unrelated, undefined, 'retain strict filtering for unrelated environment');
     const executed = JSON.parse(await readFile(payload, 'utf8'));
-    assert.equal(executed.token, observed.token);
-    assert.deepEqual(executed.owners, [observed.token.replace(':', '-')]);
+    assert.equal(typeof observed.slot, 'string');
+    assert.ok(observed.floor > 0);
+    assert.equal(executed.slot, observed.slot, 'nested compiler retains its admitted ancestor slot');
+    assert.equal(executed.floor, observed.floor);
+    assert.equal(executed.activeCount, 1);
+    assert.equal(executed.waitingCount, 0);
+    assert.equal(executed.sampleCount, observed.sampleCount, 'nested work triggers zero resource decisions');
+    const completed = await native.brokerStatus();
+    assert.equal(completed.activeCount, 0);
+    assert.equal(completed.waitingCount, 0);
   });
 
 test('direct Turbo finite source task refuses without public dispatch', () => {

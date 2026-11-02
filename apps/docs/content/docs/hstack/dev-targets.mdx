@@ -666,8 +666,7 @@ that do not hold the shared publication lock during preparation or compilation.
 Configure `build` on the producer stack. Native AUTO selects from its command-execution pool,
 using the runtime-build memory envelope and artifact-target/toolchain capability; the Metro host
 is excluded. The older build target list does not limit that pool. Healthy busy workers cause a wait,
-not local compilation. Waiting builds retain host-global demand to prevent endless small-job backfill,
-and re-evaluate alternatives on the existing pressure cadence. Local fallback requires no healthy,
+not local compilation. Waiting builds retain their broker request and re-evaluate alternatives on the existing pressure cadence. Local fallback requires no healthy,
 reachable capable worker. The target publication lock is acquired only after worker admission.
 Each alternative checks current worker health and load, including workers that recovered since the
 build began. A slow synchronization flush on one alternative leaves other workers selectable.
@@ -702,10 +701,11 @@ workers and reports the reason. Busy workers remain queued through the existing 
 admission owner while alternatives are checked without waiting; alternative admission releases the
 original request. Busy results never authorize local fallback. Once
 compilation starts, a failure propagates without replaying the build elsewhere.
-On Linux and WSL, `dev-targets status NAME` and admission waiting messages show each authenticated
-holder's class, PID, age and approximate recent process-tree CPU use. Status samples again on the
-existing admission cadence when holders exist. Unknown CPU evidence stays unknown; low CPU alone
-does not establish a hang. These diagnostics do not stop holders or impose an admission deadline.
+In current 0.3 development, Linux `dev-targets status NAME` consumes the broker's cached
+available, reserved and queued memory with active/waiting counts. Queued commands block on
+sockets and can be observed through that status.
+Status does not resample holder process trees on an admission cadence. These diagnostics do not
+stop admitted work or impose an admission deadline.
 Native Windows worker placement is not supported by this build transport; matching WSL targets
 use the POSIX path. Build placement does not move running services or their databases.
 
@@ -714,7 +714,7 @@ disconnect or exit terminates the command's process group, including its descend
 commands retain their terminal input. Recovery uses the existing execution IDs and PID records to
 cancel positively identified abandoned commands, rather than killing unrelated SSH connections or
 matching jobs by name. Linux recovery checks process start identities before delayed cancellation.
-Heavyweight reservations are reclaimed after their owning processes exit. Native macOS cleanup is
+Heavyweight reservations end when the broker's peer connection to the client listener closes. Native macOS cleanup is
 incomplete for descendants that ignore termination: without a strong process-incarnation witness,
 delayed forced cancellation is skipped rather than risking a reused process ID.
 
@@ -1018,22 +1018,25 @@ from automatic placement and tries another configured target. A pinned invocatio
 failure without switching hosts. Preparation failures and a payload's exit status, including 75,
 do not trigger replay.
 
-In current development, automatic placement also checks actual worker admission without queuing
+In current 0.3 development, automatic placement also checks worker admission without queuing
 there after preparation. A busy worker triggers re-evaluation of the remaining pool before the
-payload starts, without marking that worker unavailable. If all usable workers are busy, automatic placement
-waits and rechecks the pool instead of falling back locally. An explicitly pinned command retains
-its observable wait on that worker. Already-running launchers are not moved by this change.
+payload starts, without marking that worker unavailable. If all usable workers are busy, automatic
+placement retains one queued request on the selected worker rather than falling back locally.
+An explicitly pinned command retains its observable wait on that worker. Already-running launchers
+are not moved by this change.
 
 Before the selected remote command starts, the launcher flushes that target's named Mutagen session.
 If the flush fails, it releases the dispatch reservation and tries another configured target instead
 of running against an older checkout. Reachable synchronization failures do not permit local fallback.
 
-On Linux, recognized typecheck, Vitest, build-like, and direct dependency-install commands share a
-host-global admission queue without a fixed job-count ceiling. The launcher reports waiting
-provenance and pauses new starts below the class's available-memory floor, below 10% available
-memory, or at memory PSI `avg10` of 10 or higher. It also pauses when the runnable count is at least
-twice the online CPU count and CPU PSI `avg10` is at least 50. An interrupted command releases its
-admission record. Searches and ordinary control commands keep their normal dispatch path.
+In current 0.3 development, recognized Linux typecheck, Vitest, build-like and direct
+dependency-install commands share one host admission broker. It considers requests in arrival
+order and starts each request that fits its class's memory floor, without a fixed job-count ceiling
+or a backfill budget. Waiting commands block on their sockets rather than polling. The client keeps
+a pathname socket listener for the payload's lifetime; the reservation ends when the broker's
+peer connection to that listener closes. Admission
+adds no available-memory percentage, PSI or CPU-load denial. Searches and ordinary control commands
+keep their normal dispatch path.
 
 On the local controller, heavyweight admission also requires at least 8 GiB available memory,
 the observed floor below which browser and agent QA pauses. The local requirement is the larger
@@ -1055,61 +1058,42 @@ In 0.3 development, both modes compile captured package inputs. Edits during com
 hold completion behind a quiet checkout: the output record identifies the capture, and newer
 source remains eligible for the next build. Strict builds keep their live-input drift checks.
 
-In 0.3 development, the shared command policy sizes admission by workload. Measured cli-common
-and Protocol dist builds use the 6 GiB package-dist envelope. Canonical runtime worker requests
-use an 18 GiB runtime-build envelope: a successful full daemon build peaked at about
-15.68 GiB of process-tree RSS. Adding at least the measured package envelope's 1.53 GiB of
-spare headroom and rounding up to whole GiB gives 18 GiB. UI typechecks reserve 29 GiB after a
-controller check was stopped at 26.6 GB RSS; conservatively treating GB as GiB and adding that
-same measured headroom gives 29 GiB rounded up. A stopped run is a lower bound, not a proven
-maximum. A full CLI check peaked at about 21.62 GiB RSS; adding the same headroom and rounding
-up raises its reservation to 24 GiB. Server retains 21 GiB: its observed peak was about 12.02 GiB,
-but incomplete checks do not justify lowering the floor. Neither check completed without
-diagnostics. Unscoped/mixed-package checks and unmeasured builds reserve 29 GiB because they may
-include UI; serial projects in one package retain that package's reservation. Focused validation and dependency
-installation retain their existing 6 GiB envelope. Automatic routing excludes workers whose
-total RAM cannot hold the selected class, including cached samples and local candidates.
-Linux and WSL keep each admitted job's class envelope until exit or orphan reclamation, but subtract
-only its unused part from available memory: the envelope minus authenticated process-tree resident
-memory, floored at zero. In current 0.3 development source, service/browser and admitted trees use
-Linux PSS so shared pages contribute each process's share rather than being counted repeatedly.
-Native admission skips service page-table walks only when their summed RSS upper bound
-cannot constrain available memory or the selected class's physical capacity. Admitted-owner
-credits always retain exact PSS. Kernel generation checks do not spawn a process per PID;
-vanished processes contribute zero rather than stale RSS.
-Unavailable PSS for a live process falls back to RSS and reports the affected PIDs. Resident pages are already absent
-from available memory; missing memory observation retains the full envelope.
-Authenticated nested commands share their parent's reservation,
-and escalation credits its existing resident memory. Memory-wait and capacity-exclusion diagnostics name the
-class, required memory and existing reservations. These requirements reserve admission headroom;
+In 0.3 development, the shared command policy owns each workload's measured memory floor.
+Automatic routing excludes workers whose total physical RAM cannot hold the selected class,
+including cached samples and local candidates. A physically fitting class with insufficient
+current memory waits or returns a busy result; temporary pressure is not permanent incapacity.
+Each admitted job reserves only the unused part of its floor: the floor minus its observed
+process-tree PSS, floored at zero. Resident pages are already absent from available memory.
+Missing PSS evidence retains the full reservation. Service/browser memory remains diagnostic
+and adds no second reservation. Authenticated nested commands share their containing job's fixed
+floor; a larger nested request refuses instead of enlarging that floor or taking another slot.
+Admission refusals preserve a typed reason, and status consumes cached available, reserved and
+queued memory with active/waiting counts. These floors reserve admission headroom;
 they do not limit the command's actual memory use.
 
-In current development source, each Linux worker owns `/tmp/happier-heavyweight-admission-v1`.
-Task-private mirrors, caller admission roots and machine aliases cannot create independent queues.
-The configured execution account must own this directory; unavailable or foreign-account state fails
-closed rather than falling back to a private queue. Live older private-root owners are counted during
-cutover; already-loaded older launchers must drain before all writers use the new authority.
-Admission decisions reclaim dead owners and incomplete process-identity records under the existing
-capacity lock. Low CPU alone does not expire a live owner.
+In current 0.3 development source, each execution account's Linux broker owns
+`/tmp/happier-heavyweight-admission-v3-<uid>`. Task-private mirrors and machine aliases
+use this same authority. The account must own the private directory; foreign-owned or
+non-private state refuses instead of creating another queue. Broker restart recovers live
+client-held pathname socket listeners, while waiting clients reconnect. A separate startup-only kernel
+mutex protects listener replacement. During the old-launcher transition, the broker also keeps
+the existing old scheduler flock locked throughout its runtime; the cutover transfers the held
+lock without an unlock gap. Late old launchers remain queued and already-admitted old work finishes.
 
-Runtime service placements do not exclude a host from commands. The worker measures current
-server/Expo process-tree resident memory from existing Stack PID state and generation witnesses,
-including standalone Expo state. Total capacity reserves that memory without subtracting it twice
-from available memory. An active runtime build reserves its existing runtime-build envelope.
-Admission diagnostics expose both reservations; there is no separate service-host configuration list.
+Runtime service placements do not exclude a host from commands. Current server, Expo, daemon
+and browser memory already reduces OS available memory. The broker subtracts only unused
+admitted-work reservations, with no additional service-memory deduction. An active runtime build
+retains its runtime-build floor. Status and placement reuse the broker's cached memory and queued
+demand rather than walking admission records.
 
-Fitting small jobs can backfill a blocked larger queue head. Backfill stops after consuming that
-head's existing class envelope or when one candidate envelope would bridge its capacity gap.
-Only successful starts consume this allowance, not retries or readiness probes. This protects the
-older job from starvation without adding a timeout. Equal-or-larger queued classes cannot backfill;
-the owner rejects them before resource observation, avoiding serialized process scans that cannot
-admit those requests.
-Contended capacity-lock acquisitions wait in the existing kernel lock; `--no-wait` stays nonblocking.
-The existing retry cadence applies after an actual queue or resource-pressure decision.
+Workspace publishers try their declared leases without waiting after a capacity offer.
+A busy attempt releases partial leases and the offered capacity, retaining its queue order.
+Relevant resource changes wake that request. Ordinary admission and readiness do not take
+the startup mutex or reclaim owner/waiter records.
 
 Explicit `--local --allow-local-compilation` changes compilation placement and uses the same Linux admission owner: heavyweight work
 waits for local memory to recover, while light commands run immediately. A class that cannot fit
-total local memory minus service reservations fails immediately with an instruction to route it
+total physical local memory fails immediately with an instruction to route it
 remotely. It does not bypass
 memory admission. macOS selection applies the class's total-capacity filter, but does not have
 the Linux admission queue or available-memory floor. Native Windows command execution remains local.

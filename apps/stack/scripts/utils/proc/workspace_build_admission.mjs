@@ -1,19 +1,64 @@
-import { spawn } from 'node:child_process';
-import { readFileSync, readdirSync, writeSync } from 'node:fs';
-import { Socket } from 'node:net';
+import { readFileSync, readdirSync } from 'node:fs';
 import { constants } from 'node:os';
-import { basename, dirname, join, resolve } from 'node:path';
-import { createInterface } from 'node:readline';
+import { basename, dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { callerHoldsWorkspaceBundleLock, withWorkspaceBundleLock, WORKSPACE_BUNDLE_LOCK_BUSY_ERROR_CODE } from '../../../../../packages/cli-common/workspaceBundleLock.mjs';
+import { callerHoldsWorkspaceBundleLock, createWorkspaceBundleLockPriorityScope, isWorkspaceBundleLockPriorityChange,
+  observeWorkspaceBundleLock, observeWorkspaceBundleLockPriority, withWorkspaceBundleLock, WORKSPACE_BUNDLE_LOCK_BUSY_ERROR_CODE } from '../../../../../packages/cli-common/workspaceBundleLock.mjs';
 import { parseWorkspaceLockLeaseValue } from '../../../../../packages/cli-common/workspaceLockLease.mjs';
 import { createFileChangeObserver, DEFAULT_FILE_CHANGE_CATCH_UP_MS } from '../../../../../packages/cli-common/fileChangeObserver.mjs';
-import { callerHoldsDependencyConsumption, resolveDependencyInstallRoot, resolveDependencyRefreshLockPath, withDependencyConsumption } from './dependency_refresh.mjs';
-import { JSON_OWNER_FILE_LOCK_BUSY_ERROR_CODE } from './jsonOwnerFileLock.mjs';
 import { spawnForegroundCommand } from './proc.mjs';
+import { callerHoldsDependencyConsumption, callerHoldsDependencyResourceBlocking, resolveDependencyInstallRoot, resolveDependencyRefreshLockPath, resolveLockedInstallEnv, withDependencyConsumption, withDependencyRefreshLock } from './dependency_refresh.mjs';
+import { JSON_OWNER_FILE_LOCK_BUSY_ERROR_CODE } from './jsonOwnerFileLock.mjs';
 
 const workerPath = fileURLToPath(import.meta.url);
 const sourceRoot = fileURLToPath(new URL('../../../../../', import.meta.url));
+
+function isWorkspaceResourceBusy(error) {
+  return error?.code === WORKSPACE_BUNDLE_LOCK_BUSY_ERROR_CODE || error?.code === JSON_OWNER_FILE_LOCK_BUSY_ERROR_CODE;
+}
+
+export function createWorkspaceBuildResourcePriorityScope({ locks = [], env = process.env, signal } = {}) {
+  return createWorkspaceBundleLockPriorityScope({ resources: locks, env, signal,
+    isHeldResourceContinuation: callerHoldsDependencyResourceBlocking });
+}
+
+/** One nonblocking canonical resource attempt for the host admission broker.
+ * The returned release closes every acquired lease; a busy attempt retains none.
+ * A supplied soft-priority scope belongs to the waiting client across attempts.
+ */
+export async function tryWorkspaceBuildResources({ locks = [], env = process.env, signal, priorityScope: suppliedPriorityScope } = {}) {
+  let resolveAttempt;
+  const attempt = new Promise(resolve => { resolveAttempt = resolve; });
+  let finish;
+  const held = new Promise(resolve => { finish = resolve; });
+  const priorityScope = suppliedPriorityScope ?? createWorkspaceBuildResourcePriorityScope({ locks, env, signal });
+  priorityScope.activate();
+  let entered = false;
+  let releaseError;
+  const completion = withLocks(locks, env, signal, async acquiredEnv => {
+    entered = true;
+    // Resources can still unwind before the broker admits the payload. Keep a
+    // client-owned scope reusable across that reconnect, without preference
+    // files while the actual leases provide exclusion.
+    if (suppliedPriorityScope) priorityScope.suspend();
+    else priorityScope.dispose();
+    resolveAttempt({ acquired: true, env: acquiredEnv,
+      release: async () => { finish(); await completion; if (releaseError) throw releaseError; } });
+    await held;
+  }, priorityScope).catch(error => {
+    if (!entered && isWorkspaceResourceBusy(error)) {
+      console.error(error.message.replace(/^HSTACK_WORKSPACE_ADMISSION_ORDER: /u, ''));
+      resolveAttempt({ acquired: false });
+    }
+    else if (entered) releaseError = error;
+    else resolveAttempt({ acquired: false, error });
+  }).finally(() => {
+    if (!suppliedPriorityScope) priorityScope.dispose();
+  });
+  const result = await attempt;
+  if (result.error) throw result.error;
+  return result;
+}
 
 /** The startup worker owns this policy for its entire finite construction,
  * including nested compiler leaves. Routing markers alone grant no exemption. */
@@ -21,12 +66,7 @@ export function isWorkspaceBuildStartup({ env = process.env, devStartup = false 
   return devStartup || env.HAPPIER_WORKSPACE_BUILD_STARTUP === '1';
 }
 
-async function hasInheritedBuildCustody(env) {
-  if (callerHoldsDependencyConsumption(env)) return true;
-  return await hasInheritedPackageBuildCustody(env);
-}
-
-async function hasInheritedPackageBuildCustody(env) {
+export async function hasInheritedPackageBuildCustody(env) {
   const { callerHoldsWorkspaceBundleLock } = await import('../../../../../packages/cli-common/workspaceBundleLock.mjs');
   let leases;
   try { leases = JSON.parse(env.HAPPIER_WORKSPACE_DIST_BUILD_LOCK_LEASES || '[]'); }
@@ -107,14 +147,16 @@ function workspaceBuildResources(locks, dependencyInstallDir, env) {
 function parseLocks(raw) {
   const locks = JSON.parse(raw);
   if (!Array.isArray(locks)) throw new Error('Workspace admission requires a lock array');
-  for (const lock of locks) {
+  const workspaceLocks = locks;
+  for (const lock of workspaceLocks) {
+    if (['dependency-input-writer', 'dependency'].includes(lock?.kind) && typeof lock.installDir === 'string' && lock.installDir.trim()
+      && lock.path === resolveDependencyRefreshLockPath(lock.installDir)) continue;
     if (!lock || typeof lock.path !== 'string' || !lock.path.trim()
-      || (lock.kind !== undefined && lock.kind !== 'workspace' && lock.kind !== 'dependency')
-      || (lock.kind === 'dependency' && typeof lock.installDir !== 'string')) {
+      || (lock.kind !== undefined && lock.kind !== 'workspace')) {
       throw new Error('Workspace admission requires canonical workspace lock paths');
     }
   }
-  return locks;
+  return workspaceLocks;
 }
 
 /** An admitted descendant cannot extend the batch's lock set, even when a
@@ -127,58 +169,51 @@ export function assertInheritedWorkspaceBuildResources({ locks = [], dependencyI
   if (!Array.isArray(leases)) throw new Error('Workspace producer requires valid inherited publication custody');
   const values = [env.HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD, ...leases];
   for (const lock of locks) {
-    const valid = lock.kind === 'dependency'
-      ? resolve(lock.path) === resolveDependencyRefreshLockPath(lock.installDir, env)
-        && callerHoldsDependencyConsumption(env)
-        && JSON.parse(env.HAPPIER_BUILD_DEPENDENCY_CUSTODY)[0] === resolve(lock.path)
-      : values.some(value => typeof value === 'string' && callerHoldsWorkspaceBundleLock(resolve(lock.path), value));
+    if (lock.kind === 'dependency') {
+      if (!callerHoldsDependencyConsumption({ installDir: lock.installDir, env })) {
+        throw Object.assign(new Error('Workspace producer requires inherited dependency consumption custody'),
+          { code: 'HSTACK_WORKSPACE_BUILD_RESOURCES_CHANGED' });
+      }
+      continue;
+    }
+    const valid = values.some(value => typeof value === 'string' && callerHoldsWorkspaceBundleLock(resolve(lock.path), value));
     if (!valid) throw Object.assign(new Error('Workspace producer requires every exact inherited resource lease'), {
       code: 'HSTACK_WORKSPACE_BUILD_RESOURCES_CHANGED',
     });
   }
 }
 
-function admissionChangeObservation(locks, env) {
-  const root = env.HSTACK_ADMISSION_WAIT_ROOT;
-  const waiter = env.HSTACK_ADMISSION_WAITER;
-  const lockPaths = locks.flatMap(lock => [resolve(lock.path), `${resolve(lock.path)}.priority-claim`]);
-  const dependencyWaiters = locks.filter(lock => lock.kind === 'dependency').map(lock => `${resolve(lock.path)}.waiters`);
-  let resourcesRelevant = true;
-  const observer = createFileChangeObserver([...new Set([
-    ...(root ? [join(root, 'owners'), join(root, 'waiters')] : []), ...lockPaths.map(dirname), ...dependencyWaiters,
-  ])], {
-    // These parent directories also carry logs, queue-gate attempts and other
-    // publishers. Only exclusion/admission changes justify reading all leases.
-    isRelevant: (directory, filename) => filename == null
-      || (root && directory === join(root, 'owners'))
-      || (root && directory === join(root, 'waiters') && join(directory, String(filename)) !== waiter)
-      || (resourcesRelevant && ((dependencyWaiters.includes(directory) && /^\d+\.json$/.test(String(filename)))
-        || lockPaths.some(path => dirname(path) === directory && basename(path) === String(filename)))),
-  });
-  const raw = path => { try { return readFileSync(path, 'utf8'); } catch (error) { if (error.code === 'ENOENT') return null; throw error; } };
-  const entries = directory => {
-    try { return readdirSync(directory).sort(); } catch (error) { if (error.code === 'ENOENT') return []; throw error; }
-  };
-  const readSnapshot = (includeResources = true) => JSON.stringify([
-    root ? entries(join(root, 'owners')) : [],
-    root ? entries(join(root, 'waiters')).filter(name => join(root, 'waiters', name) !== waiter)
-      .map(name => [name, raw(join(root, 'waiters', name))]) : [],
-    includeResources ? lockPaths.map(path => {
-      const value = raw(path);
+export function createWorkspaceBuildResourceObservation({ locks = [], env = process.env, priorityScope } = {}) {
+  const lockPaths = locks.flatMap(lock => [resolve(lock.path), resolve(lock.path) + '.priority-claim']);
+  const publicationPaths = locks.filter(lock => lock.kind === undefined || lock.kind === 'workspace').map(lock => resolve(lock.path));
+  const readerDirectories = locks.filter(lock => lock.kind === 'dependency-input-writer').map(lock => `${resolve(lock.path)}.readers`);
+  const directories = [...new Set([...lockPaths.map(dirname), ...readerDirectories])];
+  const isRelevant = (directory, filename) => filename == null
+      || lockPaths.some(path => dirname(path) === directory && basename(path) === String(filename))
+      || readerDirectories.includes(directory)
+      || readerDirectories.some(path => dirname(path) === directory && basename(path) === String(filename))
+      || publicationPaths.some(path => dirname(path) === directory && isWorkspaceBundleLockPriorityChange(path, filename, priorityScope));
+  // This snapshot is shared by standalone waits and the host broker. Heartbeat
+  // writes do not change resource identity. Canonical liveness can change even
+  // when a crashed holder leaves every byte untouched.
+  const readSnapshot = () => JSON.stringify([
+    lockPaths.map(path => {
+      let value;
+      try { value = readFileSync(path, 'utf8'); }
+      catch (error) { if (error.code === 'ENOENT') return null; throw error; }
       try {
         const { updatedAtMs, ...identity } = JSON.parse(value);
         return identity;
       } catch { return value; }
-    }) : [],
-    includeResources ? dependencyWaiters.map(directory => entries(directory).filter(name => /^\d+\.json$/.test(name))
-      .map(name => {
-        const value = raw(join(directory, name));
-        try { const { updatedAtMs, ...identity } = JSON.parse(value); return [name, identity]; }
-        catch { return [name, value]; }
-      })) : [],
+    }),
+    publicationPaths.map(path => observeWorkspaceBundleLock(path)),
+    publicationPaths.map(path => observeWorkspaceBundleLockPriority(path, { priorityScope })),
+    readerDirectories.map(path => {
+      try { return readdirSync(path).sort(); }
+      catch (error) { if (error.code === 'ENOENT') return []; throw error; }
+    }),
   ]);
-  return { observer, readSnapshot, readAdmissionSnapshot: () => readSnapshot(false),
-    observeResources: value => { resourcesRelevant = value; } };
+  return { directories, isRelevant, readSnapshot };
 }
 
 /** Non-Linux and in-process publishers use the same all-resource attempt as
@@ -186,30 +221,37 @@ function admissionChangeObservation(locks, env) {
  * errors from an entered publisher are terminal and never replayed.
  */
 export async function withWorkspaceBuildResources({ locks = [], dependencyInstallDir, env = process.env, signal,
-  typecheckDeclarationPhase = false }, run) {
+  typecheckDeclarationPhase = false, admittedResourceWait = false }, run) {
   locks = workspaceBuildResources(locks, dependencyInstallDir, env);
-  const observation = admissionChangeObservation(locks, env);
-  const inherited = await hasInheritedBuildCustody(env);
+  const priorityScope = createWorkspaceBuildResourcePriorityScope({ locks, env, signal });
+  const resources = createWorkspaceBuildResourceObservation({ locks, env, priorityScope });
+  const observation = { ...resources, observer: createFileChangeObserver(resources.directories, { isRelevant: resources.isRelevant }) };
+  const inherited = await hasInheritedPackageBuildCustody(env);
   // Declaration emission reuses the containing compiler's capacity. It may
-  // wait for publication while holding only its installed-tree reader, never
-  // while retaining another package writer. All partial attempts unwind.
+  // wait for publication without retaining another package writer. All partial
+  // attempts unwind.
   const declarationWait = typecheckDeclarationPhase && !await hasInheritedPackageBuildCustody(env);
   let waited = false;
   try {
     while (true) {
       signal?.throwIfAborted();
+      priorityScope.activate();
       const snapshot = observation.observer.capture(observation.readSnapshot);
       let entered = false;
       try {
         return await withLocks(locks, env, signal, async acquiredEnv => {
           entered = true;
+          priorityScope.dispose();
           return await run(acquiredEnv, { waited });
-        });
+        }, priorityScope);
       } catch (error) {
-        if (entered || (!declarationWait && (inherited || env.HAPPIER_WORKSPACE_DIST_BUILD_LOCK_WAIT_ALLOWED === '0'
-          || process.env.HAPPIER_WORKSPACE_DIST_BUILD_LOCK_WAIT_ALLOWED === '0'))
-          || ![WORKSPACE_BUNDLE_LOCK_BUSY_ERROR_CODE, JSON_OWNER_FILE_LOCK_BUSY_ERROR_CODE].includes(error?.code)) throw error;
-        if (!waited) console.error(error.message);
+        if (entered || !isWorkspaceResourceBusy(error)) throw error;
+        if (!declarationWait && (inherited || (!admittedResourceWait
+          && (env.HAPPIER_WORKSPACE_DIST_BUILD_LOCK_WAIT_ALLOWED === '0'
+            || process.env.HAPPIER_WORKSPACE_DIST_BUILD_LOCK_WAIT_ALLOWED === '0')))) {
+          throw error;
+        }
+        if (!waited) console.error(error.message.replace(/^HSTACK_WORKSPACE_ADMISSION_ORDER: /u, ''));
         waited = true;
       }
       await observation.observer.wait({ snapshot, readSnapshot: observation.readSnapshot,
@@ -217,18 +259,28 @@ export async function withWorkspaceBuildResources({ locks = [], dependencyInstal
     }
   } finally {
     observation.observer.close();
+    priorityScope.dispose();
   }
 }
 
-async function withLocks(locks, env, signal, run, index = 0) {
+async function withLocks(locks, env, signal, run, priorityScope, index = 0) {
   if (index === locks.length) return await run(env);
   const lock = locks[index];
-  if (lock.kind === 'dependency') {
-    if (resolve(lock.path) !== resolveDependencyRefreshLockPath(lock.installDir, env)) {
-      throw new Error('Dependency admission requires its canonical installed-tree lock');
+  if (lock.kind === 'dependency' || lock.kind === 'dependency-input-writer') {
+    let entered = false;
+    const next = acquiredEnv => {
+      entered = true;
+      return withLocks(locks, acquiredEnv, signal, run, priorityScope, index + 1);
+    };
+    try {
+      return lock.kind === 'dependency'
+        ? await withDependencyConsumption({ installDir: lock.installDir, env, signal, wait: false }, next)
+        : await withDependencyRefreshLock({ installDir: lock.installDir, env, signal, wait: false },
+          context => next(resolveLockedInstallEnv(env, context)));
+    } catch (error) {
+      if (!entered && isWorkspaceResourceBusy(error)) priorityScope.suspend();
+      throw error;
     }
-    return await withDependencyConsumption({ installDir: lock.installDir, env, signal, wait: false }, env =>
-      withLocks(locks, env, signal, run, index + 1));
   }
   return await withWorkspaceBundleLock(async ({ heldLockValue }) => {
     const leases = env.HAPPIER_WORKSPACE_DIST_BUILD_LOCK_LEASES
@@ -239,9 +291,9 @@ async function withLocks(locks, env, signal, run, index = 0) {
     return await withLocks(locks, { ...env,
       HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD: env.HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD || heldLockValue,
       HAPPIER_WORKSPACE_DIST_BUILD_LOCK_LEASES: JSON.stringify([...new Set([...leases, heldLockValue])]),
-    }, signal, run, index + 1);
+    }, signal, run, priorityScope, index + 1);
   }, {
-    lockPath: resolve(lock.path), env, signal, wait: false,
+    lockPath: resolve(lock.path), env, signal, wait: false, priorityScope,
     ...(lock.timeoutMs !== undefined ? { timeoutMs: lock.timeoutMs === null ? Infinity : lock.timeoutMs } : {}),
     ...(lock.staleAfterMs !== undefined ? { staleAfterMs: lock.staleAfterMs === null ? Infinity : lock.staleAfterMs } : {}),
     ...(lock.pollIntervalMs !== undefined ? { pollIntervalMs: lock.pollIntervalMs } : {}),
@@ -249,31 +301,20 @@ async function withLocks(locks, env, signal, run, index = 0) {
   });
 }
 
-/** Private lease worker. Control uses inherited FDs, never payload stdio or a
- * durable state record. Closing custody aborts acquisition and releases scopes.
- */
+/** Standalone platform adapter. Linux capacity and queue custody are owned
+ * by admission_client; inherited producers consume their parent's resources. */
 export async function runWorkspaceBuildAdmissionWorker(argv) {
   if (argv.length === 1 && argv[0] === '--held-lock-probe') {
-    try {
-      process.exitCode = await hasInheritedBuildCustody(process.env) ? 0 : 1;
-    } catch (error) {
-      console.error(error instanceof Error ? error.message : String(error));
-      // Exit 1 means an authenticated lease is absent. A probe failure must
-      // remain distinct so the native owner cannot treat it as permission.
-      process.exitCode = 2;
-    }
+    process.exitCode = await hasInheritedPackageBuildCustody(process.env) ? 0 : 1;
     return;
   }
   const [mode, rawLocks, launcherPath, admissionClass, delimiter, command, ...args] = argv;
-  // Already-parsed launchers still use --worker and --worker-try. Keep their
-  // one-attempt transport while current launchers reuse event-wait custody.
-  if (!['--worker', '--worker-try', '--worker-events', '--worker-events-inherited', '--worker-inherited', '--standalone', '--dev-startup', '--inherited-resources'].includes(mode) || delimiter !== '--' || !command) {
+  if (!['--standalone', '--dev-startup', '--inherited-resources'].includes(mode) || delimiter !== '--' || !command) {
     throw new Error('Invalid workspace admission worker invocation');
   }
   const locks = parseLocks(rawLocks);
   if (mode === '--inherited-resources') assertInheritedWorkspaceBuildResources({ locks, env: process.env });
   if (mode === '--dev-startup') process.env.HAPPIER_WORKSPACE_BUILD_STARTUP = '1';
-  const inheritedBuildCustody = await hasInheritedBuildCustody(process.env);
   if (mode === '--standalone' && process.platform === 'linux') {
     const { requiresTypeScriptAdmission } = await import('../../../../../scripts/workspaces/resolveTypeScriptCliInvocation.mjs');
     if (requiresTypeScriptAdmission({ env: process.env, platform: process.platform })) {
@@ -281,135 +322,34 @@ export async function runWorkspaceBuildAdmissionWorker(argv) {
     }
   }
   const cancellation = new AbortController();
-  let controls, controlInput;
-  const interrupt = () => {
-    cancellation.abort();
-    controls?.close();
-    controlInput?.destroy();
-  };
+  const interrupt = () => cancellation.abort();
   for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.on(signal, interrupt);
-  // A native pipe uses event-loop custody, not a blocking filesystem read
-  // which can strand the worker during cancellation or normal lock release.
-  const standalone = mode === '--standalone' || mode === '--dev-startup' || mode === '--inherited-resources';
-  controlInput = !standalone ? new Socket({ fd: 4, readable: true, writable: false }) : null;
-  controls = controlInput ? createInterface({ input: controlInput }) : null;
-  const lines = controls?.[Symbol.asyncIterator]();
-  controls?.once('close', interrupt);
-  let result = { status: 0, signal: null };
-  const eventMode = mode === '--worker-events' || mode === '--worker-events-inherited';
-  const observation = eventMode ? admissionChangeObservation(locks, process.env) : null;
-  let waitSnapshot;
-  let waitReadSnapshot;
-  let running = false;
-  let reportedBusy = false;
-  const acquire = mode === '--inherited-resources' ? run => run(process.env) : standalone || mode === '--worker'
-    ? run => withWorkspaceBuildResources({ locks, env: process.env, signal: cancellation.signal }, run)
-    : run => withLocks(locks, process.env, cancellation.signal, run);
   try {
-    do {
-      let admissionSnapshot;
-      let resourcesAcquired = false;
-      if (eventMode) {
-        observation.observeResources(true);
-        waitReadSnapshot = observation.readSnapshot;
-        waitSnapshot = observation.observer.capture(waitReadSnapshot);
-        admissionSnapshot = observation.readAdmissionSnapshot();
-      }
-      try {
-        await acquire(async env => {
-          resourcesAcquired = true;
-          if (!standalone) {
-            writeSync(3, inheritedBuildCustody ? 'ready-inherited\n' : 'ready\n');
-            const decision = await lines.next();
-            if (decision.done || decision.value === 'release') return;
-            if (decision.value !== 'run') throw new Error('Invalid workspace admission decision');
-            running = true;
-            const values = [];
-            for (let index = 0; index < 3; index++) {
-              const value = await lines.next();
-              if (value.done) throw new Error('Workspace admission custody closed before payload');
-              values.push(value.value);
-            }
-            [env.HAPPIER_HEAVYWEIGHT_ADMISSION_TOKEN, env.HAPPIER_HEAVYWEIGHT_ADMISSION_ROOT,
-              env.HAPPIER_HEAVYWEIGHT_ADMISSION_MACHINE] = values;
-            // This decision is native-owned. The restriction grants no admission;
-            // the nested native guard still authenticates the original token.
-            env.HAPPIER_WORKSPACE_DIST_BUILD_LOCK_WAIT_ALLOWED = '0';
-          }
-          delete env.HSTACK_ADMISSION_WAIT_ROOT;
-          delete env.HSTACK_ADMISSION_WAITER;
-          cancellation.signal.throwIfAborted();
-          const invocation = mode === '--inherited-resources' && process.platform === 'linux'
-            ? { command: '/bin/sh', args: [launcherPath, '--heavyweight-admission', '--require-inherited', `--class=${admissionClass}`,
-              `--machine=${env.HAPPIER_HEAVYWEIGHT_ADMISSION_MACHINE || 'local'}`, '--', command, ...args] }
-            : standalone
-            ? process.platform === 'win32'
-              ? (await import('../process/resolveCommandInvocation.mjs')).resolveCommandInvocation({ command, args, env })
-              : { command, args }
-            : { command: '/bin/sh', args: [launcherPath, '--heavyweight-admission', '--require-inherited', `--class=${admissionClass}`,
-              `--machine=${env.HAPPIER_HEAVYWEIGHT_ADMISSION_MACHINE || 'local'}`, '--', command, ...args] };
-          result = await new Promise(resolveResult => {
-            const child = spawn(invocation.command, invocation.args, { env, signal: cancellation.signal, stdio: 'inherit',
-              ...(invocation.windowsVerbatimArguments !== undefined ? { windowsVerbatimArguments: invocation.windowsVerbatimArguments } : {}) });
-            let error;
-            child.once('error', value => { error = value; });
-            child.once('close', (status, terminalSignal) => resolveResult({ status, signal: terminalSignal, ...(error ? { error } : {}) }));
-          });
-        });
-      } catch (error) {
-        if (mode !== '--worker-events' || ![WORKSPACE_BUNDLE_LOCK_BUSY_ERROR_CODE, JSON_OWNER_FILE_LOCK_BUSY_ERROR_CODE].includes(error?.code)) throw error;
-        // All scopes have unwound before native code marks this head busy.
-        if (!reportedBusy) console.error(error.message);
-        reportedBusy = true;
-        writeSync(3, 'busy\n');
-      }
-      if (!eventMode || running) break;
-      if (resourcesAcquired) {
-        // Capacity/queue denial released otherwise available resources. Their
-        // independent publishers cannot free capacity; watching their transient
-        // leases makes queued workers repeatedly wake one another.
-        observation.observeResources(false);
-        waitReadSnapshot = observation.readAdmissionSnapshot;
-        waitSnapshot = admissionSnapshot;
-      }
-      writeSync(3, 'released\n');
-      const decision = await lines.next();
-      if (decision.done) break;
-      if (!decision.value.startsWith('wait ')) throw new Error('Invalid workspace admission wait');
-      const maxWaitMs = Number(decision.value.slice(5));
-      if (!Number.isFinite(maxWaitMs) || maxWaitMs <= 0) throw new Error('Invalid workspace admission catch-up');
-      await observation.observer.wait({ snapshot: waitSnapshot, readSnapshot: waitReadSnapshot,
-        maxWaitMs, signal: cancellation.signal });
-      writeSync(3, 'changed\n');
-      const retry = await lines.next();
-      if (retry.done) break;
-      if (retry.value !== 'try') throw new Error('Invalid workspace admission retry');
-    } while (!cancellation.signal.aborted);
+    const run = async env => {
+      cancellation.signal.throwIfAborted();
+      const invocation = mode === '--inherited-resources' && process.platform === 'linux'
+        ? { command: '/bin/sh', args: [launcherPath, '--heavyweight-admission', '--require-inherited', '--class=' + admissionClass,
+          '--machine=' + (env.HAPPIER_HEAVYWEIGHT_ADMISSION_MACHINE || 'local'), '--', command, ...args] }
+        : process.platform === 'win32'
+          ? (await import('../process/resolveCommandInvocation.mjs')).resolveCommandInvocation({ command, args, env })
+          : { command, args };
+      const result = await new Promise((resolveResult, reject) => {
+        const child = spawnForegroundCommand(invocation.command, invocation.args, { env, signal: cancellation.signal,
+          stdio: 'inherit', ownedProcessGroup: true,
+          ...(invocation.windowsVerbatimArguments !== undefined ? { windowsVerbatimArguments: invocation.windowsVerbatimArguments } : {}) });
+        child.once('error', reject);
+        child.once('close', (status, terminalSignal) => resolveResult({ status, signal: terminalSignal }));
+      });
+      process.exitCode = result.signal ? 128 + (constants.signals[result.signal] ?? 0) : result.status ?? 1;
+    };
+    if (mode === '--inherited-resources') await run(process.env);
+    else await withWorkspaceBuildResources({ locks, env: process.env, signal: cancellation.signal }, run);
   } catch (error) {
-    if (!cancellation.signal.aborted) {
-      if ([WORKSPACE_BUNDLE_LOCK_BUSY_ERROR_CODE, JSON_OWNER_FILE_LOCK_BUSY_ERROR_CODE].includes(error?.code)) {
-        if (mode === '--worker-try') {
-          // withLocks has unwound every acquired scope before readiness is
-          // reported. The native owner may now yield queue-head priority.
-          console.error(error.message);
-          writeSync(3, 'busy\n');
-        } else {
-          throw new Error('HSTACK_WORKSPACE_ADMISSION_ORDER: an admitted ancestor cannot wait for a foreign workspace lease; prepare the producer before payload admission', { cause: error });
-        }
-      } else {
-        throw error;
-      }
-    }
-    result = { status: 130, signal: null };
+    if (!cancellation.signal.aborted) throw error;
+    process.exitCode = 130;
   } finally {
-    observation?.observer.close();
-    controls?.off('close', interrupt);
-    controls?.close();
-    controlInput?.destroy();
     for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.off(signal, interrupt);
   }
-  if (result.error && !cancellation.signal.aborted) throw result.error;
-  process.exitCode = result.signal ? 128 + (constants.signals[result.signal] ?? 0) : result.status ?? 1;
 }
 
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {

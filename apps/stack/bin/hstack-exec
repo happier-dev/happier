@@ -66,8 +66,22 @@ fi
 # native projection before either direct admission or command placement.
 . "$script_dir/../scripts/utils/dev_targets/native_command_policy.sh" || exit 1
 . "$script_dir/../scripts/utils/proc/native_process_identity.sh" || exit 1
+. "$script_dir/../scripts/utils/proc/native_process_priority.sh" || exit 1
 . "$script_dir/../scripts/utils/proc/native_host_admission_state.sh" || exit 1
 native_policy_loaded=1
+
+run_dependency_free_node() (
+  source_bootstrap_option="--import=\"$repo_root/apps/stack/bin/localSourceRuntimeBootstrap.mjs\""
+  case "${NODE_OPTIONS-}" in
+    *"$source_bootstrap_option"*)
+      source_options_before=${NODE_OPTIONS%%"$source_bootstrap_option"*}
+      source_options_after=${NODE_OPTIONS#*"$source_bootstrap_option"}
+      NODE_OPTIONS="$source_options_before$source_options_after"
+      export NODE_OPTIONS
+      ;;
+  esac
+  exec node "$@"
+)
 
 run_remote_ssh_probe() {
   # Read-only observations may retry a failed multiplex channel once without
@@ -96,7 +110,7 @@ score_load_sample() {
   # eligible for admission; AUTO tries the pool once before joining a queue.
   printf '%s\n' "$1" | awk -v heavy="${2-0}" -v minimum_capacity="${3-0}" '
     {
-      if ($1 <= 0 || $2 < 0 || ($4 != "" && $4 <= 0)) exit
+      if ($1 <= 0 || $2 < 0) exit
       if (minimum_capacity > 0 && $8 < minimum_capacity) exit
       ratio = $3
       if ($8 > 0) ratio = $7 / $8
@@ -105,34 +119,19 @@ score_load_sample() {
       available_memory = ($17 != "" ? $17 : $7)
       if (ratio < 0) ratio = 0
       if (ratio > 1) ratio = 1
-      # Rank heavy work by its existing class envelope relative to actual
-      # headroom. Free-memory percentage alone penalizes larger workers even
-      # when they have more unreserved RAM for this command.
-      # Zero headroom ranks last but remains eligible to wait remotely.
-      pressure = heavy ? (available_memory > 0 ? minimum_capacity / available_memory : 1e30) : (ratio < 0.1 ? 1 : 0)
+      # Remote host queues include demand from every controller. Charge each
+      # waiting class its own envelope, not a CPU-sized job count. Preserve
+      # zero-headroom ordering; physical RAM scales the demand penalty when
+      # no current headroom exists. The broker owns head-floor reservation.
+      queued_memory = ($20 ~ /^[0-9]+$/ ? $20 : 0)
+      drained_demand = $8 > 0 ? queued_memory / $8 : 0
+      # Zero headroom is ordered separately below. A huge sentinel erases
+      # per-core load and active-dispatch increments in floating-point math.
+      pressure = heavy ? (available_memory > 0 ? (minimum_capacity + queued_memory) / available_memory : drained_demand) : (ratio < 0.1 ? 1 : 0)
       printf "%.6f", ($2 / $1) + pressure
     }'
 }
 
-exec_in_jobs_slice() {
-  # A scoped payload keeps its process identity across exec. Reentrant work
-  # already placed in jobs must reuse that scope, not create it a second time.
-  case "$(sed -n 's/^0:://p' /proc/self/cgroup 2>/dev/null)" in
-    *'/happier-jobs.slice/'*) exec "$@" ;;
-  esac
-  # Scope execution inherits niceness. Raising a nested background job back to
-  # 10 needs privileges, so retain any already-lower scheduling priority.
-  jobs_slice_nice=$(ps -o ni= -p "$$") || return
-  jobs_slice_nice=$((jobs_slice_nice))
-  if [ "$jobs_slice_nice" -lt 10 ]; then jobs_slice_nice=10; fi
-  # A control-to-jobs exec retains the process identity used by systemd's
-  # default scope name. Keep the jobs placement distinct from that control
-  # scope, using the same PID/start-token identity as the admission owner.
-  jobs_slice_token=$(heavyweight_process_token "$$")
-  # Payloads include shell programs; only that shell may expand their operands.
-  exec systemd-run --expand-environment=no "--unit=happier-jobs-$$-$jobs_slice_token.scope" \
-    --user --scope --quiet --slice=happier-jobs.slice "--nice=$jobs_slice_nice" -- "$@"
-}
 
 resolve_command_policy() {
   if [ "${native_policy_loaded-0}" != 1 ]; then
@@ -204,1065 +203,12 @@ is_heavyweight_dispatch_class() {
   esac
 }
 
-resolve_heavyweight_admission_root() {
-  # One worker-side filesystem authority, including private task mirrors. If
-  # its execution-account-owned state is unavailable, fail closed: a private
-  # queue would silently evade every other caller's resource reservations.
-  resolve_native_host_admission_root
-}
-
-resolve_worker_cpu_budget() {
-  awk -v cpu="$1" -v platform="$2" -v active="$3" -v run_queue="$4" \
-    -v cpu_psi="$5" -v memory_psi="$6" '
-    BEGIN {
-      if (cpu !~ /^[0-9]+$/ || cpu < 1) exit
-      if (active !~ /^[0-9]+$/ || active < 0) active = 0
-      if (run_queue !~ /^[0-9]+$/ || run_queue < 0) run_queue = 0
-      if (cpu_psi !~ /^[0-9]+([.][0-9]+)?$/ || cpu_psi < 0) cpu_psi = 0
-      if (memory_psi !~ /^[0-9]+([.][0-9]+)?$/ || memory_psi < 0) memory_psi = 0
-      # Runnable pressure, rather than waiting reservations, owns Linux CPU
-      # demand. Darwin retains the existing reservation-based sharing policy.
-      denominator = (platform == "linux" ? 1 : active + 1) + (cpu_psi / 100) + (memory_psi / 100)
-      if (run_queue > cpu) denominator += (run_queue - cpu) / cpu
-      workers = int(cpu / denominator)
-      if (workers < 1) workers = 1
-      if (workers > cpu) workers = cpu
-      print workers
-    }'
-}
-
-ensure_native_job_cpu_budget() {
-  [ -z "${GOMAXPROCS+x}" ] || return 0
-  [ "$(uname -s 2>/dev/null || true)" = Linux ] || return 0
-  native_job_cpu=$(getconf _NPROCESSORS_ONLN 2>/dev/null || true)
-  native_job_run_queue=$(awk '{split($4, queue, "/"); print queue[1]}' /proc/loadavg 2>/dev/null || true)
-  native_job_cpu_psi=$(awk '/^some / {for (field = 1; field <= NF; field += 1) if ($field ~ /^avg10=/) {sub(/^avg10=/, "", $field); print $field; exit}}' /proc/pressure/cpu 2>/dev/null || true)
-  native_job_memory_psi=$(awk '/^some / {for (field = 1; field <= NF; field += 1) if ($field ~ /^avg10=/) {sub(/^avg10=/, "", $field); print $field; exit}}' /proc/pressure/memory 2>/dev/null || true)
-  native_job_workers=$(resolve_worker_cpu_budget "$native_job_cpu" linux 0 "$native_job_run_queue" "$native_job_cpu_psi" "$native_job_memory_psi")
-  if [ -n "$native_job_workers" ]; then
-    export GOMAXPROCS=$native_job_workers
-  fi
-}
-
-heavyweight_owner_memory_floor_kib() {
-  heavyweight_owner_workers=
-  if [ "$2" = source-web-export ] && [ -r "$1/workers" ]; then
-    IFS= read -r heavyweight_owner_workers < "$1/workers" || true
-  fi
-  heavyweight_memory_floor_kib "$2" "${3-}" "$heavyweight_owner_workers"
-}
-
-heavyweight_prepare_export_request() {
-  [ "$heavyweight_admission_class" = source-web-export ] || return 0
-  heavyweight_export_interactive=0
-  if [ -t 0 ] && [ -t 1 ]; then heavyweight_export_interactive=1; fi
-  # Command substitution pipes the metadata child's stdout. Forward the real
-  # payload's TTY observation instead of mistaking that pipe for its boundary.
-  heavyweight_export_request=$(node "$projection_command_policy" --source-web-export-workers "$heavyweight_export_interactive" "$@") || exit 1
-  IFS=' ' read -r heavyweight_export_worker_mode heavyweight_export_requested_workers <<EOF
-$heavyweight_export_request
-EOF
-}
-
-heavyweight_request_memory_floor_kib() {
-  if [ "$heavyweight_admission_class" = source-web-export ]; then
-    heavyweight_request_workers=${heavyweight_export_workers:-$heavyweight_export_requested_workers}
-    if [ "$heavyweight_export_worker_mode" = explicit ]; then heavyweight_request_workers=$heavyweight_export_requested_workers; fi
-    heavyweight_memory_floor_kib "$heavyweight_admission_class" "${heavyweight_admission_placement-}" "$heavyweight_request_workers"
-  else
-    heavyweight_memory_floor_kib "$heavyweight_admission_class" "${heavyweight_admission_placement-}"
-  fi
-}
-
-heavyweight_publish_export_workers() {
-  if [ "$heavyweight_admission_class" = source-web-export ]; then
-    heavyweight_published_workers=${heavyweight_export_workers:-$heavyweight_export_requested_workers}
-    if [ "$heavyweight_export_worker_mode" = explicit ]; then heavyweight_published_workers=$heavyweight_export_requested_workers; fi
-    if [ "$heavyweight_published_workers" = 0 ]; then
-      # A Metro-owned default has no admitted thread count. Its missing count
-      # retains the conservative class envelope, including after escalation.
-      rm -f -- "$heavyweight_owner_path/workers" || exit 1
-    else
-      printf '%s\n' "$heavyweight_published_workers" > "$heavyweight_owner_path/workers" || exit 1
-    fi
-  fi
-}
-
-heavyweight_apply_export_workers() {
-  # Explicit Metro flags do not reduce the containing job's compiler budget.
-  [ "$heavyweight_export_worker_mode" = managed ] || return 0
-  if [ "$heavyweight_admission_class" = source-web-export ]; then
-    heavyweight_export_workers=
-    if [ -r "$heavyweight_owner_path/workers" ]; then
-      IFS= read -r heavyweight_export_workers < "$heavyweight_owner_path/workers" || true
-    fi
-    case "$heavyweight_export_workers" in ''|*[!0-9]*|0) return 0 ;; esac
-    if [ "$heavyweight_export_worker_mode" = managed ] && [ "$heavyweight_export_requested_workers" -lt "$heavyweight_export_workers" ]; then
-      heavyweight_export_workers=$heavyweight_export_requested_workers
-    fi
-    export GOMAXPROCS=$heavyweight_export_workers
-  fi
-}
-
-heavyweight_try_reentrant_admission() {
-  heavyweight_inherited_token=${1-${HAPPIER_HEAVYWEIGHT_ADMISSION_TOKEN-}}
-  heavyweight_inherited_root=${2-${HAPPIER_HEAVYWEIGHT_ADMISSION_ROOT-}}
-  heavyweight_inherited_machine=${3-${HAPPIER_HEAVYWEIGHT_ADMISSION_MACHINE-}}
-  [ -n "$heavyweight_inherited_token" ] || return 1
-
-  # The inherited value identifies the original owner as PID plus Linux
-  # process start token. An environment value alone is not authority: require
-  # the matching live owner record as well, so stale PID reuse and forged
-  # values cannot silently bypass a reservation.
-  case "$heavyweight_inherited_token" in
-    *:*)
-      heavyweight_owner_pid=${heavyweight_inherited_token%%:*}
-      heavyweight_owner_token=${heavyweight_inherited_token#*:}
-      ;;
-    *) return 1 ;;
-  esac
-  case "$heavyweight_owner_pid:$heavyweight_owner_token" in
-    ''|*[!0-9:]*|*:*:*) return 1 ;;
-  esac
-  [ "$heavyweight_owner_token" != 0 ] || return 1
-  case "$heavyweight_inherited_root" in /*) ;; *) return 1 ;; esac
-  heavyweight_inherited_owner_path="$heavyweight_inherited_root/owners/$heavyweight_owner_pid-$heavyweight_owner_token"
-  [ -d "$heavyweight_inherited_owner_path" ] || return 1
-  IFS=' ' read -r heavyweight_recorded_pid heavyweight_recorded_token 2>/dev/null < "$heavyweight_inherited_owner_path/process" || return 1
-  [ "$heavyweight_recorded_pid" = "$heavyweight_owner_pid" ] || return 1
-  [ "$heavyweight_recorded_token" = "$heavyweight_owner_token" ] || return 1
-  heavyweight_recorded_machine=$(sed -n '1p' "$heavyweight_inherited_owner_path/machine" 2>/dev/null || true)
-  [ "$heavyweight_recorded_machine" = "$heavyweight_inherited_machine" ] || return 1
-  heavyweight_process_is_current "$heavyweight_owner_pid" "$heavyweight_owner_token" || return 1
-  # A token from a different live job is not a reusable envelope. This also
-  # anchors legacy private-root adoption to a real local ancestor, not a
-  # caller-created record for an unrelated process.
-  heavyweight_ancestor=$$
-  while [ "$heavyweight_ancestor" != "$heavyweight_owner_pid" ]; do
-    case "$heavyweight_ancestor" in ''|*[!0-9]*|0|1) return 1 ;; esac
-    heavyweight_ancestor=$(awk '/^PPid:/ {print $2; exit}' "/proc/$heavyweight_ancestor/status" 2>/dev/null || true)
-  done
-  heavyweight_owner_path="$heavyweight_admission_root/owners/$heavyweight_owner_pid-$heavyweight_owner_token"
-  if [ "$heavyweight_admission_root" = "$heavyweight_inherited_root" ]; then
-    [ "$heavyweight_admission_machine" = "$heavyweight_inherited_machine" ] || return 1
-  else
-    # An already-admitted pre-cutover ancestor still owns its envelope. Adopt
-    # it into the one host queue so a nested current launcher does not wait
-    # behind that same reservation. Old private state is read, never mutated.
-    heavyweight_legacy_class=$(sed -n '1p' "$heavyweight_inherited_owner_path/class" 2>/dev/null || true)
-    case "$heavyweight_legacy_class" in ''|*[!a-z-]*) return 1 ;; esac
-    (umask 077; mkdir -p -- "$heavyweight_admission_root/owners") || return 1
-    exec 9>>"$heavyweight_admission_root/lock" || return 1
-    if [ "${heavyweight_prior_workspace_lease-0}" = 1 ]; then
-      # Adoption retains a live ancestor's reservation. It must not wait on
-      # the native mutex while that ancestor's workspace lease is held.
-      flock -n 9 || { exec 9>&-; heavyweight_decline_before_dispatch "admission-decision-in-progress lock=$heavyweight_admission_root/lock"; }
-    else
-      flock 9 || { exec 9>&-; return 1; }
-    fi
-    if ! heavyweight_process_is_current "$heavyweight_owner_pid" "$heavyweight_owner_token"; then
-      flock -u 9; exec 9>&-; return 1
-    fi
-    mkdir -p -- "$heavyweight_owner_path" || { flock -u 9; exec 9>&-; return 1; }
-    heavyweight_current_class=$(sed -n '1p' "$heavyweight_owner_path/class" 2>/dev/null || true)
-    if [ -n "$heavyweight_current_class" ] \
-      && [ "$(heavyweight_memory_floor_kib "$heavyweight_current_class")" -gt "$(heavyweight_memory_floor_kib "$heavyweight_legacy_class")" ]; then
-      heavyweight_legacy_class=$heavyweight_current_class
-    fi
-    printf '%s %s\n' "$heavyweight_owner_pid" "$heavyweight_owner_token" > "$heavyweight_owner_path/process"
-    printf '%s\n' "$heavyweight_legacy_class" > "$heavyweight_owner_path/class"
-    printf '%s\n' "$heavyweight_admission_machine" > "$heavyweight_owner_path/machine"
-    flock -u 9
-    exec 9>&-
-    export HAPPIER_HEAVYWEIGHT_ADMISSION_ROOT="$heavyweight_admission_root"
-    export HAPPIER_HEAVYWEIGHT_ADMISSION_MACHINE="$heavyweight_admission_machine"
-  fi
-  return 0
-}
-
-heavyweight_try_ancestor_admission() {
-  # Lifecycle/process adapters may lose environment context. Kernel ancestry
-  # plus the existing live owner record still identifies the containing job;
-  # it must not join a second capacity queue behind itself.
-  heavyweight_candidate_pid=$$
-  while :; do
-    heavyweight_candidate_pid=$(awk '/^PPid:/ {print $2; exit}' "/proc/$heavyweight_candidate_pid/status" 2>/dev/null || true)
-    case "$heavyweight_candidate_pid" in ''|*[!0-9]*|0|1) return 1 ;; esac
-    for heavyweight_candidate_path in "$heavyweight_admission_root/owners/$heavyweight_candidate_pid-"*; do
-      [ -d "$heavyweight_candidate_path" ] || continue
-      IFS=' ' read -r heavyweight_candidate_recorded_pid heavyweight_candidate_token 2>/dev/null < "$heavyweight_candidate_path/process" || continue
-      [ "$heavyweight_candidate_recorded_pid" = "$heavyweight_candidate_pid" ] || continue
-      heavyweight_candidate_machine=$(sed -n '1p' "$heavyweight_candidate_path/machine" 2>/dev/null || true)
-      if heavyweight_try_reentrant_admission "$heavyweight_candidate_pid:$heavyweight_candidate_token" "$heavyweight_admission_root" "$heavyweight_candidate_machine"; then
-        export HAPPIER_HEAVYWEIGHT_ADMISSION_TOKEN="$heavyweight_inherited_token"
-        export HAPPIER_HEAVYWEIGHT_ADMISSION_ROOT="$heavyweight_inherited_root"
-        export HAPPIER_HEAVYWEIGHT_ADMISSION_MACHINE="$heavyweight_inherited_machine"
-        return 0
-      fi
-    done
-  done
-}
-
-read_host_memory_kib() {
-  host_memory=$(awk '/MemTotal:/ {total=$2} /MemAvailable:/ {available=$2} END {if(total>0) print available, total}' /proc/meminfo 2>/dev/null || true)
-  if [ -z "$host_memory" ]; then
-    host_memory_total_bytes=$(sysctl -n hw.memsize 2>/dev/null || true)
-    host_memory_free=$(memory_pressure -Q 2>/dev/null | awk '/free percentage/ {gsub(/%/,"",$5); print $5/100; exit}')
-    host_memory=$(awk -v bytes="${host_memory_total_bytes:-0}" -v ratio="${host_memory_free:-0}" 'BEGIN {if(bytes>0) printf "%.0f %.0f", (bytes/1024)*ratio, bytes/1024}')
-  fi
-  printf '%s\n' "$host_memory"
-}
-
-heavyweight_unused_owner_reservation() {
-  heavyweight_reserved_floor=$3
-  heavyweight_reserved_rss=0
-  # All records describe the same live incarnation. Merge class escalation
-  # before crediting its resident tree once; MemAvailable already excludes it.
-  while IFS=' ' read -r heavyweight_merge_kind heavyweight_merge_pid heavyweight_merge_token heavyweight_merge_value heavyweight_merge_tail; do
-    [ "$heavyweight_merge_pid:$heavyweight_merge_token" = "$1:$2" ] || continue
-    case "$heavyweight_merge_kind" in
-      legacy)
-        heavyweight_merge_floor=$(heavyweight_memory_floor_kib "$heavyweight_merge_value")
-        if [ "$heavyweight_merge_floor" -gt "$heavyweight_reserved_floor" ]; then
-          heavyweight_reserved_floor=$heavyweight_merge_floor
-        fi
-        ;;
-      admitted) heavyweight_reserved_rss=$heavyweight_merge_value ;;
-    esac
-  done <<EOF
-${heavyweight_worker_reservation_snapshot-}
-EOF
-  heavyweight_unused_memory=$((heavyweight_reserved_floor - heavyweight_reserved_rss))
-  if [ "$heavyweight_unused_memory" -lt 0 ]; then heavyweight_unused_memory=0; fi
-}
-
-heavyweight_reservation_is_live() {
-  heavyweight_process_is_current "$1" "$2" && return 0
-  # A terminal wrapper may still have a live payload carrying its authenticated
-  # admission identity. Reuse the fresh canonical tree observation, not a parent
-  # or CPU heuristic, before retiring that workload's envelope.
-  while IFS=' ' read -r heavyweight_custody_kind heavyweight_custody_pid heavyweight_custody_token heavyweight_custody_rss heavyweight_custody_tail; do
-    if [ "$heavyweight_custody_kind" = admitted ] && [ "$heavyweight_custody_pid:$heavyweight_custody_token" = "$1:$2" ]; then
-      return 0
-    fi
-  done <<EOF
-${heavyweight_worker_reservation_snapshot-}
-EOF
-  return 1
-}
-
-heavyweight_count_reserved_memory() {
-  heavyweight_reserved_memory=0
-  for heavyweight_reserved_entry in "$heavyweight_admission_root/owners"/*; do
-    [ -d "$heavyweight_reserved_entry" ] || continue
-    IFS=' ' read -r heavyweight_reserved_pid heavyweight_reserved_token 2>/dev/null < "$heavyweight_reserved_entry/process" || continue
-    if ! heavyweight_reservation_is_live "$heavyweight_reserved_pid" "$heavyweight_reserved_token"; then
-      continue
-    fi
-    # Escalation changes the original reservation, rather than reserving the
-    # inherited envelope a second time.
-    [ "$heavyweight_reserved_entry" != "${heavyweight_owner_path-}" ] || continue
-    heavyweight_reserved_class=$(sed -n '1p' "$heavyweight_reserved_entry/class" 2>/dev/null || true)
-    heavyweight_reserved_floor=$(heavyweight_owner_memory_floor_kib "$heavyweight_reserved_entry" "$heavyweight_reserved_class")
-    heavyweight_unused_owner_reservation "$heavyweight_reserved_pid" "$heavyweight_reserved_token" "$heavyweight_reserved_floor"
-    heavyweight_reserved_memory=$((heavyweight_reserved_memory + heavyweight_unused_memory))
-  done
-  # Pre-cutover private mirrors may still have admitted live work. Observe
-  # their existing owner records through the same OS snapshot, without making
-  # any of those private roots a new queue or counting migrated owners twice.
-  heavyweight_legacy_seen=' '
-  while IFS=' ' read -r heavyweight_legacy_kind heavyweight_legacy_pid heavyweight_legacy_token heavyweight_legacy_class heavyweight_legacy_tail; do
-    [ "$heavyweight_legacy_kind" = legacy ] || continue
-    [ ! -d "$heavyweight_admission_root/owners/$heavyweight_legacy_pid-$heavyweight_legacy_token" ] || continue
-    [ "$heavyweight_admission_root/owners/$heavyweight_legacy_pid-$heavyweight_legacy_token" != "${heavyweight_owner_path-}" ] || continue
-    case "$heavyweight_legacy_seen" in *" $heavyweight_legacy_pid:$heavyweight_legacy_token "*) continue ;; esac
-    heavyweight_legacy_seen="$heavyweight_legacy_seen$heavyweight_legacy_pid:$heavyweight_legacy_token "
-    heavyweight_reservation_is_live "$heavyweight_legacy_pid" "$heavyweight_legacy_token" || continue
-    heavyweight_legacy_floor=$(heavyweight_memory_floor_kib "$heavyweight_legacy_class")
-    heavyweight_unused_owner_reservation "$heavyweight_legacy_pid" "$heavyweight_legacy_token" "$heavyweight_legacy_floor"
-    heavyweight_reserved_memory=$((heavyweight_reserved_memory + heavyweight_unused_memory))
-  done <<EOF
-${heavyweight_worker_reservation_snapshot-}
-EOF
-}
-
-heavyweight_read_worker_reservations() {
-  heavyweight_service_memory=
-  heavyweight_owner_diagnostics=
-  # MemAvailable already accounts for live service pages. Service RSS remains a
-  # diagnostic observation, never a second physical-capacity deduction; its
-  # shared-page fallback cannot veto otherwise available memory. Admitted work
-  # still credits proportional resident memory against its measured envelope.
-  if ! heavyweight_worker_reservation_snapshot=$(printf '%s\n' "${heavyweight_previous_owner_progress-}" | node "$script_dir/../scripts/utils/proc/service_memory.mjs" "--admission-root=$heavyweight_admission_root" "--service-memory-ceiling-kib=$heavyweight_mem_total" --include-admitted-rss --include-owner-progress); then
-    heavyweight_resource_reason=worker-reservation-observation-unavailable
-    return 1
-  fi
-  while IFS=' ' read -r heavyweight_sample_kind heavyweight_sample_value heavyweight_sample_token heavyweight_sample_class heavyweight_sample_tail; do
-    case "$heavyweight_sample_kind" in
-      service)
-        case "$heavyweight_sample_value" in ''|*[!0-9]*) return 1 ;; esac
-        [ -z "$heavyweight_service_memory" ] && [ -z "$heavyweight_sample_token$heavyweight_sample_class$heavyweight_sample_tail" ] || return 1
-        heavyweight_service_memory=$heavyweight_sample_value
-        ;;
-      legacy)
-        case "$heavyweight_sample_value:$heavyweight_sample_token" in *[!0-9:]*|:*|*:) return 1 ;; esac
-        case "$heavyweight_sample_class" in ''|*[!a-z-]*) return 1 ;; esac
-        [ -z "$heavyweight_sample_tail" ] || return 1
-        ;;
-      admitted)
-        case "$heavyweight_sample_value:$heavyweight_sample_token" in *[!0-9:]*|:*|*:) return 1 ;; esac
-        case "$heavyweight_sample_class" in ''|*[!0-9]*) return 1 ;; esac
-        [ -z "$heavyweight_sample_tail" ] || return 1
-        ;;
-      progress) heavyweight_previous_owner_progress=$heavyweight_sample_value ;;
-      holder) [ -z "$heavyweight_sample_value" ] || heavyweight_owner_diagnostics="$heavyweight_sample_value $heavyweight_sample_token $heavyweight_sample_class $heavyweight_sample_tail" ;;
-      '') ;;
-      *) return 1 ;;
-    esac
-  done <<EOF
-$heavyweight_worker_reservation_snapshot
-EOF
-  [ -n "$heavyweight_service_memory" ]
-}
-
-heavyweight_cleanup_records() {
-  [ -n "${heavyweight_admission_root-}" ] || return 0
-  for heavyweight_entry in "$heavyweight_admission_root/owners"/*; do
-    [ -d "$heavyweight_entry" ] || continue
-    if ! IFS=' ' read -r heavyweight_entry_pid heavyweight_entry_token 2>/dev/null < "$heavyweight_entry/process" \
-      || ! heavyweight_reservation_is_live "$heavyweight_entry_pid" "$heavyweight_entry_token"; then
-      rm -f -- "$heavyweight_entry/process" "$heavyweight_entry/class" "$heavyweight_entry/machine" "$heavyweight_entry/phase" "$heavyweight_entry/disk" "$heavyweight_entry/workers" 2>/dev/null || true
-      if rmdir -- "$heavyweight_entry" 2>/dev/null; then
-        printf '[preferred-execution] reclaimed heavyweight owner %s on %s (process terminal, absent or identity stale)\n' \
-          "${heavyweight_entry##*/}" "${heavyweight_admission_machine-unknown}" >&2
-      fi
-    fi
-  done
-  # Dead waiters affect queue order and backfill even when capacity is busy.
-  for heavyweight_entry in "$heavyweight_admission_root/waiters"/*; do
-    [ -f "$heavyweight_entry" ] || continue
-    IFS=' ' read -r heavyweight_entry_pid heavyweight_entry_token _heavyweight_tail 2>/dev/null < "$heavyweight_entry" || continue
-    if ! heavyweight_process_is_current "$heavyweight_entry_pid" "$heavyweight_entry_token"; then
-      rm -f -- "$heavyweight_entry" 2>/dev/null || true
-    fi
-  done
-}
-
-heavyweight_observe_memory_budget() {
-  heavyweight_memory=$(read_host_memory_kib)
-  IFS=' ' read -r heavyweight_mem_available heavyweight_mem_total <<EOF
-$heavyweight_memory
-EOF
-  case "$heavyweight_mem_available:$heavyweight_mem_total" in
-    *[!0-9:]*|'':*|*:) return 1 ;;
-    *)
-      heavyweight_resource_reason=worker-reservation-observation-unavailable
-      heavyweight_read_worker_reservations || return 1
-      [ "${1-}" != reclaim ] || heavyweight_cleanup_records
-      heavyweight_count_reserved_memory
-      heavyweight_unreserved_memory=$((heavyweight_mem_available - heavyweight_reserved_memory))
-      ;;
-  esac
-}
-
-heavyweight_resource_is_ready() {
-  # Admission, check-only probes and inherited escalation all hold the same
-  # capacity lock. Observe surviving admitted trees before reclaiming terminal
-  # wrappers; a read-only placement sample never mutates their records.
-  heavyweight_resource_reason=ready
-  if heavyweight_observe_memory_budget reclaim; then
-      if [ "$heavyweight_admission_class" = source-web-export ] && [ "$heavyweight_export_worker_mode" = managed ]; then
-        # The same capacity observation admits both threads and their complete
-        # tree. Round memory before accepting it, so the GiB ceiling also fits.
-        heavyweight_export_workers=$(source_web_export_workers_for_memory_kib "$heavyweight_export_requested_workers" "$heavyweight_unreserved_memory")
-      fi
-      heavyweight_memory_floor=$(heavyweight_request_memory_floor_kib)
-      heavyweight_required_memory=$heavyweight_memory_floor
-      while IFS=' ' read -r heavyweight_own_kind heavyweight_own_pid heavyweight_own_token heavyweight_own_rss heavyweight_own_tail; do
-        [ "$heavyweight_own_kind" = admitted ] || continue
-        [ "${heavyweight_owner_path-}" = "$heavyweight_admission_root/owners/$heavyweight_own_pid-$heavyweight_own_token" ] || continue
-        # Reentrant escalation replaces this owner's envelope. Its existing
-        # resident tree is already absent from MemAvailable, just like peers.
-        heavyweight_required_memory=$((heavyweight_memory_floor - heavyweight_own_rss))
-        if [ "$heavyweight_required_memory" -lt 0 ]; then heavyweight_required_memory=0; fi
-      done <<EOF
-$heavyweight_worker_reservation_snapshot
-EOF
-      if [ "$heavyweight_mem_total" -lt "$heavyweight_memory_floor" ]; then
-        printf '[preferred-execution] insufficient memory capacity on %s for %s (total=%s KiB, requires=%s KiB); route remotely to a capable execution target\n' \
-          "$heavyweight_admission_machine" "$heavyweight_admission_class" "$heavyweight_mem_total" "$heavyweight_memory_floor" >&2
-        exit 1
-      fi
-      if [ "$heavyweight_unreserved_memory" -lt "$heavyweight_required_memory" ]; then
-        heavyweight_resource_reason="memory-available=$heavyweight_mem_available/$heavyweight_mem_total requires=$heavyweight_required_memory KiB reserved-memory=$heavyweight_reserved_memory service-memory=$heavyweight_service_memory"
-        return 1
-      fi
-  elif [ "$heavyweight_resource_reason" = worker-reservation-observation-unavailable ]; then
-    return 1
-  fi
-  heavyweight_disk_is_ready
-}
-
-heavyweight_disk_is_ready() {
-  if [ -n "${HAPPIER_STACK_PM_CACHE_BASE_DIR-}" ]; then
-    if ! node "$script_dir/../scripts/utils/dev_targets/worker_disk_budget.mjs" --admit \
-      "--repo=$repo_root" "--class=$heavyweight_admission_class" >/dev/null; then
-      heavyweight_declined_disk=1
-      exit 75
-    fi
-  fi
-  return 0
-}
-
-heavyweight_run_admitted_command() {
-  heavyweight_payload_started=1
-  # This is a deny-only restriction, not another admission credential. Every
-  # admitted workspace consumer may reenter its own lease or acquire a free
-  # lease, but cannot charge this envelope while waiting for a foreign one.
-  HAPPIER_WORKSPACE_DIST_BUILD_LOCK_WAIT_ALLOWED=0
-  export HAPPIER_WORKSPACE_DIST_BUILD_LOCK_WAIT_ALLOWED
-  # Admission reuse does not imply cgroup placement: nested dispatch can have
-  # moved this process into the protected control slice since its parent ran.
-  if command -v systemd-run >/dev/null 2>&1 && command -v systemctl >/dev/null 2>&1 \
-    && systemctl --user show-environment >/dev/null 2>&1 \
-    && [ "$(systemctl --user show happier-jobs.slice --property=LoadState --value 2>/dev/null || true)" = loaded ]; then
-    exec_in_jobs_slice "$@"
-  fi
-  exec "$@"
-}
-
-heavyweight_report_pre_dispatch_failure() {
-  heavyweight_exit_status=$1
-  if [ "$heavyweight_exit_status" -ne 0 ] && [ "$heavyweight_exit_status" -ne 130 ] \
-    && [ "$heavyweight_exit_status" -ne 129 ] && [ "${heavyweight_payload_started-0}" = 0 ] \
-    && [ -n "${heavyweight_failure_id-}" ]; then
-    if [ "${heavyweight_declined_disk-0}" = 1 ]; then
-      printf 'HSTACK_ADMISSION_DISK:%s\n' "$heavyweight_failure_id" >&2
-    elif [ "${heavyweight_declined_busy-0}" = 1 ]; then
-      printf 'HSTACK_ADMISSION_BUSY:%s\n' "$heavyweight_failure_id" >&2
-    else
-      printf 'HSTACK_ADMISSION_UNAVAILABLE:%s\n' "$heavyweight_failure_id" >&2
-    fi
-    exit 75
-  fi
-  exit "$heavyweight_exit_status"
-}
-
-heavyweight_format_admission_reason() {
-  printf 'class=%s, %s' "$heavyweight_admission_class" "$1"
-}
-
-heavyweight_decline_before_dispatch() {
-  if [ "${heavyweight_prior_workspace_lease-0}" = 1 ]; then
-    heavyweight_reject_workspace_order
-  fi
-  heavyweight_declined_busy=1
-  printf '[preferred-execution] heavyweight admission declined before dispatch on %s (%s)\n' \
-    "$heavyweight_admission_machine" "$(heavyweight_format_admission_reason "$1")" >&2
-  [ -z "${heavyweight_owner_diagnostics-}" ] || printf '[preferred-execution] waiting behind %s on %s\n' "$heavyweight_owner_diagnostics" "$heavyweight_admission_machine" >&2
-  exit 75
-}
-
-heavyweight_reject_workspace_order() {
-  printf '%s\n' 'HSTACK_WORKSPACE_ADMISSION_ORDER: admission cannot wait while an inherited workspace lease is held; re-invoke the producer through joint workspace build admission' >&2
-  exit 1
-}
-
-heavyweight_find_queue_head() {
-  while :; do
-    heavyweight_head_path=
-    heavyweight_head_registered_at=
-    for heavyweight_entry in "$heavyweight_admission_root/waiters"/*; do
-      [ -f "$heavyweight_entry" ] || continue
-      IFS=' ' read -r heavyweight_entry_pid heavyweight_entry_token heavyweight_entry_registered_at heavyweight_entry_class heavyweight_entry_backfilled heavyweight_entry_workspace_state _heavyweight_tail < "$heavyweight_entry" 2>/dev/null || continue
-      [ "$heavyweight_entry_workspace_state" != workspace-busy ] || continue
-      case "$heavyweight_entry_registered_at" in ''|*[!0-9]*) heavyweight_entry_registered_at=0 ;; esac
-      if [ -z "$heavyweight_head_path" ] || [ "$heavyweight_entry_registered_at" -lt "$heavyweight_head_registered_at" ]; then
-        heavyweight_head_path=$heavyweight_entry
-        heavyweight_head_registered_at=$heavyweight_entry_registered_at
-        heavyweight_head_pid=$heavyweight_entry_pid
-        heavyweight_head_token=$heavyweight_entry_token
-        heavyweight_head_class=$heavyweight_entry_class
-        heavyweight_head_backfilled=${heavyweight_entry_backfilled:-0}
-      fi
-    done
-    [ -n "$heavyweight_head_path" ] || return 0
-    heavyweight_process_is_current "$heavyweight_head_pid" "$heavyweight_head_token" && return 0
-    rm -f -- "$heavyweight_head_path" 2>/dev/null || return 1
-  done
-}
-
-heavyweight_queue_is_eligible() {
-  heavyweight_backfill_head=
-  heavyweight_queue_reason=queue-ahead
-  heavyweight_find_queue_head || return 1
-  [ -n "$heavyweight_head_path" ] || return 0
-  if [ "$heavyweight_head_pid" = "${heavyweight_pid-}" ] \
-    && [ "$heavyweight_head_token" = "${heavyweight_token-}" ]; then
-    return 0
-  fi
-  [ -n "$heavyweight_head_class" ] || return 1
-  case "$heavyweight_head_backfilled" in ''|*[!0-9]*) return 1 ;; esac
-  # An unadmitted export can shrink to the measured serial envelope. Its
-  # final fitted reservation is decided with current memory under this lock.
-  heavyweight_head_workers=
-  [ "$heavyweight_head_class" != source-web-export ] || heavyweight_head_workers=1
-  heavyweight_head_floor=$(heavyweight_memory_floor_kib "$heavyweight_head_class" worker "$heavyweight_head_workers")
-  heavyweight_queue_reason="queue-ahead pid=$heavyweight_head_pid class=$heavyweight_head_class requires=$heavyweight_head_floor KiB"
-  if [ "${1-}" = before-resource-observation ] && [ "$heavyweight_admission_class" = source-web-export ]; then
-    heavyweight_candidate_floor=$(heavyweight_memory_floor_kib source-web-export worker 1)
-  else
-    heavyweight_candidate_floor=$(heavyweight_request_memory_floor_kib)
-  fi
-  # An equal-or-larger candidate can never satisfy the existing backfill gap.
-  # Reject it before the expensive OS observation so only the head (or a
-  # potentially fitting smaller job) spends time in the capacity decision.
-  if [ "$heavyweight_candidate_floor" -ge "$heavyweight_head_floor" ]; then
-    return 1
-  fi
-  # No admission deadline exists. Bound bypasses by the head's measured class
-  # envelope instead: 21 GiB permits at most three 6 GiB backfills. The charge
-  # survives a backfill's exit and disappears only with this waiting head.
-  if [ $((heavyweight_head_backfilled + heavyweight_candidate_floor)) -gt "$heavyweight_head_floor" ]; then
-    heavyweight_queue_reason="head-backfill-envelope-exhausted=$heavyweight_head_backfilled/$heavyweight_head_floor KiB pid=$heavyweight_head_pid class=$heavyweight_head_class"
-    return 1
-  fi
-  # The first pass is only a cheap impossibility check. Potential backfills
-  # still require the full current memory decision under this same lock.
-  [ "${1-}" != before-resource-observation ] || return 0
-  # Stop backfill once one candidate envelope would bridge the head's remaining
-  # capacity gap, so existing jobs can drain and the oldest request can start.
-  if [ $((heavyweight_unreserved_memory + heavyweight_candidate_floor)) -ge "$heavyweight_head_floor" ]; then
-    heavyweight_queue_reason="head-capacity-priority=$heavyweight_head_floor KiB pid=$heavyweight_head_pid class=$heavyweight_head_class unreserved-memory=$heavyweight_unreserved_memory candidate=$heavyweight_candidate_floor"
-    return 1
-  fi
-  while :; do
-    heavyweight_fitting_path=
-    heavyweight_fitting_registered_at=
-    for heavyweight_entry in "$heavyweight_admission_root/waiters"/*; do
-      [ -f "$heavyweight_entry" ] || continue
-      [ "$heavyweight_entry" != "$heavyweight_head_path" ] || continue
-      IFS=' ' read -r heavyweight_entry_pid heavyweight_entry_token heavyweight_entry_registered_at heavyweight_entry_class heavyweight_entry_backfilled heavyweight_entry_workspace_state _heavyweight_tail < "$heavyweight_entry" 2>/dev/null || continue
-      [ "$heavyweight_entry_workspace_state" != workspace-busy ] || continue
-      [ -n "$heavyweight_entry_class" ] || continue
-      case "$heavyweight_entry_registered_at" in ''|*[!0-9]*) heavyweight_entry_registered_at=0 ;; esac
-      heavyweight_entry_workers=
-      [ "$heavyweight_entry_class" != source-web-export ] || heavyweight_entry_workers=1
-      heavyweight_entry_floor=$(heavyweight_memory_floor_kib "$heavyweight_entry_class" worker "$heavyweight_entry_workers")
-      [ "$heavyweight_entry_floor" -le "$heavyweight_unreserved_memory" ] || continue
-      [ $((heavyweight_unreserved_memory + heavyweight_entry_floor)) -lt "$heavyweight_head_floor" ] || continue
-      [ $((heavyweight_head_backfilled + heavyweight_entry_floor)) -le "$heavyweight_head_floor" ] || continue
-      if [ -z "$heavyweight_fitting_path" ] || [ "$heavyweight_entry_registered_at" -lt "$heavyweight_fitting_registered_at" ]; then
-        heavyweight_fitting_path=$heavyweight_entry
-        heavyweight_fitting_registered_at=$heavyweight_entry_registered_at
-        heavyweight_fitting_pid=$heavyweight_entry_pid
-        heavyweight_fitting_token=$heavyweight_entry_token
-      fi
-    done
-    [ -n "$heavyweight_fitting_path" ] || break
-    heavyweight_process_is_current "$heavyweight_fitting_pid" "$heavyweight_fitting_token" && break
-    rm -f -- "$heavyweight_fitting_path" 2>/dev/null || return 1
-  done
-  if [ -n "$heavyweight_fitting_path" ] && [ "$heavyweight_fitting_path" != "${heavyweight_waiter_path-}" ]; then
-    heavyweight_queue_reason="backfill-ahead pid=$heavyweight_fitting_pid head-pid=$heavyweight_head_pid head-class=$heavyweight_head_class requires=$heavyweight_head_floor KiB unreserved-memory=$heavyweight_unreserved_memory"
-    return 1
-  fi
-  heavyweight_backfill_head=$heavyweight_head_path
-  return 0
-}
-
-heavyweight_charge_backfill() {
-  [ -n "$heavyweight_backfill_head" ] || return 0
-  heavyweight_backfilled=$((heavyweight_head_backfilled + heavyweight_candidate_floor))
-  printf '%s %s %s %s %s\n' "$heavyweight_head_pid" "$heavyweight_head_token" "$heavyweight_head_registered_at" "$heavyweight_head_class" "$heavyweight_backfilled" > "$heavyweight_backfill_head"
-}
-
-heavyweight_cleanup_workspace_worker() {
-  if [ -n "${heavyweight_workspace_worker_pid-}" ]; then
-    kill -TERM "$heavyweight_workspace_worker_pid" 2>/dev/null || true
-    wait "$heavyweight_workspace_worker_pid" 2>/dev/null || true
-    heavyweight_workspace_worker_pid=
-    heavyweight_child_pid=
-  fi
-  if [ "${heavyweight_workspace_controls_open-0}" = 1 ]; then
-    exec 7>&- 8<&-
-    heavyweight_workspace_controls_open=0
-  fi
-  if [ -n "${heavyweight_workspace_custody_dir-}" ]; then
-    rm -f -- "$heavyweight_workspace_custody_dir/ready" "$heavyweight_workspace_custody_dir/control"
-    rmdir -- "$heavyweight_workspace_custody_dir" 2>/dev/null || true
-    heavyweight_workspace_custody_dir=
-  fi
-}
-
-heavyweight_release_lock() {
-  if [ "${heavyweight_lock_held-0}" = 1 ]; then
-    flock -u 9 2>/dev/null || true
-    heavyweight_lock_held=0
-  fi
-}
-
-heavyweight_acquire_lock() {
-  if [ "${heavyweight_prior_workspace_lease-0}" = 1 ]; then
-    flock -n 9 2>/dev/null || heavyweight_decline_before_dispatch "admission-decision-in-progress lock=$heavyweight_admission_root/lock"
-  else
-    # AUTO's --no-wait applies to capacity, not another decision in progress.
-    # Replacing a mutex waiter restarts placement and loses its queue age.
-    # Join the existing interruptible kernel queue before taking new leases.
-    flock 9 &
-    heavyweight_child_pid=$!
-    wait "$heavyweight_child_pid"
-    heavyweight_lock_status=$?
-    heavyweight_child_pid=
-    [ "$heavyweight_lock_status" -eq 0 ] || return "$heavyweight_lock_status"
-  fi
-  heavyweight_lock_held=1
-}
-
-heavyweight_set_workspace_queue_state() {
-  IFS=' ' read -r _heavyweight_pid _heavyweight_token _heavyweight_age _heavyweight_class heavyweight_waiter_backfilled _heavyweight_tail < "$heavyweight_waiter_path" || exit 1
-  # Preserve registration age and any successful backfill charge. Only lease
-  # availability changes; a busy publisher stays queued without blocking its
-  # lease holder's admission behind head-capacity priority.
-  if [ "$1" = workspace-busy ]; then
-    printf '%s %s %s %s %s %s\n' "$heavyweight_pid" "$heavyweight_token" "$_heavyweight_age" "$heavyweight_admission_class" "$heavyweight_waiter_backfilled" "$1" > "$heavyweight_waiter_path" || exit 1
-  else
-    printf '%s %s %s %s %s\n' "$heavyweight_pid" "$heavyweight_token" "$_heavyweight_age" "$heavyweight_admission_class" "$heavyweight_waiter_backfilled" > "$heavyweight_waiter_path" || exit 1
-  fi
-}
-
-heavyweight_prepare_workspace_worker() {
-  heavyweight_workspace_attempt_held=0
-  if [ -n "${heavyweight_workspace_worker_pid-}" ]; then
-    printf 'try\n' >&7 || exit 1
-  else
-    if [ -z "${heavyweight_workspace_custody_dir-}" ]; then
-      heavyweight_workspace_custody_dir=$(mktemp -d "$heavyweight_admission_root/custody.XXXXXX") || exit 1
-    fi
-    mkfifo "$heavyweight_workspace_custody_dir/ready" "$heavyweight_workspace_custody_dir/control" || exit 1
-    # Separate inherited descriptors carry readiness and custody. Payload stdio
-    # is unchanged; a worker's exit closes readiness instead of stranding a read.
-    heavyweight_workspace_worker_mode=--worker-events
-    if [ "${heavyweight_workspace_inherited_admission-0}" = 1 ]; then
-      heavyweight_workspace_worker_mode=--worker-events-inherited
-    fi
-    HSTACK_ADMISSION_WAIT_ROOT="$heavyweight_admission_root" HSTACK_ADMISSION_WAITER="${heavyweight_waiter_path-}" \
-    node "$script_dir/../scripts/utils/proc/workspace_build_admission.mjs" "$heavyweight_workspace_worker_mode" \
-      "${heavyweight_workspace_locks:-[]}" "$launcher_path" "$heavyweight_admission_class" -- "$@" \
-      3>"$heavyweight_workspace_custody_dir/ready" 4<"$heavyweight_workspace_custody_dir/control" <&6 6<&- 9>&- &
-    heavyweight_workspace_worker_pid=$!
-    heavyweight_child_pid=$heavyweight_workspace_worker_pid
-    exec 8<"$heavyweight_workspace_custody_dir/ready"
-    exec 7>"$heavyweight_workspace_custody_dir/control"
-    heavyweight_workspace_controls_open=1
-  fi
-  IFS= read -r heavyweight_workspace_ready <&8 || {
-    wait "$heavyweight_workspace_worker_pid"
-    heavyweight_workspace_status=$?
-    heavyweight_workspace_worker_pid=
-    heavyweight_child_pid=
-    [ "$heavyweight_workspace_status" -ne 0 ] || heavyweight_workspace_status=1
-    exit "$heavyweight_workspace_status"
-  }
-  case "$heavyweight_workspace_ready" in
-    ready) heavyweight_workspace_attempt_held=1 ;;
-    ready-inherited) heavyweight_prior_workspace_lease=1; heavyweight_workspace_attempt_held=1 ;;
-    busy)
-      IFS= read -r heavyweight_workspace_ready <&8 || exit 1
-      [ "$heavyweight_workspace_ready" = released ] || exit 1
-      heavyweight_resource_reason=workspace-lease-busy
-      return 1
-      ;;
-    *) exit 1 ;;
-  esac
-}
-
-heavyweight_release_workspace_attempt() {
-  [ "${heavyweight_workspace_attempt_held-0}" = 1 ] || return 0
-  printf '%s\n' release >&7 || exit 1
-  heavyweight_workspace_attempt_held=0
-  case "$heavyweight_workspace_worker_mode" in --worker-events|--worker-events-inherited)
-    IFS= read -r heavyweight_workspace_ready <&8 || exit 1
-    [ "$heavyweight_workspace_ready" = released ] || exit 1
-    return 0
-  ;; esac
-  wait "$heavyweight_workspace_worker_pid"
-  heavyweight_workspace_status=$?
-  heavyweight_workspace_worker_pid=
-  heavyweight_child_pid=
-  exec 7>&- 8<&-
-  heavyweight_workspace_controls_open=0
-  rm -f -- "$heavyweight_workspace_custody_dir/ready" "$heavyweight_workspace_custody_dir/control"
-  [ "$heavyweight_workspace_status" -eq 0 ] || exit "$heavyweight_workspace_status"
-}
-
-heavyweight_wait_for_admission_change() {
-  # One custody worker retains native observation across decisions. Its
-  # pre-decision snapshot closes the release-before-wait race; the native
-  # owner's existing cadence still catches untracked memory and owner death.
-  printf 'wait %s\n' "$(( $1 * 1000 ))" >&7 || exit 1
-  IFS= read -r heavyweight_workspace_ready <&8 || exit 1
-  [ "$heavyweight_workspace_ready" = changed ] || exit 1
-}
-
-heavyweight_run_workspace_worker() {
-  heavyweight_payload_started=1
-  printf 'run\n%s\n%s\n%s\n' "$HAPPIER_HEAVYWEIGHT_ADMISSION_TOKEN" \
-    "$HAPPIER_HEAVYWEIGHT_ADMISSION_ROOT" "$HAPPIER_HEAVYWEIGHT_ADMISSION_MACHINE" >&7 || exit 1
-  # The worker owns canonical leases and starts the payload below this admitted
-  # ancestor. Its nested native guard authenticates reentry and jobs placement.
-  exec 9>&-
-  wait "$heavyweight_workspace_worker_pid"
-  heavyweight_workspace_status=$?
-  heavyweight_workspace_worker_pid=
-  heavyweight_child_pid=
-  exit "$heavyweight_workspace_status"
-}
-
-heavyweight_workspace_interrupt() {
-  # Teardown is terminal. Its external cleanup commands must also ignore a
-  # repeated group signal until this owner's leases and demand are released.
-  trap '' HUP INT TERM
-  heavyweight_cleanup_workspace_worker
-  if [ -n "${heavyweight_child_pid-}" ]; then
-    kill -TERM "$heavyweight_child_pid" 2>/dev/null || true
-    wait "$heavyweight_child_pid" 2>/dev/null || true
-    heavyweight_child_pid=
-  fi
-  exit 130
-}
-
-heavyweight_run_reentrant_workspace_admission() {
-  heavyweight_workspace_inherited_admission=1
-  heavyweight_child_pid=
-  trap 'heavyweight_workspace_exit_status=$?; heavyweight_cleanup_workspace_worker; heavyweight_release_lock; heavyweight_report_pre_dispatch_failure "$heavyweight_workspace_exit_status"' EXIT
-  trap 'heavyweight_workspace_interrupt' HUP INT TERM
-  exec 6<&0
-  exec 9>>"$heavyweight_admission_root/lock" || exit 1
-  # An admitted tree cannot wait for an enlargement while peers retain the
-  # capacity it needs. Covered work is lock-free; upgrades get one immediate
-  # decision and otherwise fail so the containing job can unwind normally.
-  heavyweight_recorded_class=$(sed -n '1p' "$heavyweight_owner_path/class" 2>/dev/null || true)
-  heavyweight_inherited_floor=$(heavyweight_owner_memory_floor_kib "$heavyweight_owner_path" "$heavyweight_recorded_class")
-  heavyweight_requested_floor=$(heavyweight_request_memory_floor_kib)
-  if [ "$heavyweight_requested_floor" -le "$heavyweight_inherited_floor" ]; then
-    # Existing authenticated capacity is already owned by this ancestor and
-    # its running siblings. Matching descendants need no capacity mutex.
-    heavyweight_prepare_workspace_worker "$@" || exit 1
-    heavyweight_disk_is_ready
-    heavyweight_run_workspace_worker
-  fi
-  heavyweight_workspace_admitted=0
-  if flock -n 9; then
-    heavyweight_prepare_workspace_worker "$@" || exit 1
-    # Re-read beneath the mutex: concurrent authenticated siblings may have
-    # already raised this same owner. A smaller request cannot lower it.
-    heavyweight_recorded_class=$(sed -n '1p' "$heavyweight_owner_path/class" 2>/dev/null || true)
-    heavyweight_inherited_floor=$(heavyweight_owner_memory_floor_kib "$heavyweight_owner_path" "$heavyweight_recorded_class")
-    heavyweight_requested_floor=$(heavyweight_request_memory_floor_kib)
-    if [ "$heavyweight_requested_floor" -le "$heavyweight_inherited_floor" ]; then
-      heavyweight_disk_is_ready
-      heavyweight_workspace_admitted=1
-    elif heavyweight_resource_is_ready; then
-      printf '%s\n' "$heavyweight_admission_class" > "$heavyweight_owner_path/class" || exit 1
-      heavyweight_publish_export_workers
-      heavyweight_workspace_admitted=1
-    fi
-    heavyweight_release_lock
-  else
-    heavyweight_resource_reason=admission-decision-in-progress
-  fi
-  if [ "$heavyweight_workspace_admitted" = 1 ]; then heavyweight_run_workspace_worker; fi
-  heavyweight_release_workspace_attempt
-  if [ "${heavyweight_prior_workspace_lease-0}" = 1 ]; then heavyweight_reject_workspace_order; fi
-  printf '[preferred-execution] HSTACK_NESTED_ADMISSION_CAPACITY: containing %s reservation cannot immediately cover %s (%s); reserve the composed workload before starting its parent\n' \
-    "$heavyweight_recorded_class" "$heavyweight_admission_class" "$heavyweight_resource_reason" >&2
-  exit 1
-}
-
-run_heavyweight_admission() {
-  heavyweight_admission_root=$1
-  heavyweight_admission_class=$2
-  heavyweight_admission_machine=$3
-  shift 3
-  [ "$#" -gt 0 ] || {
-    printf '%s\n' '[preferred-execution] heavyweight admission requires a command' >&2
-    exit 1
-  }
-  # Publish before the workspace custody child starts so finite preparation
-  # and Metro inherit the same job allowance.
-  ensure_native_job_cpu_budget
-  heavyweight_prepare_export_request "$@"
-
-  case "$(uname -s 2>/dev/null || true)" in
-    Linux) ;;
-    *)
-      heavyweight_payload_started=1
-      if [ -n "${heavyweight_workspace_locks-}" ]; then
-        exec node "$script_dir/../scripts/utils/proc/workspace_build_admission.mjs" --standalone \
-          "$heavyweight_workspace_locks" "$launcher_path" "$heavyweight_admission_class" -- "$@"
-      fi
-      exec "$@" ;;
-  esac
-  [ -n "$heavyweight_admission_root" ] || {
-    printf '%s\n' '[preferred-execution] heavyweight admission has no machine state directory' >&2
-    exit 1
-  }
-
-  heavyweight_pressure_retry_seconds=$(heavyweight_pressure_retry_seconds_for_pid "$$")
-  heavyweight_prior_workspace_lease=0
-  if [ -n "${HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD-}" ] || [ -n "${HAPPIER_WORKSPACE_DIST_BUILD_LOCK_LEASES-}" ] \
-    || [ -n "${HAPPIER_BUILD_DEPENDENCY_CUSTODY-}" ]; then
-    node "$script_dir/../scripts/utils/proc/workspace_build_admission.mjs" --held-lock-probe
-    heavyweight_workspace_probe_status=$?
-    case "$heavyweight_workspace_probe_status" in
-      0) heavyweight_prior_workspace_lease=1; heavyweight_no_wait=1 ;;
-      1) ;;
-      *) exit "$heavyweight_workspace_probe_status" ;;
-    esac
-  fi
-  if heavyweight_try_reentrant_admission || { [ "${heavyweight_require_inherited-0}" != 1 ] && heavyweight_try_ancestor_admission; }; then
-    # A custody worker may have started before capacity was decided. Its real
-    # native reentry consumes the admitted owner's count before Metro starts.
-    heavyweight_apply_export_workers
-    if [ "$heavyweight_admission_class" = source-web-export ] && [ "$heavyweight_export_worker_mode" = managed ] && [ -n "$heavyweight_export_workers" ]; then
-      heavyweight_export_requested_workers=$heavyweight_export_workers
-    fi
-    heavyweight_recorded_class=$(sed -n '1p' "$heavyweight_owner_path/class" 2>/dev/null || true)
-    heavyweight_inherited_floor=$(heavyweight_owner_memory_floor_kib "$heavyweight_owner_path" "$heavyweight_recorded_class")
-    heavyweight_requested_floor=$(heavyweight_request_memory_floor_kib)
-    if [ "${heavyweight_require_inherited-0}" = 1 ]; then
-      # A composed producer may only consume the envelope and resources its
-      # containing batch already owns. Never escalate or join another queue.
-      if [ -n "${heavyweight_workspace_locks-}" ] || [ "$heavyweight_requested_floor" -gt "$heavyweight_inherited_floor" ]; then
-        printf '%s\n' '[preferred-execution] inherited admission does not cover the requested producer resources or capacity' >&2
-        exit 1
-      fi
-      heavyweight_admission_class=$heavyweight_recorded_class
-      heavyweight_run_admitted_command "$@"
-    fi
-    if [ -n "${heavyweight_workspace_locks-}" ] || [ "$heavyweight_requested_floor" -gt "$heavyweight_inherited_floor" ]; then
-      # Lease and plain escalations share the same existing ancestor decision;
-      # neither queues a second reservation behind its parent.
-      heavyweight_run_reentrant_workspace_admission "$@"
-    fi
-    heavyweight_disk_is_ready
-    # This wrapper is a descendant of the owner and therefore must not create
-    # a waiter, acquire the capacity lock, or release the owner's reservation.
-    heavyweight_run_admitted_command "$@"
-  fi
-
-  if [ "${heavyweight_require_inherited-0}" = 1 ]; then
-    printf '%s\n' '[preferred-execution] producer requires authenticated inherited native admission' >&2
-    exit 1
-  fi
-
-  umask 077
-  heavyweight_owners_dir="$heavyweight_admission_root/owners"
-  heavyweight_waiters_dir="$heavyweight_admission_root/waiters"
-  heavyweight_lock_path="$heavyweight_admission_root/lock"
-  mkdir -p -- "$heavyweight_owners_dir" "$heavyweight_waiters_dir" || {
-    printf '[preferred-execution] heavyweight admission state is unavailable: %s\n' "$heavyweight_admission_root" >&2
-    exit 1
-  }
-  command -v flock >/dev/null 2>&1 || {
-    printf '[preferred-execution] heavyweight admission requires flock on %s\n' "$heavyweight_admission_machine" >&2
-    exit 1
-  }
-  # The admission gate is Linux-only, so use the kernel's advisory lock owner
-  # instead of deleting a stale identity file. A stale-file check followed by
-  # unlink can remove a successor that acquired the path between those steps.
-  # The stable file is state-free; process exit releases the kernel lock.
-  exec 9>>"$heavyweight_lock_path" || {
-    printf '[preferred-execution] heavyweight admission lock is unavailable on %s\n' "$heavyweight_admission_machine" >&2
-    exit 1
-  }
-
-  heavyweight_pid=$$
-  heavyweight_token=$(heavyweight_process_token "$heavyweight_pid")
-  heavyweight_identity="$heavyweight_pid-$heavyweight_token"
-  heavyweight_waiter_path="$heavyweight_waiters_dir/$heavyweight_identity"
-  heavyweight_owner_path="$heavyweight_owners_dir/$heavyweight_identity"
-  # This cadence is for a completed queue/capacity decision, not mutex
-  # contention. A busy decision lock waits through the existing kernel flock.
-  heavyweight_fast_retry_seconds=$((2 + heavyweight_pid % 2))
-  heavyweight_registered_at=$(date +%s 2>/dev/null || printf 0)
-  case "$heavyweight_registered_at" in ''|*[!0-9]*) heavyweight_registered_at=0 ;; esac
-  heavyweight_release_admission() {
-    heavyweight_cleanup_workspace_worker
-    rm -f -- "$heavyweight_waiter_path" 2>/dev/null || true
-    rm -f -- "$heavyweight_owner_path/process" "$heavyweight_owner_path/class" "$heavyweight_owner_path/machine" "$heavyweight_owner_path/phase" "$heavyweight_owner_path/disk" "$heavyweight_owner_path/workers" 2>/dev/null || true
-    rmdir -- "$heavyweight_owner_path" 2>/dev/null || true
-    heavyweight_release_lock
-  }
-
-  heavyweight_count_entries() {
-    heavyweight_active_count=0
-    for heavyweight_entry in "$heavyweight_owners_dir"/*; do
-      [ -d "$heavyweight_entry" ] || continue
-      IFS=' ' read -r heavyweight_entry_pid heavyweight_entry_token 2>/dev/null < "$heavyweight_entry/process" || continue
-      heavyweight_reservation_is_live "$heavyweight_entry_pid" "$heavyweight_entry_token" || continue
-      heavyweight_active_count=$((heavyweight_active_count + 1))
-    done
-    heavyweight_waiting_count=0
-    for heavyweight_entry in "$heavyweight_waiters_dir"/*; do
-      [ -f "$heavyweight_entry" ] && heavyweight_waiting_count=$((heavyweight_waiting_count + 1))
-    done
-  }
-
-  heavyweight_child_pid=
-  heavyweight_interrupt() {
-    trap '' HUP INT TERM
-    if [ -n "${heavyweight_workspace_worker_pid-}" ]; then
-      heavyweight_workspace_interrupt
-    fi
-    if [ -n "$heavyweight_child_pid" ] && kill -0 "$heavyweight_child_pid" 2>/dev/null; then
-      kill -TERM "$heavyweight_child_pid" 2>/dev/null || true
-      wait "$heavyweight_child_pid" 2>/dev/null || true
-    fi
-    exit 130
-  }
-  trap 'heavyweight_exit_status=$?; heavyweight_release_admission; heavyweight_report_pre_dispatch_failure "$heavyweight_exit_status"' EXIT
-  trap 'heavyweight_interrupt' HUP INT TERM
-  # Publishing demand makes cancellation externally reachable. Install its
-  # teardown before exposing the waiter, including before the first decision.
-  printf '%s %s %s %s %s\n' "$heavyweight_pid" "$heavyweight_token" "$heavyweight_registered_at" "$heavyweight_admission_class" 0 > "$heavyweight_waiter_path" || {
-    printf '[preferred-execution] could not register heavyweight admission wait on %s\n' "$heavyweight_admission_machine" >&2
-    exit 1
-  }
-  heavyweight_wait_started=$(date +%s)
-  heavyweight_last_wait_state=
-  exec 6<&0
-  while :; do
-    heavyweight_acquire_lock || {
-      printf '[preferred-execution] heavyweight admission lock failed on %s\n' "$heavyweight_admission_machine" >&2
-      exit 1
-    }
-    heavyweight_workspace_decision_ready=1
-    if [ -n "${heavyweight_workspace_locks-}" ] || [ "${heavyweight_no_wait-0}" != 1 ]; then
-      if heavyweight_prepare_workspace_worker "$@"; then
-        if [ -n "${heavyweight_workspace_locks-}" ]; then heavyweight_set_workspace_queue_state workspace-ready; fi
-      else
-        heavyweight_workspace_decision_ready=0
-        heavyweight_set_workspace_queue_state workspace-busy
-      fi
-    fi
-    heavyweight_is_head=0
-    heavyweight_ready=0
-    heavyweight_wait_delay_seconds=$heavyweight_fast_retry_seconds
-    if [ "$heavyweight_workspace_decision_ready" = 0 ]; then
-      :
-    elif ! heavyweight_queue_is_eligible before-resource-observation; then
-      heavyweight_resource_reason=$heavyweight_queue_reason
-    elif heavyweight_resource_is_ready; then
-      heavyweight_ready=1
-      if heavyweight_queue_is_eligible; then heavyweight_is_head=1; fi
-    else
-      heavyweight_wait_delay_seconds=$heavyweight_pressure_retry_seconds
-    fi
-    heavyweight_count_entries
-    if [ "$heavyweight_is_head" -eq 1 ] && [ "$heavyweight_ready" -eq 1 ] && mkdir "$heavyweight_owner_path" 2>/dev/null; then
-      printf '%s %s\n' "$heavyweight_pid" "$heavyweight_token" > "$heavyweight_owner_path/process" || exit 1
-      printf '%s\n' "$heavyweight_admission_class" > "$heavyweight_owner_path/class" || exit 1
-      printf '%s\n' "$heavyweight_admission_machine" > "$heavyweight_owner_path/machine" || exit 1
-      printf '%s\n' 'admitted' > "$heavyweight_owner_path/phase" || exit 1
-      heavyweight_publish_export_workers
-      if ! heavyweight_charge_backfill; then
-        printf '[preferred-execution] could not record heavyweight backfill on %s\n' "$heavyweight_admission_machine" >&2
-        exit 1
-      fi
-      rm -f -- "$heavyweight_waiter_path" 2>/dev/null || true
-      heavyweight_count_entries
-      heavyweight_release_lock
-      heavyweight_waited_seconds=$(( $(date +%s) - heavyweight_wait_started ))
-      if [ -n "$heavyweight_last_wait_state" ]; then
-        printf '[preferred-execution] admitted heavyweight command on %s (class=%s, active=%s, waited=%ss)\n' \
-          "$heavyweight_admission_machine" "$heavyweight_admission_class" "$heavyweight_active_count" "$heavyweight_waited_seconds" >&2
-      fi
-      break
-    fi
-    if [ "$heavyweight_ready" -eq 0 ]; then
-      heavyweight_wait_reason="$heavyweight_resource_reason"
-    elif [ "$heavyweight_is_head" -eq 0 ]; then
-      heavyweight_wait_reason="$heavyweight_queue_reason"
-    else
-      heavyweight_wait_reason="admission-race"
-    fi
-    heavyweight_wait_state="$heavyweight_wait_reason queue=$heavyweight_waiting_count"
-    heavyweight_diagnostic_state="$heavyweight_wait_state $heavyweight_owner_diagnostics"
-    heavyweight_release_lock
-    if [ -n "${heavyweight_workspace_worker_pid-}" ]; then heavyweight_release_workspace_attempt; fi
-    if [ "${heavyweight_prior_workspace_lease-0}" = 1 ]; then heavyweight_reject_workspace_order; fi
-    [ "${heavyweight_no_wait-0}" != 1 ] || heavyweight_decline_before_dispatch "$heavyweight_wait_reason"
-    if [ "$heavyweight_diagnostic_state" != "$heavyweight_last_wait_state" ]; then
-      printf '[preferred-execution] waiting for heavyweight admission on %s (%s)\n' \
-        "$heavyweight_admission_machine" "$(heavyweight_format_admission_reason "$heavyweight_wait_state")" >&2
-      [ -z "$heavyweight_owner_diagnostics" ] || printf '[preferred-execution] waiting behind %s on %s\n' "$heavyweight_owner_diagnostics" "$heavyweight_admission_machine" >&2
-      heavyweight_last_wait_state=$heavyweight_diagnostic_state
-    fi
-    heavyweight_wait_for_admission_change "$heavyweight_wait_delay_seconds"
-  done
-  export HAPPIER_HEAVYWEIGHT_ADMISSION_TOKEN="$heavyweight_pid:$heavyweight_token"
-  export HAPPIER_HEAVYWEIGHT_ADMISSION_ROOT="$heavyweight_admission_root"
-  export HAPPIER_HEAVYWEIGHT_ADMISSION_MACHINE="$heavyweight_admission_machine"
-  heavyweight_apply_export_workers
-  if [ -n "${heavyweight_workspace_locks-}" ]; then heavyweight_run_workspace_worker; fi
-  heavyweight_cleanup_workspace_worker
-  heavyweight_payload_started=1
-  if [ "${heavyweight_exec_admitted-0}" = 1 ]; then
-    # Compiler leaves need their native signal and numeric exit kept distinct.
-    # Exec preserves this admitted identity; the existing owner observation
-    # reaps its record after exit. Never carry the admission lock into payload.
-    exec 9>&-
-    trap - EXIT HUP INT TERM
-    heavyweight_run_admitted_command "$@"
-  fi
-  # POSIX shells replace an asynchronous function's stdin with /dev/null
-  # before evaluating <&0. Preserve the controller's pipe on another fd first.
-  exec 6<&0
-  heavyweight_run_admitted_command "$@" <&6 6<&- &
-  heavyweight_child_pid=$!
-  exec 6<&-
-  wait "$heavyweight_child_pid"
-  heavyweight_status=$?
-  heavyweight_child_pid=
-  exit "$heavyweight_status"
-}
-
-check_heavyweight_admission() {
-  if [ "$(uname -s 2>/dev/null || true)" != Linux ]; then
-    return 0
-  fi
-  mkdir -p -- "$heavyweight_admission_root/owners" "$heavyweight_admission_root/waiters" || return 1
-  exec 9>>"$heavyweight_admission_root/lock" || return 1
-  if ! flock -n 9; then
-    printf '[preferred-execution] heavyweight admission unavailable on %s (%s)\n' "$heavyweight_admission_machine" \
-      "$(heavyweight_format_admission_reason "admission-decision-in-progress lock=$heavyweight_admission_root/lock")" >&2
-    return 1
-  fi
-  if ! heavyweight_queue_is_eligible before-resource-observation; then
-    printf '[preferred-execution] heavyweight admission unavailable on %s (%s)\n' "$heavyweight_admission_machine" "$(heavyweight_format_admission_reason "$heavyweight_queue_reason")" >&2
-    return 1
-  fi
-  if ! heavyweight_resource_is_ready; then
-    printf '[preferred-execution] heavyweight admission unavailable on %s (%s)\n' "$heavyweight_admission_machine" "$(heavyweight_format_admission_reason "$heavyweight_resource_reason")" >&2
-    return 1
-  fi
-  if ! heavyweight_queue_is_eligible; then
-    printf '[preferred-execution] heavyweight admission unavailable on %s (%s)\n' "$heavyweight_admission_machine" "$(heavyweight_format_admission_reason "$heavyweight_queue_reason")" >&2
-    return 1
-  fi
-}
+. "$script_dir/../scripts/utils/proc/native_admission_client.sh" || exit 1
 
 if [ "${1-}" = --heavyweight-memory-sample ]; then
   [ "$#" -eq 1 ] && [ "$(uname -s 2>/dev/null || true)" = Linux ] || exit 1
-  # Observe the existing host owner; never create a queue, reclaim records,
-  # reserve capacity, or spend a waiting owner's admission/backfill budget.
-  heavyweight_admission_root=$native_host_admission_root
-  heavyweight_observe_memory_budget || exit 1
-  printf '{"availableMemoryKiB":%s,"totalMemoryKiB":%s,"reservedMemoryKiB":%s,"serviceRssKiB":%s,"unreservedMemoryKiB":%s}\n' \
-    "$heavyweight_mem_available" "$heavyweight_mem_total" "$heavyweight_reserved_memory" "$heavyweight_service_memory" "$heavyweight_unreserved_memory"
-  exit 0
+  read_native_admission_fact --sample
+  exit $?
 fi
 
 if [ "${1-}" = --heavyweight-admission ] || [ "${1-}" = --heavyweight-admission-check ]; then
@@ -1482,40 +428,20 @@ run_selected_local() {
   resolve_nested_worker_policy "$@"
   selected_local_workers=
   selected_local_cpu=${local_candidate_cpu-}
-  selected_local_load=${local_candidate_load-}
-  case "$selected_local_cpu:$selected_local_load" in
-    *[!0-9:.]*|'':*|*:)
+  case "$selected_local_cpu" in
+    ''|*[!0-9]*|0)
       selected_local_cpu=$(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || true)
-      selected_local_load=$(sysctl -n vm.loadavg 2>/dev/null | awk '{print $2}')
-      [ -n "$selected_local_load" ] || selected_local_load=$(awk '{print $1}' /proc/loadavg 2>/dev/null || true)
       ;;
   esac
-  case "$selected_local_cpu:$selected_local_load" in
-    *[!0-9:.]*|'':*|*:)
-      selected_local_workers=
-      ;;
-    *)
-      selected_local_cpu_psi=$(awk '/^some / {for (field = 1; field <= NF; field += 1) if ($field ~ /^avg10=/) {sub(/^avg10=/, "", $field); print $field; exit}}' /proc/pressure/cpu 2>/dev/null || true)
-      selected_local_memory_psi=$(awk '/^some / {for (field = 1; field <= NF; field += 1) if ($field ~ /^avg10=/) {sub(/^avg10=/, "", $field); print $field; exit}}' /proc/pressure/memory 2>/dev/null || true)
-      selected_local_workers=$(awk \
-        -v cpu="$selected_local_cpu" \
-        -v load_value="$selected_local_load" \
-        -v cpu_psi="${selected_local_cpu_psi:-0}" \
-        -v memory_psi="${selected_local_memory_psi:-0}" '
-          BEGIN {
-            if (cpu !~ /^[0-9]+$/ || cpu < 1) exit
-            if (load_value !~ /^[0-9]+([.][0-9]+)?$/ || load_value < 0) load_value = cpu
-            if (cpu_psi !~ /^[0-9]+([.][0-9]+)?$/ || cpu_psi < 0) cpu_psi = 0
-            if (memory_psi !~ /^[0-9]+([.][0-9]+)?$/ || memory_psi < 0) memory_psi = 0
-            denominator = 1 + (load_value / cpu) + (cpu_psi / 100) + (memory_psi / 100)
-            workers = int(cpu / denominator)
-            if (workers < 1) workers = 1
-            if (workers > cpu) workers = cpu
-            print workers
-          }
-        ')
-      ;;
-  esac
+  selected_local_active=${selected_active-0}
+  if [ "$(uname -s 2>/dev/null || true)" = Linux ]; then
+    selected_local_active=$(
+      heavyweight_admission_root=$native_host_admission_root
+      heavyweight_count_admitted_owners || exit 1
+      printf '%s' "$heavyweight_active_count"
+    )
+  fi
+  selected_local_workers=$(resolve_worker_cpu_budget "$selected_local_cpu" "$selected_local_active")
   case "$selected_local_workers" in ''|*[!0-9]*) selected_local_workers= ;; esac
 
   if [ -n "$selected_local_workers" ] && [ "$selected_local_workers" -lt "$selected_local_cpu" ]; then
@@ -2227,13 +1153,23 @@ remote_load_probe() {
     path_setup="PATH=$(quote_remote "$remote_path"):\$PATH; export PATH; "
   fi
   probe='cpu=$(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || printf 1); kernel=$(uname -s); case "$kernel" in Darwin) platform=darwin; load=$(sysctl -n vm.loadavg | awk '\''{print $2}'\''); free=$(memory_pressure -Q 2>/dev/null | awk '\''/free percentage/ {gsub(/%/,"",$5); print $5/100; exit}'\''); run_queue=0; mem_total_bytes=$(sysctl -n hw.memsize 2>/dev/null || printf 0); memory=$(awk -v bytes="$mem_total_bytes" -v ratio="${free:-1}" '\''BEGIN {printf "%.0f %.0f", (bytes/1024)*ratio, bytes/1024}'\''); set -- $memory; mem_available_kib=${1-}; mem_total_kib=${2-}; swap_used_kib=0; swap_total_kib=0; psi_cpu=0; psi_memory=0; psi_io=0; swap_in_pages=0; swap_out_pages=0 ;; *) platform=linux; load=$(awk '\''{print $1}'\'' /proc/loadavg 2>/dev/null || uptime | awk -F'\''load average: '\'' '\''{print $2}'\'' | cut -d, -f1); run_queue=$(awk '\''{split($4,r,"/"); print r[1]}'\'' /proc/loadavg 2>/dev/null); memory=$(awk '\''/MemTotal:/ {t=$2} /MemAvailable:/ {a=$2} /SwapTotal:/ {st=$2} /SwapFree:/ {sf=$2} END {if(t>0) print a/t, a, t, st-sf, st}'\'' /proc/meminfo 2>/dev/null); set -- $memory; free=${1-}; mem_available_kib=${2-}; mem_total_kib=${3-}; swap_used_kib=${4-}; swap_total_kib=${5-}; psi_cpu=$(awk '\''/^some / {for(i=1;i<=NF;i++) if($i ~ /^avg10=/) {sub(/^avg10=/,"",$i); print $i; exit}}'\'' /proc/pressure/cpu 2>/dev/null); psi_memory=$(awk '\''/^some / {for(i=1;i<=NF;i++) if($i ~ /^avg10=/) {sub(/^avg10=/,"",$i); print $i; exit}}'\'' /proc/pressure/memory 2>/dev/null); psi_io=$(awk '\''/^some / {for(i=1;i<=NF;i++) if($i ~ /^avg10=/) {sub(/^avg10=/,"",$i); print $i; exit}}'\'' /proc/pressure/io 2>/dev/null); swap_pages=$(awk '\''/pswpin / {i=$2} /pswpout / {o=$2} END {print i+0, o+0}'\'' /proc/vmstat 2>/dev/null); set -- $swap_pages; swap_in_pages=${1-}; swap_out_pages=${2-} ;; esac; [ -n "$free" ] || free=1; disk=$(df -Pk . 2>/dev/null | awk '\''NR==2 {gsub(/%/,"",$5); print $4, $5}'\''); set -- $disk; disk_free=${1-}; disk_used=${2-}; printf "%s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s\\n" "$cpu" "$load" "$free" "$disk_free" "$disk_used" "${run_queue:-0}" "${mem_available_kib:-0}" "${mem_total_kib:-0}" "${swap_used_kib:-0}" "${swap_total_kib:-0}" "${psi_cpu:-0}" "${psi_memory:-0}" "${psi_io:-0}" "${swap_in_pages:-0}" "${swap_out_pages:-0}" "$platform"'
+  probe="$probe
+unreserved_memory=\${mem_available_kib:-0}
+achievable_memory=unknown
+queued_memory=unknown"
   if [ "$heavyweight_admission_required" -eq 1 ]; then
     probe="$probe
 if [ \"\$platform\" = linux ]; then
   budget=\$($(quote_remote "$remote_executor_repo/apps/stack/bin/hstack-exec") --heavyweight-memory-sample) || exit 1
-  printf '%s\\n' \"\$budget\" | sed -n 's/.*\"unreservedMemoryKiB\":\(-\{0,1\}[0-9][0-9]*\).*/\1/p'
+  achievable_memory=\$(printf '%s\\n' \"\$budget\" | sed -n 's/.*\"achievableMemoryKiB\":\([0-9][0-9]*\).*/\1/p')
+  [ -n \"\$achievable_memory\" ] || achievable_memory=unknown
+  unreserved_memory=\$(printf '%s\\n' \"\$budget\" | sed -n 's/.*\"unreservedMemoryKiB\":\(-\{0,1\}[0-9][0-9]*\).*/\1/p')
+  queued_memory=\$(printf '%s\\n' \"\$budget\" | sed -n 's/.*\"queuedMemoryKiB\":\([0-9][0-9]*\).*/\1/p')
+  [ -n \"\$queued_memory\" ] || queued_memory=0
 fi"
   fi
+  probe="$probe
+printf '%s %s %s %s\\n' \"\$unreserved_memory\" 0 \"\$achievable_memory\" \"\$queued_memory\""
   remote_command="${path_setup}cd -- $(quote_remote "$remote_repo") && bash -lc $(quote_remote "$probe")"
   remote_sample=$(run_remote_ssh_probe "$remote_command")
   remote_sample_status=$?
@@ -2525,7 +1461,7 @@ EOF
   local_unreserved_memory=
   local_budget_available=1
   if [ "$heavyweight_admission_required" -eq 1 ] && [ "$(uname -s)" = Linux ]; then
-    local_unreserved_memory=$(heavyweight_admission_root=$native_host_admission_root; heavyweight_observe_memory_budget && printf '%s' "$heavyweight_unreserved_memory") || local_budget_available=0
+    local_unreserved_memory=$(read_native_admission_fact --unreserved-memory) || local_budget_available=0
   fi
   local_score=
   if [ "$local_budget_available" = 1 ]; then
@@ -2599,14 +1535,7 @@ for result_path in "$probe_tmp"/[0-9]* "$probe_tmp/local"; do
     candidate_heavyweight_active=${remaining_active_counts#* }
     candidate_queued=0
     if [ "$candidate_name" = local ]; then
-      # Queued demand is absent from CPU load and dispatch reservations.
-      # Observe the admission owner's live incarnations without changing queue state.
-      for candidate_waiter in "$native_host_admission_root/waiters"/*; do
-        [ -f "$candidate_waiter" ] || continue
-        IFS=' ' read -r candidate_waiter_pid candidate_waiter_token _candidate_waiter_tail 2>/dev/null < "$candidate_waiter" || continue
-        heavyweight_process_is_current "$candidate_waiter_pid" "$candidate_waiter_token" || continue
-        candidate_queued=$((candidate_queued + 1))
-      done
+      candidate_queued=$(read_native_admission_fact --waiting-count) || candidate_queued=0
     fi
     candidate_effective=$(awk -v score="$candidate_score" -v active="$candidate_active" -v queued="$candidate_queued" -v capacity="$candidate_capacity" 'BEGIN {printf "%.6f", score + ((active + queued) / capacity)}')
     if [ "$heavyweight_admission_required" -eq 1 ] || [ "$candidate_name" = "$typecheck_warm_target" ] || [ "$candidate_name" = "$typecheck_running_target" ]; then
@@ -2780,8 +1709,9 @@ if [ "$telemetry_platform" = linux ] || [ "$telemetry_platform" = darwin ]; then
   case "$command_class" in
     source-search|targeted-validation|full-validation|validation)
       resource_governor_priority=background
-      resource_governor_workers=$(resolve_worker_cpu_budget "$telemetry_cpu" "$telemetry_platform" \
-        "$selected_active" "$telemetry_run_queue" "$telemetry_psi_cpu" "$telemetry_psi_memory")
+      if [ "$telemetry_platform" = darwin ]; then
+        resource_governor_workers=$(resolve_worker_cpu_budget "$telemetry_cpu" "$selected_active")
+      fi
       ;;
   esac
 fi

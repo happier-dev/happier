@@ -19,6 +19,7 @@ import { spawnSync } from 'node:child_process';
 import { Worker } from 'node:worker_threads';
 import { basename, dirname, join, resolve, win32 } from 'node:path';
 import { createFileChangeObserver, DEFAULT_FILE_CHANGE_CATCH_UP_MS } from './fileChangeObserver.mjs';
+import { createWorkspaceBundleLockPriorityOwner } from './workspaceBundleLockPriority.mjs';
 
 import {
   createWorkspaceLockLeaseValue,
@@ -181,11 +182,14 @@ async function waitForWorkspaceBundleLockChange({
   maxWaitMs,
   signal,
   observer,
+  prioritySnapshot,
+  priorityOptions,
 }) {
   const key = snapshot => [Boolean(snapshot?.exists), Boolean(snapshot?.readable), snapshot?.raw];
   await observer.wait({
-    snapshot: JSON.stringify([key(lockSnapshot), key(claimSnapshot)]),
-    readSnapshot: () => JSON.stringify([key(readLockOwnerSnapshot(lockPath)), key(readLockOwnerSnapshot(claimPath))]),
+    snapshot: JSON.stringify([key(lockSnapshot), key(claimSnapshot), prioritySnapshot]),
+    readSnapshot: () => JSON.stringify([key(readLockOwnerSnapshot(lockPath)), key(readLockOwnerSnapshot(claimPath)),
+      observeWorkspaceBundleLockPriority(lockPath, priorityOptions)]),
     maxWaitMs, signal,
   });
 }
@@ -479,16 +483,6 @@ function reclaimLockSnapshot(lockPath, expectedRaw) {
     restoreQuarantinedLockSnapshot(lockPath, reclaimPath);
     return false;
   }
-
-  if (movedRaw === expectedRaw) {
-    try {
-      unlinkSync(reclaimPath);
-    } catch {}
-    return true;
-  }
-
-  restoreQuarantinedLockSnapshot(lockPath, reclaimPath);
-  return false;
 }
 
 function restoreQuarantinedLockSnapshot(lockPath, reclaimPath) {
@@ -800,20 +794,22 @@ function assertWorkspaceLockMayWait(options, lockPath) {
   throw error;
 }
 
-function resolveHeldLockValue(options) {
+function resolveHeldLockValues(options) {
   const env = options.env ?? process.env;
   const primary = String(options.heldLockValue ?? options.heldLockPath
     ?? env.HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD ?? '').trim();
-  if (callerHoldsWorkspaceBundleLock(options.lockPath, primary)) return primary;
   // Joint build admission may own both publication and package leases. Each
   // remains an ordinary token-authenticated lease of the existing lock owner;
   // the outermost legacy value cannot represent both exact paths.
   let leases;
   try { leases = JSON.parse(env.HAPPIER_WORKSPACE_DIST_BUILD_LOCK_LEASES ?? '[]'); }
-  catch { return primary; }
-  if (!Array.isArray(leases)) return primary;
-  return leases.find(lease => typeof lease === 'string'
-    && callerHoldsWorkspaceBundleLock(options.lockPath, lease)) ?? primary;
+  catch { return [primary]; }
+  return [primary, ...(Array.isArray(leases) ? leases.filter(lease => typeof lease === 'string') : [])];
+}
+
+function resolveHeldLockValue(options) {
+  const values = resolveHeldLockValues(options);
+  return values.find(value => callerHoldsWorkspaceBundleLock(options.lockPath, value)) ?? values[0];
 }
 
 function notifyWaiter(options, lockPath, snapshot, startedAt, staleAfterMs, timeoutMs) {
@@ -842,6 +838,70 @@ function cleanupFailedOwnerInitialization(lockPath, fd, initializationError) {
       `Failed to initialize and clean up workspace bundle lock: ${lockPath}`,
     );
   }
+}
+
+const workspaceBundlePriority = createWorkspaceBundleLockPriorityOwner({
+  read: readLockOwnerSnapshot,
+  protect: protectLockFile,
+  remove: reclaimLockSnapshot,
+  sameOwner: (left, right, path) => {
+    if (!String(left.owner?.token ?? '').trim()) return false;
+    return workspaceLockLeaseMatchesOwner({ lockPath: path, owner: right.owner,
+      leaseValue: createWorkspaceLockLeaseValue({ lockPath: path, ownerToken: left.owner.token }) });
+  },
+  owner: ({ createdAtMs }, options) => JSON.parse(serializeLockOwner({
+    createdAtMs, updatedAtMs: Date.now(), ownerToken: randomUUID(),
+    processInstanceFingerprint: options.priorityProcessFingerprint,
+  }, options)),
+  reclaimable: (snapshot, options) => shouldReclaimLockSnapshot(snapshot,
+    options.staleAfterMs ?? DEFAULT_WORKSPACE_BUNDLE_LOCK_TIMEOUT_MS, Date.now(),
+    lockOwnerObservationOptions(options, options.initializationGraceMs ?? 5_000)),
+  recover: (path, options) => {
+    try {
+      return recoverRetainedLockSnapshot(path, {
+        staleAfterMs: options.staleAfterMs ?? DEFAULT_WORKSPACE_BUNDLE_LOCK_TIMEOUT_MS,
+        initializationGraceMs: options.initializationGraceMs ?? 5_000, options,
+      });
+    } catch (error) { if (error.code === 'ENOENT') return false; throw error; }
+  },
+  clear: (path, raw, owner, options) => {
+    while (true) {
+      if (!clearPriorityClaimIfOwned(path, raw)) return false;
+      try {
+        if (classifyRetainedLockSnapshots(path, {
+          staleAfterMs: options.staleAfterMs ?? DEFAULT_WORKSPACE_BUNDLE_LOCK_TIMEOUT_MS,
+          initializationGraceMs: options.initializationGraceMs ?? 5_000, options,
+          releasedOwner: { ownerToken: owner.token, processInstanceFingerprint: owner.processInstanceFingerprint },
+        }).length > 0) return false;
+      } catch (error) { if (error.code !== 'ENOENT') throw error; }
+      const current = readLockOwnerSnapshot(path);
+      if (!current.exists) return true;
+      // A peer can link the compared quarantine back before its unlink. The
+      // bytes have not changed owners; finish withdrawing that restored record
+      // before allowing the caller to retire any resource index.
+      if (!current.readable || current.raw !== raw) return false;
+    }
+  },
+  holdsPublication: (path, options) => resolveHeldLockValues(options)
+    .some(value => callerHoldsWorkspaceBundleLock(path, value)),
+});
+
+function createPriorityScope(options, fingerprint) {
+  return workspaceBundlePriority.create({ ...options, priorityProcessFingerprint: fingerprint });
+}
+
+/** Continuous preference only; actual publication exclusion remains this owner.
+ * Dependency declarations are opaque here and authenticated by their producer. */
+export function createWorkspaceBundleLockPriorityScope(options) {
+  return createPriorityScope(options, readWorkspaceLockProcessInstanceFingerprint(process.pid, null, options));
+}
+
+export function observeWorkspaceBundleLockPriority(lockPath, options = {}) {
+  return workspaceBundlePriority.snapshot(lockPath, options);
+}
+
+export function isWorkspaceBundleLockPriorityChange(lockPath, filename, priorityScope) {
+  return workspaceBundlePriority.isRelevant(lockPath, filename, priorityScope);
 }
 
 export async function withWorkspaceBundleLock(fn, options = {}) {
@@ -886,20 +946,28 @@ export async function withWorkspaceBundleLock(fn, options = {}) {
   let heartbeat = null;
   let heartbeatWorker = null;
   let waited = false;
+  const ownPriorityScope = !options.priorityScope && options.wait !== false;
+  const priorityScope = options.priorityScope ?? (ownPriorityScope
+    ? createPriorityScope({ ...options, resources: [{ path: lockPath }] }, processInstanceFingerprint) : null);
+  const priorityObservationOptions = { ...options, priorityScope };
   // The acquisition owns one native watch. Reopening it on every fallback wake
   // repeatedly registers FSEvents clients during long macOS build contention.
   const observer = createFileChangeObserver([dirname(lockPath)], {
     isRelevant: (_directory, filename) => filename == null
-      || String(filename) === basename(lockPath) || String(filename) === basename(claimPath),
+      || String(filename) === basename(lockPath) || String(filename) === basename(claimPath)
+      || isWorkspaceBundleLockPriorityChange(lockPath, filename, priorityScope),
   });
   const waitForLockChange = options.waitForLockChangeImpl
-    ?? ((input) => waitForWorkspaceBundleLockChange({ ...input, observer }));
+    ?? ((input) => waitForWorkspaceBundleLockChange({ ...input, observer, priorityOptions: priorityObservationOptions,
+      prioritySnapshot: input.prioritySnapshot ?? observeWorkspaceBundleLockPriority(lockPath, priorityObservationOptions) }));
   const claimHistoryOptions = { staleAfterMs, initializationGraceMs, options, priorityClaim: true };
   classifyRetainedLockSnapshots(claimPath, claimHistoryOptions);
 
   try {
+    if (options.priorityScope) priorityScope.activate();
     while (true) {
       options.signal?.throwIfAborted();
+      let continuedThroughPriority = false;
       if (ownClaimRaw !== null) {
         ownClaimRaw = refreshPriorityClaim({
           claimPath,
@@ -919,6 +987,7 @@ export async function withWorkspaceBundleLock(fn, options = {}) {
         if (claimSnapshot.exists) {
           const waitSnapshot = lockSnapshot.exists ? lockSnapshot : claimSnapshot;
           assertWorkspaceLockMayWait(options, lockPath);
+          if (ownPriorityScope) priorityScope.activate();
           if (workspaceBundleLockWaitTimedOut(
             lockSnapshot.exists ? lockPath : claimPath,
             waitSnapshot, staleAfterMs, startedAt, timeoutMs,
@@ -949,6 +1018,26 @@ export async function withWorkspaceBundleLock(fn, options = {}) {
             }),
           });
           continue;
+        }
+      }
+
+      if (ownClaimRaw === null && priorityScope) {
+        const { predecessor, snapshot: prioritySnapshot } = workspaceBundlePriority.observation(lockPath, priorityScope, options);
+        if (predecessor) {
+          const lockSnapshot = readLockOwnerSnapshot(lockPath);
+          continuedThroughPriority = !lockSnapshot.exists
+            && workspaceBundlePriority.canContinue(priorityScope, predecessor, options);
+          if (!continuedThroughPriority) {
+            assertWorkspaceLockMayWait(options, lockPath);
+            if (ownPriorityScope) priorityScope.activate();
+            waited = true;
+            notifyWaiter(options, lockPath, predecessor.snapshot, startedAt, staleAfterMs, timeoutMs);
+            await waitForLockChange({ signal: options.signal, lockPath, claimPath,
+              lockSnapshot, claimSnapshot: readLockOwnerSnapshot(claimPath), prioritySnapshot,
+              maxWaitMs: resolveWorkspaceBundleLockWaitMs({ options, snapshot: predecessor.snapshot,
+                staleAfterMs, startedAt, timeoutMs, initializationGraceMs }) });
+            continue;
+          }
         }
       }
 
@@ -1019,8 +1108,10 @@ export async function withWorkspaceBundleLock(fn, options = {}) {
             throw new Error(`Failed to safely reclaim workspace bundle lock: ${lockPath}`);
           }
         }
-        assertWorkspaceLockMayWait(options, lockPath);
-        if (ownClaimRaw === null) {
+        assertWorkspaceLockMayWait(continuedThroughPriority ? { ...options, wait: false } : options, lockPath);
+        if (ownPriorityScope) priorityScope.activate();
+        if (ownClaimRaw === null && !options.priorityScope
+          && (!priorityScope || !workspaceBundlePriority.observation(lockPath, priorityScope, options).predecessor)) {
           const claim = tryAcquirePriorityClaim({
             claimPath,
             ownerToken,
@@ -1064,9 +1155,11 @@ export async function withWorkspaceBundleLock(fn, options = {}) {
     throw error;
   } finally {
     observer.close();
+    if (ownPriorityScope && fd === null) priorityScope.dispose();
   }
 
   try {
+    if (ownPriorityScope) priorityScope.dispose();
     // The acquired lock now owns exclusion. A reaper may restore this claim during
     // quarantine validation; retain it for the existing release cleanup instead
     // of failing publication after admission. Filesystem errors still propagate.
@@ -1168,11 +1261,16 @@ export function withWorkspaceBundleLockSync(fn, options = {}) {
   let fd = null;
   let waited = false;
   let heartbeatWorker = null;
+  const ownPriorityScope = !options.priorityScope && options.wait !== false;
+  const priorityScope = options.priorityScope ?? (ownPriorityScope
+    ? createPriorityScope({ ...options, resources: [{ path: lockPath }] }, processInstanceFingerprint) : null);
   const claimHistoryOptions = { staleAfterMs, initializationGraceMs, options, priorityClaim: true };
   classifyRetainedLockSnapshots(claimPath, claimHistoryOptions);
 
   try {
+    if (options.priorityScope) priorityScope.activate();
     while (true) {
+      let continuedThroughPriority = false;
       if (ownClaimRaw !== null) {
         ownClaimRaw = refreshPriorityClaim({
           claimPath,
@@ -1192,6 +1290,7 @@ export function withWorkspaceBundleLockSync(fn, options = {}) {
         if (claimSnapshot.exists) {
           const waitSnapshot = lockSnapshot.exists ? lockSnapshot : claimSnapshot;
           assertWorkspaceLockMayWait(options, lockPath);
+          if (ownPriorityScope) priorityScope.activate();
           if (workspaceBundleLockWaitTimedOut(
             lockSnapshot.exists ? lockPath : claimPath,
             waitSnapshot, staleAfterMs, startedAt, timeoutMs,
@@ -1208,6 +1307,22 @@ export function withWorkspaceBundleLockSync(fn, options = {}) {
           notifyWaiter(options, lockPath, waitSnapshot, startedAt, staleAfterMs, timeoutMs);
           sleepSync(Math.max(pollIntervalMs, 25));
           continue;
+        }
+      }
+
+      if (ownClaimRaw === null && priorityScope) {
+        const { predecessor } = workspaceBundlePriority.observation(lockPath, priorityScope, options);
+        if (predecessor) {
+          continuedThroughPriority = !readLockOwnerSnapshot(lockPath).exists
+            && workspaceBundlePriority.canContinue(priorityScope, predecessor, options);
+          if (!continuedThroughPriority) {
+            assertWorkspaceLockMayWait(options, lockPath);
+            if (ownPriorityScope) priorityScope.activate();
+            waited = true;
+            notifyWaiter(options, lockPath, predecessor.snapshot, startedAt, staleAfterMs, timeoutMs);
+            sleepSync(Math.max(pollIntervalMs, 25));
+            continue;
+          }
         }
       }
 
@@ -1277,8 +1392,10 @@ export function withWorkspaceBundleLockSync(fn, options = {}) {
             throw new Error(`Failed to safely reclaim workspace bundle lock: ${lockPath}`);
           }
         }
-        assertWorkspaceLockMayWait(options, lockPath);
-        if (ownClaimRaw === null) {
+        assertWorkspaceLockMayWait(continuedThroughPriority ? { ...options, wait: false } : options, lockPath);
+        if (ownPriorityScope) priorityScope.activate();
+        if (ownClaimRaw === null && !options.priorityScope
+          && (!priorityScope || !workspaceBundlePriority.observation(lockPath, priorityScope, options).predecessor)) {
           const claim = tryAcquirePriorityClaim({
             claimPath,
             ownerToken,
@@ -1306,9 +1423,12 @@ export function withWorkspaceBundleLockSync(fn, options = {}) {
     clearPriorityClaimIfOwned(claimPath, ownClaimRaw);
     classifyRetainedLockSnapshots(claimPath, { ...claimHistoryOptions, releasedOwner: { ownerToken, processInstanceFingerprint } });
     throw error;
+  } finally {
+    if (ownPriorityScope && fd === null) priorityScope.dispose();
   }
 
   try {
+    if (ownPriorityScope) priorityScope.dispose();
     // Keep an inconclusive cleanup for release; admission already holds the lock.
     if (clearPriorityClaimIfOwned(claimPath, ownClaimRaw)) ownClaimRaw = null;
     heartbeatWorker = (options.startWorkspaceLockHeartbeatImpl ?? startWorkspaceLockHeartbeat)({

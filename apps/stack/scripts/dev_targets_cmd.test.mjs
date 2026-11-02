@@ -172,24 +172,37 @@ test('QA setup reports independently completed dependencies and OS prerequisites
   assert.equal(missingReport.powerReady, false);
 });
 
-test('dev-targets status exposes read-only admission holder progress and observation failures', async t => {
+test('dev-targets status exposes cached broker capacity and observation failures', async t => {
   const root = await mkdtemp(join(tmpdir(), 'hstack-admission-status-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   await mkdir(join(root, 'repo-test'), { recursive: true });
   await writeFile(join(root, 'repo-test', 'dev-targets.json'), JSON.stringify({ version: 1,
     targets: [{ name: 'linux', platform: 'posix', ssh: 'linux', repoDir: '/repo', cliHomeDir: '/state' }] }));
   const { binDir } = writeFakeBin({ root, name: 'mutagen', content: '#!/bin/sh\nprintf \'[{"name":"happier-linux","paused":false,"status":"watching","successfulCycles":1,"alpha":{"connected":true,"scanned":true},"beta":{"connected":true,"scanned":true}}]\\n\'\n' });
-  writeFakeBin({ root, name: 'ssh', content: '#!/bin/sh\ncase "$*" in *__HAPPIER_WORKER_POWER__*) printf \'__HAPPIER_WORKER_POWER__={"ok":true,"detail":"masked"}\\n\'; exit 0;; esac\n[ "${OBSERVATION_FAIL-}" != 1 ] || exit 255\nprintf \'{"state":"observed","sampledAtMs":9000,"owners":[{"pid":42,"token":"11","className":"validation","ageSeconds":14400,"cpuSeconds":3,"recentCpuPercent":0}]}\\n\'\n' });
+  const sample = { state: 'observed', kind: 'sample', activeCount: 1, waitingCount: 2, sampleCount: 3,
+    availableMemoryKiB: 100, totalMemoryKiB: 200, reservedMemoryKiB: 20,
+    unreservedMemoryKiB: 80, achievableMemoryKiB: 180, residentMemoryKiB: 0, queuedMemoryKiB: 40 };
+  writeFakeBin({ root, name: 'ssh', content: [
+    '#!/bin/sh',
+    'case "$*" in',
+    '  *__HAPPIER_WORKER_POWER__*) printf \'__HAPPIER_WORKER_POWER__={"ok":true,"detail":"systemd sleep targets must all be masked"}\\n\' ;;',
+    '  *--admission-status*) [ "$OBSERVATION_FAIL" != 1 ] || exit 1; printf \'%s\\n\' \'' + JSON.stringify(sample) + '\' ;;',
+    'esac',
+    '',
+  ].join('\n') });
   const env = { PATH: `${binDir}:${process.env.PATH}` };
   const status = await run(['status', 'linux', '--stack=repo-test'], root, env);
   assert.equal(status.admission?.state, 'observed');
-  assert.equal(status.admission.owners[0].ageSeconds, 14400);
-  assert.equal(status.admission.owners[0].recentCpuPercent, 0);
+  assert.equal(status.admission.activeCount, 1);
+  assert.equal(status.admission.waitingCount, 2);
+  assert.equal(status.admission.sampleCount, 3);
+  assert.equal(status.powerPolicy.ok, true);
   const text = await runRaw(['status', 'linux', '--stack=repo-test'], root, env);
-  assert.match(text.stdout, /validation owner pid 42.*14400s.*~0.0%/);
+  assert.match(text.stdout, /1 active, 2 waiting; 80 KiB unreserved/);
   const failed = await run(['status', 'linux', '--stack=repo-test'], root, { ...env, OBSERVATION_FAIL: '1' });
   assert.equal(failed.admission.state, 'unavailable');
-  assert.equal(failed.status.state, 'ready', 'failed observation does not fabricate empty holders or alter sync health');
+  assert.equal(failed.status.state, 'ready', 'failed observation does not fabricate empty capacity or alter sync health');
+  assert.equal(failed.powerPolicy.ok, true, 'an admission observation failure does not alter independent power health');
 });
 
 test('dev-targets conflict refusals identify the root and recovery without restarting synchronization', async t => {

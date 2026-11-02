@@ -119,7 +119,7 @@ export async function prepareDevTargetSourceCommand(
 /** Read-only worker observation, independent of admission and sync readiness. */
 export async function inspectDevTargetAdmission({ target, env = process.env },
   { runCaptureResult: capture = defaultRunCaptureResult } = {}) {
-  if (target.platform === 'windows') return { state: 'unsupported', owners: [] };
+  if (target.platform === 'windows') return { state: 'unsupported' };
   const remoteCommand = buildRemoteExecCommand(target, {
     executionId: randomUUID(), commandArgs: ['node', './apps/stack/scripts/utils/proc/service_memory.mjs', '--admission-status'],
     environment: { HAPPIER_STACK_PM_CACHE_BASE_DIR: `${target.cliHomeDir.replace(/[\\/]+$/, '')}/cache` },
@@ -130,11 +130,10 @@ export async function inspectDevTargetAdmission({ target, env = process.env },
     }), env });
     if (!result?.ok) return { state: 'unavailable', error: result?.err || 'worker admission observation failed' };
     const progress = JSON.parse(result.out);
-    if (!['observed', 'unsupported'].includes(progress?.state) || !Array.isArray(progress.owners)
-      || progress.owners.some(owner => !Number.isSafeInteger(owner.pid) || owner.pid <= 1
-        || typeof owner.token !== 'string' || !/^\d+$/.test(owner.token)
-        || typeof owner.className !== 'string' || !/^[a-z][a-z-]*$/.test(owner.className)
-        || ![owner.ageSeconds, owner.cpuSeconds, owner.recentCpuPercent].every(value => value === null || (Number.isFinite(value) && value >= 0)))) {
+    if (progress?.state === 'unsupported') return { state: 'unsupported' };
+    const fields = ['activeCount', 'waitingCount', 'sampleCount', 'availableMemoryKiB', 'totalMemoryKiB',
+      'reservedMemoryKiB', 'unreservedMemoryKiB', 'achievableMemoryKiB', 'residentMemoryKiB', 'queuedMemoryKiB'];
+    if (progress?.state !== 'observed' || fields.some(field => !Number.isSafeInteger(progress[field]) || progress[field] < 0)) {
       return { state: 'unavailable', error: 'invalid worker admission observation' };
     }
     return progress;

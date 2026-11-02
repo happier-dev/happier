@@ -1,25 +1,16 @@
-# The worker owns this OS-global location. Caller homes, task mirrors, aliases
-# and temporary directories do not define an independent admission authority.
-# Bump this protocol revision when waiter/owner semantics change: incompatible
-# launchers must not share a queue. Live owners across roots remain accounted
-# through service_memory.mjs's authenticated process-tree observation.
-native_host_admission_root='/tmp/happier-heavyweight-admission-v3'
+# One host identity across caller homes, private mirrors and target aliases.
+# Capacity and demand are in the broker, never filesystem owner/waiter records.
+native_host_admission_uid=$(id -u) || return 1
+native_host_admission_root="/tmp/happier-heavyweight-admission-v3-$native_host_admission_uid"
 
 resolve_native_host_admission_root() {
   (umask 077; mkdir -p -- "$native_host_admission_root") 2>/dev/null || return 1
-  [ -d "$native_host_admission_root" ] && [ -r "$native_host_admission_root" ] \
-    && [ -w "$native_host_admission_root" ] && [ -x "$native_host_admission_root" ] || return 1
-  native_host_owner=$(stat -c %u -- "$native_host_admission_root" 2>/dev/null) || return 1
-  native_host_account=$(id -u) || return 1
-  [ "$native_host_owner" = "$native_host_account" ] || return 1
   printf '%s' "$native_host_admission_root"
 }
 
 resolve_native_host_admission_machine() {
   native_host_machine=
-  if [ -r /etc/machine-id ]; then
-    IFS= read -r native_host_machine < /etc/machine-id || true
-  fi
+  if [ -r /etc/machine-id ]; then IFS= read -r native_host_machine < /etc/machine-id || true; fi
   if [ -z "$native_host_machine" ] && [ -r /proc/sys/kernel/random/boot_id ]; then
     IFS= read -r native_host_machine < /proc/sys/kernel/random/boot_id || true
   fi

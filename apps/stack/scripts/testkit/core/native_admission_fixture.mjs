@@ -1,10 +1,12 @@
 import { copyFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { createRequire, syncBuiltinESMExports } from 'node:module';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { after } from 'node:test';
 import { writeFakeBin } from './fake_bin_harness.mjs';
+import { createTempFixture } from './temp_fixture.mjs';
 import { withDependencyRefresh } from '../../utils/proc/dependency_refresh.mjs';
 
 const sourceRoot = resolve(import.meta.dirname, '../../../../..');
@@ -49,25 +51,51 @@ register(${JSON.stringify(`data:text/javascript,${encodeURIComponent(hook)}`)}, 
  * Layer intentional fixture worker settings onto the returned environment.
  */
 export function buildNativeAdmissionFixtureEnv(env = process.env) {
-  return Object.fromEntries(Object.entries(env).filter(([key]) =>
+  const fixtureEnv = Object.fromEntries(Object.entries(env).filter(([key]) =>
     !key.startsWith('HAPPIER_HEAVYWEIGHT_ADMISSION_')
     && !key.startsWith('HAPPIER_WORKSPACE_DIST_BUILD_LOCK_')
-    && !['HAPPIER_BUILD_DEPENDENCY_CUSTODY', 'VITEST_MAX_THREADS', 'VITEST_MIN_THREADS',
+    && !key.startsWith('HSTACK_EXEC_CONTROLLER_')
+    && key !== 'control_input_pid'
+    && !['VITEST_MAX_THREADS', 'VITEST_MIN_THREADS',
       'VITEST_MAX_FORKS', 'VITEST_MIN_FORKS', 'HAPPIER_VITEST_GOVERNOR_MAX_WORKERS',
       'HAPPIER_VITEST_MAX_WORKERS', 'VITEST_UI_MAX_FORKS', 'GOMAXPROCS'].includes(key)));
+  // CLI --import affects only the test runner. Fixture Node children also
+  // consume authored workspace exports, before any dist has been published.
+  const sourceRuntime = `--import=${pathToFileURL(join(sourceRoot, 'packages/cli-common/registerSourceRuntime.mjs')).href}`;
+  if (!String(fixtureEnv.NODE_OPTIONS ?? '').includes(sourceRuntime)) {
+    fixtureEnv.NODE_OPTIONS = [fixtureEnv.NODE_OPTIONS, sourceRuntime].filter(Boolean).join(' ');
+  }
+  return fixtureEnv;
 }
 
 /** Remap only the fixed OS-state filesystem boundary, never a production flag.
  * Real admission, kernel identity, locking and class policy remain unchanged.
  */
-export async function installNativeAdmissionFixture({ root, admissionRoot = join(root, 'host-admission'), observedPidsPath = null, prepareDependencies = false,
-  launcherSourcePath = join(sourceRoot, 'apps/stack/bin/hstack-exec'),
+export async function installNativeAdmissionFixture({ root, admissionRoot = null, observedPidsPath = null, processMemoryKiBPath = null, prepareDependencies = false,
+  launcherSourcePath = process.env.HAPPIER_TEST_NATIVE_ADMISSION_LAUNCHER || join(sourceRoot, 'apps/stack/bin/hstack-exec'),
+  admissionStateSourcePath = process.env.HAPPIER_TEST_NATIVE_ADMISSION_STATE || join(sourceRoot, 'apps/stack/scripts/utils/proc/native_host_admission_state.sh'),
+  admissionBrokerSourcePath = process.env.HAPPIER_TEST_NATIVE_ADMISSION_BROKER || join(sourceRoot, 'apps/stack/scripts/utils/proc/admission_broker.mjs'),
+  admissionClientSourcePath = process.env.HAPPIER_TEST_NATIVE_ADMISSION_CLIENT || join(sourceRoot, 'apps/stack/scripts/utils/proc/admission_client.mjs'),
   commandPolicySourcePath = join(sourceRoot, 'apps/stack/scripts/utils/dev_targets/remote_commands.mjs') }) {
+  if (!admissionRoot) {
+    // Unix socket paths have a kernel byte bound. Worker TMPDIR deliberately
+    // stays disk-backed and may be long; only owned socket metadata uses /tmp.
+    const sockets = await createTempFixture({ after }, { parentDir: '/tmp', prefix: 'ha-' });
+    admissionRoot = sockets.root;
+  }
   const checkout = join(root, 'native-owner');
   const bin = join(checkout, 'apps/stack/bin');
   const proc = join(checkout, 'apps/stack/scripts/utils/proc');
   const targets = join(checkout, 'apps/stack/scripts/utils/dev_targets');
   await Promise.all([mkdir(bin, { recursive: true }), mkdir(proc, { recursive: true }), mkdir(targets, { recursive: true })]);
+  if (!observedPidsPath) {
+    observedPidsPath = join(checkout, 'worker-pids.json');
+    await writeFile(observedPidsPath, '[]');
+  }
+  if (!processMemoryKiBPath) {
+    processMemoryKiBPath = join(checkout, 'worker-pages.json');
+    await writeFile(processMemoryKiBPath, '{}');
+  }
   // This is physical filesystem input, not an installed SDK or readiness fact.
   // The real disk owner measures these owned bytes with du/df; without any
   // dependency footprint it rejects before the CPU/memory contract is reached.
@@ -113,6 +141,8 @@ esac
     copyFile(launcherSourcePath, launcher),
     copyFile(join(sourceRoot, 'apps/stack/bin/hstack-dev-target-control'), join(bin, 'hstack-dev-target-control')),
     copyFile(join(sourceRoot, 'apps/stack/scripts/utils/proc/native_process_identity.sh'), join(proc, 'native_process_identity.sh')),
+    copyFile(join(sourceRoot, 'apps/stack/scripts/utils/proc/native_process_priority.sh'), join(proc, 'native_process_priority.sh')),
+    copyFile(join(sourceRoot, 'apps/stack/scripts/utils/proc/native_admission_client.sh'), join(proc, 'native_admission_client.sh')),
     copyFile(join(sourceRoot, 'apps/stack/scripts/utils/dev_targets/native_command_policy.sh'), join(targets, 'native_command_policy.sh')),
     copyFile(join(sourceRoot, 'apps/stack/scripts/utils/dev_targets/native_sync_readiness.sh'), join(targets, 'native_sync_readiness.sh')),
     copyFile(join(sourceRoot, 'apps/stack/scripts/utils/dev_targets/remote_execution_custody.sh'), join(targets, 'remote_execution_custody.sh')),
@@ -134,13 +164,78 @@ esac
   }
   const dependencyRefresh = pathToFileURL(join(sourceRoot, 'apps/stack/scripts/utils/proc/dependency_refresh.mjs')).href;
   await writeFile(join(proc, 'dependency_refresh.mjs'), `export * from ${JSON.stringify(dependencyRefresh)};\n`);
-  const state = await readFile(join(sourceRoot, 'apps/stack/scripts/utils/proc/native_host_admission_state.sh'), 'utf8');
+  const processOwner = pathToFileURL(join(sourceRoot, 'apps/stack/scripts/utils/proc/proc.mjs')).href;
+  await writeFile(join(proc, 'proc.mjs'), `export * from ${JSON.stringify(processOwner)};\n`);
+  const state = await readFile(admissionStateSourcePath, 'utf8');
+  const rootAssignments = [...state.matchAll(/^native_host_admission_root=(?:'(\/tmp\/happier-heavyweight-admission-v\d+)'|"(\/tmp\/happier-heavyweight-admission-v\d+)-\$native_host_admission_uid")$/gm)];
+  const defaultRoot = rootAssignments[0]?.[1]
+    ?? `${rootAssignments[0]?.[2]}-${process.getuid?.()}`;
+  if (rootAssignments.length !== 1 || resolve(admissionRoot) === defaultRoot) {
+    throw new Error('Native admission fixture must replace exactly one default host root');
+  }
   const quoted = `'${admissionRoot.replaceAll("'", "'\\''")}'`;
-  await writeFile(join(proc, 'native_host_admission_state.sh'), state.replace(/'\/tmp\/happier-heavyweight-admission-v\d+'/, quoted));
+  await writeFile(join(proc, 'native_host_admission_state.sh'), state.replace(rootAssignments[0][0], `native_host_admission_root=${quoted}`));
+  // The broker owns real scheduling and reservation arithmetic. Only the
+  // physical memory/process observations belong to this isolated worker.
+  const brokerOwner = pathToFileURL(admissionBrokerSourcePath).href;
+  const resourceSamplesPath = join(checkout, 'broker-resource-samples');
+  const memoryOverridePath = join(checkout, 'broker-memory-observation.json');
+  await writeFile(join(proc, 'admission_broker.mjs'), `
+export * from ${JSON.stringify(brokerOwner)};
+import { createAdmissionBroker, readAdmissionMemorySample } from ${JSON.stringify(brokerOwner)};
+import { appendFileSync, existsSync, readFileSync, watch } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { dirname, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { readLinuxWorkerProcesses } from ${JSON.stringify(pathToFileURL(join(sourceRoot, 'apps/stack/scripts/utils/proc/service_memory.mjs')).href)};
+if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url && process.argv[2] === '--serve') {
+  if (process.argv[3] !== ${JSON.stringify(admissionRoot)}) throw new Error('Native admission fixture root mismatch');
+  const root = ${JSON.stringify(root)};
+  const readProcesses = () => {
+    const selected = new Set(JSON.parse(readFileSync(${JSON.stringify(observedPidsPath)}, 'utf8')));
+    const processes = selected.size ? new Map([...readLinuxWorkerProcesses()].filter(([pid]) => selected.has(pid))) : new Map();
+    const pages = JSON.parse(readFileSync(${JSON.stringify(processMemoryKiBPath)}, 'utf8'));
+    for (const [pid, record] of processes) {
+      if (Number.isSafeInteger(pages[pid]) && pages[pid] >= 0) processes.set(pid, { ...record, rssKiB: pages[pid], pssKiB: pages[pid] });
+    }
+    return processes;
+  };
+  const readMemory = () => {
+    if (existsSync(${JSON.stringify(memoryOverridePath)})) return JSON.parse(readFileSync(${JSON.stringify(memoryOverridePath)}, 'utf8'));
+    const values = execFileSync('awk', ['/MemAvailable:/ {available=$2} /MemTotal:/ {total=$2} END {print available, total}', '/proc/meminfo'], { encoding: 'utf8' }).trim().split(/\\s+/u).map(Number);
+    return { availableMemoryKiB: values[0], totalMemoryKiB: values[1] };
+  };
+  const broker = createAdmissionBroker({ root: ${JSON.stringify(admissionRoot)}, oldLockPath: ${JSON.stringify(join(admissionRoot, 'old-admission.lock'))}, sampleResources: ({ slots }) => {
+    appendFileSync(${JSON.stringify(resourceSamplesPath)}, 'sample\\n');
+    if (process.env.FIXTURE_SAMPLES) appendFileSync(process.env.FIXTURE_SAMPLES, 'sample\\n');
+    return readAdmissionMemorySample({ slots, readProcesses, readMemory });
+  } });
+  let started = false;
+  try { await broker.start(); started = true; process.stdout.write('ready\\n'); }
+  catch (error) {
+    if (error.code === 'EADDRINUSE') process.stdout.write('ready\\n');
+    else { process.stderr.write('HSTACK_ADMISSION_BROKER_UNAVAILABLE\\n'); process.exitCode = 76; }
+    await broker.close();
+  }
+  if (started) {
+    // One fixture broker watches its owned root lifetime; teardown must not
+    // leave a detached host behind after the temporary worker is removed.
+    const lifetime = watch(dirname(root), () => {
+      if (!existsSync(root)) { lifetime.close(); void broker.close(); }
+    });
+  }
+}
+`);
+  try {
+    await copyFile(admissionClientSourcePath, join(proc, 'admission_client.mjs'));
+    await copyFile(join(dirname(admissionClientSourcePath), 'admission_socket.mjs'), join(proc, 'admission_socket.mjs'));
+  } catch (error) {
+    // The old launcher remains executable for the pre-replacement RED run.
+    if (error.code !== 'ENOENT' || process.env.HAPPIER_TEST_NATIVE_ADMISSION_CLIENT) throw error;
+  }
   // This fixture is an isolated physical worker, not the test runner's host.
   // Replace only OS enumeration; real RSS/ancestry for explicitly included
   // fixture processes and the production observer's domain logic stay real.
-  const observer = pathToFileURL(join(sourceRoot, 'apps/stack/scripts/utils/proc/service_memory.mjs')).href;
   const commandPolicy = pathToFileURL(commandPolicySourcePath).href;
   await writeFile(join(targets, 'remote_commands.mjs'), `export * from ${JSON.stringify(commandPolicy)};
 import { runRemoteCommandPolicyCli } from ${JSON.stringify(commandPolicy)};
@@ -152,11 +247,21 @@ if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.m
 `);
   const workspaceAdmissionWorker = pathToFileURL(join(sourceRoot, 'apps/stack/scripts/utils/proc/workspace_build_admission.mjs')).href;
   await writeFile(join(proc, 'workspace_build_admission.mjs'), `export * from ${JSON.stringify(workspaceAdmissionWorker)};
+import { execFileSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { runWorkspaceBuildAdmissionWorker, runWorkspaceBuildAdmission as runOwner } from ${JSON.stringify(workspaceAdmissionWorker)};
 export async function runWorkspaceBuildAdmission(options) { return await runOwner({ ...options, launcherPath: ${JSON.stringify(launcher)} }); }
-if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) await runWorkspaceBuildAdmissionWorker(process.argv.slice(2));
+if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
+  // A simulated Darwin shell and its real Node worker share one OS boundary.
+  // Keep standalone policy real; Linux admission and imported adapters retain
+  // their actual kernel platform and process-generation observations.
+  if (process.argv[2] === '--standalone' && process.platform === 'linux'
+    && execFileSync('uname', ['-s'], { encoding: 'utf8' }).trim() === 'Darwin') {
+    Object.defineProperty(process, 'platform', { value: 'darwin' });
+  }
+  await runWorkspaceBuildAdmissionWorker(process.argv.slice(2));
+}
 `);
   const diskObserver = pathToFileURL(join(sourceRoot, 'apps/stack/scripts/utils/dev_targets/worker_disk_budget.mjs')).href;
   await writeFile(join(targets, 'worker_disk_budget.mjs'), `import { runWorkerDiskBudgetCommand } from ${JSON.stringify(diskObserver)}; await runWorkerDiskBudgetCommand();\n`);
@@ -182,37 +287,67 @@ if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.m
     // The external installer produces metadata for this dependency-free tree.
     // The real refresh owner alone records proof after that process completes.
     await withDependencyRefresh({ installDir: checkout, componentDir: join(checkout, 'apps/stack'),
-      env: { ...buildNativeAdmissionFixtureEnv(), HAPPIER_DEV_TARGET_EXECUTION: '1', HAPPIER_STACK_HOME_DIR: root } }, async ({ env }) => {
+      // Outer no-refresh flags protect the shared checkout, not this owned
+      // dependency-free fixture's synthetic package-manager boundary.
+      env: { ...buildNativeAdmissionFixtureEnv(), HAPPIER_STACK_SKIP_REFRESH_DEPS: '',
+        HAPPIER_STACK_DISABLE_REFRESH_DEPS: '', HAPPIER_DEV_TARGET_EXECUTION: '1', HAPPIER_STACK_HOME_DIR: root } }, async ({ env }) => {
       execFileSync(join(packageBin, 'pnpm'), ['install', '--frozen-lockfile'], { cwd: checkout, env, stdio: 'pipe' });
     });
   }
-  await writeFile(join(proc, 'service_memory.mjs'), `
-import { readFileSync } from 'node:fs';
-import { pathToFileURL } from 'node:url';
-import { readLinuxWorkerProcesses, readWorkerMemoryReservations as readReservations, renderWorkerMemoryReservationRows } from ${JSON.stringify(observer)};
-const observedPidsPath = ${JSON.stringify(observedPidsPath)};
-const selected = observedPidsPath ? new Set(JSON.parse(readFileSync(observedPidsPath, 'utf8'))) : new Set();
-const processes = selected.size ? new Map([...readLinuxWorkerProcesses()].filter(([pid]) => selected.has(pid))) : new Map();
-export function readWorkerMemoryReservations(options) {
-  return readReservations({ ...options, readProcesses: () => processes });
-}
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const argument = process.argv.slice(2).find(value => value.startsWith('--admission-root='));
-  let previousProgress = null;
-  if (process.argv.includes('--include-owner-progress')) {
-    try { previousProgress = JSON.parse(readFileSync(0, 'utf8')); } catch {}
-  }
-  const sample = readWorkerMemoryReservations({ admissionRoot: argument?.slice('--admission-root='.length), includeAdmittedRss: process.argv.includes('--include-admitted-rss'), includeOwnerProgress: process.argv.includes('--include-owner-progress'), previousProgress });
-  process.stdout.write(renderWorkerMemoryReservationRows(sample));
-}
-`);
-  const memoryOverridePath = join(checkout, 'broker-memory-observation.json');
+  const brokerStatus = async () => {
+    const { requestAdmissionSample } = await import(pathToFileURL(join(proc, 'admission_client.mjs')));
+    return requestAdmissionSample(admissionRoot);
+  };
   const setMemoryObservation = memory => writeFile(memoryOverridePath, JSON.stringify(memory));
-  return { launcher, admissionRoot, setMemoryObservation };
+  return { launcher, admissionRoot, observedPidsPath, processMemoryKiBPath, resourceSamplesPath, memoryOverridePath,
+    admissionClientPath: join(proc, 'admission_client.mjs'), brokerStatus, setMemoryObservation };
+}
+
+/** Physical pressure belongs to an actual live fixture process, so a queued
+ * request can recover when admitted pages are released, without allocating GiB.
+ */
+export async function holdNativeAdmissionFixtureMemory(t, native, { totalKiB, availableKiB }) {
+  // Admit this real holder before applying its physical pressure. The owned
+  // observation file substitutes only OS memory, never broker admission state.
+  await writeFile(native.memoryOverridePath, JSON.stringify({ availableMemoryKiB: totalKiB, totalMemoryKiB: totalKiB }));
+  const client = pathToFileURL(native.admissionClientPath).href;
+  const program = `import { runAdmissionCommand } from ${JSON.stringify(client)};
+process.exitCode = await runAdmissionCommand({ root: ${JSON.stringify(native.admissionRoot)},
+  className: 'validation', floorKiB: ${Math.max(1, totalKiB - availableKiB)}, machine: 'fixture',
+  repoDir: ${JSON.stringify(resolve(native.launcher, '../../../..'))}, cacheBaseDir: ${JSON.stringify(dirname(native.memoryOverridePath))},
+  command: process.execPath, args: ['-e', 'process.stdout.write("ready"); process.stdin.resume();'], env: process.env });`;
+  const child = spawn(process.execPath, ['--input-type=module', '-e', program], { env: buildNativeAdmissionFixtureEnv(native.env ?? process.env), stdio: ['pipe', 'pipe', 'pipe'] });
+  const exited = new Promise(resolve => child.once('exit', resolve));
+  let stderr = '';
+  child.stderr.on('data', value => { stderr += value; });
+  let released = false;
+  const release = async (updateMemory, { availableKiB: releasedAvailableKiB = totalKiB } = {}) => {
+    if (released) return;
+    released = true;
+    try {
+      await updateMemory?.();
+      try { await native.setMemoryObservation({ availableMemoryKiB: releasedAvailableKiB, totalMemoryKiB: totalKiB }); }
+      catch (error) { if (error.code !== 'ENOENT') throw error; }
+    } finally {
+      child.stdin.end();
+      await exited;
+    }
+  };
+  t.after(() => release());
+  await new Promise((resolve, reject) => {
+    child.stdout.once('data', resolve);
+    child.once('exit', status => reject(new Error(`fixture holder exited before admission (${status}): ${stderr}`)));
+  });
+  const pids = JSON.parse(await readFile(native.observedPidsPath, 'utf8'));
+  await writeFile(native.observedPidsPath, JSON.stringify([...pids, child.pid]));
+  const pages = JSON.parse(await readFile(native.processMemoryKiBPath, 'utf8'));
+  await writeFile(native.processMemoryKiBPath, JSON.stringify({ ...pages, [child.pid]: totalKiB - availableKiB }));
+  await native.setMemoryObservation({ availableMemoryKiB: availableKiB, totalMemoryKiB: totalKiB });
+  return { child, release };
 }
 
 /** Adapt only the OS launch boundary, retaining foreground IPC/tree custody. */
-export function installWorkspaceAdmissionProcessAdapter({ launcher, binDir = null }) {
+export function installWorkspaceAdmissionProcessAdapter({ launcher, binDir = null, remapShellCommands = false }) {
   const childProcess = createRequire(import.meta.url)('node:child_process');
   const originalSpawn = childProcess.spawn;
   const originalFork = childProcess.fork;
@@ -228,11 +363,18 @@ export function installWorkspaceAdmissionProcessAdapter({ launcher, binDir = nul
   const remapArgs = args => {
     const mapped = args?.map(remapCommand);
     if (!mapped) return mapped;
+    if (remapShellCommands) {
+      for (let index = 1; index < mapped.length; index += 1) {
+        if (['-c', '-lc'].includes(mapped[index - 1]) && typeof mapped[index] === 'string') {
+          mapped[index] = mapped[index].replaceAll(canonicalLauncher, launcher);
+        }
+      }
+    }
     for (let index = 0; index < mapped.length - 2; index += 1) {
       if (mapped[index] !== custodyModule || mapped[index + 1] !== '--happier-foreground-custody') continue;
       const invocation = JSON.parse(mapped[index + 2]);
       mapped[index + 2] = JSON.stringify({ ...invocation,
-        command: remapCommand(invocation.command), args: invocation.args?.map(remapCommand) });
+        command: remapCommand(invocation.command), args: remapArgs(invocation.args) });
     }
     return mapped;
   };
@@ -247,13 +389,46 @@ export function installWorkspaceAdmissionProcessAdapter({ launcher, binDir = nul
   };
 }
 
+/** Controller placement keeps the real repository cwd and helper identities.
+ * Redirect only its host admission state/client and child OS launch boundary;
+ * an includeLocal score must never contact the runner's default host broker.
+ */
+export async function installNativeAdmissionControllerFixture(t, root, { env: baseEnv = process.env } = {}) {
+  const native = await installNativeAdmissionFixture({ root });
+  const proc = resolve(native.launcher, '../../scripts/utils/proc');
+  const shellQuote = value => `'${value.replaceAll("'", "'\\''")}'`;
+  const replaceOnce = (source, marker, replacement) => {
+    if (source.split(marker).length !== 2) throw new Error('Native controller fixture source boundary changed');
+    return source.replace(marker, replacement);
+  };
+  let source = await readFile(native.launcher, 'utf8');
+  source = replaceOnce(source, 'script_dir=$(CDPATH= cd -- "$launcher_dir" && pwd -P) || exit 1',
+    `script_dir=${shellQuote(dirname(process.env.HAPPIER_TEST_NATIVE_ADMISSION_LAUNCHER || join(sourceRoot, 'apps/stack/bin/hstack-exec')))}`);
+  for (const entry of ['native_host_admission_state.sh', 'native_admission_client.sh']) {
+    source = replaceOnce(source, `. "$script_dir/../scripts/utils/proc/${entry}" || exit 1`,
+      `. ${shellQuote(join(proc, entry))} || exit 1`);
+  }
+  await writeFile(native.launcher, source);
+  const transportPath = join(proc, 'native_admission_client.sh');
+  await writeFile(transportPath, replaceOnce(await readFile(transportPath, 'utf8'),
+    'admission_client="$script_dir/../scripts/utils/proc/admission_client.mjs"',
+    `admission_client=${shellQuote(native.admissionClientPath)}`));
+  t.after(installWorkspaceAdmissionProcessAdapter({ launcher: native.launcher, remapShellCommands: true }));
+  const preloadPath = join(root, 'controller-admission-process.mjs');
+  await writeFile(preloadPath, `import { installWorkspaceAdmissionProcessAdapter } from ${JSON.stringify(import.meta.url)};\ninstallWorkspaceAdmissionProcessAdapter({ launcher: ${JSON.stringify(native.launcher)}, remapShellCommands: true });\n`);
+  const fixtureEnv = buildNativeAdmissionFixtureEnv(baseEnv);
+  return { ...native, preloadPath, env: { ...fixtureEnv,
+    NODE_OPTIONS: `${fixtureEnv.NODE_OPTIONS ?? ''} --import=${pathToFileURL(preloadPath).href}`.trim() } };
+}
+
 /** Independent fixture worker: redirect only process launch and OS memory
  * observation. Its child preload consumes the same adapter; native admission,
  * authenticated leases, resolver options and foreground custody stay real.
  */
 export async function installWorkspaceAdmissionProcessFixture(t, root, { env: baseEnv = process.env } = {}) {
-  if (process.platform !== 'linux') return { env: buildNativeAdmissionFixtureEnv(baseEnv), launcher: null, binDir: null, admissionRoot: null };
-  const { launcher, admissionRoot } = await installNativeAdmissionFixture({ root });
+  if (process.platform !== 'linux') return { env: buildNativeAdmissionFixtureEnv(baseEnv), launcher: null, binDir: null, admissionRoot: null, preloadPath: null };
+  const native = await installNativeAdmissionFixture({ root });
+  const { launcher } = native;
   const { binDir } = writeFakeBin({ root, binDirName: 'native-owner/node_modules/.bin', name: 'awk', content: `#!/bin/sh
 case "$*" in
   */proc/meminfo*) printf '73400320 73400320\\n' ;;
@@ -261,10 +436,11 @@ case "$*" in
   *) exec /usr/bin/awk "$@" ;;
 esac
 ` });
-  t.after(installWorkspaceAdmissionProcessAdapter({ launcher }));
+  t.after(installWorkspaceAdmissionProcessAdapter({ launcher, binDir }));
   const preloadPath = join(root, 'workspace-admission-process.mjs');
-  await writeFile(preloadPath, `import { installWorkspaceAdmissionProcessAdapter } from ${JSON.stringify(import.meta.url)};\ninstallWorkspaceAdmissionProcessAdapter({ launcher: ${JSON.stringify(launcher)} });\n`);
-  const env = { ...buildNativeAdmissionFixtureEnv(baseEnv), PATH: `${binDir}:${baseEnv.PATH ?? ''}`, HAPPIER_DEV_TARGET_EXECUTION: '1',
-    NODE_OPTIONS: `${baseEnv.NODE_OPTIONS ?? ''} --import=${pathToFileURL(preloadPath).href}`.trim() };
-  return { env, launcher, binDir, admissionRoot };
+  await writeFile(preloadPath, `import { installWorkspaceAdmissionProcessAdapter } from ${JSON.stringify(import.meta.url)};\ninstallWorkspaceAdmissionProcessAdapter({ launcher: ${JSON.stringify(launcher)}, binDir: ${JSON.stringify(binDir)} });\n`);
+  const fixtureEnv = buildNativeAdmissionFixtureEnv(baseEnv);
+  const env = { ...fixtureEnv, PATH: `${binDir}:${baseEnv.PATH ?? ''}`, HAPPIER_DEV_TARGET_EXECUTION: '1',
+    NODE_OPTIONS: `${fixtureEnv.NODE_OPTIONS ?? ''} --import=${pathToFileURL(preloadPath).href}`.trim() };
+  return { ...native, env, binDir, preloadPath };
 }

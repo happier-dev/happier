@@ -115,6 +115,45 @@ Service mode still requires explicit refresh permission. Local validation checks
 dependency readiness without installing; worker mirrors keep their explicit
 remote bootstrap.
 
+In current 0.3 development, one Linux host broker admits fitting requests from
+oldest to newest, using the command policy's measured memory floors. Waiting
+clients block on pathname Unix sockets inside the host's numeric-UID-named,
+UID-owned, mode `0700` admission directory. Shell and JavaScript share the native
+root derivation; the client rejects foreign or group/other-accessible roots
+before connecting, without changing their permissions. Filesystem permissions
+isolate other host users. A startup-only kernel lock serializes replacement of
+a crash-stale broker socket. The broker also retains the old scheduler's existing
+lock for its lifetime, so a late old launcher waits for cancellation and rerun
+through the broker; already-admitted old jobs finish normally. Admission decisions
+acquire neither lock. The broker samples resources on
+admission and release events; placement reads its last sample. There are no waiter-file scans,
+periodic capacity retries or cumulative backfill allowances.
+FIFO admission covers the oldest memory waiter's minimum supported floor before offering spare memory to younger work.
+
+Filesystem leases remain with the command's client process. A capacity offer
+allows one nonblocking attempt through the canonical workspace and dependency
+resource owners. Busy attempts release all partial leases and wait for the
+broker's shared resource-release observation. Disk admission uses the existing
+worker disk budget. Only a measured floor exceeding physical RAM is impossible
+capacity; temporary memory pressure stays eligible to wait. Physical shortage retains `HSTACK_ADMISSION_CAPACITY`,
+allowing AUTO to try another worker before the payload starts; placement failure
+retains `HSTACK_ADMISSION_CAPACITY:placement` and exit 75.
+
+An admitted client retains a kernel-lived slot socket and its leases until the
+payload finishes. Broker restart reconstructs those slots before admitting new
+work; admitted payloads continue, while queued clients reconnect. The queue is
+not persisted. Nested children inherit their containing slot and its floor.
+Declare the composed workload's capacity and resources at the parent: an
+insufficient containing floor returns `HSTACK_NESTED_ADMISSION_CAPACITY`.
+An admitted nested publisher may wait through the canonical resource owner when
+it holds no inherited publication lease. A publisher retaining another such
+lease returns `HSTACK_WORKSPACE_ADMISSION_ORDER`. Neither joins a second capacity
+queue; these resource waits never sample host capacity.
+
+Native macOS retains standalone workspace resource custody and direct execution.
+Windows retains its existing standalone process adapter; neither native platform
+uses the Linux broker.
+
 If you want to **develop Happier** (worktrees, multiple stacks, upstream PR workflows), you can install hstack for development with:
 
 ### Setup (guided)

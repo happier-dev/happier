@@ -142,6 +142,13 @@ The development push Gate runs each non-UI partition through `pnpm run test:gate
 
 In 0.3 development, runtime worker bootstrap, runtime validation preparation, local `hstack` bundled-workspace preflight and the Stack unit runner prepare emitted workspace prerequisites in `source-dev` mode by default. Their package compilers use the existing `package-dist` envelope, reusing an authenticated parent admission when present. Explicit strict mode and public packing/publication still check semantics. Both UI patch stages request patch-package's `--error-on-fail`, so a mixed previously patched tree reaches the existing dependency owner's pristine re-extraction and retry rather than being admitted as ready.
 
+The development Linux heavyweight broker samples resources once per arrival or
+release and reuses its cached sample for placement and status. Queued clients
+block on sockets; they do not start their own process-tree census, filesystem
+waiter record or catch-up poll. Relevant workspace-resource changes wake only
+blocked demand that consumes those resources. Replacing the launcher affects new
+invocations; already-running shells retain their parsed code.
+
 In 0.3 development, public package typechecks prepare their workspace-package
 prerequisites on the selected worker before compiling. The canonical workspace
 build owner verifies its content records, reuses fresh outputs without starting
@@ -319,30 +326,39 @@ heartbeats; ticket joins/removals, holder changes and the existing catch-up
 still drive admission and departed-owner recovery. When a queued writer blocks
 a free lock, the wait diagnostic identifies that queued owner explicitly.
 
-Native Linux liveness rejects unreaped zombie and dead process states even when
-the PID and start token still match. The existing admitted-tree observer keeps
-a terminal wrapper's reservation while an authenticated live payload survives;
-no remaining live workload permits reclamation. Admission logs successful owner
-reclamation and removes terminal waiters from queue ordering. Sleeping, blocked, stopped and
-orphaned live work retains its reservation: age, low CPU and a missing launching
-shell do not prove that its protected workload has ended. Validation concurrency
-is constrained by the existing memory envelopes and FIFO/backfill policy rather
-than a fixed one-job slot.
+In current 0.3 development, the Linux host admission broker owns capacity and
+FIFO ordering with head-floor reservation. Each admitted client retains a pathname socket listener
+for its payload's lifetime; closure of the broker's peer connection releases its reservation.
+Waiting clients block on their control sockets without polling or process walks.
+Admission uses no owner/waiter files, PID reaper, separate backfill allowance or fixed
+job-count ceiling. Process and scratch custody retain their separate lifecycle owners.
 
 In current 0.3 development, finite workspace publishers declare their existing
-package/publication leases to `workspace_build_admission.mjs`; native
-`hstack-exec` is the single joint lease/capacity owner. Plain and workspace
-waiters join the same blocking kernel decision-mutex queue before acquiring
-new leases. AUTO reroutes pre-dispatch capacity refusals through the eligible
+package/publication leases to `workspace_build_admission.mjs`; the broker
+coordinates capacity with each client's nonblocking resource acquisition.
+Plain and workspace demand share one broker queue. AUTO reroutes pre-dispatch capacity refusals through the eligible
 pool once, then uses the existing candidate ranking to join one healthy worker's
-native queue. Queue waiting retains its custody, resource-aware backfill and
+queue. The read-only host admission sample carries the broker's cached
+queued class floors across controllers. Heavy AUTO scoring includes that queued
+demand against unreserved memory, using each request's canonical class floor.
+Workers with no headroom retain their existing last-place pressure, scaled by
+queued demand against total physical memory. Lightweight placement ignores it;
+a later heavy command refreshes an incomplete light sample through the same
+cache owner. Prerequisites, requested runtime capabilities and host load share
+one SSH observation. AUTO calls with the same command, cwd and capability
+requirements reuse a completed observation for the existing load-probe TTL;
+explicit targets and eligible pinned-compiler requests observe afresh. The
+configured unavailable-probe TTL still owns actual admission, synchronization
+and pre-session SSH refusals. Older positive cache records without prerequisite
+identity refresh through the same probe. Warm compiler
+affinity does not override queued demand. Queue waiting retains its custody, FIFO ordering and
 cancellation without repeating selection, synchronization or bootstrap. Busy
 workers receive no failure TTL and do not justify local fallback. Runtime-control
 alternative probes remain nonblocking while their original waiter retains custody.
-Under that mutex, a publisher tries its leases without waiting;
-a busy attempt releases every new lease and yields head priority while keeping
-its waiter and original queue age. Capacity-denied attempts likewise release
-new leases before retrying. Only a ready lease transaction is admitted. The
+After a capacity offer, a publisher tries its leases without waiting;
+a busy attempt releases every new lease and its offered capacity while retaining
+its demand and original queue order. Relevant resource changes wake blocked
+demand. Only a ready lease transaction is admitted. The
 generic compiler, CLI-common, SDK prepared-script, CLI readiness
 and source-bundle publishers use this path; prerequisites finish outside their
 publication transaction. Completed source-bundle lookup, recovery and selection
@@ -359,14 +375,12 @@ in that same policy. No second class table, admission budget or deadline is adde
 Containing typechecks reserve the envelope of their declared producer graph before
 starting. A CLI test project that references UI source therefore includes the UI
 declaration producer's envelope; narrower CLI projects retain their own class.
-Nested native commands reuse their authenticated ancestor's reservation, including
-when lifecycle adapters lose admission environment context: the existing live
-owner record and kernel ancestry must still agree. An enlargement gets one
-nonblocking decision. If capacity or the decision mutex is unavailable, it returns
-`HSTACK_NESTED_ADMISSION_CAPACITY` so the caller can reserve the composed workload
-before starting its parent. It never waits for more capacity while retaining the
-parent's reservation. Joint publication workers require their containing admission
-instead of creating a second holder if the communicated identity is invalid.
+Nested native commands reuse their containing job's socket-backed reservation.
+The parent declares the composed workload's floor before it starts. A larger
+nested request returns `HSTACK_NESTED_ADMISSION_CAPACITY` rather than enlarging
+the parent's floor, waiting for extra capacity or creating a second slot. Joint
+publication workers require their containing admission instead of creating a
+second holder when the communicated identity is invalid.
 
 Package input fingerprints use the actual package workspace's compiler-owner
 scripts, not a different checkout selected by the running Stack's environment.
@@ -383,24 +397,39 @@ publisher persists proof under its publication lease. Proof is captured from fin
 published paths and written atomically last; it does not change semantic output
 identity or establish artifact authenticity.
 
-In 0.3 development, denied admission attempts keep one custody worker and its
-directory watches across retries. Lease release, queue changes and reservation
-retirement wake that worker; its snapshot precedes the decision and is rechecked
-after arming the wait. The native owner's existing catch-up cadence still
-samples external memory changes, missed notifications and exited owners. A
-plain no-wait probe starts no custody worker. JSON dependency/publication locks
+In 0.3 development, queued admission clients retain socket control while the
+broker observes relevant workspace-resource releases. Waiting adds no per-client
+custody worker, process census or catch-up timer. While resource-blocked requests
+exist, one broker catch-up uses the workspace watcher's one-second cadence to
+observe canonical owner status, including death without a filesystem release.
+Unchanged snapshots neither reoffer work nor resample capacity; the catch-up
+stops when no request is resource-blocked. JSON dependency/publication locks
 reuse the workspace lock's notification mechanics while retaining their own
 owner recovery and FIFO rules; heartbeat-only writes do not rescan healthy
 contention. They share the workspace watcher's one-second catch-up default,
 bounded by their existing acquisition and stale-owner budgets; legacy 125/250 ms
 poll settings do not keep healthy owners on periodic scans.
 
-Admission watches filter shared lock directories to the relevant lease and
-queue filenames. After acquiring and releasing all workspace resources because
-capacity or queue priority declined admission, the worker observes admission
-owners and queue changes only; independent publisher lease churn cannot free
-capacity. A resource-busy attempt still observes its leases and dependency writer
-queue. Both paths retain the existing catch-up and dead-owner recovery rules.
+The broker's workspace-resource watches filter shared lock directories to the
+leases and publication-priority entries consumed by blocked requests. A
+resource-busy attempt releases its partial leases and offered capacity, retaining
+its original queue order. An unrelated arrival does not reoffer unchanged blocked
+demand; the relevant resource change makes it runnable again. Capacity waiting
+uses the broker's arrival and release events, without a per-waiter observer or
+resource walk.
+
+In current 0.3 development, joint resource attempts and ordinary waiting
+publishers share the bundle-lock owner's publication preference. A group keeps
+its original age across publication contention without retaining actual leases
+or capacity. The admission client retains that same scope across busy resource
+attempts and withdraws it on acquisition, cancellation or exit. Dependency blockage or capacity denial suspends its preference;
+retrying restores the same age. Existing priority claims retain their handoff.
+An authenticated holder of a resource needed by an older group may acquire a
+free prerequisite to finish and release that resource, but may not wait while
+holding it. Invalid soft-preference records grant no ordering authority and do
+not make live records reapable. Observers exclude their own preference changes;
+they still observe other participants and real resource changes. Already-loaded
+publishers do not adopt this ordering until a new invocation loads current code.
 
 `hstack-exec --cwd=REPO_RELATIVE_PATH -- COMMAND ...` also works with AUTO
 placement. The selected target resolves the path against its repository; AUTO
@@ -408,20 +437,21 @@ retries retain it, and configured local fallback resolves it against the local
 repository. Absolute paths and parent traversal are rejected. `--env` and `--tty`
 still require an explicit target.
 
-Admission refusals and waits use the same reason formatter. Memory decisions
-report available, required and reserved memory; queue decisions name the deciding
-head PID, class and envelope. A contended decision lock is reported explicitly.
+Admission refusals preserve the broker's typed reason. `dev-targets status`
+consumes cached available, reserved and queued memory with active/waiting counts.
+Queued commands block on sockets and can be observed through that status,
+without a deciding-head PID or a per-decision kernel mutex.
 
-Authenticated descendants may reenter their own leases and envelope. A charged
-payload cannot wait for a foreign publication lease, including a lock-only
-consumer: native admission marks this restriction, and the canonical workspace
-lock refuses contention with `HSTACK_WORKSPACE_ADMISSION_ORDER`. An inherited
-dependency read cannot upgrade to mutation custody for the same installation:
-the dependency owner refuses that cycle with the same admission-order code.
-Prepare the refresh before finite consumption. Independent writers still acquire
-the existing mutation lock. An inherited
-lease cannot queue a compiler or capacity escalation either. Move that producer
-before payload admission rather than retrying beneath the same charged ancestor.
+Authenticated descendants may reenter their own leases and envelope. In current
+0.3 development, native joint admission can wait for foreign publication resources
+when the descendant retains no inherited publication lease. Each busy attempt
+releases every partial acquisition before observing resource changes and reuses
+the containing reservation. A descendant retaining an
+inherited publication lease still refuses a foreign wait with
+`HSTACK_WORKSPACE_ADMISSION_ORDER`. Raw lock-only consumers remain nonwaiting
+beneath charged admission; resource-aware waits belong to native joint admission.
+An inherited lease cannot queue a larger compiler or capacity request either. Declare
+that producer's complete resources through joint admission before entering it.
 Local prerequisite preparation likewise precedes admission. Ordinary Linux CI
 keeps its compiler-admission exemption; non-Linux retains its existing execution
 policy and canonical workspace leases. These changes do not replace already
@@ -537,13 +567,26 @@ Heavyweight ranking adds normalized CPU load to the selected class envelope divi
 
 Selection excludes machines whose total RAM is below the selected class's requirement. Linux/WSL admission subtracts only each live admitted job's unused reservation, `max(0, class envelope - authenticated process-tree memory)`, from available memory: resident pages are already absent from `MemAvailable`. Missing memory observation retains the full reservation. There is no additional guessed available-memory percentage, PSI or CPU-load denial. Reservations remain until exit or proven-dead owner reclamation; authenticated descendants reuse their parent's reservation, and escalation replaces that owner's envelope under the admission lock while crediting its existing resident memory. Explicit `--local` bypasses remote placement and uses this same admission against local memory. Light local commands remain immediate. Diagnostics name available, required and unused reserved memory. The envelopes reserve admission headroom but do not cap a command's actual memory use. Runtime publication placement uses the retained-demand broker described below; busy admission keeps the build remote, and only unavailable capable workers permit configured local fallback. Darwin selection applies the total-capacity filter and load ranking; its existing execution path has no admission queue. Native Windows command routing remains local.
 
-In current 0.3 development source, the canonical Linux observer uses `/proc/<pid>/smaps_rollup` PSS for admitted trees so shared pages contribute each process's share. Service/browser memory is diagnostic: its resident pages already reduce OS `MemAvailable`, and its census never supplies another capacity deduction. Native admission can report a summed service RSS upper bound without walking those services' page tables; admitted-owner credits retain proportional accounting. Process metadata is observed once for the executing account, and kernel generations are read without per-PID subprocesses. Vanished processes contribute zero rather than stale RSS; unreadable or malformed PSS for a live process falls back to RSS and reports the accounted fallback PIDs. When neither observation is available, admission retains the full reservation. Historical RSS peak measurements above remain measurements of the original runs.
+Selection excludes machines whose total RAM is below the selected class's requirement. Linux admission subtracts only each admitted job's unused reservation, `max(0, class floor - observed process-tree PSS)`, from available memory: resident pages are already absent from `MemAvailable`. Missing proportional-memory evidence retains the full reservation. There is no additional guessed available-memory percentage, PSI or CPU-load denial. Reservations follow client-held socket witnesses. Nested commands reuse their containing job's fixed floor; a larger nested request refuses rather than enlarging that floor or taking a second slot. Explicit `--local` bypasses remote placement and uses this same admission against local memory. Light local commands remain immediate. `dev-targets status` consumes cached available, reserved and queued memory with active/waiting counts. The floors reserve admission headroom but do not cap a command's actual memory use. Runtime publication placement uses the retained-demand broker described below; busy admission keeps the build remote, and only unavailable capable workers permit configured local fallback. Darwin selection applies the total-capacity filter and load ranking; its existing execution path has no admission queue. Native Windows command routing remains local.
+
+In current 0.3 development source, only a request exceeding total physical memory is permanently infeasible and emits `HSTACK_ADMISSION_CAPACITY:<executionId>` before payload execution. AUTO excludes that worker for this invocation and re-evaluates the pool; an explicit pin returns the refusal. A physically fitting request with insufficient current unreserved memory is busy or waits. Achievable memory remains diagnostic and never establishes permanent capacity. The broker samples resources for arrivals and releases; cached placement and status reads do not repeat that observation.
+
+For a `sh`/`bash` batch, placement also considers known producer commands in its
+static prefix, including multiline inline bodies and repository script files.
+Blank lines, comments and inert strict-mode options do not hide that demand.
+Inspection stops at unsupported syntax or commands whose state or demand is
+unknown; it does not infer later producers across `cd`, `export` or positional
+argument changes. The known prefix's largest class filters workers before any
+payload starts. This changes placement only: the shell text, each producer's
+admission and a started payload's authoritative exit remain unchanged.
+
+In current 0.3 development source, the canonical Linux observer uses `/proc/<pid>/smaps_rollup` PSS for admitted trees so shared pages contribute each process's share. Service/browser memory is diagnostic: its resident pages already reduce OS `MemAvailable`, and its census never supplies another capacity deduction. Service diagnostics can report a summed RSS upper bound or an explicit RSS fallback; admission credits only observed PSS and retains the full reservation when that evidence is unavailable. Process metadata is observed once for the executing account, without per-PID subprocesses. Historical RSS peak measurements above remain measurements of the original runs.
 
 In current 0.3 development source, the Linux worker fixes admission state at `/tmp/happier-heavyweight-admission-v3` and derives machine identity from the OS. The root's protocol revision must change when waiter/owner semantics change, keeping incompatible launchers in separate queues. Revision 3 adds lease availability to queued publishers so a lease-blocked head yields priority. Caller roots, homes, temporary mirrors and target aliases share the queue for their revision. The configured worker execution account owns that directory; unavailable or foreign-account state fails closed rather than falling back to a private root. Authenticated live owners in other roots retain their unused memory reservations through process-tree observation, and authenticated ancestors reuse their existing envelope on reentry. Queue heads identify themselves by pid and kernel start token rather than waiter path. Already-loaded older launchers remain in their original queue and require owner-controlled reinvocation if stranded; atomic source replacement cannot update their parsed program.
 
 If remote admission cannot register its state before payload execution, the admission owner emits an execution-qualified failure. Automatic placement excludes that worker for the existing unavailable-probe TTL and tries another configured target; an explicitly pinned invocation reports the failure without changing hosts. Preparation failures and a started payload's exit status, including 75, are authoritative and never request replay.
 
-In current 0.3 development, AUTO checks dispatcher-owned payload admission without waiting after preparation and before payload execution. An execution-qualified busy result releases that dispatch reservation and re-evaluates the remaining pool without an unavailable-host TTL. If every usable worker is busy, the selector waits using the admission pressure-retry cadence and re-evaluates the pool; it does not fall back locally merely because workers are busy. Heavy Linux candidates also rank using the admission owner's unreserved memory budget, including service memory and unused live-owner reservations; a budget below the command's class floor ranks behind fitting workers. With `includeLocal`, local ranking also adds live waiters from the current admission root divided by CPU capacity to its effective load, alongside active dispatches; stale process incarnations add no penalty. Explicit pins retain the worker's observable admission wait. Existing already-loaded launchers are not restarted or moved by this source change.
+In current 0.3 development, AUTO checks dispatcher-owned payload admission without waiting after preparation and before payload execution. An execution-qualified busy result releases that dispatch reservation and re-evaluates the remaining pool without an unavailable-host TTL. After the eligible-pool sweep, an entirely busy pool retains one broker request, its queue order and cancellation; it does not fall back locally merely because workers are busy. Heavy Linux candidates rank using the broker's cached unreserved memory budget (OS available memory less unused admitted reservations) and queued class floors; a budget below the command's class floor ranks behind fitting workers. Explicit pins retain the worker's observable admission wait. Existing already-loaded launchers are not restarted or moved by this source change.
 
 POSIX compilation-class dispatch in 0.3 development keeps project locality at this same
 AUTO selector. A repeated project scope prefers its most recently completed worker
@@ -576,7 +619,25 @@ Remote Stack retirement in current 0.3 development uses the canonical trusted-pr
 
 Runtime builds prepare and upload captured source before creating a native runtime-build owner or waiter. Source-transfer PREPARE/ACK precedes, and does not replace, actual admission READY. Once source is ready, builds retain one original worker demand while native AUTO checks alternatives on that same cadence. Each alternative refreshes command capability, synchronization and load rather than reusing unavailable or load caches. A selected alternative still flushing does not stop checks of other workers; its channel stays alive and its worker is excluded from concurrent selection until actual admission or failure. Only actual READY releases the original demand. Daemon builds prefer eligible native OS/architecture workers over supported cross builders; server/web placement keeps load-based ranking. Busy native workers still allow later cross-builder admission.
 
-Every native admission resource check reclaims owner and waiter records whose process generation is proven dead, including pressure-denied readiness probes and inherited escalation. Live records remain queued; reclamation adds no age deadline and never signals a process.
+In current 0.3 development, `admission_broker.mjs` is the Linux queue owner.
+It considers requests from oldest to newest, reserving the oldest memory waiter's
+minimum supported floor before offering spare memory to later requests. New
+arrivals cannot consume the capacity needed by that waiter as holders release;
+once its floor is covered, younger requests can use the remainder even before
+its payload starts. No aging deadline or cumulative backfill accounting is used. Workspace-busy
+requests release their offered capacity and partial leases, then wait for their
+own resource changes. A physically fitting request can wait without an admission
+deadline; `--no-wait` instead returns a typed busy result.
+
+The broker's private pathname socket and client-owned slot witnesses carry
+admission and payload lifetime. Broker restart reconnects surviving witnesses
+and recovers their floors; queued clients reconnect without a persisted queue.
+The separate kernel startup mutex protects listener replacement and initial
+recovery only. During the old-launcher transition, the broker also retains the
+existing old scheduler flock for its entire runtime. The one-time cutover passes
+already-held lock descriptions without an unlock gap, so late parsed old
+launchers cannot admit alongside the broker. Already-admitted old work finishes;
+its finite exit-event bridge wakes the broker without a periodic reaper.
 
 Linux worker disk admission uses `worker_disk_budget.mjs` to observe free bytes on
 the command's known write filesystems. It refuses an already exhausted filesystem;
@@ -601,7 +662,9 @@ diagnostic. The execution-qualified disk marker never authorizes replay of a sta
 command. `dev-targets status` exposes free bytes. Admission does not guarantee capacity
 for future writes or filesystem quotas; real write failures remain authoritative.
 
-Linux/WSL waiting messages and `dev-targets status NAME` expose authenticated admission holders' class, PID, process age, phase and approximate recent process-tree CPU use. Newly created native owners start at `admitted`; a runtime worker reports `awaiting-runtime-request` before its build ACK and `building-runtime` after it. The awaiting phase includes producer publication-flight waits after actual admission; `building-runtime` does not imply CPU activity or rule out internal lock waits. Phase is diagnostic only and never changes the reservation. Older loaded owners without the optional field report unknown; their record lifecycle is unchanged. The existing service-memory observer owns this read-only projection. Waiters reuse their preceding cadence sample; status takes a second sample at that cadence when holders exist. CPU counters have one-second resolution, unavailable evidence is reported as unknown, and zero recent CPU is not a hung verdict. Observation never imposes a holder deadline or kills work.
+Linux `dev-targets status NAME` consumes the broker's cached available, reserved and queued memory with active/waiting counts. Queued commands block on sockets and can be observed through status. Status does not walk admission owner records or take a second process sample. Service-memory diagnostics remain separate and never decide capacity. Neither low CPU nor process age imposes an admission deadline or authorizes cancellation.
+
+Admission records belong to the worker's host-local `/tmp/happier-heavyweight-admission-v3` root. PID observations on another host cannot retire them. At each decision, definite absence or a different kernel birth token stops counting the recorded process; unreadable birth or signal observations retain its reservation. These native records carry boot-relative birth ticks rather than a wall-clock start or boot witness, so a reboot alone does not prove retirement when the recorded PID and ticks still match. A terminal wrapper retains an envelope only while the current observer authenticates its surviving payload tree. No stale RSS snapshot can resurrect an absent or reused PID.
 
 An explicit routed `hstack-exec --heavyweight-admission --class=... -- ...` carries its class into this same placement policy before committing to a worker. Payload flags after the delimiter do not change the envelope. Native memory observation uses the existing native process-identity owner without installed workspace dependencies, so fresh mirrors can enter admission before their first dependency bootstrap.
 
@@ -609,7 +672,7 @@ Stack unit roots, CLI default test homes/bins, external-hook configuration fixtu
 
 Service placements do not exclude command hosts. OS available memory already accounts for current server/Expo/daemon/browser processes. Admission subtracts only unused admitted-work envelopes from that available memory; a service RSS estimate with shared-page overcount cannot block otherwise fitting work. Active builds retain their `runtime-build` class reservation. Diagnostics expose service memory and unused command reservations; no second placement list exists. A class larger than total physical RAM fails immediately with a remote-routing instruction. A fitting class waits for available capacity rather than treating a currently resident service as permanently reserved growth.
 
-Fitting work can backfill a capacity-blocked queue head. There is no existing admission deadline: cumulative backfill is instead bounded by that head's existing class envelope, and stops when a candidate envelope would bridge its capacity gap. Successful admissions alone consume this allowance; failed attempts and readiness probes do not. Equal-or-larger queued classes cannot backfill and are rejected before resource observation, so they do not serialize unnecessary process scans ahead of the head. Plain and workspace capacity-lock acquisitions block in the same kernel `flock`, including AUTO's `--no-wait` contenders: mutex contention preserves their worker and queue age rather than restarting placement. `--no-wait` still refuses a completed queue or capacity decision; inherited lease holders also refuse mutex contention to prevent lease/admission inversion. Readiness probes remain nonblocking. Active-owner diagnostics use the same process-generation and surviving-tree liveness check as memory reservations; leftover custody FIFO directories do not count as workloads. Lease-blocked publishers yield head priority until a nonblocking lease attempt succeeds, so a lease holder can obtain admission without a cycle. The existing cadence still applies after a queue or pressure decision. This prevents an endless stream of small commands from starving a ready head, without adding a timeout or fixed job-count ceiling. Admission cannot make unavailable physical capacity appear.
+FIFO admission covers the oldest memory waiter's minimum supported floor before offering spare memory to younger work. The broker owns ordering and capacity; clients own nonblocking workspace acquisition and payload witnesses. Resource changes and closure of the broker's connection to the client listener wake admission through existing events, with no waiter poll or decision mutex per request. Admission cannot make unavailable physical capacity appear.
 
 Capacity exclusions are invocation-specific: healthy raw samples remain usable by focused work on smaller workers and retain the default 15-second positive probe TTL. Dependency-refresh waiting belongs to the bootstrap's workspace lock before payload admission, within the same cancellable target execution. A selected sync-flush failure retries another target before any command starts; if reachable targets have synchronization or prerequisite failures, the launcher reports an actionable error. Configured `fallback=local` applies only when no remote target is reachable, with an explicit log. Explicit `includeLocal` participation, local placement and machine-local invocations remain distinct from fallback. Exit 137 remains authoritative and reports possible OOM with the last target memory sample; it is never automatically replayed. Outbound routing requires a cwd inside the synchronized repository; explicitly local publishers and already-placed children may use temporary repositories.
 
@@ -765,6 +828,14 @@ smaller of that budget and the package default. The launcher does not turn a
 derived budget into native Vitest pool variables or worker flags, which would
 override package policy. Explicit shared, UI, native pool and CLI overrides
 retain their existing precedence.
+
+Linux derives the automatic allowance as `max(1, floor(cores / (admitted peers + 1)))`
+from the executing host's broker-cached active count. Authenticated
+descendants reuse their containing job's share; queued requests are not admitted
+peers. Darwin retains the existing live dispatch-reservation count for the same
+formula. Load still ranks placement, while PSI and run-queue telemetry remain
+diagnostic. An explicit `GOMAXPROCS` value is preserved independently of Vitest's
+allowance.
 
 Linux development control and jobs scopes pass command operands literally to
 the payload. Their systemd invocation disables environment expansion so shell

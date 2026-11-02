@@ -5,11 +5,29 @@ import { spawn, spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { setTimeout as delay } from 'node:timers/promises';
 import { buildRuntimeArtifactComponentsAtPlacement, withAdmittedRuntimeBuildPlacement } from './remote_runtime_build.mjs';
 import { buildNativeAdmissionFixtureEnv, installNativeAdmissionFixture } from '../testkit/core/native_admission_fixture.mjs';
 import { renderNativeExecutionProjection } from '../utils/dev_targets/native_execution_projection.mjs';
 import { readHappierTempDirOwner } from '@happier-dev/cli-common/tempDirs';
 import { reapHistoricalTempRoots } from '../utils/dev_targets/historical_temp_roots.mjs';
+
+async function waitForBrokerState(fixture, matches, signal) {
+  for (;;) {
+    signal.throwIfAborted();
+    // The command must launch its broker with the fixture's OS environment.
+    // Status is read-only once the first resource observation exists.
+    try { await lstat(fixture.resourceSamplesPath); }
+    catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+      await delay(10, undefined, { signal });
+      continue;
+    }
+    const status = await fixture.brokerStatus();
+    if (matches(status)) return status;
+    await delay(10, undefined, { signal });
+  }
+}
 
 async function initializeRepo(repo) {
   for (const app of ['cli', 'ui', 'server']) {
@@ -196,8 +214,6 @@ test('runtime publication resolves explicit local placement and memory admission
   await writeFile(memory, '15728640 31457280');
   await writeFile(join(binDir, 'awk'), '#!/bin/sh\ncase "$*" in */proc/meminfo*) /bin/cat "$FIXTURE_MEMORY" ;; */proc/loadavg*|*/proc/pressure/*) printf "0\\n" ;; *) exec /usr/bin/awk "$@" ;; esac\n');
   await chmod(join(binDir, 'awk'), 0o755);
-  let waiting;
-  const admissionWaiting = new Promise(resolve => { waiting = resolve; });
   let enteredFlight = false;
   let readinessOutput = '';
   const publication = withAdmittedRuntimeBuildPlacement({ rootDir: root, stackBaseDir,
@@ -209,16 +225,23 @@ test('runtime publication resolves explicit local placement and memory admission
       // the physical worker's OS memory observation is isolated by the fixture.
       const child = spawn(fixture.launcher, args, { ...options, cwd: fixtureRepo,
         env: { ...buildNativeAdmissionFixtureEnv(options.env), PATH: binDir + ':' + process.env.PATH,
+          // This is an independent controller, not an already-placed child of
+          // the outer test runner. Its real AUTO policy must select the host.
+          HAPPIER_HSTACK_EXECUTION: '',
           FIXTURE_MEMORY: memory, FIXTURE_PROBES: probes },
       });
       child.stdout.on('data', chunk => { readinessOutput += String(chunk); });
-      child.stderr.on('data', chunk => { if (String(chunk).includes('waiting for heavyweight admission')) waiting(); });
       return child;
     } },
   });
-  await Promise.race([admissionWaiting, publication.then(() => {
-    assert.fail('local publication entered its publication before runtime admission');
-  })]);
+  const observation = new AbortController();
+  try {
+    await Promise.race([
+      waitForBrokerState(fixture, status => status.waitingCount === 1 && status.activeCount === 1,
+        AbortSignal.any([t.signal, observation.signal])),
+      publication.then(() => assert.fail('local publication entered its publication before runtime admission')),
+    ]);
+  } finally { observation.abort(); }
   assert.equal(enteredFlight, false);
   await writeFile(memory, '28311552 31457280');
   assert.deepEqual(await publication, { admitted: true });
@@ -271,15 +294,20 @@ export async function load(url, context, nextLoad) {
 }
 `);
   await writeFile(parentEntry, `
+import assert from 'node:assert/strict';
 import { writeFile } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { withAdmittedRuntimeBuildPlacement } from ${JSON.stringify(new URL('./remote_runtime_build.mjs', import.meta.url).href)};
+import { requestAdmissionSample } from ${JSON.stringify(pathToFileURL(fixture.admissionClientPath).href)};
 await writeFile(${JSON.stringify(memory)}, '15728640 31457280');
 const result = await withAdmittedRuntimeBuildPlacement({
   rootDir: ${JSON.stringify(repoDir)}, stackBaseDir: ${JSON.stringify(stackBaseDir)},
   selection: {components:{server:true}}, target: {platform:process.platform,arch:process.arch},
   transport: {spawnController: (command, args, options) => spawn(command, args.filter(arg => arg !== '--conditions=happier-source'), {...options, env: {...options.env, NODE_OPTIONS: '--import ' + ${JSON.stringify(pathToFileURL(importObserver).href)}}})},
   run: async execution => {
+    const status = await requestAdmissionSample(${JSON.stringify(fixture.admissionRoot)});
+    assert.equal(status.activeCount, 1, 'nested runtime publication reuses its ancestor slot');
+    assert.equal(status.waitingCount, 0, 'nested runtime publication never queues behind its ancestor');
     // Exercise the real worker's build owner and source import closure without
     // manufacturing a compiler/native artifact workload in this admission test.
     const result = await execution.buildComponents({selection:{components:{}}});
@@ -299,15 +327,22 @@ console.log('INHERITED_ADMISSION=' + JSON.stringify(result));
   const completion = new Promise(resolve => child.once('close', code => resolve(code)));
   t.after(async () => { if (child.exitCode === null) child.kill('SIGTERM'); await completion; });
   child.stdout.on('data', chunk => { stdout += chunk; });
-  child.stderr.on('data', chunk => {
-    stderr += chunk;
-    // A fresh waiter is the deciding failure, not a test timeout. Stop only
-    // this fixture's admitted ancestor; its native owner cancels descendants.
-    if (stderr.includes('waiting for heavyweight admission')) child.kill('SIGTERM');
-  });
-  assert.equal(await completion, 0, stderr);
+  child.stderr.on('data', chunk => { stderr += chunk; });
+  const observation = new AbortController();
+  try {
+    const queued = waitForBrokerState(fixture, status => status.waitingCount > 0,
+      AbortSignal.any([t.signal, observation.signal])).then(() => {
+      // Stop only this fixture's admitted ancestor; its native owner cancels
+      // descendants. A real second queue entry, not prose, is the failure.
+      child.kill('SIGTERM');
+      assert.fail('nested runtime publication queued behind its admitted ancestor');
+    });
+    assert.equal(await Promise.race([completion, queued]), 0, stderr);
+  } finally { observation.abort(); }
   assert.match(stdout, /INHERITED_ADMISSION={"admitted":true,"artifacts":{},"commitSha":"nogit"}/);
-  assert.doesNotMatch(stderr, /waiting for heavyweight admission/);
+  const status = await fixture.brokerStatus();
+  assert.equal(status.activeCount, 0, 'completed runtime publication releases its ancestor slot');
+  assert.equal(status.waitingCount, 0, 'completed runtime publication leaves no queued request');
   const observedImports = await readFile(imports, 'utf8');
   assert.match(observedImports, /\/src\/componentArtifacts\/index\.ts/);
   assert.match(observedImports, /\/src\/workspaces\/index\.ts/);

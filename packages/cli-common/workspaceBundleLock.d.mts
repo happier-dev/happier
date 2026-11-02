@@ -11,12 +11,42 @@ export const WORKSPACE_BUNDLE_LOCK_BUSY_ERROR_CODE: 'EWORKSPACEBUNDLELOCKBUSY';
 export const WORKSPACE_BUNDLE_LOCK_OWNERSHIP_LOST_ERROR_CODE: 'EWORKSPACEBUNDLELOCKOWNERSHIPLOST';
 export const DEFAULT_WORKSPACE_BUNDLE_LOCK_TIMEOUT_MS: number;
 
+export type WorkspaceBundleLockPriorityResource =
+  | { kind?: 'workspace'; path: string }
+  | { kind: 'dependency' | 'dependency-input-writer'; path: string; installDir: string };
+
+/** Soft publication preference, never an actual lease or capacity reservation. */
+export interface WorkspaceBundleLockPriorityScope {
+  activate(): void;
+  suspend(): void;
+  dispose(): void;
+}
+
+export function createWorkspaceBundleLockPriorityScope(options: {
+  resources: readonly WorkspaceBundleLockPriorityResource[];
+  env?: Record<string, string | undefined>;
+  signal?: AbortSignal;
+  /** Stack's dependency owner authenticates conflicts with its own resources. */
+  isHeldResourceContinuation?: (
+    resource: Extract<WorkspaceBundleLockPriorityResource, { installDir: string }>,
+    env: Record<string, string | undefined>,
+  ) => boolean;
+}): WorkspaceBundleLockPriorityScope;
+export function observeWorkspaceBundleLockPriority(lockPath: string, options?: {
+  /** Exclude the observer's own lifecycle changes, never another participant. */
+  priorityScope?: WorkspaceBundleLockPriorityScope;
+}): string;
+export function isWorkspaceBundleLockPriorityChange(
+  lockPath: string, filename: string, priorityScope?: WorkspaceBundleLockPriorityScope,
+): boolean;
+
 export interface WorkspaceBundleLockOptions<T = unknown> {
   lockPath: string;
   heldLockValue?: string;
   heldLockPath?: string;
-  /** Refuse contention without watching, sleeping, or reserving waiter priority. */
+  /** Refuse contention without watching or sleeping; an explicit priorityScope retains only soft preference. */
   wait?: boolean;
+  priorityScope?: WorkspaceBundleLockPriorityScope;
   /** Bounds waits without a fresh authenticated owner heartbeat; healthy owners use staleAfterMs. */
   timeoutMs?: number;
   pollIntervalMs?: number;
