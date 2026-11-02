@@ -20,6 +20,13 @@ import { createFxConfigOptionsFixture } from '@/agent/acp/testkit/fxConfigOption
 import { applyRegisteredSessionStateFieldMutationToMetadata } from '@/api/session/client/transport/mutations/applyRegisteredSessionStateFieldMutation';
 import { resolveAgentSessionMcpLaunchConfigs, toAgentSessionMcpLaunchConfigs } from './nativeAgentSession';
 import { buildCodexAppServerConfigOverrides } from '@happier-dev/plugins-codex/agent/runtime/appServer/config/overrides';
+import { createClaudeNativeSessionRuntimeFromOperations } from '../../../../../../../packages/plugins/claude/src/agent/runtime/nativeRuntime';
+import { createClaudeUnifiedTerminalTurnOperations } from '../../../../../../../packages/plugins/claude/src/agent/runtime/terminal/unified/turnOperations';
+import {
+    createEventsFixture as createClaudeEventsFixture,
+    createPluginContextFixture as createClaudePluginContextFixture,
+    createTerminalHostFixture as createClaudeTerminalHostFixture,
+} from '../../../../../../../packages/plugins/claude/src/agent/runtime/engine.testkit';
 import * as processIdentity from '@/daemon/processIdentity';
 
 it('restricts native MCP catalogs through the session matcher without confusing server prefixes', () => {
@@ -677,6 +684,52 @@ function createAgentActivityHeadline() {
 }
 
 describe('native Agent session host adapter', () => {
+    it('settles exact Claude queued custody after an intervening native terminal turn', async () => {
+        const terminal = createClaudeTerminalHostFixture();
+        let screen = 'Starting Claude…';
+        const captureInputState = vi.fn(async () => ({
+            stable: true, currentInput: screen, observedAt: Date.now(),
+        }));
+        const ctx = createClaudePluginContextFixture({ ...terminal.service, captureInputState }, createClaudeEventsFixture().service);
+        const operations = createClaudeUnifiedTerminalTurnOperations({
+            ctx, directory: '/tmp/claude-project', happierSessionId: 'claude-pending-overlap',
+            hostPreference: 'zellij', launchEnv: {}, permissionMode: 'default',
+        });
+        const session = createClaudeNativeSessionRuntimeFromOperations(operations, {
+            kind: 'create', sessionId: 'claude-pending-overlap', cwd: '/tmp/claude-project',
+        }, { session: { services: {
+            activeInput: { bind: () => ({ dispose() {} }) }, models: { bind: () => ({ dispose() {} }) },
+        } } } as unknown as AgentSessionRuntimeContext);
+        const runtime = createNativeAgentSessionOperations(session, 'claude-pending-overlap');
+        const outcomes: unknown[] = [];
+        runtime.setOnPromptDeliveryOutcome(outcome => { outcomes.push(outcome); });
+        runtime.subscribeRuntimeEvents(() => undefined);
+        try {
+            await runtime.sendTurnPrompt('queued prompt', { localId: 'queued-input', turnId: 'queued-host-turn' });
+            expect(terminal.service.injectUserPrompt).not.toHaveBeenCalled();
+            const hook = vi.mocked(ctx.agentRuntime.sessionHooks.startServer).mock.calls[0]?.[0].onSessionHook;
+            if (!hook) throw new Error('native hook transport was not registered');
+            const nativeSessionId = 'queued-overlap-native';
+            await hook(nativeSessionId, { hook_event_name: 'SessionStart', session_id: nativeSessionId,
+                source: 'startup', transcript_path: '/tmp/queued-overlap-native.jsonl' });
+            await hook(nativeSessionId, { hook_event_name: 'UserPromptSubmit', session_id: nativeSessionId,
+                prompt: 'different native prompt' });
+            screen = ['──────────────────────────────', '❯ ', '──────────────────────────────'].join('\n');
+            await hook(nativeSessionId, { hook_event_name: 'Stop', session_id: nativeSessionId });
+            await vi.waitFor(() => expect(terminal.service.injectUserPrompt).toHaveBeenCalled(), { timeout: 3_000 });
+            await hook(nativeSessionId, { hook_event_name: 'UserPromptSubmit', session_id: nativeSessionId,
+                prompt: 'queued prompt' });
+            expect(outcomes).toMatchObject([
+                { type: 'input-accepted', localId: 'queued-input', delivery: { kind: 'newTurn', turnId: 'queued-host-turn' } },
+            ]);
+            expect(runtime.readTurnStartingInputId?.('queued-host-turn')).toBe('queued-input');
+            await hook(nativeSessionId, { hook_event_name: 'Stop', session_id: nativeSessionId });
+            await expect(runtime.waitForTurnCompletion({ timeoutMs: null })).resolves.toBeUndefined();
+        } finally {
+            await runtime.resetOrDisposeRuntime('runtime_recovery');
+        }
+    });
+
     it.each(['fresh', 'resume', 'respawn', 'runtime-recovery', 'runtime-recovery-authority-missing', 'prompt-failure', 'claim-rejected', 'mcp-before-open', 'cancel-before-open'] as const)(
         'claims the real runner bootstrap before startup contributions (%s)', async (scenario) => {
         await withTempDir('native-runner-startup-authority-', async (temporaryDirectory) => {

@@ -61,6 +61,7 @@ import { openClaudeNativeUnifiedTerminalSession } from './terminal/unified/nativ
 import type {
   ClaudeUnifiedPromptDeliveryIdentity,
   ClaudeUnifiedPromptDeliveryOutcome,
+  ClaudeUnifiedTerminalNativeRuntime,
 } from './terminal/unified/turnOperations.js';
 import {
   resolveClaudeLaunchSettingsOverlayArgs,
@@ -124,9 +125,7 @@ type ClaudeNativePromptCustodyOperations =
   | Readonly<{
     promptCustody: 'unified_terminal';
     retirePendingInputs(localIds: readonly string[], turnId: string): void;
-    setOnPromptAcceptedByProvider: (
-      handler: (info: ClaudeUnifiedPromptDeliveryIdentity) => void,
-    ) => void;
+    setOnPromptAcceptedByProvider: ClaudeUnifiedTerminalNativeRuntime['setOnPromptAcceptedByProvider'];
     setOnPromptTerminallyRejectedBeforeProvider: (
       handler: (info: ClaudeUnifiedPromptDeliveryIdentity) => void,
     ) => void;
@@ -571,7 +570,7 @@ export function createClaudeNativeSessionRuntimeFromOperations(
       }
     }
   };
-  const acceptTerminalPromptDelivery = (identity: ClaudeUnifiedPromptDeliveryIdentity): void => {
+  const acceptTerminalPromptDelivery = (identity: ClaudeUnifiedPromptDeliveryIdentity): string | undefined => {
     const delivery = readTerminalPromptDelivery(identity);
     if (!delivery || delivery.decision !== null) return;
     delivery.decision = { kind: 'accepted' };
@@ -581,6 +580,7 @@ export function createClaudeNativeSessionRuntimeFromOperations(
       inputIds: delivery.inputIds,
       delivery: delivery.delivery,
     });
+    return delivery.delivery.turnId;
   };
   const rejectTerminalPromptDelivery = (
     identity: ClaudeUnifiedPromptDeliveryIdentity,

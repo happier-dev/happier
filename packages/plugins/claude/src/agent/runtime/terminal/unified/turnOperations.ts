@@ -503,7 +503,7 @@ export type ClaudeUnifiedTerminalNativeRuntime = ClaudeRuntimeTurnOperations & R
    * Fired ONLY at arbiter acceptance (transcript/hook-confirmed evidence) — injection alone is
    * never acceptance.
    */
-  setOnPromptAcceptedByProvider(handler: (info: ClaudeUnifiedPromptDeliveryIdentity) => void): void;
+  setOnPromptAcceptedByProvider(handler: (info: ClaudeUnifiedPromptDeliveryIdentity) => string | void): void;
   /**
    * Deterministic pre-provider terminalization seam: input rejected before provider custody for
    * a non-retryable prompt-text reason is handled once and must advance durable pending state.
@@ -1013,7 +1013,7 @@ export function createClaudeUnifiedTerminalTurnOperations(
     },
   });
   let onPromptAcceptedByProviderHandler:
-    ((info: ClaudeUnifiedPromptDeliveryIdentity) => void) | null = null;
+    ((info: ClaudeUnifiedPromptDeliveryIdentity) => string | void) | null = null;
   let onPromptTerminallyRejectedBeforeProviderHandler:
     ((info: ClaudeUnifiedPromptDeliveryIdentity) => void) | null = null;
   let onPromptDeliveryOutcomeHandler:
@@ -1772,12 +1772,13 @@ export function createClaudeUnifiedTerminalTurnOperations(
         retainUntilObserved: hasCanonicalPendingOwner(input),
       });
       // HF-1: provider acceptance is the watermark-confirmation point for this prompt's row seq.
+      let acceptedTurnId: string | void = undefined;
       try {
-        onPromptAcceptedByProviderHandler?.(buildPromptDeliveryIdentity(input));
+        acceptedTurnId = onPromptAcceptedByProviderHandler?.(buildPromptDeliveryIdentity(input));
       } catch (error) {
         params.ctx.logger.warn('[ClaudeUnifiedTerminal] onPromptAcceptedByProvider handler failed', { error });
       }
-      ensureAcceptedTurnStarted(input);
+      ensureAcceptedTurnStarted(input, acceptedTurnId);
       state.turnInFlight = true;
       settlePromptDeliveryTerminal(input);
     },
@@ -2456,7 +2457,9 @@ export function createClaudeUnifiedTerminalTurnOperations(
   }
 
   function ensureTerminalOriginTurnStarted(promptText?: string): void {
-    if (!state.activeTurnId) {
+    // A host dispatch can still be queued before any bytes reach Claude. Native input owns
+    // its own turn; borrowing the reserved host identity consumes that input's correlation.
+    if (!state.activeTurnId || (state.dispatchAttemptInFlight && !state.providerAccepted)) {
       state.promptNonce += 1;
       state.activeTurnId = createClaudeUnifiedTurnId(params.happierSessionId, state.promptNonce);
     }
@@ -2478,9 +2481,11 @@ export function createClaudeUnifiedTerminalTurnOperations(
     return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
   }
 
-  function ensureAcceptedTurnStarted(input: TerminalPromptInput): void {
+  function ensureAcceptedTurnStarted(input: TerminalPromptInput, acceptedTurnId?: string | void): void {
     const promptNonce = readPromptNonce(input) ?? state.promptNonce;
-    if (!state.activeTurnId) {
+    if (acceptedTurnId) {
+      state.activeTurnId = acceptedTurnId;
+    } else if (!state.activeTurnId) {
       state.activeTurnId = createClaudeUnifiedTurnId(params.happierSessionId, promptNonce);
     }
     state.activePromptText = input.text;

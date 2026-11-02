@@ -655,6 +655,59 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
     expect(binding).toBeNull();
   });
 
+  it('preserves queued host custody when a different native prompt runs before injection', async () => {
+    const terminalHost = createTerminalHostFixture();
+    // The real terminal can remain unready after folder trust, before any queued bytes are written.
+    let screen = 'Starting Claude…';
+    const captureInputState = vi.fn(async () => ({
+      stable: true, currentInput: screen, observedAt: Date.now(),
+    }));
+    const ctx = createPluginContextFixture({ ...terminalHost.service, captureInputState }, createEventsFixture().service);
+    const operations = createClaudeUnifiedTerminalProviderOperations({
+      ctx, directory: '/tmp/claude-project', happierSessionId: 'queued-native-overlap',
+      hostPreference: 'zellij', launchEnv: {}, permissionMode: 'default',
+    });
+    const session = createClaudeNativeSessionRuntimeFromOperations(operations, {
+      kind: 'create', sessionId: 'queued-native-overlap', cwd: '/tmp/claude-project',
+    }, { session: { services: {
+      activeInput: { bind: () => ({ dispose() {} }) }, models: { bind: () => ({ dispose() {} }) },
+    } } } as unknown as AgentSessionRuntimeContext);
+    const observed: AgentSessionRuntimeEvent[] = [];
+    const subscription = session.watch(event => observed.push(event));
+    try {
+      await session.send({ inputIds: ['queued-input'], input: { text: 'queued prompt' },
+        delivery: { kind: 'newTurn', turnId: 'queued-host-turn' } });
+      expect(terminalHost.service.injectUserPrompt).not.toHaveBeenCalled();
+      const hook = vi.mocked(ctx.agentRuntime.sessionHooks.startServer).mock.calls[0]?.[0].onSessionHook;
+      if (!hook) throw new Error('native hook transport was not registered');
+      const nativeSessionId = 'queued-overlap-provider-session';
+      await hook(nativeSessionId, { hook_event_name: 'SessionStart', session_id: nativeSessionId,
+        source: 'startup', transcript_path: '/tmp/queued-overlap.jsonl' });
+      await hook(nativeSessionId, { hook_event_name: 'UserPromptSubmit', session_id: nativeSessionId,
+        prompt: 'different native prompt' });
+      screen = IDLE_COMPOSER;
+      await hook(nativeSessionId, { hook_event_name: 'Stop', session_id: nativeSessionId });
+      await vi.waitFor(() => expect(terminalHost.service.injectUserPrompt).toHaveBeenCalled(), { timeout: 3_000 });
+      await hook(nativeSessionId, { hook_event_name: 'UserPromptSubmit', session_id: nativeSessionId,
+        prompt: 'queued prompt' });
+      await hook(nativeSessionId, { hook_event_name: 'Stop', session_id: nativeSessionId });
+      const starts = observed.filter(event => event.kind === 'turn-start');
+      expect(starts).toHaveLength(2);
+      expect(starts[0]).toMatchObject({ startedBy: 'provider' });
+      expect(starts[0]?.turnId).not.toBe('queued-host-turn');
+      expect(observed.filter(event => event.kind === 'input-accepted')).toMatchObject([
+        { inputIds: ['queued-input'], delivery: { kind: 'newTurn', turnId: 'queued-host-turn' } },
+      ]);
+      expect(starts[1]).toMatchObject({ startedBy: 'host', turnId: 'queued-host-turn' });
+      expect(observed.filter(event => event.kind === 'turn-complete')).toMatchObject([
+        { turnId: starts[0]?.turnId }, { turnId: 'queued-host-turn' },
+      ]);
+    } finally {
+      subscription.dispose();
+      await session.dispose();
+    }
+  });
+
   it('keeps host turn identity through acceptance, completion, follow-up, and cancellation', async () => {
     const terminalHost = createTerminalHostFixture();
     const events = createEventsFixture();
