@@ -23,6 +23,15 @@ function createSessionMediaEnvelope(overrides: Record<string, unknown> = {}) {
 }
 
 describe('parseSessionMediaMessageMeta', () => {
+    it('keeps MP4 metadata playable without projecting it as an agent image', async () => {
+        const { parseSessionMediaMessageMeta } = await import('./sessionMediaMessageMeta');
+        const item = { id: 'movie', role: 'input', category: 'attachment', mediaKind: 'video', mimeType: 'video/mp4',
+            name: 'recording.mp4', path: '.happier/uploads/attachments/session-1/message-1/recording.mp4', sizeBytes: 24,
+            origin: { source: 'user-upload' } };
+        const parsed = parseSessionMediaMessageMeta({ kind: 'session_media.v1', payload: { media: [item] } });
+        expect(parsed?.inlineImages).toEqual([]);
+        expect(parsed?.inlineMedia).toEqual([expect.objectContaining({ mediaKind: 'video', mimeType: 'video/mp4', name: 'recording.mp4' })]);
+    });
     it('reads retained media while dropping unknown source payload fields before security guards', async () => {
         const { parseSessionMediaMessageMeta } = await import('./sessionMediaMessageMeta');
         const raw = createSessionMediaEnvelope({

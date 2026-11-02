@@ -330,25 +330,35 @@ describe('resolveStructuredInputProviderContext', () => {
     }]);
   });
 
-  it('rejects selected verified SessionMedia video before Agent dispatch', async () => {
-    await expect(resolveStructuredInputProviderDispatchContext({
+  it.each(['video/mp4', 'video/webm'] as const)('projects verified %s SessionMedia as a readable file in turn text, never an image', async (mimeType) => {
+    const media = { ...SESSION_MEDIA_VIDEO, mimeType };
+    const result = await resolveStructuredInputProviderDispatchContext({
       structuredInput: envelope({
         composerAttachments: [{
           ...COMPOSER_ATTACHMENT,
           content: { kind: 'sessionMedia', mediaId: SESSION_MEDIA_VIDEO.id },
         }],
       }),
-      sessionMedia: [SESSION_MEDIA_VIDEO],
+      sessionMedia: [media],
       composerAttachments: {
         scope: { kind: 'session', sessionId: 'session-1' },
         localId: 'local-1',
-        resolve: vi.fn(),
+        resolve: async (input) => ({ attachments: input.request.attachments.map((attachment) => ({
+          instanceId: attachment.instanceId, status: 'ready' as const, data: { resolved: true },
+        })) }),
         signal: new AbortController().signal,
       },
-    })).rejects.toMatchObject({
-      code: 'session_media_video_unsupported',
-      retryable: false,
     });
+    expect(result.structuredInput?.imageInputs ?? []).toEqual([]);
+    expect(result.promptContext.references?.uploads).toContainEqual({
+      id: COMPOSER_ATTACHMENT.instanceId, name: media.name, path: media.path,
+      mimeType, sizeBytes: media.sizeBytes, sha256: media.sha256,
+    });
+    const prompt = renderPromptContext(result);
+    expect(prompt).toContain(`path=${JSON.stringify(media.path)}`);
+    expect(prompt).toContain(`mime_type=${JSON.stringify(mimeType)}`);
+    expect(buildCodexAppServerTurnInput({ text: prompt, structuredInput: result.structuredInput }))
+      .toContainEqual({ type: 'text', text: prompt });
   });
 
   it('resolves attachment groups at dispatch, preserves author order, and removes raw attachment values', async () => {

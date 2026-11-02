@@ -1,4 +1,4 @@
-import { SessionMediaFailureV1Schema, SessionMediaItemV1Schema } from '@happier-dev/protocol/sessions/messages/sessionMediaV1';
+import { SessionMediaFailureV1Schema, SessionMediaItemV1Schema, isReferenceSessionMediaVideoMimeType, type SESSION_MEDIA_VIDEO_MIME_TYPES_V1 } from '@happier-dev/protocol/sessions/messages/sessionMediaV1';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import type { SessionAttachmentHandleV1 } from '@happier-dev/protocol/transfers/sessions/sessionAttachmentHandleV1';
 
@@ -33,7 +33,7 @@ export type SessionMediaInlineVideoAvailableSummary = Readonly<{
     mediaKind: 'video';
     name: string;
     path: string;
-    mimeType: 'video/webm';
+    mimeType: typeof SESSION_MEDIA_VIDEO_MIME_TYPES_V1[number];
     sizeBytes: number;
     sha256?: string;
     attachmentHandle?: SessionAttachmentHandleV1;
@@ -96,7 +96,7 @@ export function parseSessionMediaMessageMeta(value: unknown): ParsedSessionMedia
         if (!isSafeSessionMediaPath(item.path)) continue;
 
         if (item.mediaKind === 'video') {
-            if (item.mimeType !== 'video/webm') continue;
+            if (!isReferenceSessionMediaVideoMimeType(item.mimeType)) continue;
             inlineMedia.push({
                 id: item.id,
                 status: 'available',

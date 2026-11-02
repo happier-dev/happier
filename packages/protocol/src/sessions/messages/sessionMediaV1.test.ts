@@ -63,17 +63,18 @@ describe('session media v1 schemas', () => {
     expect(schema.parse(validMediaItem)).toEqual(validMediaItem);
   });
 
-  it('accepts safe persisted video metadata by reference without image dimensions', () => {
+  it.each(['webm', 'mp4'])('accepts safe persisted %s video metadata by reference without image dimensions', (format) => {
     const itemSchema = readSchema('SessionMediaItemV1Schema');
     const envelopeSchema = readSchema('SessionMediaMessageMetaV1Schema');
+    const video = { ...validVideoMediaItem, mimeType: `video/${format}`, name: `recording.${format}`, path: `.happier/uploads/artifacts/session-1/message-1/recording.${format}` };
 
-    expect(itemSchema.parse(validVideoMediaItem)).toEqual(validVideoMediaItem);
+    expect(itemSchema.parse(video)).toEqual(video);
     expect(envelopeSchema.parse({
       kind: 'session_media.v1',
-      payload: { media: [validVideoMediaItem] },
+      payload: { media: [video] },
     })).toEqual({
       kind: 'session_media.v1',
-      payload: { media: [validVideoMediaItem] },
+      payload: { media: [video] },
     });
   });
 
@@ -90,7 +91,7 @@ describe('session media v1 schemas', () => {
       { ...validVideoMediaItem, path: 'https://provider.example/recording.webm' },
       { ...validVideoMediaItem, path: 'data:video/webm;base64,GkXfo0AgQoaBAUL3gQFC8oEEQvOB' },
       { ...validVideoMediaItem, path: '$HOME/.happier/recording.webm' },
-      { ...validVideoMediaItem, mimeType: 'video/mp4' },
+      { ...validVideoMediaItem, mimeType: 'video/quicktime' },
       { ...validVideoMediaItem, width: 1280 },
       { ...validVideoMediaItem, height: 720 },
     ];

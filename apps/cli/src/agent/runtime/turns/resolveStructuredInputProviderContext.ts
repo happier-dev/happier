@@ -117,7 +117,6 @@ export class StructuredInputComposerAttachmentUnavailableError
 
 type StructuredInputSessionMediaProjectionErrorCode =
   | 'session_media_reference_invalid'
-  | 'session_media_video_unsupported'
   | 'session_media_scope_unavailable';
 
 /**
@@ -690,15 +689,15 @@ function sessionMediaProjectionError(
  * admitted Composer refs. This dispatch owner re-checks that relationship so
  * direct callers cannot promote arbitrary workspace paths into Agent input.
  */
-function projectSessionMediaImageInputs(params: Readonly<{
+function projectSessionMediaInputs(params: Readonly<{
   attachments: readonly ComposerAttachmentInputV1[];
   sessionMedia: readonly SessionMediaItemV1[];
   scope?: PluginExecutionScopeV1;
-}>): readonly Record<string, unknown>[] {
-  const referencedMediaIds = params.attachments.flatMap((attachment) => (
-    attachment.content?.kind === 'sessionMedia' ? [attachment.content.mediaId] : []
+}>): Readonly<{ images: readonly Record<string, unknown>[]; files: readonly SessionAttachmentDescriptorV1[] }> {
+  const references = params.attachments.flatMap((attachment) => (
+    attachment.content?.kind === 'sessionMedia' ? [{ mediaId: attachment.content.mediaId, instanceId: attachment.instanceId }] : []
   ));
-  if (referencedMediaIds.length === 0) return Object.freeze([]);
+  if (references.length === 0) return { images: [], files: [] };
   if (params.scope?.kind !== 'session') {
     throw sessionMediaProjectionError(
       'session_media_scope_unavailable',
@@ -707,7 +706,7 @@ function projectSessionMediaImageInputs(params: Readonly<{
   }
 
   const referencedIds = new Set<string>();
-  for (const mediaId of referencedMediaIds) {
+  for (const { mediaId } of references) {
     if (referencedIds.has(mediaId)) {
       throw sessionMediaProjectionError(
         'session_media_reference_invalid',
@@ -741,7 +740,8 @@ function projectSessionMediaImageInputs(params: Readonly<{
   }
 
   const images: Record<string, unknown>[] = [];
-  for (const mediaId of referencedMediaIds) {
+  const files: SessionAttachmentDescriptorV1[] = [];
+  for (const { mediaId, instanceId } of references) {
     const media = mediaById.get(mediaId);
     if (!media) {
       throw sessionMediaProjectionError(
@@ -750,10 +750,10 @@ function projectSessionMediaImageInputs(params: Readonly<{
       );
     }
     if (media.mediaKind === 'video') {
-      throw sessionMediaProjectionError(
-        'session_media_video_unsupported',
-        'The current Agent runtime does not declare video input support',
-      );
+      // The movie is an ordinary readable Session file, not native model-video input.
+      files.push({ id: instanceId,
+        path: media.path, name: media.name, mimeType: media.mimeType, sizeBytes: media.sizeBytes, sha256: media.sha256 });
+      continue;
     }
     if (media.mediaKind !== 'image' || !media.mimeType.startsWith('image/')) {
       throw sessionMediaProjectionError(
@@ -772,7 +772,7 @@ function projectSessionMediaImageInputs(params: Readonly<{
       provenance: { kind: SESSION_ATTACHMENT_UPLOAD_STRUCTURED_INPUT_PROVENANCE_KIND },
     }));
   }
-  return Object.freeze(images);
+  return { images: Object.freeze(images), files: Object.freeze(files) };
 }
 
 /**
@@ -818,7 +818,7 @@ export async function resolveStructuredInputProviderDispatchContext(params: Read
   }
 
   const attachments = readComposerAttachmentsForDispatch(envelope);
-  const sessionMediaImageInputs = projectSessionMediaImageInputs({
+  const sessionMediaInputs = projectSessionMediaInputs({
     attachments,
     sessionMedia: params.sessionMedia ?? [],
     ...(params.composerAttachments ? { scope: params.composerAttachments.scope } : {}),
@@ -907,7 +907,7 @@ export async function resolveStructuredInputProviderDispatchContext(params: Read
     if (item.kind === 'browserScreenshot' || item.kind === 'browserAnnotation') browserMedia.set(item.media.mediaId, item.media);
   }
   const browserImageInputs = [...browserMedia.values()].map(browserMediaToStructuredImageInput);
-  const projectedImages = [...sessionMediaImageInputs, ...browserImageInputs];
+  const projectedImages = [...sessionMediaInputs.images, ...browserImageInputs];
   if (projectedImages.length > 0) {
     const existingImageIds = new Set((envelope.imageInputs ?? []).map((image) => image.id));
     if (projectedImages.some((image) => existingImageIds.has(image.id as string))) {
@@ -925,7 +925,7 @@ export async function resolveStructuredInputProviderDispatchContext(params: Read
     composerReferences: composerContextEntries,
     composerAttachments: attachmentProjection.contextEntries,
     composerAttachmentInputs: attachments,
-    uploads: params.attachments ?? [],
+    uploads: [...(params.attachments ?? []), ...sessionMediaInputs.files],
     imageInputs: structuredInput.imageInputs ?? [],
     skillMentions: structuredInput.skillMentions ?? [],
     vendorPluginMentions: structuredInput.vendorPluginMentions ?? [],

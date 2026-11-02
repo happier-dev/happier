@@ -14,6 +14,7 @@ export const SESSION_MEDIA_IMAGE_MIME_TYPES_V1 = [
 
 export const SESSION_MEDIA_VIDEO_MIME_TYPES_V1 = [
   'video/webm',
+  'video/mp4',
 ] as const;
 
 export const SESSION_MEDIA_MIME_TYPES_V1 = [
@@ -277,7 +278,7 @@ function isInlineSessionMediaImageMimeType(value: string): boolean {
   return (SESSION_MEDIA_IMAGE_MIME_TYPES_V1 as readonly string[]).includes(value);
 }
 
-function isReferenceSessionMediaVideoMimeType(value: string): boolean {
+export function isReferenceSessionMediaVideoMimeType(value: string): value is typeof SESSION_MEDIA_VIDEO_MIME_TYPES_V1[number] {
   return (SESSION_MEDIA_VIDEO_MIME_TYPES_V1 as readonly string[]).includes(value);
 }
 

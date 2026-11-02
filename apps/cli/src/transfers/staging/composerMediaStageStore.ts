@@ -29,6 +29,7 @@ import {
   isSessionMediaImageMimeType,
   sessionMediaKindForMimeType,
   sniffSessionMediaMimeType,
+  hasSessionMediaVideoHeader,
   type SupportedSessionMediaMimeType,
 } from '@/session/media/mime';
 import { sanitizeSessionMediaFileName } from '@/session/media/names';
@@ -240,15 +241,7 @@ function readPositiveSafeInteger(value: number): number | null {
 }
 
 function normalizeSupportedMimeType(value: ComposerContentMimeTypeV1): SupportedSessionMediaMimeType {
-  return value as SupportedSessionMediaMimeType;
-}
-
-function isWebmHeader(bytes: Uint8Array): boolean {
-  if (bytes.byteLength < 4) return false;
-  if (bytes[0] !== 0x1a || bytes[1] !== 0x45 || bytes[2] !== 0xdf || bytes[3] !== 0xa3) {
-    return false;
-  }
-  return Buffer.from(bytes).includes(Buffer.from('webm', 'ascii'));
+  return value;
 }
 
 async function readPrefix(path: string, maxBytes: number): Promise<Buffer | null> {
@@ -295,7 +288,7 @@ async function verifyContentFile(input: Readonly<{
   if (isSessionMediaImageMimeType(mimeType)) {
     return sniffSessionMediaMimeType(prefix) === mimeType;
   }
-  return input.handle.mediaKind === 'video' && mimeType === 'video/webm' && isWebmHeader(prefix);
+  return input.handle.mediaKind === 'video' && hasSessionMediaVideoHeader(prefix, mimeType);
 }
 
 async function readBoundedManifest(path: string): Promise<ComposerMediaStageManifest | null> {

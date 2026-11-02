@@ -1,12 +1,9 @@
 import { open } from 'node:fs/promises';
+import type { SESSION_MEDIA_IMAGE_MIME_TYPES_V1, SESSION_MEDIA_VIDEO_MIME_TYPES_V1 } from '@happier-dev/protocol/sessions/messages/sessionMediaV1';
 
-export type SupportedSessionMediaImageMimeType =
-  | 'image/png'
-  | 'image/jpeg'
-  | 'image/webp'
-  | 'image/gif';
+export type SupportedSessionMediaImageMimeType = typeof SESSION_MEDIA_IMAGE_MIME_TYPES_V1[number];
 
-export type SupportedSessionMediaVideoMimeType = 'video/webm';
+export type SupportedSessionMediaVideoMimeType = typeof SESSION_MEDIA_VIDEO_MIME_TYPES_V1[number];
 
 export type SupportedSessionMediaMimeType =
   | SupportedSessionMediaImageMimeType
@@ -24,6 +21,7 @@ const IMAGE_EXTENSIONS_BY_MIME: Record<SupportedSessionMediaImageMimeType, strin
 
 const VIDEO_EXTENSIONS_BY_MIME: Record<SupportedSessionMediaVideoMimeType, string> = {
   'video/webm': '.webm',
+  'video/mp4': '.mp4',
 };
 
 const EXTENSIONS_BY_MIME: Record<SupportedSessionMediaMimeType, string> = {
@@ -38,7 +36,19 @@ const MIME_BY_EXTENSION: Record<string, SupportedSessionMediaMimeType> = {
   '.webp': 'image/webp',
   '.gif': 'image/gif',
   '.webm': 'video/webm',
+  '.mp4': 'video/mp4',
 };
+
+/** Container signature only; playable codec validation belongs to the player/encoder. */
+export function hasSessionMediaVideoHeader(bytes: Uint8Array, mimeType: SupportedSessionMediaVideoMimeType): boolean {
+  if (mimeType === 'video/webm') {
+    return bytes.length >= 4 && bytes[0] === 0x1a && bytes[1] === 0x45 && bytes[2] === 0xdf && bytes[3] === 0xa3
+      && Buffer.from(bytes).includes(Buffer.from('webm', 'ascii'));
+  }
+  if (bytes.length < 12 || Buffer.from(bytes.subarray(4, 8)).toString('ascii') !== 'ftyp') return false;
+  const brand = Buffer.from(bytes.subarray(8, 12)).toString('ascii');
+  return /^iso[m2-9]$/.test(brand) || brand === 'mp41' || brand === 'mp42' || brand === 'avc1' || brand === 'M4V ';
+}
 
 export function extensionForSessionMediaMimeType(mimeType: SupportedSessionMediaMimeType): string {
   return EXTENSIONS_BY_MIME[mimeType];

@@ -39,6 +39,26 @@ async function pathExists(path: string): Promise<boolean> {
 describe('Composer media stage store', () => {
   const tempDirectories: string[] = [];
 
+  it('admits MP4 staged bytes through restart and refuses a mislabeled container', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'happier-mp4-stage-'));
+    tempDirectories.push(directory);
+    const tempPath = join(directory, 'incoming.mp4');
+    const bytes = Buffer.from('000000186674797069736f6d0000020069736f6d61766331', 'hex');
+    await writeFile(tempPath, bytes);
+    const rootDirectory = join(directory, 'stages');
+    const store = createComposerMediaStageStore({ rootDirectory, executionTarget });
+    const upload = { tempPath, sizeBytes: bytes.length, sha256: sha256(bytes), executionTarget, owner,
+      mediaKind: 'video', mimeType: 'video/mp4', name: 'recording.mp4' } as const;
+    const result = await store.finalizeUpload(upload);
+    expect(result).toMatchObject({ success: true, handle: { mediaKind: 'video', mimeType: 'video/mp4', name: 'recording.mp4' } });
+    if (!result.success) throw new Error(result.error);
+    const restarted = createComposerMediaStageStore({ rootDirectory, executionTarget });
+    expect(await restarted.inspectForFinalization({ handle: result.handle, executionTarget, owner })).toMatchObject({ status: 'ready' });
+    const invalid = Buffer.from('not an MP4 container');
+    await writeFile(tempPath, invalid);
+    expect(await store.finalizeUpload({ ...upload, sizeBytes: invalid.length, sha256: sha256(invalid) })).toMatchObject({ success: false });
+  });
+
   afterEach(async () => {
     filesystemFault.removePath = '';
     await Promise.all(tempDirectories.splice(0).map(async (directory) => {
