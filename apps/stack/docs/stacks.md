@@ -125,6 +125,29 @@ port-collision reallocation path.
 
 ### Source stack reload (0.3 development)
 
+Use `hstack stack start <stack> --runtime=source --restart --verify` for a
+background reload followed by one `READY` or `NOT_READY` verdict. Verification
+consumes Stack's selected/loaded identities and authenticated daemon-control
+observation, checks the retained runtime's sign-in through `auth status`, and
+boots the current UI in the managed QA browser pool. The browser loads after
+the serving process has started; an old `Web Bundled` log line cannot satisfy
+this check. Stacks with UI disabled skip the browser step. Borrowed Expo is
+verified without restarting its producer.
+
+Every verdict includes elapsed milliseconds. `NOT_READY` identifies the failing
+check and its evidence; `READY` includes the component identities. Verification
+also requires an available, identified managed CLI after reload. When its
+pre-reload identity is available, verification compares the binary selected
+on the daemon host before and after reload; an unexpected replacement is
+`NOT_READY`. A missing or unavailable pre-reload identity records
+`baseline: unavailable` and allows the reload to repair the runtime; only
+the baseline comparison is skipped. Selected and loaded runtime identities
+must still match. Verification does not update that installation. A missing sign-in,
+pending readiness, unavailable browser pool, or failed render returns
+`NOT_READY` with a nonzero exit status and leaves the existing lifecycle owner
+in control. Re-run after resolving the reported prerequisite. `--verify`
+cannot be combined with the existing `--json` dry-run option.
+
 `hstack stack start exp1 --runtime=source --ui=export --restart` prepares the
 replacement server, daemon and web export while the incumbent keeps serving.
 The source selection owner checks the daemon command loader, boots the server

@@ -2611,6 +2611,15 @@ async function main() {
     return;
   }
   if (STACK_BACKGROUND_SCRIPT_BY_COMMAND.has(cmd)) {
+    if (passthrough.includes('--verify')) {
+      const { runVerifiedStackStart } = await import('./stack/stack_reload_verification.mjs');
+      const verdict = await runVerifiedStackStart({ rootDir, stackName,
+        scriptPath: STACK_BACKGROUND_SCRIPT_BY_COMMAND.get(cmd),
+        args: passthrough.filter(arg => !['--verify', '--background', '--bg'].includes(arg)) });
+      console.log(JSON.stringify(verdict));
+      if (verdict.status !== 'READY') process.exitCode = 1;
+      return;
+    }
     const background = passthrough.includes('--background') || passthrough.includes('--bg');
     const args = background ? passthrough.filter((a) => a !== '--background' && a !== '--bg') : passthrough;
     await cmdRunScript({ rootDir, stackName, scriptPath: STACK_BACKGROUND_SCRIPT_BY_COMMAND.get(cmd), args, background });
