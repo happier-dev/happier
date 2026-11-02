@@ -99,36 +99,38 @@ describe('DesktopSidebarChrome', () => {
         itemRowActionsState.lastActionIds = [];
     });
 
-    it('shows each rail and overflow tooltip from its accessible name on hover, including disabled history', async () => withPopoverWebGlobals(async () => {
+    it('shows each rail and overflow tooltip from its accessible name on hover, including disabled history', async () => {
         const { DesktopSidebarChrome } = await import('./DesktopSidebarChrome');
-        const screen = await renderScreen(
-            <DesktopSidebarChrome
-                headerHeightPx={56}
-                onPressHome={vi.fn()}
-                onPressBack={vi.fn()}
-                onPressForward={vi.fn()}
-                onPressCollapse={vi.fn()}
-                canNavigateBack={false}
-                environmentBadge={null}
-                headerActions={[]}
-                topUtilityActions={[{ id: 'settings', title: 'Filter sessions', inlineTestID: 'nav-settings', icon: 'sliders-horizontal', onPress: vi.fn() }]}
-                renderHeaderOverflowVisual={() => <View />}
-                popoverBoundaryRef={{ current: null }}
-                desktopWindowControls={<View />}
-            />,
-        );
+        await withPopoverWebGlobals(async () => {
+            const screen = await renderScreen(
+                <DesktopSidebarChrome
+                    headerHeightPx={56}
+                    onPressHome={vi.fn()}
+                    onPressBack={vi.fn()}
+                    onPressForward={vi.fn()}
+                    onPressCollapse={vi.fn()}
+                    canNavigateBack={false}
+                    environmentBadge={null}
+                    headerActions={[]}
+                    topUtilityActions={[{ id: 'settings', title: 'Filter sessions', inlineTestID: 'nav-settings', icon: 'sliders-horizontal', onPress: vi.fn() }]}
+                    renderHeaderOverflowVisual={() => <View />}
+                    popoverBoundaryRef={{ current: null }}
+                    desktopWindowControls={<View />}
+                />,
+            );
 
-        for (const id of ['sidebar-back-button', 'sidebar-forward-button', 'sidebar-collapse-button', 'nav-settings', 'sidebar-header-actions-overflow']) {
-            const button = screen.findHostByTestId(id)!;
-            await React.act(async () => { button.props.onHoverIn?.(); });
-            const tooltips = screen.findAllByType(DeferredAnchoredTooltip);
-            expect(tooltips, id).toHaveLength(1);
-            expect(tooltips[0]!.props.label).toBe(button.props.accessibilityLabel);
-            await React.act(async () => { button.props.onHoverOut?.(); });
-            expect(screen.findAllByType(DeferredAnchoredTooltip)).toHaveLength(0);
-        }
-        await screen.unmount();
-    }));
+            for (const id of ['sidebar-back-button', 'sidebar-forward-button', 'sidebar-collapse-button', 'nav-settings', 'sidebar-header-actions-overflow']) {
+                const button = screen.findHostByTestId(id)!;
+                await React.act(async () => { button.props.onHoverIn?.(); });
+                const tooltips = screen.findAllByType(DeferredAnchoredTooltip);
+                expect(tooltips, id).toHaveLength(1);
+                expect(tooltips[0]!.props.label).toBe(button.props.accessibilityLabel);
+                await React.act(async () => { button.props.onHoverOut?.(); });
+                expect(screen.findAllByType(DeferredAnchoredTooltip)).toHaveLength(0);
+            }
+            await screen.unmount();
+        });
+    });
 
     it('places utility controls above the branded sidebar row', async () => {
         const { DesktopSidebarChrome } = await import('./DesktopSidebarChrome');
