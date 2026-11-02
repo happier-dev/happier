@@ -110,6 +110,37 @@ for (const dialect of ['zod', 'zod/mini']) test(`closed ${dialect} schema DTOs c
   assert.equal(compiled.status, 0, compiled.stdout + compiled.stderr);
 });
 
+for (const dialect of ['zod', 'zod/mini']) test(`optional ${dialect} catchall fields produce assignable DTO indexes`, async t => {
+  const cache = resolve('packages/plugin-sdk/node_modules/.cache');
+  mkdirSync(cache, { recursive: true });
+  const root = mkdtempSync(resolve(cache, 'schema-optional-catchall-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const actions = resolve(root, 'packages/protocol/src/actions');
+  mkdirSync(actions, { recursive: true });
+  writeFileSync(resolve(actions, 'actionIds.ts'), "export const ACTION_ID_FAMILIES_V1 = { inventory: ['inventory.list'] } as const;");
+  writeFileSync(resolve(actions, 'pluginActionSurface.ts'), 'export const PLUGIN_SURFACE_EXCLUSION_REASONS = {} as const;');
+  writeFileSync(resolve(actions, 'actionSpecs.ts'), `import { z } from '${dialect}';
+    const shape = z.object({ reconnectCause: z.optional(z.enum(['listed_needs_reauth', 'stored_health_rejected'])) });
+    const scalar = z.union([z.string(), z.number(), z.boolean(), z.null()]);
+    const schema = ${dialect === 'zod/mini' ? 'z.catchall(shape, scalar)' : 'shape.catchall(scalar)'};
+    export const ACTION_SPECS = [{ id: 'inventory.list', inputSchema: schema, outputSchema: schema }];`);
+  const derived = await deriveActionDtoSchemas({ repoRoot: root, onlyFamilies: ['inventory'] });
+  writeFileSync(resolve(root, 'dto.ts'), derived.outputs.get(resolve(actions, 'inventoryActionDtos.ts')));
+  writeFileSync(resolve(root, 'consumer.ts'), `import type { InventoryActionInputById, InventoryActionResultById } from './dto.js';
+    const absent: InventoryActionInputById['inventory.list'] = { attempts: 2 };
+    const present: InventoryActionInputById['inventory.list'] = { reconnectCause: 'listed_needs_reauth', healthy: false };
+    const output: InventoryActionResultById['inventory.list'] = present;
+    // @ts-expect-error Known fields must retain their declared enum.
+    const invalidCause: InventoryActionInputById['inventory.list'] = { reconnectCause: 'other' };
+    // @ts-expect-error Catchall values must retain their scalar contract.
+    const invalidExtra: InventoryActionResultById['inventory.list'] = { extra: [] };
+    void absent; void output; void invalidCause; void invalidExtra;`);
+  const invocation = resolveTypeScriptCliInvocation({ repoRoot: process.cwd(), workspaceDir: process.cwd() });
+  const compiled = spawnSync(invocation.command, [...invocation.argsPrefix, '--ignoreConfig', '--strict', '--skipLibCheck', '--noEmit',
+    '--target', 'ES2022', '--module', 'ESNext', '--moduleResolution', 'Bundler', '--types', 'node', resolve(root, 'consumer.ts')], { encoding: 'utf8' });
+  assert.equal(compiled.status, 0, compiled.stdout + compiled.stderr);
+});
+
 test('namespace-imported Mini Action schemas retain concrete values in derived DTOs', async t => {
   const cache = resolve('packages/plugin-sdk/node_modules/.cache');
   mkdirSync(cache, { recursive: true });

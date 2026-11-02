@@ -624,6 +624,22 @@ function deriveProgram({ repoRoot, keys, bindings, extraNames = [], extraInputNa
             return ts.visitEachChild(ts.factory.updateTypeLiteralNode(node, members), visit, context);
           }
         }
+        if (ts.isTypeLiteralNode(node) && node.members.some(member => ts.isPropertySignature(member) && member.questionToken)) {
+          // Optional named catchall fields include undefined even when the
+          // catchall itself does not. Its flattened index must admit absence.
+          const members = node.members.map(member => {
+            if (!ts.isIndexSignatureDeclaration(member) || !member.type
+              || member.parameters.length !== 1
+              || member.parameters[0].type?.kind !== ts.SyntaxKind.StringKeyword) return member;
+            const types = ts.isUnionTypeNode(member.type) ? member.type.types : [member.type];
+            if (types.some(type => type.kind === ts.SyntaxKind.UndefinedKeyword
+              || type.kind === ts.SyntaxKind.UnknownKeyword || type.kind === ts.SyntaxKind.AnyKeyword
+              || type.kind === ts.SyntaxKind.NeverKeyword)) return member;
+            return ts.factory.updateIndexSignature(member, member.modifiers, member.parameters,
+              ts.factory.createUnionTypeNode([...types, ts.factory.createKeywordTypeNode(ts.SyntaxKind.UndefinedKeyword)]));
+          });
+          return ts.visitEachChild(ts.factory.updateTypeLiteralNode(node, members), visit, context);
+        }
         if (ts.isMappedTypeNode(node)) {
           const name = node.typeParameter.name.text;
           const alreadyScoped = parameters.has(name);
