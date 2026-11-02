@@ -1,5 +1,7 @@
-import { createHash } from 'node:crypto';
-import { existsSync, realpathSync, statSync } from 'node:fs';
+import { assertWebArtifactPayload } from '../runtime/shared/web_payload.mjs';
+import { reapHistoricalTempRoots } from '../utils/dev_targets/historical_temp_roots.mjs';
+import { createHash, randomUUID } from 'node:crypto';
+import { existsSync, realpathSync, statSync, lstatSync, readFileSync, readdirSync, renameSync } from 'node:fs';
 import { chmod, cp, lstat, mkdir, mkdtemp, readFile, readdir, readlink, rm, symlink, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
@@ -8,14 +10,14 @@ import { performance } from 'node:perf_hooks';
 import { runSourceBuildCommand } from '../utils/proc/runSourceBuildCommand.mjs';
 import { runWorkspaceBuildAdmission } from '../utils/proc/workspace_build_admission.mjs';
 import { isWorkspaceBundleLockActive } from '../../../../packages/cli-common/workspaceBundleLock.mjs';
-import { isPidAlive } from '../utils/proc/pids.mjs';
+import { isPidAlive, observePidLiveness } from '../utils/proc/pids.mjs';
 import { readWorkspaceBuildInputs, readSourceComponentBuildInputs } from '../utils/fs/workspaceBuildInputs.mjs';
 import { readCachedFileDigestSync } from '../utils/fs/cached_file_digest.mjs';
 import { writeJsonAtomic } from '../utils/fs/json.mjs';
 import { withJsonOwnerFileLock } from '../utils/proc/jsonOwnerFileLock.mjs';
 import { run, runCapture } from '../utils/proc/proc.mjs';
 import { isDevStartupSourceDrift, prepareSourceComponent } from '../utils/dev/devReloadCoordinator.mjs';
-import { captureBuildInputFiles, mountCapturedWorkspaceDependencies, readBuildInputIdentity, withBuildInputDependencies } from '../../../../scripts/workspaces/buildInputConvergence.mjs';
+import { captureBuildInputFiles, mountCapturedWorkspaceDependencies, readBuildInputIdentity, withBuildInputDependencies, assertBuildInputDependencies } from '../../../../scripts/workspaces/buildInputConvergence.mjs';
 import { readSourceRuntimeDependencyIdentity } from './source_author_inputs.mjs';
 import { resolveDependencyInstallRoot, resolveDependencyRefreshMarkerPath, resolveDependencyRefreshLockPath } from '../utils/proc/dependency_refresh.mjs';
 import { probeCliDistRuntimeImport } from '../utils/cli/cliDistIntegrity.mjs';
@@ -302,66 +304,226 @@ async function emitSourceAuthorPackages({ repoDir, sourceRepoDir, projectDir, ru
   }
 }
 
-async function retainSourceBundles({ stacksRoot, bundleRoot, newest }) {
+function privateSourceStackActive(state, pending) {
+  return [state?.ownerPid, ...Object.values(state?.processes ?? {}).flat(), pending?.pid]
+    .some(pid => Number.isSafeInteger(Number(pid)) && Number(pid) > 1 && observePidLiveness(pid).status !== 'dead')
+    || Object.values(state?.remoteTargets ?? {}).some(target => Object.values(target?.services ?? {}).some(Boolean));
+}
+
+function readSourceRetentionRecord(path) {
+  try { return JSON.parse(readFileSync(path, 'utf8')); }
+  catch (error) {
+    if (error.code === 'ENOENT') return null;
+    throw Object.assign(new Error('Source retention record unavailable'), { code: 'ERETENTIONRECORD' });
+  }
+}
+
+function sourceRecordReferencePaths(record) {
+  return [record?.entrypoint, record?.uiDir, record?.exportDir, record?.runtimeDir]
+    .filter(path => typeof path === 'string');
+}
+
+function readSourceRetentionStack(stackBaseDir) {
+  const sourceRoot = join(stackBaseDir, 'source-runtime');
+  const pending = readSourceRetentionRecord(join(sourceRoot, 'start.pending.json'));
+  const state = readSourceRetentionRecord(join(stackBaseDir, 'stack.runtime.json'));
+  const references = [];
+  if (pending && isPidAlive(pending.pid)) references.push(...(pending.preparationDirs ?? []), pending.preparationDir);
+  for (const component of ['daemon', 'server', 'ui']) {
+    references.push(...sourceRecordReferencePaths(readSourceRetentionRecord(join(sourceRoot, `selected-${component}.json`))));
+  }
+  if ([state?.ownerPid, state?.processes?.daemonPid, ...(state?.processes?.daemonPids ?? [])].some(isPidAlive)) {
+    references.push(...sourceRecordReferencePaths(state?.sourceRuntimeLaunch));
+  }
+  if ([state?.ownerPid, state?.processes?.serverPid].some(isPidAlive)) {
+    references.push(...sourceRecordReferencePaths(state?.sourceUiLaunch));
+  }
+  return { state, pending, references };
+}
+
+function canonicalSourceReferences(references) {
+  return references.filter(Boolean).flatMap(path => {
+    try { return [realpathSync(path)]; }
+    catch (error) { if (error.code === 'ENOENT') return []; throw error; }
+  });
+}
+
+function privateSourceRecordRetains(stackBaseDir, directory, records = readSourceRetentionStack(stackBaseDir)) {
+  if (privateSourceStackActive(records.state, records.pending)) return true;
+  const canonicalDirectory = realpathSync(directory);
+  return canonicalSourceReferences(records.references)
+    .some(path => path === canonicalDirectory || path.startsWith(canonicalDirectory + sep));
+}
+
+function sourceRetentionStat(path) {
+  try { return lstatSync(path); }
+  catch (error) { if (error.code === 'ENOENT') return null; throw error; }
+}
+
+function sameSourceRetentionStat(left, right) {
+  if (left === null || right === null) return left === right;
+  return left.dev === right.dev && left.ino === right.ino && left.mtimeMs === right.mtimeMs;
+}
+
+function retireSourceDirectory(directory) {
+  if (basename(directory).startsWith('.retired-')) return directory;
+  const retiredDirectory = join(dirname(directory), `.retired-${basename(directory)}-${randomUUID()}`);
+  renameSync(directory, retiredDirectory);
+  return retiredDirectory;
+}
+
+async function withSourceBundlePublicationCustody({ bundleRoot, component = 'shared', signal, operation, onTiming }, publish) {
+  const started = performance.now();
+  let acquired;
+  try {
+    return await withJsonOwnerFileLock(() => {
+      acquired = performance.now();
+      return publish();
+    }, { lockPath: join(bundleRoot, 'publication.lock'), timeoutMs: Infinity, staleAfterMs: Infinity,
+      signal, errorLabel: 'source-bundle publication lock' });
+  } finally {
+    const finished = performance.now();
+    const timing = { acquireMs: (acquired ?? finished) - started,
+      holdMs: acquired === undefined ? 0 : finished - acquired };
+    if (onTiming) onTiming(timing);
+    else console.error(`[source-bundle] phase=${operation}-custody component=${component} acquireMs=${Math.round(timing.acquireMs)} holdMs=${Math.round(timing.holdMs)}`);
+  }
+}
+
+async function retireSourceCandidates({ stacksRoot, bundleRoot, candidates, dryRun, signal }) {
+  if (!candidates.length) return;
+  const retired = [];
+  await withSourceBundlePublicationCustody({ bundleRoot, signal, operation: 'retirement' }, () => {
+    // Refresh the narrow canonical pin records after expensive qualification.
+    // Every publisher/adopter uses this same custody; no await separates its
+    // final pin check from the atomic removal of the reusable directory name.
+    const stacks = new Map(readdirSync(stacksRoot, { withFileTypes: true })
+      .filter(entry => entry.isDirectory() && entry.name !== 'source-bundles')
+      .map(entry => [join(stacksRoot, entry.name), readSourceRetentionStack(join(stacksRoot, entry.name))]));
+    const references = canonicalSourceReferences([...stacks.values()].flatMap(stack => stack.references));
+    for (const candidate of candidates) {
+      const info = sourceRetentionStat(candidate.directory);
+      const completion = candidate.privateStack ? null : sourceRetentionStat(join(candidate.directory, 'source-bundle.json'));
+      const canonicalDirectory = info && realpathSync(candidate.directory);
+      const retained = info && (!sameSourceRetentionStat(info, candidate.info)
+        || !sameSourceRetentionStat(completion, candidate.completion ?? null)
+        || (candidate.fingerprint && isWorkspaceBundleLockActive(sourceBundleBuildLockPath(bundleRoot, candidate.fingerprint), { staleAfterMs: Infinity }))
+        || references.some(path => path === canonicalDirectory || path.startsWith(canonicalDirectory + sep))
+        || (candidate.privateStack && privateSourceRecordRetains(candidate.privateStack, candidate.directory, stacks.get(candidate.privateStack))));
+      if (!info || retained) {
+        if (candidate.result) {
+          candidate.result.reclaimableRoots--;
+          candidate.result.reclaimableBytes -= candidate.bytes;
+          if (retained) candidate.result.retainedRoots++;
+        }
+        continue;
+      }
+      if (dryRun) continue;
+      retired.push({ ...candidate, directory: retireSourceDirectory(candidate.directory) });
+    }
+  });
+  for (const candidate of retired) {
+    try {
+      await setBundleReadOnly(candidate.directory, false);
+      await rm(candidate.directory, { recursive: true, force: true });
+    } catch (error) { if (error.code !== 'ENOENT') throw error; }
+    if (candidate.result) {
+      candidate.result.reclaimedRoots++;
+      candidate.result.reclaimedBytes += candidate.bytes;
+    }
+  }
+}
+
+async function retainSourceBundles({ stacksRoot, bundleRoot, newest, dryRun = false, privateStackNames,
+  reclaimShared = !privateStackNames, signal }) {
+  await mkdir(bundleRoot, { recursive: true });
   const references = [newest];
   const candidates = [];
+  const privateWeb = [];
   const newestBuilt = new Map();
   // Completion and selection share publication custody. Allocation names bind
   // unfinished graphs to existing fingerprint custody, so cancellation leaves
   // no new ledger and a later publication can reclaim an abandoned allocation.
   for (const entry of await readdir(bundleRoot, {withFileTypes:true})) {
-    if (!entry.isDirectory() || !/^(?:bundle|runtime|web)-/.test(entry.name)) continue;
+    if (!entry.isDirectory() || !/^(?:\.retired-)?(?:bundle|runtime|web)-/.test(entry.name)) continue;
     const directory = join(bundleRoot, entry.name);
+    const info = sourceRetentionStat(directory);
+    if (!info) continue;
     const record = await readOptionalJson(join(directory, 'source-bundle.json'));
+    const completion = sourceRetentionStat(join(directory, 'source-bundle.json'));
+    const fingerprint = record?.reuseFingerprint
+      ?? /^(?:\.retired-)?(?:bundle|runtime|web)-([a-f0-9]{64})-/.exec(entry.name)?.[1];
     if (!record) {
-      const fingerprint = /^(?:bundle|runtime|web)-([a-f0-9]{64})-/.exec(entry.name)?.[1];
-      // Old allocation names cannot prove unfinished-producer custody.
-      if (!fingerprint || isWorkspaceBundleLockActive(sourceBundleBuildLockPath(bundleRoot, fingerprint), {staleAfterMs:Infinity})) continue;
-      candidates.push(directory);
+      // Old allocation names cannot prove unfinished-producer custody. A
+      // retired name already surrendered that authority before cleanup, which
+      // may have removed its completion record before being interrupted.
+      if (!fingerprint && !entry.name.startsWith('.retired-')) continue;
+      if (fingerprint && isWorkspaceBundleLockActive(sourceBundleBuildLockPath(bundleRoot, fingerprint), {staleAfterMs:Infinity})) continue;
+      candidates.push({ directory, info, completion: null, fingerprint });
       continue;
     }
+    if (!completion) continue; // Another reclaimer already retired this directory.
     // Completion is immutable; allocation-directory metadata can change
     // independently and must not make an older product the newest fallback.
-    const createdMs = (await lstat(join(directory, 'source-bundle.json'))).mtimeMs;
+    const createdMs = completion.mtimeMs;
     const component = record.component ?? (record.cliDir ? 'daemon' : 'server');
-    if (!newestBuilt.has(component) || createdMs > newestBuilt.get(component).createdMs) {
+    // Interrupted retirement remains ordinary cleanup input, never a reusable
+    // product or a replacement for the newest completed fallback.
+    if (!entry.name.startsWith('.retired-') && (!newestBuilt.has(component) || createdMs > newestBuilt.get(component).createdMs)) {
       newestBuilt.set(component, {directory, createdMs});
     }
-    if (record.reuseFingerprint && isWorkspaceBundleLockActive(sourceBundleBuildLockPath(bundleRoot, record.reuseFingerprint), {staleAfterMs:Infinity})) continue;
-    candidates.push(directory);
+    if (fingerprint && isWorkspaceBundleLockActive(sourceBundleBuildLockPath(bundleRoot, fingerprint), {staleAfterMs:Infinity})) continue;
+    candidates.push({ directory, info, completion, fingerprint });
   }
   references.push(...[...newestBuilt.values()].map(({ directory }) => directory));
   for (const entry of await readdir(stacksRoot, {withFileTypes:true})) {
     if (!entry.isDirectory() || entry.name === 'source-bundles') continue;
     const stackBaseDir = join(stacksRoot, entry.name);
     const sourceRoot = join(stackBaseDir, 'source-runtime');
-    const pending = await readOptionalJson(join(sourceRoot, 'start.pending.json'));
-    if (pending && isPidAlive(pending.pid)) references.push(...(pending.preparationDirs ?? []), pending.preparationDir);
-    for (const component of ['daemon', 'server', 'ui']) {
-      const selected = await readOptionalJson(join(sourceRoot, `selected-${component}.json`));
-      if (selected?.entrypoint) references.push(selected.entrypoint);
-      if (selected?.uiDir) references.push(selected.uiDir);
-    }
-    const state = await readOptionalJson(join(stackBaseDir, 'stack.runtime.json'));
-    if ([state?.ownerPid, state?.processes?.daemonPid, ...(state?.processes?.daemonPids ?? [])].some(isPidAlive)
-        && state?.sourceRuntimeLaunch?.entrypoint) references.push(state.sourceRuntimeLaunch.entrypoint);
-    if ([state?.ownerPid, state?.processes?.serverPid].some(isPidAlive)
-        && state?.sourceUiLaunch?.uiDir) {
-      references.push(state.sourceUiLaunch.uiDir, state.sourceUiLaunch.exportDir);
-      // A web-only reload atomically changes this Stack's serving link while
-      // the server continues using its stable path. Follow the actual reader.
-      try { references.push(realpathSync(state.sourceUiLaunch.uiDir)); }
-      catch (error) { if (error.code !== 'ENOENT') throw error; }
-    }
-    if (existsSync(sourceRoot)) for (const bundle of await readdir(sourceRoot, {withFileTypes:true})) {
-      if (bundle.isDirectory() && bundle.name.startsWith('bundle-')) candidates.push(join(sourceRoot, bundle.name));
+    const { pending, state, references: stackReferences } = readSourceRetentionStack(stackBaseDir);
+    references.push(...stackReferences);
+    if (existsSync(sourceRoot)) {
+      const entries = await readdir(sourceRoot, {withFileTypes:true});
+      // Maintenance nominates only its exact private stacks; ordinary
+      // publication keeps the existing runtime-bundle retention scope.
+      if (!privateStackNames) for (const bundle of entries) {
+        if (bundle.isDirectory() && /^(?:\.retired-)?bundle-/.test(bundle.name)) {
+          const directory = join(sourceRoot, bundle.name);
+          const info = sourceRetentionStat(directory);
+          if (!info) continue;
+          const completion = sourceRetentionStat(join(directory, 'source-bundle.json'));
+          const record = completion && readSourceRetentionRecord(join(directory, 'source-bundle.json'));
+          candidates.push({ directory, info, completion, fingerprint: record?.reuseFingerprint });
+        }
+      }
+      if (privateStackNames && !privateStackNames.includes(entry.name)) continue;
+      const names = entries.filter(bundle => bundle.isDirectory() && /^(?:\.retired-)?web-/.test(bundle.name)).map(bundle => bundle.name);
+      if (!names.length) continue;
+      const active = privateSourceStackActive(state, pending);
+      const group = { stack: entry.name, parent: sourceRoot, names, active };
+      privateWeb.push(group);
+      if (active) continue; // Another program's running or preparing Stack is untouched.
+      // Legacy private exports have no completion record. Reuse the producer's
+      // payload validator; a newer partial output cannot replace last green.
+      let lastGreen;
+      for (const name of names) {
+        if (name.startsWith('.retired-')) continue;
+        const payloadDir = join(sourceRoot, name, 'export');
+        try {
+          await assertWebArtifactPayload({ payloadDir, entrypoint: 'index.html' });
+          const completedMs = (await lstat(join(payloadDir, 'index.html'))).mtimeMs;
+          if (!lastGreen || completedMs > lastGreen.completedMs) lastGreen = { payloadDir, completedMs };
+        }
+        catch { continue; }
+      }
+      if (lastGreen) references.push(lastGreen.payloadDir);
     }
   }
   // A detached daemon may outlive its Stack owner and its recorded launch.
   // Observe the actual command before reclaiming its lazy-loadable JS tree.
   let liveCommands = '';
   try {
-    if (process.platform === 'win32') return; // No authoritative process command observation here.
+    if (process.platform === 'win32') return { observationUnavailable: true, stacks: [] }; // No authoritative process command observation here.
     if (process.platform === 'linux') {
       for (const pid of (await readdir('/proc')).filter(name => /^\d+$/.test(name))) {
         try {
@@ -374,76 +536,123 @@ async function retainSourceBundles({ stacksRoot, bundleRoot, newest }) {
     } else liveCommands = await runCapture('ps', ['-ax', '-o', 'command=']);
   } catch (error) {
     console.error(`[source-bundle] retaining bundles: live process observation unavailable (${error.code ?? error.message})`);
-    return;
+    return { observationUnavailable: true, stacks: [] };
   }
   // Serving links and managed storage aliases can name the same retained
   // product differently. Compare their actual filesystem authority before
   // reclamation; missing references no longer retain a reader.
-  const canonicalReferences = references.filter(Boolean).flatMap(path => {
-    try { return [realpathSync(path)]; }
-    catch (error) { if (error.code === 'ENOENT') return []; throw error; }
-  });
-  for (const directory of candidates) {
-    const canonicalDirectory = realpathSync(directory);
-    if (canonicalReferences.some(path => path === canonicalDirectory || path.startsWith(canonicalDirectory + sep))
-        || liveCommands.includes(directory + sep) || liveCommands.includes(canonicalDirectory + sep)) continue;
-    await setBundleReadOnly(directory, false);
-    await rm(directory, {recursive:true, force:true});
+  const canonicalReferences = canonicalSourceReferences(references);
+  const isPinned = directory => {
+    let canonicalDirectory;
+    try { canonicalDirectory = realpathSync(directory); }
+    catch (error) { if (error.code === 'ENOENT') return true; throw error; }
+    return canonicalReferences.some(path => path === canonicalDirectory || path.startsWith(canonicalDirectory + sep))
+      || liveCommands.includes(directory + sep) || liveCommands.includes(canonicalDirectory + sep);
+  };
+  const nominations = (dryRun || !reclaimShared ? [] : candidates)
+    .filter(candidate => !isPinned(candidate.directory));
+  const stacks = [];
+  for (const group of privateWeb) {
+    const candidateNames = group.active ? [] : group.names.filter(name => !isPinned(join(group.parent, name)));
+    // Private historical outputs retain the canonical historical age boundary,
+    // ownership, descendant/inode, binding and immediate process-reference checks.
+    const qualified = [];
+    const qualification = reapHistoricalTempRoots(group.parent, '/proc', { candidateNames, dryRun: true,
+      retainCandidate: (directory, _references, tree) => {
+        if (privateSourceRecordRetains(dirname(group.parent), directory)) return true;
+        qualified.push({ directory, info: tree.info, bytes: tree.bytes, privateStack: dirname(group.parent) });
+        return false;
+      } });
+    const result = { stack: group.stack, roots: group.names.length, protectedRoots: group.names.length - candidateNames.length,
+      active: group.active, ...qualification };
+    stacks.push(result);
+    nominations.push(...qualified.map(candidate => ({ ...candidate, result })));
   }
+  await retireSourceCandidates({ stacksRoot, bundleRoot, candidates: nominations, dryRun, signal });
+  return { observationUnavailable: false, stacks };
+}
+
+/** Explicit private-export maintenance uses exactly the publication owner's
+ * nominations and lock. Dry-run never changes output bytes or selections. */
+export async function reclaimPrivateSourceWebExports({ stacksRoot, stackNames, dryRun = true, signal }) {
+  if (!Array.isArray(stackNames) || stackNames.some(name => typeof name !== 'string' || !name
+      || name === '.' || name === '..' || /[\\/\0]/.test(name))) throw new Error('Private retention requires exact Stack names');
+  const bundleRoot = join(stacksRoot, 'source-bundles');
+  return await retainSourceBundles({ stacksRoot, bundleRoot, dryRun, privateStackNames: stackNames, signal });
+}
+
+/** Reuse publication retention without publishing a replacement or nominating
+ * any Stack's private outputs. Current selections and live readers stay pinned. */
+export async function reclaimSourceBundles({ stacksRoot, dryRun = true, signal }) {
+  return await retainSourceBundles({ stacksRoot, bundleRoot: join(stacksRoot, 'source-bundles'),
+    dryRun, privateStackNames: [], reclaimShared: true, signal });
 }
 
 /** Runtime and finite web products share completion and reclamation custody.
- * The consumer pins/selects the completed product inside this short section. */
-export async function withSourceBundlePublication({ stackBaseDir, outputDir, record, signal }, publish) {
+ * The consumer pins/selects the completed product inside this short section;
+ * qualification and recursive retirement run after publication release. */
+export async function withSourceBundlePublication({ stackBaseDir, outputDir, record, signal, dependencySourceDir, dependencyEnv }, publish) {
   const bundleRoot = join(dirname(stackBaseDir), 'source-bundles');
-  return await withJsonOwnerFileLock(async () => {
-    let result;
-    try {
-      if (record) {
-        await writeJsonAtomic(join(outputDir, 'source-bundle.json'), record);
-        await setBundleReadOnly(outputDir, true);
-      }
-      result = await publish();
-    } catch (error) {
-      // Distinct admission hints can converge on the same captured inputs.
-      // Retire a failed new product before releasing publication custody, so
-      // another producer cannot adopt it during caller-side error cleanup.
-      if (record) {
-        try {
-          await setBundleReadOnly(outputDir, false);
-          await rm(outputDir, { recursive: true, force: true });
-        } catch (retirementError) {
-          throw new AggregateError([error, retirementError], '[source-bundle] publication and failed-product retirement both failed');
+  let timing = { acquireMs: 0, holdMs: 0 };
+  let recordMs = 0;
+  let publishMs = 0;
+  let retainMs = 0;
+  let published = false;
+  let failedRetirement;
+  try {
+    const result = await withSourceBundlePublicationCustody({ bundleRoot, signal,
+      component: record?.component, operation: 'publication', onTiming: value => { timing = value; } }, async () => {
+      let result;
+      try {
+        if (record) {
+          const recordStarted = performance.now();
+          try {
+            if (record.dependencyPublication) await assertBuildInputDependencies({ sourceDir: dependencySourceDir,
+              env: dependencyEnv, state: record.dependencyPublication });
+            await writeJsonAtomic(join(outputDir, 'source-bundle.json'), record);
+            await setBundleReadOnly(outputDir, true);
+          } finally { recordMs = performance.now() - recordStarted; }
         }
+        const publishStarted = performance.now();
+        try { result = await publish(); }
+        finally { publishMs = performance.now() - publishStarted; }
+      } catch (error) {
+        // Distinct admission hints can converge on the same captured inputs.
+        // Retire a failed new product before releasing publication custody, so
+        // another producer cannot adopt it during caller-side error cleanup.
+        if (record) {
+          try {
+            failedRetirement = retireSourceDirectory(outputDir);
+          } catch (retirementError) {
+            throw new AggregateError([error, retirementError], '[source-bundle] publication and failed-product retirement both failed');
+          }
+        }
+        throw error;
       }
-      throw error;
-    }
-    try { await retainSourceBundles({ stacksRoot: dirname(stackBaseDir), bundleRoot, newest: outputDir }); }
+      return result;
+    });
+    published = true;
+    const retainStarted = performance.now();
+    try { await retainSourceBundles({ stacksRoot: dirname(stackBaseDir), bundleRoot, newest: outputDir, signal }); }
     catch (error) {
       console.error(`[source-bundle] published graph retained; reclamation failed (${error.code ?? error.message})`);
     }
+    finally { retainMs = performance.now() - retainStarted; }
     return result;
-  }, { lockPath: join(bundleRoot, 'publication.lock'), timeoutMs: Infinity, staleAfterMs: Infinity,
-    signal, errorLabel: 'source-bundle publication lock' });
-}
-
-async function readSourceRuntimeBundleRecord(entrypoint) {
-  return entrypoint
-    ? await readOptionalJson(join(resolve(dirname(entrypoint), '../../..'), 'source-bundle.json'))
-    : null;
-}
-
-async function readSelectedSourceRuntimeRecord({ stackBaseDir, component, required = true }) {
-  const selected = await readOptionalJson(join(stackBaseDir, 'source-runtime', `selected-${component}.json`));
-  if (!selected && !required) return null;
-  const record = await readSourceRuntimeBundleRecord(selected?.entrypoint);
-  if (!record?.identity || record.entrypoint !== selected?.entrypoint || !existsSync(record.entrypoint)) {
-    throw Object.assign(
-      new Error(`[source-bundle] selected source ${component} bundle is unavailable; explicitly restart the Stack to select current source`),
-      { code: 'source_bundle_unavailable' },
-    );
+  } catch (error) {
+    if (failedRetirement) {
+      const retainStarted = performance.now();
+      try {
+        await setBundleReadOnly(failedRetirement, false);
+        await rm(failedRetirement, { recursive: true, force: true });
+      } catch (retirementError) {
+        throw new AggregateError([error, retirementError], '[source-bundle] publication and failed-product retirement both failed');
+      } finally { retainMs = performance.now() - retainStarted; }
+    }
+    throw error;
+  } finally {
+    console.error(`[source-bundle] phase=publication-custody component=${record?.component ?? 'shared'} acquireMs=${Math.round(timing.acquireMs)} recordMs=${Math.round(recordMs)} publishMs=${Math.round(publishMs)} holdMs=${Math.round(timing.holdMs)} retainMs=${Math.round(retainMs)} status=${published ? 'published' : 'failed'}`);
   }
-  return record;
 }
 
 async function readSelectedSourceRuntimeBundle(options) {
