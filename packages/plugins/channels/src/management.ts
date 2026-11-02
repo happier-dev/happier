@@ -245,6 +245,14 @@ type CurrentProvider = Readonly<{
   observationsPoll: AdmittedTargetedOperationExecutionHandle | undefined;
   connectionStop: AdmittedTargetedOperationExecutionHandle | undefined;
 }>;
+type PersistedConversationConnection = Readonly<{
+  kind: 'created' | 'rejoined';
+  connectionId: string;
+  connectionRow: StateRow;
+}>;
+type PreparedConversationConnectionResult =
+  | Exclude<ConversationConnectionCreateResult, Readonly<{ kind: 'created' | 'rejoined' }>>
+  | PersistedConversationConnection;
 type ConversationConnectionUpdateResult = Readonly<{
   kind: 'updated' | 'unchanged';
   connectionId: string;
@@ -2008,7 +2016,7 @@ function assertRejoinedConnection(input: Readonly<{
   providerPluginId: string;
   providerConnectionKey: string;
   integrationPrincipalId: string;
-}>): void {
+}>): StateRow {
   if (input.row === null) {
     throw pluginError('channels_connection_reservation_corrupt', 'Connection identity reservation has no retained connection row.');
   }
@@ -2027,6 +2035,7 @@ function assertRejoinedConnection(input: Readonly<{
     || payload.integrationPrincipal.id !== input.integrationPrincipalId) {
     throw pluginError('channels_connection_reservation_corrupt', 'Retained connection row does not match its immutable reservation.');
   }
+  return input.row;
 }
 
 async function readExistingReservation(input: Readonly<{
@@ -2035,7 +2044,7 @@ async function readExistingReservation(input: Readonly<{
   providerPluginId: string;
   providerConnectionKey: string;
   integrationPrincipalId: string;
-}>): Promise<string | null> {
+}>): Promise<StateRow | null> {
   const collection = requireChannelsAccountStorage(input.context).collection(CHANNEL_STATE_COLLECTION);
   const reservation = await collection.get(input.reservationRowId, { signal: input.context.signal });
   assertNotAborted(input.context.signal);
@@ -2049,14 +2058,13 @@ async function readExistingReservation(input: Readonly<{
   });
   const connection = await collection.get(connectionId, { signal: input.context.signal });
   assertNotAborted(input.context.signal);
-  assertRejoinedConnection({
+  return assertRejoinedConnection({
     row: connection,
     connectionId,
     providerPluginId: input.providerPluginId,
     providerConnectionKey: input.providerConnectionKey,
     integrationPrincipalId: input.integrationPrincipalId,
   });
-  return connectionId;
 }
 
 async function findExistingConnection(input: Readonly<{
@@ -2064,7 +2072,7 @@ async function findExistingConnection(input: Readonly<{
   createInput: ConversationConnectionCreateInputV1;
   providerPluginId: string;
   setup: ConversationProviderSetupResultV1;
-}>): Promise<string | null> {
+}>): Promise<StateRow | null> {
   const connectionIdentityKey = await readExistingConnectionIdentityKey(input.context);
   if (connectionIdentityKey === null) return null;
   const reservationRowId = await deriveReservationRowId({
@@ -2203,7 +2211,7 @@ async function createOrRejoinConnection(input: Readonly<{
   transportOrigin: ConnectionTransportOrigin;
   connectionId: string;
   webhookEndpoint?: ConversationConnectionWebhookEndpoint;
-}>): Promise<Extract<ConversationConnectionCreateResult, Readonly<{ kind: 'created' | 'rejoined' }>>> {
+}>): Promise<PersistedConversationConnection> {
   const connectionIdentityKey = await ensureConnectionIdentityKey(input.context);
   const reservationRowId = await deriveReservationRowId({
     connectionIdentityKey,
@@ -2218,7 +2226,7 @@ async function createOrRejoinConnection(input: Readonly<{
     providerConnectionKey: input.setup.providerConnectionKey,
     integrationPrincipalId: input.setup.integrationPrincipal.id,
   });
-  if (existing !== null) return { kind: 'rejoined', connectionId: existing };
+  if (existing !== null) return { kind: 'rejoined', connectionId: existing.rowId, connectionRow: existing };
 
   const collection = requireChannelsAccountStorage(input.context).collection(CHANNEL_STATE_COLLECTION);
   assertNotAborted(input.context.signal);
@@ -2239,7 +2247,14 @@ async function createOrRejoinConnection(input: Readonly<{
       { kind: 'put', value: connection, expectedRevision: 'absent' },
     ], { signal: input.context.signal });
     assertNotAborted(input.context.signal);
-    if (result.status === 'updated') return { kind: 'created', connectionId };
+    if (result.status === 'updated') return {
+      kind: 'created', connectionId,
+      connectionRow: {
+        rowId: connectionId,
+        value: connection,
+        revision: result.results.find(entry => entry.rowId === connectionId)!.revision,
+      },
+    };
 
     let reservationTombstoneRevision: number | undefined;
     for (const conflict of result.conflicts) {
@@ -2262,7 +2277,14 @@ async function createOrRejoinConnection(input: Readonly<{
         { kind: 'put', value: connection, expectedRevision: 'absent' },
       ], { signal: input.context.signal });
       assertNotAborted(input.context.signal);
-      if (recreated.status === 'updated') return { kind: 'created', connectionId };
+      if (recreated.status === 'updated') return {
+        kind: 'created', connectionId,
+        connectionRow: {
+          rowId: connectionId,
+          value: connection,
+          revision: recreated.results.find(entry => entry.rowId === connectionId)!.revision,
+        },
+      };
     }
 
     const rejoined = await readExistingReservation({
@@ -2272,7 +2294,7 @@ async function createOrRejoinConnection(input: Readonly<{
       providerConnectionKey: input.setup.providerConnectionKey,
       integrationPrincipalId: input.setup.integrationPrincipal.id,
     });
-    if (rejoined !== null) return { kind: 'rejoined', connectionId: rejoined };
+    if (rejoined !== null) return { kind: 'rejoined', connectionId: rejoined.rowId, connectionRow: rejoined };
     throw pluginError(
       'channels_connection_create_conflict',
       'Connection setup conflicted before an authoritative connection could be created or re-read.',
@@ -2284,7 +2306,7 @@ async function createOrRejoinConnection(input: Readonly<{
     // can instead adopt its immutable reservation, exactly as a later Create
     // invocation does. Absence never proves rollback; a new owner decision may
     // retry only through this same atomic reservation-plus-connection CAS.
-    let existing: string | null;
+    let existing: StateRow | null;
     try {
       existing = await readExistingReservation({
         context: input.context, reservationRowId, providerPluginId: input.providerPluginId,
@@ -2296,7 +2318,7 @@ async function createOrRejoinConnection(input: Readonly<{
         details: { recommendedRecovery: recommendConversationRecovery('connection/create-v1', {}, 'createOutcomeUnknown', 'accountStateUnavailable') },
       }, { cause: error });
     }
-    if (existing !== null) return { kind: 'rejoined', connectionId: existing };
+    if (existing !== null) return { kind: 'rejoined', connectionId: existing.rowId, connectionRow: existing };
     throw new PluginError({ code: error.code, message: error.message, retryable: true,
       details: { recommendedRecovery: recommendConversationRecovery('connection/create-v1', {}, 'createOutcomeUnknown', 'setupSelectionRequired') },
     }, { cause: error });
@@ -2478,6 +2500,21 @@ async function runProviderSetupAndTest(input: Readonly<{
       'Provider setup requires remediation before connection creation.',
     );
   }
+  const currentProvider = await readCurrentSelectedProvider({
+    context: input.context,
+    selection: input.setupInput.providerSelection,
+  });
+  return await runProviderConnectionTest({ ...input, provider: currentProvider, prepared });
+}
+
+async function runProviderConnectionTest(input: Readonly<{
+  context: PluginInvocationContext;
+  setupInput: ConversationConnectionSetupAndTestInput;
+  provider: CurrentProvider;
+  connectionIdForTest: string;
+  prepared: Extract<ProviderConnectionSetup, { kind: 'ready' }>;
+}>): Promise<ProviderConnectionPreparation> {
+  const { prepared } = input;
   const transportOrigin = prepared.transportOrigin;
   if (!prepared.setup.supportedTransports.includes(input.setupInput.selectedTransport)) {
     return { kind: 'notReady', reason: 'unsupported' };
@@ -2486,8 +2523,9 @@ async function runProviderSetupAndTest(input: Readonly<{
   // invocation cancellation boundary between them so a completed setup cannot
   // start a later test after its owner has withdrawn authority.
   assertNotAborted(input.context.signal);
+  const currentProvider = input.provider;
   const testExecution = await input.context.services.actions.executeAdmittedTargetedOperationWithExecutionOrigin(
-    input.provider.connectionTest,
+    currentProvider.connectionTest,
     {
       v: 1,
       connectionId: input.connectionIdForTest,
@@ -2497,7 +2535,8 @@ async function runProviderSetupAndTest(input: Readonly<{
       credentialRef: input.setupInput.credentialRef,
       selectedTransport: input.setupInput.selectedTransport,
     },
-    { signal: input.context.signal },
+    { signal: input.context.signal,
+      expectedExecutionRouting: getConversationConnectionExecutionRouting(getConversationConnectionTransportOrigin(transportOrigin), currentProvider.pluginId) },
   );
   let testResult: ReturnType<typeof ConversationConnectionTestResultV1Schema.parse>;
   try {
@@ -2509,27 +2548,11 @@ async function runProviderSetupAndTest(input: Readonly<{
     }, { cause });
   }
   assertNotAborted(input.context.signal);
-  assertProviderExecutionOrigin({
-    provider: input.provider,
-    executionOrigin: testExecution.executionOrigin,
-    operation: 'connectionTest',
-  });
   const testTransportOrigin = testExecution.executionOrigin;
-  if (!arePluginMachineExecutionOriginsEqual(transportOrigin, testTransportOrigin)) {
-    throw pluginError(
-      'channels_connection_execution_origin_mismatch',
-      'Provider setup and connection test did not settle at the same current execution origin.',
-    );
-  }
+  // The host's expectedExecutionRouting admission above checks Home, Machine
+  // and plugin; the former post-test comparison checked only Home/Machine.
   if (testResult.kind === 'notReady') return testResult;
-  if (testResult.providerConnectionKey !== prepared.setup.providerConnectionKey
-    || testResult.integrationPrincipal.id !== prepared.setup.integrationPrincipal.id) {
-    throw pluginError(
-      'channels_connection_test_identity_mismatch',
-      'Provider setup and connection test disagreed about immutable connection identity.',
-    );
-  }
-  return { ...prepared, transportOrigin };
+  return { ...prepared, transportOrigin: testTransportOrigin };
 }
 
 function projectConnectionPrepareTransportSelection(
@@ -5353,6 +5376,19 @@ export async function createConversationConnectionForInvocation(
       true,
     );
   }
+  const result = await persistPreparedConversationConnection(createInput, providerForPersistence, prepared, connectionId, context);
+  // The row is private continuation data, never a public Action result.
+  return 'connectionRow' in result ? { kind: result.kind, connectionId: result.connectionId } : result;
+}
+
+/** The declared webhook contribution a durable-push setup must carry. */
+async function persistPreparedConversationConnection(
+  createInput: ConversationConnectionCreateInputV1,
+  provider: CurrentProvider,
+  prepared: Extract<ProviderConnectionPreparation, { kind: 'ready' }>,
+  connectionId: string,
+  context: PluginInvocationContext,
+): Promise<PreparedConversationConnectionResult> {
   // Any existing exact connection rejoins before the endpoint journey can
   // ensure anything new; uniqueness stays the one identity authority. The
   // durable-push continuation is the one exception: it re-runs this same
@@ -5364,10 +5400,10 @@ export async function createConversationConnectionForInvocation(
     const existing = await findExistingConnection({
       context,
       createInput,
-      providerPluginId: providerForPersistence.pluginId,
+      providerPluginId: provider.pluginId,
       setup: prepared.setup,
     });
-    if (existing !== null) return { kind: 'rejoined', connectionId: existing };
+    if (existing !== null) return { kind: 'rejoined', connectionId: existing.rowId, connectionRow: existing };
   }
 
   if (createInput.selectedTransport === 'durablePush') {
@@ -5382,7 +5418,7 @@ export async function createConversationConnectionForInvocation(
       context,
       createInput,
       connectionId,
-      providerPluginId: providerForPersistence.pluginId,
+      providerPluginId: provider.pluginId,
       setup: prepared.setup,
       transportOrigin: prepared.transportOrigin,
       continuation: createInput.endpointContinuation,
@@ -5399,14 +5435,13 @@ export async function createConversationConnectionForInvocation(
   return await createOrRejoinConnection({
     context,
     createInput,
-    providerPluginId: providerForPersistence.pluginId,
+    providerPluginId: provider.pluginId,
     setup: prepared.setup,
     transportOrigin: getConversationConnectionTransportOrigin(prepared.transportOrigin),
     connectionId,
   });
 }
 
-/** The declared webhook contribution a durable-push setup must carry. */
 function readDurablePushWebhookContribution(
   setup: ConversationProviderSetupResultV1,
 ): Readonly<{ pluginId: string; localId: string }> {
@@ -5520,7 +5555,7 @@ async function continueDurablePushConnectionCreation(input: Readonly<{
   setup: ConversationProviderSetupResultV1;
   transportOrigin: PluginMachineExecutionOriginV1;
   continuation: NonNullable<ConversationConnectionCreateInputV1['endpointContinuation']>;
-}>): Promise<ConversationConnectionCreateResult> {
+}>): Promise<PersistedConversationConnection> {
   const continuation = input.continuation;
   const webhookEndpointId = readCanonicalConversationWebhookEndpointId(
     continuation.webhookEndpointId,
@@ -5552,11 +5587,11 @@ async function continueDurablePushConnectionCreation(input: Readonly<{
   if (existing !== null) {
     await assertDurablePushConnectionRejoinEndpoint({
       context: input.context,
-      connectionId: existing,
+      connectionId: existing.rowId,
       webhookEndpointId,
       webhookSourceInstanceId: sourceInstanceId,
     });
-    return { kind: 'rejoined', connectionId: existing };
+    return { kind: 'rejoined', connectionId: existing.rowId, connectionRow: existing };
   }
 
   const outcome = await createOrRejoinConnection({
