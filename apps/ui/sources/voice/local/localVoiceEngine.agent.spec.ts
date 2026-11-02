@@ -299,7 +299,7 @@ describe('local voice engine agent behavior', () => {
             prewarm.reply.resolve(unsupported);
         }
         const afterCapture = await readLocalVoiceMachinePrerequisites();
-        await expect(toggleLocalVoiceTurn('s1')).rejects.toMatchObject({ code: 'VOICE_AGENT_UNSUPPORTED' });
+        await expect(toggleLocalVoiceTurn('s1')).rejects.toMatchObject({ rpcErrorCode: 'VOICE_AGENT_UNSUPPORTED' });
 
         expect(ensureAgentRpc, JSON.stringify({ beforeCapture, afterCapture,
             afterTranscription: await readLocalVoiceMachinePrerequisites(), runtime: getLocalVoiceState(),
@@ -1015,8 +1015,7 @@ describe('local voice engine agent behavior', () => {
         const turn = localVoiceEngine.sendLocalVoiceAgentTextTurn('s1', 'hello world', admitted ? {
             localId: 'typed-text-failure', deliveryCommand: 'interrupt_and_send',
         } : undefined, onAccepted);
-        if (admitted) await expect(turn).rejects.toMatchObject({ rpcErrorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND });
-        else await expect(turn).rejects.toMatchObject({ code: RPC_ERROR_CODES.METHOD_NOT_FOUND });
+        await expect(turn).rejects.toMatchObject({ rpcErrorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND });
 
         expect(startTurnRpc, JSON.stringify({
             runtime: getLocalVoiceState(),
@@ -1035,6 +1034,64 @@ describe('local voice engine agent behavior', () => {
         const dictation = voiceCaptureAdmissionController.acquire('dictation');
         if (dictation.status === 'acquired') dictation.lease.release();
         expect(dictation.status).toBe('acquired');
+    });
+
+    it('presents the RUN62H reconnect diagnostic after durable Send blocks a failed startup Run', async () => {
+        const { ConnectedServiceUxDiagnosticV1Schema } = await import('@happier-dev/protocol/connect/connectedServiceUxDiagnostics');
+        const { ExecutionRunGetResponseSchema } = await import('@happier-dev/protocol/execution/runs/responseSchemas');
+        const { voiceConversationRuntimeMachine } = await import('@/voice/runtime/machine/VoiceConversationRuntimeMachine');
+        const { deriveLocalVoiceSessionSnapshot } = await import('@/voice/runtime/machine/deriveLocalVoiceSessionSnapshot');
+        const { projectVoiceAttemptPresentation } = await import('@/components/voice/attempt/projectVoiceAttemptPresentation');
+        const { resolveConnectedServiceUxDiagnosticPresentation } = await import('@/components/sessions/connectedServices/diagnostics/connectedServiceUxDiagnostics');
+        const { t } = await import('@/text');
+        // final62h/r-proof.json records a failed Run with code/message/uxDiagnostic.
+        // Its collector omits diagnostic values; complete them using the owner's schema.
+        const uxDiagnostic = ConnectedServiceUxDiagnosticV1Schema.parse({
+            code: 'connected_service_credential_reconnect_required', source: 'spawn_resume',
+            failurePhase: 'materialization', serviceId: 'happier.agent.codex/openai-codex',
+            profileId: '705530f2-81e8-4ba2-bc7b-7929a4b95b5a', retryable: false,
+            suggestedActions: ['reconnect_profile', 'open_connected_accounts'],
+            diagnostics: { reconnectCause: 'listed_needs_reauth' },
+        });
+        const storage = await getStorage();
+        const voice = storage.getState().settings.voice;
+        storage.__setState({ settings: { ...storage.getState().settings, voice: {
+            ...voice, providerId: 'local_conversation', providers: { ...voice.providers,
+                local_conversation: { schemaVersion: 1, config: {
+                    ...readLocalConversationVoiceSettings(voice), conversationMode: 'agent',
+                    tts: { ...readLocalConversationVoiceSettings(voice).tts, autoSpeakReplies: false },
+                } },
+            },
+        } } });
+        await localVoiceEngine.toggleLocalVoiceTurn(VOICE_AGENT_GLOBAL_SESSION_ID);
+        const incumbent = sessionRpcWithServerScope.getMockImplementation();
+        if (!incumbent) throw new Error('Missing daemon transport');
+        sessionRpcWithServerScope.mockImplementation(async request => {
+            const response = await incumbent(request);
+            if (request.method !== SESSION_RPC_METHODS.EXECUTION_RUN_GET) return response;
+            const parsed = ExecutionRunGetResponseSchema.safeParse(response);
+            if (!parsed.success) return response;
+            return ExecutionRunGetResponseSchema.parse({ run: { ...parsed.data.run, status: 'failed',
+                error: { code: uxDiagnostic.code, message: 'PRIVATE_PROVIDER_BODY', uxDiagnostic } } });
+        });
+        // No durableDispatch argument: take the actual enqueue/block/result conversion path.
+        await expect(localVoiceEngine.sendLocalVoiceAgentTextTurn(VOICE_AGENT_GLOBAL_SESSION_ID, 'hello'))
+            .rejects.toMatchObject({ uxDiagnostic });
+        const snapshot = deriveLocalVoiceSessionSnapshot('local_conversation', 'local', voiceConversationRuntimeMachine.getSnapshot());
+        expect(snapshot).toMatchObject({ errorConnectedServiceDiagnostic: uxDiagnostic, errorRecoveryAction: 'none' });
+        const presentation = projectVoiceAttemptPresentation({
+            control: { availability: 'recoverable', live: true, canStart: true, canStop: false, canMute: false,
+                muted: false, capturing: false, primaryAction: 'start', recoveryAvailable: false,
+                surfaceState: 'error', tone: 'error', stop: 'blush', sessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
+                markPose: 'blocked', statusCell: null },
+            attemptId: 'run62h', ended: false, ...snapshot, recoveryAction: snapshot.errorRecoveryAction ?? null,
+            recoveryContext: { connectRecoveryTarget: { kind: 'default' }, runtimeRecoveryTarget: null,
+                attemptSessionId: VOICE_AGENT_GLOBAL_SESSION_ID, startSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
+                globalStartAuthorized: false }, serviceTitle: 'Voice', agentTitle: 'Codex', agentMachineLabel: 'Dev machine',
+        });
+        expect(presentation.failureMessage).toBe(t(resolveConnectedServiceUxDiagnosticPresentation(uxDiagnostic)!.bodyKey));
+        expect(presentation.recovery).toBeNull();
+        expect(JSON.stringify(presentation)).not.toContain('PRIVATE_PROVIDER_BODY');
     });
 
     it('rethrows a known before-effect streamed-turn rejection for durable delivery', async () => {

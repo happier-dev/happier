@@ -129,13 +129,11 @@ export async function sendVoiceTextTurn(params: {
         });
       },
     });
+    // Pending owns durable delivery settlement; the original turn failure owns
+    // the runtime diagnostic for both rejected and already accepted input.
+    if (dispatchOutcome.failure) throw dispatchOutcome.failure.error;
     if (!result.ok) throw Object.assign(new Error(result.message ?? result.reason), { code: result.errorCode ?? result.reason });
-    if (result.disposition === 'settled') {
-      // Pending settlement acknowledges the input, not successful reply audio.
-      // Preserve the original turn failure for the lifecycle's single publisher.
-      if (dispatchOutcome.failure) throw dispatchOutcome.failure.error;
-      return;
-    }
+    if (result.disposition === 'settled') return;
     const code = result.errorCode ?? (result.disposition === 'ambiguous' ? 'voice_turn_dispatch_ambiguous' : 'voice_turn_pending');
     throw Object.assign(new Error(code), { code });
   }
