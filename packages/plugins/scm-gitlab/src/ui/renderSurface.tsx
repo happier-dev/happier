@@ -651,13 +651,13 @@ function GitlabActivityStream({
               />
             )
             : null)}
-          <RefreshRow
-            onRefresh={() => { for (const { controller } of walks) controller.refresh(); }}
-            pending={walks.some(({ controller }) => controller.state.kind === 'ready' && controller.state.pending)}
-            accessibilityLabel={text('plugins.gitlab.ui.rereadActivity', 'Re-read activity from GitLab')}
-          />
         </Stack>
       )}
+      refresh={{
+        label: text('plugins.gitlab.ui.rereadActivity', 'Re-read activity from GitLab'),
+        pending: walks.some(({ controller }) => controller.state.kind === 'ready' && controller.state.pending),
+        onRefresh: () => { for (const { controller } of walks) controller.refresh(); },
+      }}
     />
   );
 }

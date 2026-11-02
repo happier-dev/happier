@@ -149,9 +149,10 @@ function PagedFooter({
   loadMoreTitle?: string;
   loadMoreTitleKey?: string;
   onLoadMore?: () => void;
-  onRefresh: () => void;
-  refreshLabel: string;
-  refreshLabelKey: string;
+  /** Absent where the Activity stream owns the re-read (`TriageActivityTimeline` `refresh`). */
+  onRefresh?: () => void;
+  refreshLabel?: string;
+  refreshLabelKey?: string;
   summary: string;
   summaryKey: string;
   summaryValues: Readonly<Record<string, string | number>>;
@@ -187,15 +188,17 @@ function PagedFooter({
           />
         )
         : null}
-      <Row gap="small">
-        <Action.Refresh
-          onRefresh={onRefresh}
-          disabled={state.pending}
-          variant="plain"
-          accessibilityLabel={refreshLabel}
-          accessibilityLabelKey={refreshLabelKey}
-        />
-      </Row>
+      {onRefresh === undefined ? null : (
+        <Row gap="small">
+          <Action.Refresh
+            onRefresh={onRefresh}
+            disabled={state.pending}
+            variant="plain"
+            {...(refreshLabel === undefined ? {} : { accessibilityLabel: refreshLabel })}
+            {...(refreshLabelKey === undefined ? {} : { accessibilityLabelKey: refreshLabelKey })}
+          />
+        </Row>
+      )}
     </Stack>
   );
 }
@@ -800,14 +803,18 @@ function ActivityStreamPanel({
           onLoadMore: comments.loadMore,
         }] : []),
       ]}
+      // One re-read of both collections the stream merges, beside the stream's own paging.
+      refresh={{
+        label: text('plugins.bitbucket.ui.rereadActivity', 'Re-read this activity from Bitbucket'),
+        pending: (activity.state.kind === 'ready' && activity.state.pending)
+          || (comments.state.kind === 'ready' && comments.state.pending),
+        onRefresh: () => { activity.refresh(); comments.refresh(); },
+      }}
       footer={(
         <Stack gap="small">
           {activity.state.kind === 'ready' ? (
             <PagedFooter
               state={activity.state}
-              onRefresh={activity.refresh}
-              refreshLabel="Re-read this activity from Bitbucket"
-              refreshLabelKey="plugins.bitbucket.ui.rereadActivity"
               summary={`${String(activity.state.rows.length)} entry/entries read.`}
               summaryKey="plugins.bitbucket.ui.entriesRead"
               summaryValues={{ count: activity.state.rows.length }}
@@ -816,9 +823,6 @@ function ActivityStreamPanel({
           {comments.state.kind === 'ready' ? (
             <PagedFooter
               state={comments.state}
-              onRefresh={comments.refresh}
-              refreshLabel="Re-read the comments from Bitbucket"
-              refreshLabelKey="plugins.bitbucket.ui.rereadComments"
               summary={`${String(comments.state.rows.length)} comment(s) read.`}
               summaryKey="plugins.bitbucket.ui.commentsRead"
               summaryValues={{ count: comments.state.rows.length }}

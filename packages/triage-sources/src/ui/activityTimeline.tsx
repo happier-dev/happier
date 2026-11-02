@@ -1,9 +1,9 @@
 import * as React from 'react';
 import {
-  Action,
   Avatar,
   Button,
   Icon,
+  IconButton,
   Markdown,
   Row,
   Stack,
@@ -13,6 +13,7 @@ import {
   type IconName,
   type TextTone,
   type TimelineItemContent,
+  usePluginHostApi,
 } from '@happier-dev/plugin-ui';
 import { formatTriageTimestampV1 } from '@happier-dev/triage-protocol/v1';
 
@@ -88,8 +89,22 @@ export type TriageActivityTimelineProps = Readonly<{
   empty: React.ReactNode;
   /** One per collection the source still has pages of; each keeps its own cursor. */
   continuations?: readonly TriageActivityContinuationV1[];
-  /** After the stream: what was read, a re-read control. */
+  /**
+   * The source's manual re-read of every collection it merged (detail panels never poll). It sits with the rail's
+   * own paging controls as one quiet glyph, so reading on and reading again live in one place.
+   */
+  refresh?: TriageActivityRefreshV1;
+  /** After the stream: what was read, the comment box. */
   footer?: React.ReactNode;
+}>;
+
+/** A source's re-read of its Activity; the label names the provider it reads ("Re-read this timeline from GitHub"). */
+export type TriageActivityRefreshV1 = Readonly<{
+  label: string;
+  labelKey?: string;
+  /** A read already in flight: the control stays in place and inert rather than vanishing. */
+  pending: boolean;
+  onRefresh: () => unknown;
 }>;
 
 const MARKER_ICON: Readonly<Record<TriageActivityKindV1, IconName>> = Object.freeze({
@@ -132,11 +147,22 @@ function activityEventContent(
   event: TriageActivityEventV1,
   locale: string,
   nowMs: number,
+  hostApi: ReturnType<typeof usePluginHostApi>,
 ): TimelineItemContent {
   const actor = event.actor ?? null;
   const detail = event.detail ?? null;
   const quote = event.quote ?? null;
   const href = event.href ?? null;
+  // Opening the event where it happened is a rare reach beside a scanned rail: a quiet glyph, not a word per row.
+  const open = href === null
+    ? null
+    : (
+      <IconButton
+        icon={<Icon name="external" tone="secondary" />}
+        accessibilityLabel={event.hrefLabel ?? event.summary}
+        onPress={() => { void hostApi.openExternalLink(href).catch(() => undefined); }}
+      />
+    );
   return {
     glyph: <ActivityGlyph event={event} />,
     heading: (
@@ -161,37 +187,39 @@ function activityEventContent(
         {event.inset ?? null}
       </>
     ),
-    trailing: href === null
-      ? null
-      : (
-        <Action.OpenExternal
-          url={href}
-          variant="plain"
-          accessibilityLabel={event.hrefLabel ?? event.summary}
-        />
-      ),
+    trailing: open,
   };
 }
 
-function ContinuationButtons({ continuations }: Readonly<{
+function ContinuationButtons({ continuations, refresh }: Readonly<{
   continuations: readonly TriageActivityContinuationV1[];
-}>): React.ReactElement {
+  refresh?: TriageActivityRefreshV1;
+}>): React.ReactElement | null {
+  if (continuations.length === 0 && refresh === undefined) return null;
+  // Quiet controls at the rail's edge, not full-width blocks: paging and re-reading are rare reaches, the events lead.
   return (
-    <>
-      {/* A quiet text control at the rail's edge, not a full-width block: paging is a rare reach, the events lead. */}
+    <Row gap="small" align="center" wrap>
       {continuations.map((continuation) => (
-        <Row key={continuation.key}>
-          <Button
-            title={continuation.title}
-            {...(continuation.titleKey === undefined ? {} : { titleKey: continuation.titleKey })}
-            variant="plain"
-            size="small"
-            busy={continuation.pending}
-            onPress={continuation.onLoadMore}
-          />
-        </Row>
+        <Button
+          key={continuation.key}
+          title={continuation.title}
+          {...(continuation.titleKey === undefined ? {} : { titleKey: continuation.titleKey })}
+          variant="plain"
+          size="small"
+          busy={continuation.pending}
+          onPress={continuation.onLoadMore}
+        />
       ))}
-    </>
+      {refresh === undefined ? null : (
+        <IconButton
+          icon={<Icon name="refresh" tone="secondary" />}
+          accessibilityLabel={refresh.label}
+          {...(refresh.labelKey === undefined ? {} : { accessibilityLabelKey: refresh.labelKey })}
+          disabled={refresh.pending}
+          onPress={refresh.onRefresh}
+        />
+      )}
+    </Row>
   );
 }
 
@@ -206,6 +234,7 @@ function ContinuationButtons({ continuations }: Readonly<{
  */
 export function TriageActivityTimeline(props: TriageActivityTimelineProps): React.ReactElement {
   const events = React.useMemo(() => orderTriageActivityEventsV1(props.events), [props.events]);
+  const hostApi = usePluginHostApi();
   const continuations = props.continuations ?? [];
   const earlier = continuations.filter((continuation) => continuation.reads === 'earlier');
   const later = continuations.filter((continuation) => continuation.reads !== 'earlier');
@@ -225,13 +254,13 @@ export function TriageActivityTimeline(props: TriageActivityTimelineProps): Reac
       // An earlier page is a pure prepend: the row the reader was on stays where it was.
       preserveVisibleContentPositionOnPrepend
       empty={props.empty}
-      endContent={later.length === 0 && props.footer === undefined ? undefined : (
+      endContent={later.length === 0 && props.refresh === undefined && props.footer === undefined ? undefined : (
         <Stack gap="small" style={{ paddingTop: 8 }}>
-          <ContinuationButtons continuations={later} />
+          <ContinuationButtons continuations={later} {...(props.refresh === undefined ? {} : { refresh: props.refresh })} />
           {props.footer}
         </Stack>
       )}
-      renderItem={(event) => activityEventContent(event, props.locale, props.nowMs)}
+      renderItem={(event) => activityEventContent(event, props.locale, props.nowMs, hostApi)}
     />
   );
 }

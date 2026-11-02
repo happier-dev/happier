@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import * as React from 'react';
 import { act } from 'react';
-import { defineUiSurface, EmptyState } from '@happier-dev/plugin-ui';
+import { defineUiSurface, EmptyState, Text } from '@happier-dev/plugin-ui';
 import { createPluginUiTestkit, createSurfaceContextFixture, type PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -100,6 +100,34 @@ describe('TriageActivityTimeline', () => {
     // The earlier page lands before the remark already on screen, not stapled after it.
     expect(text.indexOf('Opened the issue')).toBeGreaterThanOrEqual(0);
     expect(text.indexOf('Opened the issue')).toBeLessThan(text.indexOf('Commented recently'));
+  });
+
+  it('offers the re-read beside the rail\'s own paging, ahead of the footer, and inert while a read runs', async () => {
+    const calls: string[] = [];
+    const render = (pending: boolean) => () => (
+      <TriageActivityTimeline events={[event('note:recent', 2, 'Commented recently', { kind: 'comment', actor: 'Jonas' })]}
+        locale="en" nowMs={NOW_MS} accessibilityLabel="Activity" empty={EMPTY}
+        continuations={[{ key: 'events', title: 'Load more events', pending: false, onLoadMore: () => { calls.push('more'); } }]}
+        refresh={{ label: 'Re-read activity', pending, onRefresh: () => { calls.push('refresh'); } }}
+        footer={<Text value="Write a comment" />}
+      />
+    );
+    const page = await mount(render(false));
+    const refresh = await page.getByRole('button', { name: 'Re-read activity' });
+    const more = await page.getByRole('button', { name: 'Load more events' });
+    // One quiet row of stream controls at the rail's edge: reading on and reading again sit together.
+    const refreshNode = document.querySelector('[aria-label="Re-read activity"]');
+    const moreNode = [...document.querySelectorAll('[role="button"]')].find(node => node.textContent === 'Load more events');
+    expect(refreshNode?.parentElement).toBe(moreNode?.parentElement);
+    const text = document.body.textContent ?? '';
+    expect(text.indexOf('Load more events')).toBeLessThan(text.indexOf('Write a comment'));
+    await act(async () => { await page.press(refresh); });
+    await act(async () => { await page.press(more); });
+    expect(calls).toEqual(['refresh', 'more']);
+
+    await mounted.splice(0)[0]?.dispose();
+    await mount(render(true));
+    expect(document.querySelector('[aria-label="Re-read activity"]')?.getAttribute('aria-disabled')).toBe('true');
   });
 
   it('says nothing happened instead of drawing an empty rail', async () => {

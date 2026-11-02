@@ -286,6 +286,20 @@ describe('the mounted GitHub Feedback plane', () => {
       .resolves.toMatchObject({ role: 'button' });
   });
 
+  it('keeps a complete issue conversation quiet: no read counts and no pull-request-only Feedback pointer', async () => {
+    answers.comments = {
+      kind: 'comments',
+      rows: [{ id: 'IC_1', author: 'hubber', body: 'Is this ready?', createdAtMs: OBSERVED_AT_MS - 20_000 }],
+    };
+    const detail = await mountFeedback(launchInput('issue'));
+    await act(async () => {
+      await detail.press(await detail.getByRole('tab', { name: 'Comments' }));
+    });
+    await expect(detail.getByText('Is this ready?')).resolves.toBeDefined();
+    expect(document.body.textContent).not.toContain('comment(s) read');
+    expect(document.body.textContent).not.toContain('Line-anchored review conversations');
+  });
+
   it('renders envelope omissions and an unavailable continuation as partial evidence', async () => {
     answers.comments = {
       kind: 'comments',

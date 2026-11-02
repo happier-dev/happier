@@ -2296,17 +2296,13 @@ function useGithubTimelineStream(input: TriageDetailSurfaceInputV1): GithubActiv
       : [],
     summary: (
       <Stack gap="small">
-        <Text
+        {state.omittedRowCount === 0 ? null : <Text
           variant="micro"
           tone="neutral"
-          valueKey={state.omittedRowCount === 0
-            ? 'plugins.github.ui.eventsRead'
-            : 'plugins.github.ui.eventsReadWithUnreadable'}
-          fallback={state.omittedRowCount === 0
-            ? '{count} event(s) read.'
-            : '{count} event(s) read. {unreadable} row(s) on the pages read could not be understood.'}
+          valueKey="plugins.github.ui.eventsReadWithUnreadable"
+          fallback="{count} event(s) read. {unreadable} row(s) on the pages read could not be understood."
           values={{ count: state.rows.length, unreadable: state.omittedRowCount }}
-        />
+        />}
         {incomplete === null ? null : <Text variant="micro" tone="neutral">{incomplete}</Text>}
       </Stack>
     ),
@@ -2407,15 +2403,15 @@ function GithubActivityView({
       )}
       empty={answered.length === streams.length ? answered[0]?.empty ?? null : null}
       continuations={answered.flatMap((stream) => stream.continuations)}
+      refresh={{
+        label: refreshLabel,
+        labelKey: refreshLabelKey,
+        pending: streams.some((stream) => stream.pending),
+        onRefresh: () => { for (const stream of streams) stream.refresh(); },
+      }}
       footer={(
         <Stack gap="small">
           {answered.map((stream, index) => <React.Fragment key={index}>{stream.summary}</React.Fragment>)}
-          <RefreshRow
-            onRefresh={() => { for (const stream of streams) stream.refresh(); }}
-            pending={streams.some((stream) => stream.pending)}
-            accessibilityLabel={refreshLabel}
-            accessibilityLabelKey={refreshLabelKey}
-          />
         </Stack>
       )}
     />
@@ -2968,21 +2964,6 @@ function ChecksPanel({
 
 /* --------------------------------------------------------------------- Comments */
 
-/**
- * The one sentence this panel owes its reader, every time it is shown.
- *
- * GitHub serves pull-request-level comments, line comments and review bodies as
- * separate resources with separate cursors. This panel reads the first of them,
- * and saying so is what keeps a reader from believing the conversation is empty
- * when it is only elsewhere.
- */
-function commentScopeDisclosure(text: PluginTranslate): string {
-  return text(
-    'plugins.github.ui.commentScope',
-    'These are comments on the entry itself. Line-anchored review conversations are shown'
-      + ' in Feedback.',
-  );
-}
 
 /** A remark as one Activity event: its author's mark, the verb, and its own words quoted. */
 function remarkEvent(text: PluginTranslate, remark: Readonly<{
@@ -3077,7 +3058,6 @@ function useGithubCommentsStream(input: TriageDetailSurfaceInputV1): GithubActiv
       : null,
     header: (
       <Stack gap="small">
-        <Text variant="micro" tone="neutral">{commentScopeDisclosure(text)}</Text>
         <PageFailureBanner state={state} />
       </Stack>
     ),
@@ -3102,17 +3082,13 @@ function useGithubCommentsStream(input: TriageDetailSurfaceInputV1): GithubActiv
       : [],
     summary: (
       <Stack gap="small">
-        <Text
+        {state.omittedRowCount === 0 ? null : <Text
           variant="micro"
           tone="neutral"
-          valueKey={state.omittedRowCount === 0
-            ? 'plugins.github.ui.commentsRead'
-            : 'plugins.github.ui.commentsReadWithUnreadable'}
-          fallback={state.omittedRowCount === 0
-            ? '{count} comment(s) read.'
-            : '{count} comment(s) read. {unreadable} row(s) on the pages read could not be understood.'}
+          valueKey="plugins.github.ui.commentsReadWithUnreadable"
+          fallback="{count} comment(s) read. {unreadable} row(s) on the pages read could not be understood."
           values={{ count: state.rows.length, unreadable: state.omittedRowCount }}
-        />
+        />}
         {state.projectionTruncated
           ? (
             <Text
@@ -3132,7 +3108,6 @@ function useGithubCommentsStream(input: TriageDetailSurfaceInputV1): GithubActiv
       <EmptyState
         title="No comments yet"
         titleKey="plugins.github.ui.noComments"
-        description={commentScopeDisclosure(text)}
       />
     ),
   };
@@ -3599,21 +3574,13 @@ function useGithubFeedbackStream(context: GithubFeedbackWriteContextV1): GithubA
     ],
     summary: conversation.state.kind !== 'ready' ? null : (
       <Stack gap="small">
-        <Text
+        {conversation.state.omittedRowCount === 0 ? null : <Text
           variant="micro"
           tone="neutral"
-          valueKey={conversation.state.omittedRowCount === 0
-            ? 'plugins.github.ui.feedbackRead'
-            : 'plugins.github.ui.commentsReadWithUnreadable'}
-          fallback={conversation.state.omittedRowCount === 0
-            ? '{comments} comment(s) read.'
-            : '{count} comment(s) read. {unreadable} row(s) on the pages read could not be understood.'}
-          values={{
-            comments: conversation.state.rows.length,
-            count: conversation.state.rows.length,
-            unreadable: conversation.state.omittedRowCount,
-          }}
-        />
+          valueKey="plugins.github.ui.commentsReadWithUnreadable"
+          fallback="{count} comment(s) read. {unreadable} row(s) on the pages read could not be understood."
+          values={{ count: conversation.state.rows.length, unreadable: conversation.state.omittedRowCount }}
+        />}
         {conversation.state.projectionTruncated
           ? (
             <Text
