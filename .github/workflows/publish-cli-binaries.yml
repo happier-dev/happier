@@ -344,10 +344,61 @@ jobs:
           if-no-files-found: error
           retention-days: 2
 
+  build_linux_arm64_pty:
+    name: Build Linux ARM64 PTY addon
+    if: ${{ inputs.retry_version == '' && inputs.resume_version == '' }}
+    needs: [prepare]
+    runs-on: ubuntu-24.04-arm
+    permissions: {}
+    steps:
+      - name: Download exact candidate source transport
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: cli-source-${{ needs.prepare.outputs.source_sha }}
+          path: ${{ runner.temp }}/cli-source
+      - name: Materialize candidate source without repository authority
+        env:
+          SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          archive="${RUNNER_TEMP}/cli-source/cli-source-${SOURCE_SHA}.tar.gz"
+          test -f "$archive"
+          tar -xzf "$archive" -C "$GITHUB_WORKSPACE"
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version-file: .node-version
+      - name: Enable Corepack
+        uses: ./.github/actions/enable-corepack-yarn
+      - name: Install native candidate dependencies
+        uses: ./.github/actions/install-yarn-dependencies
+        env:
+          YARN_PRODUCTION: "false"
+          npm_config_production: "false"
+          HAPPIER_UI_VENDOR_WEB_ASSETS: "0"
+          HAPPIER_INSTALL_SCOPE: protocol,agents,release-runtime,cli-common
+        with:
+          args: --frozen-lockfile --ignore-engines --ignore-platform
+      - name: Verify and stage the native ARM64 addon
+        working-directory: apps/cli
+        run: |
+          set -euo pipefail
+          node -e 'if (process.arch !== "arm64") throw new Error("ARM64 runner required"); require("node-pty")'
+          destination="$GITHUB_WORKSPACE/dist/native/node-pty/linux-arm64"
+          mkdir -p "$destination"
+          cp "$(dirname "$(node -p 'require.resolve("node-pty/package.json")')")/build/Release/pty.node" "$destination/pty.node"
+      - name: Upload exact native PTY addon
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: cli-linux-arm64-pty-${{ needs.prepare.outputs.source_sha }}
+          path: dist/native/node-pty/linux-arm64/pty.node
+          if-no-files-found: error
+          retention-days: 2
+
   build_candidate:
     name: Build unsigned CLI candidate
     if: ${{ inputs.retry_version == '' && inputs.resume_version == '' }}
-    needs: [prepare, build_windows_service_launcher]
+    needs: [prepare, build_windows_service_launcher, build_linux_arm64_pty]
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     permissions: {}
@@ -372,6 +423,11 @@ jobs:
         with:
           name: cli-windows-service-launcher-${{ needs.prepare.outputs.source_sha }}
           path: packages/cli-common/native/windows/bin/windows-x64
+      - name: Download exact Linux ARM64 PTY addon
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: cli-linux-arm64-pty-${{ needs.prepare.outputs.source_sha }}
+          path: dist/native/node-pty/linux-arm64
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:

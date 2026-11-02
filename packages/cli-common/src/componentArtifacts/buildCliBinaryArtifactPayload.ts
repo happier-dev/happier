@@ -7,7 +7,6 @@ import { CLI_BINARY_TARGETS, resolveCliToolsPlatformDir, resolveCurrentBinaryTar
 import { WINDOWS_SERVICE_LAUNCHER_FILE_NAME } from '../service/windowsLauncher.js';
 import { commandExists, compileBunBinary, ensureFileExists, execOrThrow, resolveBunCommand, resolveYarnCommand, type RunCommand } from './commands.js';
 import {
-  bundleInstalledPackageWithRuntimeDependencies,
   bundleWorkspacePackageWithRuntimeDependencies,
   resolveWorkspaceBundlesFromPackageJson,
   vendorBundledPackageRuntimeDependencies,
@@ -63,15 +62,6 @@ async function copyCliRuntimeSidecars(repoRoot: string, payloadDir: string): Pro
     await mkdir(join(targetPath, '..'), { recursive: true });
     await cp(sourcePath, targetPath, { recursive: true });
   }
-
-  const resolveFromPackageJsonPath = join(repoRoot, 'package.json');
-  for (const packageName of CLI_RUNTIME_BUNDLED_PACKAGES) {
-    bundleInstalledPackageWithRuntimeDependencies({
-      packageName,
-      resolveFromPackageJsonPath,
-      destNodeModulesDir: join(payloadDir, 'node_modules'),
-    });
-  }
 }
 
 async function copyCliRuntimeTools(repoRoot: string, payloadDir: string, target: BinaryTarget): Promise<void> {
@@ -112,6 +102,15 @@ async function copyCliNodeRuntimePayload(
     destPackageDir: payloadDir,
     excludeRootDependencies: [...CLI_OPTIONAL_RUNTIME_PACKAGES, 'sharp'],
   });
+  // node-pty 1.1.0 ships no Linux prebuilds. Cross-target archives consume the
+  // addon produced on the matching release runner instead of the build host's.
+  if (target.os === 'linux' && (process.platform !== 'linux' || process.arch !== target.arch)) {
+    const binding = join(repoRoot, 'dist', 'native', 'node-pty', `linux-${target.arch}`, 'pty.node');
+    await ensureFileExists(binding);
+    const releaseDir = join(payloadDir, 'node_modules', 'node-pty', 'build', 'Release');
+    await mkdir(releaseDir, { recursive: true });
+    await cp(binding, join(releaseDir, 'pty.node'));
+  }
   for (const entry of await resolveSharpRuntimeSidecarEntries({ resolveFromPackageJsonPath: join(cliDir, 'package.json'), target })) {
     const destination = join(payloadDir, entry.targetPath);
     await mkdir(join(destination, '..'), { recursive: true });

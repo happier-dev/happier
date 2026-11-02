@@ -20,6 +20,21 @@ test('CLI candidate build installs the complete cross-target optional native pac
   assert.match(String(install?.with?.args ?? ''), /(?:^|\s)--ignore-platform(?:\s|$)/);
 });
 
+test('CLI cross-target builds consume the ARM64 PTY addon from the same candidate on a native runner', async () => {
+  const { workflow } = await loadWorkflow('publish-cli-binaries.yml');
+  const native = workflow.jobs.build_linux_arm64_pty;
+  assert.ok(native, 'Linux ARM64 needs its own source-built node-pty addon');
+  assert.equal(native['runs-on'], 'ubuntu-24.04-arm');
+  assert.equal(native.steps.find((step) => step.run?.includes('require("node-pty")'))?.['working-directory'], 'apps/cli');
+  assert.ok(workflow.jobs.build_candidate.needs.includes('build_linux_arm64_pty'));
+  const upload = native.steps.find((step) => step.uses?.startsWith('actions/upload-artifact@'));
+  const download = workflow.jobs.build_candidate.steps.find((step) =>
+    step.uses?.startsWith('actions/download-artifact@') && step.with?.name === upload?.with?.name);
+  assert.ok(upload?.with?.name.includes('${{ needs.prepare.outputs.source_sha }}'));
+  assert.equal(upload.with.path, 'dist/native/node-pty/linux-arm64/pty.node');
+  assert.equal(download?.with?.path, 'dist/native/node-pty/linux-arm64');
+});
+
 test('CLI and hstack publishers keep launcher artifacts distinct within one release run', async () => {
   const artifactNames = new Set();
   const launcherDirectory = 'packages/cli-common/native/windows/bin/windows-x64';

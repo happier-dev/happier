@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import test from 'node:test';
@@ -16,15 +16,19 @@ function loadInstallActionSteps() {
   return YAML.parse(raw).runs.steps;
 }
 
-function resolveCacheIdentity(args) {
+function resolveCacheIdentity(args, glibcVersionRuntime) {
   const step = loadInstallActionSteps().find((candidate) => candidate.id === 'runtime');
   const directory = mkdtempSync(join(tmpdir(), 'happier-dependency-cache-key-'));
   try {
     const output = join(directory, 'output');
+    const preload = join(directory, 'report.cjs');
+    // The runner's libc is an OS boundary; keep the action's real identity script.
+    writeFileSync(preload, `process.report.getReport = () => ({ header: ${JSON.stringify({ glibcVersionRuntime })} });`);
     const result = spawnSync('bash', ['-e', '-c', step.run], {
       cwd: repoRoot,
       encoding: 'utf8',
-      env: { ...process.env, ...step.env, INSTALL_ARGS: args, GITHUB_OUTPUT: output, HAPPIER_INSTALL_SCOPE: '' },
+      env: { ...process.env, ...step.env, INSTALL_ARGS: args, GITHUB_OUTPUT: output, HAPPIER_INSTALL_SCOPE: '',
+        NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ''} --require=${preload}` },
     });
     assert.equal(result.status, 0, result.stderr);
     return Object.fromEntries(
@@ -37,6 +41,18 @@ function resolveCacheIdentity(args) {
     rmSync(directory, { recursive: true, force: true });
   }
 }
+
+test('native dependency caches cannot cross the runner glibc ABI boundary', () => {
+  const key = loadInstallActionSteps().find((step) => step.id === 'dependencies').with.key;
+  const renderRuntimeKey = (identity) => key.replace(/\$\{\{ steps\.runtime\.outputs\.(\w+) \}\}/g,
+    (_match, name) => identity[name] ?? '');
+  const ubuntu24 = resolveCacheIdentity('--ignore-platform', '2.39');
+  const newerRunner = resolveCacheIdentity('--ignore-platform', '2.42');
+  assert.notEqual(renderRuntimeKey(ubuntu24), renderRuntimeKey(newerRunner),
+    'a cached node-pty built with GLIBC_2.42 cannot load on Ubuntu 24.04');
+  assert.equal(renderRuntimeKey(ubuntu24), renderRuntimeKey(resolveCacheIdentity('--ignore-platform', '2.39')));
+  assert.ok(resolveCacheIdentity('--ignore-platform').libc, 'non-glibc platforms also need a stable key');
+});
 
 test('installs that produce the same dependency tree share one modules cache entry', () => {
   const steps = loadInstallActionSteps();

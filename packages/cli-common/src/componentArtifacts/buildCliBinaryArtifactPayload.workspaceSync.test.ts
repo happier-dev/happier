@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readFile, readdir, rm, utimes, writeFile } from 'node:fs/promises';
+import { cp, mkdtemp, mkdir, readFile, readdir, rm, utimes, writeFile } from 'node:fs/promises';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import cliDistBuildManifest from '../../cliDistBuildManifest.cjs';
 import { buildCliBinaryArtifactPayload } from './buildCliBinaryArtifactPayload.js';
+import { CLI_BINARY_TARGETS } from './targets.js';
 
 const tempDirs: string[] = [];
 const sourceRepoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..');
@@ -114,7 +115,12 @@ describe('buildCliBinaryArtifactPayload bundled workspace sync', () => {
         }));
     });
 
-    it('rebuilds a stale-version cli dist and forwards the exact release version', async () => {
+    it.each(CLI_BINARY_TARGETS)('stages target-native PTY assets and rebuilds stale CLI dist for $os-$arch', async (target) => {
+        const platform = target.os === 'windows' ? 'win32' : target.os;
+        const targetKey = `${platform}-${target.arch}`;
+        const sharpPackages = [`@img/sharp-${targetKey}`,
+            ...(target.os === 'windows' ? [] : [`@img/sharp-libvips-${targetKey}`]),
+            ...(target.os === 'linux' ? [`@img/sharp-linuxmusl-${target.arch}`, `@img/sharp-libvips-linuxmusl-${target.arch}`] : [])];
         const repoRoot = await createTempDir();
         const payloadDir = join(repoRoot, 'artifacts', 'payload');
         const older = new Date('2026-04-13T18:00:00.000Z');
@@ -151,6 +157,8 @@ describe('buildCliBinaryArtifactPayload bundled workspace sync', () => {
             dependencies: {
                 '@happier-dev/cli-common': '0.0.0',
                 '@huggingface/transformers': '0.0.0',
+                'node-pty': '0.0.0',
+                '@homebridge/node-pty-prebuilt-multiarch': '0.0.0',
                 sharp: '0.0.0',
             },
         }, null, 2)}\n`, older);
@@ -220,8 +228,7 @@ describe('buildCliBinaryArtifactPayload bundled workspace sync', () => {
             'node-pty',
             '@homebridge/node-pty-prebuilt-multiarch',
             'sharp',
-            '@img/sharp-darwin-arm64',
-            '@img/sharp-libvips-darwin-arm64',
+            ...sharpPackages,
         ]) {
             await writeRepoFile(
                 join(repoRoot, 'node_modules', ...packageName.split('/'), 'package.json'),
@@ -229,6 +236,7 @@ describe('buildCliBinaryArtifactPayload bundled workspace sync', () => {
                     name: packageName,
                     version: '0.0.0',
                     main: './index.js',
+                    ...(packageName === 'sharp' ? { optionalDependencies: Object.fromEntries(sharpPackages.map((name) => [name, '0.0.0'])) } : {}),
                 }, null, 2)}\n`,
                 older,
             );
@@ -237,14 +245,24 @@ describe('buildCliBinaryArtifactPayload bundled workspace sync', () => {
 
         const compileObservedContents: string[] = [];
         const buildVersions: string[] = [];
-        for (const key of ['darwin-arm64', 'linux-x64', 'win32-x64']) {
-            await writeRepoFile(join(repoRoot, 'node_modules', 'node-pty', 'prebuilds', key, 'pty.node'), key, older);
+        // node-pty 1.1.0 ships macOS/Windows prebuilds; Linux is source-built.
+        for (const key of ['darwin-arm64', 'darwin-x64', 'win32-x64']) {
+            const binding = key.startsWith('win32-') ? 'conpty.node' : 'pty.node';
+            await writeRepoFile(join(repoRoot, 'node_modules', 'node-pty', 'prebuilds', key, binding), key, older);
         }
+        await writeRepoFile(join(repoRoot, 'node_modules/node-pty/build/Release/pty.node'), `${process.platform}-${process.arch}`, older);
+        await cp(join(repoRoot, 'node_modules/node-pty'), join(repoRoot, 'apps/cli/node_modules/node-pty'), { recursive: true });
+        // The CLI's dependency closure must not be overwritten by a root copy.
+        await writeRepoFile(join(repoRoot, 'node_modules/node-pty/build/Release/pty.node'), 'stale root addon', older);
+        for (const arch of ['x64', 'arm64']) {
+            await writeRepoFile(join(repoRoot, 'dist/native/node-pty', `linux-${arch}`, 'pty.node'), `linux-${arch}`, older);
+        }
+        await writeRepoFile(join(repoRoot, 'packages/cli-common/native/windows/bin/windows-x64/happier-service-launcher.exe'), 'launcher', older);
 
         await buildCliBinaryArtifactPayload({
             repoRoot,
             payloadDir,
-            target: { os: 'darwin', arch: 'arm64', bunTarget: 'bun-darwin-arm64', exeExt: '' },
+            target,
             releaseVersion: '0.2.10-dev.61',
             ensureWorkspacePackagesBuiltByName: async (_root, packageNames) => ({
                 ok: true,
@@ -269,14 +287,17 @@ describe('buildCliBinaryArtifactPayload bundled workspace sync', () => {
         expect(buildVersions).toEqual(['0.2.10-dev.61']);
         await expect(readFile(join(payloadDir, 'node_modules', 'sharp', 'index.js'), 'utf8'))
             .resolves.toBe('module.exports = {};\n');
-        await expect(readFile(join(payloadDir, 'node_modules', '@img', 'sharp-darwin-arm64', 'index.js'), 'utf8'))
-            .resolves.toBe('module.exports = {};\n');
-        await expect(readFile(join(payloadDir, 'node_modules', '@img', 'sharp-libvips-darwin-arm64', 'index.js'), 'utf8'))
-            .resolves.toBe('module.exports = {};\n');
+        for (const packageName of sharpPackages) {
+            await expect(readFile(join(payloadDir, 'node_modules', packageName, 'index.js'), 'utf8'))
+                .resolves.toBe('module.exports = {};\n');
+        }
         expect(compileObservedContents).toEqual([currentSourceContent]);
         const requireFromPayload = createRequire(join(payloadDir, 'scripts', 'claude_remote_launcher.cjs'));
         expect(requireFromPayload('./claude_launcher_runtime.cjs')).toHaveProperty('runClaudeCli', expect.any(Function));
-        expect(await readdir(join(payloadDir, 'node_modules', 'node-pty', 'prebuilds'))).toEqual(['darwin-arm64']);
+        expect(await readdir(join(payloadDir, 'node_modules', 'node-pty', 'prebuilds'))).toEqual(target.os === 'linux' ? [] : [targetKey]);
+        const ptyBinding = target.os === 'linux' ? 'build/Release/pty.node'
+            : `prebuilds/${targetKey}/${target.os === 'windows' ? 'conpty.node' : 'pty.node'}`;
+        await expect(readFile(join(payloadDir, 'node_modules/node-pty', ptyBinding), 'utf8')).resolves.toBe(targetKey);
         await expect(readFile(join(payloadDir, 'node_modules', '@huggingface', 'transformers', 'index.js'), 'utf8'))
             .rejects.toMatchObject({ code: 'ENOENT' });
         await expect(readFile(join(payloadDir, 'tools', 'unpacked', 'difft'), 'utf8'))
@@ -289,10 +310,11 @@ describe('buildCliBinaryArtifactPayload bundled workspace sync', () => {
         }
         await expect(readFile(join(payloadDir, 'tools', 'unpacked', '.happier-tools-manifest.json'), 'utf8'))
             .resolves.toContain('"zellij"');
-        await expect(readFile(join(payloadDir, 'tools', 'unpacked', 'rg'), 'utf8'))
+        await expect(readFile(join(payloadDir, 'tools', 'unpacked', target.os === 'windows' ? 'rg.exe' : 'rg'), 'utf8'))
             .resolves.toContain('ripgrep');
-        await expect(readFile(join(payloadDir, 'tools', 'unpacked', 'zellij'), 'utf8'))
-            .resolves.toContain('zellij');
+        if (target.os !== 'windows') {
+            await expect(readFile(join(payloadDir, 'tools', 'unpacked', 'zellij'), 'utf8')).resolves.toContain('zellij');
+        }
         await expect(readFile(join(payloadDir, 'tools', 'unpacked', 'ripgrep.node'), 'utf8'))
             .rejects.toMatchObject({ code: 'ENOENT' });
     });
