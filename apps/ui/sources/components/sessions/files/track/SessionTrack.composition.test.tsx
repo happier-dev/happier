@@ -29,7 +29,8 @@ const { createWorkspaceState } = await import('@/components/appShell/workspace/w
 const { createWorkspaceActionAdapter } = await import('@/components/appShell/workspace/workspaceActions');
 const { createWorkspaceNavigationAdapter } = await import('@/components/appShell/workspace/workspaceNavigationAdapter');
 const { resolveCompactAppDestinations } = await import('@/components/appShell/destinations/compactAppDestinationCatalog');
-const { createWorkspaceFileDetailsTab } = await import('@/components/appShell/panes/details/fileDetailsTab');
+const { createWorkspaceFileDetailsTab, workspaceFileDetailsTabKey } = await import('@/components/appShell/panes/details/fileDetailsTab');
+const { readWorkspaceFileLinkView } = await import('@/utils/url/sessionFileDeepLink');
 const { createSessionPaneScopeId } = await import('@/components/sessions/panes/sessionPaneScopeId');
 const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
 const { publishAppliedActiveServerSnapshot, publishAppliedActiveServerRuntimeAvailability } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
@@ -89,7 +90,7 @@ async function renderSessionTrack(tool: ScriptedWrite) {
             const execute = createWorkspaceActionAdapter({ getState: () => state, navigation, readCanvas: () => null, createId: () => 'opened-tab',
                 // The mounted Details viewport is the imperative UI boundary. Its real pane owner handles preview and presentation.
                 openFileInPlace: file => {
-                    paneRef.current.openDetailsTab(createWorkspaceFileDetailsTab(file.path, file.anchor, file.anchorSource), { intent: 'preview', present: false });
+                    paneRef.current.openDetailsTab(createWorkspaceFileDetailsTab(file.path, file.anchor, file.anchorSource, readWorkspaceFileLinkView(file)), { intent: 'preview', present: false });
                     return true;
                 } });
             unregister = registerMountedWorkspaceAction(async request => execute(request.actionId, request.input));
@@ -111,20 +112,20 @@ describe('Session Track composition', () => {
     it('pauses following when the current file acquires an Account-owned draft in its actual Session pane', async () => {
         const { hook } = await renderSessionTrack({ id: 'write-dirty', name: 'Write', input: { file_path: '/repo/a.ts', content: 'hello' } });
         await act(async () => { await waitForHomeGovernance(() => {
-            expect(hook.getCurrent().pane.scopeState?.details.tabs).toEqual([expect.objectContaining({ key: 'file:a.ts' })]);
+            expect(hook.getCurrent().pane.scopeState?.details.tabs).toEqual([expect.objectContaining({ key: workspaceFileDetailsTabKey('a.ts', '/repo') })]);
         }); });
-        await act(async () => hook.getCurrent().pane.patchDetailsTabState('file:a.ts', {
+        await act(async () => hook.getCurrent().pane.patchDetailsTabState(workspaceFileDetailsTabKey('a.ts', '/repo'), {
             accountId: 'alice', isEditingFile: true, editorOriginalHash: 'base', editorText: 'unsaved draft',
         }));
         expect(hook.getCurrent().track).toMatchObject({ paused: true, pauseReason: 'dirtyEditor', target: { path: 'a.ts' } });
-        expect(hook.getCurrent().pane.scopeState?.details.tabState['file:a.ts']).toMatchObject({ editorText: 'unsaved draft' });
+        expect(hook.getCurrent().pane.scopeState?.details.tabState[workspaceFileDetailsTabKey('a.ts', '/repo')]).toMatchObject({ editorText: 'unsaved draft' });
         await hook.unmount();
     });
 
     it('follows the current writing file through the real opener without navigating or presenting Details', async () => {
         const { hook, hrefs, present } = await renderSessionTrack({ id: 'write-a', name: 'Write', input: { file_path: '/repo/a.ts', content: 'hello' } });
         await act(async () => { await waitForHomeGovernance(() => {
-            expect(hook.getCurrent().pane.scopeState?.details.tabs).toEqual([expect.objectContaining({ key: 'file:a.ts', isPreview: true, isPinned: false })]);
+            expect(hook.getCurrent().pane.scopeState?.details.tabs).toEqual([expect.objectContaining({ key: workspaceFileDetailsTabKey('a.ts', '/repo'), isPreview: true, isPinned: false })]);
         }); });
         expect(hook.getCurrent().track.target?.path).toBe('a.ts');
         expect(hrefs).toEqual([]);

@@ -94,9 +94,10 @@ export function useSessionTrack(
         intent: 'preview',
         present: options.present,
         anchorSource: options.anchorSource,
+        ...(params.workspaceRoot ? { rootPath: params.workspaceRoot } : {}),
       });
     },
-    [opener],
+    [opener, params.workspaceRoot],
   );
   // Track decides when to scroll (path change, new region, Resume); the File page showing the path resolves
   // where (the call's lines, or the text it replaces) and scrolls there: one region owner for caret and scroll.
@@ -274,19 +275,22 @@ export function PhoneTrackWatchCapsule(props: Readonly<{ sessionAddress: Session
     if (!path) return;
     setTrackEnabled(true);
     const anchor = target?.region ? { kind: 'fileLine' as const, startLine: target.region.startLine } : undefined;
+    const view = props.workspaceRoot ? { rootPath: props.workspaceRoot } : undefined;
     // Watch reveals the same File scene Track positions. A new resource destination has a different
     // pane scope, so it would discard the user's mode (including Edit) and other tab memory.
     void opener.open({ kind: 'session', ...props.sessionAddress, path }, {
       intent: 'preview',
       present: false,
+      ...view,
       ...(anchor ? { anchor, anchorSource: 'file' as const } : {}),
       onOpened: () => {
-        if (presentPane) presentPane({ scopeId, pane: 'details', tab: createWorkspaceFileDetailsTab(path, anchor, 'file') });
+        if (presentPane) presentPane({ scopeId, pane: 'details', tab: createWorkspaceFileDetailsTab(path, anchor, 'file', view) });
         else router.replace(buildWorkspaceFileLink({ target: { kind: 'session', ...props.sessionAddress }, path,
+          ...view,
           ...(anchor ? { anchor, anchorSource: 'file' } : {}) }) as Href);
       },
     });
-  }, [opener, path, presentPane, props.sessionAddress, router, scopeId, setTrackEnabled, target?.region]);
+  }, [opener, path, presentPane, props.sessionAddress, props.workspaceRoot, router, scopeId, setTrackEnabled, target?.region]);
   if (!path) return null;
   const fileName = path.split(/[\\/]/).pop() ?? path;
   return (

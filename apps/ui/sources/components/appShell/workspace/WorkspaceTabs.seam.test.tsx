@@ -8,6 +8,7 @@ import { createSessionFixture, installBrowserStorageLockBoundary, invokeTestInst
 import { serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import type { WorkspaceNavigationContextValue } from './WorkspaceNavigationContext';
+import { workspaceFileDetailsTabKey } from '../panes/details/fileDetailsTab';
 import type { RenderWithAppProvidersOptions } from '@/dev/testkit/render/renderWithAppProviders';
 import type { DestinationRef } from '../destinations/compactAppDestinationCatalog';
 import { createArtifactStoreBoundary } from '@/dev/testkit/harness/artifactStoreBoundary';
@@ -428,9 +429,9 @@ describe('workspace tabs production composition', () => {
                 }]);
             });
             await vi.waitFor(async () => { await act(async () => {});
-                expect(pane.scopeState?.details.activeTabKey).toBe('file:tracked.ts'); });
+                expect(pane.scopeState?.details.activeTabKey).toBe(workspaceFileDetailsTabKey('tracked.ts', '/repo')); });
             expect(track).toMatchObject({ enabled: true, paused: false, target: { path: 'tracked.ts' } });
-            expect(pane.scopeState?.details.tabs.find(candidate => candidate.key === 'file:tracked.ts')).toMatchObject({ isPreview: true, isPinned: false });
+            expect(pane.scopeState?.details.tabs.find(candidate => candidate.key === workspaceFileDetailsTabKey('tracked.ts', '/repo'))).toMatchObject({ isPreview: true, isPinned: false });
             expect(navigation.state.focusedGroupId).toBe(beforeTracking.focusedGroupId);
             expect(navigation.state.groups[beforeTracking.focusedGroupId].activeTabId).toBe(beforeTracking.groups[beforeTracking.focusedGroupId].activeTabId);
             expect(Object.keys(navigation.state.tabs)).toEqual(Object.keys(beforeTracking.tabs));
@@ -455,7 +456,7 @@ describe('workspace tabs production composition', () => {
                 path: 'blocked.ts' }, { intent: 'preview', present: false, onOpened: () => placedFiles.push('blocked.ts') }); });
             expect(opened).toBe(false);
             expect(placedFiles).toEqual(['main.ts']);
-            expect(pane.scopeState?.details.activeTabKey).toBe('file:tracked.ts');
+            expect(pane.scopeState?.details.activeTabKey).toBe(workspaceFileDetailsTabKey('tracked.ts', '/repo'));
         } finally { await screen.unmount(); foregroundInput.remove(); storage.setState(initial, true); }
     });
     it.each(['web', 'ios'] as const)('opens a qualified Project file through useOpenProject and keeps Find private on %s', async platform => {
