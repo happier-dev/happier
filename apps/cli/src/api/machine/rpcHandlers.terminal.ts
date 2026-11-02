@@ -79,6 +79,8 @@ export type MachineTerminalRpcRegistration = Readonly<{
 export type MachineTerminalRpcHandlerDeps = Readonly<{
   /** Captured Home of the installed Machine RPC owner, not a request field. */
   serverId?: string;
+  /** Canonical Home held by the installed Machine owner, never a request field. */
+  resolveHostHomeServerIdentityId?: (signal?: AbortSignal) => Promise<string | null>;
   env?: NodeJS.ProcessEnv;
   platform?: NodeJS.Platform;
   workingDirectory?: string;

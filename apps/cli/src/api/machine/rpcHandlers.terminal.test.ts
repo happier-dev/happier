@@ -16,7 +16,9 @@ import {
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { RpcHandlerManager } from '../rpc/RpcHandlerManager';
-import { registerMachineTerminalRpcHandlers } from './rpcHandlers.terminal';
+import { registerMachineTerminalRpcHandlers as registerUnadmittedMachineTerminalRpcHandlers } from './rpcHandlers.terminal';
+import { authorizeMachineRpcRequest } from './machineRpcAuthorization';
+import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { registerMachineRpcHandlers } from './rpcHandlers';
 import * as ptyBoundary from '@/terminal/pty/provider';
 import * as processBoundary from '@happier-dev/cli-common/process';
@@ -29,7 +31,7 @@ import { createHostActionOperationRuntime } from '@/daemon/actionOperations/crea
 import { createDaemonAdmissionDrain } from '@/daemon/lifecycle/admissionDrain';
 import { createProjectWorkerAdmission } from '@/workspaces/execution/projectWorkerAdmission';
 import { createProjectFiniteAction, type ProjectFiniteActionRuntime } from '@/workspaces/projectSetup/projectFiniteAction';
-import { createProjectNativeEnvironmentIoForHost } from '@/plugins/runtime/invocation/services/exec';
+import { createProjectNativeToolchainIoForHost } from '@/plugins/runtime/invocation/services/exec';
 import { createWorkspaceExecutionConfigClientV1 } from '@happier-dev/protocol/workspaces/workspaceExecutionConfigClientV1';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import { PROJECT_ACCOUNT_ROWS_ROUTE_V1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
@@ -40,7 +42,9 @@ import { createProjectSetupSuccessStore } from '@/workspaces/projectSetup/projec
 import { authorizeFilesystemPath } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemPathAuthorization';
 import { projectRequesterAccountActionAuthorization } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import { projectExternalActionRequesterHttpAuthorization } from '@/api/externalActionExecutionAuthorization';
-import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { ExternalActionExecutionAuthorizationV1Schema, ExternalActionRequestEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { selectHostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import nacl from 'tweetnacl';
 import { updateSettings } from '@/persistence';
 import { reloadConfiguration } from '@/configuration';
@@ -51,6 +55,25 @@ import { HomeConnectionDescriptorV1Schema } from '@happier-dev/protocol/auth/acc
 import { readDaemonTerminalPtyConfig } from '@/terminal/pty/config';
 import { resolveAdmittedRequesterAccountReadRuntime } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import { DaemonTerminalListResponseV1Schema } from '@happier-dev/protocol/daemon/terminal';
+
+/** Held authenticated Home at this fixture's installed Machine boundary. */
+function registerMachineTerminalRpcHandlers(params: Parameters<typeof registerUnadmittedMachineTerminalRpcHandlers>[0]) {
+  return registerUnadmittedMachineTerminalRpcHandlers({ ...params, deps: {
+    serverId: 'home', resolveHostHomeServerIdentityId: async () => 'stable-home', ...params.deps,
+  } });
+}
+
+/** Re-enter the real Machine authorizer for a new RPC; only Home's reply is substituted. */
+function createMachineTerminalRpcIngress(handlers: ReadonlyMap<string, RpcHandler>, verifyMachineAdmission: () => Promise<boolean>,
+  logger?: (message: string, data?: unknown) => void) {
+  const rpc = new RpcHandlerManager({ scopePrefix: 'machine', localMachineId: 'machine', encryptionMode: 'plain',
+    ...(logger ? { logger } : {}),
+    authorizeRequest: request => authorizeMachineRpcRequest(request, { machineId: 'machine',
+      resolveCustodianAccountId: async () => 'owner', resolveInstallationId: () => 'installation',
+      resolveHomeServerIdentityId: async () => 'stable-home', verifyMachineAdmission }) });
+  for (const [method, handler] of handlers) rpc.registerHandler(method, handler);
+  return rpc;
+}
 
 class FakePty implements PtyProcess {
   readonly pid = 4321;
@@ -852,21 +875,23 @@ describe('registerMachineTerminalRpcHandlers', () => {
       ? `e30.${Buffer.from(JSON.stringify({ sub: 'owner', tokenEpoch: 1,
         provenance: AuthTokenProvenanceSchema.parse({ v: 1, kind: 'terminal', authority: 'account_automation' }) })).toString('base64url')}.signature`
       : `requester:${root}`;
-    const runtime: ProjectFiniteActionRuntime & { operationRuntime: typeof operationRuntime } = {
+    const runtime = {
       serverId: 'home', machineId: 'machine', accountId: 'owner', credentials: { token, encryption: null,
         ...(options.machineComposition ? { credentialProvenance: 'stored_session' as const } : {}) }, serverHttpBaseUrl: 'https://home.example',
       operationRuntime, terminalSessions: sessionManager,
+      resolveHostHomeServerIdentityId: async () => 'stable-home',
       workerAdmission: createProjectWorkerAdmission({ machineId: 'machine', admissionDrain,
         readPolicy: async () => ({ status: 'ready', policy: { accepting: true, runAtMost: null }, source: 'stored', metadataVersion: 1 }) }),
       resolveWorkspaceExecutionConfig: async () => preference,
       nativeIo: { resolveTool: async tool => ({ executablePath: `/managed/${tool}`, version: '1' }) },
-      environmentIo: createProjectNativeEnvironmentIoForHost({ resolveTool: async () => null }),
+      environmentIo: createProjectNativeToolchainIoForHost({ resolveTool: async () => null }),
       platform: 'linux', arch: 'x64', hostEnvironment: {}, successHomeDir: join(root, 'success'),
-    };
-    let current = true;
-    const ingress: RpcHandlerContext = { signal: new AbortController().signal, transportRequestId: 'mounted-request', callerAuthority: 'account_automation',
+    } satisfies ProjectFiniteActionRuntime & { operationRuntime: typeof operationRuntime };
+    // Home withdrawal refuses the next RPC without retiring installed Account credentials.
+    const current = { machineAdmission: true, accountCredentials: true };
+    const ingress: RpcHandlerContext = { signal: new AbortController().signal, transportRequestId: 'mounted-request', callerAuthority: 'present_user',
       machineAdmission: { actorAccountId: 'owner', custodianAccountId: 'owner', machineId: 'machine', installationId: 'installation', role: 'manage', encryptionMode: 'plain' },
-      verifyMachineAdmissionCurrent: async () => current };
+      verifyMachineAdmissionCurrent: async () => current.machineAdmission };
     const handlers = new Map<string, RpcHandler>();
     const actionsSettingsProvider = { getActionsSettings: () => normalizeActionsSettingsV1({ v: 1, actions: {},
       approvalWaivedSurfaces: { ...(options.waived ? { 'projects.script.run': ['api'] } : {}),
@@ -894,18 +919,126 @@ describe('registerMachineTerminalRpcHandlers', () => {
     }) : registerMachineTerminalRpcHandlers({ rpcHandlerManager: { registerHandler(method, handler) { handlers.set(method, handler); } },
       deps: { env: {}, workingDirectory: root, sessionManager, admissionDrain, accountReadRuntime: async () => runtime, projectFiniteRuntime: async () => runtime,
         projectScriptExecutor: (boundRuntime, context) => createCliActionExecutorHarness({ token: runtime.credentials.token, credentials: runtime.credentials, mode: 'plain', ctx: null,
-          isCredentialCurrent: async () => current,
+          isCredentialCurrent: async () => current.accountCredentials,
           sessionId: 'cli-global', serverId: runtime.serverId, serverHttpBaseUrl: runtime.serverHttpBaseUrl,
           actionsSettingsProvider,
-        }, { projectAction: createProjectFiniteAction(boundRuntime, context) }).executor,
+        }, { projectAction: createProjectFiniteAction({ ...boundRuntime,
+          requesterIdentity: boundRuntime.requesterIdentity ?? selectHostRequesterExecutionIdentity({ rpcContext: context,
+            hostHomeServerIdentityId: 'stable-home' }) }, context) }).executor,
       } });
     if ('getFiniteTerminalSessions' in registration) sessionManager = registration.getFiniteTerminalSessions();
-    const invoke = (method: string = RPC_METHODS.DAEMON_TERMINAL_ENSURE, cwd = root, context = ingress) => handlers.get(method)!({
-      terminalKey: 'mounted', cwd, launch: { kind: 'package_script', runTargetId: 'web; echo untrusted:dev' },
+    const automationIngress = { ...ingress, callerAuthority: 'account_automation' as const };
+    const invoke = (method: string = RPC_METHODS.DAEMON_TERMINAL_ENSURE, cwd = root, context: RpcHandlerContext = automationIngress,
+      runTargetId = 'web; echo untrusted:dev') => handlers.get(method)!({
+      terminalKey: 'mounted', cwd, launch: { kind: 'package_script', runTargetId },
     }, context);
-    return { root, ingress, invoke, handlers, provider, sessionManager, operationRuntime, runtime, admissionDrain, get, post, retire: () => { current = false; },
+    return { root, ingress, invoke, handlers, provider, sessionManager, operationRuntime, runtime, admissionDrain, get, post, retire: () => { current.machineAdmission = false; },
       dispose: async () => { await registration.dispose(); vi.restoreAllMocks(); await rm(root, { recursive: true, force: true }); } };
   }
+
+  it('lets the requester Session read its admitted finite script output while other people and interactive control stay refused', async () => {
+    const h = await finiteHarness({ waived: true });
+    let admissionPredicate: string | undefined;
+    const rpc = createMachineTerminalRpcIngress(h.handlers, async () => true, (message, data) => {
+      if (message !== '[RPC] Request completed' || !data || typeof data !== 'object') return;
+      const predicate: unknown = Reflect.get(data, 'admissionPredicate');
+      admissionPredicate = typeof predicate === 'string' ? predicate : undefined;
+    });
+    const admission = h.ingress.machineAdmission!;
+    const origin = { v: 1, caller: { kind: 'session', sessionId: 'requester-session', starterDepth: 0, turnDepth: 0 },
+      sourceTurnId: 'turn', callerPermissionMode: null, requestId: 'output-read' } satisfies NonNullable<RpcHandlerContext['sessionActionOrigin']>;
+    const outputEnvelope = ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId: origin.requestId,
+      target: { kind: 'machine', machineId: admission.machineId }, input: {
+        serverId: 'home', machineId: admission.machineId, operationId: 'operation', byteOffset: 0,
+      } });
+    // Home admission is the transport boundary. Use its bound Action proof,
+    // rather than attaching an untrusted Session-origin field to a raw RPC.
+    const outputAuthorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-admitted-output', binding: {
+      accountId: admission.actorAccountId, custodianAccountId: admission.custodianAccountId,
+      authentication: { kind: 'account', tokenEpoch: 1 }, serverIdentityId: 'stable-home',
+      machineId: admission.machineId, installationId: admission.installationId, actionId: 'projects.execution.output.read',
+      requestId: origin.requestId, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(outputEnvelope),
+      target: outputEnvelope.target, sessionActionOrigin: origin,
+      sessionActionSource: { machineId: 'source-machine', installationId: 'source-installation' },
+    } });
+    // REPLAY11 shape: the Session's Account-credential request is admitted by the installed Machine RPC owner
+    // (callerClass machine_custodian) and reaches the terminal handler.
+    const asRequester = (method: string, params: unknown, sessionOrigin = false,
+      machineAdmission = admission) => rpc.handleRequest({ method: `machine:${method}`, params,
+      machineAdmission, callerAuthority: 'account_automation', ...(sessionOrigin ? { sessionActionOrigin: origin,
+        callerInputAuthorization: outputAuthorization } : {}) });
+    // Installed handler with the host-stamped Session origin (other people's admissions, and interactive controls).
+    const asSessionHandler = (method: string, params: unknown, machineAdmission: RpcHandlerContext['machineAdmission'] | null = admission) =>
+      h.handlers.get(method)!(params, { signal: new AbortController().signal, callerAuthority: 'account_automation',
+        sessionActionOrigin: origin, verifyMachineAdmissionCurrent: async () => true, ...(machineAdmission ? { machineAdmission } : {}) });
+    const text = (response: unknown) => {
+      const parsed = TerminalStreamReadResponseSchema.parse(response);
+      if (!parsed.ok) throw new Error(parsed.code);
+      return Buffer.concat(parsed.frames.filter((frame): frame is TerminalStreamBytesFrame => frame.t === 'bytes')
+        .map(frame => Buffer.from(decodeTerminalStreamBytesFrame(frame)))).toString('utf8');
+    };
+    try {
+      const ran = await h.invoke();
+      expect(ran).toMatchObject({ ok: true, terminalId: expect.any(String) });
+      if (!ran || typeof ran !== 'object' || !('terminalId' in ran) || typeof ran.terminalId !== 'string') throw new Error('finite run did not attach');
+      const terminalId = ran.terminalId;
+      h.provider.spawned[0]!.pty.emitBytes(Buffer.from('script output', 'utf8'));
+      h.provider.spawned[0]!.pty.exit(0);
+      expect(await h.operationRuntime.runner.waitForTerminal({ accountId: 'owner', machineId: 'machine' }, 'operation'))
+        .toMatchObject({ state: 'succeeded', domainRef: { terminalId } });
+      const read = { terminalId, byteOffset: 0, maxBytes: 1000, maxFrames: 10 };
+      // (a) The requester reads its own admitted finite output after exit 0, through the installed path and as a Session origin.
+      const own = await asRequester(RPC_METHODS.DAEMON_TERMINAL_STREAM_READ_BYTES, read);
+      expect(own).toMatchObject({ ok: true, terminalId });
+      expect(text(own)).toBe('script output');
+      // Signed Session transport stamps this origin before installed admission.
+      // Reading retained output must not require a new native execution identity.
+      const signedRead = await asRequester(RPC_METHODS.DAEMON_TERMINAL_STREAM_READ_BYTES, read, true);
+      expect(signedRead, admissionPredicate).toMatchObject({ ok: true, terminalId });
+      expect(text(signedRead)).toBe('script output');
+      await expect(asRequester(RPC_METHODS.DAEMON_TERMINAL_STREAM_READ_BYTES, read, true,
+        { ...admission, actorAccountId: 'recipient', role: 'use' }))
+        .resolves.toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
+      expect(text(await asSessionHandler(RPC_METHODS.DAEMON_TERMINAL_STREAM_READ_BYTES, read))).toBe('script output');
+      // (b) Other people stay refused by the retained custody: another Account (Team member / Machine Use),
+      // a foreign installation, and a caller without Machine admission (link recipient).
+      for (const foreign of [{ ...admission, actorAccountId: 'recipient', role: 'use' as const },
+        { ...admission, installationId: 'previous-installation' }, null]) {
+        await expect(asSessionHandler(RPC_METHODS.DAEMON_TERMINAL_STREAM_READ_BYTES, read, foreign))
+          .resolves.toMatchObject({ ok: false, code: 'terminal_forbidden' });
+      }
+      const custody = h.sessionManager.getCustody(terminalId)!;
+      const prior = await h.sessionManager.ensure({ terminalKey: 'prior-installation', cwd: h.root, holdUntilExit: true,
+        custody: { ...custody, installationId: 'previous-installation' }, launchProcess: { file: '/managed/tool', args: [] } });
+      if (!prior.ok) throw new Error('prior-installation fixture did not open');
+      await expect(asRequester(RPC_METHODS.DAEMON_TERMINAL_STREAM_READ_BYTES, { ...read, terminalId: prior.terminalId }))
+        .resolves.toMatchObject({ ok: false, code: 'terminal_forbidden' });
+      // (c) Interactive access is unchanged: a same-Account Project shell and every control on the finite terminal.
+      const shell = await h.sessionManager.ensure({ terminalKey: 'interactive', cwd: custody.rootPath, custody });
+      if (!shell.ok) throw new Error('interactive fixture did not open');
+      await expect(asRequester(RPC_METHODS.DAEMON_TERMINAL_STREAM_READ_BYTES, { ...read, terminalId: shell.terminalId }))
+        .resolves.toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
+      await expect(asRequester(RPC_METHODS.DAEMON_TERMINAL_STREAM_READ_BYTES, { ...read, terminalId: shell.terminalId }, true))
+        .resolves.toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
+      for (const [method, params] of [
+        [RPC_METHODS.DAEMON_TERMINAL_STREAM_READ_BYTES, { ...read, terminalId: shell.terminalId }],
+        [RPC_METHODS.DAEMON_TERMINAL_STREAM_READ, { terminalId, cursor: 0 }],
+        [RPC_METHODS.DAEMON_TERMINAL_STREAM_ACK, { terminalId, ackedByteOffset: 0 }],
+        [RPC_METHODS.DAEMON_TERMINAL_STREAM_INPUT, { terminalId, event: { t: 'text', text: 'agent-effect' } }],
+        [RPC_METHODS.DAEMON_TERMINAL_INPUT, { terminalId, data: 'agent-effect\n' }],
+        [RPC_METHODS.DAEMON_TERMINAL_RESIZE, { terminalId, cols: 100, rows: 30 }],
+        [RPC_METHODS.DAEMON_TERMINAL_CLOSE, { terminalId }],
+      ] as const) {
+        await expect(asSessionHandler(method, params), method).rejects.toMatchObject({ rpcErrorCode: RPC_ERROR_CODES.FORBIDDEN });
+        await expect(asRequester(method, params), method).resolves.toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
+      }
+      expect(h.provider.spawned.flatMap(entry => entry.pty.writes).join('')).not.toContain('agent-effect');
+      expect(h.sessionManager.list().some(entry => entry.terminalId === terminalId)).toBe(true);
+    } finally {
+      for (const { pty } of h.provider.spawned) if (!pty.exited) pty.exit(0);
+      await h.dispose();
+    }
+  });
 
   it('mounts accepted finite work after drain closes and retains the same bytes after a nonzero exit', async () => {
     const h = await finiteHarness({ waived: true, acceptedRootTrailingSlash: true });

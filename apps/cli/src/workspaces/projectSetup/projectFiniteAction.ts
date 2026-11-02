@@ -1,3 +1,4 @@
+import type { HostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import type { ProcessEnvInput } from '@/utils/processEnv/buildScopedProcessEnv';
 import type { createWorkspaceExecutionConfigClientV1 } from '@happier-dev/protocol/workspaces/workspaceExecutionConfigClientV1';
@@ -52,6 +53,10 @@ export type ProjectFiniteActionRuntime = ProjectRuntimeAccountAccess & Readonly<
     machineId: string;
     accountId: string;
     serverHttpBaseUrl: string;
+    /** Installed receiving connection Home, never a profile label or workspace operand. */
+    resolveHostHomeServerIdentityId?: (signal?: AbortSignal) => Promise<string | null>;
+    /** Captured by the installed Project runtime owner, never an Action operand. */
+    requesterIdentity?: HostRequesterExecutionIdentity;
     /** Exact Account custody lifetime supplied by the installed host constructor. */
     isCurrent?: () => Promise<boolean>;
     /** Fresh Machine/root admission at native effects; isCurrent owns local custody. */
