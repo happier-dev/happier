@@ -14,6 +14,7 @@ export type MachineRpcGovernanceMetadataV1 = Readonly<{
 }>;
 
 const ACTION_SPEC_RPC_METHOD_IDS = Object.freeze({
+  [RPC_METHODS.MACHINES_REACHABILITY_INSPECT]: 'machines.reachability.inspect',
   [RPC_METHODS.DAEMON_TERMINAL_ENSURE]: 'machines.terminal.open',
   [RPC_METHODS.DAEMON_TERMINAL_LIST]: 'machines.terminal.list',
   [RPC_METHODS.DAEMON_TERMINAL_STREAM_READ_BYTES]: 'machines.terminal.read',

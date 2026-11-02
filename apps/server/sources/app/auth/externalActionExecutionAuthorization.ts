@@ -620,9 +620,12 @@ async function hasCurrentExecutionMachineAdmission(
     if (machine.kind === 'ephemeral_session_runner') return binding.accountId === machine.accountId;
     const current = await resolveExternalActionExecutionMachineAdmissionInTx(db, { actorAccountId: binding.accountId,
         machineId: binding.machineId, actionId: binding.actionId });
+    // A sealed Manage role is consumed downstream (unrestricted terminal,
+    // definition admission); a later downgrade is seen at this next admission.
     return current.kind === 'admitted'
         && current.custodianAccountId === binding.custodianAccountId
-        && current.installationId === binding.installationId;
+        && current.installationId === binding.installationId
+        && (binding.admittedMachineRole !== 'manage' || current.role === 'manage');
 }
 
 function isContributedActionRoot(actionId: string): boolean {

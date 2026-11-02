@@ -239,6 +239,10 @@ const EXTERNAL_ACTION_DAEMON_DISPATCH_ROUTE_POLICY: MachineRpcRoutePolicyV1 = Ob
 });
 
 const DIRECT_EPHEMERAL_POLICIES = Object.freeze([
+  // Inspect runs the elevated native firewall CHECK and returns host network
+  // facts; reachability is Machine-wide, so Manage (owner ruling 2026-10-31 Use scope).
+  { ...directEphemeral(RPC_METHODS.MACHINES_REACHABILITY_INSPECT, 'Exact-Machine demanded reachability observation and inert proposed-change preparation.'),
+    sharedMachineAccess: 'manage' },
   directEphemeral(RPC_METHODS.DAEMON_EXECUTION_RUNS_LIST, 'Daemon-local execution run registry read; no server persistence, transcript write, or cross-device fanout.'),
   directEphemeral(RPC_METHODS.DAEMON_EXECUTION_RUN_BROKER_AUTHORITY_RESOLVE, 'Nonce- and Home-bound exact-Machine Run currentness read for broker admission; no credential or durable proof.'),
   directEphemeral(RPC_METHODS.DAEMON_MEMORY_STATUS, 'Daemon-local memory worker status read with no mutation or server persistence.'),
