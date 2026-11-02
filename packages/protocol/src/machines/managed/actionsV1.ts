@@ -31,7 +31,7 @@ import { ManagedControllerV1Schema, ManagedCredentialSelectionsV1Schema, Retaine
 import { AcquireResultV1Schema, ManagedRefusalCodeV1Schema, ManagedResourceV1Schema, ProviderObservationV1Schema } from './providerFactsV1.js';
 import { MANAGED_MACHINE_ACTION_IDS_V1, type ManagedMachineActionIdV1 } from './actionIdsV1.js';
 import { ManagedConfigurationFactsV1Schema, ManagedOneOffSelectionV1Schema, ManagedPresetSelectionV1Schema } from './managedConfigurationV1.js';
-import { DevcontainerRebuildIntentV1Schema, ManagedIntentInputSchema, ManagedIntentResultSchema, ManagedActivityReadRequestV1Schema } from './managedIntentV1.js';
+import { DevcontainerRebuildIntentV1Schema, ManagedIntentInputSchema, ManagedIntentResultSchema, ManagedActivityReadRequestV1Schema, ManagedActivityRpcRequestV1Schema } from './managedIntentV1.js';
 import { MachineInstallationProofV1Schema } from '../identity/installationIdentity.js';
 import { SocketRpcMachineAdmissionContextV1Schema } from '../machineAccessV1.js';
 import { MachineProvisionerDestroyResultV1Schema, MachineProvisionerPowerResultV1Schema, MachineProvisionerRebuildResultV1Schema } from '../../plugins/contributions/machineProvisioners.js';
@@ -132,7 +132,7 @@ export const ManagedControllerCurrentnessV1Schema = lazyZodSchema(() => z.strict
 export const ManagedControllerCurrentInputV1Schema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(ManagedControllerCurrentnessV1Schema, { nativeRole: z.optional(z.literal('inspect')) })));
 export const ManagedGuestCurrentInputV1Schema = lazyZodSchema(() => z.strictObject({ v: z.literal(1),
   context: SocketRpcMachineAdmissionContextV1Schema, method: z.string().check(z.minLength(1)),
-  managedTarget: z.lazy(() => ManagedActivityReadRequestV1Schema), proof: MachineInstallationProofV1Schema,
+  managedTarget: z.lazy(() => ManagedActivityRpcRequestV1Schema), proof: MachineInstallationProofV1Schema,
 }));
 export const ManagedGuestCurrentOutputV1Schema = lazyZodSchema(() => z.strictObject({ current: z.boolean() }));
 /** Signed only by the current guest after its real admission drain commits idle. */

@@ -56,6 +56,11 @@ export const ManagedAdmissionDrainConfirmRequestV1Schema = lazyDefinition(() => 
   homeId: id(), managedId: id(), expectedRevision: revision(), controller: z.optional(ManagedControllerV1Schema),
   action: z.enum(['begin', 'resume']),
 }));
+/** Guest currentness signs the existing read or exact reversible drain request. */
+export const ManagedActivityRpcRequestV1Schema = lazyDefinition(() => z.union([
+  ManagedActivityReadRequestV1Schema, ManagedAdmissionDrainConfirmRequestV1Schema,
+]));
+export type ManagedActivityRpcRequestV1 = Readonly<z.infer<typeof ManagedActivityRpcRequestV1Schema>>;
 export const ManagedActivityBridgeResultV1Schema = lazyDefinition(() => z.union([
   ActivityDecisionV1Schema,
   z.strictObject({ kind: z.literal('idle'), since: z.number().check(z.gte(0)),

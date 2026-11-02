@@ -4,6 +4,7 @@ import type { Fastify } from "@/app/api/types";
 import { resolveMachineAdmissionInTx, resolveEffectiveMachineRoleInTx } from '@/app/machines/machineAccess';
 import { classifyMachineAvailabilityState } from '@/app/machines/machineStateGuards';
 import { ManagedAdmissionInputV1Schema, ManagedControllerCurrentnessV1Schema, ManagedControllerCurrentInputV1Schema, ManagedControllerReportV1Schema, ManagedEnrollmentCorrelationV1Schema, ManagedControllerContextInputV1Schema, ManagedBootstrapCredentialCreateV1Schema, ManagedControllerSubmitInputV1Schema, ManagedControllerMachineOutputV1Schema, resolveManagedAcquireReviewV1, ManagedMachineActionInputSchemasV1, ManagedMachineActionOutputSchemasV1, managedMachineActionEndpointPathV1, ManagedControlAdmissionInputV1Schema, ManagedControllerIntentReportV1Schema, MANAGED_CONTROL_ACTION_IDS_V1, ManagedGuestCurrentInputV1Schema, ManagedGuestCurrentOutputV1Schema, MachineEnvironmentApplyInputV1Schema, MachineEnvironmentResolveResultV1Schema, MachineEnvironmentReportInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { resolveManagedGuestActivityAdmissionInTx } from './managedGuestActivity';
 import { MANAGED_ACTIVITY_READ_RPC_METHOD, MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD, ManagedWakeTargetsReadRequestV1Schema, ManagedWakeTargetsReadResultV1Schema } from '@happier-dev/protocol/machines/managed/managedIntentV1';
 import { verifyMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
@@ -237,17 +238,11 @@ export function registerManagedMachineRoutes(app: Fastify): void {
             || !verifyMachineInstallationProof({ payload: { version: 1, machineId: context.machineId, installationId: context.installationId,
                 accountId: context.custodianAccountId, rpcAdmission: { context, method, managedTarget } }, proof,
                 publicKey: encodeBase64(guest.installationPublicKey, 'base64url') })) throw new ManagedMachineError('permission_denied');
-        const admission = await resolveMachineAdmissionInTx(tx, { actorAccountId: context.actorAccountId, machineId: context.machineId, rpcMethod });
-        if (admission.kind !== 'admitted' || admission.installationId !== context.installationId
-            || admission.encryptionMode !== context.encryptionMode || admission.role !== context.role) throw new ManagedMachineError('permission_denied');
-        const row = await readManagedMachineInTx(tx, managedTarget);
-        if (row.custodianAccountId !== context.custodianAccountId || row.enrolledMachineId !== context.machineId
-            || row.intentRevision !== managedTarget.expectedRevision || !sameManagedInput(readManagedController(row), managedTarget.controller)
-            || row.creationState !== 'active'
-            || row.archivedAt !== null) return { current: false };
-        await requireManagedControllerInTx(tx, { homeId: row.homeId, custodianAccountId: row.custodianAccountId, controller: managedTarget.controller });
-        if (await resolveManagedMachineRoleInTx(tx, row, context.actorAccountId) !== 'manage') throw new ManagedMachineError('permission_denied');
-        return { current: true };
+        const admission = await resolveManagedGuestActivityAdmissionInTx(tx, { actorAccountId: context.actorAccountId,
+            machineId: context.machineId, rpcMethod, target: managedTarget });
+        return { current: admission !== null && admission.custodianAccountId === context.custodianAccountId
+            && admission.installationId === context.installationId && admission.encryptionMode === context.encryptionMode
+            && admission.role === context.role };
     })));
     app.post("/v1/machines/managed/controller/admit-control", { preHandler: app.authenticate, schema: { body: ManagedControlAdmissionInputV1Schema } }, async (request, reply) => respond(reply, async () => {
         const input = request.body.input;

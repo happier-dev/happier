@@ -70,6 +70,7 @@ export function readManagedJsonEqualityOperand(value: unknown): Prisma.InputJson
 // and the independently outstanding native effect. Request bodies keep their
 // canonical owners; this stored envelope is not another admission parser.
 const StoredManagedAdmissionSchema = z.strictObject({
+    enrollmentAccountId: z.optional(z.string().check(z.minLength(1))),
     computeInput: z.optional(ManagedAdmissionComputeInputV1Schema),
     continuation: z.optional(z.nullable(z.strictObject({ requestEnvelopeDigest: z.string().check(z.minLength(1)) }))),
     environmentSetup: z.optional(z.strictObject({ requestEnvelopeDigest: z.string().check(z.minLength(1)) })),
@@ -91,6 +92,10 @@ export function readManagedAdmissionState(value: unknown) {
 export function readManagedAcquisitionIdentity(value: unknown) {
     const { computeInput, continuation } = readManagedAdmissionState(value);
     return { computeInput, continuation };
+}
+/** New admission binds the authenticated requester; only historical absence retains custody. */
+export function readManagedEnrollmentAccountId(row: Pick<StoredManagedMachine, 'admittedInput' | 'custodianAccountId'>): string {
+    return readManagedAdmissionState(row.admittedInput).enrollmentAccountId ?? row.custodianAccountId;
 }
 export function readManagedCurrentRequestId(row: Pick<StoredManagedMachine, "admittedInput" | "admittedActionRequestId">): string {
     return readManagedAdmissionState(row.admittedInput).currentAdmission?.request.requestId ?? row.admittedActionRequestId;
