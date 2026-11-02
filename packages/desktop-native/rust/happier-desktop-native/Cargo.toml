@@ -9,15 +9,48 @@ publish = false
 name = "happier_desktop_native"
 crate-type = ["cdylib", "rlib"]
 
+[features]
+default = []
+node-bindings = ["dep:napi", "dep:napi-derive", "dep:napi-build"]
+capture = ["dep:serde", "dep:serde_json", "dep:png", "dep:tempfile", "dep:screencapturekit", "dep:block2", "dep:notify", "dep:dirs", "dep:image", "dep:mp4", "dep:matroska-demuxer", "dep:windows-capture", "dep:windows", "dep:ashpd", "dep:tokio", "dep:url", "dep:zbus", "dep:x11rb", "dep:xa11y-core", "dep:xa11y-macos", "dep:xa11y-windows", "dep:xa11y-linux", "dep:gstreamer", "dep:futures-util", "dep:x11"]
+
 [dependencies]
-napi = { version = "3.12.1", default-features = false, features = ["napi8"] }
-napi-derive = "3.6.3"
+napi = { version = "3.12.1", optional = true, default-features = false, features = ["napi8"] }
+napi-derive = { version = "3.6.3", optional = true }
+serde = { version = "1", features = ["derive", "rc"], optional = true }
+serde_json = { version = "1", optional = true }
+png = { version = "0.17.16", optional = true }
+tempfile = { version = "3.20", optional = true }
+notify = { version = "=8.2.1", optional = true }
+dirs = { version = "=6.0.0", optional = true }
+image = { version = "0.25.8", default-features = false, features = ["png", "jpeg", "webp", "bmp", "gif", "tiff"], optional = true }
+mp4 = { version = "=0.14.0", optional = true }
+matroska-demuxer = { version = "=0.8.1", optional = true }
+xa11y-core = { version = "=0.15.4", default-features = false, optional = true }
+
+[target."cfg(target_os = \"windows\")".dependencies]
+xa11y-windows = { version = "=0.15.4", default-features = false, optional = true }
+windows-capture = { version = "=2.0.1", path = "../../../../apps/ui/src-tauri/vendor/windows-capture", optional = true }
+windows = { version = "0.62.2", optional = true, features = ["Win32_Devices_Display", "Win32_Graphics_Gdi", "Win32_UI_HiDpi", "Win32_UI_WindowsAndMessaging", "Win32_UI_Shell", "Win32_System_Com", "Win32_System_Com_StructuredStorage", "Win32_System_Variant", "Win32_System_LibraryLoader", "Win32_Media_MediaFoundation", "Media_Editing", "Storage_Search"] }
+
+[target."cfg(target_os = \"linux\")".dependencies]
+xa11y-linux = { version = "=0.15.4", default-features = false, optional = true }
+gstreamer = { version = "=0.24.3", optional = true }
+futures-util = { version = "0.3", default-features = false, features = ["std", "async-await"], optional = true }
+x11rb = { version = "=0.13.2", default-features = false, features = ["randr", "composite", "xinput"], optional = true }
+x11 = { version = "=2.21.0", default-features = false, features = ["xlib"], optional = true }
+ashpd = { version = "=0.13.13", default-features = false, features = ["tokio", "screenshot"], optional = true }
+tokio = { version = "1", features = ["rt", "net", "sync", "macros"], optional = true }
+url = { version = "2", optional = true }
+zbus = { version = "5", default-features = false, features = ["tokio"], optional = true }
 
 [target."cfg(target_os = \"macos\")".dependencies]
-# Pinned to the exact versions `apps/ui/src-tauri` resolves, so this code can be
-# moved between the two crates verbatim.
+xa11y-macos = { version = "=0.15.4", default-features = false, optional = true }
+block2 = { version = "0.6.1", optional = true }
+screencapturekit = { version = "=11.1.1", default-features = false, features = ["macos_14_0"], optional = true }
+# Share the shell's objc2 family; allow its compatible patch resolution.
 objc2 = "0.6.2"
-objc2-app-kit = { version = "=0.3.1", features = [
+objc2-app-kit = { version = "0.3.1", features = [
   "NSApplication",
   "NSColor",
   "NSGraphics",
@@ -27,16 +60,18 @@ objc2-app-kit = { version = "=0.3.1", features = [
   "NSView",
   "NSWindow",
 ] }
-objc2-core-graphics = "=0.3.1"
-objc2-foundation = { version = "=0.3.1", features = [
+objc2-core-graphics = "0.3.1"
+objc2-foundation = { version = "0.3.1", features = [
   "NSArray",
   "NSDictionary",
   "NSEnumerator",
   "NSGeometry",
+  "NSPathUtilities",
   "NSObject",
   "NSString",
+  "NSUserDefaults",
   "NSValue",
 ] }
 
 [build-dependencies]
-napi-build = "2.4.1"
+napi-build = { version = "2.4.1", optional = true }

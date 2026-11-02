@@ -1,0 +1,90 @@
+[package]
+name = "windows-capture"
+version = "2.0.1"
+authors = ["NiiightmareXD"]
+edition = "2024"
+description = "Fastest Windows Screen Capture Library For Rust 🔥"
+documentation = "https://docs.rs/windows-capture"
+readme = "README.md"
+repository = "https://github.com/NiiightmareXD/windows-capture"
+license = "MIT"
+keywords = ["screenshot", "screen", "capture", "graphics", "windows"]
+categories = [
+    "api-bindings",
+    "graphics",
+    "gui",
+    "multimedia",
+    "os::windows-apis",
+]
+resolver = "3"
+
+[dependencies]
+# Windows API
+windows = { version = "0.62.2", features = [
+    "Foundation_Metadata",
+    "Foundation",
+    "Graphics_Capture",
+    "Graphics_DirectX_Direct3D11",
+    "Graphics_Imaging",
+    "Media_Core",
+    "Media_MediaProperties",
+    "Media_Transcoding",
+    "Security_Cryptography",
+    "Storage_Streams",
+    "Storage",
+    "System",
+    "Win32_Devices_Display",
+    "Win32_Foundation",
+    "Win32_Graphics_Direct3D",
+    "Win32_Graphics_Direct3D11",
+    "Win32_Graphics_Dwm",
+    "Win32_Graphics_Dxgi_Common",
+    "Win32_Graphics_Gdi",
+    "Win32_System_Com",
+    "Win32_System_LibraryLoader",
+    "Win32_System_ProcessStatus",
+    "Win32_System_Threading",
+    "Win32_System_WinRT_Direct3D11",
+    "Win32_System_WinRT_Graphics_Capture",
+    "Win32_UI_HiDpi",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+    "System_Threading",
+] }
+windows-future = "0.3.2"
+
+# Mutex optimization
+parking_lot = "0.12.5"
+
+# Multithreading
+rayon = "1.12.0"
+
+# Error handling
+thiserror = "2.0.18"
+
+[dev-dependencies]
+clap = { version = "4.6.1", features = ["derive"] }
+ctrlc = "3.5.2"
+
+[package.metadata.docs.rs]
+default-target = "x86_64-pc-windows-msvc"
+targets = ["x86_64-pc-windows-msvc"]
+
+[[example]]
+name = "graphics_capture"
+doc-scrape-examples = false
+
+[[example]]
+name = "dxgi_duplication"
+doc-scrape-examples = false
+
+[[example]]
+name = "cli"
+doc-scrape-examples = false
+
+[[example]]
+name = "stream_capture"
+doc-scrape-examples = false
+
+[workspace]
+members = ["windows-capture-python"]

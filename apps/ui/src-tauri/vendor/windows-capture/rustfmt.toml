@@ -1,0 +1,10 @@
+style_edition = "2024"
+use_small_heuristics = "Max"
+group_imports = "StdExternalCrate"
+imports_granularity = "Module"
+max_width = 120
+comment_width = 100
+format_code_in_doc_comments = true
+format_macro_matchers = true
+format_macro_bodies = true
+wrap_comments = true

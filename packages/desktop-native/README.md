@@ -1,13 +1,14 @@
 # @happier-dev/desktop-native
 
-Host-agnostic macOS window and display primitives for Happier's desktop shells,
-packaged as a napi-rs N-API addon.
+Host-agnostic window, display and capture primitives for Happier's desktop shells.
+The Rust core has no Node dependency by default; the existing napi-rs addon is an
+optional `node-bindings` adapter.
 
 Happier's desktop target is being built twice on purpose right now — the shipping
 Tauri shell and an in-tree Electron shell — so the macOS-native logic has to stop
 belonging to either of them. This package is where that logic lands: it depends on
-no shell, and the only thing it takes from a host is the content view's native
-handle. That makes it drivable from Electron
+no shell. Its window configuration takes the host content view's native handle,
+making those primitives drivable from Electron
 (`BrowserWindow.getNativeWindowHandle()`, which yields an `NSView *`) and from
 Tauri (`WebviewWindow::ns_view()`, the same pointer) with no branch in the crate.
 
@@ -56,7 +57,8 @@ the Objective-C runtime. Those guards are pure and unit tested headlessly. A
 pointer that is well-formed but stale cannot be detected; keeping the handle live
 for the duration of the call remains the host's contract. Every window and display
 entry point must run on the process main thread and returns a typed error
-otherwise.
+otherwise. Tauri's shared `desktop_panel` host uses its NSPanel mechanics, not
+the Node adapter's runtime subclass, on Tauri windows.
 
 ## Build and verify
 
@@ -64,49 +66,34 @@ otherwise.
 pnpm --filter @happier-dev/desktop-native run build:native     # cargo build + place native/*.node
 pnpm --filter @happier-dev/desktop-native run verify:native    # headless load check
 pnpm --filter @happier-dev/desktop-native run test             # TypeScript surface
-cd rust/happier-desktop-native && cargo test --target aarch64-apple-darwin
+./apps/stack/bin/hstack-exec --target=mac-host -- cargo test --locked --manifest-path packages/desktop-native/rust/happier-desktop-native/Cargo.toml
+./apps/stack/bin/hstack-exec --target=mac-host -- cargo build --locked --manifest-path packages/desktop-native/rust/happier-desktop-native/Cargo.toml --example core_link
 ```
 
 `native/` holds the built addon and is not committed. `rust/happier-desktop-native/.cargo/config.toml`
 extends the flat-namespace `napi_*` lookup to host-target binaries so the `cargo test`
-harness links; `napi_build::setup()` only covers the cdylib.
+harness links when testing the optional Node feature; `napi_build::setup()` only
+covers the cdylib and now runs only with `node-bindings`. `build:native` selects
+that feature explicitly. The standalone `core_link` check runs without it.
 
-## Status: `src-tauri` has NOT been migrated onto this package
+## Development consumers
 
-Nothing consumes this package yet. `apps/ui/src-tauri` still carries its own copy
-of all of the above, and this package was built beside it rather than extracted
-from it because a Tauri/wry upgrade was in flight in that tree. The two are
-byte-compatible by construction: the crate pins the same
-`objc2` / `objc2-app-kit` / `objc2-foundation` / `objc2-core-graphics` versions
-`src-tauri` resolves, and `geometry.rs` reproduces the existing derivation rules
-exactly, so the logic can move verbatim.
+`apps/ui/src-tauri` consumes the plain Rust core. Its activity overlay projects
+shared display/identity/notch facts into the existing serialized shape, retaining
+its monitor matching and placement policies. Electron keeps the existing Node
+API. These are host adapters, not competing display derivations.
 
-The follow-up that completes the extraction:
+The optional `capture` feature supplies native media contracts and the macOS
+ScreenCaptureKit still backend: macOS 14+ uses the screenshot API; macOS 13 takes
+the first complete stream frame and stops. Display-local geometry lives in
+`geometry`; cancellation and errors are typed. The Tauri capture owner exposes
+one active operation and lazy commands through
+`apps/ui/sources/desktop/capture/nativeCapture.ts`.
 
-1. Delete `resolve_display_identity` from
-   `apps/ui/src-tauri/src/activity_overlay/display_identity.rs` and the notch
-   derivation from `macos_display_context.rs`, and have both call this crate's
-   `geometry` module. Depending on `happier-desktop-native` as a path dependency
-   from `src-tauri/Cargo.toml` keeps one owner for the rules; the crate's `rlib`
-   target exists for exactly that.
-2. Replace the raw `NSScreen` reads in
-   `apps/ui/src-tauri/src/activity_overlay/macos_display_context.rs` — the only
-   place in `src-tauri` that reads them — with `display::list_displays`, keeping
-   that module's monitor-matching logic, which stays Tauri-specific because it
-   matches against a `tauri::Monitor` rect.
-3. Replace the collection-behaviour / style-mask / level writes in
-   `apps/ui/src-tauri/src/activity_overlay/host_window.rs` with
-   `window::configure`, passing `WebviewWindow::ns_view()` instead of
-   `ns_window()`.
-4. Decide the fate of `apps/ui/src-tauri/src/activity_overlay/panel_host.rs` and
-   its `tauri-nspanel` dependency. `window::configure`'s key/main split covers the
-   panel behaviour Happier actually relies on; if `panel_host.rs` is retired, the
-   `tauri-nspanel` git dependency in `apps/ui/src-tauri/Cargo.toml` goes with it.
-   Until then `panel_host.rs` and this crate are two owners of the same concept
-   and must not both be live on the same window.
-5. Add `packages/desktop-native` to the desktop build pipelines so the addon is
-   present for the Electron shell and, once step 1 lands, so `src-tauri`'s build
-   resolves the path dependency.
-
-Steps 1-4 touch `apps/ui/src-tauri/**` and step 5 touches the build pipeline;
-both were out of scope when this package was created.
+`capture::files::CaptureFiles` keeps sources and complete prepared PNGs under an
+opaque `captureRef`; dropping the owner deletes nothing. Prepared reads never
+fall back to source bytes. Tauri owns the folder override (default
+Pictures/Happier), and recording and import consumers use the same reader.
+Only settled discard removes the owned files. These interfaces describe
+development source, not released desktop-capture availability; graphical capture
+and marked-image delivery require the integrated selector/editor surface.

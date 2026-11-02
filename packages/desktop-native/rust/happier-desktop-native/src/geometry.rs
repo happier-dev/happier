@@ -1,12 +1,10 @@
 //! Pure display-geometry derivations.
 //!
-//! These mirror the rules currently implemented inside the Tauri shell
-//! (`apps/ui/src-tauri/src/activity_overlay/display_identity.rs` and
-//! `macos_display_context.rs`) so that shell can later delegate to this crate
-//! without a behaviour change. They are pure so they run headlessly under test.
+//! The canonical identity, notch and coordinate owner for desktop shells.
 
 /// A rectangle in AppKit's bottom-left-origin screen coordinate space.
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "capture", derive(serde::Serialize, serde::Deserialize))]
 pub struct Rect {
     pub x: f64,
     pub y: f64,
@@ -14,8 +12,40 @@ pub struct Rect {
     pub height: f64,
 }
 
+/// Map a display-local logical point into its backend's desktop coordinates.
+/// A monitor's native origin is already physical on Windows, even when negative.
+pub fn display_local_point(frame: Rect, desktop_scale: f64, x: f64, y: f64) -> (f64, f64) {
+    (frame.x + x * desktop_scale, frame.y + y * desktop_scale)
+}
+
+pub fn desktop_rect_to_display_local(frame: Rect, desktop_scale: f64, rect: Rect) -> Rect {
+    Rect { x: (rect.x - frame.x) / desktop_scale, y: (rect.y - frame.y) / desktop_scale,
+        width: rect.width / desktop_scale, height: rect.height / desktop_scale }
+}
+
+/// Normalize a drag and keep it within its initiating display's logical bounds.
+pub fn clamp_display_rect(rect: Rect, display: Rect) -> Option<Rect> {
+    if ![rect.x, rect.y, rect.width, rect.height].iter().all(|v| v.is_finite()) { return None; }
+    let left = rect.x.min(rect.x + rect.width).clamp(0., display.width);
+    let top = rect.y.min(rect.y + rect.height).clamp(0., display.height);
+    let right = rect.x.max(rect.x + rect.width).clamp(0., display.width);
+    let bottom = rect.y.max(rect.y + rect.height).clamp(0., display.height);
+    (right > left && bottom > top).then_some(Rect { x: left, y: top, width: right-left, height: bottom-top })
+}
+
+/// Pixel coverage of a display-local logical rectangle in one native frame.
+pub fn display_pixel_ranges(rect: Rect, scale: f64, width: u32, height: u32)
+    -> Option<(std::ops::Range<u32>, std::ops::Range<u32>)> {
+    let left = (rect.x * scale).floor() as u32;
+    let top = (rect.y * scale).floor() as u32;
+    let right = ((rect.x + rect.width) * scale).ceil().min(width as f64) as u32;
+    let bottom = ((rect.y + rect.height) * scale).ceil().min(height as f64) as u32;
+    (right > left && bottom > top).then_some((left..right, top..bottom))
+}
+
 /// Physical notch extents, in points.
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "capture", derive(serde::Serialize, serde::Deserialize))]
 pub struct NotchSize {
     pub width: f64,
     pub height: f64,

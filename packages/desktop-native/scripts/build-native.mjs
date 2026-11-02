@@ -39,7 +39,7 @@ function main() {
   const arch = process.arch;
   const target = resolveRustTarget(platform, arch);
 
-  const cargoArgs = ["build", "--manifest-path", join(crateDir, "Cargo.toml"), "--target", target];
+  const cargoArgs = ["build", "--manifest-path", join(crateDir, "Cargo.toml"), "--target", target, "--features", "node-bindings"];
   if (profile === "release") {
     cargoArgs.push("--release");
   }
