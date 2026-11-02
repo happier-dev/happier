@@ -1,6 +1,7 @@
 import { useStoreWithEqualityFn } from 'zustand/traditional';
 import type { StoreApi } from 'zustand/vanilla';
 import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import type { WorkspaceRefResolutionContextV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import type { WorkspaceSyncRelationshipV1 } from '@happier-dev/protocol';
 import type { ProjectAccountAuthoringSessionV1, ProjectAccountOrganizationV1, ProjectAccountRowKeyV1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import { areServerAccountScopesEqual, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
@@ -20,6 +21,8 @@ export type ProjectAccountRowsSnapshot = Readonly<{
     /** When the rows were last read successfully; a failed refresh labels the retained rows with it. */
     lastReadyAtMs?: number;
     workspaceRefs: readonly WorkspaceRefV1[];
+    /** Producer-owned index over these exact refs; status/Account admission remains with readers. */
+    sessionProjectKeyResolver?: WorkspaceRefResolutionContextV1['sessionProjectKeyResolver'];
     relationships: readonly WorkspaceSyncRelationshipV1[];
     organizations: readonly ProjectOrganizationRow[];
     /** Server-owned display relationships; absence retains the older hydrated-Session fallback. */

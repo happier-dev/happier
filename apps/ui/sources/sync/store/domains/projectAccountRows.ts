@@ -1,4 +1,6 @@
 import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import { createSessionProjectKeyResolverV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
+import { workspaceRefResolutionContextV1 } from '@/sync/domains/workspaces/workspaceRefs';
 import type { WorkspaceSyncRelationshipV1 } from '@happier-dev/protocol';
 import { getWorkspaceSyncWorkerCopyV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { buildProjectAccountRowPhysicalKeyV1, type ProjectAccountOrganizationV1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
@@ -123,6 +125,9 @@ export function createProjectAccountRowsDomain<S extends ProjectAccountRowsDomai
             const complete = incoming.coverage === 'complete';
             const workspaceRefs = reconcileRows(previous.workspaceRefs, incoming.workspaceRefs,
                 ref => buildProjectAccountRowPhysicalKeyV1({ kind: 'workspace-ref', serverId: ref.serverId, id: ref.id }), previous.revisionsByPhysicalKey, incomingRevisions, complete);
+            const sessionProjectKeyResolver = workspaceRefs === previous.workspaceRefs && previous.sessionProjectKeyResolver
+                ? previous.sessionProjectKeyResolver
+                : createSessionProjectKeyResolverV1(workspaceRefs, workspaceRefResolutionContextV1());
             const organizations = reconcileRows(previous.organizations, incoming.organizations,
                 row => buildProjectAccountRowPhysicalKeyV1(row.key), previous.revisionsByPhysicalKey, incomingRevisions, complete);
             const graphKey = buildProjectAccountRowPhysicalKeyV1({ kind: 'relationship-graph' });
@@ -134,7 +139,8 @@ export function createProjectAccountRowsDomain<S extends ProjectAccountRowsDomai
             const revisionsByPhysicalKey = areAccountSettingsJsonValuesEqual(previous.revisionsByPhysicalKey, mergedRevisions)
                 ? previous.revisionsByPhysicalKey : mergedRevisions;
             if (previous.status === incoming.status && previous.coverage === incoming.coverage && workspaceRefs === previous.workspaceRefs
-                && relationships === previous.relationships && organizations === previous.organizations && revisionsByPhysicalKey === previous.revisionsByPhysicalKey) return state;
+                && sessionProjectKeyResolver === previous.sessionProjectKeyResolver && relationships === previous.relationships
+                && organizations === previous.organizations && revisionsByPhysicalKey === previous.revisionsByPhysicalKey) return state;
             let pinnedWorkspaceRefIds = state.pinnedWorkspaceRefIds;
             if (workspaceRefs !== previous.workspaceRefs || organizations !== previous.organizations) {
                 const pinnedProjects = new Set(organizations.filter(row => row.value.pinned === true).map(row => buildProjectAccountRowPhysicalKeyV1(row.key)));
@@ -142,7 +148,7 @@ export function createProjectAccountRowsDomain<S extends ProjectAccountRowsDomai
                     serverId: ref.serverId, projectKey: ref.projectKey ?? ref.id }))).map(ref => ref.id);
                 if (!areAccountSettingsJsonValuesEqual(nextPins, pinnedWorkspaceRefIds)) pinnedWorkspaceRefIds = nextPins;
             }
-            return { projectAccountRows: { ...incoming, scope: previous.scope, workspaceRefs, relationships, organizations, revisionsByPhysicalKey }, pinnedWorkspaceRefIds } as Partial<S>;
+            return { projectAccountRows: { ...incoming, scope: previous.scope, workspaceRefs, sessionProjectKeyResolver, relationships, organizations, revisionsByPhysicalKey }, pinnedWorkspaceRefIds } as Partial<S>;
         }),
         setProjectAccountRowsStatusForScope: (scope, status) => set(state => !areServerAccountScopesEqual(state.projectAccountRows?.scope, scope)
             || state.projectAccountRows?.status === status ? state : { projectAccountRows: { ...state.projectAccountRows!, status } } as Partial<S>),

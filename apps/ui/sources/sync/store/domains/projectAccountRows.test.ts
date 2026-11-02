@@ -37,6 +37,27 @@ describe('Project Account row projection', () => {
         expect(refs[42].rootPath).toBe('/changed');
         dispose();
     });
+    it('owns one indexed Session checkout resolver per changed census and reuses it for unrelated rows', () => {
+        const state = store();
+        state.getState().activateProjectAccountRowsScope(scope);
+        let reads = 0;
+        const workspaceRefs = Array.from({ length: 1_000 }, (_, index) => ({
+            get id() { if (index !== 42) reads += 1; return `ref-${index}`; }, serverId: scope.serverId,
+            machineId: 'machine-a', rootPath: `/repo/${index}`, createdAtMs: 1,
+        }));
+        state.getState().applyProjectAccountRowsForScope(scope, { ...snapshot(), workspaceRefs });
+        const resolver = state.getState().projectAccountRows?.sessionProjectKeyResolver;
+        expect(resolver).toBeTypeOf('function');
+        reads = 0;
+        for (let index = 0; index < 20; index += 1) {
+            expect(resolver?.({ workspaceId: 'ref-42' }, scope.serverId)).toMatchObject({ kind: 'resolved', ref: workspaceRefs[42] });
+        }
+        // Each lookup admits its exact candidate; it never inventories the other 999 refs.
+        expect(reads).toBe(0);
+        state.getState().applyProjectAccountRowsForScope(scope, { ...snapshot(), workspaceRefs,
+            organizations: [{ key: { kind: 'project-organization', serverId: scope.serverId, projectKey: 'other' }, revision: 2, value: { pinned: true } }] });
+        expect(state.getState().projectAccountRows?.sessionProjectKeyResolver).toBe(resolver);
+    });
     it('selects the atmosphere only from the requested Project in the active Account/Home', () => {
         const state = store();
         state.getState().activateProjectAccountRowsScope(scope);
