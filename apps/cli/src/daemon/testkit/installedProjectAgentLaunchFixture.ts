@@ -4,17 +4,19 @@ import axios from 'axios';
 import { onTestFinished, vi } from 'vitest';
 import { ProjectTrustMutationRequestV1Schema, ProjectTrustReadRequestV1Schema, type ProjectTrustContentV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectTrustRowV1';
 import { ApiMachineClient } from '@/api/apiMachine';
+import { ApiClient } from '@/api/api';
 import { createDaemonAdmissionDrain } from '@/daemon/lifecycle/admissionDrain';
 import { createProjectSessionRuntimeFixture } from '@/daemon/testkit/projectSessionRuntimeFixture';
 import { createProjectWorkerAdmission } from '@/workspaces/execution/projectWorkerAdmission';
 import { projectRuntimeAccountRowsInput } from '@/workspaces/projectAccountRows';
 import { prepareProjectAgentLaunch } from '@/workspaces/projectSetup/projectAgentLaunch';
 import { createProjectSetupTrustClient } from '@/workspaces/projectSetup/projectSetupTrust';
-import type { ProjectNativeEnvironmentIoForHost } from '@/plugins/runtime/invocation/services/exec';
+import type { ProjectNativeToolchainIoForHost } from '@/plugins/runtime/invocation/services/exec';
 import { createInstalledProjectFiniteRuntime } from '@/daemon/startup/createInstalledProjectFiniteRuntime';
 import { readStoredCredentialsForServerId, sameStoredCredentials, writeCredentialsTokenOnly, writeStoredCredentialsForServerId, type StoredCredentials } from '@/persistence';
 import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
-import { verifyMachineInstallationProof, RequesterSessionCurrentnessPurposeV1Schema } from '@happier-dev/protocol/machines/identity/installationIdentity';
+import { verifyMachineInstallationProof, MachineInstallationProofV1Schema, RequesterSessionCurrentnessPurposeV1Schema } from '@happier-dev/protocol/machines/identity/installationIdentity';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { SocketRpcMachineAdmissionContextV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
 import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 import { setActionApprovalOverride } from '@happier-dev/protocol/actions/actionSettings';
@@ -22,21 +24,28 @@ import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/boot
 import { EXTERNAL_ACTION_EFFECT_ACTION_HEADER } from '@happier-dev/protocol/actions/externalActionApi';
 import { ProjectAccountRowReadRequestV1Schema, ProjectAccountRowReadResponseV1Schema,
   ProjectAccountRowListResponseV1Schema } from '@happier-dev/protocol/projects/projectAccountRowsV1';
+import { readBundledPluginAvailabilityHttpFixture } from '@/plugins/testkit/bundledPluginAvailabilityHttpFixture';
 
 /** Installed Project/Account/Trust and native IO composition for cold launch seam tests. */
 export async function createInstalledProjectAgentLaunchFixture(options: Readonly<{
   accountActionCredentials?: StoredCredentials;
   requesterCredentials?: StoredCredentials;
+  homeServerIdentityId?: string;
+  boundSessionId?: string;
   prepareProject?: boolean;
   machineAccess?: NonNullable<Parameters<typeof createProjectSessionRuntimeFixture>[0]>['machineAccess'];
+  machineRpcMethods?: readonly string[];
+  resolveCurrentMachineExecutionOriginContext?: Parameters<typeof createInstalledProjectFiniteRuntime>[0]['resolveCurrentMachineExecutionOriginContext'];
 }> = {}) {
   const f = await createProjectSessionRuntimeFixture(options.accountActionCredentials
-    ? { serverId: 'session-home', serverUrl: 'https://session-home.test', machineAccess: options.machineAccess,
+    ? { serverId: 'session-home', homeServerIdentityId: options.homeServerIdentityId, boundSessionId: options.boundSessionId,
+      serverUrl: 'https://session-home.test', machineAccess: options.machineAccess,
       // Account decision ingress may proceed directly over RPC. Original
       // CLI Run ingress remains unwaived and must retain setup review.
       accountSettings: { actionsSettingsV1: setActionApprovalOverride({ settings: { v: 1, actions: {} },
         actionId: 'projects.prepare', surface: 'rpc', approvalRequired: false }) } }
-    : { serverId: 'session-home', serverUrl: 'https://session-home.test', credentials: options.requesterCredentials, machineAccess: options.machineAccess });
+    : { serverId: 'session-home', homeServerIdentityId: options.homeServerIdentityId, boundSessionId: options.boundSessionId,
+      serverUrl: 'https://session-home.test', credentials: options.requesterCredentials, machineAccess: options.machineAccess });
   let accountActionCredentials: StoredCredentials | undefined;
   let accountActionSettings: Awaited<ReturnType<typeof bootstrapAccountSettingsContext>> | undefined;
   if (options.accountActionCredentials) {
@@ -58,18 +67,26 @@ export async function createInstalledProjectAgentLaunchFixture(options: Readonly
   let trustWrites = 0;
   const accountReads: unknown[] = [];
   vi.spyOn(axios, 'post').mockImplementation(async (url, body, requestOptions) => {
+    const availability = readBundledPluginAvailabilityHttpFixture(new URL(String(url)).pathname, body);
+    if (availability) return { status: 200, data: availability };
     if (String(url).endsWith('/v1/machines/machine/admission/verify')) {
-      if (!body || typeof body !== 'object' || !('context' in body) || !('purpose' in body) || !('proof' in body)) throw new Error('Missing requester admission proof');
+      if (!body || typeof body !== 'object' || !('context' in body) || !('proof' in body)) throw new Error('Missing requester admission proof');
       // Home HTTP is the boundary; custody uses the real signer and proof verifier.
       const context = SocketRpcMachineAdmissionContextV1Schema.parse(body.context);
+      const proof = MachineInstallationProofV1Schema.parse(body.proof);
+      const purpose = 'purpose' in body ? { purpose: RequesterSessionCurrentnessPurposeV1Schema.parse(body.purpose) }
+        : 'method' in body && typeof body.method === 'string'
+          && (body.method === `machine:${RPC_METHODS.DAEMON_PROJECTS_PREPARE}`
+            || options.machineRpcMethods?.some(method => body.method === `machine:${method}`))
+          ? { method: body.method } : null;
       const custodianAccountId = options.machineAccess?.custodianAccountId ?? 'requester';
-      const valid = context.actorAccountId === 'requester' && context.custodianAccountId === custodianAccountId
+      const valid = purpose !== null && context.actorAccountId === 'requester'
+        && context.custodianAccountId === custodianAccountId
         && context.role === (options.machineAccess?.role ?? 'manage')
         && verifyMachineInstallationProof({ publicKey: f.installation.publicKey,
-        proof: body.proof as Parameters<typeof verifyMachineInstallationProof>[0]['proof'], payload: {
+        proof, payload: {
           version: 1, accountId: custodianAccountId, machineId: 'machine', installationId: f.installation.installationId,
-          rpcAdmission: { context,
-            purpose: RequesterSessionCurrentnessPurposeV1Schema.parse(body.purpose) } } });
+          rpcAdmission: { context, ...purpose } } });
       return { status: valid && f.isHomeCurrent() ? 200 : 403, data: valid && f.isHomeCurrent() ? { v: 1, ok: true } : { error: 'access_denied' } };
     }
     accountReads.push(requestOptions?.headers?.Authorization);
@@ -111,14 +128,14 @@ export async function createInstalledProjectAgentLaunchFixture(options: Readonly
   // Installed-tool discovery and evaluation are OS boundaries; this fixture
   // does not characterize a real Mise distribution. Account and launch owners stay real.
   const resolveTool = async () => ({ executablePath: '/tools/mise', version: '2026.10.4' });
-  const environmentIo: ProjectNativeEnvironmentIoForHost = {
+  const environmentIo: ProjectNativeToolchainIoForHost = {
     resolveTool,
     async run() { nativeEffects++; return { exitCode: 0, stdout: 'PATH=/native/bin\0NATIVE=active\0' }; },
     createInvocation: () => environmentIo,
   };
   const admission = createProjectWorkerAdmission({ machineId: 'machine', admissionDrain: createDaemonAdmissionDrain(),
     readPolicy: async () => ({ status: 'ready', policy: { accepting: true, runAtMost: 1 }, source: 'default', metadataVersion: 1 }) });
-  const finite = createInstalledProjectFiniteRuntime({ api: { getMachine: async () => null },
+  const finite = createInstalledProjectFiniteRuntime({ api: await ApiClient.create(accountActionCredentials ?? f.bootstrap.credentials),
     credentials: accountActionCredentials ?? { token: 'custodian-token', encryption: null },
     externalActionAccountId: options.accountActionCredentials ? 'requester' : 'custodian',
     finiteServerId: 'session-home', finiteServerHttpBaseUrl: 'https://session-home.test', registeredMachineId: 'machine',
@@ -126,10 +143,12 @@ export async function createInstalledProjectAgentLaunchFixture(options: Readonly
     nativeIo: { commandIo: { resolveTool }, environmentIo },
     successHomeDir: join(f.directory, 'success'), isCurrent: async () => !accountActionCredentials
       || sameStoredCredentials(accountActionCredentials, await readStoredCredentialsForServerId('session-home')),
-    prepareBetween: async () => { throw new Error('No worker routing expected'); }, resolveCurrentMachineExecutionOriginContext: async () => null });
+    prepareBetween: async () => { throw new Error('No worker routing expected'); },
+    resolveCurrentMachineExecutionOriginContext: options.resolveCurrentMachineExecutionOriginContext ?? (async () => null) });
   const machine = new ApiMachineClient(accountActionCredentials?.token ?? 'custodian-token', { id: 'machine', encryptionMode: 'plain',
     dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER, metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0 },
-    undefined, { createProjectFiniteRuntime: finite });
+    undefined, { createProjectFiniteRuntime: finite,
+      resolveCurrentServerIdentityId: () => options.homeServerIdentityId ?? null });
   machine.setRPCHandlers({ spawnSession: async () => { throw new Error('No replacement Session expected'); },
     stopSession: async () => true, requestShutdown() {} }, options.accountActionCredentials ? {
       actionsSettingsProvider: createActionSettingsProvider({ allowEnvironmentOverride: false,

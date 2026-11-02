@@ -10,7 +10,8 @@ import type { TrackedSession } from '@/daemon/types';
 import type { AgentSessionRunnerBindingV1 } from '@/plugins/runtime/runner/agentSessionRunnerFactoryBinding';
 import { createAdmittedPluginRuntimeFixture, createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
-import { createPluginReloadController, type PluginReloadController } from '@/plugins/runtime/reload/controller';
+import type { PluginReloadController } from '@/plugins/runtime/reload/controller';
+import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { createRequesterSessionRuntimeContextResolver, releaseUnretainedRequesterSessionRuntimeContext,
   resolveRequesterSessionBootstrapFromCustody, type RequesterSessionRuntimeContext, type ResolveRequesterSessionRuntimeContext } from '@/daemon/sessionEncryption/requesterSessionCredentials';
 import { startDaemonSessionControlRuntime } from '@/daemon/startup/startDaemonSessionControlRuntime';
@@ -32,6 +33,7 @@ type InstalledProjectAgentDaemonFixtureOwners = Readonly<{
   tracked: TrackedSession;
   plugin: Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>> | Awaited<ReturnType<typeof createAuthoredAdmittedPluginRuntimeFixture>>;
   pidToTrackedSession: Map<number, TrackedSession>;
+  connectedServiceRuntimeRegistry: ConnectedServiceRuntimeRegistry;
   pidToAwaiter: Map<number, (tracked: TrackedSession) => void>;
   daemon: Awaited<ReturnType<typeof startDaemonSessionControlRuntime>>;
   resolveRequesterRuntime: ResolveRequesterSessionRuntimeContext;
@@ -46,26 +48,42 @@ export type InstalledProjectAgentDaemonFixture = Omit<InstalledProjectAgentLaunc
 export async function createInstalledProjectAgentDaemonFixture(readControl: () => Parameters<typeof startDaemonControlServer>[0] | null, bundledAgentId?: string, unassociated = false,
   authoredPlugin?: Parameters<typeof createAuthoredAdmittedPluginRuntimeFixture>[0]['plugins'][number],
   controller?: PluginReloadController,
-  requesterOptions?: Pick<Parameters<typeof createRequesterSessionRuntimeContext>[0], 'resolveQualifiedConnectedAccountV4Support'>
-    & Pick<Parameters<typeof startDaemonSessionControlRuntime>[0], 'resolveCurrentMachineExecutionOriginContext' | 'processEnv' | 'openTeamCredentialProviderBinding'>
-    & Partial<Pick<Parameters<typeof startDaemonSessionControlRuntime>[0], 'credentials'>>
-    & Pick<NonNullable<Parameters<typeof createInstalledProjectAgentLaunchFixture>[0]>, 'machineAccess'>
-    & { requesterCredentials?: StoredCredentials }): Promise<InstalledProjectAgentDaemonFixture> {
-  const daemonCredentials = requesterOptions?.credentials ?? { token: 'custodian-token', encryption: null };
+  requesterOptions?: Partial<Pick<Parameters<typeof createRequesterSessionRuntimeContext>[0], 'resolveQualifiedConnectedAccountV4Support'>>
+    & Partial<Pick<Parameters<typeof startDaemonSessionControlRuntime>[0], 'resolveCurrentMachineExecutionOriginContext' | 'processEnv' | 'openTeamCredentialProviderBinding'>>
+    & Partial<Pick<Parameters<typeof startDaemonSessionControlRuntime>[0], 'credentials' | 'externalActionAccountId' | 'agentIsolation'>>
+    & Pick<NonNullable<Parameters<typeof createInstalledProjectAgentLaunchFixture>[0]>, 'machineAccess' | 'homeServerIdentityId' | 'machineRpcMethods'>
+    & { requesterCredentials?: StoredCredentials; ordinaryAccountSession?: boolean }): Promise<InstalledProjectAgentDaemonFixture> {
+  let daemonCredentials = requesterOptions?.credentials ?? { token: 'custodian-token', encryption: null };
+  // This Home fixture owns original admission; normal fixtures retain its
+  // actual held identity rather than relying on later legacy recovery to invent birth.
+  const fixtureHome = requesterOptions?.homeServerIdentityId
+    ?? (await requesterOptions?.resolveCurrentMachineExecutionOriginContext?.())?.serverIdentityId
+    ?? 'srv_installed_project_fixture';
+  const birth = {
+    homeServerIdentityId: fixtureHome, boundSessionId: 'project-session',
+  };
   const accountActionCredentials = { token: `e30.${Buffer.from(JSON.stringify({ sub: 'requester',
     provenance: { v: 1, kind: 'terminal', authority: 'account_automation' } })).toString('base64url')}.signature`, encryption: null };
   const fixture = await createInstalledProjectAgentLaunchFixture(unassociated
-    ? { prepareProject: false, requesterCredentials: requesterOptions?.requesterCredentials, machineAccess: requesterOptions?.machineAccess }
-    : { accountActionCredentials, machineAccess: requesterOptions?.machineAccess });
+    ? { prepareProject: false, ...birth, requesterCredentials: requesterOptions?.requesterCredentials, machineAccess: requesterOptions?.machineAccess,
+      machineRpcMethods: requesterOptions?.machineRpcMethods,
+      resolveCurrentMachineExecutionOriginContext: requesterOptions?.resolveCurrentMachineExecutionOriginContext,
+      ...(requesterOptions?.ordinaryAccountSession ? { accountActionCredentials } : {}) }
+    : { ...birth, accountActionCredentials, machineAccess: requesterOptions?.machineAccess,
+      machineRpcMethods: requesterOptions?.machineRpcMethods,
+      resolveCurrentMachineExecutionOriginContext: requesterOptions?.resolveCurrentMachineExecutionOriginContext });
   const { f, machine } = fixture;
   const signal: AbortSignal = fixture.signal;
-  const runtimeController = controller ?? createPluginReloadController({ happyHomeDir: f.directory });
+  const runtimeController = controller ?? pluginReloadController;
   const cwd = unassociated ? join(f.directory, 'fresh-unassociated') : fixture.cwd;
   if (unassociated) await mkdir(cwd);
   await writeCredentialsTokenOnly(accountActionCredentials);
   await writeStoredCredentialsForServerId('session-home', accountActionCredentials);
   expect((await readStoredCredentialsForServerId('session-home'))?.token === accountActionCredentials.token,
     'The Account Action fixture must retain its canonical Home credentials').toBe(true);
+  if (requesterOptions?.ordinaryAccountSession) {
+    daemonCredentials = (await readStoredCredentialsForServerId('session-home'))!;
+  }
   const plugin = bundledAgentId ? await createAdmittedPluginRuntimeFixture({ happyHomeDir: f.directory,
     controller: runtimeController, runtimeOptions: { pluginIds: [`happier.agent.${bundledAgentId}`] } })
     : await createAuthoredAdmittedPluginRuntimeFixture({ happyHomeDir: f.directory, controller: runtimeController,
@@ -76,12 +94,17 @@ export async function createInstalledProjectAgentDaemonFixture(readControl: () =
         export function activate(api) { api.agents.register('agent', factory, {
           sessionRunnerFactory: { module: './agent.mjs', export: 'factory', runtimeApiVersion: 1 } }); }` } }] });
   onTestFinished(() => plugin.dispose());
-  const retainedAgent = plugin.registry.agentRuntimesByAgentId.get(bundledAgentId ?? 'acme.project-launch/agent')?.sessionRunnerFactoryBinding;
-  if (!retainedAgent) throw new Error(`Missing genuine retained Agent binding: ${JSON.stringify(plugin.registry.pluginDiagnosticsByPluginId[bundledAgentId ? `happier.agent.${bundledAgentId}` : 'acme.project-launch'])}`);
+  const pluginId = bundledAgentId ? `happier.agent.${bundledAgentId}` : 'acme.project-launch';
+  const agent = [...plugin.registry.contributes.agentDefinitionsById.values()]
+    .find(definition => definition.identity?.pluginId === pluginId);
+  if (!agent?.identity) throw new Error(`Missing installed Agent declaration: ${pluginId}`);
+  await plugin.registry.activateContributionsOnDemand([{ ...agent.identity, family: 'agents' }]);
+  const retainedAgent = plugin.registry.agentRuntimesByAgentId.get(agent.id)?.sessionRunnerFactoryBinding;
+  if (!retainedAgent) throw new Error(`Missing genuine retained Agent binding (${bundledAgentId ?? 'acme.project-launch/agent'}); registered: ${[...plugin.registry.agentRuntimesByAgentId.keys()].join(', ')}; diagnostics: ${JSON.stringify(plugin.registry.pluginDiagnosticsByPluginId[bundledAgentId ? `happier.agent.${bundledAgentId}` : 'acme.project-launch'])}`);
   const runner = { pid: process.pid, processStartTimeMs: 1, processCommandHash: 'a'.repeat(64), snapshotIdentity: 'fixture-runner' };
-  const sessionId = 'project-session';
+  const sessionId = requesterOptions?.ordinaryAccountSession ? 'ordinary-native-owner' : 'project-session';
   const tracked: TrackedSession = { pid: process.pid, sessionRunnerPid: process.pid, startedBy: 'daemon', happySessionId: sessionId,
-    requesterWorkAttributionV1: f.bootstrap.attribution,
+    ...(requesterOptions?.ordinaryAccountSession ? {} : { requesterWorkAttributionV1: f.bootstrap.attribution }),
     processStartTimeMs: runner.processStartTimeMs, processCommandHash: runner.processCommandHash,
     runnerAgentSourceCustodyV1: retainedAgent.sourceCustody,
     runnerAgentBootstrapIdentity: { agentId: retainedAgent.agentId, backendId: retainedAgent.agentId },
@@ -114,10 +137,11 @@ export async function createInstalledProjectAgentDaemonFixture(readControl: () =
     await skillStore.collectSkillCache({ libraryDigests: [] });
   });
   const daemon = await startDaemonSessionControlRuntime({ machineId: 'machine', serverId: 'session-home', serverBaseUrl: 'https://session-home.test',
+    agentIsolation: requesterOptions?.agentIsolation,
     skillStore,
     resolveCurrentMachineExecutionOriginContext: requesterOptions?.resolveCurrentMachineExecutionOriginContext,
     openTeamCredentialProviderBinding: requesterOptions?.openTeamCredentialProviderBinding,
-    externalActionAccountId: 'custodian', credentials: daemonCredentials, api: {} as never,
+    externalActionAccountId: requesterOptions?.externalActionAccountId ?? 'custodian', credentials: daemonCredentials, api: {} as never,
     deviceLocalSecretStorage,
     pluginRuntimeController: plugin.controller, connectedServiceRuntimeRegistry,
     daemonSessionMutationCustody: { stageTranscriptMessage: async () => { throw new Error('No transcript mutation'); },
@@ -135,6 +159,11 @@ export async function createInstalledProjectAgentDaemonFixture(readControl: () =
     onHappySessionWebhook: createOnHappySessionWebhook({ pidToTrackedSession, pidToAwaiter, deviceLocalSecretStorage }),
     requestShutdown() {}, processEnv: { NODE_ENV: 'test', ...requesterOptions?.processEnv } });
   onTestFinished(() => daemon.stopControlServer());
+  // Full daemon startup binds its produced Account ingress to the Machine.
+  // The launch-only fixture predates that owner and cannot publish its routes.
+  machine.setRPCHandlers({ spawnSession: daemon.spawnSession, stopSession: daemon.stopSession, requestShutdown() {} }, {
+    ...(daemon.externalActionIngressOwner ? { externalActionIngressOwner: daemon.externalActionIngressOwner } : {}),
+  });
   createRequesterRuntime = async bootstrap => {
     requesterRecoveryStage = 'runtime';
     const context = await createRequesterSessionRuntimeContext({ bootstrap,
@@ -149,7 +178,10 @@ export async function createInstalledProjectAgentDaemonFixture(readControl: () =
     requesterRecoveryStage = context ? 'ready' : 'runtime_refused';
     return context;
   };
-  const requester = await resolveRequesterRuntime(sessionId, f.bootstrap.attribution);
+  // Keep the separately admitted Account runtime for fixture materialization;
+  // native dispatch still resolves the ordinary tracked Session itself.
+  const requester = requesterOptions?.ordinaryAccountSession
+    ? await createRequesterRuntime(f.bootstrap) : await resolveRequesterRuntime(sessionId, f.bootstrap.attribution);
   if (!requester) throw new Error(`Missing requester runtime (${requesterRecoveryStage})`);
   const services = readControl()?.agentRuntimeDaemonServices;
   if (!services) throw new Error('Missing production private dispatcher');
@@ -160,7 +192,7 @@ export async function createInstalledProjectAgentDaemonFixture(readControl: () =
     { sessionId, runner, retainedAgent, trackedSession: tracked, invocationContext: tracked.runnerAgentInvocationContext!,
       isCurrent: async () => true, signal }));
   const operationBase = (invocationId = 'cold-invocation') => ({ invocationId, requestId: `request-${++sequence}` });
-  return { ...fixture, signal, cwd, dispatch, operationBase, sessionId, retainedAgent, requester, runner, tracked, plugin, pidToTrackedSession, pidToAwaiter, daemon,
+  return { ...fixture, signal, cwd, dispatch, operationBase, sessionId, retainedAgent, requester, runner, tracked, plugin, pidToTrackedSession, connectedServiceRuntimeRegistry, pidToAwaiter, daemon,
     resolveRequesterRuntime,
     readRequesterRecoveryStage: () => requesterRecoveryStage,
     async replaceRequesterRuntime() {

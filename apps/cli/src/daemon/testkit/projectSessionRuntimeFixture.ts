@@ -14,6 +14,7 @@ import { installAxiosRequestMethodAdapter } from '@/testkit/http/axiosAdapter';
 import { MachineAccessGrantsListResponseV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
 import type { StoredCredentials } from '@/persistence';
 import type { MachineInstallationIdentityV1 } from '@happier-dev/protocol';
+import { seedTestServerProfile } from '@/testkit/serverProfiles';
 
 export type ProjectSessionRuntimeFixture = Readonly<{
   directory: string;
@@ -39,6 +40,10 @@ export async function createProjectSessionRuntimeFixture(options: Readonly<{
     ...(options.serverUrl ? { HAPPIER_SERVER_URL: options.serverUrl } : {}) });
   reloadConfiguration();
   onTestFinished(async () => { env.restore(); reloadConfiguration(); await rm(directory, { recursive: true, force: true }); });
+  if (options.homeServerIdentityId) {
+    await seedTestServerProfile({ id: options.serverId ?? 'session-home', homeId: options.homeServerIdentityId,
+      serverUrl: options.serverUrl ?? 'https://session-home.test' });
+  }
   const installation = await readOrCreateInstallationIdentity();
   const channel = await createRequesterCurrentnessSocketHarness();
   onTestFinished(() => channel.close());
@@ -59,6 +64,10 @@ export async function createProjectSessionRuntimeFixture(options: Readonly<{
     const sessionId = new URL(url).pathname.match(/^\/v2\/sessions\/([^/]+)$/u)?.[1];
     if (sessionId) return { status: 200, data: { session: createSessionRecordFixture({ id: sessionId,
       encryptionMode: 'plain', metadata: JSON.stringify({ machineId: 'machine' }), dataEncryptionKey: null, share: null }) } };
+    if (options.boundSessionId && new URL(url).pathname === `/v1/access-keys/${options.boundSessionId}/machine`) {
+      return { status: 200, data: { accessKey: { sessionId: options.boundSessionId, machineId: 'machine',
+        data: 'session-machine-control:fixture' } } };
+    }
     if (url.endsWith('/v1/machines/machine/access')) return { status: current ? 200 : 403, data: current
       ? MachineAccessGrantsListResponseV1Schema.parse({ machineId: 'machine', custodian: { accountId: options.machineAccess?.custodianAccountId ?? 'requester', displayName: 'Requester' },
         access: { custodian: { accountId: options.machineAccess?.custodianAccountId ?? 'requester', displayName: 'Requester' }, role: options.machineAccess?.role ?? 'manage', resourceMode: 'plain', accessState: 'ready' },
@@ -85,6 +94,13 @@ export async function createProjectSessionRuntimeFixture(options: Readonly<{
       verifyMachineAdmissionCurrent: async () => current });
     if (!prepared) throw new Error('Session admission failed');
     onTestFinished(prepared.cleanupOnFailure);
+    // This fixture supplied the Home at the original admission. Persist its
+    // exact bound birth before a separately started daemon recovers custody.
+    if (options.boundSessionId && options.homeServerIdentityId) {
+      const bound = await prepared.admitted.bindExistingSession(options.boundSessionId);
+      if (!bound) throw new Error('Original Session custody could not be retained');
+      onTestFinished(bound.cleanup);
+    }
     // Cold synchronous host setup shares this test's event loop with Home.
     // Finish both ends of the real upgrade before that work can exhaust Engine.IO's upgrade window.
     await channel.settleTransport();
