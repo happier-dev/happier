@@ -3,14 +3,24 @@ import { resolveMergedSessionRuntimeActivityProjectionFields } from '@/sync/engi
 import { hasTerminalPrimaryTurnStatus } from './attention/runtimePresentation';
 import { areServerProfileIdentifiersEquivalent } from '../server/serverProfiles';
 
-export type SessionLifecycleProjection = Pick<Session,
-    | 'serverId' | 'seq' | 'updatedAt' | 'meaningfulActivityAt' | 'lastTurnCompletedAt'
-    | 'active' | 'activeAt' | 'thinking' | 'thinkingAt'
-    | 'latestTurnId' | 'latestTurnStatus' | 'latestTurnStatusObservedAt'
-    | 'pendingVersion' | 'pendingCount' | 'pendingBlockedCount' | 'pendingActivationAuthorization'
-    | 'latestReadyEventSeq' | 'latestReadyEventAt'
-    | 'runtimeActivityState' | 'runtimeActivityActiveCount' | 'runtimeActivityObservedAt' | 'runtimeActivityRevision'
->;
+export const sessionLifecycleProjectionFields = [
+    'serverId', 'seq', 'updatedAt', 'meaningfulActivityAt', 'lastTurnCompletedAt',
+    'active', 'activeAt', 'thinking', 'thinkingAt',
+    'latestTurnId', 'latestTurnStatus', 'latestTurnStatusObservedAt',
+    'pendingVersion', 'pendingCount', 'pendingBlockedCount', 'pendingActivationAuthorization',
+    'latestReadyEventSeq', 'latestReadyEventAt',
+    'runtimeActivityState', 'runtimeActivityActiveCount', 'runtimeActivityObservedAt', 'runtimeActivityRevision',
+] as const satisfies readonly (keyof Session)[];
+
+export type SessionLifecycleProjection = Pick<Session, typeof sessionLifecycleProjectionFields[number]>;
+
+/** Successful canonical Turns own completion; legacy Sessions retain their transcript watermark. */
+export function readSessionTurnCompletedAt(
+    session: Partial<Pick<SessionLifecycleProjection, 'latestTurnStatus' | 'latestTurnStatusObservedAt' | 'lastTurnCompletedAt'>>,
+): number | null {
+    return (session.latestTurnStatus === 'completed'
+        ? session.latestTurnStatusObservedAt : null) ?? session.lastTurnCompletedAt ?? null;
+}
 
 export function normalizeSessionOrderingNumber(value: unknown): number | null {
     return typeof value === 'number' && Number.isFinite(value)

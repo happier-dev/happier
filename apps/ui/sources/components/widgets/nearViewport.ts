@@ -135,10 +135,15 @@ export function createNearViewportTracker(input: Readonly<{
 const subscribeWithoutScrollHost = () => () => {};
 
 /** Plugin pages and Project ItemLists attach the incumbent policy to their physical content. */
-export function createScrollViewNearViewportTracker(scrollRef: React.RefObject<unknown>, horizontal: boolean): PluginUiScrollActivityTracker {
+export function createScrollViewNearViewportTracker(
+    scrollRef: React.RefObject<unknown>,
+    horizontal: boolean,
+    options?: Readonly<{ overscan?: boolean; initialViewportHeight?: number }>,
+): PluginUiScrollActivityTracker {
     const tracker = createNearViewportTracker({
         quantum: PAGE_ROW_TOUCH_MIN_HEIGHT_PX,
-        initialViewportHeight: Dimensions.get('window')[horizontal ? 'width' : 'height'],
+        initialViewportHeight: options?.initialViewportHeight ?? Dimensions.get('window')[horizontal ? 'width' : 'height'],
+        overscan: options?.overscan,
         axis: horizontal ? 'x' : 'y',
         readContentNode: () => {
             const node = scrollRef.current;
@@ -161,10 +166,55 @@ export function createScrollViewNearViewportTracker(scrollRef: React.RefObject<u
     };
 }
 
-export function useIsNearViewport(tracker: Pick<NearViewportTracker, 'subscribe' | 'getWindow'> | null, span: NearViewportSpan | null): boolean {
+function useNearViewportPlacement(tracker: Pick<NearViewportTracker, 'subscribe' | 'getWindow'> | null, span: NearViewportSpan | null, measuredViewport = false) {
     const read = React.useCallback(
-        () => tracker === null || (span !== null && isSpanNearViewport(tracker.getWindow(), span)),
-        [span, tracker],
+        () => {
+            if (tracker === null) return 'near';
+            const window = tracker.getWindow();
+            if (span === null) return 'unmeasured';
+            if (window === null) return measuredViewport ? 'unmeasured' : 'near';
+            return isSpanNearViewport(window, span) ? 'near' : 'far';
+        },
+        [span, tracker, measuredViewport],
     );
     return React.useSyncExternalStore(tracker?.subscribe ?? subscribeWithoutScrollHost, read, read);
+}
+
+export function useIsNearViewport(tracker: Pick<NearViewportTracker, 'subscribe' | 'getWindow'> | null, span: NearViewportSpan | null): boolean {
+    return useNearViewportPlacement(tracker, span) === 'near';
+}
+
+/** Measure a retained shell once per layout change; only its viewport eligibility drives renders. */
+export function useMeasuredNearViewport(
+    tracker: Pick<NearViewportTracker, 'subscribe' | 'getWindow' | 'measureSpan' | 'getLayoutRevision'> | null,
+    nodeRef: React.RefObject<unknown>,
+    focused: boolean,
+    instanceId: string,
+): Readonly<{ near: boolean; measured: boolean; measure: () => void }> {
+    const latestMeasurement = React.useRef<Promise<NearViewportSpan | null> | null>(null);
+    const [span, setSpan] = React.useState<NearViewportSpan | null>(null);
+    const placement = useNearViewportPlacement(tracker, span, true);
+    const measure = React.useCallback(() => {
+        if (!tracker) return;
+        const node = nodeRef.current;
+        const measurement = tracker.measureSpan(node);
+        latestMeasurement.current = measurement;
+        void measurement.then(next => {
+            if (latestMeasurement.current !== measurement || nodeRef.current !== node) return;
+            setSpan(current => current?.top === next?.top && current?.height === next?.height ? current : next);
+        });
+    }, [nodeRef, tracker]);
+    React.useEffect(() => {
+        if (!tracker) return;
+        let revision = tracker.getLayoutRevision();
+        measure();
+        const unsubscribe = tracker.subscribe(() => {
+            const next = tracker.getLayoutRevision();
+            if (next === revision) return;
+            revision = next;
+            measure();
+        });
+        return () => { unsubscribe(); latestMeasurement.current = null; };
+    }, [measure, tracker, focused, instanceId]);
+    return { near: placement === 'near', measured: placement !== 'unmeasured', measure };
 }
