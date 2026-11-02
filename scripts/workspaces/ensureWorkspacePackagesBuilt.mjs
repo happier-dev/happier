@@ -1084,6 +1084,7 @@ async function consumeWorkspacePackageBuildInputs({
   quiet,
   env,
   force,
+  requestedBuildAt,
   timeoutMs,
   onPackageBuildStart,
   onPackageBuildDone,
@@ -1131,7 +1132,12 @@ async function consumeWorkspacePackageBuildInputs({
   } = state;
   const reportImportRetry = createWorkspaceBuildWaitNotifier({ env, label, kind: 'imports' });
   if (expectedTargets.length === 0) return { built: false, reason: 'no-expected-files' };
-  if (!force && state.complete) {
+  // Force requests a new compile relative to this demand. A concurrent
+  // publisher may already have satisfied it while admission was pending.
+  const forcedBuildCompleted = force && state.complete
+    && typeof state.verifiedOutput.record.builtAt === 'string'
+    && state.verifiedOutput.record.builtAt !== requestedBuildAt;
+  if (state.complete && (!force || forcedBuildCompleted)) {
     if (state.verifiedOutput.verificationNeeded) {
       // Initial inspection is read-only. Only this admitted publisher may
       // persist successful migration/reverification of worker-local identity.
@@ -1139,7 +1145,7 @@ async function consumeWorkspacePackageBuildInputs({
     }
     return {
       built: false,
-      reason: waited ? 'concurrent_build_already_completed' : 'already-built',
+      reason: waited || forcedBuildCompleted ? 'concurrent_build_already_completed' : 'already-built',
     };
   }
 
@@ -1361,6 +1367,11 @@ async function ensureWorkspacePackageBuilt(packageDir, {
   if (!existsSync(packageJsonPath)) return { built: false, reason: 'missing-package-json' };
 
   const packageJson = await readJson(packageJsonPath);
+  // Reuse the existing successful compiler receipt, not a separate generation
+  // or completion ledger. Failed builds and reference-only refreshes retain it.
+  const requestedBuildAt = force
+    ? (await readJson(join(packageDir, 'dist', BUILD_INPUT_RECORD)).catch(() => null))?.builtAt ?? null
+    : null;
   const inputFingerprint = readWorkspacePackageInputFingerprint({ packageDir, dependencyDirs, env: envIn });
   const initial = await inspectWorkspacePackageOutput(packageDir, packageJson, {
     env: envIn,
@@ -1387,7 +1398,7 @@ async function ensureWorkspacePackageBuilt(packageDir, {
     const { resolveWorkspacePackageBuildAdmissionClass } = await import('../../apps/stack/scripts/utils/dev_targets/remote_commands.mjs');
     const resultDir = await mkdtemp(join(tmpdir(), 'happier-workspace-build-result-'));
     const resultPath = join(resultDir, 'result.json');
-    const request = { monorepoRoot, packageDir, packageJsonPath, quiet, force, timeoutMs,
+    const request = { monorepoRoot, packageDir, packageJsonPath, quiet, force, requestedBuildAt, timeoutMs,
       publicationMode, buildMode, trailingPass, dependencyDirs, resultPath,
       boundaryModule: workspaceBuildBoundary.workerModule,
       boundaryExport: workspaceBuildBoundary.workerExport,
@@ -1468,6 +1479,7 @@ async function ensureWorkspacePackageBuilt(packageDir, {
     quiet,
     env,
     force,
+    requestedBuildAt,
     timeoutMs,
     onPackageBuildStart,
     onPackageBuildDone,

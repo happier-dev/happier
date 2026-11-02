@@ -3229,6 +3229,95 @@ test('concurrent workspace package build waiters reuse the one published result'
   assert.equal(await readFile(join(packageDir, 'dist', 'index.js'), 'utf8'), 'export const published = true;\n');
 });
 
+for (const worker of [false, true]) test(`forced workspace publication bursts share a new build via ${worker ? 'worker' : 'in-process compiler'} without suppressing later requests or changed inputs`, async (t) => {
+  withPatchedProcessEnv(t, { HAPPIER_WORKSPACE_DIST_BUILD_LOCK_WAIT_ALLOWED: null });
+  const root = mkdtempSync(join(tmpdir(), 'happier-workspace-forced-burst-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  writePnpmWorkspaceFixture(root, { private: true, workspaces: ['packages/*'] });
+  writeFileSync(join(root, 'pnpm-lock.yaml'), '# fixture\n');
+  for (const app of ['ui', 'cli', 'server']) {
+    mkdirSync(join(root, 'apps', app), { recursive: true });
+    writeFileSync(join(root, 'apps', app, 'package.json'), JSON.stringify({ name: `@fixture/${app}` }));
+  }
+  const packageDir = join(root, 'packages', 'burst');
+  mkdirSync(join(packageDir, 'src'), { recursive: true });
+  writeFileSync(join(packageDir, 'package.json'), JSON.stringify({
+    name: '@happier-dev/burst', type: 'module', main: './dist/index.js',
+    scripts: { build: 'fixture-compiler' },
+  }));
+  const source = join(packageDir, 'src', 'index.ts');
+  writeFileSync(source, 'export const value = "before";\n');
+  let builds = 0, requests = 0, notifyStarted, notifyWaiters, release;
+  let heldBuild;
+  let env = process.env;
+  if (worker) {
+    withPatchedProcessEnv(t, { HAPPIER_STACK_REPO_DIR: root, HAPPIER_STACK_RUNTIME_IDENTITY_REPO_DIR: null });
+    const native = await installWorkspaceAdmissionProcessFixture(t, root);
+    env = native.env;
+    const sockets = [];
+    const server = createServer(socket => {
+      builds += 1;
+      notifyStarted?.();
+      if (heldBuild) void heldBuild.then(() => socket.end('release'));
+      else socket.end('release');
+      sockets.push(socket);
+    });
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    t.after(async () => {
+      for (const socket of sockets) socket.destroy();
+      await new Promise(resolve => server.close(resolve));
+    });
+    const manifestPath = join(packageDir, 'package.json');
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+    writeFileSync(manifestPath, JSON.stringify({ ...manifest, scripts: { build: 'node compile.mjs' } }));
+    writeFileSync(join(packageDir, 'compile.mjs'), `import {connect} from 'node:net';
+import {readFileSync,writeFileSync} from 'node:fs';
+import {join} from 'node:path';
+const socket=connect(${server.address().port},'127.0.0.1');
+socket.once('data',()=>{socket.end();writeFileSync(join(process.env.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR,'index.js'),readFileSync('src/index.ts','utf8'));});
+`);
+  }
+  const results = [];
+  const workspaceBuildBoundary = {
+    ...(worker ? defaultWorkspaceBuildBoundary : {}),
+    async prepareEnv(dir, env) {
+      if (++requests === 5) notifyWaiters?.();
+      return worker ? await defaultWorkspaceBuildBoundary.prepareEnv(dir, env) : { ...env };
+    },
+    // Substitute only the compiler process; captures, locks, input identities,
+    // output verification and publication all use the production owners.
+    async runPackageBuild(dir, { env }) {
+      builds += 1;
+      notifyStarted?.();
+      await heldBuild;
+      writeFileSync(join(env.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR, 'index.js'),
+        readFileSync(join(dir, 'src', 'index.ts'), 'utf8'));
+    },
+  };
+  const prepare = () => ensureWorkspacePackagesBuiltByName(root, ['@happier-dev/burst'], {
+    quiet: true, force: true, buildMode: 'strict', workspaceBuildBoundary, env,
+    onPackageBuildResult: result => results.push(result),
+  });
+  await prepare();
+  const started = new Promise(resolve => { notifyStarted = resolve; });
+  const waitersReady = new Promise(resolve => { notifyWaiters = resolve; });
+  heldBuild = new Promise(resolve => { release = resolve; });
+  const first = prepare();
+  await started;
+  const waiters = Array.from({ length: 3 }, () => prepare());
+  await waitersReady;
+  release();
+  await Promise.all([first, ...waiters]);
+  assert.equal(builds, 2, 'one priming build plus one compile for four identical forced requests');
+  assert.equal(results.filter(result => result.reason === 'concurrent_build_already_completed').length, 3);
+  await prepare();
+  assert.equal(builds, 3, 'a later explicit force still requests a fresh build');
+  writeFileSync(source, 'export const value = "after";\n');
+  await prepare();
+  assert.equal(builds, 4, 'changed inputs must still compile');
+  assert.equal(readFileSync(join(packageDir, 'dist', 'index.js'), 'utf8'), readFileSync(source, 'utf8'));
+});
+
 test('workspace build reuses an inherited bundle publication lease', async (t) => {
   const repoRoot = mkdtempSync(join(tmpdir(), 'happier-workspace-build-inherited-bundle-lock-'));
   t.after(() => {
