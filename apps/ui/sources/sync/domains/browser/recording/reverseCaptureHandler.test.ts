@@ -1,7 +1,7 @@
 import {
     UiBrowserRecordingCaptureFrameResponseV1Schema,
     type UiBrowserRecordingCaptureFrameRequestV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/browser/recording/reverseCaptureV1';
 import { describe, expect, it, vi } from 'vitest';
 
 import type {
@@ -18,7 +18,6 @@ const REQUEST: UiBrowserRecordingCaptureFrameRequestV1 = {
     navigationGeneration: 2,
     captureRequestId: 'capture_1',
     outputPath: '/tmp/recordings/rec.capture_1.native-view.png',
-    maxBytes: 16_000_000,
 };
 
 function availability() {
@@ -46,9 +45,9 @@ describe('handleUiBrowserRecordingCaptureFrameRequest (W2C-BA-1 UI reverse handl
 
         const response = await handleUiBrowserRecordingCaptureFrameRequest(REQUEST, { capture });
 
-        // The daemon-owned outputPath + byte cap reached the native capture seam unchanged.
+        // The daemon-owned outputPath reached the native capture seam unchanged.
         expect(capture).toHaveBeenCalledWith(
-            expect.objectContaining({ outputPath: REQUEST.outputPath, maxBytes: 16_000_000, viewId: 'view_1' }),
+            expect.objectContaining({ outputPath: REQUEST.outputPath, viewId: 'view_1' }),
         );
         // Reference-only contract — a local path + metadata, never inline pixel bytes.
         expect(UiBrowserRecordingCaptureFrameResponseV1Schema.safeParse(response).success).toBe(true);

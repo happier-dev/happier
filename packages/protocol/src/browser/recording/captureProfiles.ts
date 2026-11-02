@@ -46,7 +46,7 @@ export const BROWSER_RECORDING_CAPTURE_PROFILES = [
   },
   {
     captureKind: 'cdpScreencast',
-    adapterKinds: ['chromiumSidecar'],
+    adapterKinds: ['chromiumSidecar', 'streamedBrowserSurface'],
     mimeTypes: ['video/webm'],
     fidelity: 'cdp',
   },

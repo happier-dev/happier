@@ -14,8 +14,6 @@ const broadServerRecordingCapabilities = {
   supportedCaptureKinds: ['nativeViewCapture', 'cdpScreencast', 'streamFrameCapture'],
   supportedMimeTypes: ['image/png', 'video/webm'],
   supportedAdapterKinds: ['externalUrl', 'chromiumSidecar', 'streamedBrowserSurface', 'simulatorPreview'],
-  maxDurationMs: 30_000,
-  maxBytes: 16_000_000,
   maxFps: 12,
   audioSupported: false,
   cursorOverlaySupported: true,

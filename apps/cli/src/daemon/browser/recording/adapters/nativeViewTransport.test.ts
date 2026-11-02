@@ -31,8 +31,6 @@ function createRecording(overrides: Partial<BrowserRecordingSessionV1> = {}): Br
     retentionClass: 'preSend',
     redactionLevel: 'metadataOnly',
     policyState: 'allowed',
-    maxDurationMs: 30_000,
-    maxBytes: 16_000_000,
     actionChapters: [],
     relatedReferences: [],
     ...overrides,
@@ -46,7 +44,7 @@ const TRANSPORT_SEAMS = {
 } as const;
 
 describe('desktop browser recording native-view capture transport (daemon->native invoke)', () => {
-  it('threads a root-relative artifact path + maxBytes cap + view identity to the canonical invoke', async () => {
+  it('threads a root-relative artifact path and view identity to the canonical invoke', async () => {
     const ensureDirectory = vi.fn(async () => undefined);
     const deleteFile = vi.fn(async () => undefined);
     let captured: DesktopBrowserRecordingFrameCaptureRequest | undefined;
@@ -71,8 +69,8 @@ describe('desktop browser recording native-view capture transport (daemon->nativ
       invokeRecordingFrameCapture,
     });
 
-    const recording = createRecording({ maxBytes: 12_000_000 });
-    const result = await transport.captureFrame({ recording, maxBytes: 12_000_000 });
+    const recording = createRecording();
+    const result = await transport.captureFrame({ recording });
 
     expect(ensureDirectory).toHaveBeenCalledWith('/tmp/happier-home/recordings');
     expect(captured).toEqual({
@@ -81,7 +79,6 @@ describe('desktop browser recording native-view capture transport (daemon->nativ
       navigationGeneration: 7,
       captureRequestId: 'capture_1',
       outputPath: 'browser_recording_native_1.capture_1.native-view.png',
-      maxBytes: 12_000_000,
     });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
@@ -115,7 +112,7 @@ describe('desktop browser recording native-view capture transport (daemon->nativ
       invokeRecordingFrameCapture,
     });
 
-    const result = await transport.captureFrame({ recording: createRecording(), maxBytes: 16_000_000 });
+    const result = await transport.captureFrame({ recording: createRecording() });
 
     expect(result.ok).toBe(false);
     if (result.ok) return;

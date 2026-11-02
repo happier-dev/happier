@@ -29,6 +29,7 @@ describe('resolveBrowserRecordingStreamFrameStartContext', () => {
   it('enables stream-frame recording with a live-stream registry present', () => {
     const context = resolveBrowserRecordingStreamFrameStartContext({
       hasLiveStreamCaptureRegistry: true,
+      hasFrameEncoder: true,
     })(createStartInput());
 
     expect(context.browserRecordingEnabled).toBe(true);
@@ -43,6 +44,7 @@ describe('resolveBrowserRecordingStreamFrameStartContext', () => {
   it('stays fail-closed when no live-stream registry exists (no producer)', () => {
     const context = resolveBrowserRecordingStreamFrameStartContext({
       hasLiveStreamCaptureRegistry: false,
+      hasFrameEncoder: false,
     })(createStartInput());
 
     expect(context.browserRecordingEnabled).toBe(false);
@@ -54,6 +56,7 @@ describe('resolveBrowserRecordingStreamFrameStartContext', () => {
   it('scopes supported adapters to producer-backed stream surfaces only (never localPreview/chromiumSidecar/hostedPlugin)', () => {
     const context = resolveBrowserRecordingStreamFrameStartContext({
       hasLiveStreamCaptureRegistry: true,
+      hasFrameEncoder: true,
     })(createStartInput());
 
     // Only streamed/simulator live surfaces — never local iframe previews, desktop webview engines,
@@ -68,10 +71,24 @@ describe('resolveBrowserRecordingStreamFrameStartContext', () => {
 });
 
 describe('resolveBrowserRecordingStartContext (composed producer matrix)', () => {
+  it.each([false, true])('withdraws WebM capabilities without an encoder while retaining native capture=%s', hasNativeViewCapture => {
+    const context = resolveBrowserRecordingStartContext({
+      hasLiveStreamCaptureRegistry: true,
+      hasCdpScreencast: true,
+      hasNativeViewCapture,
+      hasFrameEncoder: false,
+    })(createStartInput());
+
+    expect(context.recordingCapabilities.available).toBe(hasNativeViewCapture);
+    expect(context.recordingCapabilities.supportedCaptureKinds).toEqual(hasNativeViewCapture ? ['nativeViewCapture'] : []);
+    expect(context.recordingCapabilities.supportedMimeTypes).toEqual(hasNativeViewCapture ? ['image/png'] : []);
+  });
+
   it('stays fail-closed when neither producer is wired', () => {
     const context = resolveBrowserRecordingStartContext({
       hasLiveStreamCaptureRegistry: false,
       hasNativeViewCapture: false,
+      hasFrameEncoder: false,
     })(createStartInput());
 
     expect(context.browserRecordingEnabled).toBe(false);
@@ -83,6 +100,7 @@ describe('resolveBrowserRecordingStartContext (composed producer matrix)', () =>
     const context = resolveBrowserRecordingStartContext({
       hasLiveStreamCaptureRegistry: false,
       hasNativeViewCapture: true,
+      hasFrameEncoder: false,
     })(createStartInput({
       captureKind: 'nativeViewCapture',
       adapterKind: 'externalUrl',
@@ -105,6 +123,7 @@ describe('resolveBrowserRecordingStartContext (composed producer matrix)', () =>
       hasLiveStreamCaptureRegistry: false,
       hasNativeViewCapture: false,
       hasCdpScreencast: true,
+      hasFrameEncoder: true,
     })(createStartInput({
       targetKind: 'externalUrl',
       adapterKind: 'chromiumSidecar',
@@ -117,7 +136,7 @@ describe('resolveBrowserRecordingStartContext (composed producer matrix)', () =>
     expect(context.recordingCapabilities.available).toBe(true);
     expect(context.recordingCapabilities.supportedCaptureKinds).toEqual(['cdpScreencast']);
     expect(context.recordingCapabilities.supportedMimeTypes).toEqual(['video/webm']);
-    expect(context.recordingCapabilities.supportedAdapterKinds).toEqual(['chromiumSidecar']);
+    expect(context.recordingCapabilities.supportedAdapterKinds).toEqual(['chromiumSidecar', 'streamedBrowserSurface']);
     expect(context.recordingCapabilities.supportedCaptureKinds).not.toContain('streamFrameCapture');
     expect(context.recordingCapabilities.supportedCaptureKinds).not.toContain('nativeViewCapture');
   });
@@ -127,6 +146,7 @@ describe('resolveBrowserRecordingStartContext (composed producer matrix)', () =>
       hasLiveStreamCaptureRegistry: true,
       hasNativeViewCapture: true,
       hasCdpScreencast: true,
+      hasFrameEncoder: true,
     })(createStartInput());
 
     expect(context.browserRecordingEnabled).toBe(true);
@@ -142,5 +162,20 @@ describe('resolveBrowserRecordingStartContext (composed producer matrix)', () =>
     expect(context.recordingCapabilities.supportedAdapterKinds).not.toContain('localPreview');
     // Never surface an unbacked desktop producer just because the stream producer is present.
     expect(context.recordingCapabilities.supportedCaptureKinds).not.toContain('webContentsCapture');
+  });
+});
+
+// Overlay support follows the selected producer, not merely recording being enabled.
+describe('recording overlay capability', () => {
+  it.each([
+    { hasCdpScreencast: true, hasFrameEncoder: true, captureKind: 'cdpScreencast' as const, expected: true },
+    { hasCdpScreencast: false, hasFrameEncoder: true, captureKind: 'cdpScreencast' as const, expected: false },
+    { hasCdpScreencast: true, hasFrameEncoder: false, captureKind: 'cdpScreencast' as const, expected: false },
+    { hasCdpScreencast: true, hasFrameEncoder: true, captureKind: 'nativeViewCapture' as const, expected: false },
+    { hasCdpScreencast: true, hasFrameEncoder: true, captureKind: 'streamFrameCapture' as const, expected: false },
+  ])('reports $expected for $captureKind with CDP=$hasCdpScreencast, encoder=$hasFrameEncoder', options => {
+    const context = resolveBrowserRecordingStartContext({ hasLiveStreamCaptureRegistry: true,
+      hasNativeViewCapture: true, ...options })(createStartInput({ captureKind: options.captureKind }));
+    expect(context.recordingCapabilities.cursorOverlaySupported).toBe(options.expected);
   });
 });

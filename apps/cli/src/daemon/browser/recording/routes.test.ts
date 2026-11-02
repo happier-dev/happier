@@ -11,8 +11,6 @@ const recordingCapabilities = {
   supportedCaptureKinds: ['streamFrameCapture'],
   supportedMimeTypes: ['video/webm'],
   supportedAdapterKinds: ['simulatorPreview'],
-  maxDurationMs: 30_000,
-  maxBytes: 16_000_000,
   maxFps: 12,
   audioSupported: false,
   cursorOverlaySupported: true,
@@ -109,7 +107,7 @@ describe('browser recording daemon routes', () => {
       recordingId: started.recording.recordingId,
       status: 'recording',
     });
-    expect(await routes.listRecordingsForView({ viewId: 'view_1' })).toHaveLength(1);
+    expect(await routes.listRecordingsForView({ browserSessionId: 'browser_session_1', viewId: 'view_1' })).toHaveLength(1);
 
     const stopped = await routes.stopRecording({
       recordingId: started.recording.recordingId,

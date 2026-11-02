@@ -61,8 +61,6 @@ const recordingCapabilities = {
     supportedCaptureKinds: ['nativeViewCapture'],
     supportedMimeTypes: ['image/png'],
     supportedAdapterKinds: ['externalUrl'],
-    maxDurationMs: 30_000,
-    maxBytes: 16_000_000,
     maxFps: 12,
     audioSupported: false,
     cursorOverlaySupported: true,
@@ -110,8 +108,6 @@ function recording(overrides: Partial<BrowserRecordingSessionV1> = {}): BrowserR
         retentionClass: 'preSend',
         redactionLevel: 'metadataOnly',
         policyState: 'allowed',
-        maxDurationMs: 30_000,
-        maxBytes: 16_000_000,
         actionChapters: [],
         relatedReferences: [],
         ...overrides,
@@ -253,6 +249,28 @@ describe('session browser recording runtime', () => {
         expect(screen.findByTestId('active-recording-id')?.props.children).toBe('recording_1');
     });
 
+    it('asks the daemon to start again despite a retained active snapshot', async () => {
+        await registerNativeCaptureHandler();
+        machineRpcMock.start
+            .mockResolvedValueOnce({ ok: true, result: { status: 'started', recording: recording() } })
+            .mockResolvedValueOnce({ ok: true, result: { status: 'started', recording: recording({ recordingId: 'recording_2' }) } });
+        const { useSessionBrowserRecordingRuntime } = await import('./sessionBrowserRecordingRuntime');
+        const hook = await renderHook(() => useSessionBrowserRecordingRuntime({
+            enabled: true, sessionId: 'session_1', machineId: 'machine_1', serverId: 'srv_recording',
+            recordingCapabilities, nowMs: () => 10_000,
+        }));
+        await waitForHomeGovernance(() => expect(hook.getCurrent()).not.toBeNull());
+
+        await act(async () => { await hook.getCurrent()?.browserShellRecording.onStartRecording?.(nativeRecordingRequest); });
+        expect(hook.getCurrent()?.state.activeRecordingIdByViewId.view_1).toBe('recording_1');
+        // The daemon may retire the recording independently while this projection remains retained.
+        await act(async () => { await hook.getCurrent()?.browserShellRecording.onStartRecording?.(nativeRecordingRequest); });
+
+        expect(machineRpcMock.start).toHaveBeenCalledTimes(2);
+        expect(hook.getCurrent()?.state.activeRecordingIdByViewId.view_1).toBe('recording_2');
+        expect(machineRpcMock.start.mock.calls[1]?.[0].input).not.toHaveProperty('recordingId');
+    });
+
     it('deduplicates concurrent start requests for the same browser view', async () => {
         await registerNativeCaptureHandler();
         machineRpcMock.start.mockReturnValue(new Promise(() => undefined));
@@ -358,7 +376,11 @@ describe('session browser recording runtime', () => {
         expect(screen.findByTestId('active-recording-id')?.props.children).toBe('none');
     });
 
-    it('does not call the daemon for stream-frame recording when no capture source is resolvable', async () => {
+    it('projects the daemon refusal when no stream-frame capture source is resolvable', async () => {
+        machineRpcMock.start.mockResolvedValueOnce({ ok: true, result: {
+            status: 'unavailable',
+            reason: { code: 'browser_recording_capture_unavailable', message: 'No capture source is available.' },
+        } });
         const onUnavailable = vi.fn();
         const { useSessionBrowserRecordingRuntime } = await import('./sessionBrowserRecordingRuntime');
 
@@ -405,14 +427,18 @@ describe('session browser recording runtime', () => {
 
         await screen.pressByTestIdAsync('start-recording');
 
-        expect(machineRpcMock.start).not.toHaveBeenCalled();
+        expect(machineRpcMock.start).toHaveBeenCalledTimes(1);
+        expect(machineRpcMock.start.mock.calls[0]?.[0].input.captureSource).toBeUndefined();
         expect(onUnavailable).toHaveBeenCalledWith(expect.objectContaining({
             reasonCode: 'browser_recording_capture_unavailable',
         }));
     });
 
-    it('does not call the daemon for native view recording when no reverse-capture handler is registered', async () => {
-        machineRpcMock.start.mockResolvedValueOnce({ ok: false, reason: 'unexpected_start' });
+    it('projects the daemon refusal when no native reverse-capture handler is registered', async () => {
+        machineRpcMock.start.mockResolvedValueOnce({ ok: true, result: {
+            status: 'unavailable',
+            reason: { code: 'browser_recording_capture_unavailable', message: 'No reverse capture handler is available.' },
+        } });
         const onUnavailable = vi.fn();
         const { useSessionBrowserRecordingRuntime } = await import('./sessionBrowserRecordingRuntime');
 
@@ -458,7 +484,7 @@ describe('session browser recording runtime', () => {
 
         await screen.pressByTestIdAsync('start-recording');
 
-        expect(machineRpcMock.start).not.toHaveBeenCalled();
+        expect(machineRpcMock.start).toHaveBeenCalledTimes(1);
         expect(onUnavailable).toHaveBeenCalledWith(expect.objectContaining({
             reasonCode: 'browser_recording_capture_unavailable',
         }));

@@ -1,31 +1,8 @@
 import { DEFAULT_BROWSER_RECORDING_CAPABILITIES } from '@happier-dev/protocol/features/payload/capabilities/browserCapabilities';
 import type { BrowserRecordingCapabilities, DaemonBrowserRecordingStartInputV1 } from '@happier-dev/protocol';
+import { BROWSER_RECORDING_CAPTURE_PROFILES } from '@happier-dev/protocol/browser/recording/captureProfiles';
 
 import type { BrowserRecordingStartContext } from './routes';
-
-/**
- * Stream-frame recording surfaces. The PMS `streamFrameCapture` producer proves streamed browser
- * and simulator live-stream recording ONLY — it must never be cited as proof for local-preview
- * iframes/RN WebViews or `desktopWebView` recording (BRW-15 closeout invariant). Desktop WebView
- * recording stays scoped to `nativeViewCapture`; local previews stay unavailable until they have
- * a real live-stream source model.
- */
-const STREAM_FRAME_SUPPORTED_ADAPTER_KINDS = [
-  'streamedBrowserSurface',
-  'simulatorPreview',
-] as const;
-
-const STREAM_FRAME_RECORDING_CAPABILITIES: BrowserRecordingCapabilities = {
-  ...DEFAULT_BROWSER_RECORDING_CAPABILITIES,
-  enabled: true,
-  attachmentsEnabled: true,
-  available: true,
-  supportedCaptureKinds: ['streamFrameCapture'],
-  supportedMimeTypes: ['video/webm'],
-  supportedAdapterKinds: [...STREAM_FRAME_SUPPORTED_ADAPTER_KINDS],
-  supportedRetentionClasses: ['preSend', 'attached', 'clearOnClose', 'clearOnSend'],
-  disabledReasons: [],
-};
 
 const STREAM_FRAME_DISABLED_RECORDING_CAPABILITIES: BrowserRecordingCapabilities = {
   ...DEFAULT_BROWSER_RECORDING_CAPABILITIES,
@@ -34,43 +11,9 @@ const STREAM_FRAME_DISABLED_RECORDING_CAPABILITIES: BrowserRecordingCapabilities
   ],
 };
 
-/**
- * Desktop Wry `nativeViewCapture` recording surface (BA-4). The native still-capture producer
- * proves DESKTOP WebView recording ONLY — it is a single PNG frame written reference-only by the
- * native `desktop_browser_capture_recording_frame` command, NEVER a PMS stream mapped onto a
- * desktop view. Start admission requires a bound capture route; the producer
- * validates actual platform support before a successful recording exists.
- */
-const NATIVE_VIEW_SUPPORTED_ADAPTER_KINDS = ['externalUrl'] as const;
-
-const NATIVE_VIEW_RECORDING_CAPABILITIES: BrowserRecordingCapabilities = {
-  ...DEFAULT_BROWSER_RECORDING_CAPABILITIES,
-  enabled: true,
-  attachmentsEnabled: true,
-  available: true,
-  supportedCaptureKinds: ['nativeViewCapture'],
-  supportedMimeTypes: ['image/png'],
-  supportedAdapterKinds: [...NATIVE_VIEW_SUPPORTED_ADAPTER_KINDS],
-  supportedRetentionClasses: ['preSend', 'attached', 'clearOnClose', 'clearOnSend'],
-  disabledReasons: [],
-};
-
-const CDP_SCREENCAST_SUPPORTED_ADAPTER_KINDS = ['chromiumSidecar'] as const;
-
-const CDP_SCREENCAST_RECORDING_CAPABILITIES: BrowserRecordingCapabilities = {
-  ...DEFAULT_BROWSER_RECORDING_CAPABILITIES,
-  enabled: true,
-  attachmentsEnabled: true,
-  available: true,
-  supportedCaptureKinds: ['cdpScreencast'],
-  supportedMimeTypes: ['video/webm'],
-  supportedAdapterKinds: [...CDP_SCREENCAST_SUPPORTED_ADAPTER_KINDS],
-  supportedRetentionClasses: ['preSend', 'attached', 'clearOnClose', 'clearOnSend'],
-  disabledReasons: [],
-};
-
 export type BrowserRecordingStreamFrameStartContextOptions = Readonly<{
   hasLiveStreamCaptureRegistry: boolean;
+  hasFrameEncoder: boolean;
 }>;
 
 export type BrowserRecordingStartContextOptions = Readonly<{
@@ -80,6 +23,8 @@ export type BrowserRecordingStartContextOptions = Readonly<{
   hasNativeViewCapture: boolean;
   /** A managed-Chromium CDP screencast transport is bound → `cdpScreencast` exists. */
   hasCdpScreencast?: boolean;
+  /** The shared runtime resolver found the executable WebM encoder; native PNG does not need it. */
+  hasFrameEncoder: boolean;
 }>;
 
 function mergeUnique<T>(...lists: readonly (readonly T[])[]): T[] {
@@ -95,18 +40,7 @@ function mergeUnique<T>(...lists: readonly (readonly T[])[]): T[] {
 export function resolveBrowserRecordingStreamFrameStartContext(
   options: BrowserRecordingStreamFrameStartContextOptions,
 ): (startInput: DaemonBrowserRecordingStartInputV1) => BrowserRecordingStartContext {
-  return () => {
-    if (!options.hasLiveStreamCaptureRegistry) {
-      return {
-        browserRecordingEnabled: false,
-        recordingCapabilities: STREAM_FRAME_DISABLED_RECORDING_CAPABILITIES,
-      };
-    }
-    return {
-      browserRecordingEnabled: true,
-      recordingCapabilities: STREAM_FRAME_RECORDING_CAPABILITIES,
-    };
-  };
+  return resolveBrowserRecordingStartContext({ ...options, hasNativeViewCapture: false });
 }
 
 /**
@@ -129,18 +63,13 @@ export function resolveBrowserRecordingStartContext(
       };
     }
 
-    const streamFrame = options.hasLiveStreamCaptureRegistry
-      ? STREAM_FRAME_RECORDING_CAPABILITIES
-      : null;
-    const nativeView = options.hasNativeViewCapture
-      ? NATIVE_VIEW_RECORDING_CAPABILITIES
-      : null;
-    const cdpScreencast = options.hasCdpScreencast
-      ? CDP_SCREENCAST_RECORDING_CAPABILITIES
-      : null;
-    const sources = [streamFrame, nativeView, cdpScreencast].filter(
-      (entry): entry is BrowserRecordingCapabilities => entry !== null,
-    );
+    const sources = BROWSER_RECORDING_CAPTURE_PROFILES.filter(profile => {
+      switch (profile.captureKind) {
+        case 'streamFrameCapture': return options.hasLiveStreamCaptureRegistry && options.hasFrameEncoder;
+        case 'nativeViewCapture': return options.hasNativeViewCapture;
+        case 'cdpScreencast': return options.hasCdpScreencast === true && options.hasFrameEncoder;
+      }
+    });
 
     return {
       browserRecordingEnabled: true,
@@ -148,14 +77,13 @@ export function resolveBrowserRecordingStartContext(
         ...DEFAULT_BROWSER_RECORDING_CAPABILITIES,
         enabled: true,
         attachmentsEnabled: true,
-        available: true,
-        supportedCaptureKinds: sources.flatMap((entry) => entry.supportedCaptureKinds),
-        supportedMimeTypes: mergeUnique(...sources.map((entry) => entry.supportedMimeTypes)),
-        supportedAdapterKinds: mergeUnique(...sources.map((entry) => entry.supportedAdapterKinds)),
-        supportedRetentionClasses: mergeUnique(
-          ...sources.map((entry) => entry.supportedRetentionClasses),
-        ),
-        disabledReasons: [],
+        available: sources.length > 0,
+        cursorOverlaySupported: startInput.captureKind === 'cdpScreencast' && sources.some(source => source.captureKind === 'cdpScreencast'),
+        supportedCaptureKinds: sources.map((entry) => entry.captureKind),
+        supportedMimeTypes: mergeUnique(...sources.map((entry) => entry.mimeTypes)),
+        supportedAdapterKinds: mergeUnique(...sources.map((entry) => entry.adapterKinds)),
+        supportedRetentionClasses: sources.length > 0 ? ['preSend', 'attached', 'clearOnClose', 'clearOnSend'] : [],
+        disabledReasons: sources.length > 0 ? [] : ['Browser recording WebM encoder is unavailable.'],
       },
       ...(startInput.captureKind === 'nativeViewCapture' && options.hasNativeViewCapture
         ? { captureSourceAvailable: true }

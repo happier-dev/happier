@@ -7,7 +7,7 @@ describe('createBrowserRecordingAttachExecutor', () => {
     it('dispatches a real attach when an adapter is registered and gates pass', async () => {
         const attach = vi.fn(async (): Promise<BrowserRecordingAttachResult> => ({
             status: 'attached',
-            state: { sessionsById: {}, sessionOrder: [], activeRecordingIdByViewId: {}, attachmentsById: {}, attachmentOrder: [] },
+            state: { sessionsById: {}, sessionOrder: [], activeRecordingIdByViewId: {} },
             attachmentId: 'attachment_1',
         }));
         const executor = createBrowserRecordingAttachExecutor({ adapter: { attach } });
@@ -40,7 +40,7 @@ describe('createBrowserRecordingAttachExecutor', () => {
     it('surfaces the exact typed disabled reason from the gate check', async () => {
         const attach = vi.fn(async (): Promise<BrowserRecordingAttachResult> => ({
             status: 'unavailable',
-            state: { sessionsById: {}, sessionOrder: [], activeRecordingIdByViewId: {}, attachmentsById: {}, attachmentOrder: [] },
+            state: { sessionsById: {}, sessionOrder: [], activeRecordingIdByViewId: {} },
             reason: {
                 reasonCode: 'browser_recording_session_media_policy_denied',
                 policyState: 'policyDenied',

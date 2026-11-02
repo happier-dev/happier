@@ -14,12 +14,11 @@ import { createBrowserRecordingDaemonRuntime } from './runtime';
  *
  * Proves the FULL desktop recording chain crosses the daemon→native (Wry) IPC seam end-to-end:
  *   desktop invoke (canonical `desktop_browser_capture_recording_frame`) → daemon transport →
- *   capture command → `nativeViewCapture` adapter → bounded reference-only session-media artifact.
+ *   capture command → `nativeViewCapture` adapter → reference-only session-media artifact.
  *
  * With the transport bound, a desktop-view recording must NOT return
  * `browser_recording_capture_adapter_missing` (the previous honest fail-closed state) — it produces a
- * real `local-file` reference. The native byte cap is threaded + re-enforced daemon-side, so an
- * over-cap capture is rejected and never persisted.
+ * real `local-file` reference. Session media ingestion owns its configured file budget.
  */
 
 const WORKING_DIRECTORY = '/tmp/happier-native-view-production-path';
@@ -45,8 +44,6 @@ function buildRuntime(invokeRecordingFrameCapture: DesktopBrowserRecordingFrameC
         supportedCaptureKinds: ['nativeViewCapture'],
         supportedMimeTypes: ['image/png'],
         supportedAdapterKinds: ['externalUrl'],
-        maxDurationMs: 30_000,
-        maxBytes: 16_000_000,
         maxFps: 12,
         audioSupported: false,
         cursorOverlaySupported: false,
@@ -92,8 +89,8 @@ describe('nativeViewCapture production path (desktop daemon entrypoint wiring)',
       const started = await runtime.routes.startRecording(startInput());
       expect(started.status).toBe('started');
       expect(invoke).toHaveBeenCalledTimes(1);
-      // The native side received the daemon byte cap, never an unbounded request.
-      expect(vi.mocked(invoke).mock.calls[0]?.[0]).toMatchObject({ maxBytes: 16_000_000 });
+      // The native side receives only capture identity and the artifact path.
+      expect(vi.mocked(invoke).mock.calls[0]?.[0]).not.toHaveProperty('maxBytes');
       const outputPath = vi.mocked(invoke).mock.calls[0]?.[0].outputPath;
       expect(outputPath).toMatch(/^browser_recording_.+\.capture_1\.native-view\.png$/);
       expect(outputPath).not.toMatch(/^[/\\]|^[A-Za-z]:[\\/]/);
@@ -115,8 +112,6 @@ describe('nativeViewCapture production path (desktop daemon entrypoint wiring)',
           supportedCaptureKinds: ['nativeViewCapture'],
           supportedMimeTypes: ['image/png'],
           supportedAdapterKinds: ['externalUrl'],
-          maxDurationMs: 30_000,
-          maxBytes: 16_000_000,
           maxFps: 12,
           audioSupported: false,
           cursorOverlaySupported: false,
@@ -137,7 +132,7 @@ describe('nativeViewCapture production path (desktop daemon entrypoint wiring)',
     }
   });
 
-  it('rejects an over-cap native capture so nothing oversized is persisted', async () => {
+  it('starts a valid native capture beyond the former byte default', async () => {
     const invoke: DesktopBrowserRecordingFrameCaptureInvoke = vi.fn(async (request) => ({
       ok: true as const,
       frame: { mimeType: 'image/png', width: 4_000, height: 4_000, sizeBytes: 32_000_000, path: request.outputPath },
@@ -145,8 +140,7 @@ describe('nativeViewCapture production path (desktop daemon entrypoint wiring)',
     const runtime = buildRuntime(invoke);
     try {
       await expect(runtime.routes.startRecording(startInput())).resolves.toMatchObject({
-        status: 'unavailable',
-        reason: { code: 'browser_recording_capture_unavailable' },
+        status: 'started',
       });
     } finally {
       runtime.stop();

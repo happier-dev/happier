@@ -121,9 +121,9 @@ function recordingMatchesRecordingId(
 
 function allRecordingsMatchView(
     recordings: readonly BrowserRecordingSessionV1[],
-    viewId: string,
+    view: DaemonBrowserRecordingListInputV1,
 ): boolean {
-    return recordings.every((recording) => recording.viewId === viewId);
+    return recordings.every((recording) => recording.browserSessionId === view.browserSessionId && recording.viewId === view.viewId);
 }
 
 function parsedCallFailure(): Readonly<{ ok: false; reason: 'invalid_response' }> {
@@ -245,6 +245,7 @@ export async function listBrowserRecordingsForViewViaMachineRpc(
     const payload: DaemonBrowserRecordingListRequestV1 = DaemonBrowserRecordingListRequestV1Schema.parse({
         protocolVersion: 1,
         machineId: input.machineId,
+        browserSessionId: input.browserSessionId,
         viewId: input.viewId,
     });
     const raw = await callBrowserRecordingMachineRpc({
@@ -257,7 +258,7 @@ export async function listBrowserRecordingsForViewViaMachineRpc(
     if (!raw.ok) return raw;
 
     const parsed = DaemonBrowserRecordingListResponseV1Schema.safeParse(raw.raw);
-    if (!parsed.success || !allRecordingsMatchView(parsed.data.recordings, input.viewId)) {
+    if (!parsed.success || !allRecordingsMatchView(parsed.data.recordings, input)) {
         return parsedCallFailure();
     }
     return { ok: true, recordings: parsed.data.recordings };

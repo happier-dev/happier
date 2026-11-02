@@ -88,7 +88,7 @@ async function fixture(withRecording = false, readIdle?: () => boolean | Promise
         navigationGeneration: 1, mimeType: 'video/webm', retentionClass: 'preSend',
         captureSource: { kind: 'machineLiveStream', streamFamily: 'browser.streamed', sourceId: 'stream', targetMachineId: 'machine' },
         recordingCapabilities: { enabled: true, attachmentsEnabled: true, available: true, supportedCaptureKinds: ['streamFrameCapture'], supportedMimeTypes: ['video/webm'],
-          supportedAdapterKinds: ['streamedBrowserSurface'], maxDurationMs: 30_000, maxBytes: 16_000_000, maxFps: 12, audioSupported: false, cursorOverlaySupported: true,
+          supportedAdapterKinds: ['streamedBrowserSurface'], maxFps: 12, audioSupported: false, cursorOverlaySupported: true,
           actionTimelineChaptersSupported: true, supportedRetentionClasses: ['preSend'], disabledReasons: [], policyDeniedReasons: [] } })).status).toBe('started');
       expect((await recordings.stopRecording({ recordingId: 'recording', stoppedAtMs: Date.now() + 2_000, navigationGenerationEnd: 2, expiresAtMs })).status).toBe('finalized');
       await fs.unlink(source); return recordings.listStorageRecordings()[0].path;

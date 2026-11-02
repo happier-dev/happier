@@ -183,8 +183,6 @@ const unavailableRecordingCapabilities = {
   supportedCaptureKinds: [],
   supportedMimeTypes: [],
   supportedAdapterKinds: [],
-  maxDurationMs: 30_000,
-  maxBytes: 16_000_000,
   maxFps: 12,
   audioSupported: false,
   cursorOverlaySupported: false,
@@ -201,8 +199,6 @@ const availableRecordingCapabilities = {
   supportedCaptureKinds: ['streamFrameCapture'],
   supportedMimeTypes: ['video/webm'],
   supportedAdapterKinds: ['simulatorPreview'],
-  maxDurationMs: 30_000,
-  maxBytes: 16_000_000,
   maxFps: 12,
   audioSupported: false,
   cursorOverlaySupported: true,
@@ -2097,13 +2093,12 @@ describe('BrowserShell', () => {
 
   it('renders active browser recording status and delegates stop or cancel actions', async () => {
     const { BrowserShell } = await import('./BrowserShell');
-    const { createBrowserRecordingState, startBrowserRecordingSession } =
+    const { applyBrowserRecordingSessionSnapshot, createBrowserRecordingState } =
       await import('@/sync/domains/browser/recording');
     const state = await createSimulatorPreviewShellState();
-    const started = startBrowserRecordingSession({
-      state: createBrowserRecordingState(),
-      browserRecordingEnabled: true,
-      recordingCapabilities: availableRecordingCapabilities,
+    const activeRecording = {
+      v: 1,
+      recordingId: 'recording_1',
       browserSessionId: 'browser_session_1',
       viewId: 'view_1',
       profileId: 'profile_1',
@@ -2113,13 +2108,20 @@ describe('BrowserShell', () => {
       captureKind: 'streamFrameCapture',
       fidelity: 'streamFrame',
       startedAtMs: 10_000,
-      navigationGeneration: 0,
+      navigationGenerationStart: 0,
+      status: 'recording',
+      durationMs: 0,
+      byteSize: 0,
+      frameCount: 0,
+      fps: availableRecordingCapabilities.maxFps,
       mimeType: 'video/webm',
       retentionClass: 'preSend',
-      captureSourceAvailable: true,
-    });
-    expect(started.status).toBe('started');
-    if (started.status !== 'started') return;
+      redactionLevel: 'metadataOnly',
+      policyState: 'allowed',
+      actionChapters: [],
+      relatedReferences: [],
+    } satisfies import('@happier-dev/protocol/browser/recording/v1').BrowserRecordingSessionV1;
+    const recordingState = applyBrowserRecordingSessionSnapshot(createBrowserRecordingState(), activeRecording);
     const onStopRecording = vi.fn();
     const onCancelRecording = vi.fn();
 
@@ -2130,7 +2132,7 @@ describe('BrowserShell', () => {
         state={state}
         onCommand={vi.fn()}
         browserRecording={{
-          state: started.state,
+          state: recordingState,
           recordingCapabilities: availableRecordingCapabilities,
           enabled: true,
           nowMs: () => 12_300,
@@ -2156,12 +2158,12 @@ describe('BrowserShell', () => {
 
     expect(onStopRecording).toHaveBeenCalledWith(
       expect.objectContaining({
-        recordingId: started.recordingId,
+        recordingId: activeRecording.recordingId,
       }),
     );
     expect(onCancelRecording).toHaveBeenCalledWith(
       expect.objectContaining({
-        recordingId: started.recordingId,
+        recordingId: activeRecording.recordingId,
       }),
     );
     expect(onStopRecording.mock.calls[0]?.[0]).not.toHaveProperty('mediaRef');

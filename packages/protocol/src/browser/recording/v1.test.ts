@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
+import { BrowserRecordingCapabilitiesSchema } from '../../features/payload/capabilities/browserCapabilities.js';
+import { BrowserRecordingOutcomeReasonV1Schema } from './v1.js';
 
 describe('browser recording protocol contracts', () => {
+  it('has no producerless recording caps or cap outcomes', () => {
+    expect(BrowserRecordingCapabilitiesSchema.safeParse({ maxDurationMs: 30_000, maxBytes: 16_000_000 }).success).toBe(false);
+    expect(BrowserRecordingOutcomeReasonV1Schema.safeParse('duration_cap').success).toBe(false);
+    expect(BrowserRecordingOutcomeReasonV1Schema.safeParse('size_cap').success).toBe(false);
+  });
+
   it('parses bounded recording sessions with explicit lifecycle status and outcome reasons', async () => {
     const mod = await import('./v1.js').catch(() => null);
 
@@ -29,8 +37,6 @@ describe('browser recording protocol contracts', () => {
       retentionClass: 'preSend',
       redactionLevel: 'metadataOnly',
       policyState: 'allowed',
-      maxDurationMs: 30_000,
-      maxBytes: 16_000_000,
     });
 
     expect(parsed.status).toBe('recording');
@@ -87,8 +93,6 @@ describe('browser recording protocol contracts', () => {
       retentionClass: 'preSend',
       redactionLevel: 'metadataOnly',
       policyState: 'allowed',
-      maxDurationMs: 30_000,
-      maxBytes: 16_000_000,
       mediaRef: {
         refKind: 'sessionMedia',
         mediaId: 'media_recording_1',
@@ -261,8 +265,10 @@ describe('browser recording protocol contracts', () => {
     expect(mod.DaemonBrowserRecordingListRequestV1Schema.parse({
       protocolVersion: 1,
       machineId: 'machine_1',
+      browserSessionId: 'browser_session_1',
       viewId: 'view_1',
     }).viewId).toBe('view_1');
+    expect(mod.DaemonBrowserRecordingListInputV1Schema.safeParse({ viewId: 'view_1' }).success).toBe(false);
     expect(mod.DaemonBrowserRecordingCleanupResponseV1Schema.parse({
       protocolVersion: 1,
       result: {

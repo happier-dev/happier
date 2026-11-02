@@ -34,8 +34,6 @@ function createRecording(
     retentionClass: 'preSend',
     redactionLevel: 'metadataOnly',
     policyState: 'allowed',
-    maxDurationMs: 30_000,
-    maxBytes: 16_000_000,
     actionChapters: [],
     relatedReferences: [],
     ...overrides,
@@ -48,16 +46,19 @@ type CapturedEncoder = BrowserRecordingStreamFrameEncoder & {
   readonly discardSpy: ReturnType<typeof vi.fn>;
 };
 
-function createFakeEncoder(byteSize = 4_096): CapturedEncoder {
+function createFakeEncoder(
+  byteSize = 4_096,
+  appendFrame?: BrowserRecordingStreamFrameEncoder['appendFrame'],
+): CapturedEncoder {
   const appended: Buffer[] = [];
   const discardSpy = vi.fn(async () => {});
   return {
     frames: [],
     appended,
     discardSpy,
-    appendFrame: (input) => {
+    appendFrame: appendFrame ?? ((input) => {
       appended.push(input.payload);
-    },
+    }),
     finish: async () => ({
       source: {
         kind: 'local-file' as const,
@@ -109,6 +110,43 @@ function jpegFrame(sessionId: number, bytes: Buffer, timestampMs = 1_100): Brows
 }
 
 describe('browser recording cdpScreencast adapter', () => {
+  it('captures startup frames and refuses a producer that fails before startup settles', async () => {
+    for (const fails of [false, true]) {
+      const encoder = createFakeEncoder();
+      const stop = vi.fn(async () => {});
+      const adapter = createBrowserRecordingCdpScreencastCaptureAdapter({
+        encoderFactory: async () => encoder,
+        transport: { start: async input => {
+          input.onFrame(jpegFrame(1, Buffer.from('startup-frame')));
+          if (fails) input.onError?.(new Error('CDP connection lost'));
+          return { stop };
+        } },
+      });
+      const recording = createRecording();
+      const started = await adapter.start({ recording });
+      expect(encoder.appended).toEqual([Buffer.from('startup-frame')]);
+      if (fails) {
+        expect(started).toMatchObject({ status: 'unavailable', reason: { code: 'browser_recording_capture_failed' } });
+        expect(stop).toHaveBeenCalledOnce();
+        expect(encoder.discardSpy).toHaveBeenCalledOnce();
+      } else await adapter.discard({ recordingId: recording.recordingId, recording, reason: 'user_canceled' });
+    }
+  });
+
+  it('keeps accepting page frames until Stop', async () => {
+    const fake = createFakeTransport();
+    const encoder = createFakeEncoder();
+    const recording = createRecording();
+    const adapter = createBrowserRecordingCdpScreencastCaptureAdapter({ transport: fake.transport,
+      encoderFactory: async () => encoder, nowMs: () => 168_000 });
+    await adapter.start({ recording });
+    fake.emit(jpegFrame(1, Buffer.from('within-window'), 1_100));
+    fake.emit(jpegFrame(2, Buffer.from('after-window'), 168_000));
+    const artifact = await adapter.stop({ recordingId: recording.recordingId, recording });
+    expect(encoder.appended).toEqual([Buffer.from('within-window'), Buffer.from('after-window')]);
+    expect(artifact).toMatchObject({ durationMs: 167_000, frameCount: 2 });
+  });
+
   it.each(['producer', 'encoder'] as const)('reports a failed %s drain and rejects late frames', async (failure) => {
     const fake = createFakeTransport();
     const encoder = createFakeEncoder();
@@ -195,22 +233,21 @@ describe('browser recording cdpScreencast adapter', () => {
     }
   });
 
-  it('bounds the aggregate raw byte budget and stops appending past the cap (no unbounded accumulation)', async () => {
+  it('lets encoder backpressure bound pending frames', async () => {
     const fake = createFakeTransport();
-    const encoder = createFakeEncoder();
+    const encoder = createFakeEncoder(undefined, () => false);
     const adapter = createBrowserRecordingCdpScreencastCaptureAdapter({
       transport: fake.transport,
       encoderFactory: async () => encoder,
     });
-    // Tiny byte cap forces the second frame to exceed the aggregate budget.
-    const recording = createRecording({ maxBytes: 12 });
+    const recording = createRecording();
     await adapter.start({ recording });
 
-    fake.emit(jpegFrame(1, Buffer.from('12345678'))); // 8 bytes -> accepted
-    fake.emit(jpegFrame(2, Buffer.from('12345678'))); // would push to 16 > 12 -> rejected
+    fake.emit(jpegFrame(1, Buffer.from('12345678')));
+    fake.emit(jpegFrame(2, Buffer.from('12345678')));
 
-    // The producer owns ACKs; the recording encoder does not append over-budget frames.
-    expect(encoder.appended).toHaveLength(1);
+    expect(encoder.appended).toHaveLength(0);
+    expect(await adapter.stop({ recordingId: recording.recordingId, recording })).toMatchObject({ frameCount: 0 });
   });
 
   it('discards the encoder and stops the session on discard', async () => {

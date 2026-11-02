@@ -25,13 +25,12 @@ describe('UiBrowserRecordingCaptureFrame contract (W2C-BA-1)', () => {
       navigationGeneration: 3,
       captureRequestId: 'capture_1',
       outputPath: '/tmp/recordings/rec.capture_1.native-view.png',
-      maxBytes: 16_000_000,
     };
     const parsed = UiBrowserRecordingCaptureFrameRequestV1Schema.parse(request);
     expect(parsed).toEqual(request);
   });
 
-  it('rejects an unbounded (non-positive) byte cap', () => {
+  it('rejects the removed byte-cap operand', () => {
     expect(
       UiBrowserRecordingCaptureFrameRequestV1Schema.safeParse({
         protocolVersion: 1,
@@ -40,7 +39,6 @@ describe('UiBrowserRecordingCaptureFrame contract (W2C-BA-1)', () => {
         navigationGeneration: 0,
         captureRequestId: 'capture_1',
         outputPath: '/tmp/x.png',
-        maxBytes: 0,
       }).success,
     ).toBe(false);
   });

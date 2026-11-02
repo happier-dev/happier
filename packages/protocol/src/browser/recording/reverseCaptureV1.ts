@@ -9,14 +9,13 @@ import { z } from 'zod/mini';
  * asks the connected desktop UI — over the existing daemon<->UI session RPC channel
  * (`RPC_METHODS.UI_BROWSER_RECORDING_CAPTURE_FRAME`) — to capture ONE frame from the view it owns.
  *
- * Reference-only invariant (BRW-15): the daemon names the local `outputPath` + the negotiated byte
- * cap; the UI's native capture writes the PNG to that path and returns ONLY a reference + metadata.
+ * Reference-only invariant (BRW-15): the daemon names the local `outputPath`;
+ * the UI's native capture writes the PNG to that path and returns ONLY a reference + metadata.
  * The raw pixel buffer never crosses the RPC boundary in either direction.
  */
 
 const IdSchema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1), z.maxLength(256)));
 const NonNegativeIntSchema = lazyZodSchema(() => z.number().check(z.int(), z.nonnegative()));
-const PositiveIntSchema = lazyZodSchema(() => z.number().check(z.int(), z.positive()));
 
 /**
  * Request the daemon sends the connected desktop UI to capture one recording frame. Mirrors the
@@ -31,8 +30,6 @@ export const UiBrowserRecordingCaptureFrameRequestV1Schema = lazyZodSchema(() =>
     captureRequestId: IdSchema,
     /** Local filesystem path the native side must write the captured PNG to. */
     outputPath: z.string().check(z.trim(), z.minLength(1)),
-    /** Recording byte cap; the native side rejects a capture larger than this. */
-    maxBytes: PositiveIntSchema,
   }));
 export type UiBrowserRecordingCaptureFrameRequestV1 = z.infer<
   typeof UiBrowserRecordingCaptureFrameRequestV1Schema

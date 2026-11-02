@@ -12,8 +12,6 @@ const emptyRecordingState: BrowserRecordingState = {
     sessionsById: {},
     sessionOrder: [],
     activeRecordingIdByViewId: {},
-    attachmentsById: {},
-    attachmentOrder: [],
 };
 
 function makeAdapter(): BrowserRecordingAttachAdapter {

@@ -51,7 +51,7 @@ describe('browser recording action routes (BA-5)', () => {
     await owner.dispatch('browser.recording.stop', { recordingId: 'r1', navigationGenerationEnd: 1 });
     await owner.dispatch('browser.recording.cancel', { recordingId: 'r1', reason: 'user_canceled' });
     await owner.dispatch('browser.recording.status', { recordingId: 'r1' });
-    await owner.dispatch('browser.recording.listForView', { viewId: 'view_1' });
+    await owner.dispatch('browser.recording.listForView', { browserSessionId: 'browser_session_1', viewId: 'view_1' });
     await owner.dispatch('browser.recording.cleanupExpired', {});
     expect(calls.stopRecording).toHaveBeenCalledOnce();
     expect(calls.cancelRecording).toHaveBeenCalledOnce();

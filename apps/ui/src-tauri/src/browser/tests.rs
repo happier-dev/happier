@@ -182,7 +182,6 @@ fn recording_frame_request(
     view_id: &str,
     navigation_generation: u64,
     output_path: &str,
-    max_bytes: usize,
 ) -> DesktopBrowserCaptureRecordingFrameRequest {
     DesktopBrowserCaptureRecordingFrameRequest {
         browser_session_id: "browser_session_1".to_string(),
@@ -190,7 +189,6 @@ fn recording_frame_request(
         navigation_generation,
         capture_request_id: "capture_request_1".to_string(),
         output_path: output_path.to_string(),
-        max_bytes,
     }
 }
 
@@ -1607,7 +1605,6 @@ fn native_state_refuses_sensitive_or_unknown_source_privacy_before_pixels() {
             "view_1",
             0,
             "recordings/private.png",
-            16_000_000,
         ));
         assert!(
             !recording.ok,
@@ -1818,7 +1815,6 @@ fn native_state_writes_recording_frame_reference_only() {
         "view_1",
         0,
         output_path,
-        16_000_000,
     ));
 
     assert!(result.ok);
@@ -1909,49 +1905,6 @@ fn recording_frame_writer_writes_valid_relative_artifacts_inside_recording_root(
 }
 
 #[test]
-fn native_state_rejects_recording_frame_over_byte_cap() {
-    let temp_dir = tempfile::tempdir().expect("tempdir");
-    let output_path = "frame_oversized.png";
-    let expected_output_path = temp_dir
-        .path()
-        .join(".happier")
-        .join("tmp")
-        .join("browser-recordings")
-        .join(output_path);
-    let host = FakeWebViewHost::new(false);
-    let state = DesktopBrowserState::for_test(
-        DesktopBrowserAvailability::available(
-            DesktopBrowserPlatform::MacOs,
-            DesktopBrowserPrimitive::MacOsNsViewWebKit,
-            DesktopBrowserSupport {
-                navigation: true,
-                capture: true,
-                ..DesktopBrowserSupport::default()
-            },
-        ),
-        temp_dir.path().to_path_buf(),
-        Box::new(host.clone()),
-    );
-    assert!(
-        state
-            .open_view(open_request("view_1", "profile_1", "https://example.test"))
-            .ok
-    );
-
-    // The fake capture yields a 4-byte frame; a 3-byte cap must reject without writing the file.
-    let result =
-        state.capture_recording_frame(recording_frame_request("view_1", 0, output_path, 3));
-
-    assert!(!result.ok);
-    assert_eq!(
-        result.error_code,
-        Some(DesktopBrowserCaptureErrorCode::CaptureTooLarge)
-    );
-    assert!(result.frame.is_none());
-    assert!(!expected_output_path.exists());
-}
-
-#[test]
 fn native_state_rejects_recording_frame_when_capture_unsupported() {
     let temp_dir = tempfile::tempdir().expect("tempdir");
     let output_path = "frame_unsupported.png";
@@ -1980,7 +1933,6 @@ fn native_state_rejects_recording_frame_when_capture_unsupported() {
         "view_1",
         0,
         output_path,
-        16_000_000,
     ));
 
     assert!(!result.ok);
@@ -2936,7 +2888,7 @@ fn native_state_pending_source_privacy_cannot_admit_reopened_view_pixels() {
     completion("false".to_string());
     let capture = tauri::async_runtime::block_on(super::await_native_capture(Ok(receiver)));
     let result = state.finish_view_recording_frame(
-        recording_frame_request("view_1", 0, "recordings/replaced.png", 16_000_000),
+        recording_frame_request("view_1", 0, "recordings/replaced.png"),
         capture,
     );
     assert!(

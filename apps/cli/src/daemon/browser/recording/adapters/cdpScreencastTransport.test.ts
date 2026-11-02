@@ -2,6 +2,7 @@ import type { BrowserRecordingSessionV1 } from '@happier-dev/protocol';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createBrowserRecordingCdpScreencastTransport } from './cdpScreencastTransport';
+import { createBrowserRecordingCdpScreencastCaptureAdapter } from './cdpScreencast';
 import { createBrowserCdpScreencastProducer } from '../../capture/cdpScreencast';
 import { createSurfaceInputControl } from '../../../surfaces/inputControl';
 
@@ -36,15 +37,13 @@ function createRecording(
     retentionClass: 'preSend',
     redactionLevel: 'metadataOnly',
     policyState: 'allowed',
-    maxDurationMs: 30_000,
-    maxBytes: 16_000_000,
     actionChapters: [],
     relatedReferences: [],
     ...overrides,
   };
 }
 
-function createHarness(options: { handle?: null; sessionId?: string; canSubscribe?: boolean } = {}) {
+function createHarness(options: { handle?: null; sessionId?: string; canSubscribe?: boolean; failMethod?: string } = {}) {
   const commands: Array<Record<string, unknown>> = [];
   const listeners: Array<(notification: CdpNotification) => void> = [];
   const lifecycleListeners: Array<(event: { type: 'bound' | 'unbound'; browserSessionId: string; viewId: string }) => void> = [];
@@ -61,6 +60,10 @@ function createHarness(options: { handle?: null; sessionId?: string; canSubscrib
       transport: {
         dispatchPageCommand: vi.fn(async (command: Record<string, unknown>) => {
           commands.push(command);
+          if (command.method === options.failMethod) throw new Error('cdp_fixture_failure');
+          if (command.method === 'Page.addScriptToEvaluateOnNewDocument') return { identifier: 'overlay' };
+          if (command.method === 'Page.getFrameTree') return { frameTree: { frame: { id: 'main' } } };
+          if (command.method === 'Page.createIsolatedWorld') return { executionContextId: 1 };
           return {};
         }),
       },
@@ -86,9 +89,11 @@ describe('managed-Chromium CDP screencast recording transport', () => {
     const harness = createHarness();
     const control = createSurfaceInputControl();
     const producer = createBrowserCdpScreencastProducer({ contextCapture: harness.contextCapture, resolveInputControl: () => control });
+    const transport = createBrowserRecordingCdpScreencastTransport({ contextCapture: harness.contextCapture, producer,
+      resolveInputControl: () => control });
     const observations: unknown[] = [];
     const humanFrames: unknown[] = [];
-    await producer.start({ view: createRecording(), onFrame: frame => observations.push(frame) });
+    await transport.start({ recording: createRecording(), onFrame: frame => observations.push(frame) });
     await producer.start({ view: createRecording(), purpose: 'humanViewer', onFrame: frame => humanFrames.push(frame) });
     await control.beginConfidentialityHold();
     harness.listeners.forEach(listener => listener({ method: 'Page.screencastFrame', sessionId: 'session_cdp',
@@ -96,6 +101,8 @@ describe('managed-Chromium CDP screencast recording transport', () => {
     expect(observations).toEqual([]);
     expect(humanFrames).toHaveLength(1);
     expect(harness.commands.filter(command => command.method === 'Page.screencastFrameAck')).toHaveLength(1);
+    expect(harness.commands.filter(command => command.method === 'Emulation.setFocusEmulationEnabled').at(-1))
+      .toMatchObject({ params: { enabled: false } });
     expect(await producer.start({ view: createRecording(), onFrame: frame => observations.push(frame) })).toBeNull();
     await producer.dispose();
   });
@@ -115,12 +122,13 @@ describe('managed-Chromium CDP screencast recording transport', () => {
   });
   it.each(['viewer', 'recording'] as const)('shares one per-view producer when %s closes first', async (first) => {
     const harness = createHarness();
-    const transport = createBrowserRecordingCdpScreencastTransport({ producer: createBrowserCdpScreencastProducer({ contextCapture: harness.contextCapture }) });
+    const producer = createBrowserCdpScreencastProducer({ contextCapture: harness.contextCapture });
+    const transport = createBrowserRecordingCdpScreencastTransport({ contextCapture: harness.contextCapture, producer });
     const recordingFrames: unknown[] = [];
     const viewerFrames: unknown[] = [];
     const [recording, viewer] = await Promise.all([
       transport.start({ recording: createRecording(), onFrame: (frame) => recordingFrames.push(frame) }),
-      transport.start({ recording: createRecording({ recordingId: 'viewer' }), onFrame: (frame) => viewerFrames.push(frame) }),
+      producer.start({ view: createRecording(), purpose: 'humanViewer', onFrame: (frame) => viewerFrames.push(frame) }),
     ]);
     expect(harness.commands.filter((command) => command.method === 'Page.startScreencast')).toHaveLength(1);
     const emit = (sessionId: number) => harness.listeners.forEach((listener) => listener({
@@ -138,11 +146,85 @@ describe('managed-Chromium CDP screencast recording transport', () => {
     expect(viewerFrames).toHaveLength(first === 'recording' ? 2 : 1);
     await (first === 'viewer' ? recording : viewer)?.stop();
     expect(harness.commands.filter((command) => command.method === 'Page.stopScreencast')).toHaveLength(1);
+    await producer.dispose();
+  });
+  it.each(['explicit stop', 'view retirement'] as const)('releases recording focus emulation on %s', async (reason) => {
+    const harness = createHarness();
+    const control = createSurfaceInputControl();
+    const producer = createBrowserCdpScreencastProducer({ contextCapture: harness.contextCapture, resolveInputControl: () => control });
+    const transport = createBrowserRecordingCdpScreencastTransport({ contextCapture: harness.contextCapture, producer,
+      resolveInputControl: () => control });
+    const frames: unknown[] = [];
+    const session = await transport.start({ recording: createRecording(), onFrame: frame => frames.push(frame) });
+    expect(harness.commands.filter(command => command.method === 'Emulation.setFocusEmulationEnabled'))
+      .toEqual([{ targetId: 'target_cdp', sessionId: 'session_cdp', method: 'Emulation.setFocusEmulationEnabled', params: { enabled: true } }]);
+    if (reason === 'explicit stop') await session?.stop();
+    else harness.lifecycleListeners.forEach(listener => listener({ type: 'unbound', browserSessionId: 'browser_session_cdp', viewId: 'view_cdp' }));
+    await vi.waitFor(() => expect(harness.commands.filter(command => command.method === 'Emulation.setFocusEmulationEnabled'))
+      .toHaveLength(2));
+    await session?.stop();
+    expect(harness.commands.filter(command => command.method === 'Emulation.setFocusEmulationEnabled').at(-1))
+      .toMatchObject({ params: { enabled: false } });
+    expect(harness.commands.filter(command => command.method === 'Page.removeScriptToEvaluateOnNewDocument')).toHaveLength(1);
+    harness.listeners.forEach(listener => listener({ method: 'Page.screencastFrame', sessionId: 'session_cdp',
+      params: { sessionId: 1, data: 'late-or-confidential' } }));
+    expect(frames).toEqual([]);
+    await producer.dispose();
+  });
+
+  it.each(['Emulation.setFocusEmulationEnabled', 'Page.startScreencast', 'Page.stopScreencast', 'Page.removeScriptToEvaluateOnNewDocument'])(
+    'releases emulation and attempts overlay cleanup when %s fails', async failMethod => {
+      const harness = createHarness({ failMethod });
+      const control = createSurfaceInputControl();
+      const producer = createBrowserCdpScreencastProducer({ contextCapture: harness.contextCapture });
+      const transport = createBrowserRecordingCdpScreencastTransport({ contextCapture: harness.contextCapture, producer,
+        resolveInputControl: () => control });
+      const starting = transport.start({ recording: createRecording(), onFrame: vi.fn() });
+      if (failMethod === 'Emulation.setFocusEmulationEnabled') await expect(starting).rejects.toThrow('cdp_fixture_failure');
+      else {
+        const session = await starting;
+        if (failMethod === 'Page.startScreencast') expect(session).toBeNull();
+        else await expect(session?.stop()).rejects.toThrow('cdp_fixture_failure');
+      }
+      expect(harness.commands.filter(command => command.method === 'Emulation.setFocusEmulationEnabled'))
+        .toEqual([
+          { targetId: 'target_cdp', sessionId: 'session_cdp', method: 'Emulation.setFocusEmulationEnabled', params: { enabled: true } },
+          { targetId: 'target_cdp', sessionId: 'session_cdp', method: 'Emulation.setFocusEmulationEnabled', params: { enabled: false } },
+        ]);
+      expect(harness.commands.filter(command => command.method === 'Page.removeScriptToEvaluateOnNewDocument')).toHaveLength(1);
+      await expect(control.beginConfidentialityHold()).resolves.toBeUndefined();
+      await producer.dispose();
+    },
+  );
+
+  it('releases focus emulation and rejects late frames when the capture adapter cancels a recording', async () => {
+    const harness = createHarness();
+    const producer = createBrowserCdpScreencastProducer({ contextCapture: harness.contextCapture });
+    const transport = createBrowserRecordingCdpScreencastTransport({ contextCapture: harness.contextCapture, producer });
+    const appended: Buffer[] = [];
+    let discarded = false;
+    // The encoder process is an external boundary; capture, cancellation and producer stay real.
+    const adapter = createBrowserRecordingCdpScreencastCaptureAdapter({ transport, encoderFactory: async () => ({
+      appendFrame: input => { appended.push(input.payload); },
+      discard: async () => { discarded = true; },
+      finish: async () => { throw new Error('Canceled recording must not be finalized'); },
+    }) });
+    const recording = createRecording();
+    expect(await adapter.start({ recording })).toEqual({ status: 'started' });
+    await adapter.discard({ recording, recordingId: recording.recordingId, reason: 'user_canceled' });
+    expect(discarded).toBe(true);
+    expect(harness.commands.filter(command => command.method === 'Emulation.setFocusEmulationEnabled').at(-1))
+      .toMatchObject({ params: { enabled: false } });
+    harness.listeners.forEach(listener => listener({ method: 'Page.screencastFrame', sessionId: 'session_cdp',
+      params: { sessionId: 1, data: 'late-frame' } }));
+    expect(appended).toEqual([]);
+    await producer.dispose();
   });
   it('starts Page.screencast, forwards matching frames, acks frames, and stops through the existing context-capture surface', async () => {
     const harness = createHarness();
     const frames: unknown[] = [];
     const transport = createBrowserRecordingCdpScreencastTransport({
+      contextCapture: harness.contextCapture,
       producer: createBrowserCdpScreencastProducer({ contextCapture: harness.contextCapture }),
     });
 
@@ -152,7 +234,7 @@ describe('managed-Chromium CDP screencast recording transport', () => {
     });
 
     expect(session).not.toBe(null);
-    expect(harness.commands[0]).toMatchObject({
+    expect(harness.commands.find(command => command.method === 'Page.startScreencast')).toMatchObject({
       targetId: 'target_cdp',
       sessionId: 'session_cdp',
       method: 'Page.startScreencast',
@@ -183,7 +265,7 @@ describe('managed-Chromium CDP screencast recording transport', () => {
     });
 
     await session?.stop();
-    expect(harness.commands.at(-1)).toMatchObject({
+    expect(harness.commands.find(command => command.method === 'Page.stopScreencast')).toMatchObject({
       targetId: 'target_cdp',
       sessionId: 'session_cdp',
       method: 'Page.stopScreencast',
@@ -192,13 +274,17 @@ describe('managed-Chromium CDP screencast recording transport', () => {
   });
 
   it('fails closed when the recording view has no sidecar page handle or event stream', async () => {
+    const missingHandle = createHarness({ handle: null }).contextCapture;
     const noHandle = createBrowserRecordingCdpScreencastTransport({
-      producer: createBrowserCdpScreencastProducer({ contextCapture: createHarness({ handle: null }).contextCapture }),
+      contextCapture: missingHandle,
+      producer: createBrowserCdpScreencastProducer({ contextCapture: missingHandle }),
     });
     await expect(noHandle.start({ recording: createRecording(), onFrame: vi.fn() })).resolves.toBe(null);
 
+    const missingEvents = createHarness({ canSubscribe: false }).contextCapture;
     const noEvents = createBrowserRecordingCdpScreencastTransport({
-      producer: createBrowserCdpScreencastProducer({ contextCapture: createHarness({ canSubscribe: false }).contextCapture }),
+      contextCapture: missingEvents,
+      producer: createBrowserCdpScreencastProducer({ contextCapture: missingEvents }),
     });
     await expect(noEvents.start({ recording: createRecording(), onFrame: vi.fn() })).resolves.toBe(null);
   });

@@ -36,8 +36,6 @@ function recordingSession(startedAtMs: number): BrowserRecordingSessionV1 {
         retentionClass: 'preSend',
         redactionLevel: 'metadataOnly',
         policyState: 'allowed',
-        maxDurationMs: 30_000,
-        maxBytes: 16_000_000,
         actionChapters: [],
         relatedReferences: [],
     } as BrowserRecordingSessionV1;

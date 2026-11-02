@@ -28,7 +28,8 @@ export type BrowserRecordingStreamFrameEncoderOutput = Readonly<{
 }>;
 
 export type BrowserRecordingStreamFrameEncoder = Readonly<{
-  appendFrame(input: BrowserRecordingStreamFrameEncoderFrame): void;
+  /** false skips an incoming frame while the OS pipe is draining; no caller queues it. */
+  appendFrame(input: BrowserRecordingStreamFrameEncoderFrame): false | void;
   finish(input: Readonly<{
     recording: BrowserRecordingSessionV1;
     frameCount: number;
@@ -100,11 +101,7 @@ function buildStartRequest(input: Readonly<{
     routeKind: 'loopback_direct',
     sourceMachineId: input.captureSource.sourceMachineId ?? input.sourceMachineId,
     targetMachineId: input.captureSource.targetMachineId ?? input.targetMachineId,
-    maxBitrateBps: Math.max(1, input.recording.maxBytes * 8),
     maxFramesPerSecond,
-    maxFrameBytes: input.recording.maxBytes,
-    maxDurationMs: input.recording.maxDurationMs,
-    maxTotalBytes: input.recording.maxBytes,
   };
 }
 
@@ -236,13 +233,13 @@ export function createBrowserRecordingStreamFrameCaptureAdapter(
           if (frame.payloadKind === 'metadata') return;
           const payload = Buffer.from(frame.payloadBase64, 'base64');
           try {
-            encoder.appendFrame({
+            const accepted = encoder.appendFrame({
               sequence: frame.sequence,
               timestampMs: frame.timestampMs,
               payloadKind: frame.payloadKind,
               payload,
             });
-            frameCount += 1;
+            if (accepted !== false) frameCount += 1;
           } catch (error) {
             fatalError = error;
           }
@@ -266,7 +263,7 @@ export function createBrowserRecordingStreamFrameCaptureAdapter(
         caps: startRequest,
         startRequest,
         startedAtMs: input.recording.startedAtMs,
-        expiresAtMs: input.recording.startedAtMs + input.recording.maxDurationMs,
+        expiresAtMs: Number.POSITIVE_INFINITY,
         nowMs,
         offerFrame: pump.offerFrame,
         applyControl: pump.applyControl,
@@ -333,7 +330,7 @@ export function createBrowserRecordingStreamFrameCaptureAdapter(
           durationMs,
           byteSize: output.byteSize,
           frameCount: active.frameCount(),
-          fps: calculateFps(active.frameCount(), durationMs),
+          fps: Math.min(active.recording.fps, calculateFps(active.frameCount(), durationMs)),
           mimeType: 'video/webm',
           source: output.source,
           cleanup: output.cleanup,

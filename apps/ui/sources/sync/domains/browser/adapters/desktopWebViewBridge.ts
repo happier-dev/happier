@@ -207,7 +207,7 @@ export type DesktopBrowserRecordingFrameErrorCode =
 /**
  * Reference-only recording-frame capture request. Unlike a snapshot (inline base64 for an interactive
  * screenshot), the recording-frame command writes the PNG to the daemon-owned `outputPath` and enforces
- * the daemon-negotiated `maxBytes` cap — the pixel bytes never cross back over IPC.
+ * the daemon-owned artifact path — the pixel bytes never cross back over IPC.
  */
 export type DesktopBrowserCaptureRecordingFrameRequest = Readonly<{
     browserSessionId: string;
@@ -215,7 +215,6 @@ export type DesktopBrowserCaptureRecordingFrameRequest = Readonly<{
     navigationGeneration: number;
     captureRequestId: string;
     outputPath: string;
-    maxBytes: number;
 }>;
 
 export type DesktopBrowserCapturedRecordingFrame = Readonly<{
@@ -792,12 +791,6 @@ function normalizeDesktopBrowserCapturedRecordingFrame(
         return { errorCode: 'captureFailed' };
     }
 
-    // Reference-only + bounded: the native side must honor the daemon byte cap; reject an over-cap
-    // frame even if it somehow returned ok (defense-in-depth alongside the native + daemon bounds).
-    if (sizeBytes > request.maxBytes) {
-        return { errorCode: 'captureTooLarge' };
-    }
-
     return {
         browserSessionId,
         viewId,
@@ -858,7 +851,7 @@ function normalizeDesktopBrowserCaptureRecordingFrameResult(
 /**
  * Reference-only recording-frame capture over the canonical desktop invoke path (BA-4 `nativeViewCapture`
  * producer). The native `desktop_browser_capture_recording_frame` command writes the captured PNG to the
- * daemon-provided `outputPath`, enforcing the daemon's `maxBytes` cap, and returns ONLY a path + metadata.
+ * daemon-provided `outputPath` and returns ONLY a path + metadata.
  * This is the UI half of the daemon→native (Wry) capture IPC; the daemon owns the path + cap and the
  * resulting session-media artifact.
  */

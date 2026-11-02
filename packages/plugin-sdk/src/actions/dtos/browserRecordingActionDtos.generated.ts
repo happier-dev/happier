@@ -47,6 +47,7 @@ export type BrowserRecordingActionInputById = {
     };
     readonly "browser.recording.listForView": {
         viewId: string;
+        browserSessionId: string;
     };
     readonly "browser.recording.discard": {
         recordingId: string;

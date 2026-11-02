@@ -17,8 +17,6 @@ const recordingCapabilities = {
   supportedCaptureKinds: ['streamFrameCapture'],
   supportedMimeTypes: ['video/webm'],
   supportedAdapterKinds: ['simulatorPreview'],
-  maxDurationMs: 30_000,
-  maxBytes: 16_000_000,
   maxFps: 12,
   audioSupported: false,
   cursorOverlaySupported: true,
@@ -336,6 +334,7 @@ describe('browser recording daemon runtime', () => {
       resolveSessionMediaTarget: () => ({ sessionId: 'session_1', messageLocalId: 'message_1' }),
       resolveStartContext: resolveBrowserRecordingStreamFrameStartContext({
         hasLiveStreamCaptureRegistry: true,
+        hasFrameEncoder: true,
       }),
     });
 

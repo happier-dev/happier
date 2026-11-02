@@ -15,7 +15,6 @@ function captureRequest(): DesktopBrowserRecordingFrameCaptureRequest {
     navigationGeneration: 2,
     captureRequestId: 'capture_1',
     outputPath: '/tmp/recordings/rec.capture_1.native-view.png',
-    maxBytes: 16_000_000,
   };
 }
 
@@ -38,10 +37,11 @@ describe('createReverseDesktopBrowserRecordingNativeViewCaptureInvoke', () => {
 
     const result = await invoke(captureRequest());
 
-    // The daemon byte cap + view identity crossed the reverse channel (validated against the contract).
+    // View identity crossed the reverse channel (validated against the contract).
     const sent = callUi.mock.calls[0]?.[0];
     expect(UiBrowserRecordingCaptureFrameRequestV1Schema.safeParse(sent).success).toBe(true);
-    expect(sent).toMatchObject({ maxBytes: 16_000_000, viewId: 'view_1', navigationGeneration: 2 });
+    expect(sent).toMatchObject({ viewId: 'view_1', navigationGeneration: 2 });
+    expect(sent).not.toHaveProperty('maxBytes');
 
     expect(result).toEqual({
       ok: true,

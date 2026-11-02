@@ -37,8 +37,6 @@ const recording = {
   retentionClass: 'preSend',
   redactionLevel: 'metadataOnly',
   policyState: 'allowed',
-  maxDurationMs: 30_000,
-  maxBytes: 16_000_000,
   actionChapters: [],
   relatedReferences: [],
 } satisfies BrowserRecordingSessionV1;
@@ -78,7 +76,7 @@ describe('browser recording session-media writer', () => {
     }
   });
 
-  it('persists captured local video artifacts through the canonical session-media owner and discards them durably', async () => {
+  it('awaits the Session workspace before persisting captured video and discards it durably', async () => {
     const { createBrowserRecordingSessionMediaWriter } = await import('./sessionMediaWriter');
     const workingDirectory = await mkdtemp(join(tmpdir(), 'happier-browser-recording-writer-'));
     const captureDirectory = await mkdtemp(join(tmpdir(), 'happier-browser-recording-capture-'));
@@ -90,7 +88,8 @@ describe('browser recording session-media writer', () => {
       // Transcript admission is the process/network boundary; media persistence stays real.
       const commitAttachment = vi.fn(async () => {});
       const writer = createBrowserRecordingSessionMediaWriter({
-        workingDirectory,
+        workingDirectory: captureDirectory,
+        resolveWorkingDirectory: async () => workingDirectory,
         pathAllowanceRegistry: createTransferPathAllowanceRegistry(),
         resolveSessionMediaTarget: () => ({
           sessionId: 'session_1',

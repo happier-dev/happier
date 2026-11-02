@@ -25,7 +25,7 @@ export type BrowserRecordingNativeViewCaptureTransportResult =
 /**
  * The desktop-host boundary the `nativeViewCapture` producer talks to. This is the ONLY seam that
  * reaches the native Wry WebView snapshot (`desktop_browser_capture_recording_frame`); everything
- * above it (byte-cap bounding, reference-only artifact shaping) is daemon logic and is unit-tested
+ * above it (reference-only artifact shaping) is daemon logic and is unit-tested
  * against a fake transport. Mirrors the `BrowserRecordingCdpScreencastTransport` seam used by the
  * managed-Chromium screencast producer — the concrete IPC wiring is injected by the desktop daemon
  * entrypoint, never opened here.
@@ -33,8 +33,6 @@ export type BrowserRecordingNativeViewCaptureTransportResult =
 export type BrowserRecordingNativeViewCaptureTransport = Readonly<{
   captureFrame(input: Readonly<{
     recording: BrowserRecordingSessionV1;
-    /** The negotiated recording byte cap. The native side rejects a capture larger than this. */
-    maxBytes: number;
   }>): Promise<BrowserRecordingNativeViewCaptureTransportResult>;
 }>;
 
@@ -45,23 +43,18 @@ export type BrowserRecordingNativeViewCaptureCommandOptions = Readonly<{
 /**
  * Builds the real `nativeViewCapture` producer command from a desktop-host capture transport. This
  * is the "cli adapter that drives" the native `desktop_browser_capture_recording_frame` command:
- * it threads the recording's `maxBytes` cap to the native side, enforces the SAME cap a second time
- * daemon-side as defense-in-depth (a buggy/compromised native side cannot smuggle an oversized
- * artifact past the daemon), and reshapes the native reference into the canonical reference-only
+ * it reshapes the native reference into the canonical reference-only
  * `BrowserRecordingNativeViewCaptureResult` consumed by `createBrowserRecordingNativeViewCaptureAdapter`.
  *
- * Bounded per the recording caps (BA-4): an oversized or empty capture is rejected and its on-disk
- * file released via `cleanup`, so nothing unbounded is ever persisted or accumulated in memory.
+ * Empty captures are rejected and their on-disk files released via `cleanup`.
  */
 export function createBrowserRecordingNativeViewCaptureCommand(
   options: BrowserRecordingNativeViewCaptureCommandOptions,
 ): BrowserRecordingNativeViewCaptureCommand {
   return async ({ recording }) => {
-    const maxBytes = recording.maxBytes;
-
     let result: BrowserRecordingNativeViewCaptureTransportResult;
     try {
-      result = await options.transport.captureFrame({ recording, maxBytes });
+      result = await options.transport.captureFrame({ recording });
     } catch {
       return { ok: false, reasonCode: 'native_view_capture_transport_failed' };
     }
@@ -73,11 +66,6 @@ export function createBrowserRecordingNativeViewCaptureCommand(
     if (result.byteSize <= 0) {
       await result.cleanup?.().catch(() => undefined);
       return { ok: false, reasonCode: 'native_view_capture_empty' };
-    }
-
-    if (result.byteSize > maxBytes) {
-      await result.cleanup?.().catch(() => undefined);
-      return { ok: false, reasonCode: 'native_view_capture_byte_cap_exceeded' };
     }
 
     return {

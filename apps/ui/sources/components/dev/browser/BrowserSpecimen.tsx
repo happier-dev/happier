@@ -59,8 +59,6 @@ const RECORDING_CAPABILITIES = {
     supportedCaptureKinds: ['nativeViewCapture', 'cdpScreencast', 'streamFrameCapture'],
     supportedMimeTypes: ['video/webm'],
     supportedAdapterKinds: ['externalUrl', 'chromiumSidecar'],
-    maxDurationMs: 600_000,
-    maxBytes: 64_000_000,
     maxFps: 12,
     audioSupported: false,
     cursorOverlaySupported: true,

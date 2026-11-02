@@ -1,10 +1,11 @@
 import type {
     BrowserCapabilities,
+    BrowserRecordingCapabilities} from '@happier-dev/protocol/features/payload/capabilities/browserCapabilities';
+import type {
     BrowserRecordingCaptureSourceV1,
-    BrowserRecordingCapabilities,
     DaemonBrowserRecordingUnavailableReasonV1,
     BrowserRecordingSessionV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/browser/recording/v1';
 import { DEFAULT_BROWSER_CAPABILITIES } from '@happier-dev/protocol/features/payload/capabilities/browserCapabilities';
 import { browserViewKey } from '@happier-dev/protocol/browser/view/key';
 import { simulatorCaptureStreamFamilyV1 } from '@happier-dev/protocol/devices/simulator/v1';
@@ -22,7 +23,6 @@ import type { BrowserRecordingStartControlRequest } from '@/components/browser/r
 import {
     applyBrowserRecordingSessionSnapshot,
     createBrowserRecordingState,
-    startBrowserRecordingSession,
     type BrowserRecordingState,
     type BrowserRecordingUnavailableReason,
 } from '@/sync/domains/browser/recording';
@@ -92,29 +92,6 @@ function resolveCaptureSource(
         };
     }
     return undefined;
-}
-
-function requestCanUseNativeViewCapture(
-    request: BrowserRecordingStartControlRequest,
-): boolean {
-    return request.targetKind === 'externalUrl'
-        && request.adapterKind === 'externalUrl'
-        && request.renderEngineKind === 'desktopWebView';
-}
-
-function resolveRequestCaptureSourceAvailable(input: Readonly<{
-    request: BrowserRecordingStartControlRequest;
-    captureSource: BrowserRecordingCaptureSourceV1 | undefined;
-    nativeViewCaptureHandlerRegistered: boolean;
-}>): boolean {
-    if (input.request.captureKind === 'streamFrameCapture') {
-        return input.captureSource !== undefined;
-    }
-    if (input.request.captureKind === 'nativeViewCapture') {
-        return input.nativeViewCaptureHandlerRegistered
-            && requestCanUseNativeViewCapture(input.request);
-    }
-    return true;
 }
 
 function readRecordingFromDaemonResult(result: unknown): BrowserRecordingSessionV1 | null {
@@ -211,7 +188,7 @@ export function useSessionBrowserRecordingRuntime(
     const serverId = typeof params.serverId === 'string' && params.serverId.trim().length > 0
         ? params.serverId.trim()
         : null;
-    const { execute, isCurrent, ready } = useMountedActionExecution(serverId, { openOnRequest: true, retainInvocation: true });
+    const { execute, isCurrent, ready } = useMountedActionExecution(serverId, { retainInvocation: true });
     const enabled = params.enabled && machineId != null && presented && ready;
     const nowMs = params.nowMs ?? Date.now;
     const recordingCapabilities = params.recordingCapabilities
@@ -254,37 +231,8 @@ export function useSessionBrowserRecordingRuntime(
         pending.add(request.viewId);
         const startedAtMs = nowMs();
         const captureSource = resolveCaptureSource(request, machineId);
-        const captureSourceAvailable = resolveRequestCaptureSourceAvailable({
-            request,
-            captureSource,
-            nativeViewCaptureHandlerRegistered,
-        });
 
         try {
-            const local = startBrowserRecordingSession({
-                state,
-                browserRecordingEnabled: true,
-                recordingCapabilities,
-                browserSessionId: request.browserSessionId,
-                viewId: request.viewId,
-                profileId: request.profileId,
-                targetKind: request.targetKind,
-                adapterKind: request.adapterKind,
-                renderEngineKind: request.renderEngineKind,
-                captureKind: request.captureKind,
-                fidelity: request.fidelity,
-                navigationGeneration: request.navigationGeneration,
-                mimeType: request.mimeType,
-                retentionClass: request.retentionClass,
-                policyState: request.policyState,
-                captureSourceAvailable,
-                startedAtMs,
-            });
-            if (local.status === 'unavailable') {
-                onUnavailable?.(local.reason);
-                return;
-            }
-
             const result = await execute('browser.recording.start', {
                 browserSessionId: request.browserSessionId,
                 viewId: request.viewId,
@@ -299,7 +247,6 @@ export function useSessionBrowserRecordingRuntime(
                 retentionClass: request.retentionClass,
                 policyState: request.policyState,
                 startedAtMs,
-                recordingId: local.recordingId,
                 mediaTarget: {
                     sessionId,
                     messageLocalId: buildRecordingMessageLocalId(request.viewId, startedAtMs),
@@ -331,12 +278,9 @@ export function useSessionBrowserRecordingRuntime(
         execute,
         isCurrent,
         machineId,
-        nativeViewCaptureHandlerRegistered,
         nowMs,
         onUnavailable,
-        recordingCapabilities,
         sessionId,
-        state,
     ]);
 
     const onStopRecording = React.useCallback(async (recording: BrowserRecordingSessionV1) => {

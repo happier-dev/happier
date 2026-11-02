@@ -44,8 +44,6 @@ function capabilitiesForKind(
     supportedCaptureKinds: [captureKind],
     supportedMimeTypes: [mimeType],
     supportedAdapterKinds: [adapterKind],
-    maxDurationMs: 30_000,
-    maxBytes: 16_000_000,
     maxFps: 12,
     audioSupported: false,
     cursorOverlaySupported: false,

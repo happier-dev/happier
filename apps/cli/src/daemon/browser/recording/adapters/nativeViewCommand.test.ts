@@ -30,8 +30,6 @@ function createRecording(overrides: Partial<BrowserRecordingSessionV1> = {}): Br
     retentionClass: 'preSend',
     redactionLevel: 'metadataOnly',
     policyState: 'allowed',
-    maxDurationMs: 30_000,
-    maxBytes: 16_000_000,
     actionChapters: [],
     relatedReferences: [],
     ...overrides,
@@ -46,7 +44,7 @@ function createTransport(
 }
 
 describe('browser recording native-view capture command (daemon->native IPC driver)', () => {
-  it('drives the native transport with the recording byte cap and returns a reference-only artifact', async () => {
+  it('drives the native transport and returns a reference-only artifact', async () => {
     const { transport, captureFrame } = createTransport({
       ok: true,
       path: '/tmp/happier-recording/native-frame.png',
@@ -57,11 +55,11 @@ describe('browser recording native-view capture command (daemon->native IPC driv
     });
     const command = createBrowserRecordingNativeViewCaptureCommand({ transport });
 
-    const recording = createRecording({ maxBytes: 16_000_000 });
+    const recording = createRecording();
     const result = await command({ recording });
 
     expect(captureFrame).toHaveBeenCalledTimes(1);
-    expect(captureFrame).toHaveBeenCalledWith({ recording, maxBytes: 16_000_000 });
+    expect(captureFrame).toHaveBeenCalledWith({ recording });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.source).toMatchObject({
@@ -88,7 +86,7 @@ describe('browser recording native-view capture command (daemon->native IPC driv
     expect(result.reasonCode).toBe('capture_unsupported');
   });
 
-  it('fails closed (and cleans up) when the native frame exceeds the recording byte cap', async () => {
+  it('accepts a native frame beyond the former recording byte default', async () => {
     const cleanup = vi.fn(async () => undefined);
     const { transport } = createTransport({
       ok: true,
@@ -99,13 +97,10 @@ describe('browser recording native-view capture command (daemon->native IPC driv
     });
     const command = createBrowserRecordingNativeViewCaptureCommand({ transport });
 
-    const result = await command({ recording: createRecording({ maxBytes: 16_000_000 }) });
+    const result = await command({ recording: createRecording() });
 
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.reasonCode).toBe('native_view_capture_byte_cap_exceeded');
-    // The daemon-side bound must release the oversized on-disk artifact so it is never persisted.
-    expect(cleanup).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({ ok: true, byteSize: 32_000_000 });
+    expect(cleanup).not.toHaveBeenCalled();
   });
 
   it('fails closed on an empty (zero-byte) native capture', async () => {

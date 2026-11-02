@@ -49,8 +49,6 @@ const recording = {
   retentionClass: 'preSend',
   redactionLevel: 'metadataOnly',
   policyState: 'allowed',
-  maxDurationMs: 30_000,
-  maxBytes: 16_000_000,
   actionChapters: [],
   relatedReferences: [],
 } satisfies BrowserRecordingSessionV1;

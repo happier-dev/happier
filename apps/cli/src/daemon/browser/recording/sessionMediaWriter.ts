@@ -30,7 +30,7 @@ export type BrowserRecordingSessionMediaWriterOptions = Readonly<{
   accessPolicy?: FilesystemAccessPolicy;
   sourceAccessPolicy?: FilesystemAccessPolicy;
   resolveSessionMediaTarget(recording: BrowserRecordingSessionV1): BrowserRecordingSessionMediaTarget;
-  resolveWorkingDirectory?: (target: BrowserRecordingSessionMediaTarget) => string;
+  resolveWorkingDirectory?: (target: BrowserRecordingSessionMediaTarget) => string | Promise<string>;
   commitAttachment?: (input: Readonly<{ sessionId: string; localId: string; meta: Record<string, unknown> }>) => Promise<void>;
   resolveInputControl?: BrowserRecordingInputControlResolver;
 }>;
@@ -100,14 +100,13 @@ export function createBrowserRecordingSessionMediaWriter(
       if (control?.isObservationHeld()) throw confidential();
       const persist = async (): Promise<BrowserEvidenceSessionMediaReferenceV1> => {
         const target = options.resolveSessionMediaTarget(recording);
-        const workingDirectory = options.resolveWorkingDirectory?.(target) ?? options.workingDirectory;
+        const workingDirectory = await (options.resolveWorkingDirectory?.(target) ?? options.workingDirectory);
         if (control?.isObservationHeld()) throw confidential();
         const persisted = await persistSessionMedia({
           workingDirectory,
           accessPolicy,
           sourceAccessPolicy,
           pathAllowanceRegistry: options.pathAllowanceRegistry,
-          maxBytes: recording.maxBytes,
           input: {
             sessionId: target.sessionId,
             messageLocalId: target.messageLocalId,

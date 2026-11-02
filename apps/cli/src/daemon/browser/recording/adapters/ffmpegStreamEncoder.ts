@@ -2,6 +2,7 @@ import { spawn as spawnProcess, type SpawnOptions } from 'node:child_process';
 import { observeProcessLaunch } from '@/processes/launchNotification';
 import { withProcessOwnerEnvironment } from '@/processes/ownerTag';
 import { randomUUID } from 'node:crypto';
+import { once } from 'node:events';
 import { mkdir, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Writable } from 'node:stream';
@@ -19,6 +20,7 @@ export type BrowserRecordingFfmpegProcess = Readonly<{
   kill(signal?: NodeJS.Signals): boolean;
   once(event: 'close', listener: (code: number | null, signal: NodeJS.Signals | null) => void): unknown;
   once(event: 'error', listener: (error: Error) => void): unknown;
+  once(event: 'spawn', listener: () => void): unknown;
 }>;
 
 export type BrowserRecordingFfmpegSpawn = (
@@ -37,7 +39,6 @@ export type FfmpegBrowserRecordingStreamFrameEncoderFactoryOptions = Readonly<{
 
 const ENCODER_UNAVAILABLE_MESSAGE = 'Browser recording ffmpeg encoder is unavailable.';
 const ENCODER_FAILED_MESSAGE = 'Browser recording ffmpeg encoder failed.';
-const ENCODER_BACKPRESSURE_MESSAGE = 'Browser recording ffmpeg encoder backpressure exceeded.';
 
 function defaultSpawnFfmpeg(
   binaryPath: string,
@@ -77,7 +78,7 @@ function buildFfmpegArgs(input: Readonly<{
     '-f',
     'mjpeg',
     '-r',
-    String(Math.max(1, Math.floor(input.fps))),
+    String(input.fps),
     '-i',
     'pipe:0',
     '-an',
@@ -120,15 +121,25 @@ class FfmpegBrowserRecordingStreamFrameEncoder implements BrowserRecordingStream
     discarded: false,
   };
   private readonly closePromise: Promise<void>;
+  private writtenFrames = 0;
+  private lastFrame: Buffer | null = null;
+  private pendingFrame: Readonly<{ index: number; payload: Buffer }> | null = null;
+  readonly ready: Promise<void>;
 
   constructor(
     private readonly child: BrowserRecordingFfmpegProcess,
     private readonly outputPath: string,
     private readonly fileNameHint: string,
+    private readonly startedAtMs: number,
+    private readonly fps: number,
   ) {
+    this.ready = new Promise<void>((resolve, reject) => {
+      child.once('spawn', resolve);
+      child.once('error', () => reject(createGenericFailure()));
+    });
     this.closePromise = new Promise<void>((resolve, reject) => {
       child.once('error', () => {
-        const failure = this.fail(createGenericFailure());
+        const failure = this.fail();
         reject(failure);
       });
       child.once('close', (code) => {
@@ -136,14 +147,15 @@ class FfmpegBrowserRecordingStreamFrameEncoder implements BrowserRecordingStream
           resolve();
           return;
         }
-        const failure = this.fail(createGenericFailure());
+        const failure = this.fail();
         reject(failure);
       });
     });
     void this.closePromise.catch(() => undefined);
+    child.stdin.on('error', () => { this.fail(); });
   }
 
-  appendFrame(input: Parameters<BrowserRecordingStreamFrameEncoder['appendFrame']>[0]): void {
+  appendFrame(input: Parameters<BrowserRecordingStreamFrameEncoder['appendFrame']>[0]): false | void {
     if (this.state.discarded) {
       throw new Error('Browser recording ffmpeg encoder has been discarded.');
     }
@@ -154,16 +166,19 @@ class FfmpegBrowserRecordingStreamFrameEncoder implements BrowserRecordingStream
       throw this.state.failure;
     }
 
-    let accepted = false;
+    // MJPEG has no timestamps. Sample its fixed-rate slots on the capture clock,
+    // keeping the last picture across gaps rather than stretching every arrival
+    // into a frame interval. Retain at most the held picture and one admitted one.
+    if (this.child.stdin.writableNeedDrain) return false;
     try {
-      accepted = this.child.stdin.write(input.payload);
+      this.flushPendingFrame();
+      if (this.pendingFrame || this.child.stdin.writableNeedDrain) return false;
+      const index = Math.max(0, Math.floor((input.timestampMs - this.startedAtMs) * this.fps / 1_000));
+      if (index < this.writtenFrames) return false;
+      this.pendingFrame = { index, payload: input.payload };
+      this.flushPendingFrame();
     } catch {
-      const failure = this.fail(createGenericFailure());
-      killFfmpeg(this.child);
-      throw failure;
-    }
-    if (!accepted) {
-      const failure = this.fail(new Error(ENCODER_BACKPRESSURE_MESSAGE));
+      const failure = this.fail();
       killFfmpeg(this.child);
       throw failure;
     }
@@ -178,13 +193,28 @@ class FfmpegBrowserRecordingStreamFrameEncoder implements BrowserRecordingStream
     }
     this.state.finished = true;
     if (input.frameCount <= 0) {
-      const failure = this.fail(createGenericFailure());
+      const failure = this.fail();
       killFfmpeg(this.child);
       await this.removeOutput();
       throw failure;
     }
 
     try {
+      const targetFrames = Math.max(1, Math.ceil(input.durationMs * this.fps / 1_000));
+      while (this.pendingFrame || this.writtenFrames < targetFrames) {
+        if (this.state.failure || this.child.stdin.destroyed) throw createGenericFailure();
+        if (this.child.stdin.writableNeedDrain) {
+          await Promise.race([
+            once(this.child.stdin, 'drain'),
+            this.closePromise.then(() => { throw createGenericFailure(); }),
+          ]);
+        }
+        this.flushPendingFrame();
+        if (!this.pendingFrame && this.writtenFrames < targetFrames) {
+          if (!this.lastFrame) throw createGenericFailure();
+          if (!this.child.stdin.writableNeedDrain) this.writeFrame(this.lastFrame);
+        }
+      }
       this.child.stdin.end();
       await this.closePromise;
       if (this.state.failure) {
@@ -206,28 +236,49 @@ class FfmpegBrowserRecordingStreamFrameEncoder implements BrowserRecordingStream
           await this.removeOutput();
         },
       };
-    } catch (error) {
-      const failure = this.fail(error instanceof Error ? error : createGenericFailure());
+    } catch {
+      const failure = this.fail();
       await this.removeOutput();
       throw failure;
+    } finally {
+      this.lastFrame = null;
+      this.pendingFrame = null;
     }
   }
 
   async discard(_input: Parameters<BrowserRecordingStreamFrameEncoder['discard']>[0]): Promise<void> {
     if (this.state.discarded) return;
     this.state.discarded = true;
+    this.lastFrame = null;
+    this.pendingFrame = null;
     killFfmpeg(this.child);
     this.child.stdin.destroy();
     await this.removeOutput();
   }
 
-  private fail(error: Error): Error {
+  private fail(): Error {
     if (!this.state.failure) {
-      this.state.failure = error.message === ENCODER_BACKPRESSURE_MESSAGE
-        ? error
-        : createGenericFailure();
+      this.state.failure = createGenericFailure();
     }
     return this.state.failure;
+  }
+
+  private writeFrame(payload: Buffer): void {
+    // write(false) still accepted this slot. The next slot waits for drain.
+    this.child.stdin.write(payload);
+    this.writtenFrames += 1;
+  }
+
+  private flushPendingFrame(): void {
+    const frame = this.pendingFrame;
+    if (!frame) return;
+    this.lastFrame ??= frame.payload;
+    while (this.writtenFrames <= frame.index) {
+      if (this.child.stdin.writableNeedDrain) return;
+      this.writeFrame(this.writtenFrames === frame.index ? frame.payload : this.lastFrame);
+    }
+    this.lastFrame = frame.payload;
+    this.pendingFrame = null;
   }
 
   private async removeOutput(): Promise<void> {
@@ -258,8 +309,9 @@ export function createFfmpegBrowserRecordingStreamFrameEncoderFactory(
       recordingId: recording.recordingId,
       randomId: randomId(),
     });
+    const fps = Math.max(1, Math.floor(recording.fps));
     const args = buildFfmpegArgs({
-      fps: recording.fps,
+      fps,
       outputPath,
     });
     const child = spawnFfmpeg(ffmpegBinaryPath, args, {
@@ -267,10 +319,14 @@ export function createFfmpegBrowserRecordingStreamFrameEncoderFactory(
       stdio: ['pipe', 'ignore', 'ignore'],
       windowsHide: true,
     });
-    return new FfmpegBrowserRecordingStreamFrameEncoder(
+    const encoder = new FfmpegBrowserRecordingStreamFrameEncoder(
       child,
       outputPath,
       `browser-recording-${sanitizeRecordingIdSegment(recording.recordingId)}.webm`,
+      recording.startedAtMs,
+      fps,
     );
+    await encoder.ready;
+    return encoder;
   };
 }

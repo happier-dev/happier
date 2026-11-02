@@ -43,8 +43,6 @@ function createRecording(): BrowserRecordingSessionV1 {
     retentionClass: 'preSend',
     redactionLevel: 'metadataOnly',
     policyState: 'allowed',
-    maxDurationMs: 30_000,
-    maxBytes: 16_000_000,
     actionChapters: [],
     relatedReferences: [],
   };
@@ -92,7 +90,8 @@ describe('browser recording stream-frame adapter', () => {
     expect(Buffer.concat(encodedFrames).toString()).toBe('safe-frame');
   });
 
-  it('captures machine-live-stream image frames through an encoder boundary', async () => {
+  it.each([3_000, 168_000])(
+    'stores stream evidence until Stop at %s', async stoppedAtMs => {
     const [
       { createMachineLiveStreamCaptureRegistry },
       { createBrowserRecordingStreamFrameCaptureAdapter },
@@ -130,6 +129,7 @@ describe('browser recording stream-frame adapter', () => {
         },
       });
 
+      let nowMs = 3_000;
       const adapter = createBrowserRecordingStreamFrameCaptureAdapter({
         captureRegistry: registry,
         encoderFactory: async () => ({
@@ -151,11 +151,12 @@ describe('browser recording stream-frame adapter', () => {
           },
           discard: vi.fn(async () => {}),
         }),
-        nowMs: () => 3_000,
+        nowMs: () => nowMs,
       });
 
+      const recording = createRecording();
       const start = await adapter.start({
-        recording: createRecording(),
+        recording,
         captureSource: {
           kind: 'machineLiveStream',
           streamFamily: 'simulator.preview',
@@ -164,18 +165,19 @@ describe('browser recording stream-frame adapter', () => {
       });
 
       expect(start).toEqual({ status: 'started' });
+      nowMs = stoppedAtMs;
 
       const artifact = await adapter.stop({
         recordingId: 'recording_1',
-        recording: createRecording(),
+        recording,
       });
 
       expect(stopSource).toHaveBeenCalledTimes(1);
       expect(artifact).toMatchObject({
-        durationMs: 2_000,
+        durationMs: stoppedAtMs - 1_000,
         byteSize: 'first-framesecond-frame'.length,
         frameCount: 2,
-        fps: 1,
+        fps: 2 / ((stoppedAtMs - 1_000) / 1000),
         mimeType: 'video/webm',
         source: {
           kind: 'local-file',

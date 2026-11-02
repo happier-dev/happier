@@ -58,7 +58,6 @@ export async function handleUiBrowserRecordingCaptureFrameRequest(
         navigationGeneration: request.navigationGeneration,
         captureRequestId: request.captureRequestId,
         outputPath: request.outputPath,
-        maxBytes: request.maxBytes,
     });
 
     if (!result.ok || !result.frame) {

@@ -33,8 +33,6 @@ const recordingCapabilities = {
   supportedCaptureKinds: ['nativeViewCapture'],
   supportedMimeTypes: ['image/png'],
   supportedAdapterKinds: ['externalUrl'],
-  maxDurationMs: 30_000,
-  maxBytes: 16_000_000,
   maxFps: 12,
   audioSupported: false,
   cursorOverlaySupported: false,

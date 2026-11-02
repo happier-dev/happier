@@ -7,6 +7,7 @@ import type {
   BrowserRecordingCapabilities,
 } from '@happier-dev/protocol';
 import { describe, expect, it, vi } from 'vitest';
+import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
 
 import { createSurfaceInputControl } from '../../surfaces/inputControl';
 import type { BrowserRecordingRuntimeStartInput } from './service';
@@ -20,8 +21,6 @@ const recordingCapabilities = {
   supportedCaptureKinds: ['streamFrameCapture'],
   supportedMimeTypes: ['video/webm'],
   supportedAdapterKinds: ['streamedBrowserSurface'],
-  maxDurationMs: 30_000,
-  maxBytes: 16_000_000,
   maxFps: 12,
   audioSupported: false,
   cursorOverlaySupported: true,
@@ -77,6 +76,62 @@ describe('browser recording daemon service', () => {
     retentionClass: 'preSend',
     captureSource: streamCaptureSource,
   } satisfies BrowserRecordingRuntimeStartInput;
+
+  it('isolates recordings and retirement for two Sessions sharing one view id', async () => {
+    const { createBrowserRecordingDaemonService } = await import('./service');
+    const service = createBrowserRecordingDaemonService({
+      now: () => 10_000,
+      // The capture encoder and media persistence are external process/storage boundaries.
+      captureAdapters: [{ captureKind: 'streamFrameCapture', start: async () => ({ status: 'started' }),
+        stop: async () => ({ durationMs: 1_000, byteSize: 800_000, frameCount: 12, fps: 12,
+          mimeType: 'video/webm', source: recordingArtifactSource }), discard: async () => {} }],
+      mediaWriter: { persistRecording: async () => mediaRef, discardRecording: async () => {} },
+    });
+    const viewA = { browserSessionId: 'session_a', viewId: 'main' };
+    const viewB = { browserSessionId: 'session_b', viewId: 'main' };
+    const first = await service.startRecording({ ...confidentialStartInput, ...viewA });
+    const second = await service.startRecording({ ...confidentialStartInput, ...viewB });
+    expect(first.status).toBe('started');
+    expect(second.status).toBe('started');
+    if (first.status !== 'started' || second.status !== 'started') throw new Error('Both Sessions must record');
+    expect(first.recording.recordingId).not.toBe(second.recording.recordingId);
+    expect(service.listRecordingsForView(viewA)).toEqual([first.recording]);
+    expect(service.listRecordingsForView(viewB)).toEqual([second.recording]);
+    expect(await service.startRecording({ ...confidentialStartInput, ...viewA }))
+      .toMatchObject({ status: 'unavailable', reason: { code: 'browser_recording_already_active' } });
+
+    expect(await service.applyLifecycleOutcome({ ...viewA, reason: 'view_closed' }))
+      .toMatchObject({ recording: { recordingId: first.recording.recordingId, outcomeReason: 'view_closed' } });
+    expect(service.getRecordingStatus(second.recording.recordingId)).toEqual(second.recording);
+    const restarted = await service.startRecording({ ...confidentialStartInput, ...viewA });
+    expect(restarted.status).toBe('started');
+    if (restarted.status !== 'started') throw new Error('Retired Session must restart');
+    expect(await service.cancelRecording({ recordingId: restarted.recording.recordingId, reason: 'user_canceled' }))
+      .toMatchObject({ status: 'canceled', recording: { browserSessionId: viewA.browserSessionId } });
+    expect(service.getRecordingStatus(second.recording.recordingId)).toEqual(second.recording);
+    expect(await service.stopRecording({ recordingId: second.recording.recordingId, navigationGenerationEnd: 8 }))
+      .toMatchObject({ status: 'finalized', recording: { browserSessionId: viewB.browserSessionId } });
+    expect(service.listRecordingsForView(viewA).every(recording => recording.browserSessionId === viewA.browserSessionId)).toBe(true);
+    expect(service.listRecordingsForView(viewB)).toMatchObject([{ status: 'finalized' }]);
+  });
+
+  it('keeps failed terminal records transportable and returns their cause on repeated stop', async () => {
+    const { createBrowserRecordingDaemonService } = await import('./service');
+    const service = createBrowserRecordingDaemonService({ now: () => 10_000,
+      captureAdapters: [{ captureKind: 'streamFrameCapture', start: async () => ({ status: 'started' }),
+        stop: async () => { throw new Error('encoder exited'); }, discard: async () => {} }],
+      mediaWriter: { persistRecording: async () => mediaRef, discardRecording: async () => {} },
+    });
+    const started = await service.startRecording(confidentialStartInput);
+    if (started.status !== 'started') throw new Error('Expected admitted recording');
+    const input = { recordingId: started.recording.recordingId, navigationGenerationEnd: 7 };
+    const stopped = await service.stopRecording(input);
+    expect(StrictJsonValueSchema.safeParse(stopped).success).toBe(true);
+    expect(stopped).toMatchObject({ status: 'failed', reason: 'capture_failed' });
+    expect(await service.stopRecording(input)).toEqual(stopped);
+    expect(StrictJsonValueSchema.safeParse(service.getRecordingStatus(input.recordingId)).success).toBe(true);
+    expect(StrictJsonValueSchema.safeParse(service.listRecordingsForView({ browserSessionId: 'browser_session_1', viewId: confidentialStartInput.viewId })).success).toBe(true);
+  });
 
   it.each([false, true])('projects retained recording paths and expiry with transcript custody=%s', async (attached) => {
     const { createBrowserRecordingDaemonService } = await import('./service');
@@ -223,8 +278,8 @@ describe('browser recording daemon service', () => {
     else expect(persistRecording).not.toHaveBeenCalled();
     if (phase === 'stopping' || phase === 'persisting') expect(cleanup).toHaveBeenCalled();
     expect(JSON.stringify(result)).not.toContain('D26-recording-fixture-secret');
-    expect(service.listRecordingsForView({ viewId: 'view_1' })).not.toContainEqual(expect.objectContaining({ status: 'recording' }));
-    expect(service.listRecordingsForView({ viewId: 'view_1' })).not.toContainEqual(expect.objectContaining({ mediaRef }));
+    expect(service.listRecordingsForView({ browserSessionId: 'browser_session_1', viewId: 'view_1' })).not.toContainEqual(expect.objectContaining({ status: 'recording' }));
+    expect(service.listRecordingsForView({ browserSessionId: 'browser_session_1', viewId: 'view_1' })).not.toContainEqual(expect.objectContaining({ mediaRef }));
   });
 
   it('discards an active held view while an unrelated view keeps recording', async () => {
@@ -247,8 +302,8 @@ describe('browser recording daemon service', () => {
     await control.beginConfidentialityHold();
 
     expect(discardedViews).toEqual(['view_1']);
-    expect(service.listRecordingsForView({ viewId: 'view_1' })[0]).toMatchObject({ status: 'failed', outcomeReason: 'policy_revoked' });
-    expect(service.listRecordingsForView({ viewId: 'safe_view' })[0]).toMatchObject({ status: 'recording' });
+    expect(service.listRecordingsForView({ browserSessionId: 'browser_session_1', viewId: 'view_1' })[0]).toMatchObject({ status: 'failed', outcomeReason: 'policy_revoked' });
+    expect(service.listRecordingsForView({ browserSessionId: 'browser_session_1', viewId: 'safe_view' })[0]).toMatchObject({ status: 'recording' });
   });
 
   it.each(['known', 'failed'] as const)('handles %s cleanup of a capture canceled during startup while confidentiality drains it', async (completion) => {
@@ -797,7 +852,7 @@ describe('browser recording daemon service', () => {
     expect(nativeAdapter.start).not.toHaveBeenCalled();
   });
 
-  it('rejects over-cap captured artifacts before media persistence', async () => {
+  it('persists valid captured artifacts beyond the former byte default', async () => {
     const { createBrowserRecordingDaemonService } = await import('./service');
     const cleanup = vi.fn(async () => {});
     const captureAdapter = {
@@ -805,7 +860,7 @@ describe('browser recording daemon service', () => {
       start: vi.fn(async () => ({ status: 'started' as const })),
       stop: vi.fn(async () => ({
         durationMs: 2_000,
-        byteSize: recordingCapabilities.maxBytes + 1,
+        byteSize: 16_000_001,
         frameCount: 24,
         fps: 12,
         mimeType: 'video/webm',
@@ -849,11 +904,10 @@ describe('browser recording daemon service', () => {
     });
 
     expect(stopped).toMatchObject({
-      status: 'failed',
-      reason: 'size_cap',
-      recording: { status: 'failed', outcomeReason: 'size_cap', mediaRef: undefined },
+      status: 'finalized',
+      recording: { status: 'finalized', outcomeReason: 'user_stopped', byteSize: 16_000_001, mediaRef },
     });
-    expect(mediaWriter.persistRecording).not.toHaveBeenCalled();
+    expect(mediaWriter.persistRecording).toHaveBeenCalledOnce();
     expect(cleanup).toHaveBeenCalledTimes(1);
   });
 
@@ -902,8 +956,9 @@ describe('browser recording daemon service', () => {
     });
     expect(canceled).toMatchObject({
       status: 'canceled',
-      recording: { status: 'canceled', outcomeReason: 'user_canceled', mediaRef: undefined },
+      recording: { status: 'canceled', outcomeReason: 'user_canceled' },
     });
+    expect(canceled).not.toHaveProperty('recording.mediaRef');
 
     const hostLossStart = await service.startRecording({
       browserRecordingEnabled: true,
@@ -933,8 +988,9 @@ describe('browser recording daemon service', () => {
 
     expect(hostLost).toMatchObject({
       status: 'failed',
-      recording: { status: 'failed', outcomeReason: 'host_lost', mediaRef: undefined },
+      recording: { status: 'failed', outcomeReason: 'host_lost' },
     });
+    expect(hostLost).not.toHaveProperty('recording.mediaRef');
     expect(captureAdapter.discard).toHaveBeenCalledWith(expect.objectContaining({
       recordingId: cancelStart.recording.recordingId,
       reason: 'user_canceled',
@@ -1012,8 +1068,8 @@ describe('browser recording daemon service', () => {
     expect(service.getRecordingStatus(started.recording.recordingId)).toMatchObject({
       status: 'discarded',
       outcomeReason: 'retention_limit',
-      mediaRef: undefined,
     });
+    expect(service.getRecordingStatus(started.recording.recordingId)).not.toHaveProperty('mediaRef');
   });
 
   it('keeps finalized media references when durable discard fails during expiry cleanup', async () => {
@@ -1150,13 +1206,13 @@ describe('browser recording daemon service', () => {
       recording: {
         status: 'discarded',
         outcomeReason: 'user_discarded',
-        mediaRef: undefined,
       },
     });
     expect(service.getRecordingStatus(started.recording.recordingId)).toMatchObject({
       status: 'discarded',
-      mediaRef: undefined,
     });
+    expect(discarded).not.toHaveProperty('recording.mediaRef');
+    expect(service.getRecordingStatus(started.recording.recordingId)).not.toHaveProperty('mediaRef');
   });
 
   it('preserves finalized stored media when durable user discard fails', async () => {

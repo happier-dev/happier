@@ -89,6 +89,7 @@ export function registerDaemonBrowserRecordingHandlers(
             return DaemonBrowserRecordingListResponseV1Schema.parse({
                 protocolVersion: 1,
                 recordings: await browserRecording.listRecordingsForView({
+                    browserSessionId: request.browserSessionId,
                     viewId: request.viewId,
                 }),
             });

@@ -16225,8 +16225,6 @@ describe('startDaemonSessionControlRuntime', () => {
             supportedCaptureKinds: ['streamFrameCapture'],
             supportedMimeTypes: ['video/webm'],
             supportedAdapterKinds: ['simulatorPreview'],
-            maxDurationMs: 30_000,
-            maxBytes: 16_000_000,
             maxFps: 1_000_000,
             audioSupported: false,
             cursorOverlaySupported: true,

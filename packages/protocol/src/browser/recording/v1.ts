@@ -69,8 +69,6 @@ export const BrowserRecordingOutcomeReasonV1Schema = lazyZodSchema(() => z.enum(
   'user_stopped',
   'user_canceled',
   'user_discarded',
-  'duration_cap',
-  'size_cap',
   'view_hidden',
   'view_parked',
   'view_suspended',
@@ -198,8 +196,6 @@ export const BrowserRecordingSessionV1Schema = lazyZodSchema(() => z.strictObjec
     retentionClass: BrowserRecordingRetentionClassV1Schema,
     redactionLevel: BrowserRecordingRedactionLevelV1Schema,
     policyState: BrowserRecordingPolicyStateV1Schema,
-    maxDurationMs: PositiveIntSchema,
-    maxBytes: PositiveIntSchema,
     expiresAtMs: z.optional(NonNegativeIntSchema),
     mediaRef: z.optional(BrowserEvidenceSessionMediaReferenceV1Schema),
     actionChapters: z._default(z.optional(z.array(BrowserRecordingActionChapterV1Schema)), []),
@@ -412,6 +408,7 @@ export type DaemonBrowserRecordingStatusInputV1 = z.infer<
 >;
 
 export const DaemonBrowserRecordingListInputV1Schema = lazyZodSchema(() => z.strictObject({
+    browserSessionId: IdSchema,
     viewId: IdSchema,
   }));
 export type DaemonBrowserRecordingListInputV1 = z.infer<
@@ -509,6 +506,7 @@ export type DaemonBrowserRecordingStatusResponseV1 = z.infer<
 export const DaemonBrowserRecordingListRequestV1Schema = lazyZodSchema(() => z.strictObject({
     protocolVersion: z.literal(1),
     machineId: IdSchema,
+    browserSessionId: IdSchema,
     viewId: IdSchema,
   }));
 export type DaemonBrowserRecordingListRequestV1 = z.infer<

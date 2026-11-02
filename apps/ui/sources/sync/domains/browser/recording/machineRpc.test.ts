@@ -32,8 +32,6 @@ function recording(overrides: Partial<BrowserRecordingSessionV1> = {}): BrowserR
         retentionClass: 'preSend',
         redactionLevel: 'metadataOnly',
         policyState: 'allowed',
-        maxDurationMs: 30_000,
-        maxBytes: 16_000_000,
         actionChapters: [],
         relatedReferences: [],
         ...overrides,
@@ -149,6 +147,7 @@ describe('browser recording daemon machine RPC client', () => {
         })).resolves.toEqual({ ok: true, recording: finalized });
         await expect(mod.listBrowserRecordingsForViewViaMachineRpc({
             machineId: 'machine_1',
+            browserSessionId: 'browser_session_1',
             viewId: 'view_1',
         })).resolves.toEqual({ ok: true, recordings: [finalized] });
         await expect(mod.cleanupBrowserRecordingsViaMachineRpc({

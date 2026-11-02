@@ -26,6 +26,7 @@ import { createBrowserAutomationOwnerRegistry } from "@/daemon/browser/automatio
 import { createControlAdapterAutomationTransport } from "@/daemon/browser/automation/adapters/controlBridge";
 import { createBrowserRecordingDaemonRuntime, type BrowserRecordingDaemonRuntime, type BrowserRecordingDaemonRuntimeOptions } from "@/daemon/browser/recording/runtime";
 import { resolveBrowserRecordingStartContext as resolveBrowserRecordingStartContextForProducers } from "@/daemon/browser/recording/startContext";
+import { resolveFfmpegStaticBinaryPath } from "@/daemon/runtime/ffmpegStatic";
 import { createBrowserRecordingNativeViewCaptureCommand } from "@/daemon/browser/recording/adapters/nativeViewCommand";
 import { createBrowserRecordingCdpScreencastTransport } from "@/daemon/browser/recording/adapters/cdpScreencastTransport";
 import { createBrowserCdpScreencastProducer, type BrowserCdpScreencastProducer } from "@/daemon/browser/capture/cdpScreencast";
@@ -43,7 +44,8 @@ import { createProductBrowserSidecarControlAdapterFactory } from "@/daemon/brows
 import { createBrowserDaemonFeatureGate, type BrowserDaemonFeatureGate } from "@/daemon/browser/featureGate";
 import type { MachineLiveStreamCaptureRegistry } from "@/daemon/peer/mediation/stream";
 import { type CliServerFeaturesSnapshot } from "@/features/serverFeaturesClient";
-import type { TrackedSession } from "@/daemon/types";
+import type { StoredCredentials } from '@/persistence';
+import { readOwnSessionMachineWorkspace } from '@/session/machineControlLocality';
 import type { DaemonSessionMutationCustody } from "@/daemon/connectedServices/usageLimitRecovery/createDaemonUsageLimitRecoveryMutationCustody";
 
 export type DaemonBrowserStoragePurgeOwner = Readonly<{
@@ -55,17 +57,20 @@ export type DaemonBrowserStoragePurgeOwner = Readonly<{
 
 export function createBrowserRoutePublication({
   params, runtimeActionRouteProviderTarget, resolveServerFeaturesSnapshot,
-  findTrackedSessionByHappySessionId, setGuardBrowserResourceOwner, shutdownSignal,
+  setGuardBrowserResourceOwner, shutdownSignal,
 }: Readonly<{
   params: Readonly<{
 readMachineResourcesPolicy?: import('@/processes/toolIdleTimeouts').MachineResourcesPolicyReader;
 machineId: string;
+credentials: StoredCredentials;
+serverBaseUrl: string;
+currentMachineHost?: string | null;
+currentMachineHomeDir?: string | null;
 daemonSessionMutationCustody: Pick<
       DaemonSessionMutationCustody,
       'stageTranscriptEvent' | 'stageTranscriptMessage'
     > &
       Partial<Pick<DaemonSessionMutationCustody, 'stage'>>;
-pidToTrackedSession: Map<number, TrackedSession>;
 getApiMachineForSessions: () => ApiMachineClient | null;
 onBrowserDiagnosticsRoutesReady?: (
       routes: BrowserDiagnosticsRoutes,
@@ -115,7 +120,6 @@ setBrowserRecordingRoutesProvider?: (
     ) => void;
 }>;
   resolveServerFeaturesSnapshot: () => Promise<CliServerFeaturesSnapshot | undefined> | CliServerFeaturesSnapshot | undefined;
-  findTrackedSessionByHappySessionId: (trackedSessions: Iterable<TrackedSession>, sessionIdRaw: string) => TrackedSession | null;
   setGuardBrowserResourceOwner: (owner: Pick<Extract<BrowserSidecarControlAdapterFactoryResult, { ok: true }>, 'adapter' | 'readProcessRoots' | 'readResourceTargets'>) => void;
   shutdownSignal: AbortSignal;
 }>): Readonly<{
@@ -614,9 +618,11 @@ setBrowserRecordingRoutesProvider?: (
         browserDaemonFeatureGate.isEnabled('browser.recording') &&
         !browserRecordingRuntime
       ) {
-        const cdpScreencastTransport = browserCdpScreencastProducer
+        const cdpScreencastTransport = browserCdpScreencastProducer && browserSidecarContextCaptureForRecording
           ? createBrowserRecordingCdpScreencastTransport({
               producer: browserCdpScreencastProducer,
+              contextCapture: browserSidecarContextCaptureForRecording,
+              resolveInputControl: resolveBrowserInputControl,
             })
           : null;
         browserRecordingCdpScreencastAvailable = Boolean(
@@ -625,19 +631,21 @@ setBrowserRecordingRoutesProvider?: (
         browserRecordingRuntime = createBrowserRecordingDaemonRuntime({
           workingDirectory: configuration.happyHomeDir,
           resolveInputControl: resolveBrowserInputControl,
-          resolveWorkingDirectory: ({ sessionId }) => {
-            const tracked = findTrackedSessionByHappySessionId(
-              params.pidToTrackedSession.values(),
+          resolveWorkingDirectory: async ({ sessionId }) => {
+            const workspace = await readOwnSessionMachineWorkspace({
+              credentials: params.credentials,
+              serverHttpBaseUrl: params.serverBaseUrl,
               sessionId,
-            );
-            const directory =
-              tracked?.spawnOptions?.directory ??
-              tracked?.happySessionMetadataFromLocalWebhook?.path;
-            if (!directory)
+              machineId: params.machineId,
+              currentMachineHost: params.currentMachineHost ?? '',
+              currentMachineHomeDir: params.currentMachineHomeDir ?? '',
+              signal: shutdownSignal,
+            });
+            if (!workspace)
               throw new Error(
                 'Browser recording session working directory is unavailable.',
               );
-            return directory;
+            return workspace.rootPath;
           },
           commitAttachment: async ({ sessionId, localId, meta }) => {
             await params.daemonSessionMutationCustody.stageTranscriptMessage({
@@ -705,11 +713,14 @@ setBrowserRecordingRoutesProvider?: (
     };
   const resolveBrowserRecordingStartContext =
     params.resolveBrowserRecordingStartContext ??
-    ((startInput) =>
+    (async (startInput) =>
       resolveBrowserRecordingStartContextForProducers({
         hasLiveStreamCaptureRegistry: Boolean(params.liveStreamCaptureRegistry),
         hasNativeViewCapture: browserRecordingNativeViewCapture.isPlatformCaptureSupported?.() !== false,
         hasCdpScreencast: browserRecordingCdpScreencastAvailable,
+        hasFrameEncoder: Boolean(params.browserRecordingStreamFrameEncoderFactory)
+          || ((Boolean(params.liveStreamCaptureRegistry) || browserRecordingCdpScreencastAvailable)
+            && Boolean(await resolveFfmpegStaticBinaryPath())),
       })(startInput));
   // BRW-6 privacy: daemon-side owner of on-disk browser profile/partition purge. Subscribed
   // to the session-deleted signal (purges session profiles and cleanup-on-close ephemeral profiles) and the

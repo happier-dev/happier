@@ -35,8 +35,6 @@ function createRecording(): BrowserRecordingSessionV1 {
     retentionClass: 'preSend',
     redactionLevel: 'metadataOnly',
     policyState: 'allowed',
-    maxDurationMs: 30_000,
-    maxBytes: 16_000_000,
     actionChapters: [],
     relatedReferences: [],
   };
@@ -100,6 +98,7 @@ class FakeFfmpegProcess extends EventEmitter {
       originalWrite(chunk, encodingOrCallback as BufferEncoding, callback);
       return this.writeReturns;
     }) as Writable['write'];
+    queueMicrotask(() => this.emit('spawn'));
   }
 }
 
@@ -156,8 +155,12 @@ describe('browser recording ffmpeg stream encoder', () => {
         expect.arrayContaining(['-f', 'mjpeg', '-i', 'pipe:0', '-f', 'webm']),
         expect.objectContaining({ stdio: ['pipe', 'ignore', 'ignore'] }),
       );
+      const expectedFrames = Buffer.concat([
+        ...Array.from({ length: 6 }, () => Buffer.from('first-frame')),
+        ...Array.from({ length: 18 }, () => Buffer.from('second-frame')),
+      ]);
       expect(output).toMatchObject({
-        byteSize: 'first-framesecond-frame'.length,
+        byteSize: expectedFrames.length,
         source: {
           kind: 'local-file',
           mimeType: 'video/webm',
@@ -168,7 +171,7 @@ describe('browser recording ffmpeg stream encoder', () => {
       if (output.source.kind !== 'local-file') return;
       expect(output.source.path).toContain(join(workingDirectory, '.happier', 'tmp', 'browser-recordings'));
       expect(JSON.stringify(output)).not.toContain(Buffer.from('first-frame').toString('base64'));
-      await expect(readFile(output.source.path)).resolves.toEqual(Buffer.from('first-framesecond-frame'));
+      await expect(readFile(output.source.path)).resolves.toEqual(expectedFrames);
       await output.cleanup?.();
       await expect(stat(output.source.path)).rejects.toMatchObject({ code: 'ENOENT' });
       expect(spawned).toHaveLength(1);
@@ -198,6 +201,23 @@ describe('browser recording ffmpeg stream encoder', () => {
     } finally {
       await rm(workingDirectory, { recursive: true, force: true });
     }
+  });
+
+  it('does not admit an encoder whose process cannot spawn', async () => {
+    const { createFfmpegBrowserRecordingStreamFrameEncoderFactory } = await import('./ffmpegStreamEncoder');
+    const workingDirectory = await mkdtemp(join(tmpdir(), 'happier-browser-ffmpeg-spawn-fail-'));
+    try {
+      const factory = createFfmpegBrowserRecordingStreamFrameEncoderFactory({ workingDirectory,
+        resolveFfmpegBinaryPath: async () => '/bundled/ffmpeg',
+        spawnFfmpeg: () => {
+          const child = new EventEmitter();
+          queueMicrotask(() => child.emit('error', new Error('spawn ENOENT')));
+          return Object.assign(child, { stdin: new Writable({ write: (_chunk, _encoding, done) => done() }), kill: () => false });
+        },
+      });
+      await expect(factory({ recording: createRecording(), outputMimeType: 'video/webm' }))
+        .rejects.toThrow('Browser recording ffmpeg encoder failed.');
+    } finally { await rm(workingDirectory, { recursive: true, force: true }); }
   });
 
   it('removes partial output and surfaces a generic error when ffmpeg fails', async () => {
@@ -238,7 +258,7 @@ describe('browser recording ffmpeg stream encoder', () => {
     }
   });
 
-  it('kills ffmpeg and throws when stdin backpressure is exceeded', async () => {
+  it('stores a frame accepted by stdin when its write signals backpressure', async () => {
     const { createFfmpegBrowserRecordingStreamFrameEncoderFactory } = await import('./ffmpegStreamEncoder');
     const workingDirectory = await mkdtemp(join(tmpdir(), 'happier-browser-ffmpeg-encoder-backpressure-'));
     const spawned: FakeFfmpegProcess[] = [];
@@ -266,9 +286,11 @@ describe('browser recording ffmpeg stream encoder', () => {
         timestampMs: 1_000,
         payloadKind: 'image_keyframe',
         payload: Buffer.from('frame'),
-      })).toThrow('Browser recording ffmpeg encoder backpressure exceeded.');
-      expect(spawned[0]?.kill).toHaveBeenCalledWith('SIGKILL');
-      await encoder.discard({ recording: createRecording(), reason: 'capture_failed' });
+      })).not.toThrow();
+      const output = await encoder.finish({ recording: createRecording(), frameCount: 1, durationMs: 1_000 });
+      expect(output.byteSize).toBe(12 * Buffer.byteLength('frame'));
+      expect(spawned[0]?.kill).not.toHaveBeenCalled();
+      await output.cleanup?.();
     } finally {
       await rm(workingDirectory, { recursive: true, force: true });
     }

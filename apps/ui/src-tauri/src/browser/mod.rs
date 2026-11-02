@@ -680,13 +680,6 @@ impl DesktopBrowserState {
             );
         }
 
-        if snapshot.size_bytes > request.max_bytes {
-            return DesktopBrowserCaptureRecordingFrameResult::unavailable(
-                self.availability(),
-                DesktopBrowserCaptureErrorCode::CaptureTooLarge,
-            );
-        }
-
         let png_bytes = match decode_snapshot_png_bytes(&snapshot.bytes_base64) {
             Some(bytes) => bytes,
             None => {
@@ -696,15 +689,6 @@ impl DesktopBrowserState {
                 );
             }
         };
-
-        // Defense-in-depth: the decoded length is the authoritative on-disk size; reject if it
-        // somehow exceeds the cap even though the reported size_bytes did not.
-        if png_bytes.len() > request.max_bytes {
-            return DesktopBrowserCaptureRecordingFrameResult::unavailable(
-                self.availability(),
-                DesktopBrowserCaptureErrorCode::CaptureTooLarge,
-            );
-        }
 
         let recording_root = recording_frame_root(
             &self

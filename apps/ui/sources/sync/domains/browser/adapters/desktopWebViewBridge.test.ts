@@ -568,7 +568,7 @@ describe('desktop WebView native bridge', () => {
         const request = { browserSessionId: 'browser_session_1', viewId: 'view_1', navigationGeneration: 7,
             captureRequestId: 'capture_request_1' };
         expect(await mod.captureDesktopBrowserSnapshot(request)).toMatchObject({ ok: false, errorCode: 'sensitiveFieldsPresent' });
-        expect(await mod.captureDesktopBrowserRecordingFrame({ ...request, outputPath: '/tmp/frame.png', maxBytes: 16_000_000 }))
+        expect(await mod.captureDesktopBrowserRecordingFrame({ ...request, outputPath: '/tmp/frame.png' }))
             .toMatchObject({ ok: false, errorCode: 'sensitiveFieldsPresent' });
     });
 
@@ -804,6 +804,7 @@ describe('desktop WebView native bridge', () => {
                 height: 600,
                 sizeBytes: 4,
                 bytesBase64: 'data:image/png;base64,AQIDBA==',
+                scaleFactor: 2,
             },
         });
         const mod = await import('./desktopWebViewBridge');
@@ -867,7 +868,6 @@ describe('desktop WebView native bridge', () => {
             navigationGeneration: 7,
             captureRequestId: 'capture_request_1',
             outputPath: '/tmp/happier-home/recordings/frame.png',
-            maxBytes: 16_000_000,
         });
 
         expect(result.ok).toBe(true);
@@ -887,12 +887,11 @@ describe('desktop WebView native bridge', () => {
                 navigationGeneration: 7,
                 captureRequestId: 'capture_request_1',
                 outputPath: '/tmp/happier-home/recordings/frame.png',
-                maxBytes: 16_000_000,
             },
         });
     });
 
-    it('rejects a recording frame that exceeds the negotiated byte cap', async () => {
+    it('accepts a valid recording frame beyond the former byte default', async () => {
         isDesktopHostMock.mockReturnValue(true);
         invokeDesktopHostMock.mockResolvedValue({
             ok: true,
@@ -937,11 +936,9 @@ describe('desktop WebView native bridge', () => {
             navigationGeneration: 7,
             captureRequestId: 'capture_request_1',
             outputPath: '/tmp/happier-home/recordings/frame.png',
-            maxBytes: 16_000_000,
         });
 
-        expect(result).toMatchObject({ ok: false, errorCode: 'captureTooLarge' });
-        expect(result.frame).toBeUndefined();
+        expect(result).toMatchObject({ ok: true, frame: { sizeBytes: 32_000_000 } });
     });
 
     it('passes through a native recording-frame write failure error code', async () => {
@@ -978,7 +975,6 @@ describe('desktop WebView native bridge', () => {
             navigationGeneration: 7,
             captureRequestId: 'capture_request_1',
             outputPath: '/tmp/happier-home/recordings/frame.png',
-            maxBytes: 16_000_000,
         });
 
         expect(result).toMatchObject({ ok: false, errorCode: 'captureWriteFailed' });
@@ -994,7 +990,6 @@ describe('desktop WebView native bridge', () => {
             navigationGeneration: 7,
             captureRequestId: 'capture_request_1',
             outputPath: '/tmp/happier-home/recordings/frame.png',
-            maxBytes: 16_000_000,
         });
 
         expect(result).toMatchObject({ ok: false, errorCode: 'captureUnsupported' });

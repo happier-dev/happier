@@ -9191,7 +9191,7 @@ daemonWorkSignal: AbortSignal;
   params.onComputerRoutesReady?.(() => computerRoutes);
   const browserRoutePublication = createBrowserRoutePublication({
     params, runtimeActionRouteProviderTarget, resolveServerFeaturesSnapshot,
-    findTrackedSessionByHappySessionId, shutdownSignal: shutdownCancellationDomains.daemonWorkSignal,
+    shutdownSignal: shutdownCancellationDomains.daemonWorkSignal,
     setGuardBrowserResourceOwner: (owner) => { guardBrowserResourceOwner = owner; },
   });
   const { refreshBrowserRouteOwners, purgeBrowserStorageForSessionDeleted, purgeBrowserStorageForLogout } = browserRoutePublication;

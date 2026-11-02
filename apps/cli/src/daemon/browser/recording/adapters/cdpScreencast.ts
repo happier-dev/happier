@@ -52,9 +52,11 @@ type ActiveScreencastRecording = {
   readonly recording: BrowserRecordingSessionV1;
   readonly encoder: BrowserRecordingStreamFrameEncoder;
   readonly session: BrowserRecordingCdpScreencastSession;
-  frameCount: number;
-  totalRawBytes: number;
-  fatalError: unknown;
+  readonly frames: {
+    frameCount: number;
+    fatalError: unknown;
+    closed: boolean;
+  };
 };
 
 function unavailable(
@@ -70,22 +72,11 @@ function calculateFps(frameCount: number, durationMs: number): number {
 }
 
 /**
- * Secondary safety bound on top of the aggregate byte budget: cap the number of accepted frames so
- * a misbehaving page that emits far faster than the negotiated fps can never accumulate unbounded
- * work. Derived from the recording's duration cap + fps with a small burst headroom.
- */
-function resolveMaxFrames(recording: BrowserRecordingSessionV1): number {
-  const seconds = Math.max(1, Math.ceil(recording.maxDurationMs / 1000));
-  const fps = Math.max(1, Math.floor(recording.fps));
-  return seconds * fps + fps;
-}
-
-/**
  * Daemon-side `cdpScreencast` recording adapter (BA-4). Plugs into the SAME
  * `BrowserRecordingCaptureAdapter` seam as the PMS stream + native-view adapters — never a second
  * capture path. JPEG screencast frames are streamed straight into the canonical mjpeg→webm encoder
- * (no in-memory frame accumulation); the aggregate raw byte budget + frame cap + the encoder's own
- * backpressure guard keep it bounded. The transport seam stays injectable so the producer is fully
+ * (no in-memory frame accumulation); the encoder's backpressure bounds pending work.
+ * The transport seam stays injectable so the producer is fully
  * unit-tested without launching Chromium.
  */
 export function createBrowserRecordingCdpScreencastCaptureAdapter(
@@ -133,37 +124,32 @@ export function createBrowserRecordingCdpScreencastCaptureAdapter(
         };
       }
 
-      const maxRawBytes = Math.max(1, input.recording.maxBytes);
-      const maxFrames = resolveMaxFrames(input.recording);
       const recordingId = input.recording.recordingId;
+      const frames: ActiveScreencastRecording['frames'] = {
+        frameCount: 0, fatalError: null, closed: false,
+      };
 
       // The shared page producer owns ACKs, including frames arriving during capture startup.
       const onFrame = (frame: BrowserRecordingCdpScreencastFrame): void => {
-        const active = activeByRecordingId.get(recordingId);
-        if (!active) return;
+        if (frames.closed) return;
         try {
-          if (active.fatalError) return;
+          if (frames.fatalError) return;
           const payload = Buffer.from(frame.dataBase64, 'base64');
-          const withinByteBudget = active.totalRawBytes + payload.byteLength <= maxRawBytes;
-          const withinFrameBudget = active.frameCount < maxFrames;
-          if (!withinByteBudget || !withinFrameBudget) {
-            // Bound reached: drain (ack) but never accumulate past the cap.
-            return;
-          }
           try {
-            active.encoder.appendFrame({
-              sequence: active.frameCount,
+            const accepted = encoder.appendFrame({
+              sequence: frames.frameCount,
               timestampMs: frame.timestampMs,
               payloadKind: 'image_keyframe',
               payload,
             });
-            active.frameCount += 1;
-            active.totalRawBytes += payload.byteLength;
+            if (accepted !== false) {
+              frames.frameCount += 1;
+            }
           } catch (error) {
-            active.fatalError = error;
+            frames.fatalError = error;
           }
         } catch (error) {
-          active.fatalError = error;
+          frames.fatalError = error;
         }
       };
 
@@ -172,8 +158,7 @@ export function createBrowserRecordingCdpScreencastCaptureAdapter(
           recording: input.recording,
           onFrame,
           onError: (error) => {
-            const active = activeByRecordingId.get(recordingId);
-            if (active) active.fatalError = error;
+            frames.fatalError = error;
           },
         })
         .catch(async () => {
@@ -181,6 +166,7 @@ export function createBrowserRecordingCdpScreencastCaptureAdapter(
           return null;
         });
       if (!session) {
+        frames.closed = true;
         await encoder.discard({ recording: input.recording, reason: 'capture_unavailable' }).catch(() => undefined);
         return {
           status: 'unavailable',
@@ -190,14 +176,18 @@ export function createBrowserRecordingCdpScreencastCaptureAdapter(
           ),
         };
       }
+      if (frames.fatalError) {
+        frames.closed = true;
+        try { await session.stop(); }
+        finally { await encoder.discard({ recording: input.recording, reason: 'capture_failed' }); }
+        return { status: 'unavailable', reason: unavailable('browser_recording_capture_failed', 'CDP screencast capture failed during startup.') };
+      }
 
       activeByRecordingId.set(recordingId, {
         recording: input.recording,
         encoder,
         session,
-        frameCount: 0,
-        totalRawBytes: 0,
-        fatalError: null,
+        frames,
       });
       return { status: 'started' };
     },
@@ -208,22 +198,23 @@ export function createBrowserRecordingCdpScreencastCaptureAdapter(
         throw new Error('CDP screencast recording is not active.');
       }
       try {
+        active.frames.closed = true;
         await active.session.stop();
-        if (active.fatalError) {
+        if (active.frames.fatalError) {
           throw new Error('CDP screencast frame encoding failed.');
         }
         const durationMs = Math.max(0, nowMs() - active.recording.startedAtMs);
         const output = await active.encoder.finish({
           recording: active.recording,
-          frameCount: active.frameCount,
+          frameCount: active.frames.frameCount,
           durationMs,
         });
         activeByRecordingId.delete(input.recordingId);
         return {
           durationMs,
           byteSize: output.byteSize,
-          frameCount: active.frameCount,
-          fps: Math.min(active.recording.fps, calculateFps(active.frameCount, durationMs)),
+          frameCount: active.frames.frameCount,
+          fps: Math.min(active.recording.fps, calculateFps(active.frames.frameCount, durationMs)),
           mimeType: 'video/webm',
           source: output.source,
           ...(output.cleanup ? { cleanup: output.cleanup } : {}),
@@ -238,6 +229,7 @@ export function createBrowserRecordingCdpScreencastCaptureAdapter(
     async discard(input) {
       const active = activeByRecordingId.get(input.recordingId);
       if (!active) return;
+      active.frames.closed = true;
       activeByRecordingId.delete(input.recordingId);
       try {
         await active.session.stop();

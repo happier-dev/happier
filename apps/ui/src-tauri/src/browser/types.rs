@@ -412,8 +412,7 @@ impl DesktopBrowserCaptureSnapshotResult {
 /// `desktop_browser_capture_snapshot` — which returns inline base64 to the UI for an interactive
 /// screenshot — the recording-frame command writes the captured PNG under the app-owned recording
 /// root using the daemon-provided relative `output_path` artifact and returns ONLY a reference +
-/// metadata (never inline bytes). `max_bytes` is the recording byte cap the daemon negotiated; an
-/// over-cap capture is rejected, not written.
+/// metadata (never inline bytes).
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct DesktopBrowserCaptureRecordingFrameRequest {
@@ -423,8 +422,6 @@ pub struct DesktopBrowserCaptureRecordingFrameRequest {
     pub capture_request_id: String,
     /// Recording-root-relative artifact path; absolute paths and traversal are rejected natively.
     pub output_path: String,
-    /// Recording byte cap. A capture larger than this is rejected with `CaptureTooLarge`.
-    pub max_bytes: usize,
 }
 
 /// Reference-only result of a captured recording frame: the path the PNG was written to plus

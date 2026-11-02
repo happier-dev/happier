@@ -28,10 +28,31 @@ only for an `UNSURFACE` cell that makes no product promise.
 
 ## Reference-only invariant (BRW-15)
 
+The daemon owns recording admission, identifiers and lifecycle. Its per-view identity is
+`browserViewKey({ browserSessionId, viewId })`, so Sessions can use the same view id
+independently. Recording lists require both identity fields; status, Stop and Cancel
+address the daemon's unique recording id. The UI projects daemon results and retains
+the real Composer attachment path without a second local recording lifecycle.
+
 In 0.3 development, CDP recording and browser live viewing share the per-view producer in
 `apps/cli/src/daemon/browser/capture/cdpScreencast.ts`. The recording transport subscribes to it;
 it does not independently start, stop or acknowledge the CDP screencast. Releasing the last
 consumer stops capture, and view retirement terminates every consumer.
+
+The daemon resolves the recording's Session workspace from the existing owner-metadata and
+Machine-locality reader before persisting Session media. Human-only Sessions do not need a
+tracked agent process; the Session's workspace remains the destination for their recording.
+
+The managed recording transport enables CDP focus emulation for its target while
+recording is active. This keeps the page rendering when another tab or popup is
+in front, while preserving the foreground tab. Existing recording cleanup disables
+the override on Stop, Cancel, view retirement, confidential hold and failed start;
+the same cleanup removes the recording overlay.
+
+Live-view discovery also carries the daemon's exact Session and view identity into
+the workspace target. The opaque stream target id is not a replacement for that
+identity. A workspace tab saved before this 0.3 development correction may remain
+unavailable; close it and reopen the browser from current discovery.
 
 In the current 0.3 development daemon, a finished recording is persisted in its Session's
 working directory by `persistSessionMedia`. The daemon then admits a media-only transcript

@@ -20,7 +20,6 @@ function captureRequest(): DesktopBrowserRecordingFrameCaptureRequest {
       navigationGeneration: 1,
       captureRequestId: 'capture_1',
       outputPath: 'rec.capture_1.native-view.png',
-      maxBytes: 16_000_000,
     };
   }
 
@@ -53,7 +52,7 @@ describe('createDesktopReverseBrowserRecordingCaptureUiCall', () => {
 
     expect(callConnectedClientRpc).toHaveBeenCalledWith(
       RPC_METHODS.UI_BROWSER_RECORDING_CAPTURE_FRAME,
-      expect.objectContaining({ outputPath: captureRequest().outputPath, maxBytes: 16_000_000 }),
+      expect.objectContaining({ outputPath: captureRequest().outputPath }),
       undefined,
     );
     expect(result).toMatchObject({ ok: true, frame: { path: captureRequest().outputPath } });

@@ -7,7 +7,7 @@ import type { BrowserRecordingNativeViewCaptureTransport } from './nativeViewCom
 /**
  * Reference-only request the daemon hands the canonical desktop invoke path (the
  * `desktop_browser_capture_recording_frame` Tauri command, A2-registered). The daemon owns the
- * root-relative artifact path and the negotiated `maxBytes` cap; the native side resolves that
+ * root-relative artifact path; the native side resolves that
  * artifact under its app-owned recording root and returns ONLY a reference + metadata (BRW-15
  * reference-only invariant) — the pixel buffer never crosses back to the daemon.
  */
@@ -18,8 +18,6 @@ export type DesktopBrowserRecordingFrameCaptureRequest = Readonly<{
   captureRequestId: string;
   /** Recording-root-relative artifact path. Never an absolute caller-controlled filesystem path. */
   outputPath: string;
-  /** Recording byte cap. The native side rejects a capture larger than this. */
-  maxBytes: number;
 }>;
 
 /**
@@ -77,10 +75,9 @@ function defaultDeleteFile(path: string): Promise<void> {
 /**
  * Builds the concrete desktop-host `nativeViewCapture` transport (the missing daemon→native (Wry) IPC
  * producer). It is the seam injected by the desktop daemon entrypoint into
- * `createBrowserRecordingNativeViewCaptureCommand`: it derives a root-relative artifact id, threads
- * the recording's negotiated `maxBytes` cap to the native side, and reshapes the native reference
+ * `createBrowserRecordingNativeViewCaptureCommand`: it derives a root-relative artifact id and reshapes the native reference
  * into the canonical reference-only `BrowserRecordingNativeViewCaptureTransportResult`. The native
- * side owns root containment, byte caps, and atomic writes; the daemon only deletes the absolute path
+ * side owns root containment and atomic writes; the daemon only deletes the absolute path
  * returned after a successful capture.
  */
 export function createDesktopBrowserRecordingNativeViewCaptureTransport(
@@ -93,7 +90,7 @@ export function createDesktopBrowserRecordingNativeViewCaptureTransport(
     ?? join(options.workingDirectory, '.happier', 'tmp', 'browser-recordings');
 
   return {
-    async captureFrame({ recording, maxBytes }) {
+    async captureFrame({ recording }) {
       const captureRequestId = randomId();
       const outputPath = `${recording.recordingId}.${captureRequestId}.native-view.png`;
 
@@ -105,7 +102,6 @@ export function createDesktopBrowserRecordingNativeViewCaptureTransport(
         navigationGeneration: recording.navigationGenerationStart,
         captureRequestId,
         outputPath,
-        maxBytes,
       };
 
       const result = await options.invokeRecordingFrameCapture(request);

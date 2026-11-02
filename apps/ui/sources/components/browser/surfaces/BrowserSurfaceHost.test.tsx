@@ -306,8 +306,6 @@ const recordingCapabilities = {
     supportedCaptureKinds: ['streamFrameCapture'],
     supportedMimeTypes: ['video/webm'],
     supportedAdapterKinds: ['localPreview'],
-    maxDurationMs: 30_000,
-    maxBytes: 16_000_000,
     maxFps: 12,
     audioSupported: false,
     cursorOverlaySupported: true,

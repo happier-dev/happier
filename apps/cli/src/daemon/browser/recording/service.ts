@@ -1,10 +1,19 @@
+import { randomUUID } from 'node:crypto';
 import { BrowserRecordingSessionV1Schema } from '@happier-dev/protocol/browser/recording/v1';
+import { browserViewKey } from '@happier-dev/protocol/browser/view/key';
+import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import { resolveBrowserRecordingProfileUnavailableReason } from '@happier-dev/protocol/browser/recording/captureProfiles';
 import type { BrowserRecordingCaptureSourceV1, BrowserDiagnosticFidelityV1, BrowserEvidenceSessionMediaReferenceV1, BrowserRecordingCapabilities, BrowserRecordingCaptureKindV1, BrowserRenderEngineKindV1, BrowserRecordingOutcomeReasonV1, BrowserRecordingPolicyStateV1, BrowserRecordingRetentionClassV1, BrowserRecordingSessionV1, BrowserSemanticAdapterKindV1, BrowserViewTargetKindV1 } from '@happier-dev/protocol';
 import type { SessionMediaIngestionSource } from '@/session/media/_types';
 import type { SurfaceInputControl } from '../../surfaces/inputControl';
 
 const RECORDING_ID_PREFIX = 'browser_recording';
+
+// Lifecycle updates clear optional members with undefined. Admit their native JSON
+// projection once here so state, Action results and strict IPC readers share one record.
+function parseRecordingSession(value: unknown): BrowserRecordingSessionV1 {
+  return BrowserRecordingSessionV1Schema.parse(projectNativeJsonValueForTransport(value));
+}
 
 export type BrowserRecordingInputControlResolver = (view: Readonly<{
   browserSessionId: string;
@@ -33,6 +42,7 @@ export type BrowserRecordingDaemonUnavailableReason = Readonly<{
 }>;
 
 export type BrowserRecordingCapturedArtifact = Readonly<{
+  /** A usable bounded clip can be stored even when its owner stopped accepting frames. */
   durationMs: number;
   byteSize: number;
   frameCount: number;
@@ -87,7 +97,7 @@ export type BrowserRecordingDaemonService = Readonly<{
     failedRecordingIds: readonly string[];
   }>>;
   getRecordingStatus(recordingId: string): BrowserRecordingSessionV1 | null;
-  listRecordingsForView(input: Readonly<{ viewId: string }>): readonly BrowserRecordingSessionV1[];
+  listRecordingsForView(input: Readonly<{ browserSessionId: string; viewId: string }>): readonly BrowserRecordingSessionV1[];
   listStorageRecordings(): readonly BrowserRecordingStorageRecord[];
   discardStorageRecording(input: Readonly<{ recordingId: string; beforeEffect?: () => Promise<void> }>): Promise<void>;
   subscribeStorageChanges(listener: () => void): () => void;
@@ -191,19 +201,8 @@ function createUnavailable(
   return { code, message };
 }
 
-function sanitizeRecordingIdSegment(value: string): string {
-  const sanitized = value.replace(/[^a-zA-Z0-9_-]+/g, '_').replace(/^_+|_+$/g, '');
-  return sanitized.length > 0 ? sanitized.slice(0, 72) : 'view';
-}
-
-function buildRecordingId(input: BrowserRecordingRuntimeStartInput, startedAtMs: number): string {
-  if (input.recordingId) return input.recordingId;
-  return [
-    RECORDING_ID_PREFIX,
-    sanitizeRecordingIdSegment(input.viewId),
-    input.navigationGeneration,
-    startedAtMs,
-  ].join('_');
+function buildRecordingId(input: BrowserRecordingRuntimeStartInput): string {
+  return input.recordingId ?? `${RECORDING_ID_PREFIX}_${randomUUID()}`;
 }
 
 function durationFrom(recording: BrowserRecordingSessionV1, atMs: number): number {
@@ -298,12 +297,10 @@ function isStoredMediaDiscardReason(
   return reason === 'user_discarded' || reason === 'session_closed' || reason === 'logout';
 }
 
-function resolveArtifactCapFailure(
+function resolveArtifactFailure(
   recording: BrowserRecordingSessionV1,
   artifact: BrowserRecordingCapturedArtifact,
 ): BrowserRecordingOutcomeReasonV1 | null {
-  if (artifact.durationMs > recording.maxDurationMs) return 'duration_cap';
-  if (artifact.byteSize > recording.maxBytes) return 'size_cap';
   if (artifact.fps > recording.fps) return 'capture_failed';
   return null;
 }
@@ -321,7 +318,7 @@ export function createBrowserRecordingDaemonService(input: Readonly<{
   const sessionsById = new Map<string, BrowserRecordingSessionV1>();
   const storageChangeListeners = new Set<() => void>();
   const sessionOrder: string[] = [];
-  const activeRecordingIdByViewId = new Map<string, string>();
+  const activeRecordingIdByView = new Map<string, string>();
   const activeAdapterByRecordingId = new Map<string, {
     readonly adapter: BrowserRecordingCaptureAdapter;
     readonly control?: SurfaceInputControl;
@@ -338,11 +335,12 @@ export function createBrowserRecordingDaemonService(input: Readonly<{
       sessionOrder.push(recording.recordingId);
     }
     sessionsById.set(recording.recordingId, recording);
+    const viewKey = browserViewKey(recording);
     if (activeForView) {
-      activeRecordingIdByViewId.set(recording.viewId, recording.recordingId);
+      activeRecordingIdByView.set(viewKey, recording.recordingId);
     } else {
-      if (activeRecordingIdByViewId.get(recording.viewId) === recording.recordingId) {
-        activeRecordingIdByViewId.delete(recording.viewId);
+      if (activeRecordingIdByView.get(viewKey) === recording.recordingId) {
+        activeRecordingIdByView.delete(viewKey);
       }
       activeAdapterByRecordingId.get(recording.recordingId)?.unregisterConfidentialityDrain?.();
       activeAdapterByRecordingId.delete(recording.recordingId);
@@ -375,7 +373,7 @@ export function createBrowserRecordingDaemonService(input: Readonly<{
     if (status !== 'paused') {
       await discardCapture(recording, reason);
     }
-    const updated = BrowserRecordingSessionV1Schema.parse({
+    const updated = parseRecordingSession({
       ...recording,
       status,
       outcomeReason: reason,
@@ -409,7 +407,7 @@ export function createBrowserRecordingDaemonService(input: Readonly<{
         ),
       };
     }
-    const discarded = BrowserRecordingSessionV1Schema.parse({
+    const discarded = parseRecordingSession({
       ...recording,
       status: 'discarded',
       outcomeReason: reason,
@@ -442,7 +440,7 @@ export function createBrowserRecordingDaemonService(input: Readonly<{
     async startRecording(startInput) {
       const control = input.resolveInputControl?.(startInput);
       if (control?.isObservationHeld()) return confidentialityUnavailable();
-      const activeRecordingId = activeRecordingIdByViewId.get(startInput.viewId);
+      const activeRecordingId = activeRecordingIdByView.get(browserViewKey(startInput));
       if (activeRecordingId) {
         return {
           status: 'unavailable',
@@ -470,7 +468,7 @@ export function createBrowserRecordingDaemonService(input: Readonly<{
       }
 
       const startedAtMs = startInput.startedAtMs ?? now();
-      const recordingId = buildRecordingId(startInput, startedAtMs);
+      const recordingId = buildRecordingId(startInput);
       if (sessionsById.has(recordingId)) {
         return {
           status: 'unavailable',
@@ -480,7 +478,7 @@ export function createBrowserRecordingDaemonService(input: Readonly<{
           ),
         };
       }
-      const recording = BrowserRecordingSessionV1Schema.parse({
+      const recording = parseRecordingSession({
         v: 1,
         recordingId,
         browserSessionId: startInput.browserSessionId,
@@ -502,8 +500,6 @@ export function createBrowserRecordingDaemonService(input: Readonly<{
         retentionClass: startInput.retentionClass,
         redactionLevel: 'metadataOnly',
         policyState: startInput.policyState ?? 'allowed',
-        maxDurationMs: startInput.recordingCapabilities.maxDurationMs,
-        maxBytes: startInput.recordingCapabilities.maxBytes,
       });
 
       // Register before capture startup can await; the input owner drains the actual operation
@@ -543,7 +539,7 @@ export function createBrowserRecordingDaemonService(input: Readonly<{
           await terminalOutcome(recording, 'capture_unavailable', now());
           return { status: 'unavailable', reason: adapterStart.reason };
         }
-        const started = BrowserRecordingSessionV1Schema.parse({ ...recording, status: 'recording' });
+        const started = parseRecordingSession({ ...recording, status: 'recording' });
         putRecording(started, true);
         return { status: 'started', recording: started };
       };
@@ -563,6 +559,9 @@ export function createBrowserRecordingDaemonService(input: Readonly<{
       if (recording.status === 'finalized' || recording.status === 'completed') {
         return { status: 'finalized', recording };
       }
+      if (recording.status === 'failed' && recording.outcomeReason) {
+        return { status: 'failed', recording, reason: recording.outcomeReason };
+      }
 
       const adapter = activeAdapterByRecordingId.get(recording.recordingId)?.adapter;
       if (!adapter || !isActiveStatus(recording.status)) {
@@ -580,9 +579,9 @@ export function createBrowserRecordingDaemonService(input: Readonly<{
         try {
           artifact = await adapter.stop({ recordingId: recording.recordingId, recording });
           if (control?.isObservationHeld()) throw new Error('Browser recording is held for confidential input.');
-          const capFailure = resolveArtifactCapFailure(recording, artifact);
+          const capFailure = resolveArtifactFailure(recording, artifact);
           if (capFailure) {
-            const failed = BrowserRecordingSessionV1Schema.parse({
+            const failed = parseRecordingSession({
               ...recording,
               status: 'failed',
               outcomeReason: capFailure,
@@ -604,7 +603,7 @@ export function createBrowserRecordingDaemonService(input: Readonly<{
             throw new Error('Browser recording is held for confidential input.');
           }
           const stoppedAtMs = stopInput.stoppedAtMs ?? now();
-          const finalized = BrowserRecordingSessionV1Schema.parse({
+          const finalized = parseRecordingSession({
             ...recording,
             status: 'finalized',
             outcomeReason: 'user_stopped',
@@ -626,7 +625,7 @@ export function createBrowserRecordingDaemonService(input: Readonly<{
             if (outcome.status === 'unavailable') return outcome;
             return { status: 'failed', recording: outcome.recording, reason: 'policy_revoked' };
           }
-          const failed = BrowserRecordingSessionV1Schema.parse({
+          const failed = parseRecordingSession({
             ...recording,
             status: 'failed',
             outcomeReason: 'capture_failed',
@@ -675,9 +674,9 @@ export function createBrowserRecordingDaemonService(input: Readonly<{
     },
 
     async applyLifecycleOutcome(lifecycleInput) {
-      const recordingId = activeRecordingIdByViewId.get(lifecycleInput.viewId);
+      const recordingId = activeRecordingIdByView.get(browserViewKey(lifecycleInput));
       const recording = recordingId ? readRecording(recordingId) : null;
-      if (!recording || recording.browserSessionId !== lifecycleInput.browserSessionId) {
+      if (!recording) {
         return {
           status: 'unavailable',
           reason: createUnavailable('browser_recording_missing', 'Browser recording is no longer available.'),
@@ -706,7 +705,7 @@ export function createBrowserRecordingDaemonService(input: Readonly<{
           failedRecordingIds.push(recordingId);
           continue;
         }
-        const discarded = BrowserRecordingSessionV1Schema.parse({
+        const discarded = parseRecordingSession({
           ...recording,
           status: 'discarded',
           outcomeReason: 'retention_limit',
@@ -724,9 +723,10 @@ export function createBrowserRecordingDaemonService(input: Readonly<{
     },
 
     listRecordingsForView(viewInput) {
+      const viewKey = browserViewKey(viewInput);
       return sessionOrder
         .map((recordingId) => readRecording(recordingId))
-        .filter((recording): recording is BrowserRecordingSessionV1 => recording?.viewId === viewInput.viewId);
+        .filter((recording): recording is BrowserRecordingSessionV1 => recording != null && browserViewKey(recording) === viewKey);
     },
 
     listStorageRecordings() {

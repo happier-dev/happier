@@ -17,7 +17,7 @@ import { createBrowserRecordingDaemonRuntime } from './runtime';
  * PRODUCTION-PATH CROSS-BOUNDARY ACCEPTANCE (W2C-BA-1) — the desktop reverse capture channel.
  *
  * Proves the FULL desktop recording chain crosses the cross-process daemon->UI reverse RPC boundary:
- *   daemon recording producer -> nativeViewTransport (daemon-owned outputPath + byte cap) ->
+ *   daemon recording producer -> nativeViewTransport (daemon-owned outputPath) ->
  *   reverse invoke -> callUi (the daemon<->UI session RPC seam) -> UI handler ->
  *   `desktop_browser_capture_recording_frame` -> reference-only frame.
  *
@@ -38,13 +38,12 @@ const WORKING_DIRECTORY = '/tmp/happier-native-view-reverse-production-path';
 function uiCallThatRunsCaptureDesktopBrowserRecordingFrame(
   nativeCapture: (request: {
     outputPath: string;
-    maxBytes: number;
   }) => Promise<UiBrowserRecordingCaptureFrameResponseV1['result']>,
 ): ReverseDesktopBrowserRecordingCaptureUiCall {
   return async (request) => {
     // The daemon serialized a contract-valid request across the boundary.
     UiBrowserRecordingCaptureFrameRequestV1Schema.parse(request);
-    const result = await nativeCapture({ outputPath: request.outputPath, maxBytes: request.maxBytes });
+    const result = await nativeCapture({ outputPath: request.outputPath });
     return UiBrowserRecordingCaptureFrameResponseV1Schema.parse({ protocolVersion: 1, result });
   };
 }
@@ -73,8 +72,6 @@ function buildRuntime(
         supportedCaptureKinds: ['nativeViewCapture'],
         supportedMimeTypes: ['image/png'],
         supportedAdapterKinds: ['externalUrl'],
-        maxDurationMs: 30_000,
-        maxBytes: 16_000_000,
         maxFps: 12,
         audioSupported: false,
         cursorOverlaySupported: false,
@@ -120,10 +117,10 @@ describe('nativeViewCapture reverse channel production path (W2C-BA-1)', () => {
     try {
       const started = await runtime.routes.startRecording(startInput());
       expect(started.status).toBe('started');
-      // The reverse channel actually crossed to the UI half once, carrying the daemon byte cap.
+      // The reverse channel crosses to the UI half once with no cap operand.
       expect(callUi).toHaveBeenCalledTimes(1);
       expect(nativeCapture).toHaveBeenCalledTimes(1);
-      expect(callUi.mock.calls[0]?.[0]).toMatchObject({ maxBytes: 16_000_000 });
+      expect(callUi.mock.calls[0]?.[0]).not.toHaveProperty('maxBytes');
       const outputPath = callUi.mock.calls[0]?.[0].outputPath;
       expect(outputPath).toMatch(/^browser_recording_.+\.capture_1\.native-view\.png$/);
       expect(outputPath).not.toMatch(/^[/\\]|^[A-Za-z]:[\\/]/);
@@ -148,7 +145,7 @@ describe('nativeViewCapture reverse channel production path (W2C-BA-1)', () => {
     }
   });
 
-  it('rejects an over-cap reverse capture so nothing oversized is persisted (daemon-side defense-in-depth)', async () => {
+  it('starts a valid reverse capture beyond the former byte default', async () => {
     const callUi = uiCallThatRunsCaptureDesktopBrowserRecordingFrame(async ({ outputPath }) => ({
       ok: true as const,
       frame: { mimeType: 'image/png', width: 4_000, height: 4_000, sizeBytes: 32_000_000, path: outputPath },
@@ -156,8 +153,7 @@ describe('nativeViewCapture reverse channel production path (W2C-BA-1)', () => {
     const runtime = buildRuntime(callUi, { captureSourceAvailable: true });
     try {
       await expect(runtime.routes.startRecording(startInput())).resolves.toMatchObject({
-        status: 'unavailable',
-        reason: { code: 'browser_recording_capture_unavailable' },
+        status: 'started',
       });
     } finally {
       runtime.stop();
