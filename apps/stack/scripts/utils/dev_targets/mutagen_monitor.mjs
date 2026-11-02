@@ -1,12 +1,15 @@
 const MUTAGEN_MONITOR_TEMPLATE = '{{range .}}{{if .SessionState}}{{printf "%s|%s|%d|%s|%t|%d\\n" .Name .Status .SuccessfulCycles .LastError .Paused (len .Conflicts)}}{{end}}{{end}}';
 
 export function buildMutagenMonitorArgs(sessionNames) {
+  // Positional names must all exist on every list update. Select names in the
+  // template instead, so project replacement can temporarily remove them.
+  const names = sessionNames.map(name => `(eq .Name ${JSON.stringify(name)})`).join(' ');
+  const template = MUTAGEN_MONITOR_TEMPLATE.replace('{{if .SessionState}}', `{{if and .SessionState (or ${names})}}`);
   return [
     'sync',
     'monitor',
     '--template',
-    MUTAGEN_MONITOR_TEMPLATE,
-    ...sessionNames,
+    template,
   ];
 }
 

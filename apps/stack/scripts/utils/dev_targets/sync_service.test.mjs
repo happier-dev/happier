@@ -109,6 +109,9 @@ test('detached sync start recreates requested sessions missing from its canonica
     ssh: 'mac',
     repoDir: '/remote/happier',
   };
+  await writeFile(join(root, 'dev-targets.json'), JSON.stringify({
+    version: 1, targets: [{ ...target, cliHomeDir: '/remote/cli' }],
+  }));
   await mkdir(dirname(runtimeFor(root).projectFile), { recursive: true });
   await writeFile(projectFile, renderMutagenProject({
     sourceDir: DEV_TARGET_SYNC_EXECUTOR_REPO,
@@ -298,7 +301,8 @@ test('sync startup reports a failed WSL target while healthy targets repair and 
     ['sync', 'reset', healthySession], ['sync', 'flush', healthySession],
   ]);
   assert.equal(calls.some(call => call.command === 'ssh' && call.args.includes('windows1-linux')), false, 'a failed runtime must not block later project preparation through its guest SSH');
-  assert.deepEqual(monitors[0].args.slice(4), [healthySession]);
+  assert.equal(monitors[0].args.length, 4);
+  assert.ok(monitors[0].args[3].includes(`(eq .Name ${JSON.stringify(healthySession)})`));
 });
 
 test('sync startup accepts an unpaused reconnecting session when Mutagen resume reports an offline endpoint', async (t) => {
@@ -405,10 +409,14 @@ test('foreground sync start streams the canonical Mutagen monitor until it exits
   assert.match(spawned[0].args[3], /SuccessfulCycles/);
   assert.match(
     spawned[0].args[3],
-    /if \.SessionState/,
+    /if (?:and )?\.SessionState/,
     'the monitor must skip transient Mutagen entries whose embedded session state is nil',
   );
-  assert.deepEqual(spawned[0].args.slice(-2), targets.map(target => resolveMutagenSessionName(target.name, '/repo')));
+  assert.equal(spawned[0].args.length, 4);
+  for (const target of targets) {
+    const name = resolveMutagenSessionName(target.name, '/repo');
+    assert.ok(spawned[0].args[3].includes(`(eq .Name ${JSON.stringify(name)})`));
+  }
   assert.deepEqual(spawned[0].env, { MUTAGEN_DATA_DIRECTORY: '/stack/mutagen/data' });
   assert.equal(spawned[0].lineFilter({ stream: 'stdout', line: 'happier-mac|Watching|1||false|0' }), true);
   assert.equal(spawned[0].lineFilter({ stream: 'stdout', line: 'happier-mac|Watching|1||false|0' }), false);

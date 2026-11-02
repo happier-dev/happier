@@ -54,12 +54,19 @@ test('alpha watching follows service roles while command and captured-build work
       return [name, session.match(/configurationAlpha:\n\s+watch:\n\s+mode: "([^"]+)"/)?.[1]];
     }));
   };
-  assert.deepEqual(renderModes(config), { server: 'portable', expo: 'portable', daemon: 'portable', qa: 'portable', worker: 'no-watch', unused: 'portable' });
+  assert.deepEqual(renderModes(config), { server: 'portable', expo: 'portable', daemon: 'portable', qa: 'portable', worker: 'no-watch', unused: 'no-watch' });
   const moved = parseDevTargetsConfig({
     ...config,
     runtimePlacement: { ...config.runtimePlacement, expo: { mode: 'prefer-target', target: 'worker' } },
   });
-  assert.deepEqual(renderModes(moved), { server: 'portable', expo: 'no-watch', daemon: 'portable', qa: 'portable', worker: 'portable', unused: 'portable' });
+  assert.deepEqual(renderModes(moved), { server: 'portable', expo: 'no-watch', daemon: 'portable', qa: 'portable', worker: 'portable', unused: 'no-watch' });
+  const local = parseDevTargetsConfig({
+    ...config,
+    runtimePlacement: {
+      server: { mode: 'local' }, expo: { mode: 'local' }, daemon: { mode: 'local' }, qa: { mode: 'local' },
+    },
+  });
+  assert.equal(Object.values(renderModes(local)).filter(mode => mode !== 'no-watch').length, 0);
   const legacy = parseDevTargetsConfig({ version: 1, targets: configuredTargets });
   assert.deepEqual(renderModes(legacy), { server: 'portable', expo: 'portable', daemon: 'portable', qa: 'portable', worker: 'portable', unused: 'portable' });
 });
@@ -293,6 +300,8 @@ test('renderMutagenProject preserves default exclusions inside re-included proje
   }
   excluded.push('.project/reviews/report.md', '.project/plans/qa/browser-diagnostics.json',
     '.project/plans/qa/capture.har', 'packages/fixture/.project/plans/source.ts');
+  excluded.push('.project/plans/2026-08-23-ru2-surfaces-finalization/impl-2026-09-30/lanes/qa-login/resume-currentness.json');
+  included.push('.project/plans/2026-08-23-ru2-surfaces-finalization/impl-2026-09-30/lanes/QA-LOGIN-JOURNEY.md');
   for (const root of ['.project/plans/qa-shots', '.project/plans/audit/qa-shots']) {
     for (const directory of ['acc1', 'ACC1', 'plat1b', 'PLAT1b']) {
       excluded.push(`${root}/${directory}`, `${root}/${directory}/capture.json`);

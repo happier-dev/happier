@@ -2938,7 +2938,7 @@ test('supervisor streams Mutagen status for the lifetime of the controller', asy
           && call.label === 'mutagen'
           && call.command === 'mutagen'
           && call.args.includes('--template')
-          && call.args.at(-1) === 'happier-linux'
+          && call.args[3].includes('(eq .Name "happier-linux")')
           && typeof call.lineFilter === 'function',
       ),
     );

@@ -144,6 +144,7 @@ test('candidate producer creates and pauses only its own project in the shared r
   const ownerId = 'execution-host-candidate-0.3';
   const candidateTarget = { ...target, name: ownerId, repoDir: '/guest/candidate' };
   const ordinary = runtimeFor(root, sourceDir);
+  await writeFile(join(root, 'dev-targets.json'), JSON.stringify({ version: 1, targets: [target] }));
   await mkdir(dirname(ordinary.projectFile), { recursive: true });
   const ordinaryProject = renderMutagenProject({ sourceDir, targets: [target], ownerId: INDEPENDENT_DEV_TARGET_SYNC_OWNER });
   await writeFile(ordinary.projectFile, ordinaryProject);
@@ -529,6 +530,7 @@ test('independent sync start owns and resumes the canonical Mutagen project', as
 test('source policy replacement does not require a paused replica to become reachable', async t => {
   const { root } = await createTempFixture(t, { prefix: 'hstack-sync-policy-offline-' });
   const projectFile = projectFor(root);
+  await writeFile(join(root, 'dev-targets.json'), JSON.stringify({ version: 1, targets: [target] }));
   await mkdir(dirname(projectFile), { recursive: true });
   const desired = renderMutagenProject({ sourceDir: DEV_TARGET_SYNC_EXECUTOR_REPO,
     targets: [target], ownerId: INDEPENDENT_DEV_TARGET_SYNC_OWNER });
@@ -559,6 +561,7 @@ test('source policy replacement does not require a paused replica to become reac
 test('equivalent project keeps reconnecting sessions when project resume reports an offline endpoint', async () => {
   const root = await mkdtemp(join(tmpdir(), 'happier-sync-project-reconnect-'));
   const projectFile = projectFor(root);
+  await writeFile(join(root, 'dev-targets.json'), JSON.stringify({ version: 1, targets: [target] }));
   await mkdir(dirname(projectFor(root)), { recursive: true });
   await writeFile(projectFile, renderMutagenProject({
     sourceDir: DEV_TARGET_SYNC_EXECUTOR_REPO,
@@ -596,6 +599,7 @@ test('equivalent project keeps reconnecting sessions when project resume reports
 test('a project resume failure never restarts the shared daemon hosting other repositories', async () => {
   const root = await mkdtemp(join(tmpdir(), 'happier-sync-project-ssh-daemon-'));
   const projectFile = projectFor(root);
+  await writeFile(join(root, 'dev-targets.json'), JSON.stringify({ version: 1, targets: [target] }));
   await mkdir(dirname(projectFor(root)), { recursive: true });
   await writeFile(projectFile, renderMutagenProject({
     sourceDir: DEV_TARGET_SYNC_EXECUTOR_REPO,
