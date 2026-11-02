@@ -1,6 +1,7 @@
 import type { VoiceAdapterId } from '@/voice/session/types';
 import type { VoiceConversationInUseVoice } from '@happier-dev/protocol/actions/voiceConversationActionFamily';
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
+import type { ConnectedServiceUxDiagnosticV1 } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
 
 export type VoiceMachineErrorKind = import('@happier-dev/protocol/voice/attemptPresentation').VoiceAttemptFailureKind;
 
@@ -21,6 +22,7 @@ export type VoiceMachineError = Readonly<{
     recoveryAction: VoiceMachineRecoveryAction;
     presentation: VoiceMachineErrorPresentation;
     recoverable: boolean;
+    uxDiagnostic?: ConnectedServiceUxDiagnosticV1;
 }>;
 
 export type VoiceConversationRuntimeState =

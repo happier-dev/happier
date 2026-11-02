@@ -11,6 +11,7 @@ import type {
 import type { ExecutionRunResumeHandle } from '@happier-dev/protocol';
 import type { ConnectedServiceBindingsV2 } from '@happier-dev/protocol';
 import type { PermissionIntent } from '@happier-dev/agents';
+import type { ConnectedServiceUxDiagnosticV1 } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
 
 export type Verbosity = 'short' | 'balanced';
 
@@ -96,11 +97,15 @@ export class VoiceAgentError extends Error {
     | 'VOICE_AGENT_INVALID_CURSOR'
     | 'VOICE_AGENT_TURN_COMPLETED'
     | 'VOICE_AGENT_UNSUPPORTED'
-    | 'VOICE_AGENT_START_FAILED';
+    | 'VOICE_AGENT_START_FAILED'
+    | ConnectedServiceUxDiagnosticV1['code'];
 
-  constructor(code: VoiceAgentError['code'], message: string) {
+  readonly details?: Readonly<{ uxDiagnostic: ConnectedServiceUxDiagnosticV1 }>;
+
+  constructor(code: VoiceAgentError['code'], message: string, readonly uxDiagnostic?: ConnectedServiceUxDiagnosticV1) {
     super(message);
     this.code = code;
+    if (uxDiagnostic) this.details = { uxDiagnostic };
   }
 }
 

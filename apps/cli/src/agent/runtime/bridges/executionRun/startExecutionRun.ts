@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { materializeActionRequestAttributionV1 } from '@happier-dev/protocol/actions/actionRequestAttributionV1';
+import { toVoiceAgentStartError } from '@/agent/voice/agent/voiceAgentStartError';
 
 import type { SessionId } from '@/agent/core/AgentMessage';
 import type { ACPMessageData, ACPProvider } from '@/api/session/sessionMessageTypes';
@@ -965,13 +966,7 @@ async function startAdmittedExecutionRun(
               ...(connectedServices !== undefined ? { connectedServices } : {}),
             });
           } catch (error) {
-            if (error instanceof VoiceAgentError) {
-              throw error;
-            }
-            throw new VoiceAgentError(
-              'VOICE_AGENT_UNSUPPORTED',
-              error instanceof Error ? error.message : 'voice agent backend unavailable',
-            );
+            throw toVoiceAgentStartError(error, runtimeBackendId, 'voice agent backend unavailable', 'VOICE_AGENT_UNSUPPORTED');
           }
         },
       });

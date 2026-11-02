@@ -700,8 +700,9 @@ export function useVoiceAttemptControl(idleTarget: VoiceAttemptIdleTarget): Voic
     const publicPresentation = React.useMemo(() => projectVoiceAttemptPresentation({
         control, attemptId: expectedAttempt, ended: presentedEnded !== null,
         errorCode: snap.errorCode, errorMessage: snap.errorMessage, recoveryAction, recoveryContext,
+        errorConnectedServiceDiagnostic: snap.errorConnectedServiceDiagnostic,
         serviceTitle, agentTitle, agentMachineLabel,
-    }), [control, expectedAttempt, presentedEnded, snap.errorCode, snap.errorMessage, recoveryAction,
+    }), [control, expectedAttempt, presentedEnded, snap.errorCode, snap.errorMessage, snap.errorConnectedServiceDiagnostic, recoveryAction,
         recoveryContext, serviceTitle, agentTitle, agentMachineLabel]);
     const recoveryLabel = publicPresentation.recovery?.label ?? null;
     const recoveryIcon = publicPresentation.recovery?.icon ?? null;

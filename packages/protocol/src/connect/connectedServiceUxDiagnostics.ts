@@ -173,6 +173,17 @@ export const ConnectedServiceUxDiagnosticV1Schema = lazyZodSchema(() => (<I exte
 
 export type ConnectedServiceUxDiagnosticV1 = z.infer<typeof ConnectedServiceUxDiagnosticV1ObjectSchema>;
 
+/** Read the owner's diagnostic from a local error or its transport envelope. */
+export function readConnectedServiceUxDiagnosticFromError(error: unknown): ConnectedServiceUxDiagnosticV1 | null {
+  if (!error || typeof error !== 'object') return null;
+  const carrier = error as Readonly<Record<string, unknown>>;
+  const details = carrier.details && typeof carrier.details === 'object'
+    ? carrier.details as Readonly<Record<string, unknown>> : null;
+  const errorDetail = carrier.errorDetail && typeof carrier.errorDetail === 'object'
+    ? carrier.errorDetail as Readonly<Record<string, unknown>> : null;
+  return normalizeConnectedServiceUxDiagnosticV1(carrier.uxDiagnostic ?? details?.uxDiagnostic ?? errorDetail?.uxDiagnostic);
+}
+
 export function normalizeConnectedServiceUxDiagnosticV1(
   value: unknown,
 ): ConnectedServiceUxDiagnosticV1 | null {

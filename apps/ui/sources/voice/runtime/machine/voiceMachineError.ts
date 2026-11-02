@@ -1,6 +1,7 @@
 import { isMicrophoneUnavailableError, isPermissionDeniedMicrophoneError } from '@/utils/platform/microphonePermissions';
 import type { MicSessionFailure } from '@/voice/runtime/mic/MicSession';
 import { readVoiceProviderCredentialRemediationCode } from '@happier-dev/protocol/voice/providerOperations';
+import { CONNECTED_SERVICE_UX_DIAGNOSTIC_ACTIONS, readConnectedServiceUxDiagnosticFromError, type ConnectedServiceUxDiagnosticV1 } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
 
 import type {
     VoiceMachineError,
@@ -93,15 +94,25 @@ export function resolveVoiceMachineErrorKind(reason: string, preferredKind?: Voi
 export function createVoiceMachineError(params: Readonly<{
     kind: VoiceMachineErrorKind;
     reason: string;
+    uxDiagnostic?: ConnectedServiceUxDiagnosticV1;
 }>): VoiceMachineError {
     const policy = POLICY_BY_KIND[params.kind];
+    const uxDiagnostic = params.uxDiagnostic;
     return {
         kind: params.kind,
-        reason: params.reason,
+        reason: uxDiagnostic?.code ?? params.reason,
         ...policy,
+        // Connected Services owns retryability; its refusal stays visible until dismissed.
+        ...(uxDiagnostic ? {
+            uxDiagnostic,
+            retryPolicy: uxDiagnostic.retryable ? 'user_action' as const : 'never' as const,
+            recoveryAction: uxDiagnostic.retryable && uxDiagnostic.suggestedActions.includes(CONNECTED_SERVICE_UX_DIAGNOSTIC_ACTIONS.retry)
+                ? 'retry' as const : 'none' as const,
+            presentation: 'error' as const,
+        } : {}),
         // Only a notice ends gracefully. A blocked microphone stays on screen ("Microphone blocked"
         // with Allow, lab ST): projected as a graceful disconnect it was drawn as plain rest.
-        recoverable: policy.presentation === 'notice',
+        recoverable: !uxDiagnostic && policy.presentation === 'notice',
     };
 }
 
@@ -155,6 +166,8 @@ export function classifyVoiceMachineError(
     error: unknown,
     fallback: Readonly<{ kind?: VoiceMachineErrorKind; reason?: string }> = {},
 ): VoiceMachineError {
+    const uxDiagnostic = readConnectedServiceUxDiagnosticFromError(error);
+    if (uxDiagnostic) return createVoiceMachineError({ kind: 'provider_error', reason: uxDiagnostic.code, uxDiagnostic });
     if (isAbortError(error)) {
         return createVoiceMachineError({
             kind: 'turn_aborted',

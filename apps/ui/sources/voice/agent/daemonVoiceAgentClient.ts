@@ -1,4 +1,5 @@
 import { createRpcCallError } from '@/sync/runtime/rpcErrors';
+import { readConnectedServiceUxDiagnosticFromError } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
 import { sessionRpcWithServerAccountScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { isSocketIoAckTimeoutError } from '@happier-dev/sync-client';
@@ -29,12 +30,11 @@ function ensureOk<S extends { safeParse: (v: unknown) => unknown }>(value: unkno
   throw new Error('invalid_rpc_response');
 }
 
-function throwIfRpcError(value: any): void {
-  if (value && typeof value === 'object' && typeof value.error === 'string') {
-    throw createRpcCallError({ error: value.error, errorCode: value.errorCode });
-  }
-  if (value && typeof value === 'object' && (value as any).ok === false && typeof (value as any).error === 'string') {
-    throw createRpcCallError({ error: String((value as any).error), errorCode: (value as any).errorCode });
+function throwIfRpcError(value: unknown): void {
+  if (value && typeof value === 'object' && 'error' in value && typeof value.error === 'string') {
+    const uxDiagnostic = readConnectedServiceUxDiagnosticFromError(value);
+    throw Object.assign(createRpcCallError({ error: value.error,
+      errorCode: 'errorCode' in value && typeof value.errorCode === 'string' ? value.errorCode : undefined }), uxDiagnostic ? { uxDiagnostic } : {});
   }
 }
 

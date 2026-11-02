@@ -138,6 +138,7 @@ async function readConversation(target: VoiceStartIntent = { kind: 'default' }):
         inUseVoice: snapshot.status === 'connected' ? snapshot.inUseVoice ?? null : null,
         presentation: projectVoiceAttemptPresentation({
             control, attemptId, ended: visibleEnded !== null, errorCode: snapshot.errorCode, errorMessage: snapshot.errorMessage,
+            errorConnectedServiceDiagnostic: snapshot.errorConnectedServiceDiagnostic,
             recoveryAction, recoveryContext: context,
             serviceTitle: entry ? resolveVoiceServiceTitle(entry, tLoose, createPluginLocalizedTextResolver({ projection: null })) : t('voicePresence.title'),
             agentTitle: agent ? resolveAgentCatalogTitle(agent.localId) : null,

@@ -183,6 +183,7 @@ const SNAPSHOT_FIELDS = {
   micMuted: true,
   errorCode: true,
   errorMessage: true,
+  errorConnectedServiceDiagnostic: true,
   errorRecoveryAction: true,
   errorPresentation: true,
   presentationState: true,
@@ -213,6 +214,7 @@ function normalizeVoiceSessionSnapshot(snapshot: VoiceSessionSnapshot): VoiceSes
     // Ensure optional error fields clear when omitted from a later snapshot.
     errorCode: snapshot.errorCode,
     errorMessage: snapshot.errorMessage,
+    errorConnectedServiceDiagnostic: snapshot.errorConnectedServiceDiagnostic,
     errorRecoveryAction: snapshot.errorRecoveryAction,
     errorPresentation: snapshot.errorPresentation,
     presentationState: snapshot.presentationState,

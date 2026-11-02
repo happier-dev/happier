@@ -13,6 +13,7 @@ import {
   SessionOrganizationSnapshotResponseSchema,
   SPAWN_SESSION_ERROR_CODES,
 } from '@happier-dev/protocol';
+import { ManagedMachineActionOutputSchemasV1, managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { ACP_CATALOG_ROWS_ROUTE_V1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 import { SessionCreationCorrespondenceV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
@@ -154,9 +155,13 @@ function commitFixtureSession(id: string) {
   return record;
 }
 // Real Sync owns tuple parsing, retries and projection application; only Home HTTP is synthetic.
-async function respondToServerRequest(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+async function respondToServerRequest(input: RequestInfo | URL, init?: RequestInit): Promise<Response | null> {
   const path = new URL(String(input)).pathname;
+  if (path === '/v2/sessions/read-batch') return null;
   const json = (body: unknown) => Response.json(body);
+  if (path === managedMachineActionEndpointPathV1('machines.managed.list')) {
+    return json(ManagedMachineActionOutputSchemasV1['machines.managed.list'].parse({ machines: [] }));
+  }
   if (path === '/health') return json({});
   if (path === '/v2/cursor') return json({ cursor: 0, changesFloor: 0 });
   if (path === '/v2/changes') return json({ changes: [], nextCursor: 0 });
@@ -339,7 +344,7 @@ afterEach(async () => {
   await connection?.dispose();
   vi.restoreAllMocks();
 });
-async function restoreAccount() {
+async function restoreAccount(account: Pick<Parameters<typeof restoreServerAccountForTest>[0], 'serverIdentityId' | 'credentials'> = {}) {
   unarchiveResponse.mockReset();
   unarchiveResponse.mockImplementation(async () => Response.json({ success: true, archivedAt: null }));
   purposeBindings = { v: 1, bindings: [] };
@@ -349,6 +354,7 @@ async function restoreAccount() {
   sessionListWireOverride = null;
   sessionOrganizationFailure = null;
   connection = await restoreServerAccountForTest({
+    ...account,
     serverUrl: 'https://voice-conversation.example.test', accountId: 'account-1',
     credentialScope: 'restored-home', activation: 'switch', request: createSessionReadBatchFetchBoundary(respondToServerRequest),
   });
@@ -1061,6 +1067,26 @@ describe('ensureVoiceConversationSessionForVoiceHome', () => {
     });
     await expect(ensureVoiceConversationSessionForVoiceHome()).resolves.toBe('voice-home-session');
     expect(spawnResponse).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([false, true])('keeps the connected account diagnostic through carrier creation (retryable=%s)', async retryable => {
+    const { createAccountTokenForTests } = await import('@/dev/testkit/harness/homeGovernanceHarness');
+    await connection.dispose();
+    await restoreAccount({ serverIdentityId: 'srv_voice_connected_account',
+      credentials: { token: createAccountTokenForTests('account-1', { currentAccount: true }) } });
+    const { ConnectedServiceUxDiagnosticV1Schema } = await import('@happier-dev/protocol/connect/connectedServiceUxDiagnostics');
+    const uxDiagnostic = ConnectedServiceUxDiagnosticV1Schema.parse({
+      code: retryable ? 'connected_service_credential_refresh_unavailable' : 'connected_service_credential_reconnect_required',
+      failurePhase: 'materialization', source: 'spawn_resume', serviceId: 'happier.agent.codex/openai-codex',
+      profileId: 'voice-profile', retryable,
+      suggestedActions: retryable ? ['retry', 'open_connected_accounts'] : ['reconnect_profile', 'open_connected_accounts'],
+    });
+    spawnResponse.mockResolvedValueOnce({ type: 'error', code: 'spawn_failed', retryable,
+      launchError: { kind: 'launch_error', code: uxDiagnostic.code, message: 'PRIVATE_PROVIDER_BODY', uxDiagnostic } });
+    const { ensureVoiceConversationSessionForVoiceHome } = await loadConversationSession();
+    const rejection = await ensureVoiceConversationSessionForVoiceHome().then(() => null, (error: unknown) => error);
+    expect(rejection).toMatchObject({ code: uxDiagnostic.code, message: uxDiagnostic.code, uxDiagnostic });
+    expect(JSON.stringify(rejection)).not.toContain('PRIVATE_PROVIDER_BODY');
   });
 
   it('does not expose private raw spawn diagnostics across the canonical Action boundary', async () => {

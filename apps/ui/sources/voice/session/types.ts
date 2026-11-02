@@ -1,5 +1,6 @@
 import type { PendingDeliveryBlockedReason } from '@happier-dev/protocol';
 import { readRpcErrorCode } from '@/sync/runtime/rpcErrors';
+import { readConnectedServiceUxDiagnosticFromError, type ConnectedServiceUxDiagnosticV1 } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
 import type { VoiceConversationInUseVoice } from '@happier-dev/protocol/actions/voiceConversationActionFamily';
 import type {
@@ -78,6 +79,7 @@ export type VoiceSessionSnapshot = Readonly<{
   micMuted?: boolean;
   errorCode?: string;
   errorMessage?: string;
+  errorConnectedServiceDiagnostic?: ConnectedServiceUxDiagnosticV1;
   errorRecoveryAction?: import('@/voice/runtime/machine/voiceConversationRuntimeTypes').VoiceMachineRecoveryAction;
   errorPresentation?: import('@/voice/runtime/machine/voiceConversationRuntimeTypes').VoiceMachineErrorPresentation;
   presentationState?: VoiceSessionPresentationState;
@@ -189,11 +191,13 @@ export function createVoiceTextTurnRejectedBeforeEffectError(
   );
   if (error instanceof Error) rejection.name = error.name;
   const rpcErrorCode = readRpcErrorCode(error);
+  const uxDiagnostic = readConnectedServiceUxDiagnosticFromError(error);
   return Object.assign(rejection, {
     code: VOICE_TEXT_TURN_REJECTED_BEFORE_EFFECT,
     pendingDeliveryBlockedReason,
     cause: error,
     ...(rpcErrorCode ? { rpcErrorCode } : {}),
+    ...(uxDiagnostic ? { uxDiagnostic } : {}),
   });
 }
 

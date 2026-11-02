@@ -51,6 +51,7 @@ import { SessionRuntimeIssueV1Schema } from '../../sessions/control/runtimeIssue
 import { ActionInputIssueSchema } from '../../actions/executor/actionInputValidation.js';
 import { ActionErrorClassV1Schema, type ActionErrorClassV1 } from '../../actions/actionErrorClassV1.js';
 import { WorkflowTargetUnavailableReasonV1Schema } from '../../workflows/workflowTargetUnavailableReasonV1.js';
+import { ConnectedServiceUxDiagnosticV1Schema, readConnectedServiceUxDiagnosticFromError } from '../../connect/connectedServiceUxDiagnostics.js';
 
 /** A refusal offers choices, never credential material or permission to use a route. */
 export const ExecutionRunChildChoiceV1Schema = lazyZodSchema(() => z.strictObject({
@@ -95,6 +96,7 @@ export const ExecutionRunStartFailureDetailsV1Schema = lazyZodSchema(() => z.str
   updateRequired: z.optional(OperationUpdateRequiredV1Schema),
   childChoice: z.optional(ExecutionRunChildChoiceV1Schema),
   providerError: z.optional(ProviderErrorV1Schema),
+  uxDiagnostic: z.optional(ConnectedServiceUxDiagnosticV1Schema),
   issues: z.optional(z.array(ActionInputIssueSchema)),
 }));
 export type ExecutionRunStartFailureDetailsV1 = z.infer<typeof ExecutionRunStartFailureDetailsV1Schema>;
@@ -129,6 +131,7 @@ export function withExecutionRunStartFailureDetails(
     && 'providerError' in details ? details.providerError : undefined);
   const issues = z.array(ActionInputIssueSchema).safeParse(details && typeof details === 'object'
     && 'issues' in details ? details.issues : undefined);
+  const uxDiagnostic = readConnectedServiceUxDiagnosticFromError(details);
   return {
     executionRunStart: { v: 1, runCreation, ...(parsedClass.success ? { errorClass: parsedClass.data } : {}),
       ...(refusal.success ? { refusal: refusal.data } : {}) },
@@ -136,6 +139,7 @@ export function withExecutionRunStartFailureDetails(
     ...(childChoice.success ? { childChoice: childChoice.data } : {}),
     ...(providerError.success ? { providerError: providerError.data } : {}),
     ...(issues.success ? { issues: issues.data } : {}),
+    ...(uxDiagnostic ? { uxDiagnostic } : {}),
   };
 }
 
@@ -148,6 +152,7 @@ export const ExecutionRunErrorSchema = lazyZodSchema(() => z.looseObject({
   code: z.string().check(z.minLength(1)),
   message: z.optional(z.string()),
   runtimeIssueV1: z.optional(SessionRuntimeIssueV1Schema),
+  uxDiagnostic: z.optional(ConnectedServiceUxDiagnosticV1Schema),
 }));
 export type ExecutionRunError = z.infer<typeof ExecutionRunErrorSchema>;
 

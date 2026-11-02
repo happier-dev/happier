@@ -811,10 +811,10 @@ export async function initializeVoiceAgentHandle({
             // Keep the exact startup failure instead of returning a handle
             // whose first stream would replace it with "Not running".
             if (retainedRunState.runId === started.voiceAgentId && retainedRunState.status === 'failed') {
-                throw createRpcCallError({
+                throw Object.assign(createRpcCallError({
                     error: retainedRunState.error?.message ?? 'Execution Run startup failed',
                     errorCode: retainedRunState.error?.code ?? 'execution_run_failed',
-                });
+                }), retainedRunState.error?.uxDiagnostic ? { uxDiagnostic: retainedRunState.error.uxDiagnostic } : {});
             }
         }
         try {

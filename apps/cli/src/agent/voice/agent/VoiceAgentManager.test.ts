@@ -6,6 +6,7 @@ import { ProviderBoundModelRefSchema, buildBackendTargetKeyV2, createVoiceAgentO
 import type { ExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
 import type { BackendFactory, ResolveVoicePromptPreparationArgs, VoiceAgentTurnStreamEvent } from './voiceAgentTypes';
 import { VoiceAgentError, VoiceAgentManager } from './VoiceAgentManager';
+import { ConnectedServiceSpawnProfileActionRequiredError } from '@/daemon/connectedServices/resolveConnectedServiceAuthForSpawn';
 import { createVoiceSessionRuntimeThroughNativeFactory } from '@/agent/runtime/bridges/executionRun/testkit/nativeSessionContext';
 import type { AgentRuntime, AgentSessionOpenRequest, AgentSessionRuntimeContext, AgentSessionRuntimeEvent, AgentSessionSendRequest, AgentSessionSendResult } from '@happier-dev/plugin-sdk/agents/runtime';
 import { ApiSessionClient } from '@/api/session/sessionClient';
@@ -1371,6 +1372,23 @@ describe('VoiceAgentManager', () => {
 
     await manager.commit({ voiceAgentId: started.voiceAgentId });
     expect(capturedOpts.map((options) => options.connectedServices)).toEqual([connectedServices, connectedServices]);
+    await manager.dispose();
+  });
+
+  it('retains the connected account owner diagnostic when Voice start requires profile action', async () => {
+    const manager = new VoiceAgentManager({ createBackend: () => {
+      throw new ConnectedServiceSpawnProfileActionRequiredError({
+        serviceId: 'happier.agent.codex/openai-codex', profileId: 'work', status: 'needs_reauth',
+      });
+    } });
+    await expect(manager.start({ backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+      chatModelId: 'chat-model', commitModelId: 'commit-model', permissionIntent: 'read-only',
+      idleTtlSeconds: 60, initialContext: 'CTX',
+    })).rejects.toMatchObject({ code: 'connected_service_credential_reconnect_required', uxDiagnostic: {
+      code: 'connected_service_credential_reconnect_required', retryable: false,
+      serviceId: 'happier.agent.codex/openai-codex', profileId: 'work',
+      suggestedActions: ['reconnect_profile', 'open_connected_accounts'],
+    } });
     await manager.dispose();
   });
 

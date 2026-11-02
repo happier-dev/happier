@@ -1,4 +1,4 @@
-import { CONNECTED_SERVICE_UX_DIAGNOSTIC_ACTIONS, CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
+
 import { buildBackendTargetKeyV2, readBackendTargetRefV2, type BackendTargetRefV2, type PersistedBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import type { SessionModelSelectionV1 } from '@happier-dev/protocol/providers/model-selection';
 import { buildQualifiedPluginContributionKey, type PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
@@ -554,11 +554,7 @@ function toVoiceConversationSpawnError(spawned: unknown): Error {
     const errorDetail = isConnectedServiceUxDiagnosticSpawnErrorDetail(rawErrorDetail)
         ? rawErrorDetail
         : null;
-    const uxDiagnostic = errorDetail?.uxDiagnostic ?? null;
-    const isRetryableCredentialRefresh =
-        uxDiagnostic?.code === CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceCredentialRefreshUnavailable
-        && uxDiagnostic.retryable === true
-        && uxDiagnostic.suggestedActions.includes(CONNECTED_SERVICE_UX_DIAGNOSTIC_ACTIONS.retry);
+    const uxDiagnostic = errorDetail?.uxDiagnostic ?? (launchError.success ? launchError.data.uxDiagnostic : null);
     const isRetryableProviderFailure = spawnRecord.retryableProviderFailure === true;
     const safeMessage = isRetryableProviderFailure
         ? 'service_temporarily_unavailable'
@@ -566,10 +562,11 @@ function toVoiceConversationSpawnError(spawned: unknown): Error {
     return Object.assign(
         new Error(safeMessage),
         {
-            code: isRetryableCredentialRefresh || isRetryableProviderFailure
+            code: isRetryableProviderFailure
                 ? 'service_temporarily_unavailable'
                 : errorCode ?? 'VOICE_CONVERSATION_SPAWN_FAILED',
             ...(errorDetail ? { errorDetail } : {}),
+            ...(uxDiagnostic ? { uxDiagnostic } : {}),
             ...(spawnRecord.spawnAttemptCustody
                 ? { spawnAttemptCustody: spawnRecord.spawnAttemptCustody }
                 : {}),
@@ -638,6 +635,7 @@ async function spawnVoiceConversationSession(params: Readonly<{
             ? {
                 errorCode: launchErrorCode ?? action.result.code,
                 errorMessage: launchErrorCode ?? action.result.code,
+                errorDetail: 'launchError' in action.result ? action.result.launchError : undefined,
                 retryableProviderFailure:
                     'providerError' in action.result
                     && action.result.providerError?.retryable === true

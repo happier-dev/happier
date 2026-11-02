@@ -4,6 +4,29 @@ import { deriveLocalVoiceSessionSnapshot } from '@/voice/runtime/machine/deriveL
 import { useVoiceConversationRuntimeStore } from '@/voice/runtime/machine/voiceConversationRuntimeStore';
 
 describe('voiceSessionStore subscriptions', () => {
+  it('publishes connected-account repair changes and clears them after recovery', async () => {
+    vi.resetModules();
+    const { ConnectedServiceUxDiagnosticV1Schema } = await import('@happier-dev/protocol/connect/connectedServiceUxDiagnostics');
+    const { getVoiceSessionSnapshot, setVoiceSessionSnapshot, resetVoiceSessionRuntimeStateForTests } = await import('./voiceSessionStore');
+    const snapshot = { adapterId: 'local_conversation', sessionId: 's1', status: 'disconnected' as const,
+      mode: 'idle' as const, canStop: false, errorCode: 'provider_error', errorMessage: 'connected_account_unavailable' };
+    const diagnostic = ConnectedServiceUxDiagnosticV1Schema.parse({
+      code: 'connected_service_credential_reconnect_required', source: 'spawn_resume', failurePhase: 'materialization',
+      serviceId: 'happier.agent.codex/openai-codex', profileId: 'work', retryable: false,
+      suggestedActions: ['reconnect_profile', 'open_connected_accounts'],
+    });
+    try {
+      setVoiceSessionSnapshot(snapshot);
+      const unavailable = getVoiceSessionSnapshot();
+      setVoiceSessionSnapshot({ ...snapshot, errorConnectedServiceDiagnostic: diagnostic });
+      expect(getVoiceSessionSnapshot()).not.toBe(unavailable);
+      expect(getVoiceSessionSnapshot().errorConnectedServiceDiagnostic).toEqual(diagnostic);
+      setVoiceSessionSnapshot({ ...snapshot, status: 'connected', canStop: true });
+      expect(getVoiceSessionSnapshot().errorConnectedServiceDiagnostic).toBeUndefined();
+    } finally {
+      await resetVoiceSessionRuntimeStateForTests();
+    }
+  });
   it('publishes Retry availability and withdrawal during the real reconnect projection', async () => {
     vi.resetModules();
     const { getVoiceSessionSnapshot, setVoiceSessionSnapshot, subscribeToVoiceSessionSnapshot } = await import('./voiceSessionStore');

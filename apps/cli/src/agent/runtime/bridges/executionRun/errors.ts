@@ -11,6 +11,7 @@ import type { AgentRuntimeDiagnosticDataV1 } from '@happier-dev/protocol/runtime
 import { redactDiagnosticsUrl } from '@happier-dev/protocol/browser/diagnostics/egress/headers';
 import { isSensitiveUrlPathSegment } from '@happier-dev/protocol/browser/diagnostics/egress/url';
 import axios from 'axios';
+import { readConnectedServiceUxDiagnosticFromError } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
 
 /**
  * Preparation precedes fresh Run creation. The refusal keeps the error's own typed code; an error with
@@ -108,7 +109,9 @@ export function readExecutionRunRuntimeIssue(error: unknown): NonNullable<Execut
 export function projectExecutionRunError(error: unknown, context?: Readonly<{ runId: string }>): NonNullable<ExecutionRunState['error']> & Readonly<{ message: string }> {
   recordExecutionRunHttpFailure(error, value => value, context);
   const runtimeIssueV1 = readExecutionRunRuntimeIssue(error);
+  const uxDiagnostic = readConnectedServiceUxDiagnosticFromError(error);
   return { code: readExecutionRunErrorCode(error) ?? 'execution_run_failed', message: readExecutionRunErrorMessage(error),
+    ...(uxDiagnostic ? { uxDiagnostic } : {}),
     ...(runtimeIssueV1 ? { runtimeIssueV1 } : {}) };
 }
 
@@ -155,10 +158,11 @@ export function sanitizeExecutionRunError(
   if (error instanceof Error) sanitized.name = error.name;
   const code = readExecutionRunErrorCode(error);
   const runtimeIssueV1 = readExecutionRunRuntimeIssue(error);
+  const uxDiagnostic = readConnectedServiceUxDiagnosticFromError(error);
   return Object.assign(sanitized, code ? { code } : {}, runtimeIssueV1 ? { runtimeIssueV1: {
     ...runtimeIssueV1,
     ...(runtimeIssueV1.sanitizedPreview ? { sanitizedPreview: sanitize(runtimeIssueV1.sanitizedPreview) } : {}),
-  } } : {});
+  } } : {}, uxDiagnostic ? { uxDiagnostic, details: { uxDiagnostic } } : {});
 }
 
 export function createExecutionRunCodedError(code: string, message: string): Error {

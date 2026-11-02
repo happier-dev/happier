@@ -18,6 +18,7 @@ export function projectSessionSpawnFailure(input: Readonly<{
       ? sanitizeConnectedServiceDiagnosticString(reason) : '';
     return { type: 'error', code: 'spawn_failed', retryable: diagnostic.retryable,
       launchError: { kind: 'launch_error', code: diagnostic.code,
+        uxDiagnostic: diagnostic,
         message: diagnostic.code === 'connected_service_credential_reconnect_required'
           ? 'Reconnect the selected Connected Account profile, then retry.'
           : `The selected Connected Account could not be prepared.${cause ? ` Reason: ${cause}.` : ''} Review Connected Accounts, then retry.` } };

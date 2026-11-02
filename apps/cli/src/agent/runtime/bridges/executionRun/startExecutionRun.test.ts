@@ -519,6 +519,32 @@ describe('startExecutionRun', () => {
       }
     },
   );
+  it('keeps the connected account action-required reason across the Voice Run runtime factory', async () => {
+    const { ConnectedServiceSpawnProfileActionRequiredError } = await import('@/daemon/connectedServices/resolveConnectedServiceAuthForSpawn');
+    const runs = new Map<string, ExecutionRunState>();
+    const controllers = new Map<string, ExecutionRunController>();
+    const createRuntime = () => { throw new ConnectedServiceSpawnProfileActionRequiredError({
+      serviceId: 'happier.agent.codex/openai-codex', profileId: 'work', status: 'needs_reauth',
+    }); };
+    const voiceAgentManager = new VoiceAgentManager({ createRuntime });
+    const selection = { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: null, modelId: 'voice-chat' };
+    let terminalError: ExecutionRunState['error'];
+    try {
+      await startExecutionRun({
+        params: { sessionId: 'parent_session_1', intent: 'voice_agent', backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+          modelSelection: selection, connectedServices: null, intentInput: { commitModelSelection: selection },
+          permissionMode: 'read_only', retentionPolicy: 'resumable', runClass: 'long_lived', ioMode: 'streaming', bootstrapMode: 'none' },
+        parentProvider: 'codex', sendAcp: async () => {}, streamedTranscriptSession: null, createRuntime,
+        getNowMs: () => 1, budgetRegistry: null, runs, controllers, enqueueMarkerWrite: async () => {},
+        writeActivityMarker: async () => {}, finishRun: async (_id, patch) => { terminalError = patch.error; },
+        executeBoundedRun: async () => {}, send: async () => ({ ok: true }), voiceAgentManager,
+      }).catch(() => undefined);
+      await vi.waitFor(() => expect(terminalError).toMatchObject({ code: 'connected_service_credential_reconnect_required', uxDiagnostic: {
+        serviceId: 'happier.agent.codex/openai-codex', profileId: 'work', retryable: false,
+      } }));
+    } finally { await voiceAgentManager.dispose(); }
+  });
+
   it.each([true, false])('joins parent startup only for an omitted Voice role (explicit commit: %s)', async explicitCommit => {
     const runs = new Map<string, ExecutionRunState>();
     const controllers = new Map<string, ExecutionRunController>();

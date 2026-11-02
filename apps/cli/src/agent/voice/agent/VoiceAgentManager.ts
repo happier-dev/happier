@@ -42,6 +42,7 @@ import type {
 } from './voiceAgentTypes';
 import type { PermissionIntent } from '@happier-dev/agents';
 import { VoiceAgentError } from './voiceAgentTypes';
+import { toVoiceAgentStartError } from './voiceAgentStartError';
 import { renderSessionInputContextPromptV1 } from '@happier-dev/protocol/sessions/messages/sessionInputPromptContextV1';
 import type { SessionFollowPreparedContext } from '@/agent/runtime/session/follow/sessionFollowContextReconciler';
 import { isSessionProviderInputOutcomeTerminal } from '@/agent/runtime/session/input/providerInputOutcome';
@@ -722,7 +723,7 @@ export class VoiceAgentManager {
         voiceAgent.commitSessionId = null;
       }
       if (commitBackend) await this.disposeRuntimeOnce(commitBackend).catch(() => {});
-      throw new VoiceAgentError('VOICE_AGENT_START_FAILED', e instanceof Error ? e.message : 'commit backend unavailable');
+      throw toVoiceAgentStartError(e, resolveExecutionRunRuntimeBackendId(voiceAgent.backendTarget), 'commit backend unavailable');
     }
   }
 
@@ -991,10 +992,7 @@ export class VoiceAgentManager {
         disposals.push(this.disposeRuntimeOnce(chatBackendForCleanup));
       }
       await Promise.allSettled(disposals);
-      if (e instanceof VoiceAgentError) {
-        throw e;
-      }
-      throw new VoiceAgentError('VOICE_AGENT_START_FAILED', e instanceof Error ? e.message : 'start failed');
+      throw toVoiceAgentStartError(e, resolveExecutionRunRuntimeBackendId(params.backendTarget), 'start failed');
     } finally {
       startSignal.removeEventListener('abort', cancelStart);
       if (this.startingVoiceAgents.get(voiceAgentId) === startOccurrence) {

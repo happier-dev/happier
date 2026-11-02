@@ -1,4 +1,5 @@
 import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString';
+import { readConnectedServiceUxDiagnosticFromError } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
 
 import { voiceConversationRuntimeMachine } from './VoiceConversationRuntimeMachine';
 import { createVoiceMachineError, resolveVoiceMachineErrorKind } from './voiceMachineError';
@@ -31,6 +32,7 @@ export function transitionVoiceRuntimeToIdle(params: Readonly<{
     const error = createVoiceMachineError({
         kind: resolveVoiceMachineErrorKind(reason, params.kind),
         reason,
+        uxDiagnostic: readConnectedServiceUxDiagnosticFromError(params.cause) ?? undefined,
     });
     if (params.cause !== undefined) {
         Object.defineProperty(error, 'cause', { value: params.cause, enumerable: false });

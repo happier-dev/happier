@@ -42,6 +42,8 @@ describe('Session launch cause transport', () => {
     expect(result).toMatchObject({ code: 'spawn_failed', retryable: false, launchError: {
       code: 'connected_service_credential_reconnect_required',
       message: expect.stringMatching(/reconnect/i),
+      uxDiagnostic: { code: 'connected_service_credential_reconnect_required',
+        serviceId: 'acme.agent/account', profileId: 'revoked', retryable: false },
     } });
   });
   it('preserves a safe Provider refusal through the daemon control producer and consumer', async () => {

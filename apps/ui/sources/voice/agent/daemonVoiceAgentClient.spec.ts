@@ -1,7 +1,8 @@
 import { beforeEach, afterAll, describe, expect, it, vi } from 'vitest';
 import { RPC_ERROR_CODES, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
-import { ProviderBoundModelRefSchema, SessionCurrentProjectionRecordV1Schema, ExecutionRunEnsureOrStartRequestSchema } from '@happier-dev/protocol';
+import { ProviderBoundModelRefSchema, ExecutionRunEnsureOrStartRequestSchema } from '@happier-dev/protocol';
 import { createDeferred, createSessionFixture } from '@/dev/testkit';
+import { createPlainSessionByIdResponseFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 
@@ -33,15 +34,11 @@ function installDaemonBoundary() {
   network.setHttpResponder(async input => {
     const path = new URL(String(input)).pathname;
     if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
+    if (path === '/v2/sessions/read-batch') return null;
     const match = /^\/v2\/sessions\/([^/]+)$/.exec(path);
     if (!match) return null;
     const session = createSessionFixture({ id: decodeURIComponent(match[1]), serverId: home.id, active: true });
-    return Response.json({ session: SessionCurrentProjectionRecordV1Schema.parse({
-      ...session, metadataLayoutVersion: 0, metadata: JSON.stringify(session.metadata),
-      effectiveAccess: { v: 1, level: session.access!.level, sources: [{ kind: 'owner' }], capabilities: session.access!.capabilities },
-      responsibleAccountId: null, responsibleAccount: null, share: null, archivedAt: null,
-      agentState: null, dataEncryptionKey: null, pendingCount: 0, pendingVersion: 0,
-    }) });
+    return Response.json(createPlainSessionByIdResponseFixture(session));
   });
   network.setRpcResponder(async request => {
     if (!request.token || !request.payload || typeof request.payload !== 'object' || Array.isArray(request.payload)) {
@@ -79,6 +76,18 @@ async function settleWithin<T>(
 }
 
 describe('DaemonVoiceAgentClient', () => {
+  it('retains the connected account diagnostic at the Voice RPC boundary', async () => {
+    const uxDiagnostic = { code: 'connected_service_credential_reconnect_required', failurePhase: 'materialization',
+      source: 'spawn_resume', serviceId: 'happier.agent.codex/openai-codex', profileId: 'work', retryable: false,
+      suggestedActions: ['reconnect_profile', 'open_connected_accounts'] };
+    daemonRpc.mockResolvedValueOnce({ ok: false, error: uxDiagnostic.code, errorCode: uxDiagnostic.code,
+      details: { executionRunStart: { v: 1, runCreation: 'noRunCreated' }, uxDiagnostic } });
+    const { DaemonVoiceAgentClient } = await import('./daemonVoiceAgentClient');
+    await expect(new DaemonVoiceAgentClient({ serverId: home.id, accountId: 'account-a' }).start({
+      sessionId: 's1', agentId: 'codex', chatModelId: 'fast', commitModelId: 'fast',
+      permissionIntent: 'read-only', idleTtlSeconds: 300, initialContext: 'ctx',
+    })).rejects.toMatchObject({ rpcErrorCode: uxDiagnostic.code, uxDiagnostic });
+  });
   it('preserves a configured ACP Session target and exact model identity at daemon admission', async () => {
     daemonRpc.mockResolvedValueOnce({ ok: true, runId: 'run_acp', created: true });
     const { DaemonVoiceAgentClient } = await import('./daemonVoiceAgentClient');
