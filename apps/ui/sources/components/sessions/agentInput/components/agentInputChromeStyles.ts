@@ -13,7 +13,9 @@ type Theme = UnistylesThemes[keyof UnistylesThemes];
  * paints these, and settings previews render the same chips inside the same panel, so the two
  * cannot drift apart.
  */
-/** Native rows state their rhythm as margins; chips and the rows around them share this one. */
+/** Native chips state the rail's column gap as their own trailing margin. */
+export const NATIVE_ACTION_CHIP_GAP_X = 6;
+/** The gap between wrapped chip lines: native rows state it as margins, web rows as `rowGap`; the rails' hit areas split this one value. */
 export const NATIVE_ACTION_CHIP_GAP_Y = 1;
 export const AGENT_INPUT_PANEL_PADDING_TOP = 2;
 
@@ -28,6 +30,8 @@ export const AGENT_INPUT_FIELD_ACCESSORY_EDGES_PX = { leading: 0, trailing: 0, t
  */
 export const AGENT_INPUT_EXPANSION_TOGGLE_HIT_REACH = { bottom: 4 } as const;
 export const AGENT_INPUT_PANEL_PADDING_BOTTOM = 8;
+/** The field's own breathing room above and below its text: the step between the typed line and the chip rail. */
+export const AGENT_INPUT_FIELD_PADDING_Y = Platform.OS === 'web' ? 10 : 8;
 
 /**
  * The composer's one edge (calm-shell C1), the same for live, read-only, document and preview composers and
@@ -39,6 +43,15 @@ export const AGENT_INPUT_PANEL_PADDING_BOTTOM = 8;
 export function resolveAgentInputPanelEdgeStyle(theme: Theme) {
     const width = theme.dark ? 1.5 : 2;
     return { borderWidth: width, borderColor: theme.colors.glass.border } as const;
+}
+
+/**
+ * Over a picture or the planet the light rim stops reading as a whisper and becomes a white outline, so
+ * there the composer takes the flat edge's ink (DESIGN.md: the composer uses the flat edge; on light it
+ * is ink, never white). Dark keeps its even glass line. `GlassSurface` applies it while it is backed.
+ */
+export function resolveAgentInputPanelBackedEdgeStyle(theme: Theme) {
+    return theme.dark ? null : ({ borderColor: theme.colors.border.surface } as const);
 }
 
 /** The material plane owns paint; this layout is shared by live input and previews. */
@@ -70,7 +83,7 @@ export const AGENT_INPUT_ACTION_CHIP_STYLE = {
     justifyContent: 'center' as const,
     height: 32,
     gap: 6,
-    ...(Platform.OS === 'web' ? {} : { marginRight: 6, marginBottom: NATIVE_ACTION_CHIP_GAP_Y }),
+    ...(Platform.OS === 'web' ? {} : { marginRight: NATIVE_ACTION_CHIP_GAP_X, marginBottom: NATIVE_ACTION_CHIP_GAP_Y }),
 };
 
 /** A chip while pressed: the standard pressed dip. */
@@ -84,11 +97,15 @@ export const AGENT_INPUT_ACTION_CHIP_ICON_ONLY_STYLE = {
     gap: 0,
 };
 
+/**
+ * Chip labels are quiet settings, not headings: Inter medium in the chip tint. Semibold (0.2's weight, drawn
+ * there in the lighter Apple system face) read heavy and dark in Inter beside the prompt (owner 2026-10-30).
+ */
 export function resolveAgentInputActionChipTextStyle(theme: Theme) {
     return {
         fontSize: 13,
         color: theme.colors.composer.chipTint,
-        fontWeight: '600' as const,
-        ...Typography.default('semiBold'),
+        fontWeight: '500' as const,
+        ...Typography.default('medium'),
     };
 }
