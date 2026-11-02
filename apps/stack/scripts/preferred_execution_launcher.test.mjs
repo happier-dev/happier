@@ -10,7 +10,7 @@ import { createTempFixture } from './testkit/core/temp_fixture.mjs';
 import { writeFakeBin } from './testkit/core/fake_bin_harness.mjs';
 import { withDependencyRefresh } from './utils/proc/dependency_refresh.mjs';
 import { prepareCommandRepository, renderNativeExecutionProjection } from './utils/dev_targets/native_execution_projection.mjs';
-import { buildRemoteExecCommand, resolveHeavyweightMemoryFloorKiB } from './utils/dev_targets/remote_commands.mjs';
+import { buildRemoteExecCommand, posixQuote, resolveHeavyweightMemoryFloorKiB } from './utils/dev_targets/remote_commands.mjs';
 import { buildNativeAdmissionFixtureEnv, holdNativeAdmissionFixtureMemory, installCliNativeCustodySourceFixture, installNativeAdmissionControllerFixture, installNativeAdmissionFixture } from './testkit/core/native_admission_fixture.mjs';
 import { flushDevTargetSync } from './utils/dev_targets/sync_project.mjs';
 import { syncDevTarget } from './utils/dev_targets/executor.mjs';
@@ -69,7 +69,7 @@ async function executable(path, contents) {
   if (path.endsWith('/node')) {
     // These are internal policy/admission owners, even when their argv contains
     // a compiler or test payload that the external executable fixture handles.
-    contents = contents.replace(/^(#![^\n]*\n)/, `$1case "\${1-}:\${2-}" in\n  *native_execution_projection.mjs:--validate-execution-config) exec ${JSON.stringify(process.execPath)} "$@" ;;\nesac\ncase "\${1-}" in\n  *remote_commands.mjs|*workspace_build_admission.mjs|*worker_disk_budget.mjs|*remote_dependency_bootstrap.mjs|*remote_validation_preparation.mjs) exec ${JSON.stringify(process.execPath)} "$@" ;;\nesac\n`);
+    contents = contents.replace(/^(#![^\n]*\n)/, `$1case "\${1-}:\${2-}" in\n  *native_execution_projection.mjs:--validate-execution-config) exec ${JSON.stringify(process.execPath)} "$@" ;;\nesac\ncase "\${1-}" in\n  *controller_coalescing.mjs|*remote_commands.mjs|*workspace_build_admission.mjs|*worker_disk_budget.mjs|*remote_dependency_bootstrap.mjs|*remote_validation_preparation.mjs) exec ${JSON.stringify(process.execPath)} "$@" ;;\nesac\n`);
   }
   await writeFile(path, contents, 'utf8');
   await chmod(path, 0o755);
@@ -1058,6 +1058,136 @@ esac
     } },
   };
 }
+
+async function controllerCoalescingFixture(t) {
+  const fixture = await memoryRoutingFixture(t);
+  await executable(join(fixture.binDir, 'uname'), '#!/bin/sh\nprintf "Linux\\n"\n');
+  const connections = [];
+  const gate = createServer(socket => { connections.push(socket); socket.write('ready'); });
+  await new Promise(resolveListen => gate.listen(join(fixture.root, 'gate.sock'), resolveListen));
+  t.after(() => { for (const socket of connections) socket.destroy(); gate.close(); });
+  const payload = `const net = require('node:net'); const s = net.connect(${JSON.stringify(join(fixture.root, 'gate.sock'))}); s.once('data', () => { process.stdout.write('payload-started\\n'); process.stdout.write(Buffer.from([0,255])); process.stderr.write('payload-stderr\\n'); }); s.on('end', () => process.exit(7));`;
+  await executable(join(fixture.binDir, 'ssh'), `#!/bin/sh
+case "$*" in
+  *remote_execution_custody.sh*" cancel "*) exit 0 ;;
+  *getconf*) printf '8 0 0.1 22000000 20 0 25480397 28311552 0 0 0 0 0 0 0 linux 25480397\\n' ;;
+  *"&& command -v "*|*-O\\ check*|*-MNf*) exit 0 ;;
+  *remote_execution_custody.sh*) exec ${JSON.stringify(process.execPath)} -e '${payload.replaceAll("'", "'\\''")}' ;;
+  *) exit 0 ;;
+esac
+`);
+  const children = [];
+  t.after(() => { for (const child of children) if (child.exitCode === null) child.kill('SIGTERM'); });
+  function start({ args = ['probe-command', 'coalescing'], env = {}, options = [], isolatedController = false } = {}) {
+    const invocation = [launcher, ...options, '--', ...args];
+    const child = spawn(isolatedController ? process.execPath : '/bin/sh', isolatedController ? [
+      join(repoRoot, 'apps/stack/scripts/utils/dev_targets/controller_coalescing.mjs'),
+      fixture.root, repoRoot, '0', '', invocation.map(posixQuote).join(' '),
+    ] : invocation, {
+      ...fixture.invocation, env: { ...fixture.invocation.env, ...env },
+    });
+    children.push(child);
+    let stdout = '', stderr = '';
+    const stdoutChunks = [];
+    t.after(() => {
+      if (!stdout.includes('payload-started\n')) t.diagnostic(stderr.split('\n').filter(line => !/\:\/\/|bearer |token|secret|password|api_?key|credential|database_url|-----begin|private_key/i.test(line)).join('\n'));
+    });
+    let ready, joined, failed;
+    const started = new Promise((resolveStarted, rejectStarted) => { ready = resolveStarted; failed = rejectStarted; });
+    const attached = new Promise(resolveJoined => { joined = resolveJoined; });
+    child.stdout.on('data', chunk => { stdoutChunks.push(chunk); stdout += chunk; if (stdout.includes('payload-started\n')) { ready(); joined(); } });
+    child.stderr.on('data', chunk => { stderr += chunk; if (stderr.includes('[preferred-execution] coalesced queued')) joined(); });
+    const result = new Promise(resolveExit => child.once('close', code => {
+      if (!stdout.includes('payload-started\n')) failed(new Error(`payload did not start: exit=${code}; ${stderr}`));
+      resolveExit({ code, stdout: Buffer.concat(stdoutChunks), stderr });
+    }));
+    return { child, started, attached, result };
+  }
+  return { connections, start, privateControllerRepo: fixture.root };
+}
+
+test('controller coalescing shares one AUTO dispatch with full output replay and exit status', { timeout: 60000, skip: process.platform !== 'linux' }, async t => {
+  const { start, connections } = await controllerCoalescingFixture(t);
+  const first = start(); await first.started;
+  const second = start(); await second.started;
+  const dispatches = connections.length;
+  for (const socket of connections) socket.end();
+  const results = await Promise.all([first.result, second.result]);
+  assert.equal(dispatches, 1, 'identical callers must produce exactly one outbound payload dispatch');
+  for (const result of results) {
+    assert.equal(result.code, 7);
+    assert.deepEqual(result.stdout, Buffer.concat([Buffer.from('payload-started\n'), Buffer.from([0, 255])]));
+    assert.match(result.stderr, /payload-stderr/);
+  }
+  assert.equal(results[0].stderr, results[1].stderr, 'both callers receive the same stderr replay');
+  const next = start(); await next.started;
+  assert.equal(connections.length, 2, 'a completed result must never serve a new invocation');
+  connections[1].end();
+  assert.equal((await next.result).code, 7);
+});
+
+for (const variant of ['argv', 'env', 'cwd', 'ssh-agent']) test(`controller coalescing keeps different ${variant} in distinct dispatches`, { timeout: 60000, skip: process.platform !== 'linux' }, async t => {
+  const { start, connections } = await controllerCoalescingFixture(t);
+  const first = start(); await first.started;
+  const second = start(variant === 'argv' ? { args: ['probe-command', 'different'] }
+    : variant === 'env' ? { env: { HAPPIER_TYPESCRIPT_COMPILER: 'microsoft' } }
+      : variant === 'ssh-agent' ? { env: { SSH_AUTH_SOCK: '/fixture/different-agent.sock' } }
+      : { options: ['--cwd=apps/stack'] });
+  await second.started;
+  assert.equal(connections.length, 2);
+  for (const socket of connections) socket.end();
+  await Promise.all([first.result, second.result]);
+});
+
+test('controller coalescing queues exactly one whole-package typecheck follower for five requesters', { timeout: 60000, skip: process.platform !== 'linux' }, async t => {
+  const { start, connections } = await controllerCoalescingFixture(t);
+  const request = { args: ['tsc', '--noEmit', '-p', 'apps/stack/tsconfig.json'] };
+  const first = start(request); await first.started;
+  const followers = Array.from({ length: 5 }, () => start(request));
+  await Promise.all(followers.map(follower => follower.attached));
+  const activeDispatches = connections.length;
+  connections[0].end();
+  await first.result;
+  assert.equal(activeDispatches, 1, 'five later typechecks must wait behind the current run');
+  await Promise.all(followers.map(follower => follower.started));
+  assert.equal(connections.length, 2, 'five requesters must share exactly one follower dispatch');
+  connections[1].end();
+  for (const result of await Promise.all(followers.map(follower => follower.result))) assert.equal(result.code, 7);
+});
+
+test('controller coalescing keeps a shared job after first cancellation and ends it after last cancellation', { timeout: 60000, skip: process.platform !== 'linux' }, async t => {
+  const { start, connections } = await controllerCoalescingFixture(t);
+  const first = start(); await first.started;
+  const second = start(); await second.started;
+  assert.equal(connections.length, 1);
+  first.child.kill('SIGTERM');
+  await first.result;
+  assert.equal(connections[0].destroyed, false, 'remaining caller must retain the dispatch');
+  const closed = new Promise(resolveClose => connections[0].once('close', resolveClose));
+  second.child.kill('SIGTERM');
+  await Promise.all([second.result, closed]);
+});
+
+test('controller coalescing ends its real dispatch when its private broker is killed', { timeout: 60000, skip: process.platform !== 'linux' }, async t => {
+  const { start, connections, privateControllerRepo } = await controllerCoalescingFixture(t);
+  const first = start({ isolatedController: true }); await first.started;
+  const observed = spawnSync(process.execPath, [
+    join(repoRoot, 'apps/stack/scripts/utils/dev_targets/controller_coalescing.mjs'), '--status', privateControllerRepo,
+  ], { encoding: 'utf8' });
+  assert.equal(observed.status, 0);
+  const status = JSON.parse(observed.stdout);
+  assert.equal(status.dispatchPids.length, 1);
+  let jobSettled = false;
+  t.after(() => { if (!jobSettled) for (const pid of status.dispatchPids) { try { process.kill(-pid, 'SIGTERM'); } catch (error) { if (error.code !== 'ESRCH') throw error; } } });
+  const closed = new Promise(resolveClose => connections[0].once('close', resolveClose));
+  // This service belongs only to this fixture's private repo; never terminate
+  // the shared checkout's controller or any other lane's command.
+  process.kill(status.pid, 'SIGKILL');
+  assert.equal((await first.result).code, 1);
+  await closed;
+  jobSettled = true;
+});
+
 
 test('automatic placement excludes mac-host unless it is in the configured command pool', async (t) => {
   const fixture = await memoryRoutingFixture(t, { availableKiB: 28000000, roomyLoad: 12 });

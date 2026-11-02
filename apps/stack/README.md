@@ -565,3 +565,15 @@ Or (recommended) persist it via init:
 ```bash
 hstack init --cli-root-dir=/path/to/your/happier-dev-checkout
 ```
+
+In 0.3 development source, noninteractive commands from the shared primary
+checkout on a Linux controller coalesce before worker selection. Identical
+checkout, working directory, command arguments and command-policy environment
+share one dispatch, with stdout/stderr replay from the beginning and the same
+exit status. A whole-package typecheck requested during an active identical
+check joins one queued follower, so it starts after the current check completes.
+Cancelling a caller detaches it; the last caller cancels that shared dispatch.
+Completed results are not cached. Explicit environment options participate in
+identity without appearing in diagnostic identifiers. Sibling-checkout,
+interactive and runtime-control commands keep their existing lifetimes;
+native macOS and Windows dispatch behavior is unchanged.

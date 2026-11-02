@@ -67,6 +67,7 @@ fi
 . "$script_dir/../scripts/utils/dev_targets/native_command_policy.sh" || exit 1
 . "$script_dir/../scripts/utils/dev_targets/native_dispatch_recovery.sh" || exit 1
 . "$script_dir/../scripts/utils/dev_targets/native_placement.sh" || exit 1
+. "$script_dir/../scripts/utils/dev_targets/native_execution_signals.sh" || exit 1
 . "$script_dir/../scripts/utils/proc/native_process_identity.sh" || exit 1
 . "$script_dir/../scripts/utils/proc/native_process_priority.sh" || exit 1
 . "$script_dir/../scripts/utils/proc/native_host_admission_state.sh" || exit 1
@@ -84,6 +85,28 @@ run_dependency_free_node() (
   esac
   exec node "$@"
 )
+
+executor_signal_pid() {
+  # Custody owns signal emission; admission and controller cleanup supply only
+  # their reason and owned child PID. A diagnostic id confers no authority.
+  executor_signal_execution_id=${execution_id:-${HAPPIER_REMOTE_EXECUTION_ID:-unknown}}
+  native_execution_signal "$executor_signal_execution_id" "$executor_signal_execution_id" "$1" TERM pid "$2" ''
+}
+
+# A shared controller owns this pipe's writer. Kernel EOF also covers abrupt
+# broker death; reuse the native signal owner and the existing input reader.
+# Keep its output closed so local exec/fallback and early errors cannot retain
+# a finished dispatch's stdout/stderr while the parent closes its stdin pipe.
+if [ "${HSTACK_EXEC_CONTROLLER_LIFELINE-}" = 1 ] && [ -z "${control_input_pid-}" ]; then
+  exec 5<&0
+  (
+    while IFS= read -r controller_lifeline_line; do :; done
+    native_execution_signal unknown unknown controller_coalescer_eof TERM pgid "$$" ''
+  ) <&5 >/dev/null 2>&1 &
+  control_input_pid=$!
+  export control_input_pid
+  exec 5<&-
+fi
 
 run_remote_ssh_probe() {
   # Read-only observations may retry a failed multiplex channel once without
@@ -504,6 +527,32 @@ quote_remote() {
   printf "'"
   printf '%s' "$1" | sed "s/'/'\"'\"'/g"
   printf "'"
+}
+
+project_inherited_command_environment() {
+  projected_command_environment=
+  for inherited_name in $1; do
+    eval "inherited_present=\${$inherited_name+x}"
+    [ "$inherited_present" = x ] || continue
+    eval "inherited_value=\${$inherited_name}"
+    projected_command_environment="$projected_command_environment export $inherited_name=$(quote_remote "$inherited_value");"
+  done
+}
+
+run_controller_coalesced() {
+  coalesced_command=$(quote_remote "$launcher_path")
+  [ -z "$explicit_target" ] || coalesced_command="$coalesced_command $(quote_remote "--target=$explicit_target")"
+  coalesced_command="$coalesced_command$explicit_remote_restart_options --"
+  for coalesced_argument in "$@"; do
+    coalesced_command="$coalesced_command $(quote_remote "$coalesced_argument")"
+  done
+  coalesced_typecheck=0
+  if [ "$policy_kind" = typecheck ] && { [ "$policy_hasScript" = 1 ] || [ -n "$policy_projectPaths" ]; }; then
+    coalesced_typecheck=1
+  fi
+  exec node "$script_dir/../scripts/utils/dev_targets/controller_coalescing.mjs" \
+    "$repo_root" "$invoked_cwd" "$coalesced_typecheck" \
+    "$controller_coalescing_environment_names" "$coalesced_command"
 }
 
 explicit_remote_restart_options=
@@ -1019,6 +1068,11 @@ if [ "${policy_workspaceSync-1}" != 0 ] && ! command -v mutagen >/dev/null 2>&1;
   printf '%s\n' '[preferred-execution] controller synchronization requires mutagen on PATH; install Mutagen or restore the controller PATH before remote execution' >&2
   exit 127
 fi
+if [ "${HAPPIER_CONTROLLER_COALESCED-}" != 1 ] && [ -z "$command_repo_root" ] \
+    && [ "$explicit_tty" != 1 ] && [ "$control_stdin" != 1 ] \
+    && [ -z "$runtime_build_target" ] && [ "$(uname -s 2>/dev/null || true)" = Linux ]; then
+  run_controller_coalesced "$@"
+fi
 requires_remote_dependencies=$policy_bootstrap
 requires_remote_workspace_preparation=0
 [ "$command_class" = targeted-validation ] && requires_remote_workspace_preparation=1
@@ -1436,17 +1490,58 @@ probe_tmp=$(mktemp -d "${TMPDIR:-/tmp}/hstack-exec.XXXXXX") || {
   exit 1
 }
 cleanup_probe_tmp() { rm -rf -- "$probe_tmp"; }
-trap cleanup_probe_tmp EXIT HUP INT TERM
+probe_children=
+cancel_probe_phase() {
+  trap '' HUP INT TERM
+  probe_cancel_status=$1
+  # These read-only probes have no payload or graceful shutdown protocol.
+  # Pin their descendants while the recorded child still proves ownership.
+  probe_cancel_members=
+  for probe_identity in $probe_children; do
+    probe_pid=${probe_identity%%:*}
+    probe_birth=${probe_identity#*:}
+    heavyweight_process_is_current "$probe_pid" "$probe_birth" || continue
+    probe_descendants=$(collect_descendants "$probe_pid")
+    heavyweight_process_is_current "$probe_pid" "$probe_birth" || continue
+    for probe_member in $probe_descendants; do
+      probe_member_birth=$(heavyweight_process_token "$probe_member")
+      [ -n "$probe_member_birth" ] || continue
+      probe_cancel_members="$probe_cancel_members $probe_member:$probe_member_birth"
+    done
+  done
+  for probe_identity in $probe_cancel_members; do
+    probe_member=${probe_identity%%:*}
+    probe_member_birth=${probe_identity#*:}
+    heavyweight_process_is_current "$probe_member" "$probe_member_birth" || continue
+    native_execution_signal "${execution_id:-unknown}" "${execution_id:-unknown}" controller_probe_cleanup KILL pid "$probe_member" "$probe_identity"
+  done
+  for probe_identity in $probe_children; do
+    wait "${probe_identity%%:*}" 2>/dev/null || true
+  done
+  if command -v release_reservation >/dev/null 2>&1; then release_reservation; fi
+  exit "$probe_cancel_status"
+}
+trap cleanup_probe_tmp EXIT
+trap 'cancel_probe_phase 130' INT TERM
+trap 'cancel_probe_phase 129' HUP
 number=1
 while [ "$number" -le "$target_count" ]; do
   eval "automatic_target=\${target_${number}_automatic-1}"
   if { [ -n "$explicit_target_number" ] && [ "$number" -eq "$explicit_target_number" ]; } || \
      { [ -z "$explicit_target_number" ] && [ "$automatic_target" = 1 ]; }; then
     (probe_target "$number" > "$probe_tmp/$number") &
+    probe_pid=$!
+    probe_birth=$(heavyweight_process_token "$probe_pid")
+    probe_children="$probe_children $probe_pid:$probe_birth"
   fi
   number=$((number + 1))
 done
-wait
+# Only this phase's probes belong to this wait. A coalesced job's stdin
+# reader lives until dispatch completion and must not hold target selection.
+for probe_identity in $probe_children; do
+  wait "${probe_identity%%:*}" 2>/dev/null || true
+done
+probe_children=
 
 # Linux's primary checkout also hosts interactive agents and Stack services.
 # Heavy AUTO commands stay in the configured worker pool, even when an idle
@@ -1824,12 +1919,8 @@ pid_file="$remote_home/remote-exec/$execution_id.pid"
 remote_script="set -euo pipefail; export HAPPIER_DEV_TARGET_EXECUTION=1; export HAPPIER_STACK_PM_CACHE_BASE_DIR=$(quote_remote "$remote_home/cache"); export HAPPIER_WORKSPACE_BUILD_MODE=$(quote_remote "$remote_preparation_build_mode");"
 # Dependency policy applies to preparation as well as the final payload. Explicit
 # per-invocation values retain precedence over inherited controller values.
-if [ "${HAPPIER_STACK_SKIP_REFRESH_DEPS+x}" = x ]; then
-  remote_script="$remote_script export HAPPIER_STACK_SKIP_REFRESH_DEPS=$(quote_remote "$HAPPIER_STACK_SKIP_REFRESH_DEPS");"
-fi
-if [ "${HAPPIER_STACK_DISABLE_REFRESH_DEPS+x}" = x ]; then
-  remote_script="$remote_script export HAPPIER_STACK_DISABLE_REFRESH_DEPS=$(quote_remote "$HAPPIER_STACK_DISABLE_REFRESH_DEPS");"
-fi
+project_inherited_command_environment "$command_preparation_environment_names"
+remote_script="$remote_script$projected_command_environment"
 remote_script="$remote_script$explicit_remote_dependency_environment"
 if [ -n "$remote_path" ]; then remote_script="$remote_script PATH=$(quote_remote "$remote_path"):\$PATH; export PATH;"; fi
 remote_script="$remote_script PATH=$(quote_remote "$remote_home/cache/pnpm-toolchain/bin"):\$PATH; export PATH;"
@@ -1852,14 +1943,11 @@ if [ "${HAPPIER_TYPECHECK_DISPATCHED-}" = 1 ]; then
 fi
 # Transport the override; compiler selection remains owned by the shared
 # resolver on the executing host.
-if [ "${HAPPIER_TYPESCRIPT_COMPILER+x}" = x ]; then
-  remote_command_environment="$remote_command_environment export HAPPIER_TYPESCRIPT_COMPILER=$(quote_remote "$HAPPIER_TYPESCRIPT_COMPILER");"
-fi
+project_inherited_command_environment "$command_payload_environment_names"
+remote_command_environment="$remote_command_environment$projected_command_environment"
 # Build coordinators and finite source exports consume the same existing CPU
 # allowance as compiler leaves. Keep an explicit caller/guest budget intact.
-if [ "${GOMAXPROCS+x}" = x ]; then
-  remote_command_environment="$remote_command_environment export GOMAXPROCS=$(quote_remote "$GOMAXPROCS");"
-elif [ -n "$resource_governor_workers" ]; then
+if [ "${GOMAXPROCS+x}" != x ] && [ -n "$resource_governor_workers" ]; then
   remote_command_environment="$remote_command_environment if [ -z \"\${GOMAXPROCS+x}\" ]; then export GOMAXPROCS=$resource_governor_workers; fi;"
 fi
 if [ "$resource_governor_priority" = background ]; then
@@ -1867,27 +1955,8 @@ if [ "$resource_governor_priority" = background ]; then
     vitest)
       # Preserve an explicit caller budget (which SSH would not otherwise
       # forward) and do not replace a budget already supplied by the guest.
-      if [ "${HAPPIER_VITEST_MAX_WORKERS+x}" = x ]; then
-        remote_command_environment="$remote_command_environment export HAPPIER_VITEST_MAX_WORKERS=$(quote_remote "$HAPPIER_VITEST_MAX_WORKERS");"
-      fi
-      if [ "${VITEST_UI_MAX_FORKS+x}" = x ]; then
-        remote_command_environment="$remote_command_environment export VITEST_UI_MAX_FORKS=$(quote_remote "$VITEST_UI_MAX_FORKS");"
-      fi
-      if [ "${HAPPIER_VITEST_GOVERNOR_MAX_WORKERS+x}" = x ]; then
-        remote_command_environment="$remote_command_environment export HAPPIER_VITEST_GOVERNOR_MAX_WORKERS=$(quote_remote "$HAPPIER_VITEST_GOVERNOR_MAX_WORKERS");"
-      fi
-      if [ "${VITEST_MAX_THREADS+x}" = x ]; then
-        remote_command_environment="$remote_command_environment export VITEST_MAX_THREADS=$(quote_remote "$VITEST_MAX_THREADS");"
-      fi
-      if [ "${VITEST_MIN_THREADS+x}" = x ]; then
-        remote_command_environment="$remote_command_environment export VITEST_MIN_THREADS=$(quote_remote "$VITEST_MIN_THREADS");"
-      fi
-      if [ "${VITEST_MAX_FORKS+x}" = x ]; then
-        remote_command_environment="$remote_command_environment export VITEST_MAX_FORKS=$(quote_remote "$VITEST_MAX_FORKS");"
-      fi
-      if [ "${VITEST_MIN_FORKS+x}" = x ]; then
-        remote_command_environment="$remote_command_environment export VITEST_MIN_FORKS=$(quote_remote "$VITEST_MIN_FORKS");"
-      fi
+      project_inherited_command_environment "$command_vitest_environment_names"
+      remote_command_environment="$remote_command_environment$projected_command_environment"
       if [ "$governor_inject_vitest_environment" -eq 1 ]; then
         remote_command_environment="$remote_command_environment if [ -z \"\${HAPPIER_VITEST_GOVERNOR_MAX_WORKERS+x}\" ] && [ -z \"\${VITEST_MAX_THREADS+x}\" ] && [ -z \"\${VITEST_MIN_THREADS+x}\" ] && [ -z \"\${VITEST_MAX_FORKS+x}\" ] && [ -z \"\${VITEST_MIN_FORKS+x}\" ]; then export HAPPIER_VITEST_GOVERNOR_MAX_WORKERS=$resource_governor_workers; fi;"
       fi
@@ -2233,11 +2302,16 @@ if [ "$heavyweight_admission_required" -eq 1 ] && [ "$explicit_tty" != 1 ]; then
   mkfifo "$admission_error_pipe" || { rm -f -- "$admission_error_log"; release_reservation; exit 1; }
 fi
 release_custody_pipe() {
+  # This reader owns the whole coalesced job, including retries and fallback.
+  # Only transport-owned input readers belong to custody-attempt cleanup.
+  if [ "${HSTACK_EXEC_CONTROLLER_LIFELINE-}" != 1 ] && [ -n "${control_input_pid-}" ]; then
+    executor_signal_pid controller_input_cleanup "$control_input_pid"
+    control_input_pid=
+  fi
   [ -n "$custody_pipe" ] || return 0
   exec 9>&-
   rm -f -- "$custody_pipe"
-  [ -z "$custody_watcher_pid" ] || kill -TERM "$custody_watcher_pid" 2>/dev/null || true
-  [ -z "${control_input_pid-}" ] || kill -TERM "$control_input_pid" 2>/dev/null || true
+  [ -z "$custody_watcher_pid" ] || executor_signal_pid controller_custody_cleanup "$custody_watcher_pid"
   [ -z "$admission_error_log" ] || rm -f -- "$admission_error_log" "$admission_error_pipe"
 }
 trap release_custody_pipe EXIT

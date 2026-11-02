@@ -29,6 +29,14 @@ heavyweight_process_token() {
   printf '%s' "$heavyweight_process_token_value"
 }
 
+collect_descendants() (
+  # Keep the iterator private to each recursive call in POSIX shells too.
+  for child in $(ps -eo pid=,ppid= | awk -v parent="$1" '$2 == parent {print $1}'); do
+    collect_descendants "$child"
+  done
+  printf '%s\n' "$1"
+)
+
 heavyweight_process_is_current() {
   heavyweight_current_pid=$1
   heavyweight_current_token=$2
