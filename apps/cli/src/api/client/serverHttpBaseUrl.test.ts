@@ -107,4 +107,24 @@ describe('resolveServerHttpBaseUrl', () => {
     expect(resolveServerHttpBaseUrl()).toBe('https://personal-home.example');
     expect(resolveServerSocketIoTransports()).toBe(configuration.socketIoTransports);
   });
+
+  it('follows a replacement carrier for its captured Home without following another Home or an explicit invocation', async () => {
+    const { captureServerHttpBaseUrl, publishServerHttpRuntimeOrigin, runWithServerHttpBaseUrl } = await import('./serverHttpBaseUrl');
+    const first = publishServerHttpRuntimeOrigin('http://127.0.0.1:43235', 'iroh', undefined, 'daemon-home');
+    const readOrigin = captureServerHttpBaseUrl();
+    const readExplicitOrigin = runWithServerHttpBaseUrl('https://other.example.test', captureServerHttpBaseUrl);
+    const readExplicitRuntimeOrigin = runWithServerHttpBaseUrl('http://127.0.0.1:43235', captureServerHttpBaseUrl);
+    const replacement = publishServerHttpRuntimeOrigin('http://127.0.0.1:40109', 'iroh', undefined, 'daemon-home');
+    first();
+    expect(readOrigin()).toBe('http://127.0.0.1:40109');
+    expect(readExplicitOrigin()).toBe('https://other.example.test');
+    expect(readExplicitRuntimeOrigin()).toBe('http://127.0.0.1:43235');
+    replacement();
+    const other = publishServerHttpRuntimeOrigin('https://another.example.test', 'https', undefined, 'other-home');
+    try {
+      expect(readOrigin()).toBe('http://127.0.0.1:43235');
+    } finally {
+      other();
+    }
+  });
 });

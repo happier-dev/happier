@@ -14,6 +14,7 @@ type PublishedHomeTunnelOwner = Readonly<{
 
 type ServerHttpRuntimePublication = Readonly<{
   origin: string;
+  serverId: string;
   carrier: 'iroh' | 'https';
   homeTunnelOwner?: PublishedHomeTunnelOwner;
 }>;
@@ -29,6 +30,15 @@ export function resolveServerHttpBaseUrl(): string {
   return invocationServerHttpBaseUrl.getStore()
     ?? runtimePublication?.origin
     ?? normalizeServerHttpBaseUrl(configuration.apiServerUrl);
+}
+
+/** A live daemon consumer follows carrier replacement within its original Home. */
+export function captureServerHttpBaseUrl(): () => string {
+  const origin = resolveServerHttpBaseUrl();
+  const invocationOrigin = invocationServerHttpBaseUrl.getStore();
+  if (invocationOrigin) return () => origin;
+  const serverId = runtimePublication?.serverId ?? configuration.activeServerId;
+  return () => runtimePublication?.serverId === serverId ? runtimePublication.origin : origin;
 }
 
 /**
@@ -49,9 +59,11 @@ export function publishServerHttpRuntimeOrigin(
   runtimeOrigin: string,
   carrier: 'iroh' | 'https',
   homeTunnelOwner?: PublishedHomeTunnelOwner,
+  serverId: string = configuration.activeServerId,
 ): () => void {
   const publication = {
     origin: normalizeServerHttpBaseUrl(runtimeOrigin),
+    serverId,
     carrier,
     ...(homeTunnelOwner ? {
       homeTunnelOwner: {
