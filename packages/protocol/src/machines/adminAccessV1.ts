@@ -1,6 +1,7 @@
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { createStoredReadSchema } from '../json/storedReadSchema.js';
+import { MachineSetupObservationReasonV1Schema } from './setup/machineSetupObservationReasonV1.js';
 import { getMachineMetadataFieldV1, mutateMachineMetadataFieldV1, readMachineMetadataFieldV1,
   type MachineMetadataFieldDefinitionV1, type MachineMetadataFieldPortV1 } from './machineMetadataFieldV1.js';
 
@@ -81,16 +82,29 @@ export const MachineFirewallRestorationV1Schema = lazyZodSchema(() => z.strictOb
 }));
 export type MachineFirewallRestorationV1 = z.infer<typeof MachineFirewallRestorationV1Schema>;
 
-export const MachineElevatedResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('outcome', [
-  z.strictObject({ outcome: z.literal('applied'), observation: MachineAdminAccessObservationV1Schema }),
-  z.strictObject({ outcome: z.literal('not_applied'), reasonCode: z.enum(['mode_none', 'not_preauthorized',
-    'denied', 'platform_unsupported', 'plan_stale', 'cancelled', 'managed_cli_unavailable']),
+/** Closed diagnostics only: private native output never enters retained results. */
+const MachineElevationFailureKindV1Schema = lazyZodSchema(() => z.enum([
+  'native_protocol_invalid', 'native_check_unavailable', 'native_check_unsupported', 'native_effect_failed',
+]));
+const MachineElevationFailureV1Schema = lazyZodSchema(() => z.strictObject({
+  kind: MachineElevationFailureKindV1Schema,
+  reason: z.optional(MachineSetupObservationReasonV1Schema),
+}));
+
+export const MachineElevatedNotAppliedResultV1Schema = lazyZodSchema(() =>
+  z.strictObject({ outcome: z.literal('not_applied'), reasonCode: z.union([z.enum(['mode_none', 'not_preauthorized',
+    'denied', 'platform_unsupported', 'plan_stale', 'cancelled', 'managed_cli_unavailable']), MachineElevationFailureKindV1Schema]),
+    failure: z.optional(MachineElevationFailureV1Schema),
     recovery: z.optional(z.strictObject({ kind: z.literal('install_managed_cli'),
       executablePath: z.string().check(z.minLength(1)) })),
-    restoration: z.optional(MachineFirewallRestorationV1Schema) }),
+    restoration: z.optional(MachineFirewallRestorationV1Schema) }));
+
+export const MachineElevatedResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('outcome', [
+  z.strictObject({ outcome: z.literal('applied'), observation: MachineAdminAccessObservationV1Schema }),
+  MachineElevatedNotAppliedResultV1Schema,
   z.strictObject({ outcome: z.literal('needs_attendance'), operationId: z.string().check(z.minLength(1)),
     prompt: MachineSudoPasswordPromptV1Schema }),
-  z.strictObject({ outcome: z.literal('outcome_unknown'), restoration: z.optional(MachineFirewallRestorationV1Schema) }),
+  z.strictObject({ outcome: z.literal('outcome_unknown'), failure: z.optional(MachineElevationFailureV1Schema), restoration: z.optional(MachineFirewallRestorationV1Schema) }),
 ]));
 export type MachineElevatedResultV1 = z.infer<typeof MachineElevatedResultV1Schema>;
 

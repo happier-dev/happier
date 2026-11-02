@@ -5,6 +5,18 @@ import { t } from '@/text';
 import { resolveActionExecutionErrorMessage, resolveActionExecutionFailureMessage } from './resolveActionExecutionFailureMessage';
 
 describe('Action failure presentation', () => {
+    it.each([
+        ['native_protocol_invalid', 'errors.machineNativeProtocolInvalid'],
+        ['native_check_unavailable', 'errors.machineNativeCheckUnavailable'],
+        ['native_check_unsupported', 'errors.machineNativeCheckUnsupported'],
+        ['native_effect_failed', 'errors.machineNativeEffectFailed'],
+    ] as const)('presents the native elevation reason %s through Action envelopes', (errorCode, key) => {
+        const refused = { ok: false, errorCode, error: errorCode };
+        for (const result of [refused, { ok: true, result: refused }]) {
+            expect(resolveActionExecutionFailureMessage(result, 'Could not add domain')).toBe(t(key));
+        }
+        expect(resolveActionExecutionErrorMessage({ code: errorCode }, 'Could not add domain')).toBe(t(key));
+    });
     it('explains how to recover a Domain add when the managed Happier CLI is unavailable', () => {
         const refused = { ok: false, errorCode: 'managed_cli_unavailable', error: 'managed_cli_unavailable',
             errorDetails: { recovery: { kind: 'install_managed_cli', executablePath: '/private/managed/happier' } } };

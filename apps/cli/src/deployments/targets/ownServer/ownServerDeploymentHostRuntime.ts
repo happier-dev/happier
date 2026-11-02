@@ -311,8 +311,10 @@ export function createOwnServerDeploymentRuntimeForHost(host: OwnServerDeploymen
                             machineId: host.machineId, operationId, signal, basis, steps,
                             onSetupApplied(result) { applied = result; },
                         }, { ...elevation, verifyCurrent: async () => !signal.aborted }));
-                        if (elevated.outcome !== 'applied') return refuse('reasonCode' in elevated ? elevated.reasonCode : elevated.outcome,
-                            'recovery' in elevated && elevated.recovery ? { recovery: elevated.recovery } : undefined);
+                        if (elevated.outcome !== 'applied') return refuse('reasonCode' in elevated ? elevated.reasonCode : elevated.outcome, {
+                            ...('recovery' in elevated && elevated.recovery ? { recovery: elevated.recovery } : {}),
+                            ...('failure' in elevated && elevated.failure ? { failure: elevated.failure } : {}),
+                        });
                         if (!applied) return refuse('outcome_unknown');
                         if (input.privateBinding && !setup.settleCaddyFirewall) return refuse('private_scope_unenforceable');
                         const setupResult = applied;

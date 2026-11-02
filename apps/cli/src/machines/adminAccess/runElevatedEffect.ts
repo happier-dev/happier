@@ -16,6 +16,8 @@ import { MachineEffectInternalRecordSchema, type MachineEffectInternalRequest } 
 import type { MachineConnectorSecretGrantHostRequest } from '@/deployments/secrets/readEnvironmentSecretLaunchAdmissionForHost';
 import { getFirstPartyComponentCatalogEntry, resolveFirstPartyInstallLayout, resolveManagedCliReleaseChannelSync } from '@happier-dev/cli-common/firstPartyRuntime';
 import { join } from 'node:path';
+import { logger } from '@/ui/logger';
+import { MachineSetupObservationReasonV1Schema } from '@happier-dev/protocol/machines/setup/machineSetupObservationV1';
 
 /** The managed install layout is shared by policy transitions and recipe work. */
 export function resolveInstalledMachineEffectCli(): string {
@@ -242,7 +244,31 @@ export async function runElevatedAdminAccessTransition(input: RunElevatedAdminAc
 async function runElevatedProcess(input: Pick<RunElevatedEffectInput, 'machineId' | 'operationId' | 'signal' | 'onRebootDispatch' | 'onSetupApplied'>,
     dependencies: MachineElevationDependencies, request: ElevatedRequest,
     transitionAuthentication?: MachineAdminAccessV1, transitionObservation?: MachineAdminAccessObservationV1): Promise<ElevatedProcessResult> {
-    const refused = (reasonCode: 'mode_none' | 'not_preauthorized' | 'denied' | 'platform_unsupported' | 'plan_stale' | 'cancelled'): MachineElevatedResultV1 => ({ outcome: 'not_applied', reasonCode });
+    const result = await runElevatedProcessInternal(input, dependencies, request, transitionAuthentication, transitionObservation);
+    if (result.outcome !== 'applied' && result.outcome !== 'checked') {
+        // One retained daemon diagnostic; never retain private stdout/stderr,
+        // native facts, credentials, or executable/recovery paths.
+        logger.warnLocalFile('[machine-elevation] settled', { operationId: input.operationId, outcome: result.outcome,
+            ...('reasonCode' in result ? { reasonCode: result.reasonCode } : {}),
+            ...('failure' in result && result.failure ? { failure: result.failure } : {}) });
+    }
+    return result;
+}
+
+async function runElevatedProcessInternal(input: Pick<RunElevatedEffectInput, 'machineId' | 'operationId' | 'signal' | 'onRebootDispatch' | 'onSetupApplied'>,
+    dependencies: MachineElevationDependencies, request: ElevatedRequest,
+    transitionAuthentication?: MachineAdminAccessV1, transitionObservation?: MachineAdminAccessObservationV1): Promise<ElevatedProcessResult> {
+    type Refusal = Extract<MachineElevatedResultV1, { outcome: 'not_applied' }>;
+    const refused = (reasonCode: Refusal['reasonCode']): MachineElevatedResultV1 => ({ outcome: 'not_applied', reasonCode });
+    let nativeFailure: Refusal['failure'];
+    const rememberNativeFailure = (kind: NonNullable<Refusal['failure']>['kind'], nativeReason?: string) => {
+        const reason = MachineSetupObservationReasonV1Schema.safeParse(nativeReason);
+        nativeFailure ??= { kind, ...(reason.success ? { reason: reason.data } : {}) };
+        return nativeReason === 'platform_unsupported' ? 'platform_unsupported' : kind;
+    };
+    const nativeRefused = (reasonCode: Refusal['reasonCode']): MachineElevatedResultV1 => ({
+        outcome: 'not_applied', reasonCode, ...(nativeFailure ? { failure: nativeFailure } : {}),
+    });
     if (input.signal?.aborted) return refused('cancelled');
     let grantModule: typeof import('../setup/effectInternalSecretGrant') | undefined;
     let connectorSession: ReturnType<typeof import('../setup/effectInternalSecretGrant').createMachineConnectorSecretGrantSession>;
@@ -328,7 +354,7 @@ async function runElevatedProcess(input: Pick<RunElevatedEffectInput, 'machineId
     let planSent = false;
     let effectStarted = false;
     let protocolFailed = false;
-    let stopReason: 'denied' | 'platform_unsupported' | 'plan_stale' | 'cancelled' | undefined;
+    let stopReason: Refusal['reasonCode'] | undefined;
     let termination: Promise<void> | undefined;
     let terminal: Extract<ReturnType<typeof MachineEffectInternalRecordSchema.parse>, { type: 'result' }> | undefined;
     let checkedFirewallPlans: readonly Readonly<{ plan: MachineSetupEffectPlanV1 }>[] | undefined;
@@ -363,12 +389,12 @@ async function runElevatedProcess(input: Pick<RunElevatedEffectInput, 'machineId
         const records = (async () => {
             for await (const line of stdout) {
                 let value: unknown;
-                try { value = JSON.parse(line); } catch { protocolFailed = true; await stop('denied'); continue; }
+                try { value = JSON.parse(line); } catch { protocolFailed = true; await stop(stopReason ?? rememberNativeFailure('native_protocol_invalid')); continue; }
                 // These child requests never enter the retained operation/event channel.
                 if (value && typeof value === 'object' && 'type' in value && value.type === 'connector.secretGrant.control') {
                     const control = grantModule?.MachineConnectorSecretGrantControlSchema.safeParse(value);
                     if (!connectorSession || !control?.success || !requestSent || terminal || stopReason) {
-                        protocolFailed = true; await stop('denied'); continue;
+                        protocolFailed = true; await stop(stopReason ?? rememberNativeFailure('native_protocol_invalid')); continue;
                     }
                     // A pending live authority/header callback cannot hold a
                     // cancelled or exited child operation open.
@@ -377,10 +403,11 @@ async function runElevatedProcess(input: Pick<RunElevatedEffectInput, 'machineId
                     continue;
                 }
                 const parsed = MachineEffectInternalRecordSchema.safeParse(value);
-                if (!parsed.success || terminal) { protocolFailed = true; await stop('denied'); continue; }
+                if (!parsed.success || terminal) { protocolFailed = true; await stop(stopReason ?? rememberNativeFailure('native_protocol_invalid')); continue; }
                 const record = parsed.data;
                 if (record.type === 'ready') {
-                    if (requestSent || stopReason || ask && !submitted) { protocolFailed = true; await stop('denied'); continue; }
+                    if (ask && !submitted) { await stop('denied'); continue; }
+                    if (requestSent || stopReason) { protocolFailed = true; await stop(stopReason ?? rememberNativeFailure('native_protocol_invalid')); continue; }
                     // CHECK prepares the already-admitted operation. Its
                     // authority boundary is the resulting APPLY frame below.
                     const requestRefusal = firewall || request.kind === 'checkApply' && !connectorSession ? undefined : await currentRefusal();
@@ -428,17 +455,17 @@ async function runElevatedProcess(input: Pick<RunElevatedEffectInput, 'machineId
                         // request. Keep draining its authoritative result; a
                         // missing terminal record still settles as unknown.
                     }
-                } else if (!requestSent || stopReason && !(firewall && stopReason === 'cancelled')) { protocolFailed = true; await stop('denied'); }
+                } else if (!requestSent || stopReason && !(firewall && stopReason === 'cancelled')) { protocolFailed = true; await stop(stopReason ?? rememberNativeFailure('native_protocol_invalid')); }
                 else if (record.type === 'firewall.verified') {
                     if (!firewall || !verifyReply || record.planIndex !== stageIndex
                         || record.planDigest !== checkedFirewallPlans?.[stageIndex]?.plan.planDigest) {
-                        protocolFailed = true; await stop('denied'); continue;
+                        protocolFailed = true; await stop(stopReason ?? rememberNativeFailure('native_protocol_invalid')); continue;
                     }
                     verifyReply(stopReason ? false : record.ok); verifyReply = undefined; verifyPending = undefined;
                 }
                 else if (record.type === 'firewall.staged') {
                     if (!firewall || record.planIndex !== stageIndex + 1 || record.planDigest !== checkedFirewallPlans?.[record.planIndex]?.plan.planDigest) {
-                        protocolFailed = true; await stop('denied'); continue;
+                        protocolFailed = true; await stop(stopReason ?? rememberNativeFailure('native_protocol_invalid')); continue;
                     }
                     stageIndex = record.planIndex;
                     if (stopReason) continue;
@@ -470,7 +497,7 @@ async function runElevatedProcess(input: Pick<RunElevatedEffectInput, 'machineId
                     })().catch(async () => { await stop('denied'); });
                 }
                 else if (record.type === 'result' && record.result.status === 'checked' && 'plans' in record.result) {
-                    if (!firewall || planSent) { protocolFailed = true; await stop('denied'); continue; }
+                    if (!firewall || planSent) { protocolFailed = true; await stop(stopReason ?? rememberNativeFailure('native_protocol_invalid')); continue; }
                     const plans = record.result.plans;
                     const matches = request.kind === 'apply'
                         ? plans.length === request.effect.plans.length && plans.every(({ plan }, index) => {
@@ -485,7 +512,8 @@ async function runElevatedProcess(input: Pick<RunElevatedEffectInput, 'machineId
                     if (stopReason) continue;
                     const unavailable = plans.flatMap(entry => entry.plan.nativeFacts)
                         .find(fact => fact.status === 'unavailable' || fact.status === 'unsupported');
-                    if (unavailable) { await stop(unavailable.reason === 'platform_unsupported' ? 'platform_unsupported' : 'denied'); continue; }
+                    if (unavailable) { await stop(rememberNativeFailure(unavailable.status === 'unsupported'
+                        ? 'native_check_unsupported' : 'native_check_unavailable', unavailable.reason)); continue; }
                     dependencies.emit?.({ type: 'machine.setup.checked', data: { plans } });
                     if (input.signal?.aborted || stopReason) { await stop(input.signal?.aborted ? 'cancelled' : stopReason); continue; }
                     checkedFirewallPlans = plans;
@@ -497,7 +525,7 @@ async function runElevatedProcess(input: Pick<RunElevatedEffectInput, 'machineId
                     try { await writeFrame(child.stdin, JSON.stringify(frame) + '\n'); } catch { /* Drain the authoritative result. */ }
                 }
                 else if (record.type === 'result' && record.result.status === 'checked' && 'plan' in record.result) {
-                    if (request.kind === 'apply' || request.kind === 'nativeApply' || 'firewallIntent' in request || planSent) { protocolFailed = true; await stop('denied'); continue; }
+                    if (request.kind === 'apply' || request.kind === 'nativeApply' || 'firewallIntent' in request || planSent) { protocolFailed = true; await stop(stopReason ?? rememberNativeFailure('native_protocol_invalid')); continue; }
                     const plan = record.result.plan;
                     if (!sameStrictJsonValue(plan.basis, request.basis) || !sameStrictJsonValue(plan.steps, request.steps)
                         || !sameStrictJsonValue(plan.checks, request.checks)) {
@@ -505,7 +533,8 @@ async function runElevatedProcess(input: Pick<RunElevatedEffectInput, 'machineId
                     }
                     if (request.kind === 'check') { terminal = record; if (connectorSession) child.stdin.end(); continue; }
                     const unavailable = plan.nativeFacts.find(fact => fact.status === 'unavailable' || fact.status === 'unsupported');
-                    if (unavailable) { await stop(unavailable.reason === 'platform_unsupported' ? 'platform_unsupported' : 'denied'); continue; }
+                    if (unavailable) { await stop(rememberNativeFailure(unavailable.status === 'unsupported'
+                        ? 'native_check_unsupported' : 'native_check_unavailable', unavailable.reason)); continue; }
                     if (request.acceptPlan && !await request.acceptPlan(plan)) { await stop('denied'); continue; }
                     dependencies.emit?.({ type: 'machine.setup.checked', data: { plan } });
                     const requestRefusal = await currentRefusal();
@@ -528,7 +557,7 @@ async function runElevatedProcess(input: Pick<RunElevatedEffectInput, 'machineId
                 else if (!planSent) {
                     if (record.type === 'result' && record.result.status !== 'checked' && record.result.status !== 'applied'
                         && record.result.completedStepIds.length === 0) terminal = record;
-                    else { protocolFailed = true; await stop('denied'); }
+                    else { protocolFailed = true; await stop(stopReason ?? rememberNativeFailure('native_protocol_invalid')); }
                 }
                 else if (record.type === 'progress') {
                     if (stopReason) continue;
@@ -547,7 +576,12 @@ async function runElevatedProcess(input: Pick<RunElevatedEffectInput, 'machineId
         await stageTask;
         if (readers.some(reader => reader.status === 'rejected')) protocolFailed = true;
         await termination;
-        if (protocolFailed || !terminal) return planSent ? { outcome: 'outcome_unknown' } : refused(stopReason ?? 'denied');
+        if (protocolFailed || !terminal) {
+            if (!stopReason && ask && !requestSent && !protocolFailed) return refused('denied');
+            if (!stopReason) rememberNativeFailure('native_protocol_invalid');
+            return planSent ? { outcome: 'outcome_unknown', ...(nativeFailure ? { failure: nativeFailure } : {}) }
+                : nativeRefused(stopReason ?? 'native_protocol_invalid');
+        }
         const result = terminal.result;
         if (reboot && result.status === 'unsupported' && result.reason === 'platform_unsupported') return refused('platform_unsupported');
         if (result.status === 'checked') return request.kind === 'check' && settled.code === 0 && 'plan' in result
@@ -564,10 +598,14 @@ async function runElevatedProcess(input: Pick<RunElevatedEffectInput, 'machineId
             return { outcome: 'not_applied', reasonCode: 'cancelled', ...(result.restoration ? { restoration: result.restoration } : {}) };
         }
         if (result.status === 'outcome_unknown' || effectStarted || result.completedStepIds.length > 0) {
-            return { outcome: 'outcome_unknown', ...(result.restoration ? { restoration: result.restoration } : {}) };
+            rememberNativeFailure('native_effect_failed', result.reason);
+            return { outcome: 'outcome_unknown', failure: nativeFailure, ...(result.restoration ? { restoration: result.restoration } : {}) };
         }
-        return refused('denied');
-    } catch { await stop('denied'); return planSent ? { outcome: 'outcome_unknown' } : refused(stopReason ?? 'denied'); }
+        return nativeRefused(rememberNativeFailure(result.reason === 'invalid_request' ? 'native_protocol_invalid' : 'native_effect_failed', result.reason));
+    } catch {
+        await stop(rememberNativeFailure('native_protocol_invalid'));
+        return planSent ? { outcome: 'outcome_unknown', failure: nativeFailure } : nativeRefused(stopReason ?? 'native_protocol_invalid');
+    }
     finally {
         password?.fill(0);
         if (connectorSession) connectorSession.frame.token = '';

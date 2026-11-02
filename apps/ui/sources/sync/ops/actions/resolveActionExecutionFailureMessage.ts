@@ -47,6 +47,10 @@ function readFailureMessage(value: unknown): string | null {
     const code = record.errorCode ?? record.code;
     if (code === 'machine_admin_access_required') return t('errors.machineAdminAccessRequired');
     if (code === 'managed_cli_unavailable') return t('errors.machineManagedCliUnavailable');
+    if (code === 'native_protocol_invalid') return t('errors.machineNativeProtocolInvalid');
+    if (code === 'native_check_unavailable') return t('errors.machineNativeCheckUnavailable');
+    if (code === 'native_check_unsupported') return t('errors.machineNativeCheckUnsupported');
+    if (code === 'native_effect_failed') return t('errors.machineNativeEffectFailed');
     if (code === 'credential_scope_denied') return t('errors.permissionDenied');
     if (code === 'server_unreachable' || code === 'home_unreachable') return t('settingsPlugins.targetSelection.unreachableThisHome');
     if (isActionTurnedOffErrorCode(code)) return t('actionConfirmations.turnedOffMessage');

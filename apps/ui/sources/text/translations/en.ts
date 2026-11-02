@@ -8299,6 +8299,10 @@ const enErrors = {
   permissionDenied: 'Permission denied',
   machineAdminAccessRequired: 'Set up administrator access for this machine, then try adding the domain again.',
   machineManagedCliUnavailable: "Install or update Happier on this machine, then try adding the domain again.",
+  machineNativeProtocolInvalid: "This machine’s elevated helper returned an invalid or missing response. Update or repair its managed Happier CLI, then retry.",
+  machineNativeCheckUnavailable: "A native prerequisite could not be checked. Review this machine’s setup diagnostics, resolve the unavailable prerequisite, then retry.",
+  machineNativeCheckUnsupported: "A native prerequisite is unsupported on this machine. Review its setup diagnostics and choose a supported setup before retrying.",
+  machineNativeEffectFailed: "The elevated native operation failed. Review this machine’s setup diagnostics, resolve the reported failure, then retry.",
   permissionDeniedReadOnlyMode:
     'Denied by Read Only mode (write actions are denied).',
   permissionCanceled: 'Permission canceled',
