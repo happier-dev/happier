@@ -4824,3 +4824,74 @@ describe('external author Doc collaboration through physical SDK carriers', () =
         } finally { await carrier.dispose(); host.dispose?.(); account.dispose(); await homes.reset(); }
     });
 });
+
+
+describe('client Action Session-open continuation', () => {
+    it.each(['sameAccount', 'foreignAccount', 'retiredCapture'] as const)(
+        'fences raw mounted exact Session addresses to the captured Account (%s)', async mode => {
+        const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+        const { createFrontDoorActionExecute } = await import('@/sync/ops/actions/frontDoorRuntimeActionExecutor');
+        const { createSessionFixture, createPlainSessionByIdResponseFixture } = await import('@/dev/testkit/fixtures/sessionFixtures');
+        const { buildSessionTurnsProjectionV1 } = await import('@happier-dev/protocol/sessions/turns/sessionTurnV1');
+        const accountLifetime = clientAccountLifetime();
+        const originHome = rpcHomes.get('server-client-action')!.id;
+        const targetHome = mode === 'foreignAccount'
+            ? (await network.addHome('https://raw-address-foreign-account', 'another-account')).id
+            : rpcHomes.get('server-wire')!.id;
+        const opened: Array<{ sessionId: string; serverId?: string }> = [];
+        let sessionReads = 0;
+        const displayWarnings = vi.spyOn(console, 'warn');
+        onTestFinished(() => displayWarnings.mockRestore());
+        const execute = createFrontDoorActionExecute(createDefaultActionExecutor({
+            openSession: (sessionId, options) => { opened.push({ sessionId, serverId: options?.serverId }); },
+        }));
+        network.setHttpResponder(async (url, init) => {
+            const parsedUrl = new URL(String(url));
+            if (mode === 'retiredCapture' && parsedUrl.origin === rpcHomes.get('server-wire')!.serverUrl) accountLifetime.retire();
+            if (parsedUrl.pathname === '/v2/sessions/reviewed') {
+                if ((init?.method ?? 'GET') === 'GET') sessionReads += 1;
+                // End a regressed continuation at the network boundary so the
+                // count assertion reports the loop instead of a test timeout.
+                if (sessionReads > 4) accountLifetime.retire();
+                return Response.json(createPlainSessionByIdResponseFixture(createSessionFixture({ id: 'reviewed' })));
+            }
+            if (parsedUrl.pathname === '/v1/sessions/reviewed/turns') {
+                return Response.json(buildSessionTurnsProjectionV1({ sessionId: 'reviewed', updatedAt: 1, turns: [] }));
+            }
+            return createEmptyAccountBootstrapHttpResponse(parsedUrl.pathname, init);
+        });
+        const controller = createBoundPluginSurfaceController({ facts: {
+            ...surfaceContext(), serverId: originHome, accountLifetime,
+            machineId: CLIENT_ACTION_ORIGIN.materializationRef.machineId,
+            executionOrigin: CLIENT_ACTION_ORIGIN, occurrenceId: 'raw-address-mount',
+            interactionEnabled: true, daemonInteractionEnabled: true,
+        }, binding: { executeHostAction: execute } });
+        try {
+            const outcome = await controller.hostApi.handleRequest(executeActionRequest({ action: 'session.open',
+                input: { sessionId: 'reviewed' }, sessionAddress: { serverId: targetHome, sessionId: 'reviewed' } }))
+                .then(value => ({ kind: 'value' as const, value }), error => ({ kind: 'error' as const, error }));
+            if (mode === 'retiredCapture' && outcome.kind === 'error') {
+                expect(outcome.error).toMatchObject({ name: 'AbortError' });
+                expect(opened).toEqual([]);
+                return;
+            }
+            expect(outcome.kind).toBe('value');
+            if (outcome.kind !== 'value') throw outcome.error;
+            const result = outcome.value;
+            if (mode === 'sameAccount') {
+                expect(sessionReads).toBe(1);
+                expect(result, JSON.stringify(result)).toMatchObject({ status: 'opened', sessionId: 'reviewed', serverId: targetHome });
+                expect(opened).toEqual([{ sessionId: 'reviewed', serverId: targetHome }]);
+                const readsAtIdle = sessionReads;
+                displayWarnings.mockClear();
+                await new Promise(resolve => setTimeout(resolve, 0));
+                expect(sessionReads).toBe(readsAtIdle);
+                expect(displayWarnings.mock.calls.filter(([message]) => String(message).includes('[SessionDisplay]'))).toHaveLength(0);
+            } else {
+                expect(result, JSON.stringify(result)).toMatchObject({ code: 'unavailable' });
+                expect(opened).toEqual([]);
+            }
+        } finally { controller.dispose(); accountLifetime.retire(); }
+    });
+
+});
