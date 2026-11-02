@@ -18,6 +18,7 @@ import { isWorkflowAuthoringActionId, workflowDraftClientRpcMethod, WorkflowDraf
 import { PluginExecutionOriginActionIdSchema, PluginExecutionOriginActionInputSchemas } from '@happier-dev/protocol/actions/pluginExecutionOriginActionFamily';
 import type { SocketRpcAnsweringClientV1, SocketRpcAnsweringClientCandidateV1 } from '@happier-dev/protocol/socketRpc';
 import { readCliActionBoundSessionId } from './resolveCliActionCallerSession';
+import { retainAdmittedClientActionParent } from './admittedClientActionChildren';
 import { MOUNTED_BROWSER_DIAGNOSTICS_ACTION_IDS } from '@happier-dev/protocol/browser/automation/reverseDispatchV1';
 import { createBrowserAutomationReverseDispatcher } from '@/daemon/browser/automation/reverseDispatch';
 import { isVoiceConversationActionId } from '@happier-dev/protocol/actions/voiceConversationActionFamily';
@@ -34,7 +35,7 @@ export type ClientActionMachineRpc = Readonly<{
 export function createClientActionReverseDispatcher(
   getMachineClient: () => ClientActionMachineRpc | null | undefined,
 ): NonNullable<ActionExecutorDeps['clientActionExecute']> {
-  return async ({ actionId, input, context }) => {
+  return async ({ actionId, input, context, executeChild }) => {
     const requestedClientId: unknown = input && typeof input === 'object' ? Reflect.get(input, 'clientId') : undefined;
     const clientId = typeof requestedClientId === 'string' ? requestedClientId : undefined;
     const unavailable = () => clientId
@@ -115,6 +116,16 @@ export function createClientActionReverseDispatcher(
       ...(context.externalActionTarget ? { externalActionTarget: context.externalActionTarget } : {}),
     } });
     if (!request.success) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+    // A Session caller's parent stays admitted here while the App answers; its
+    // declared Workflow children return to this caller rather than to App relay.
+    const parentRequestId = context.actionRequestId?.trim();
+    const parentAccountId = context.externalActionExecutionAuthorization?.binding.accountId ?? context.runtimeAccountId;
+    const releaseParent = context.actionCaller?.kind === 'session' && context.authority !== 'present_user'
+      && parentRequestId && parentAccountId && executeChild
+      ? retainAdmittedClientActionParent(parentRequestId, {
+        accountId: parentAccountId, sessionId: context.actionCaller.sessionId, executeChild,
+      })
+      : null;
     let issued = false;
     const sideEffectClass = getActionSpec(actionId).sideEffectClass;
     const mayHaveEffect = sideEffectClass !== 'read' && sideEffectClass !== 'none';
@@ -165,6 +176,8 @@ export function createClientActionReverseDispatcher(
       return issued ? failureWithCause('client_rpc_transport_failure',
         context.signal?.aborted ? 'cancelled' : readRpcErrorCode(error) ?? undefined, error)
         : machineTransportUnavailable(context.signal?.aborted ? 'cancelled' : readRpcErrorCode(error) ?? undefined);
+    } finally {
+      releaseParent?.();
     }
   };
 }

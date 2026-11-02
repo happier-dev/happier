@@ -529,7 +529,7 @@ import { dispatchRuntimeAction } from './executor/dispatch.js';
 import type { RuntimeActionExecute } from './executor/types.js';
 import type { SessionConnectedServiceAuthSwitchRpcParams } from '../connect/sessionConnectedServiceAuthSwitch.js';
 
-import type { ActionExecuteResult, ActionExecutorContext, ActionExecutorDeps, ActionSessionAddress, ActionPreparedInvocation, ActionPrepareResult } from './executor/types.js';
+import type { ActionExecuteResult, ActionExecutorContext, ActionExecutorDeps, ActionSessionAddress, ActionPreparedInvocation, ActionPrepareResult, AdmittedClientActionContext } from './executor/types.js';
 export type {
   ActionAutomationRunCaller,
   ActionCaller,
@@ -3521,13 +3521,34 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         if (!accountId) return { ok: false, errorCode: 'forbidden', error: 'forbidden' };
         ctx = { ...ctx, expectedAccountId: accountId };
       }
-      if (executionPlacement === 'client' && deps.clientActionExecute && !existingAdmission?.clientExecutionContinued) {
+      let admittedClientContext: AdmittedClientActionContext | undefined;
+      if (executionPlacement === 'client') {
+        // Availability already decided the surface; transport retains that fact,
+        // including on a trusted prepared continuation. Missing surfaces stay closed.
+        const surface = availability?.surface ?? ctx.surface;
+        if (!surface) return actionDisabled(availability);
+        admittedClientContext = { ...ctx, surface, authority: resolveHostStampedAuthority(ctx) };
+      }
+      if (admittedClientContext && deps.clientActionExecute && !existingAdmission?.clientExecutionContinued) {
+        const context = admittedClientContext;
         // Local client delivery continues the resolved leaf. Dropping it here
         // re-enters target resolution and then client delivery on every read.
-        const delivered = await deps.clientActionExecute({ actionId, input: admittedInput, context: ctx,
-          execute: () => executeCoreTerminal(actionId, admittedInput, ctx, true, legacyMetadataLabel,
-            { ...dispatchAdmission, context: ctx, clientExecutionContinued: true },
-            options?.approvalReplay === true, undefined, options?.sessionTargetLeaf === true) });
+        const delivered = await deps.clientActionExecute({ actionId, input: admittedInput, context,
+          execute: () => executeCoreTerminal(actionId, admittedInput, context, true, legacyMetadataLabel,
+            { ...dispatchAdmission, context, clientExecutionContinued: true },
+            options?.approvalReplay === true, undefined, options?.sessionTargetLeaf === true),
+          // The child is the caller's own new invocation: ordinary admission and
+          // approval policy, never the parent's bypass, consent or request identity.
+          executeChild: (childId, childInput) => {
+            const { bypassApprovals: _parentBypass, presentUserConfirmation: _parentConfirmation,
+              actionRequestId: parentRequestId, ...caller } = context;
+            const position = childPositions.get(childId) ?? 0;
+            childPositions.set(childId, position + 1);
+            const parent = normalizeId(parentRequestId);
+            return executeInvocation(childId, childInput, { ...caller, ...(parent ? {
+              actionRequestId: deriveWorkflowReplacementId(['action.client_child', parent, actionId, childId, position]),
+            } : {}) });
+          } });
         // An exact receiver's result cannot retarget to a headless owner.
         if (typeof data.clientId === 'string') return delivered;
         if (actionId === 'inbox.get' && delivered.ok && readRecord(delivered.result).status === 'unavailable' && deps.appShellAction) {

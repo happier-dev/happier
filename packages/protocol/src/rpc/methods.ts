@@ -263,6 +263,9 @@ export const RPC_METHODS = {
   UI_BROWSER_RECORDING_CAPTURE_FRAME: 'ui.browser.recording.captureFrame',
   UI_CONTRIBUTED_ACTION_EXECUTE: 'ui.actions.contributed.execute',
   UI_ACTION_EXECUTE: 'ui.actions.execute.v1',
+  // App → dispatching daemon: a declared child of a client Action that daemon admitted
+  // and is still awaiting. The daemon supplies the caller; the App supplies only operands.
+  UI_ACTION_CHILD_EXECUTE: 'ui.actions.child.execute.v1',
   UI_BROWSER_AUTOMATION_DISPATCH: 'ui.browser.automation.dispatch',
   DAEMON_SIMULATOR_PREVIEW_SNAPSHOT: 'daemon.devices.simulator.preview.snapshot',
   DAEMON_SIMULATOR_PREVIEW_ACTION: 'daemon.devices.simulator.preview.action',

@@ -934,6 +934,11 @@ function registerMachineRpcHandlersOnce(params: Readonly<{
         }
       : {}),
   });
+  // Children of a client Action this daemon admitted and is still awaiting.
+  rpcHandlerManager.registerHandler(RPC_METHODS.UI_ACTION_CHILD_EXECUTE, async (raw: unknown, context) => {
+    const { executeAdmittedClientActionChild } = await import('@/session/actions/admittedClientActionChildren');
+    return await executeAdmittedClientActionChild(raw, context);
+  });
   rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_SESSION_CONNECTED_SERVICE_AUTH_SWITCH, async (raw: unknown) => {
     const parsed = parseSessionConnectedServiceAuthSwitchRpcParams(raw);
     if (!parsed) {

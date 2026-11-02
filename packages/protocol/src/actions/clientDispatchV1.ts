@@ -112,6 +112,35 @@ export const UiActionDispatchRequestV1Schema = lazyZodSchema(() => z.strictObjec
 })));
 export type UiActionDispatchRequestV1 = z.infer<typeof UiActionDispatchRequestV1Schema>;
 
+/**
+ * Workflow definition writes and trigger operations whose non-person caller is
+ * admitted by the Machine host's agent-start policy and materializer.
+ */
+const WORKFLOW_HOST_ADMITTED_CHILD_ACTION_IDS_V1: ReadonlySet<ActionId> = new Set<ActionId>([
+  'workflow.definition.create', 'workflow.definition.update', 'workflow.definition.edit', 'workflow.definition.delete',
+  'workflow.trigger.list', 'workflow.trigger.add', 'workflow.trigger.update', 'workflow.trigger.remove', 'workflow.trigger.test',
+  'session.trigger.list', 'session.trigger.add', 'session.trigger.update', 'session.trigger.remove',
+]);
+
+/** Exact list: a new trigger Action joins deliberately; `workflow.trigger.run_now` is not a child here. */
+export function isWorkflowHostAdmittedChildActionIdV1(actionId: ActionId): boolean {
+  return WORKFLOW_HOST_ADMITTED_CHILD_ACTION_IDS_V1.has(actionId);
+}
+
+/**
+ * A child of a client Action the dispatching daemon admitted and is still awaiting.
+ * It names that parent; caller, Session, Run and Account facts stay with the daemon.
+ */
+export const UiActionChildExecuteRequestV1Schema = lazyZodSchema(() => z.strictObject({
+  v: z.literal(1),
+  parentRequestId: z.string().check(z.trim(), z.minLength(1)),
+  sessionId: z.string().check(z.trim(), z.minLength(1)),
+  actionId: ActionIdSchema,
+  input: z.unknown(),
+}).check(z.refine(request => isWorkflowHostAdmittedChildActionIdV1(request.actionId)
+  && Object.hasOwn(request, 'input'), { message: 'Invalid admitted client Action child', path: ['actionId'] })));
+export type UiActionChildExecuteRequestV1 = z.infer<typeof UiActionChildExecuteRequestV1Schema>;
+
 export const UiActionDispatchResultV1Schema = lazyZodSchema(() => z.strictObject({
   v: z.literal(1),
   execution: z.discriminatedUnion('ok', [
@@ -119,6 +148,7 @@ export const UiActionDispatchResultV1Schema = lazyZodSchema(() => z.strictObject
     ActionExecuteFailureSchema,
   ]),
 }));
+export type UiActionDispatchResultV1 = z.infer<typeof UiActionDispatchResultV1Schema>;
 
 /** Absence is a declared domain result where the Action has one, otherwise a typed failure. */
 export function clientActionUnavailable(actionId: ActionId): ActionExecuteResult {

@@ -28,6 +28,7 @@ import {
     type SessionPullRequestBindingInputV1,
 } from '@happier-dev/channels-protocol/v1';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { isWorkflowHostAdmittedChildActionIdV1 } from '@happier-dev/protocol/actions/clientDispatchV1';
 import { readRpcRequestDisposition } from '@happier-dev/sync-client';
 
 import { WorkflowActionFailureV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
@@ -382,12 +383,7 @@ export function createUiWorkflowAction(params: Readonly<{
             : { ...rawArgs, context: { ...rawArgs.context, serverId: account.serverId } };
         const ordinaryAccountCredential = account.credentialAuthorityKind === 'account' || account.credentialAuthorityKind === 'terminal';
         const restrictedResource = args.context.externalActionTarget && args.context.externalActionTarget.kind !== 'machine';
-        const definitionWrite = args.actionId === 'workflow.definition.create'
-            || args.actionId === 'workflow.definition.update' || args.actionId === 'workflow.definition.edit'
-            || args.actionId === 'workflow.definition.delete';
         const savedOccurrence = args.actionId === 'workflow.trigger.run_now';
-        const triggerOperation = !savedOccurrence
-            && (args.actionId.startsWith('workflow.trigger.') || args.actionId.startsWith('session.trigger.'));
         // Prepared recovery publishes executor rows. A present user's trigger
         // reads and writes are Account data served here; any other caller's
         // trigger or definition write consumes the host's agent-start policy
@@ -396,7 +392,7 @@ export function createUiWorkflowAction(params: Readonly<{
             || args.actionId === 'workflow.run.invocations.retry'
             || (args.actionId === 'workflow.run.resume' && args.input.mode === 'recover')
             || (savedOccurrence && isWorkflowTriggerAgentCallerV1(args.context))
-            || ((definitionWrite || triggerOperation) && args.context.authority !== 'present_user');
+            || (isWorkflowHostAdmittedChildActionIdV1(args.actionId) && args.context.authority !== 'present_user');
         let result: unknown;
         try {
             result = await (ordinaryAccountCredential && !restrictedResource && !machineOrHostOperation

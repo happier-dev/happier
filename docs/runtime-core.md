@@ -2831,6 +2831,20 @@ capturing and forwarding these admission facts; ordinary host/plugin requester
 invocations cannot manufacture them. This matching-development contract needs
 the server, daemon and FIN relay loaded together.
 
+A Workflow definition/trigger child that the App produces while serving a
+client Action (for example a mounted draft Save) does not use the App's Account
+relay when the parent's caller is a Session. The daemon that admitted that
+parent keeps it as the still-active fact for as long as it awaits the App's
+answer. The App returns each child to that daemon over
+`RPC_METHODS.UI_ACTION_CHILD_EXECUTE`, naming only the parent request id, its
+Session and the child operands (`UiActionChildExecuteRequestV1`). The daemon
+refuses an unknown or settled parent, a different Session and a server-stamped
+actor Account other than the parent's. It then runs the child through ordinary
+admission under the parent's own admitted caller, including Session-leaf and Run
+facts and requester attribution. It never inherits the parent's approval bypass,
+confirmation or request id. `isWorkflowHostAdmittedChildActionIdV1` is the one
+predicate for this family. The App never stamps Session provenance.
+
 Experimental native Realtime Start is Session-owner-only in 0.3 development;
 it runs on that owner's Agent account. The canonical Protocol RPC classification
 requires `sessionOwner`, while shared editors retain ordinary input and question

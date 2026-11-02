@@ -1557,6 +1557,12 @@ export type ActionExecutorDeps = Readonly<{
     context: ActionExecutorContext;
     /** Continue this admitted effect locally when no presenter forward is needed. */
     execute: () => Promise<ActionExecuteResult>;
+    /**
+     * Ordinary admission of a child the presenter returns while this delivery is
+     * pending: the parent's caller, without its bypass, confirmation or request id.
+     * The executor always supplies it; a host delivering directly has none.
+     */
+    executeChild?: (actionId: ActionId, input: unknown) => Promise<ActionExecuteResult>;
   }>) => Promise<ActionExecuteResult>;
   uiCommandPaletteAction?: (args: Readonly<{
     actionId: 'ui.command_palette.list' | 'ui.command_palette.invoke';
