@@ -64,6 +64,7 @@ window-vibrancy = "=0.8.1"
 
 [target."cfg(target_os = \"windows\")".dependencies]
 webview2-com = "0.38"
+windows-core-061 = { package = "windows-core", version = "=0.61.2" }
 # The tray reads the taskbar theme from the registry; already in the tree via hyper-util.
 windows-registry = "0.6"
 windows = { version = "0.62.2", features = ["Foundation", "UI_ViewManagement", "Win32_Graphics_Dwm"] }
@@ -71,6 +72,7 @@ windows = { version = "0.62.2", features = ["Foundation", "UI_ViewManagement", "
 [target."cfg(target_os = \"linux\")".dependencies]
 gtk = "0.18"
 webkit2gtk = "=2.0.2"
+soup3 = "=0.5.0"
 
 [patch.crates-io]
 tauri-plugin-mcp-bridge = { path = "vendor/tauri-plugin-mcp-bridge" }
