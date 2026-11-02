@@ -2050,6 +2050,24 @@ describe('Collection table', () => {
     view.unmount();
   });
 
+  it("ends a list row's second line with its list fact, which the table leaves to its columns", () => {
+    const factAnatomy: CollectionAnatomy<Entry> = {
+      ...anatomy,
+      reason: undefined,
+      listFact: (entry) => (entry.id === 'a' ? 'Overdue' : null),
+      columnTitles: { title: 'Task', where: 'Where', age: 'Age' },
+    };
+    const list = mount({ presentation: 'list', detail: 'none', anatomy: factAnatomy });
+    list.measure(390);
+    expect(list.query('row:a')?.textContent).toContain('Overdue');
+    expect(list.query('row:b')?.textContent).not.toContain('Overdue');
+    list.unmount();
+    const table = mount({ anatomy: factAnatomy });
+    table.measure(1440);
+    expect(table.query('virtualizer')?.textContent).not.toContain('Overdue');
+    table.unmount();
+  });
+
   it('groups rows by the one axis, with each group naming what its rows share', () => {
     const view = mount();
     view.measure(1440);

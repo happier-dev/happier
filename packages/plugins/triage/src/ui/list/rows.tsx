@@ -37,6 +37,8 @@ import {
 } from '../window/entryDisplay.js';
 import type { TriageListGroupIdV1, TriageListItemV1, TriageListRowSignalV1, TriageListTaskFactsV1 } from './sections.js';
 import { TriageTaskRowStatusControl } from '../detail/taskFields.js';
+import { createTriageTaskListFactV1, readTriageTaskDueV1 } from './taskColumns.js';
+export { readTriageTaskDueV1 } from './taskColumns.js';
 
 const NO_SHARED_GROUP_REASONS: ReadonlyMap<TriageListGroupIdV1, string> = new Map();
 const NO_TASK_REREAD = async () => undefined;
@@ -560,6 +562,13 @@ export function useTriageListAnatomyV1(input: Readonly<{
   const { taskItems, personalTaskOrder, onTaskOrderOutcome } = input;
   return React.useMemo<CollectionAnatomy<TriageListItemV1>>(() => {
     const descriptorOf = (item: TriageListItemV1) => resolveTriageSourceDescriptorV1(targetedContributions, item.row.entryRef.source);
+    const agent = (item: TriageListItemV1) => {
+      if (item.agent === null) return null;
+      const mark = readTriageAgentCellMarkV1(item.agent);
+      return <Status presentation="inline" tone={mark.tone} indicator={mark.marked} pulsing={mark.live}
+        label={text(item.agent.labelKey, item.agent.label, item.agent.labelParams)}
+        leading={item.agent.agent?.brand === undefined ? undefined : <BrandMark pluginId={item.agent.agent.brand.pluginId} size="small" pixelSize={resolveHappierIconSize('small')} externallyLabelled />} />;
+    };
     const unfinished = new Set(personalTaskOrder?.undoneOrder ?? []);
     const orderByGroup = new Map<TriageListGroupIdV1, string[]>();
     for (const item of taskItems ?? []) {
@@ -682,6 +691,7 @@ export function useTriageListAnatomyV1(input: Readonly<{
           return <Text variant="meta" tone={due.tone ?? 'secondary'} value={due.label} numberOfLines={1} />;
         },
       }] } : {}),
+      ...(tasks ? { listFact: createTriageTaskListFactV1({ locale, text, renderAgent: agent }) } : {}),
       ...(withReason ? { reason: (item: TriageListItemV1) => {
         const { row } = item;
         // The group's header already says the one suggestion all its rows share; the row does not repeat it.
@@ -709,15 +719,7 @@ export function useTriageListAnatomyV1(input: Readonly<{
           return <Status presentation="inline" tone={mark.tone} indicator={mark.marked} pulsing={mark.live} label={item.signal.label} />;
         },
       } : {}),
-      ...(withAgent ? { agent: (item: TriageListItemV1) => {
-        if (item.agent === null) return null;
-        const mark = readTriageAgentCellMarkV1(item.agent);
-        return <Status
-          presentation="inline" tone={mark.tone} indicator={mark.marked} pulsing={mark.live}
-          label={text(item.agent.labelKey, item.agent.label, item.agent.labelParams)}
-          leading={item.agent.agent?.brand === undefined ? undefined : <BrandMark pluginId={item.agent.agent.brand.pluginId} size="small" pixelSize={resolveHappierIconSize('small')} externallyLabelled />}
-        />;
-      } } : {}),
+      ...(withAgent ? { agent } : {}),
       age: (item) => (item.row.activityAtMs === null
         ? null
         : formatTriageCompactAgeV1(locale, item.row.activityAtMs, Date.now())),
@@ -745,45 +747,6 @@ export function useTriageListAnatomyV1(input: Readonly<{
       },
     };
   }, [contributionSnapshotJson, locale, onTaskApplied, organizing, sharedGroupReasons, tasks, text, withAgent, withReason, withSignal, taskItems, personalTaskOrder, onTaskOrderOutcome]);
-}
-
-const DAY_MS = 86_400_000;
-const CALENDAR_DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
-
-/**
- * A task's Due cell (lab `tasks-list`): Overdue in rose before it is due, Today in amber, then the weekday within the
- * week and the date beyond. A calendar date ("2026-10-22", as trackers keep it) is a day in the reader's calendar,
- * never a UTC midnight; a moment is overdue once it has passed. A finished task only says its date.
- */
-export function readTriageTaskDueV1(
-  dueDate: string | undefined,
-  category: TriageListTaskFactsV1['category'],
-  locale: string,
-  nowMs: number,
-  text: PluginTranslate,
-): Readonly<{ label: string; tone: 'danger' | 'warning' | null }> | null {
-  if (dueDate === undefined) return null;
-  const calendar = CALENDAR_DATE.exec(dueDate);
-  const due = calendar === null
-    ? new Date(Date.parse(dueDate))
-    : new Date(Number(calendar[1]), Number(calendar[2]) - 1, Number(calendar[3]));
-  if (Number.isNaN(due.getTime())) return null;
-  const today = new Date(nowMs);
-  today.setHours(0, 0, 0, 0);
-  const dueDay = new Date(due);
-  dueDay.setHours(0, 0, 0, 0);
-  const days = Math.round((dueDay.getTime() - today.getTime()) / DAY_MS);
-  const date = Math.abs(days) <= 6
-    ? new Intl.DateTimeFormat(locale, { weekday: 'short' }).format(due)
-    : new Intl.DateTimeFormat(locale, { month: 'short', day: 'numeric' }).format(due);
-  if (category === 'completed' || category === 'canceled') return { label: date, tone: null };
-  const passed = calendar === null ? due.getTime() < nowMs : days < 0;
-  if (passed) {
-    const when = days === 0 ? new Intl.DateTimeFormat(locale, { hour: 'numeric', minute: '2-digit' }).format(due) : date;
-    return { label: text('plugins.triage.tasks.due.overdue', 'Overdue · {date}', { date: when }), tone: 'danger' };
-  }
-  if (days === 0) return { label: text('plugins.triage.tasks.due.today', 'Today'), tone: 'warning' };
-  return { label: date, tone: null };
 }
 
 /**

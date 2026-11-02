@@ -6,8 +6,14 @@ import { createPluginUiTestkit, createSurfaceContextFixture, type PluginUiTestki
 import { defineUiSurface, Text, type CollectionAnatomy } from '@happier-dev/plugin-ui';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
 
-import type { TriageListItemV1 } from './sections.js';
+import { planTriageListItemsV1, type TriageListItemV1 } from './sections.js';
+import { testkitEntryRef, testkitObservation, testkitPresentOutcome } from '../../corpus/testkit/observations.test-support.js';
+import { foldTriageListWindow, TRIAGE_LIST_DEFAULT_LENS_V1 } from '../../projection/listWindow.js';
+// A mounted plugin renderer loads after its real declaration/registration entry.
+import '../../manifest.js';
+
 import { TRIAGE_ROW_REASON_TEST_ID_V1, useTriageListAnatomyV1 } from './rows.js';
+import { readTriageTaskDueV1 } from './taskColumns.js';
 import type { TriageListDisplayRowV1 } from '../marks/pinnedRows.js';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -35,6 +41,46 @@ async function readAnatomy(input: Readonly<{ withSignal: boolean; withAgent: boo
 }
 
 describe('PRs & Issues table columns', () => {
+  it("gives a task's list row its one loudest fact: an agent asking, then an urgent due date, Blocked, then a working agent", async () => {
+    const base = testkitObservation();
+    const present = testkitPresentOutcome();
+    const observations = [{ ...base, entryRef: testkitEntryRef({ kindId: 'issue', entryId: 'task' }),
+      outcome: present }];
+    const window = foldTriageListWindow({ observations, lanes: [], configuredSourcesStatus: 'complete',
+      activeSourceInstanceIds: [base.sourceInstanceId], lens: TRIAGE_LIST_DEFAULT_LENS_V1, assembledAtMs: base.observedAtMs });
+    const [planned] = planTriageListItemsV1({ rows: window.rows, pins: [], workflowSubjectOf: () => 'issue',
+      tasks: { audience: 'everyone', isTask: () => true, hasSessions: () => false } });
+    const task = { ...planned!.task!, category: 'unstarted' as const };
+    const asking = { kind: 'permission' as const, labelKey: 'x.asking', label: 'Codex needs you', tone: 'attention' as const, live: false };
+    const working = { kind: 'working' as const, labelKey: 'x.working', label: 'Working', tone: 'neutral' as const, live: true };
+    const blocked = { ...task, relations: { blockedBy: [planned!.row.entryRef] } };
+    const overdue = { ...task, dueDate: '2020-01-01' };
+    const cases: ReadonlyArray<readonly [string, TriageListItemV1]> = [
+      ['asking', { ...planned!, key: 'asking', agent: asking, task: { ...overdue, relations: blocked.relations } }],
+      ['overdue', { ...planned!, key: 'overdue', agent: working, task: { ...overdue, relations: blocked.relations } }],
+      ['blocked', { ...planned!, key: 'blocked', agent: working, task: blocked }],
+      ['working', { ...planned!, key: 'working', agent: working, task }],
+      ['quiet', { ...planned!, key: 'quiet', agent: null, task }],
+    ];
+    let fixture!: PluginUiTestkit;
+    await act(async () => {
+      fixture = await createPluginUiTestkit({ identity: { instanceId: 'task-fact', mountNonce: 'task-fact' },
+        authorPlugin: { id: 'happier.triage', version: '0.0.0' },
+        surface: defineUiSurface(() => {
+          const anatomy = useTriageListAnatomyV1({ withSignal: false, tasks: true, taskAudience: 'everyone' });
+          return <>{cases.map(([id, item]) => <React.Fragment key={id}>{anatomy.listFact?.(item)}</React.Fragment>)}</>;
+        }),
+        surfaceContext: createSurfaceContextFixture(), adapter: createPluginUiRnwSemanticSurfaceAdapter(), handlers: {},
+      });
+    });
+    mounted.push(fixture);
+    await expect(fixture.getByText('Codex needs you')).resolves.toBeDefined();
+    const overdueLabel = readTriageTaskDueV1('2020-01-01', task.category, createSurfaceContextFixture().locale, Date.now(), (_key, fallback = '', params) =>
+      Object.entries(params ?? {}).reduce((value, [name, part]) => value.replace(`{${name}}`, String(part)), fallback))!.label;
+    await expect(fixture.getByText(overdueLabel)).resolves.toBeDefined();
+    await expect(fixture.getByText('Blocked')).resolves.toBeDefined();
+    await expect(fixture.getByText('Working')).resolves.toBeDefined();
+  });
   it('draws the Agent column only when some listed entry has a linked agent, like Signal', async () => {
     const without = await readAnatomy({ withSignal: false, withAgent: false });
     expect(without.agent).toBeUndefined();

@@ -190,6 +190,12 @@ export type CollectionAnatomy<Item> = Readonly<{
   byline?: (item: Item) => ReactNode;
   /** The one loud fact. */
   reason?: (item: Item) => ReactNode;
+  /**
+   * The list row's one trailing fact when it has no `reason` ("Overdue", "Codex needs you"): where the table spreads
+   * an item's facts across its field columns, the list row has room for one, chosen by the caller. The table and
+   * cards never draw it.
+   */
+  listFact?: (item: Item) => ReactNode;
   signal?: (item: Item) => ReactNode;
   agent?: (item: Item) => ReactNode;
   /** Tabular age ("18m"). */
@@ -1082,6 +1088,8 @@ function ListCells<Item>(props: Readonly<{
   const age = anatomy.age?.(item) ?? null;
   const where = anatomy.byline === undefined ? anatomy.where?.(item) : anatomy.byline(item);
   const reason = anatomy.reason?.(item);
+  // The second line ends with the loud reason, or else the caller's one list fact.
+  const lineEnd = reason === undefined || reason === null || reason === false || reason === '' ? anatomy.listFact?.(item) : reason;
   const description = anatomy.description?.(item) ?? null;
   const described = anatomy.description !== undefined;
   const titleMeta = anatomy.titleMeta?.(item);
@@ -1176,8 +1184,8 @@ function ListCells<Item>(props: Readonly<{
           ) : (
             <>
               <View pointerEvents={layer?.content} style={[flexCellStyle, lineStyle]}>{facts(where)}</View>
-              {layer === null ? <SlotContent value={reason} textStyle={secondLine} /> : (
-                <View pointerEvents={layer.leaf} style={controlsStyle}><SlotContent value={reason} textStyle={secondLine} /></View>
+              {layer === null ? <SlotContent value={lineEnd} textStyle={secondLine} /> : (
+                <View pointerEvents={layer.leaf} style={controlsStyle}><SlotContent value={lineEnd} textStyle={secondLine} /></View>
               )}
               {metaPlacement !== 'beneath' ? null : layer === null ? metaCell : <View pointerEvents={layer.leaf}>{metaCell}</View>}
             </>
