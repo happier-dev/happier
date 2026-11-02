@@ -36,7 +36,7 @@ export const DeploymentTemplateInstantiateInputV1Schema = lazyZodSchema(() => z.
   bindings: StoredAppPresetBindingsV1Schema,
   generatedSecretAudience: z.optional(DeploymentTemplateGeneratedSecretAudienceV1Schema),
   connectTo: z.optional(z.strictObject({ service: id })), replace: z.optional(z.array(id)),
-  domainBindings: z.optional(z.array(z.strictObject({ key: id, hostname: id }))),
+  domainBindings: z.optional(z.array(z.strictObject({ templateDomainId: id, hostname: id }))),
 }).check(z.superRefine((input, context) => {
   if (input.environment.kind === 'existing' && !('contentRevision' in input.destination)
     || input.environment.kind === 'create' && ('contentRevision' in input.destination || input.target.kind !== 'new')) {
