@@ -190,6 +190,7 @@ export type PluginContributionRegistry = Readonly<{
   inputTypes: readonly PluginOwnedContribution<PluginInputTypeContributionV1>[];
   atmospherePictures: readonly PluginOwnedContribution<PluginAtmospherePictureContributionV1>[];
   registrySources: readonly PluginOwnedContribution<PluginRegistrySourceContributionV1>[];
+  storeKinds: readonly PluginOwnedContribution<import('@happier-dev/protocol').PluginStoreKindContributionV1>[];
   languageServers: readonly PluginOwnedContribution<PluginLanguageServerContributionV1>[];
   skills: readonly PluginOwnedContribution<PluginSkillContributionV1>[];
   machineProvisioners: readonly PluginOwnedContribution<MachineProvisionerContributionV1>[];
@@ -428,6 +429,7 @@ export function projectPluginContributionRegistry(params: Readonly<{
   const inputTypes: PluginOwnedContribution<PluginInputTypeContributionV1>[] = [];
   const atmospherePictures: PluginOwnedContribution<PluginAtmospherePictureContributionV1>[] = [];
   const registrySources: PluginOwnedContribution<PluginRegistrySourceContributionV1>[] = [];
+  const storeKinds: PluginOwnedContribution<import('@happier-dev/protocol').PluginStoreKindContributionV1>[] = [];
   const languageServers: PluginOwnedContribution<PluginLanguageServerContributionV1>[] = [];
   const skills: PluginOwnedContribution<PluginSkillContributionV1>[] = [];
   const machineProvisioners: PluginOwnedContribution<MachineProvisionerContributionV1>[] = [];
@@ -1099,6 +1101,15 @@ export function projectPluginContributionRegistry(params: Readonly<{
         sourceSpec: plugin.sourceSpec, definition,
       });
     }
+    for (const definition of readSemanticDefinitions<import('@happier-dev/protocol').PluginStoreKindContributionV1>('storeKinds')) {
+      storeKinds.push({
+        pluginId: plugin.pluginId, pluginVersion: plugin.manifest.version,
+        identity: createPluginContributionIdentity({ pluginId: plugin.pluginId, localId: definition.id }),
+        pluginRootPath: plugin.pluginRootPath, manifestPath: plugin.manifestPath,
+        daemonEntryPath: plugin.daemonEntryPath, devDaemonEntryPath: plugin.devDaemonEntryPath,
+        sourceSpec: plugin.sourceSpec, definition,
+      });
+    }
     for (const definition of readSemanticDefinitions<PluginRegistrySourceContributionV1>('registrySources')) {
       registrySources.push({
         pluginId: plugin.pluginId, pluginVersion: plugin.manifest.version,
@@ -1248,6 +1259,7 @@ export function projectPluginContributionRegistry(params: Readonly<{
     inputTypes: Object.freeze(inputTypes),
     atmospherePictures: Object.freeze(atmospherePictures),
     registrySources: Object.freeze(registrySources),
+    storeKinds: Object.freeze(storeKinds),
     languageServers: Object.freeze(languageServers),
     skills: Object.freeze(skills),
     machineProvisioners: Object.freeze(machineProvisioners),

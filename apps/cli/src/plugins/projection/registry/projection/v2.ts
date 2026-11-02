@@ -50,6 +50,7 @@ import { rolesProjectionFamily } from '../roles';
 import { workflowsProjectionFamily } from '../workflows';
 import { inputTypesProjectionFamily } from '../inputTypes';
 import { atmospherePicturesProjectionFamily } from '../atmospherePictures';
+import { storeKindsProjectionFamily } from '../storeKinds';
 import { registrySourcesProjectionFamily } from '../registrySources';
 import { languageServersProjectionFamily } from '../languageServers';
 import { skillsProjectionFamily } from '../skills';
@@ -1100,6 +1101,7 @@ export function buildPluginProjectionV2(params: Readonly<{
         inputTypesProjectionFamily,
         atmospherePicturesProjectionFamily,
         registrySourcesProjectionFamily,
+        storeKindsProjectionFamily,
         languageServersProjectionFamily,
         skillsProjectionFamily,
         machineProvisionersProjectionFamily,

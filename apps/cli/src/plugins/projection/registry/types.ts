@@ -128,6 +128,7 @@ export type ResolvedWorkflowContribution = ResolvedTargetUiContribution<PluginWo
 export type ResolvedInputTypeContribution = ResolvedTargetUiContribution<PluginInputTypeContributionV1>;
 export type ResolvedAtmospherePictureContribution = ResolvedTargetUiContribution<PluginAtmospherePictureContributionV1>;
 export type ResolvedRegistrySourceContribution = ResolvedTargetUiContribution<import('@happier-dev/protocol').PluginRegistrySourceContributionV1>;
+export type ResolvedStoreKindContribution = ResolvedTargetUiContribution<import('@happier-dev/protocol').PluginStoreKindContributionV1>;
 export type ResolvedLanguageServerContribution = ResolvedTargetUiContribution<PluginLanguageServerContributionV1>;
 export type ResolvedSkillContribution = ResolvedTargetUiContribution<import('@happier-dev/protocol').PluginSkillContributionV1> & Readonly<{
     pluginRootPath: string;
@@ -826,6 +827,7 @@ export type ResolvedContributionInputs = Readonly<{
     inputTypes?: readonly ResolvedInputTypeContribution[];
     atmospherePictures?: readonly ResolvedAtmospherePictureContribution[];
     registrySources?: readonly ResolvedRegistrySourceContribution[];
+    storeKinds?: readonly ResolvedStoreKindContribution[];
     backupDestinations?: readonly ResolvedBackupDestinationContribution[];
     deploymentTargets?: readonly ResolvedDeploymentTargetContribution[];
     healthCheckKinds?: readonly ResolvedHealthCheckKindContribution[];
@@ -903,6 +905,7 @@ export type ResolvedContributionRegistry = Readonly<{
     inputTypes?: readonly ResolvedInputTypeContribution[];
     atmospherePictures?: readonly ResolvedAtmospherePictureContribution[];
     registrySources?: readonly ResolvedRegistrySourceContribution[];
+    storeKinds?: readonly ResolvedStoreKindContribution[];
     backupDestinations: readonly ResolvedBackupDestinationContribution[];
     deploymentTargets?: readonly ResolvedDeploymentTargetContribution[];
     healthCheckKinds?: readonly ResolvedHealthCheckKindContribution[];

@@ -1,4 +1,5 @@
 import { DeploymentTargetContributionV1Schema } from '../plugins/contributions/deploymentTargets.js';
+import { PluginStoreKindContributionV1Schema } from '../plugins/contributions/storeKinds.js';
 import { HealthCheckKindContributionV1Schema } from '../plugins/contributions/healthCheckKinds.js';
 import { AccessProviderContributionV1Schema } from '../plugins/contributions/accessProviders.js';
 import { BackupDestinationContributionV1Schema } from '../plugins/contributions/backupDestinations.js';
@@ -2730,6 +2731,7 @@ export const PluginProjectedFamilyEntryV2Schema: z.ZodMiniUnion<readonly [
   typeof PluginProjectedAccessProviderEntryV1Schema,
   typeof PluginProjectedBackupDestinationEntryV1Schema,
   typeof PluginProjectedHealthCheckKindEntryV1Schema,
+  typeof PluginProjectedStoreKindEntryV1Schema,
   typeof PluginProjectedDeploymentTargetEntryV1Schema,
   typeof PluginProjectedWorkItemsEntryV1Schema,
   typeof PluginProjectedMachineProvisionerEntryV1Schema,
@@ -2761,6 +2763,7 @@ export const PluginProjectedFamilyEntryV2Schema: z.ZodMiniUnion<readonly [
   PluginProjectedAccessProviderEntryV1Schema,
   PluginProjectedBackupDestinationEntryV1Schema,
   PluginProjectedHealthCheckKindEntryV1Schema,
+  PluginProjectedStoreKindEntryV1Schema,
   PluginProjectedDeploymentTargetEntryV1Schema,
   PluginProjectedWorkItemsEntryV1Schema,
   PluginProjectedMachineProvisionerEntryV1Schema,
@@ -2836,6 +2839,7 @@ machineSetupPresets: z.ZodMiniOptional<typeof PluginProjectedMachineSetupPresets
 machineRecipes: z.ZodMiniOptional<typeof PluginProjectedMachineRecipesFamilyV1Schema>;
 
 healthCheckKinds: z.ZodMiniOptional<typeof PluginProjectedHealthCheckKindsFamilyV1Schema>;
+storeKinds: z.ZodMiniOptional<typeof PluginProjectedStoreKindsFamilyV1Schema>;
 
 deploymentTargets: z.ZodMiniOptional<typeof PluginProjectedDeploymentTargetsFamilyV1Schema>;
 
@@ -2878,6 +2882,7 @@ machineSetupPresets: z.optional(PluginProjectedMachineSetupPresetsFamilyV1Schema
 machineRecipes: z.optional(PluginProjectedMachineRecipesFamilyV1Schema),
 
 healthCheckKinds: z.optional(PluginProjectedHealthCheckKindsFamilyV1Schema),
+storeKinds: z.optional(PluginProjectedStoreKindsFamilyV1Schema),
 
 deploymentTargets: z.optional(PluginProjectedDeploymentTargetsFamilyV1Schema),
 
@@ -2916,6 +2921,7 @@ export const PluginProjectedFamilyV2Schema: z.ZodMiniUnion<readonly [
   typeof PluginProjectedMachineSetupPresetsFamilyV1Schema,
   typeof PluginProjectedMachineRecipesFamilyV1Schema,
   typeof PluginProjectedHealthCheckKindsFamilyV1Schema,
+  typeof PluginProjectedStoreKindsFamilyV1Schema,
   typeof PluginProjectedDeploymentTargetsFamilyV1Schema,
   typeof PluginProjectedBackupDestinationsFamilyV1Schema,
   typeof PluginProjectedWorkItemsFamilyV1Schema,
@@ -2948,6 +2954,7 @@ export const PluginProjectedFamilyV2Schema: z.ZodMiniUnion<readonly [
   PluginProjectedMachineSetupPresetsFamilyV1Schema,
   PluginProjectedMachineRecipesFamilyV1Schema,
   PluginProjectedHealthCheckKindsFamilyV1Schema,
+  PluginProjectedStoreKindsFamilyV1Schema,
   PluginProjectedDeploymentTargetsFamilyV1Schema,
   PluginProjectedBackupDestinationsFamilyV1Schema,
   PluginProjectedWorkItemsFamilyV1Schema,
@@ -3078,6 +3085,18 @@ export const PluginProjectedDeploymentTargetEntryV1Schema = lazyZodSchema(() => 
   if (entry.executionOrigin && !entry.occurrenceId) context.addIssue({ code: 'custom', path: ['occurrenceId'], message: 'Deployment target origin requires its serving occurrence' });
   validateProjectedExecutionOrigin(entry.executionOrigin, entry, context);
 })));
+export const PluginProjectedStoreKindEntryV1Schema = lazyZodSchema(() => z.strictObject({
+  id: z.string().check(z.minLength(1)), pluginId: PluginIdSchema, pluginVersion: z.string().check(z.minLength(1)),
+  occurrenceId: z.optional(PluginUiRuntimeOccurrenceIdV1Schema),
+  executionOrigin: z.optional(PluginMachineExecutionOriginV1Schema),
+  definition: PluginStoreKindContributionV1Schema,
+}).check(z.superRefine((entry, context) => {
+  if (entry.id !== `${entry.pluginId}/${entry.definition.id}`) context.addIssue({ code: 'custom', path: ['id'], message: 'Store kind identity must match its descriptor.' });
+  if (entry.executionOrigin && !entry.occurrenceId) context.addIssue({ code: 'custom', path: ['occurrenceId'], message: 'Store kind origin requires its serving occurrence.' });
+  validateProjectedExecutionOrigin(entry.executionOrigin, entry, context);
+})));
+export type PluginProjectedStoreKindEntryV1 = z.infer<typeof PluginProjectedStoreKindEntryV1Schema>;
+
 export const PluginProjectedHealthCheckKindEntryV1Schema = lazyZodSchema(() => z.strictObject({
   id: z.string().check(z.minLength(1)), pluginId: PluginIdSchema, pluginVersion: z.string().check(z.minLength(1)),
   occurrenceId: z.optional(PluginUiRuntimeOccurrenceIdV1Schema),
@@ -3110,6 +3129,7 @@ export const PluginProjectedAccessProviderEntryV1Schema = lazyZodSchema(() => z.
 const PluginProjectedBackupDestinationsFamilyV1Schema = lazyZodSchema(() => projectedFamilySchema('backupDestinations', PluginProjectedBackupDestinationEntryV1Schema));
 const PluginProjectedDeploymentTargetsFamilyV1Schema = lazyZodSchema(() => projectedFamilySchema('deploymentTargets', PluginProjectedDeploymentTargetEntryV1Schema));
 const PluginProjectedHealthCheckKindsFamilyV1Schema = lazyZodSchema(() => projectedFamilySchema('healthCheckKinds', PluginProjectedHealthCheckKindEntryV1Schema));
+const PluginProjectedStoreKindsFamilyV1Schema = lazyZodSchema(() => projectedFamilySchema('storeKinds', PluginProjectedStoreKindEntryV1Schema));
 const PluginProjectedMachineRecipesFamilyV1Schema = lazyZodSchema(() => projectedFamilySchema('machineRecipes', PluginProjectedMachineRecipeEntryV1Schema));
 const PluginProjectedMachineSetupPresetsFamilyV1Schema = lazyZodSchema(() => projectedFamilySchema('machineSetupPresets', PluginProjectedMachineSetupPresetEntryV1Schema));
 const PluginProjectedAccessProvidersFamilyV1Schema = lazyZodSchema(() => projectedFamilySchema('accessProviders', PluginProjectedAccessProviderEntryV1Schema));

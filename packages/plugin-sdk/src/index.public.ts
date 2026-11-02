@@ -256,3 +256,5 @@ export type { ProjectToolchainSelectionV1 } from './projectNativeAdapters.js';
 export type { PluginProjectNativeToolchainRequestV1 } from './projectNativeAdapters.js';
 
 export type { PluginProjectNativeToolchainResultV1 } from './projectNativeAdapters.js';
+export type { StoreKindContributionV1, StoreKindLaunchInputV1, PluginStoreItemReferenceV1, PluginStoreItemV1 } from './storeKinds.js';
+export { createPluginStoreItemHref, PluginStoreItemReferenceV1ProtocolSchema, PluginStoreItemV1ProtocolSchema } from './storeKinds.js';

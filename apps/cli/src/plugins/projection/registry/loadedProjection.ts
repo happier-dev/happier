@@ -308,6 +308,7 @@ export function projectLoadedPluginRegistry(
     const inputTypeCandidates: ResolvedInputTypeContribution[] = [];
     const atmospherePictureCandidates: ResolvedAtmospherePictureContribution[] = [];
     const registrySourceCandidates: ResolvedRegistrySourceContribution[] = [];
+    const storeKindCandidates: import('./types').ResolvedStoreKindContribution[] = [];
     const languageServerCandidates: ResolvedLanguageServerContribution[] = [];
     const skillCandidates: ResolvedSkillContribution[] = [];
     const machineProvisionerCandidates: ResolvedMachineProvisionerContribution[] = [];
@@ -891,6 +892,11 @@ export function projectLoadedPluginRegistry(
             pluginId: contribution.pluginId, pluginVersion: contribution.pluginVersion, identity: contribution.identity!,
             manifestPath: contribution.manifestPath, definition: contribution.definition });
     }
+    for (const contribution of pluginRegistry.storeKinds) {
+        storeKindCandidates.push({ provenance: params.provenance, source: { kind: contribution.sourceSpec.kind },
+            pluginId: contribution.pluginId, pluginVersion: contribution.pluginVersion, identity: contribution.identity!,
+            manifestPath: contribution.manifestPath, definition: contribution.definition });
+    }
     for (const contribution of pluginRegistry.registrySources) {
         registrySourceCandidates.push({ provenance: params.provenance, source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId, pluginVersion: contribution.pluginVersion, identity: contribution.identity!,
@@ -1045,6 +1051,7 @@ export function projectLoadedPluginRegistry(
         inputTypes: Object.freeze(inputTypeCandidates),
         atmospherePictures: Object.freeze(atmospherePictureCandidates),
         registrySources: Object.freeze(registrySourceCandidates),
+        storeKinds: Object.freeze(storeKindCandidates),
         languageServers: Object.freeze(languageServerCandidates),
         skills: Object.freeze(skillCandidates),
         machineProvisioners: Object.freeze(machineProvisionerCandidates),

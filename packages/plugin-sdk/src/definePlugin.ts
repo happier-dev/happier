@@ -918,6 +918,7 @@ export type DefinePluginInput<
         accessProviders?: Readonly<Record<PluginContributionLocalId, AccessProviderAuthorDefinitionV1>>;
         deploymentTargets?: Readonly<Record<PluginContributionLocalId, import('./deploymentTargets.js').DeploymentTargetAuthorDefinitionV1>>;
         healthCheckKinds?: Readonly<Record<PluginContributionLocalId, Omit<import('./healthCheckKinds.js').HealthCheckKindContributionV1, 'id'>>>;
+        storeKinds?: Readonly<Record<PluginContributionLocalId, Omit<import('./storeKinds.js').StoreKindContributionV1, 'id'>>>;
         machineRecipes?: Readonly<Record<PluginContributionLocalId, ReadonlyAuthorDeclaration<Omit<MachineRecipeV1, 'id'>>>>;
         machineSetupPresets?: Readonly<Record<PluginContributionLocalId, ReadonlyAuthorDeclaration<Omit<MachineSetupPresetContributionV1, 'id'>>>>;
         systemTools?: Readonly<Record<
@@ -2454,6 +2455,7 @@ const ATMOSPHERE_PICTURES_ADAPTER = descriptorFamilyAdapter('atmospherePictures'
 const REGISTRY_SOURCES_ADAPTER = descriptorFamilyAdapter('registrySources');
 const DEPLOYMENT_TARGETS_ADAPTER = descriptorFamilyAdapter('deploymentTargets');
 const HEALTH_CHECK_KINDS_ADAPTER = descriptorFamilyAdapter('healthCheckKinds');
+const STORE_KINDS_ADAPTER = descriptorFamilyAdapter('storeKinds');
 const MACHINE_RECIPES_ADAPTER = descriptorFamilyAdapter('machineRecipes');
 const MACHINE_SETUP_PRESETS_ADAPTER = descriptorFamilyAdapter('machineSetupPresets');
 const SKILLS_ADAPTER = descriptorFamilyAdapter('skills');
@@ -2661,6 +2663,7 @@ export const DEFINE_PLUGIN_FAMILY_POLICY_V2 = Object.freeze({
     registrySources: { classification: 'descriptor-only', authorKey: 'registrySources', inputShape: 'descriptor', adapter: REGISTRY_SOURCES_ADAPTER },
     deploymentTargets: { classification: 'descriptor-only', authorKey: 'deploymentTargets', inputShape: 'descriptor', adapter: DEPLOYMENT_TARGETS_ADAPTER },
     healthCheckKinds: { classification: 'descriptor-only', authorKey: 'healthCheckKinds', inputShape: 'descriptor', adapter: HEALTH_CHECK_KINDS_ADAPTER },
+    storeKinds: { classification: 'descriptor-only', authorKey: 'storeKinds', inputShape: 'descriptor', adapter: STORE_KINDS_ADAPTER },
     machineRecipes: { classification: 'descriptor-only', authorKey: 'machineRecipes', inputShape: 'descriptor', adapter: MACHINE_RECIPES_ADAPTER },
     machineSetupPresets: { classification: 'descriptor-only', authorKey: 'machineSetupPresets', inputShape: 'descriptor', adapter: MACHINE_SETUP_PRESETS_ADAPTER },
     skills: { classification: 'descriptor-only', authorKey: 'skills', inputShape: 'descriptor', adapter: SKILLS_ADAPTER },

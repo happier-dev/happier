@@ -1,5 +1,6 @@
 import type { DeploymentTargetContributionV1 } from './deploymentTargets.js';
 import type { HealthCheckKindContributionV1 } from './healthCheckKinds.js';
+import type { StoreKindContributionV1 } from './storeKinds.js';
 import type { MachineRecipeV1, MachineSetupPresetContributionV1 } from './machineSetup.js';
 import type { PluginManifestIngestionDiagnostic } from '@happier-dev/protocol/plugins/manifest/ingest';
 // Portable declarative grammar is projected by the single Action DTO producer.
@@ -594,6 +595,7 @@ export interface PluginManifest {
     accessProviders?: readonly AccessProviderContributionV1[];
     deploymentTargets?: readonly DeploymentTargetContributionV1[];
     healthCheckKinds?: readonly HealthCheckKindContributionV1[];
+    storeKinds?: readonly StoreKindContributionV1[];
     machineRecipes?: readonly MachineRecipeV1[];
     machineSetupPresets?: readonly MachineSetupPresetContributionV1[];
     projectNativeAdapters?: readonly Readonly<PluginProjectNativeAdapterContributionV1>[];
@@ -740,6 +742,7 @@ export type PluginContributes = Readonly<{
   accessProviders: readonly AccessProviderContributionV1[];
   deploymentTargets: readonly DeploymentTargetContributionV1[];
   healthCheckKinds: readonly HealthCheckKindContributionV1[];
+  storeKinds: readonly StoreKindContributionV1[];
   machineRecipes: readonly MachineRecipeV1[];
   machineSetupPresets: readonly MachineSetupPresetContributionV1[];
   projectNativeAdapters: NonNullable<NonNullable<PluginManifest['contributes']>['projectNativeAdapters']>;

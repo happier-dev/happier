@@ -180,3 +180,10 @@ export { trimBugReportTextToMaxBytes } from './diagnostics.js';
 export type { PluginProjectNativeToolchainRequestV1 } from './projectNativeAdapters.js';
 
 export type { PluginProjectNativeToolchainResultV1 } from './projectNativeAdapters.js';
+export type { PluginStoreItemReferenceV1 } from './storeKinds.js';
+export { PluginStoreItemReferenceV1ProtocolSchema } from './storeKinds.js';
+export type { PluginStoreItemV1 } from './storeKinds.js';
+export { PluginStoreItemV1ProtocolSchema } from './storeKinds.js';
+export type { StoreKindContributionV1 } from './storeKinds.js';
+export type { StoreKindLaunchInputV1 } from './storeKinds.js';
+export { createPluginStoreItemHref } from './storeKinds.js';

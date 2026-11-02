@@ -45,6 +45,8 @@ import { createDaemonPluginRuntimeOwner } from './runtimeOwner';
 import { createPluginReloadController } from '@/plugins/runtime/reload/controller';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 
+import { createExternalStoreKind } from '../../../../../packages/plugin-sdk/examples/public-authoring/storeKinds';
+
 const BUNDLED_PLUGIN_ROOT = resolve(import.meta.dirname, '../../../../../packages/plugins/codex');
 
 const roots: string[] = [];
@@ -297,6 +299,34 @@ async function loadCurrentDevelopmentSentinel(input: Readonly<{
 }
 
 describe('createDaemonPathPluginChangePreparer', () => {
+  it('installs the maintained public Store kind through ordinary path review and registry commit', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-store-example-home-'));
+    const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-store-example-source-'));
+    roots.push(happyHomeDir, pluginRoot);
+    const example = createExternalStoreKind({ read: async () => null, write: async () => {}, remove: async () => {} });
+    await mkdir(join(pluginRoot, '.happier-plugin'));
+    // Match R5's supported CLI-surface adaptation without rewriting the authored Action metadata.
+    const manifest = { ...example.manifest, entrypoints: { daemon: './daemon.mjs' }, contributes: { ...example.manifest.contributes,
+      actions: (example.manifest.contributes.actions ?? []).map(action => ({ ...action, surfaces: [...action.surfaces, 'cli'] })),
+    } };
+    await writeFile(join(pluginRoot, '.happier-plugin/plugin.json'), JSON.stringify(manifest));
+    await writeFile(join(pluginRoot, 'daemon.mjs'), 'export function activate() {}\n');
+    const service = createDaemonPluginChangeService({ prepare: createDaemonPathPluginChangePreparer({
+      happyHomeDir,
+      runtimeLifecycle: { prepare: async () => ({ abort: async () => undefined, adopt: async () => undefined }) },
+    }) });
+    try {
+      const review = await service.requestPluginChange({ kind: 'installPath', locator: pluginRoot });
+      expect(review, JSON.stringify(review)).toMatchObject({ kind: 'reviewRequired', reviewKind: 'installation', review: { pluginId: example.manifest.id } });
+      if (review.kind !== 'reviewRequired') throw new Error('Expected installation review');
+      await expect(service.decidePluginChange({ pendingChangeId: review.pendingChangeId, decision: 'installAndTrust' }))
+        .resolves.toMatchObject({ kind: 'committed', pluginId: example.manifest.id });
+      const [installed] = await readInstalledPluginCatalog({ happyHomeDir });
+      expect(installed?.diagnostics).toEqual([]);
+      expect(installed?.manifest?.contributes.storeKinds).toMatchObject([{ id: 'theme', operations: { acquire: 'acquire', manage: 'manage' } }]);
+    } finally { await service.shutdown(); }
+  });
+
   it.each(['dependencies', 'ui', 'compile', 'admission', 'runtime', 'runtimeUnavailable'] as const)('logs the original local %s failure before publishing a redacted diagnostic', async (phase) => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-plugin-development-log-'));
     const pluginRoot = await createDescriptorPlugin({ development: true });

@@ -156,6 +156,7 @@ export type PluginContributionCatalogEntryV2 = Readonly<{
 
 const REFERENCE_RULES: Readonly<Record<string, readonly PluginContributionReferenceRuleV2[]>> = Object.freeze({
   healthCheckKinds: [{ field: 'action', targetFamily: 'actions' }],
+  storeKinds: [{ field: 'viewId', targetFamily: 'ui.views' }],
   actions: [{ field: 'hostAccess', targetFamily: 'manifest.hostAccess', many: true }],
   hooks: [{ field: 'hostAccess', targetFamily: 'manifest.hostAccess', many: true }],
   resources: [{ field: 'hostAccess', targetFamily: 'manifest.hostAccess', many: true }],
@@ -201,6 +202,7 @@ const FAMILY_POLICIES = {
 secretSources: { identityField: 'id', disposition: 'retained', activationDemand: 'registration', projectionFamily: null, allowedRuntimeRegistration: 'secretSources', registrationHost: 'daemon', consumer: 'saved-secret-acquisition', platforms: CLI_PLATFORMS },
 
   healthCheckKinds: { identityField: 'id', disposition: 'retained', activationDemand: 'none', projectionFamily: 'healthCheckKinds', allowedRuntimeRegistration: null, consumer: 'health-check-source-catalog', platforms: ALL_PLATFORMS },
+  storeKinds: { identityField: 'id', disposition: 'retained', activationDemand: 'none', projectionFamily: 'storeKinds', allowedRuntimeRegistration: null, consumer: 'store-kind-catalog', platforms: ALL_PLATFORMS },
   agents: { identityField: 'id', disposition: 'reshaped', activationDemand: 'conditional', projectionFamily: null, allowedRuntimeRegistration: 'agents', consumer: 'agent-runtime', platforms: CLI_PLATFORMS },
   providers: { identityField: 'id', disposition: 'delegated', activationDemand: 'conditional', projectionFamily: 'providers', allowedRuntimeRegistration: 'providers', registrationHost: 'daemon', consumer: 'providers-first-class', platforms: CLI_PLATFORMS },
   machineProvisioners: { identityField: 'id', disposition: 'reshaped', activationDemand: 'declarative', projectionFamily: 'machineProvisioners', allowedRuntimeRegistration: null, consumer: 'managed-machine-admission', platforms: CLI_PLATFORMS },
@@ -272,6 +274,13 @@ function extractRuleReferences(
 }
 
 function extractNestedReferences(family: string, value: Readonly<Record<string, unknown>>): PluginContributionReferenceCandidateV2[] {
+  if (family === 'storeKinds') {
+    const operations = value.operations;
+    if (!operations || typeof operations !== 'object' || Array.isArray(operations)) return [];
+    return Object.entries(operations).map(([role, reference]) => ({
+      targetFamily: 'actions', reference, path: ['operations', role],
+    }));
+  }
   if (family === 'deploymentTargets') {
     return readDeploymentTargetReferenceRolesV1(value as DeploymentTargetContributionV1).map(binding => ({
       targetFamily: binding.targetFamily, reference: binding.reference, path: binding.path, allowQualifiedCrossPlugin: false,
