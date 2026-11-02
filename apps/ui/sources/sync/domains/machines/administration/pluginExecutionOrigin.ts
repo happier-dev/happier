@@ -1,4 +1,4 @@
-import { arePluginMachineExecutionOriginsEqual, getPluginMachineExecutionOriginRef, type PluginMachineExecutionOriginV1 } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
+import { arePluginMachineExecutionOriginsEqual, arePluginMachineExecutionRoutingsEqual, getPluginMachineExecutionRouting, getPluginMachineExecutionOriginRef, type PluginMachineExecutionOriginV1 } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 import { type PluginMachineMaterializationV1 } from '@happier-dev/protocol/plugins/availability/v1';
 import type { MachineAdministrationTargetV1 } from '@happier-dev/protocol/account/settings/machineAdministrationSelectionsV1';
 
@@ -477,7 +477,9 @@ export function resolvePluginMachineExecutionOriginState(params: Readonly<{
         if (new Set(compatible.map(getPluginExecutionOriginCandidateVersion)).size > 1) {
             return Object.freeze({ kind: 'conflict', candidates: compatible, reasons: Object.freeze(['different_versions'] as const) });
         }
-        const incumbent = params.automaticOrigin && compatible.find(candidate => candidateMatchesOrigin(candidate, params.automaticOrigin!));
+        const incumbent = params.automaticOrigin && (compatible.find(candidate => candidateMatchesOrigin(candidate, params.automaticOrigin!))
+            ?? compatible.find(candidate => arePluginMachineExecutionRoutingsEqual(
+                getPluginMachineExecutionRouting(getPluginExecutionOriginCandidateOrigin(candidate)), getPluginMachineExecutionRouting(params.automaticOrigin!))));
         if (incumbent) return Object.freeze({ kind: 'selected', origin: getPluginExecutionOriginCandidateOrigin(incumbent),
             candidate: incumbent, selectionSource: 'auto' });
         const matchesTarget = (candidate: PluginExecutionOriginCandidateV1, target: MachineAdministrationTargetV1 | null | undefined) => {

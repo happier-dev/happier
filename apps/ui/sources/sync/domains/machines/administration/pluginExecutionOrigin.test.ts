@@ -145,6 +145,20 @@ function candidate(input: Readonly<{
 }
 
 describe('resolvePluginMachineExecutionOriginState', () => {
+    it('retains the admitted Auto Machine when its supplying origin is replaced at equal coverage', () => {
+        const previous = candidate({ serverIdentityId: 'srv_one', machineId: 'machine-a', materializationId: 'previous' });
+        const replacement = candidate({ serverIdentityId: 'srv_one', machineId: 'machine-a', materializationId: 'replacement' });
+        const other = candidate({ serverIdentityId: 'srv_one', machineId: 'machine-b', materializationId: 'other' });
+        const params = { pluginId: 'acme.plugin', storedOrigin: null,
+            automaticOrigin: composePluginMachineExecutionOriginV1(previous.materialization), candidates: [replacement, other],
+            lastUsedTarget: { serverIdentityId: 'srv_one', machineId: 'machine-b' } };
+        expect(resolvePluginMachineExecutionOriginState(params)).toMatchObject({ kind: 'selected',
+            origin: composePluginMachineExecutionOriginV1(replacement.materialization), selectionSource: 'auto' });
+        expect(resolvePluginMachineExecutionOriginState({ ...params, candidates: [
+            { ...replacement, validation: { kind: 'rejected', reason: 'offline' } }, other,
+        ] })).toMatchObject({ kind: 'selected', origin: composePluginMachineExecutionOriginV1(other.materialization) });
+    });
+
     it('auto-picks compatible admitted supply during census hydration and keeps unresolved coverage pending', () => {
         const a = candidate({ serverIdentityId: 'srv_one', machineId: 'machine-a', materializationId: 'a' });
         const b = candidate({ serverIdentityId: 'srv_one', machineId: 'machine-b', materializationId: 'b', version: '2.0.0' });

@@ -152,6 +152,25 @@ describe('execution-origin Machine publication', () => {
         expect(first.getSnapshot().selection?.state).toMatchObject({ kind: 'selected', origin: secondSource.source.origin, selectionSource: 'auto' });
     });
 
+    it('retains Auto on the same Machine after compatible source custody replacement', () => {
+        const { inputs, connect, home, machine, source, now } = fixture();
+        const second = createMachineFixture({ id: 'replacement-other-machine', activeAt: now - 1 });
+        const secondSource = { ...source, source: { ...source.source,
+            origin: { ...source.source.origin, sourceRef: { ...source.source.origin.sourceRef, machineId: second.id } } } };
+        storage.setState({ machineListByServerId: { [home.id]: [machine, second] } });
+        const current = { ...inputs, sources: [source, secondSource], selection: { availabilityRevision: {},
+            storedOrigin: null, homeServerIdentityId: home.serverIdentityId,
+            classifyRelease: () => ({ releaseContent: 'matched' as const, validation: { kind: 'admitted' as const } }) } };
+        const connection = connect(current);
+        expect(connection.getSnapshot().selection?.state).toMatchObject({ kind: 'selected', origin: source.source.origin });
+        storage.setState({ machineListByServerId: { [home.id]: [machine, { ...second, activeAt: now + 1 }] } });
+        const replacementSource = { ...source, source: { ...source.source, occurrenceId: 'replacement',
+            origin: { ...source.source.origin, sourceRef: { ...source.source.origin.sourceRef,
+                sourceCustody: { kind: 'development' as const, registeredRootId: 'replacement-root' } } } } };
+        connection.updateInputs({ ...current, sources: [replacementSource, secondSource] });
+        expect(connection.getSnapshot().selection?.state).toMatchObject({ kind: 'selected', origin: replacementSource.source.origin });
+    });
+
     it('marks the selected Machine pending until its newer content opens without waiting for another Machine', () => {
         vi.useFakeTimers();
         const { inputs, connect, home, machine, source, now } = fixture();

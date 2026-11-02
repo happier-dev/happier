@@ -2367,7 +2367,10 @@ Machine when known, and the most recently active eligible Machine (stable identi
 breaks ties). In unreleased 0.3 source, that ranking chooses the initial or replacement
 Auto origin. The mounted Administration publication retains its choice while it
 remains eligible and compatible; presence heartbeats and equal reconstructed inputs
-do not move it. Fresh execution and execution-origin Action reads revalidate that
+do not move it.
+A compatible replacement source or materialization on the same Machine retains
+that Machine preference; the replacement still passes normal admission.
+Fresh execution and execution-origin Action reads revalidate that
 same choice. An explicit Machine pin takes precedence, including when unavailable;
 an unpinned operation re-picks when its current origin becomes ineligible.
 `executionTarget: { autoPick: false }` opts a Machine-dependent plugin into asking
