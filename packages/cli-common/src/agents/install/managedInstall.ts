@@ -69,6 +69,15 @@ function resolveManagedAgentCommandPathInInstallDir(
   return join(installDir, resolveAgentCliManagedCommandRelativePathForRuntime(runtimeSpec));
 }
 
+async function prepareManagedAgentInstallRoot(runtimeSpec: AgentCliRuntimeDescriptor, env: NodeJS.ProcessEnv): Promise<string> {
+  const installRoot = resolveAgentCliManagedInstallRootForRuntime(runtimeSpec, { processEnv: env });
+  await mkdir(installRoot, { recursive: true });
+  // Secure scratch creation makes recursive ancestors private. Only this
+  // runtime-code namespace is public; .tmp and install logs remain private.
+  if (process.platform !== 'win32') await chmod(dirname(installRoot), 0o755);
+  return installRoot;
+}
+
 function buildManagedPackageInstallEnvironment(env: NodeJS.ProcessEnv, workspaceDir: string): NodeJS.ProcessEnv {
   const childEnv = buildManagedPnpmEnvironment(env);
   delete childEnv.INIT_CWD;
@@ -363,7 +372,7 @@ export async function installManagedPackageAgentCli(params: Readonly<{
   }
 
   params.signal?.throwIfAborted();
-  const installRoot = resolveAgentCliManagedInstallRootForRuntime(params.runtimeSpec, { processEnv: params.env });
+  const installRoot = await prepareManagedAgentInstallRoot(params.runtimeSpec, params.env);
   const scratchDir = await createManagedToolScratchDir({
     installDir: installRoot,
     prefix: params.runtimeSpec.id,
@@ -608,7 +617,7 @@ export async function installManagedBinaryAgentCli(params: Readonly<{
   onProgress?: AgentInstallProgressCallback;
 }>): Promise<void> {
   params.signal?.throwIfAborted();
-  const installRoot = resolveAgentCliManagedInstallRootForRuntime(params.runtimeSpec, { processEnv: params.env });
+  const installRoot = await prepareManagedAgentInstallRoot(params.runtimeSpec, params.env);
   const asset = await resolveManagedBinaryAsset({
     managedInstall: params.managedInstall,
     platform: params.platform,

@@ -1,9 +1,10 @@
 import { randomUUID } from 'node:crypto';
-import { lstat, mkdir, readdir, rename, rm, symlink } from 'node:fs/promises';
+import { chmod, lstat, mkdir, readdir, rename, rm, symlink } from 'node:fs/promises';
 import { basename, join, relative } from 'node:path';
 
 import { readProcessInstanceFingerprintSync } from '../../processInstance.mjs';
 import { withWorkspaceBundleLock } from '../../workspaceBundleLock.mjs';
+import { publishRuntimePayloadPermissions } from '../firstPartyRuntime/runtimePayloadPermissions.js';
 
 const MANAGED_INSTALL_COMMIT_LOCK_TIMEOUT_MS = 60_000;
 const MANAGED_INSTALL_LOCK_PLATFORM = process.platform;
@@ -115,6 +116,7 @@ async function promoteVersionedManagedInstallCandidate(params: Readonly<{
   const pendingActivePath = join(params.installRoot, `.active-${releaseName}`);
 
   await mkdir(releasesDir, { recursive: true });
+  await chmod(releasesDir, 0o755);
   await rename(params.candidatePath, activeReleaseDir);
   try {
     // POSIX symlink replacement is atomic: launches observe a complete release, never a mixed current directory.
@@ -154,6 +156,10 @@ export async function promoteManagedCurrentInstall(params: Readonly<{
   let didReportWait = false;
   await withWorkspaceBundleLock(async () => {
     if (params.preserveExistingCurrent && await pathExists(currentPath)) return;
+    if (process.platform !== 'win32') {
+      await publishRuntimePayloadPermissions(candidatePath);
+      await chmod(params.installRoot, 0o755);
+    }
     if (
       params.activateVersionedRelease
       && process.platform !== 'win32'

@@ -225,6 +225,14 @@ Before adding or changing an agent runtime, managed dependency, install, or upda
 
 Agent detection, install status, daemon validation, runtime spawning, and UI/managedDependencies must reuse the same source of truth. Agent CLIs should prefer user/system installs by default over Happier-managed installs unless an explicit setting says otherwise.
 
+In 0.3 development, managed Agent installation publishes the providers directory, install
+root and promoted runtime code for separate execution users through the same
+permission publisher as first-party payloads. POSIX runtime directories are
+readable/traversable and executable files remain executable; scratch directories
+and install logs stay private, and publication does not follow symlinks. Existing
+private managed installs need a forced Agent reinstall after the corrected
+daemon payload is loaded; refreshing inventory alone does not change permissions.
+
 In current 0.3 development source, Pi's vendor-managed launcher is a system-install
 candidate declared by its plugin: `PI_CODING_AGENT_DIR/bin/pi`, then
 `~/.pi/agent/bin/pi`, when `PATH` has no matching executable. Explicit

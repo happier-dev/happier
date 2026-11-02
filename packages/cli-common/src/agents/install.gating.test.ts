@@ -107,6 +107,36 @@ const originalPlatformDescriptor = Object.getOwnPropertyDescriptor(process, 'pla
 const originalArchDescriptor = Object.getOwnPropertyDescriptor(process, 'arch');
 
 describe('installAgentCli vendor_recipe execution gating', () => {
+  it.skipIf(process.platform === 'win32')('publishes managed Agent ancestors without exposing private install scratch or logs', async () => {
+    const assetName = expectedCodexReleaseAssetName();
+    const platform = resolvePlatformFromNodePlatform(process.platform);
+    if (!assetName || !platform) throw new Error('Expected supported Codex platform');
+    const homeDir = await mkdtemp(join(tmpdir(), 'happier-member-install-'));
+    const installHome = join(homeDir, 'public-install');
+    const providers = join(installHome, 'tools', 'providers');
+    const installRoot = join(providers, 'codex');
+    try {
+      await mkdir(installRoot, { recursive: true, mode: 0o700 });
+      const result = await installAgentCli({ agentId: 'codex', platform, skipIfInstalled: false,
+        env: { ...process.env, HAPPIER_HOME_DIR: homeDir, HAPPIER_FIRST_PARTY_INSTALL_HOME: installHome, PATH: '' },
+        deps: { ...githubReleaseHttpFixture({ assets: [{ name: assetName, browser_download_url: `https://example.test/${assetName}`, digest: `sha256:${'c'.repeat(64)}` }] }),
+          downloadGitHubReleaseAsset: async params => { await writeFile(params.destinationPath, 'archive'); },
+          extractGitHubReleaseAsset: async params => {
+            await materializeDeclaredArchiveEntries(params);
+            if (!params.outputPath) throw new Error('Expected native executable');
+            await chmod(params.outputPath, 0o700);
+          } },
+      });
+      expect(result.ok, result.ok ? undefined : result.errorMessage).toBe(true);
+      for (const path of [providers, installRoot, join(installRoot, 'current'), join(installRoot, 'current', 'bin')]) {
+        expect((await stat(path)).mode & 0o777).toBe(0o755);
+      }
+      expect((await stat(join(installRoot, 'current', 'bin', 'codex'))).mode & 0o777).toBe(0o755);
+      expect((await stat(join(installRoot, '.tmp'))).mode & 0o777).toBe(0o700);
+      expect((await stat(homeDir)).mode & 0o777).toBe(0o700);
+      if (result.ok && result.logPath) expect((await stat(result.logPath)).mode & 0o777).toBe(0o600);
+    } finally { await rm(homeDir, { recursive: true, force: true }); }
+  });
   it.skipIf(process.platform === 'win32')('preserves a Windows Path-only environment when executing a vendor recipe', async () => {
     const homeDir = await mkdtemp(join(tmpdir(), 'happier-vendor-windows-path-'));
     if (!originalPlatformDescriptor) throw new Error('Expected configurable platform');

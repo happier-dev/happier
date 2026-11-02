@@ -1,6 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { chmod, lstat, mkdir, readdir, rename, rm, stat } from 'node:fs/promises';
-import { join } from 'node:path';
+import { mkdir, rename, rm, stat } from 'node:fs/promises';
 
 import type { PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
 
@@ -13,21 +12,7 @@ import { syncInstalledPayloadPointer } from './syncInstalledPayloadPointer.js';
 import { readInstalledVersionMarkers, writeInstalledVersionMarker } from './versionMarkers.js';
 import { withFirstPartyPayloadMutationLock } from './withFirstPartyPayloadMutationLock.js';
 import { joinPathForPathShape } from '../path/pathShape.js';
-
-// Installed payloads contain runtime code, not personal state. Native member
-// users load the same files as the daemon, regardless of the builder's umask.
-// Do not follow links into data outside the payload or grant non-owner writes.
-async function publishRuntimePayloadPermissions(path: string): Promise<void> {
-  const entry = await lstat(path);
-  if (entry.isDirectory()) {
-    await chmod(path, 0o755);
-    for (const name of await readdir(path)) {
-      await publishRuntimePayloadPermissions(join(path, name));
-    }
-  } else if (entry.isFile()) {
-    await chmod(path, (entry.mode & 0o111) === 0 ? 0o644 : 0o755);
-  }
-}
+import { publishRuntimePayloadPermissions } from './runtimePayloadPermissions.js';
 
 export interface FirstPartyPayloadPromotionResult {
   currentVersionId: string;

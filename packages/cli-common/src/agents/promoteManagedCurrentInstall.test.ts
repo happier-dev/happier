@@ -1,6 +1,6 @@
 import type { RmOptions } from 'node:fs';
 import { spawnSync } from 'node:child_process';
-import { chmod, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, readdir, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -76,6 +76,36 @@ async function makeTempRoot(): Promise<string> {
 }
 
 describe('promoteManagedCurrentInstall', () => {
+  it.skipIf(process.platform === 'win32')('publishes runtime code for separate users while retaining private scratch and external data', async () => {
+    const { promoteManagedCurrentInstall } = await import('./promoteManagedCurrentInstall.js');
+    const installRoot = await makeTempRoot();
+    await chmod(installRoot, 0o700);
+    const scratch = join(installRoot, '.tmp');
+    const candidatePath = join(scratch, 'candidate');
+    await mkdir(join(candidatePath, 'bin'), { recursive: true, mode: 0o700 });
+    await writeFile(join(candidatePath, 'bin', 'agent'), '#!/bin/sh\nexit 0\n', { mode: 0o700 });
+    await writeFile(join(candidatePath, 'resource'), 'runtime resource', { mode: 0o600 });
+    const privateData = join(installRoot, 'private-data');
+    await writeFile(privateData, 'private', { mode: 0o600 });
+    await symlink(privateData, join(candidatePath, 'external-link'));
+
+    for (const activateVersionedRelease of [false, true]) {
+      if (activateVersionedRelease) {
+        await mkdir(join(candidatePath, 'bin'), { recursive: true, mode: 0o700 });
+        await writeFile(join(candidatePath, 'bin', 'agent'), '#!/bin/sh\nexit 0\n', { mode: 0o700 });
+        await writeFile(join(candidatePath, 'resource'), 'runtime resource', { mode: 0o600 });
+      }
+      await promoteManagedCurrentInstall({ installRoot, candidatePath, activateVersionedRelease });
+      const published = join(installRoot, activateVersionedRelease ? 'active' : 'current');
+      expect((await stat(installRoot)).mode & 0o777).toBe(0o755);
+      expect((await stat(join(published, 'bin'))).mode & 0o777).toBe(0o755);
+      expect((await stat(join(published, 'bin', 'agent'))).mode & 0o777).toBe(0o755);
+      expect((await stat(join(published, 'resource'))).mode & 0o777).toBe(0o644);
+      if (activateVersionedRelease) expect((await stat(join(installRoot, '.releases'))).mode & 0o777).toBe(0o755);
+      expect((await stat(scratch)).mode & 0o777).toBe(0o700);
+      expect((await stat(privateData)).mode & 0o777).toBe(0o600);
+    }
+  });
   beforeEach(() => {
     // This test owns both lock contenders; the worker's publication-order guard is external to the fixture.
     vi.stubEnv('HAPPIER_WORKSPACE_DIST_BUILD_LOCK_WAIT_ALLOWED', '1');
