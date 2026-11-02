@@ -11,7 +11,8 @@ import { LegacyAutomationWorkflowConversionReasonV1Schema } from '../automations
 
 import { createCanonicalJsonSigningInput } from '../crypto/canonicalJson.js';
 import { StrictJsonValueSchema } from '../json/strictJsonValue.js';
-import { AutomationRunStateV3Schema } from '../automations/automationRunStateV3.js';
+import { WorkflowRunStateV1Schema, type WorkflowRunStateV1 } from './workflowRunStateV1.js';
+export { WORKFLOW_RUN_STATES_V1, WorkflowRunStateV1Schema, type WorkflowRunStateV1 } from './workflowRunStateV1.js';
 import { AutomationRunCauseSchema } from '../automations/automationRunCause.js';
 import { AutomationIdV1Schema } from '../automations/automationIdV1.js';
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
@@ -76,13 +77,6 @@ export function isWorkflowDraftPublicationLifecycleV1(lifecycle: WorkflowInvocat
 export const WORKFLOW_ATTENTION_INVOCATION_LIFECYCLES_V1 = [
   'waiting_for_approval', 'needs_attention', 'waiting_for_review', 'outcome_uncertain',
 ] as const satisfies readonly WorkflowInvocationLifecycleV1[];
-
-export const WORKFLOW_RUN_STATES_V1 = [
-  ...AutomationRunStateV3Schema.options,
-  'pause_requested', 'paused', 'interrupted', 'waiting_for_review',
-] as const;
-export const WorkflowRunStateV1Schema = lazyZodSchema(() => z.enum(WORKFLOW_RUN_STATES_V1));
-export type WorkflowRunStateV1 = z.infer<typeof WorkflowRunStateV1Schema>;
 
 export const WorkflowControlV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('running') }),

@@ -133,12 +133,20 @@ export function readSessionAwarenessPresentationRankV1(state: SessionAwarenessPr
 export const SESSION_WORK_STATUS_FILTERS_V1 = ['working', 'needs_you', 'failed', 'idle', 'offline'] as const;
 export type SessionWorkStatusFilterV1 = typeof SESSION_WORK_STATUS_FILTERS_V1[number];
 
+/** Shared filter-choice identity for an already-admitted Work presentation, including acknowledged Run failures. */
+export function readWorkStatusFilterV1(
+  status: Readonly<Pick<ReturnType<typeof readSessionAwarenessWorkStatusV1>, 'bucket' | 'tone'> & { state: string }>,
+): SessionWorkStatusFilterV1 {
+  if (status.state === 'failed' || status.state === 'dispatch_failed' || status.tone === 'danger') return 'failed';
+  return status.bucket === 'finished' ? 'idle' : status.bucket;
+}
+
 export function listSessionPresentationStatesForWorkStatusFilterV1(
   choice: SessionWorkStatusFilterV1,
 ): readonly SessionAwarenessPresentationStateV1[] {
   return SESSION_AWARENESS_PRESENTATION_STATES_V1.filter((state) => {
     const status = readSessionPresentationStateWorkStatusV1(state);
-    return (status.tone === 'danger' ? 'failed' : status.bucket) === choice;
+    return readWorkStatusFilterV1(status) === choice;
   });
 }
 
