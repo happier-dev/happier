@@ -24,12 +24,14 @@ if (typeof value === "string") process.stdout.write(value);
 ' "$expression" <<<"$INPUT" 2>/dev/null || true
 }
 
-TOOL_NAME=$(json_field 'tool')
+TOOL_NAME=$(json_field 'tool_name')
+if [[ -z "$TOOL_NAME" ]]; then TOOL_NAME=$(json_field 'tool'); fi
 if [[ "$TOOL_NAME" != "Bash" ]]; then
   exit 0
 fi
 
-COMMAND=$(json_field 'args.command')
+COMMAND=$(json_field 'tool_input.command')
+if [[ -z "$COMMAND" ]]; then COMMAND=$(json_field 'args.command'); fi
 if [[ -z "$COMMAND" ]]; then
   exit 0
 fi
@@ -59,6 +61,10 @@ if [[ -z "$MATCHED" ]]; then
   case "$STASH_STRIPPED" in
     *"git stash"*) MATCHED="git stash" ;;
   esac
+fi
+
+if [[ -z "$MATCHED" ]]; then
+  MATCHED=$(node "$(dirname "${BASH_SOURCE[0]}")/refWriteGuard.mjs" <<<"$COMMAND")
 fi
 
 if [[ -z "$MATCHED" ]]; then

@@ -15,13 +15,39 @@ const header = '# Coordination board\r\n\r\n';
 const oldPost = '### 2026-10-30 12:00 UTC — old\r\nOlder café.\r\n';
 const newPost = '### 2026-10-31 12:00 UTC — recent\r\nRecent body.\r\n';
 
+test('rejects forbidden NEW heading types and broadcasts without changing historical entries', async (t) => {
+  const { board, entryFile } = await fixture(t);
+  const before = await fs.readFile(board);
+  for (const [addressee, type] of [['Coordination', 'FYI'], ['Coordination', 'ACK'], ['ALL leads', 'RESULT'], ['Coordination, ALL leads', 'ASK']]) {
+    await fs.writeFile(entryFile, `### 2026-11-02 12:00 UTC — Writer → ${addressee} — ${type} — subject\nBody\n`);
+    await assert.rejects(run(process.execPath, [writer, board, entryFile]), (error) => {
+      assert.equal(error.code, 1);
+      assert.equal(error.stderr.trim().split('\n').length, 1);
+      return true;
+    });
+    assert.deepEqual(await fs.readFile(board), before);
+  }
+});
+
+test('accepts every allowed type, unrestricted body length, and duplicate posts', async (t) => {
+  const { board, entryFile } = await fixture(t);
+  for (const type of ['CLAIM', 'RESULT', 'ASK', 'URGENT', 'RULING', 'HOLD']) {
+    const addressee = ['URGENT', 'RULING', 'HOLD'].includes(type) ? 'ALL leads' : 'Coordination';
+    const entry = `### 2026-11-02 12:00 UTC — Writer → ${addressee} — ${type} — ${'long subject '.repeat(20)}\n${'body '.repeat(10000)}\n`;
+    await fs.writeFile(entryFile, entry);
+    await postBoardEntry(board, entryFile);
+    await postBoardEntry(board, entryFile);
+    assert.equal((await fs.readFile(board, 'utf8')).split(entry).length - 1, 2);
+  }
+});
+
 async function fixture(t, contents = header + newPost + oldPost) {
   const directory = await fs.mkdtemp(path.join(tmpdir(), 'board-writer-'));
   t.after(() => fs.rm(directory, { recursive: true, force: true }));
   const board = path.join(directory, 'HANDOFF.md');
   const entryFile = path.join(directory, 'entry.md');
   await fs.writeFile(board, contents);
-  await fs.writeFile(entryFile, '### 2026-10-31 13:00 UTC — added\nNew body.\n\n');
+  await fs.writeFile(entryFile, '### 2026-10-31 13:00 UTC — Writer → Coordination — RESULT — added\nNew body.\n\n');
   return { directory, board, entryFile };
 }
 
@@ -65,7 +91,7 @@ test('two concurrent processes reread under the lock and both entries land', asy
   const { directory, board, entryFile } = await fixture(t);
   const before = await fs.readFile(board);
   const secondEntry = path.join(directory, 'second.md');
-  await fs.writeFile(secondEntry, '### 2026-10-31 13:01 UTC — second\nSecond body.\n\n');
+  await fs.writeFile(secondEntry, '### 2026-10-31 13:01 UTC — Writer → Coordination — RESULT — second\nSecond body.\n\n');
   const lock = `${board}.lock`;
   await fs.mkdir(lock);
   const holder = path.join(lock, 'test-holder.json');
@@ -105,7 +131,7 @@ for (const format of ['directory', 'legacy PID file']) {
       await fs.writeFile(lock, stdout);
     }
     const secondEntry = path.join(directory, 'second.md');
-    await fs.writeFile(secondEntry, '### 2026-10-31 13:01 UTC — second\nSecond body.\n\n');
+    await fs.writeFile(secondEntry, '### 2026-10-31 13:01 UTC — Writer → Coordination — RESULT — second\nSecond body.\n\n');
     const writers = [startWriter(board, entryFile), startWriter(board, secondEntry)];
     t.after(() => { for (const { child } of writers) child.kill(); });
     await Promise.all(writers.map(({ done }) => done));

@@ -1,5 +1,17 @@
 {
   "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "^Bash$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$(git rev-parse --show-toplevel)/.codex/hooks/prevent-destructive-git.mjs\"",
+            "commandWindows": "powershell -NoProfile -Command \"& node ((git rev-parse --show-toplevel) + '/.codex/hooks/prevent-destructive-git.mjs'); exit $LASTEXITCODE\""
+          }
+        ]
+      }
+    ],
     "PostToolUse": [
       {
         "matcher": "^apply_patch$|^Edit$|^Write$",

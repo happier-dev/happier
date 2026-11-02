@@ -7,6 +7,20 @@ import { setTimeout as delay } from 'node:timers/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
+function validateEntry(entry) {
+  // OWNER-RULINGS: Usage economy and board conventions (2026-10-31).
+  // History is deliberately not validated or rewritten.
+  const headings = entry.toString('utf8').match(/^### [^\r\n]*/gm) ?? [];
+  for (const heading of headings) {
+    const match = /^### \d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC — .+? → (.+?) — (CLAIM|RESULT|ASK|URGENT|RULING|HOLD) — .+$/.exec(heading);
+    if (!match) throw new Error('Use a board heading: ### YYYY-MM-DD HH:MM UTC — SENDER → ADDRESSEE — CLAIM|RESULT|ASK|URGENT|RULING|HOLD — subject');
+    if (match[1].split(',').some((name) => name.trim().toLowerCase() === 'all leads') && !['RULING', 'URGENT', 'HOLD'].includes(match[2])) {
+      throw new Error('Address ALL leads only with RULING, URGENT or HOLD; name the intended lane for other posts.');
+    }
+  }
+  if (headings.length === 0) throw new Error('Add a board heading with an allowed type: CLAIM, RESULT, ASK, URGENT, RULING or HOLD.');
+}
+
 function holderIsAlive(holder) {
   if (!Number.isSafeInteger(holder.pid) || holder.pid <= 0 || holder.hostname !== hostname()) {
     throw new Error('Board lock has no verifiable local holder; refusing to steal it');
@@ -126,6 +140,8 @@ async function replaceBoard(board, current, candidate, archived, mode, minimumBy
 
 /** Post raw entry bytes; optional rotation archives older posts under the same lock. */
 export async function postBoardEntry(board, entryFile, { rotateBefore } = {}) {
+  const entry = await fs.readFile(entryFile);
+  validateEntry(entry);
   let cutoff;
   if (rotateBefore !== undefined) {
     const normalized = /^\d{4}-\d{2}-\d{2}$/.test(rotateBefore)
@@ -143,7 +159,6 @@ export async function postBoardEntry(board, entryFile, { rotateBefore } = {}) {
   try {
     const current = await fs.readFile(boardPath);
     const mode = (await fs.stat(boardPath)).mode & 0o777;
-    const entry = await fs.readFile(entryFile);
     // latin1 keeps regexp offsets equal to byte offsets, even for non-ASCII history.
     const offset = /^### 20/m.exec(current.toString('latin1'))?.index ?? current.length;
     const separator = entry.length > 0 && entry.at(-1) !== 10 ? Buffer.from('\n') : Buffer.alloc(0);
