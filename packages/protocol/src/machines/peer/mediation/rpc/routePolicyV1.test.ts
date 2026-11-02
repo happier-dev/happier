@@ -19,6 +19,13 @@ async function importRpcPolicy() {
 }
 
 describe('MachineRpcRoutePolicyV1', () => {
+  it('admits private native vault operations only with Machine Manage authority', async () => {
+    const { resolveMachineRpcRoutePolicy } = await import('./routePolicyV1');
+    expect(resolveMachineRpcRoutePolicy(RPC_METHODS.DAEMON_SECRET_SOURCE_INVOKE)).toMatchObject({
+      routeClass: 'direct_ephemeral', sharedMachineAccess: 'manage',
+      scope: { accountRequired: true, machineRequired: true, serverRequired: false },
+    });
+  });
   it('requires Manage for raw host desktop controls', async () => {
     const { resolveMachineRpcRoutePolicy } = await import('./routePolicyV1');
     expect(resolveMachineRpcRoutePolicy(RPC_METHODS.DAEMON_COMPUTER_ACTION_EXECUTE)).toMatchObject({ sharedMachineAccess: 'manage' });

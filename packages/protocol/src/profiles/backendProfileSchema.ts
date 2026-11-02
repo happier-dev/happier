@@ -103,9 +103,10 @@ export const AIBackendProfileSchema = lazyZodSchema(() => z.object({
 
 export type AIBackendProfile = z.infer<typeof AIBackendProfileSchema>;
 
+export const SAVED_SECRET_NAME_MAX_LENGTH = 100;
 export const SavedSecretSchema = lazyZodSchema(() => z.object({
   id: z.string().check(z.minLength(1)),
-  name: z.string().check(z.minLength(1), z.maxLength(100)),
+  name: z.string().check(z.minLength(1), z.maxLength(SAVED_SECRET_NAME_MAX_LENGTH)),
   kind: z._default(z.enum(['apiKey', 'token', 'password', 'other']), 'apiKey'),
   // Secret-at-rest container:
   // - plaintext is set via `encryptedValue.value` (input only; must not be persisted)

@@ -88,6 +88,12 @@ export type MachineRpcRoutePolicyV1 = Readonly<{
   ephemeralRunnerAuthority?: EphemeralRunnerMachineRpcAuthority;
 }>;
 
+/** Native vault reads run as the executing Machine's OS principal. This is
+ * the same access requirement as native browser-login source reads. */
+export const MACHINE_NATIVE_SECRET_SOURCE_ACCESS_POLICY_V1 = Object.freeze({
+  sharedMachineAccess: 'manage',
+} as const satisfies Pick<MachineRpcRoutePolicyV1, 'sharedMachineAccess'>);
+
 export type MachineRpcRelayFallbackDeploymentKind = 'shared_server' | 'self_hosted';
 
 export const DAEMON_VOICE_AUDIO_RELAY_CAP_PROFILE_ID = 'machine_live_stream_relay_caps_v1';
@@ -247,6 +253,8 @@ const DIRECT_EPHEMERAL_POLICIES = Object.freeze([
   directEphemeral(RPC_METHODS.DAEMON_EXECUTION_RUN_BROKER_AUTHORITY_RESOLVE, 'Nonce- and Home-bound exact-Machine Run currentness read for broker admission; no credential or durable proof.'),
   directEphemeral(RPC_METHODS.DAEMON_MEMORY_STATUS, 'Daemon-local memory worker status read with no mutation or server persistence.'),
   directEphemeral(RPC_METHODS.APPROVAL_REQUEST_SECRET_CONTINUE, 'Private human continuation consumes exact approval custody; ephemeral input is never receipted or replayed. Normal authenticated relay remains available.'),
+  { ...directEphemeral(RPC_METHODS.DAEMON_SECRET_SOURCE_INVOKE, 'Private native vault metadata/write exchange; values stay inside the Account content codec and no invocation receipt is persisted.'),
+    ...MACHINE_NATIVE_SECRET_SOURCE_ACCESS_POLICY_V1 },
   directEphemeral(RPC_METHODS.DAEMON_MEMORY_SETTINGS_GET, 'Daemon-local memory settings read with no account mutation.'),
   directEphemeral(RPC_METHODS.DAEMON_VOICE_INFERENCE_STATUS, 'Daemon-local voice inference worker status read.'),
   directEphemeral(RPC_METHODS.DAEMON_VOICE_INFERENCE_MODELS_LIST, 'Daemon-local installed/available model list read.'),
@@ -1324,7 +1332,3 @@ export function validateMachineRpcGrantAllowedMethods(
   }
   return { ok: true };
 }
-
-export const MACHINE_NATIVE_SECRET_SOURCE_ACCESS_POLICY_V1 = Object.freeze({
-  sharedMachineAccess: 'manage',
-} as const satisfies Pick<MachineRpcRoutePolicyV1, 'sharedMachineAccess'>);

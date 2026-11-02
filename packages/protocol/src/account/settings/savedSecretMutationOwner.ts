@@ -67,6 +67,7 @@ import type { ArtifactSharingResourceV1 } from '../../artifacts/artifactSharingV
 import type { ProfileCatalogRecordV1 } from '../../profiles/profileCatalogV1.js';
 import { createStoredReadSchema } from '../../json/storedReadSchema.js';
 import { z } from 'zod/mini';
+import { canShareSavedSecretResourceContentV1, type SavedSecretResourceContentV1 } from './savedSecretResourceContentSchemaV1.js';
 import { readRemoteHostCatalogRecordV1, type RemoteHostRecordV1 } from '../../remoteHosts/remoteHostRecordV1.js';
 import { AcpCatalogRecordV1Schema, listAcpCatalogSavedSecretRefsV1, rewriteAcpCatalogSavedSecretRefsV1, type AcpCatalogRecordV1 } from '../../acp/catalog/catalogRowsV1.js';
 import { ProviderConnectionsCatalogV1Schema, listProviderConnectionsCatalogSavedSecretRefsV1, rewriteProviderConnectionsCatalogSavedSecretRefsV1, type ProviderConnectionsCatalogV1 } from '../../providers/connections/connectionRowsV1.js';
@@ -619,6 +620,30 @@ export type AccountSettingsVoiceCredentialSourceResolution = Readonly<{
   /** The recipient contract the user approved for this target, when recorded. */
   approvedRecipientContractDigest: string | null;
 }>;
+
+/**
+ * Client writers' one audience decision for a resource's content. External
+ * descriptors are acquired by their owner and delegate nothing, so they stay
+ * personal; the Home enforces the same rule for Plain content it can read.
+ */
+export function admitSavedSecretResourceAudienceV1(
+  content: SavedSecretResourceContentV1,
+  audience: Readonly<{ accounts: readonly string[]; teams: readonly unknown[]; groups: readonly unknown[] }> | null | undefined,
+  ownerAccountId: string,
+): 'allowed' | 'audience_unavailable' | 'recipient_mode_unsupported' {
+  if (canShareSavedSecretResourceContentV1(content)) return 'allowed';
+  return admitSavedSecretExternalSourceAudienceV1(audience, ownerAccountId);
+}
+
+/** Export admits the prospective external source before creating native material. */
+export function admitSavedSecretExternalSourceAudienceV1(
+  audience: Readonly<{ accounts: readonly string[]; teams: readonly unknown[]; groups: readonly unknown[] }> | null | undefined,
+  ownerAccountId: string,
+): 'allowed' | 'audience_unavailable' | 'recipient_mode_unsupported' {
+  if (!audience) return 'audience_unavailable';
+  return audience.accounts.some(id => id !== ownerAccountId) || audience.teams.length || audience.groups.length
+    ? 'recipient_mode_unsupported' : 'allowed';
+}
 
 export class AccountSettingsSavedSecretMutationError extends Error {
   readonly code:

@@ -173,6 +173,7 @@ export const RPC_METHODS = {
   DAEMON_PLUGIN_SECRET_STATUS: 'daemon.plugins.secrets.status',
   DAEMON_PLUGIN_SECRET_SET: 'daemon.plugins.secrets.set',
   DAEMON_PLUGIN_SECRET_DELETE: 'daemon.plugins.secrets.delete',
+  DAEMON_SECRET_SOURCE_INVOKE: 'daemon.secrets.source.invoke.v1',
   DAEMON_PLUGIN_INVOCATION_LOGS_READ: 'daemon.plugins.invocationLogs.read',
   DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE: 'daemon.plugins.structuredMessages.actions.execute',
   DAEMON_PLUGIN_ACTION_FORM_CONNECTED_ACCOUNT_OPTIONS_RESOLVE:

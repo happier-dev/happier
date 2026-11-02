@@ -1,3 +1,4 @@
+import { PluginSecretSourceFieldV1Schema } from '../../plugins/contributions/secretSources.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod/mini';
 import { SavedSecretPasskeySourceV1Schema } from './savedSecretPasskeySourceV1.js';
@@ -60,6 +61,7 @@ export const SavedSecretExternalSourceV1Schema = lazyZodSchema(() => z.strictObj
   contribution: asProtocolZod(PluginContributionIdentityV1Schema),
   account: z.string().check(z.minLength(1)),
   reference: z.string().check(z.minLength(1)),
+  metadata: z.optional(z.omit(PluginSecretSourceFieldV1Schema, { account: true, reference: true })),
 }));
 export type SavedSecretExternalSourceV1 = Readonly<z.infer<typeof SavedSecretExternalSourceV1Schema>>;
 export const SavedSecretResourceSourceV1Schema = lazyZodSchema(() => z.union([
@@ -112,6 +114,11 @@ export function describeSavedSecretResourceContentV1(content: SavedSecretResourc
   if (content.v === 1) return { kind: 'value' };
   return content.source.kind === 'passkey' ? { kind: 'passkey' }
     : { kind: 'external', provider: content.source.contribution };
+}
+
+/** External descriptors are acquired by their owner; they cannot delegate vault access. */
+export function canShareSavedSecretResourceContentV1(content: SavedSecretResourceContentV1): boolean {
+  return content.v === 1 || content.source.kind !== 'external';
 }
 
 const CanonicalPaddedBase64Schema = lazyZodSchema(() => z.string().check(z.minLength(1), z.maxLength(SAVED_SECRET_RESOURCE_MAX_CIPHERTEXT_BASE64_LENGTH_V1), z.refine((value) => {

@@ -1,10 +1,11 @@
-import { type SavedSecretExternalSourceV1 } from './savedSecretResourceContentSchemaV1.js';
 import type { SavedSecretResourceEnvelopeCensusRecipientV1 } from './savedSecretCatalogV1.js';
 import { sealEncryptedDataKeyEnvelopeV1 } from '../../crypto/encryptedDataKeyEnvelopeV1.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import tweetnacl from 'tweetnacl';
 import { z } from 'zod/mini';
 import { createStoredReadSchema } from '../../json/storedReadSchema.js';
+export { parseSavedSecretPasskeyImportV1, type SavedSecretPasskeyImportResultV1 } from './savedSecretPasskeyImportV1.js';
+export { SavedSecretPasskeySourceV1Schema, type SavedSecretPasskeySourceV1 } from './savedSecretPasskeySourceV1.js';
 
 import { decodeBase64, encodeBase64 } from '../../crypto/base64.js';
 import {
@@ -17,6 +18,7 @@ import {
   SAVED_SECRET_RESOURCE_MAX_ENCRYPTED_PAYLOAD_UTF8_BYTES_V1,
   SavedSecretResourceContentV1Schema,
   SavedSecretExternalSourceV1Schema,
+  type SavedSecretExternalSourceV1,
   SavedSecretResourceSourceV1Schema,
   type SavedSecretResourceSourceV1,
   SavedSecretResourceStoredContentV1Schema,
@@ -37,9 +39,11 @@ export {
 };
 export type {
   SavedSecretResourceContentV1,
+  SavedSecretExternalSourceV1,
   SavedSecretResourceSourceV1,
   SavedSecretResourceStoredContentV1,
 };
+export { canShareSavedSecretResourceContentV1 } from './savedSecretResourceContentSchemaV1.js';
 export { describeSavedSecretResourceContentV1, SavedSecretStorageDescriptorV1Schema,
   type SavedSecretStorageDescriptorV1 } from './savedSecretResourceContentSchemaV1.js';
 
@@ -166,4 +170,47 @@ export function prepareSavedSecretResourceRecipientEnvelopesV1(params: Readonly<
     }]);
 }
 
-export type { SavedSecretExternalSourceV1 };
+
+/** A resource opens in its persisted mode; Account policy decides only the next write.
+ * An explicit owner directive (including keeping Home-managed Plain content) is retained.
+ * Hosts keep their existing key-envelope and mutation custody around this preparation.
+ */
+export function prepareSavedSecretResourceUpdateContentV1(params: Readonly<{
+  resourceId: string;
+  resourceMode: 'plain' | 'e2ee';
+  accountMode: 'plain' | 'e2ee';
+  storedContent: unknown;
+  resourceDataKey?: Uint8Array | null;
+  nextName?: string;
+  nextValue?: string;
+  nextSource?: SavedSecretExternalSourceV1;
+  toMode?: 'plain' | 'e2ee';
+}>): Readonly<{
+  content: SavedSecretResourceContentV1;
+  mode: 'plain' | 'e2ee';
+  toMode?: 'plain' | 'e2ee';
+}> | null {
+  const current = params.resourceMode === 'plain'
+    ? openSavedSecretResourceStoredContentV1({ resourceId: params.resourceId, mode: 'plain', storedContent: params.storedContent })
+    : params.resourceDataKey ? openSavedSecretResourceStoredContentV1({ resourceId: params.resourceId, mode: 'e2ee',
+        storedContent: params.storedContent, resourceDataKey: params.resourceDataKey }) : null;
+  if (!current) return null;
+  // Imported RP/credential identity belongs to the source export. Ordinary
+  // edits may rename it or convert custody, never remap or flatten the key.
+  if (current.v === 2 && current.source.kind === 'passkey'
+    && (params.nextSource !== undefined || params.nextValue !== undefined)) return null;
+  if (params.nextValue !== undefined && params.nextSource !== undefined) return null;
+  const updated = params.nextSource !== undefined
+    ? { v: 2 as const, name: current.name, kind: current.kind, source: params.nextSource }
+    : params.nextValue !== undefined
+      ? { v: 1 as const, name: current.name, kind: current.kind, value: params.nextValue }
+      : current;
+  const content = SavedSecretResourceContentV1Schema.safeParse({ ...updated,
+    ...(params.nextName === undefined ? {} : { name: params.nextName }),
+  });
+  if (!content.success) return null;
+  const mode = params.toMode ?? (params.accountMode === 'e2ee' ? 'e2ee' : params.resourceMode);
+  return { content: content.data, mode,
+    ...(params.toMode !== undefined || mode !== params.resourceMode ? { toMode: mode } : {}),
+  };
+}

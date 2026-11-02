@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { admitSavedSecretResourceAudienceV1 } from './savedSecretMutationOwner.js';
 
 import {
   AccountSettingsSavedSecretMutationError,
@@ -3406,5 +3407,23 @@ describe('SavedSecret collection capacity', () => {
     const written = result.settings.secrets as readonly unknown[];
     expect(written.length).toBe(oversized.length - 1);
     expect(secretsRootBytes(written)).toBeLessThan(secretsRootBytes(oversized));
+  });
+});
+
+describe('admitSavedSecretResourceAudienceV1', () => {
+  const external = { v: 2 as const, name: 'Vault field', kind: 'password' as const,
+    source: { kind: 'external' as const, contribution: { pluginId: 'acme.vault', localId: 'vault' }, account: 'me', reference: 'op://v/i/f' } };
+  const value = { v: 1 as const, name: 'Token', kind: 'token' as const, value: 'x' };
+  const personal = { accounts: ['owner'], teams: [], groups: [] };
+  it.each([
+    ['shareable content with any audience', value, { accounts: ['friend'], teams: ['team'], groups: [] }, 'allowed'],
+    ['shareable content with no audience row', value, null, 'allowed'],
+    ['external content kept personal', external, personal, 'allowed'],
+    ['external content granted to another Account', external, { accounts: ['owner', 'friend'], teams: [], groups: [] }, 'recipient_mode_unsupported'],
+    ['external content granted to a Team', external, { accounts: [], teams: ['team'], groups: [] }, 'recipient_mode_unsupported'],
+    ['external content granted to a group', external, { accounts: [], teams: [], groups: ['group'] }, 'recipient_mode_unsupported'],
+    ['external content whose audience is unknown', external, null, 'audience_unavailable'],
+  ] as const)('%s', (_label, content, audience, expected) => {
+    expect(admitSavedSecretResourceAudienceV1(content, audience, 'owner')).toBe(expected);
   });
 });

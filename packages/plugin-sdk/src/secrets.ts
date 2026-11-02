@@ -12,7 +12,7 @@ export type SecretMutationResult = Readonly<{ revision: string }>;
 
 export interface SecretsService {
     status(id: string): Promise<SecretStatus>;
-    get(id: string, options?: { reason?: string; signal?: AbortSignal }): Promise<string>;
+    get(id: string, options?: { reason?: string; signal?: AbortSignal; sourceKind?: 'inline' }): Promise<string>;
     set(
         id: string,
         value: string,
