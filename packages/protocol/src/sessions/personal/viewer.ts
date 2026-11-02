@@ -10,6 +10,8 @@ import { SessionPersonalRelevanceV1Schema, type SessionPersonalRelevanceV1 } fro
 /** Account-private read projection; additive outer facts are safely dropped, while each known nested fact stays closed. */
 export const SessionViewerProjectionV1Schema = lazyZodSchema(() => z.object({
   readState: ViewerReadStateV1Schema,
+  /** Own-Account organization assignments held by membership query pages. */
+  tagIds: z.optional(z.readonly(z.array(z.string().check(z.minLength(1))))),
   latestFailureSeq: z.nullable(z.number().check(z.int(), z.gte(0))),
   relevance: SessionPersonalRelevanceV1Schema,
   attention: SessionPersonalAttentionProjectionV1Schema,
@@ -19,6 +21,7 @@ export const SessionViewerProjectionV1Schema = lazyZodSchema(() => z.object({
 
 export type SessionViewerProjectionV1 = Readonly<{
   readState: ViewerReadStateV1;
+  tagIds?: readonly string[];
   latestFailureSeq: number | null;
   relevance: SessionPersonalRelevanceV1;
   attention: SessionPersonalAttentionProjectionV1;
