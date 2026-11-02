@@ -99,7 +99,6 @@ export {
   PluginHostedWebOriginV1Schema,
   PluginHostedWebSecurityPolicyV1Schema,
   buildPluginHostedWebStaticAssetContentSecurityPolicyV1,
-  resolvePluginHostedWebSourceMapPolicyV1,
   type PluginHostedWebCspPolicyV1,
   type PluginHostedWebOriginV1,
   type PluginHostedWebSecurityPolicyV1,

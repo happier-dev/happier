@@ -31,7 +31,7 @@ function createDefaultPluginHostedWebCspPolicyV1() {
   allowDataUrls: false,
   allowBlobUrls: false,
   allowInlineStyles: false,
-  allowEval: false as const,
+  allowEval: false,
   };
 }
 
@@ -40,7 +40,7 @@ export const PluginHostedWebCspPolicyV1Schema = lazyZodSchema(() => z._default(z
   allowDataUrls: z._default(z.boolean(), false),
   allowBlobUrls: z._default(z.boolean(), false),
   allowInlineStyles: z._default(z.boolean(), false),
-  allowEval: z._default(z.literal(false), false),
+  allowEval: z._default(z.boolean(), false),
 }), createDefaultPluginHostedWebCspPolicyV1));
 export type PluginHostedWebCspPolicyV1 = z.infer<typeof PluginHostedWebCspPolicyV1Schema>;
 
@@ -53,21 +53,6 @@ export const PluginHostedWebSecurityPolicyV1Schema = lazyZodSchema(() => z.stric
   mixedContent: z._default(z.enum(['deny', 'devLoopbackOnly']), 'deny'),
 }));
 export type PluginHostedWebSecurityPolicyV1 = z.infer<typeof PluginHostedWebSecurityPolicyV1Schema>;
-
-function directiveValues(values: readonly string[]): string {
-  return values.join(' ');
-}
-
-function withOptionalSchemes(
-  values: readonly string[],
-  policy: PluginHostedWebCspPolicyV1,
-): readonly string[] {
-  return [
-    ...values,
-    ...(policy.allowDataUrls ? ['data:'] : []),
-    ...(policy.allowBlobUrls ? ['blob:'] : []),
-  ];
-}
 
 /**
  * Who may embed a served hosted-web asset (§3.12, EU-8).
@@ -89,67 +74,13 @@ export type PluginHostedWebStaticAssetCspOptionsV1 = Readonly<{
 
 function resolveFrameAncestors(options: PluginHostedWebStaticAssetCspOptionsV1 | undefined): string {
   const ancestors = (options?.frameAncestors ?? []).filter(isExactHttpOrigin);
-  return ancestors.length > 0 ? directiveValues([...new Set(ancestors)]) : "'none'";
+  return ancestors.length > 0 ? [...new Set(ancestors)].join(' ') : "'none'";
 }
 
+/** Trusted plugin resources are unrestricted; the host still owns who may embed them. */
 export function buildPluginHostedWebStaticAssetContentSecurityPolicyV1(
-  security: PluginHostedWebSecurityPolicyV1,
+  _security: PluginHostedWebSecurityPolicyV1,
   options?: PluginHostedWebStaticAssetCspOptionsV1,
 ): string {
-  const csp = security.csp;
-  const callbackOrigins = [...security.allowedCallbackOrigins];
-  const connectOrigins = csp.connectSrc === 'declaredOrigins'
-    ? [...security.allowedConnectOrigins]
-    : [];
-  const formAction = callbackOrigins.length > 0
-    ? directiveValues(["'self'", ...callbackOrigins])
-    : "'none'";
-  const styleSrc = csp.allowInlineStyles
-    ? directiveValues(["'self'", "'unsafe-inline'"])
-    : "'self'";
-  const imgSrc = csp.allowDataUrls
-    || csp.allowBlobUrls
-      ? directiveValues(withOptionalSchemes(["'self'"], csp))
-      : "'self'";
-  const fontSrc = csp.allowDataUrls || csp.allowBlobUrls
-    ? directiveValues(withOptionalSchemes(["'self'"], csp))
-    : "'self'";
-  const directives = [
-    "default-src 'none'",
-    "base-uri 'none'",
-    `form-action ${formAction}`,
-    `frame-ancestors ${resolveFrameAncestors(options)}`,
-    "object-src 'none'",
-    "script-src 'self'",
-    "worker-src 'none'",
-    `style-src ${styleSrc}`,
-    `img-src ${imgSrc}`,
-    `font-src ${fontSrc}`,
-    `connect-src ${csp.connectSrc === 'none' ? "'none'" : directiveValues(["'self'", ...connectOrigins])}`,
-    'block-all-mixed-content',
-  ];
-  return directives.join('; ');
-}
-
-export function resolvePluginHostedWebSourceMapPolicyV1(input: Readonly<{
-  security: PluginHostedWebSecurityPolicyV1;
-  digest: string;
-  internalChannel?: boolean;
-}>): Readonly<{
-  enabled: boolean;
-  allowedDigests?: ReadonlySet<string>;
-}> {
-  if (input.security.sourceMaps === 'declaredDigestOnly') {
-    return Object.freeze({
-      enabled: true,
-      allowedDigests: new Set([input.digest]),
-    });
-  }
-  if (input.security.sourceMaps === 'devOrInternalOnly' && input.internalChannel === true) {
-    return Object.freeze({
-      enabled: true,
-      allowedDigests: new Set([input.digest]),
-    });
-  }
-  return Object.freeze({ enabled: false });
+  return `frame-ancestors ${resolveFrameAncestors(options)}; block-all-mixed-content`;
 }

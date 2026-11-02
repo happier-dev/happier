@@ -134,19 +134,10 @@ function failure(code: HostedWebAssetPolicyFailureCode, status: number): HostedW
   return Object.freeze({ ok: false, code, status });
 }
 
-function isSourceMap(relativePath: string): boolean {
-  return relativePath.toLowerCase().endsWith('.map');
-}
-
-function canServeSourceMap(input: HostedWebAssetPolicyInput): boolean {
-  return input.sourceMaps?.enabled === true
-    && input.sourceMaps.allowedDigests?.has(input.digest) === true;
-}
-
 /**
  * The cross-realm policy owner for hosted-web artifact requests. Platform
  * adapters own containment and bytes; they consume this result for every
- * request-path, declaration, MIME, source-map, cache, and CSP decision.
+ * request-path, declaration, MIME, cache, and embedding decision.
  */
 export function resolveHostedWebAssetPolicy(input: HostedWebAssetPolicyInput): HostedWebAssetPolicyResult {
   const assetRootId = normalizeHostedWebAssetArtifactPath(input.assetRootId);
@@ -176,15 +167,10 @@ export function resolveHostedWebAssetPolicy(input: HostedWebAssetPolicyInput): H
       .filter((file): file is string => file !== null),
   );
   const declared = declaredFiles.has(requestedRelativePath);
-  const requestedSourceMap = isSourceMap(requestedRelativePath);
-  const sourceMapAllowed = !requestedSourceMap || canServeSourceMap(input);
 
   let relativePath = requestedRelativePath;
   let fallback: 'spa' | undefined;
-  if (!declared || !sourceMapAllowed) {
-    if (requestedSourceMap && declared && !sourceMapAllowed) {
-      return failure('source_map_unavailable', 404);
-    }
+  if (!declared) {
     if (
       input.routeMode === 'pathFallback'
       && !requestPath.directoryRequest

@@ -63,9 +63,10 @@ describe('hosted web native asset policy table', () => {
       expect.objectContaining({
         path: 'assets/index.js.map',
         outcome: {
-          kind: 'rejected',
-          code: 'source_map_unavailable',
-          status: 404,
+          kind: 'content',
+          contentType: 'application/json; charset=utf-8',
+          resourceId: expect.any(String),
+          headers: expect.any(Object),
         },
       }),
       expect.objectContaining({
@@ -97,7 +98,7 @@ describe('hosted web native asset policy table', () => {
       kind: 'content',
       contentType: 'text/javascript; charset=utf-8',
       headers: {
-        'Content-Security-Policy': "default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors https://app.happier.test; object-src 'none'; script-src 'self'; worker-src 'none'; style-src 'self'; img-src 'self'; font-src 'self'; connect-src 'self'; block-all-mixed-content",
+        'Content-Security-Policy': "frame-ancestors https://app.happier.test; block-all-mixed-content",
       },
     });
     expect(resolveHostedWebAssetNativePolicyRequestV1(built.table, '/settings/team')).toMatchObject({
@@ -111,9 +112,10 @@ describe('hosted web native asset policy table', () => {
       status: 400,
     });
     expect(resolveHostedWebAssetNativePolicyRequestV1(built.table, '/assets/index.js.map')).toEqual({
-      kind: 'rejected',
-      code: 'source_map_unavailable',
-      status: 404,
+      kind: 'content',
+      contentType: 'application/json; charset=utf-8',
+      resourceId: expect.any(String),
+      headers: expect.any(Object),
     });
     expect(resolveHostedWebAssetNativePolicyRequestV1(built.table, '/assets/blob.bin')).toEqual({
       kind: 'rejected',

@@ -21,46 +21,13 @@ describe('hostedWebSecurity', () => {
     }
   });
 
-  it('keeps declared connects and explicit data/blob booleans as the resource controls', () => {
+  it('admits plugin eval/data/connect declarations without imposing an Artifact egress ceiling', () => {
     const security = PluginHostedWebSecurityPolicyV1Schema.parse({
       allowedConnectOrigins: ['https://api.happier.test'],
-      csp: {
-        connectSrc: 'declaredOrigins',
-        allowDataUrls: true,
-        allowBlobUrls: true,
-      },
+      csp: { connectSrc: 'declaredOrigins', allowEval: true, allowDataUrls: true, allowBlobUrls: true },
     });
-
-    const csp = buildPluginHostedWebStaticAssetContentSecurityPolicyV1(security);
-
-    expect(csp).toContain("script-src 'self'");
-    expect(csp).toContain("style-src 'self'");
-    expect(csp).toContain("img-src 'self' data: blob:");
-    expect(csp).toContain("font-src 'self' data: blob:");
-    expect(csp).toContain("connect-src 'self' https://api.happier.test");
-  });
-
-  it('can describe an inline document whose effective connect policy is none', () => {
-    const security = PluginHostedWebSecurityPolicyV1Schema.parse({
-      csp: { connectSrc: 'none', allowInlineStyles: true, allowDataUrls: true },
-    });
-
-    const csp = buildPluginHostedWebStaticAssetContentSecurityPolicyV1(security);
-
-    expect(csp).toContain("connect-src 'none'");
-    expect(csp).toContain("style-src 'self' 'unsafe-inline'");
-    expect(csp).toContain("img-src 'self' data:");
-  });
-
-  it('does not advertise unsupported CSP navigation enforcement', () => {
-    const security = PluginHostedWebSecurityPolicyV1Schema.parse({});
-
-    const csp = buildPluginHostedWebStaticAssetContentSecurityPolicyV1(security);
-
-    // CSP does not provide a reliably enforced `navigate-to` directive. Actual
-    // top-level navigation authority belongs to each native/web frame adapter.
-    expect(csp).not.toContain('navigate-to');
-    expect(csp).toContain("form-action 'none'");
+    const csp = buildPluginHostedWebStaticAssetContentSecurityPolicyV1(security, { frameAncestors: ['https://host.happier.test'] });
+    expect(csp).toBe('frame-ancestors https://host.happier.test; block-all-mixed-content');
   });
 
   describe('frame-ancestors (§3.12, EU-8)', () => {
