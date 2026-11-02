@@ -33,6 +33,8 @@ export {
   isSelfContainedCliBinary,
   resolveSelfContainedCliRuntimeRootPath,
 } from './resolveSelfContainedCliRuntimeRoot.js';
+export { resolveManagedCliShimInstall } from './managedCliShimInstall.js';
+export type { ManagedCliShimInstall } from './managedCliShimInstall.js';
 export {
   readInstalledVersionMarkers,
   readInstalledVersionMarkersSync,
