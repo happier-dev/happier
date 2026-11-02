@@ -42,15 +42,8 @@ export type DaemonVoiceRuntimeFamilyCapabilities = Readonly<Partial<
 const SUPPORTED_RUNTIME_FAMILY_CAPABILITIES: DaemonVoiceRuntimeFamilyCapabilities = Object.freeze({
   sherpa_zipformer_streaming: Object.freeze({ abiVersion: 1 }),
   sherpa_kokoro_offline: Object.freeze({ abiVersion: 1 }),
+  sherpa_parakeet_offline: Object.freeze({ abiVersion: 1 }),
 });
-
-// An adapter can be implemented and exercised before it is safe to advertise
-// as installable. Parakeet remains staged until its published manifest,
-// cancellation semantics, and measured memory policy pass the W4.3 gates.
-const IMPLEMENTED_RUNTIME_FAMILIES: ReadonlySet<ModelPackRuntimeFamily> = new Set([
-  ...(Object.keys(SUPPORTED_RUNTIME_FAMILY_CAPABILITIES) as ModelPackRuntimeFamily[]),
-  'sherpa_parakeet_offline',
-]);
 
 export function isDaemonVoiceRuntimeFamilySupported(runtimeFamily: ModelPackRuntimeFamily): boolean {
   return Object.hasOwn(SUPPORTED_RUNTIME_FAMILY_CAPABILITIES, runtimeFamily);
@@ -120,7 +113,7 @@ export function resolveDaemonVoiceRuntimePackAdapter(
     ? { family: entry.runtimeFamily, artifacts: entry.runtimeArtifacts }
     : null);
   const declaredSupportArtifacts = runtimeDescriptor ? supportArtifacts : entry?.supportArtifacts;
-  if (!runtime || !IMPLEMENTED_RUNTIME_FAMILIES.has(runtime.family)) {
+  if (!runtime || !isDaemonVoiceRuntimeFamilySupported(runtime.family)) {
     return null;
   }
 

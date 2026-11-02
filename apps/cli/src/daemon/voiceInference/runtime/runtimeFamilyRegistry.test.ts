@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { getModelPackCatalogEntry } from '@happier-dev/protocol';
+import { getModelPackCatalogEntry } from '@happier-dev/protocol/voice/modelPacks/catalog';
 
 import {
   assertDaemonVoiceRuntimeManifestCompatible,
@@ -51,12 +51,13 @@ describe('daemon voice runtime-family registry', () => {
     expect(capabilities).toEqual({
       sherpa_zipformer_streaming: { abiVersion: 1 },
       sherpa_kokoro_offline: { abiVersion: 1 },
+      sherpa_parakeet_offline: { abiVersion: 1 },
     });
     expect(Object.isFrozen(capabilities)).toBe(true);
     expect(Object.values(capabilities).every((entry) => Object.isFrozen(entry))).toBe(true);
     expect(isDaemonVoiceRuntimeFamilySupported('sherpa_zipformer_streaming')).toBe(true);
     expect(isDaemonVoiceRuntimeFamilySupported('sherpa_kokoro_offline')).toBe(true);
-    expect(isDaemonVoiceRuntimeFamilySupported('sherpa_parakeet_offline')).toBe(false);
+    expect(isDaemonVoiceRuntimeFamilySupported('sherpa_parakeet_offline')).toBe(true);
   });
 
   it('admits verified Zipformer support files but resolves only executable runtime paths', () => {
@@ -142,8 +143,8 @@ describe('daemon voice runtime-family registry', () => {
     });
   });
 
-  it('resolves the staged Parakeet adapter without advertising the family before release gates pass', () => {
-    expect(isDaemonVoiceRuntimeFamilySupported('sherpa_parakeet_offline')).toBe(false);
+  it('resolves Parakeet through the advertised offline family after verified v3 publication', () => {
+    expect(isDaemonVoiceRuntimeFamilySupported('sherpa_parakeet_offline')).toBe(true);
     expect(resolveDaemonVoiceRuntimePackAdapter(
       'sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8',
       '/models/parakeet',
