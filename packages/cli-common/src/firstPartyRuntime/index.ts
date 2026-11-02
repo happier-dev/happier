@@ -31,6 +31,7 @@ export type { InstalledFirstPartyComponentPaths } from './resolveInstalledCompon
 export { resolveJunctionFreeCurrentPath } from './resolveJunctionFreeCurrentPath.js';
 export {
   isSelfContainedCliBinary,
+  resolveInstalledCliRuntimeRootPath,
   resolveSelfContainedCliRuntimeRootPath,
 } from './resolveSelfContainedCliRuntimeRoot.js';
 export {

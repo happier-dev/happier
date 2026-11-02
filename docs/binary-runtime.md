@@ -97,7 +97,13 @@ checkouts must run the build script before installing a Windows service. A self-
 resolves the launcher from its runtime root
 (`packages/cli-common/src/firstPartyRuntime/resolveSelfContainedCliRuntimeRoot.ts`, the same root
 the CLI's `resolveCliRuntimeAssetPath` uses): a `~/.happier/bin/happier|hprev|hdev` shortcut is a
-hardlink or copy, so it maps to `~/.happier/<cli root>/current`; any other self-contained binary
+hardlink or copy, so it maps to the active payload under that shim's install home. The default
+`happier` shortcut follows that home's `default-cli-release-channel.json` (stable when missing);
+channel shortcuts and their legacy aliases retain their own channel. Asset reads and packaged
+child entrypoints share `resolveInstalledCliRuntimeRootPath`, which uses the existing install
+layout and `current.version` resolver to bypass Windows junctions, falling back to `current`
+for legacy installs without a marker. The process's data home does not redirect a launched shim
+to another install. Any other self-contained binary
 uses its own directory. Node and Bun processes use the package asset. Windows hstack has no
 supported shortcut installer today, so a binary hstack resolves the launcher beside itself; a
 future Windows hstack shortcut must be added to that runtime-root mapping.
