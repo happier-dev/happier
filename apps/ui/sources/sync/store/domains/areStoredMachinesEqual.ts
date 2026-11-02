@@ -1,3 +1,4 @@
+import { retainDeep } from '@/sync/domains/state/structuralSharing';
 import type { Machine } from '../../domains/state/storageTypes';
 import { areSessionValuesDeepEqual } from './areStoredSessionsEqual';
 import { hasCurrentMachineContent } from '../../domains/machines/resolveServerScopedMachines';
@@ -60,6 +61,51 @@ export function areStoredMachineSemanticsEqual(
     next: Machine | null | undefined,
 ): boolean {
     return areStoredMachineValuesEqual(previous, next, false);
+}
+
+type MachineContentAuthority = Pick<Machine, 'id' | 'dataEncryptionKey' | 'keyBasis' | 'installationId'
+    | 'installationPublicKey' | 'contentPublicKeyFingerprint' | 'access' | 'isShared' | 'revokedAt'
+    | 'replacedByMachineId' | 'replacedAt'>;
+
+/** Content versions are meaningful only within this admitted installation/access/key basis. */
+export function haveSameMachineContentAuthority(previous: MachineContentAuthority, next: MachineContentAuthority): boolean {
+    return previous.id === next.id
+        && (previous.dataEncryptionKey ?? null) === (next.dataEncryptionKey ?? null)
+        && (previous.keyBasis ? previous.keyBasis.dataEncryptionKey : previous.dataEncryptionKey ?? null)
+            === (next.keyBasis ? next.keyBasis.dataEncryptionKey : next.dataEncryptionKey ?? null)
+        && (previous.installationId ?? null) === (next.installationId ?? null)
+        && (previous.installationPublicKey ?? null) === (next.installationPublicKey ?? null)
+        && (previous.contentPublicKeyFingerprint ?? null) === (next.contentPublicKeyFingerprint ?? null)
+        && (previous.revokedAt ?? null) === (next.revokedAt ?? null)
+        && (previous.replacedByMachineId ?? null) === (next.replacedByMachineId ?? null)
+        && (previous.replacedAt ?? null) === (next.replacedAt ?? null)
+        && Boolean(previous.isShared) === Boolean(next.isShared)
+        && (previous.access?.custodian.accountId ?? null) === (next.access?.custodian.accountId ?? null)
+        && (previous.access?.role ?? null) === (next.access?.role ?? null)
+        && (previous.access?.resourceMode ?? null) === (next.access?.resourceMode ?? null)
+        && (previous.access?.accessState ?? null) === (next.access?.accessState ?? null);
+}
+
+/** One inventory retention rule for full-row ingress and later hydration. */
+export function retainMachineRecord(previous: Machine | null | undefined, next: Machine): Machine {
+    if (!previous || previous.storageMode !== next.storageMode || !haveSameMachineContentAuthority(previous, next)) return next;
+    if (areStoredMachineSemanticsEqual(previous, next)) {
+        const nowMs = Date.now();
+        if (isMachineOnline(previous, nowMs) === isMachineOnline(next, nowMs)) return previous;
+    }
+    let retained = next;
+    // Exact-field readers share the admitted siblings even when another field in the same decoded
+    // blob advances. Whole-row version authority stays above.
+    const retainField = <Key extends keyof Machine>(key: Key) => {
+        const field = retainDeep(previous[key], next[key]);
+        if (field === next[key]) return;
+        if (retained === next) retained = { ...next };
+        retained[key] = field;
+    };
+    for (const key of ['metadata', 'daemonState', 'availability', 'access', 'keyBasis', 'operationProtocolCapabilities'] as const) {
+        retainField(key);
+    }
+    return retained;
 }
 
 /** Resource publications do not change launch choices. Content/key readiness still does. */

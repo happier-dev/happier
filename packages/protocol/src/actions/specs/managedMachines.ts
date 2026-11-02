@@ -28,6 +28,7 @@ const titles: Record<ManagedMachineActionIdV1, string> = {
   'machines.environment.apply': 'Apply machine setup',
   'machines.setup.plan': 'Review machine setup',
   'machines.setup.apply': 'Apply machine setup',
+  'machines.setup.updates.apply': 'Install machine updates',
   'machines.managed.cancel': 'Cancel managed machine creation',
   'machines.managed.power.set': 'Change machine power',
   'machines.managed.rebuild': 'Rebuild Dev Container',
@@ -39,7 +40,7 @@ const titles: Record<ManagedMachineActionIdV1, string> = {
 
 export const MANAGED_MACHINE_ACTION_SPECS = MANAGED_MACHINE_ACTION_IDS_V1.map((actionId): PreNormalizedActionSpec => {
   const effect = actionId === 'machines.managed.acquire'
-    || actionId === 'machines.setup.apply' || actionId === 'machines.managed.setup.skip'
+    || actionId === 'machines.setup.apply' || actionId === 'machines.setup.updates.apply' || actionId === 'machines.managed.setup.skip'
     || actionId === 'machines.managed.bootstrap.retry' || actionId === 'machines.managed.cancel'
     || ['machines.managed.power.set', 'machines.managed.rebuild', 'machines.managed.retention.update', 'machines.managed.delete', 'machines.managed.controller.update', 'machines.managed.retire'].includes(actionId);
   const account = actionId === 'machines.provisioners.list'
@@ -54,12 +55,13 @@ export const MANAGED_MACHINE_ACTION_SPECS = MANAGED_MACHINE_ACTION_IDS_V1.map((a
       ? { approvalPolicy: { uiConfirmation: 'direct' as const } }
       : effect ? { approvalPolicy: { uiConfirmation: 'policy' as const } } : {}),
     title: titles[actionId],
-    ...(actionId === 'machines.setup.apply' ? { approvalScope: 'machine' as const } : {}),
+    ...(actionId === 'machines.setup.apply' || actionId === 'machines.setup.updates.apply' ? { approvalScope: 'machine' as const } : {}),
     ...({
       'machines.managed.bootstrap.retry': { confirmVerb: { key: 'common.retry', fallback: 'Retry' } },
       // Its own words, not "Cancel": the dialog's dismiss button already says Cancel.
       'machines.managed.cancel': { confirmVerb: { key: 'managedMachines.actions.cancelCreation', fallback: 'Cancel creation' } },
       'machines.setup.apply': { confirmVerb: { key: 'common.run', fallback: 'Run' } },
+      'machines.setup.updates.apply': { confirmVerb: { key: 'common.install', fallback: 'Install' } },
       'machines.managed.rebuild': { confirmVerb: { key: 'common.update', fallback: 'Update' } },
       'machines.managed.delete': { confirmVerb: { key: 'common.delete', fallback: 'Delete' }, irreversible: true },
       'machines.managed.retire': { confirmVerb: { key: 'common.remove', fallback: 'Remove' } },
@@ -72,6 +74,8 @@ export const MANAGED_MACHINE_ACTION_SPECS = MANAGED_MACHINE_ACTION_IDS_V1.map((a
           ? 'Cancel the admitted creation request and retain the resulting resource cleanup disposition.'
           : actionId === 'machines.setup.apply'
             ? 'Apply the reviewed setup sources on the exact Machine through current approval and native admission; acceptance does not confirm a native effect.'
+          : actionId === 'machines.setup.updates.apply'
+            ? 'Install the exact reviewed security or all OS package updates through native setup admission. Package updates may restart services; this operation never reboots the Machine.'
           : effect ? `${titles[actionId]} on the retained resource through current approval and controller admission; acceptance does not confirm a native effect.`
             : `${titles[actionId]} on the exact Home without starting or waking compute.`,
     safety: effect ? 'danger' : 'safe',
@@ -86,7 +90,7 @@ export const MANAGED_MACHINE_ACTION_SPECS = MANAGED_MACHINE_ACTION_IDS_V1.map((a
     outputSchema: ManagedMachineActionOutputSchemasV1[actionId],
     // This requester-private census is assembled by the Account's existing
     // readers; it has no server endpoint that could read E2EE references.
-    ...(actionId === 'machines.managed.references.get' || actionId === 'machines.setup.plan' || actionId === 'machines.setup.apply' ? {} : {
+    ...(actionId === 'machines.managed.references.get' || actionId === 'machines.setup.plan' || actionId === 'machines.setup.apply' || actionId === 'machines.setup.updates.apply' ? {} : {
       serverTransport: { method: 'POST' as const, path: managedMachineActionEndpointPathV1(actionId) },
     }),
     ...(effect ? { operation: {

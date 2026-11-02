@@ -127,6 +127,13 @@ export async function removeMachineSetup(input: RemoveMachineSetupInput): Promis
   return await startMachineSetup({ ...input, setup: {}, sources: [], taskKind: 'machine.setup.remove.v1' });
 }
 
+export async function applyMachineSetupUpdates(input: Omit<ApplyMachineSetupInput,
+  'setup' | 'recipePlans' | 'removalPlans' | 'exclusions' | 'sourceChange' | 'secretEnvironment' | 'preset' | 'managedId'> & Readonly<{
+    plan: MachineSetupEffectPlanV1;
+  }>): Promise<ActionExecuteResult> {
+  return await startMachineSetup({ ...input, setup: {}, sources: [], plans: [input.plan], taskKind: 'machine.setup.apply.v1' });
+}
+
 async function startMachineSetup(input: AdmittedMachineSetupInput): Promise<ActionExecuteResult> {
   const signal = input.signal ?? input.operation.signal;
   const operationId = input.operation.operationAcceptance?.operationId ?? input.operation.actionRequestId;

@@ -11,6 +11,7 @@ import { MachinePresetActionIdV1Schema, MachinePresetActionInputSchemasV1 } from
 import type { ActionExecuteResult, ActionExecutorContext } from '../types.js';
 import type { CoreInvocation, DispatchFacts, PreparedCoreAdmission } from '../coreInvocation.js';
 import type { ActionExecutorDeps } from '../types.js';
+import type { z } from 'zod/mini';
 
 
 
@@ -33,6 +34,22 @@ export async function dispatchMachineManaged(inv: Pick<CoreInvocation, 'actionId
           const result = await deps.machineSetupApply({ input: ManagedMachineActionInputSchemasV1['machines.setup.apply'].parse(admittedInput),
             context: ctx, ...(ctx.signal ? { signal: ctx.signal } : {}) });
           return readActionFailureEnvelope(result) ?? { ok: true, result };
+        }
+        if (managedMachineActionId === 'machines.setup.updates.apply') {
+          if (!deps.machineSetupUpdatesApply) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
+          const result = await deps.machineSetupUpdatesApply({
+            input: admittedInput as z.infer<(typeof ManagedMachineActionInputSchemasV1)['machines.setup.updates.apply']>,
+            context: ctx, ...(ctx.signal ? { signal: ctx.signal } : {}),
+          });
+          return readActionFailureEnvelope(result) ?? { ok: true, result: ManagedMachineActionOutputSchemasV1['machines.setup.updates.apply'].parse(result) };
+        }
+        if (managedMachineActionId === 'machines.setup.remove') {
+          if (!deps.machineSetupRemove) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
+          const result = await deps.machineSetupRemove({
+            input: admittedInput as z.infer<(typeof ManagedMachineActionInputSchemasV1)['machines.setup.remove']>,
+            context: ctx, ...(ctx.signal ? { signal: ctx.signal } : {}),
+          });
+          return readActionFailureEnvelope(result) ?? { ok: true, result: ManagedMachineActionOutputSchemasV1['machines.setup.remove'].parse(result) };
         }
         if (managedMachineActionId === 'machines.managed.references.get') {
           const input = ManagedMachineActionInputSchemasV1['machines.managed.references.get'].parse(admittedInput);

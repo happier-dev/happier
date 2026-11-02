@@ -315,6 +315,10 @@ export const MUTATING_PUBLIC_ACTION_IDS: ReadonlySet<PublicActionId> = new Set([
   "machines.replacement.clear",
   "machines.replacement.set",
   "machines.resources.policy.set",
+  "machines.setup.plan",
+  "machines.setup.apply",
+  "machines.setup.remove",
+  "machines.setup.updates.apply",
   "machines.storage.deleteNow",
   "machines.storage.pile.set",
   "machines.storage.protected.add",
@@ -1746,6 +1750,14 @@ export type GeneratedActions = Readonly<{
       readonly policy: Readonly<{
         readonly get: (input: PublicActionInputById["machines.resources.policy.get"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"machines.resources.policy.get">>;
         readonly set: (input: PublicActionInputById["machines.resources.policy.set"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"machines.resources.policy.set">>;
+      }> ;
+    }> ;
+    readonly setup: Readonly<{
+      readonly plan: (input: PublicActionInputById["machines.setup.plan"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"machines.setup.plan">>;
+      readonly apply: (input: PublicActionInputById["machines.setup.apply"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"machines.setup.apply">>;
+      readonly remove: (input: PublicActionInputById["machines.setup.remove"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"machines.setup.remove">>;
+      readonly updates: Readonly<{
+        readonly apply: (input: PublicActionInputById["machines.setup.updates.apply"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"machines.setup.updates.apply">>;
       }> ;
     }> ;
     readonly storage: Readonly<{
@@ -4224,6 +4236,14 @@ export function createGeneratedActions(execute: RawActionExecute): GeneratedActi
         policy: {
           get: (input: PublicActionInputById["machines.resources.policy.get"], options?: ActionExecutionOptions) => execute("machines.resources.policy.get", input, options),
           set: (input: PublicActionInputById["machines.resources.policy.set"], options?: ActionExecutionOptions) => execute("machines.resources.policy.set", input, options),
+        },
+      },
+      setup: {
+        plan: (input: PublicActionInputById["machines.setup.plan"], options?: ActionExecutionOptions) => execute("machines.setup.plan", input, options),
+        apply: (input: PublicActionInputById["machines.setup.apply"], options?: ActionExecutionOptions) => execute("machines.setup.apply", input, options),
+        remove: (input: PublicActionInputById["machines.setup.remove"], options?: ActionExecutionOptions) => execute("machines.setup.remove", input, options),
+        updates: {
+          apply: (input: PublicActionInputById["machines.setup.updates.apply"], options?: ActionExecutionOptions) => execute("machines.setup.updates.apply", input, options),
         },
       },
       storage: {

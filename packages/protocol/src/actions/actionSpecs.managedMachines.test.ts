@@ -11,6 +11,18 @@ const effects = ['machines.managed.acquire', 'machines.managed.bootstrap.retry',
   'machines.managed.controller.update', 'machines.managed.retire'] as const;
 
 describe('managed Machine host Action contracts', () => {
+  it('reviews exact update scope without setup operands and exposes dangerous target-native apply', () => {
+    const plan = getActionSpec('machines.setup.plan');
+    expect(plan.inputSchema.safeParse({ homeId: 'home', machineId: 'machine', updates: { scope: 'security' } }).success).toBe(true);
+    expect(plan.inputSchema.safeParse({ homeId: 'home', machineId: 'machine', updates: { scope: 'all' }, sources: [] }).success).toBe(false);
+    const id = ACTION_IDS.find(id => String(id) === 'machines.setup.updates.apply');
+    expect(id).toBeDefined();
+    if (!id) return;
+    expect(getActionSpec(id)).toMatchObject({ executionPlacement: 'machine', safety: 'danger',
+      approvalScope: 'machine', bindings: { rpcMethod: 'machines.setup.updates.apply' },
+      approvalPolicy: { uiConfirmation: 'policy' } });
+  });
+
   it('requires approval before applying the exact preset environment on an existing machine', () => {
     const spec = getActionSpec('machines.environment.apply');
     const input = { homeId: 'home', machineId: 'guest', presetId: 'preset', presetRevision: 4 };

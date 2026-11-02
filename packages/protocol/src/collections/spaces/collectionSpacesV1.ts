@@ -95,7 +95,8 @@ export function createDefaultCollectionSpaceV1<K extends CollectionEntityKindV1>
 export function resolveCollectionSpacesV1<K extends CollectionEntityKindV1>(catalog: CollectionSpacesV1, entityKind: K,
     defaultOverride?: Readonly<{ name?: string; filter?: CollectionFilterMapV1[K] }>): readonly CollectionSpaceV1<K>[] {
     const spaces = catalog.spaces.filter((space): space is CollectionSpaceV1<K> => space.entityKind === entityKind);
-    return spaces.some(space => space.id === DEFAULT_IDS[entityKind]) ? spaces : [createDefaultCollectionSpaceV1(entityKind, defaultOverride), ...spaces];
+    const defaultId: string = DEFAULT_IDS[entityKind];
+    return spaces.some(space => space.id === defaultId) ? spaces : [createDefaultCollectionSpaceV1(entityKind, defaultOverride), ...spaces];
 }
 export type CollectionSpacesMutationResultV1 = Readonly<{ ok: true; value: CollectionSpacesV1 }>
     | Readonly<{ ok: false; reason: 'space_not_found' | 'space_already_exists' | 'space_entity_mismatch' | 'default_space_reserved' | 'unsupported_filter_fields' }>;

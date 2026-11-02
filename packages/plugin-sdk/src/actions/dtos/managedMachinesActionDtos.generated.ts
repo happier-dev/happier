@@ -2,7 +2,8 @@
 // Type-only projection of Protocol-owned Action DTO declarations.
 
 import type { JsonValue, PluginJsonValueV2 } from '../../identity.js';
-import type { InputPredicate, PluginActionWorkflowBlockV1, PluginJsonSchemaV2 } from './pluginActionDtoSupport.generated.js';
+import type { MachinePresetItemV1 } from '../../machineSetup.js';
+import type { InputPredicate, JSONType, MachineSetupSourceFactsMapV1, MachineSetupSourceV1, PluginActionWorkflowBlockV1, PluginJsonSchemaV2 } from './pluginActionDtoSupport.generated.js';
 
 export type ManagedMachinesActionInputById = {
     readonly "machines.provisioners.list": {
@@ -3368,6 +3369,4741 @@ export type ManagedMachinesActionInputById = {
         manualResponsibility: true;
         homeId: string;
         managedId: string;
+    };
+    readonly "machines.setup.plan": {
+        homeId: string;
+        machineId: string;
+        sources?: unknown;
+        exclusions?: undefined | {
+            ref: {
+                pluginId: string;
+                recipeId: string;
+                revision: string;
+            };
+            reason: 'not_selected';
+        }[];
+        removeItemKeys?: string[] | undefined;
+        mode?: 'check' | 'effects' | undefined;
+        appChildren?: ({
+            sourceIndex: number;
+            itemIndex: number;
+            actionId: 'deployments.deploy';
+            input: {
+                contentArtifactId: string;
+                contentHeaderVersion: number;
+                contentBodyVersion: number;
+                targetLinkId: string;
+                expectedTargetLinkRevision: number;
+                requestKey: string;
+                environmentId: string;
+                expectedRevision: number;
+                serverId: string;
+                whenBusy?: 'refuse' | 'supersede' | undefined;
+                pendingDeploy?: undefined | {
+                    t: 'encrypted';
+                    c: string;
+                } | {
+                    t: 'plain';
+                    v: {
+                        sourceIntent: {
+                            kind: 'repository';
+                            projectSourceId: string;
+                            sourceRevision: number;
+                            sha: string;
+                            compose: {
+                                profiles: string[];
+                                services: string[];
+                                path: string;
+                                primaryService?: string | undefined;
+                            };
+                            pullRequestHead?: undefined | {
+                                number: number;
+                            };
+                        } | {
+                            profiles: string[];
+                            services: string[];
+                            kind: 'stored';
+                            contentRevision: number;
+                            composeDigest: string;
+                            document: string;
+                            primaryService?: string | undefined;
+                        };
+                        requestKey: string;
+                        targetLinkId: string;
+                        actionOperationId: string;
+                        sourceMethod?: 'gitIntegration' | 'upload' | undefined;
+                        triggerOccurrence?: undefined | {
+                            automationId: string;
+                            triggerId: string;
+                            triggerRevision: number;
+                            occurrenceKey: string;
+                        };
+                    };
+                };
+            };
+        } | {
+            sourceIndex: number;
+            itemIndex: number;
+            actionId: 'deployments.environments.create';
+            input: {
+                protection: 'nonProduction' | 'production';
+                purpose: 'preview' | 'standard';
+                deployerMode: 'chosen' | 'managers' | 'members';
+                controllerMachineId: string;
+                contentArtifactId: string;
+                contentHeaderVersion: number;
+                contentBodyVersion: number;
+                requestKey: string;
+                serverId: string;
+                projectSourceId?: string | undefined;
+                newProject?: undefined | {
+                    requestKey: string;
+                    name: string;
+                    owner: {
+                        kind: 'account';
+                        accountId: string;
+                    } | {
+                        kind: 'team';
+                        teamId: string;
+                    };
+                };
+                deployerPrincipals?: undefined | {
+                    principalKind: 'account' | 'teamGroup';
+                    principalId: string;
+                }[];
+                buildMachineId?: string | undefined;
+                managedRetention?: 'keep' | 'until-delete' | undefined;
+                preview?: undefined | {
+                    templateEnvironmentId: string;
+                    expectedTemplateRevision: number;
+                    pullRequestId: string;
+                    runtimeTargetLinkId: string;
+                };
+                firstTargetLink?: undefined | {
+                    machines: {
+                        machineId: string;
+                        installationId: string;
+                    }[];
+                    contentArtifactId: string;
+                    contentHeaderVersion: number;
+                    contentBodyVersion: number;
+                };
+                copyFrom?: undefined | {
+                    environmentId: string;
+                    expectedRevision: number;
+                    choices: {
+                        secrets: ({
+                            kind: 'omit';
+                            binding: {
+                                purpose: 'backupDestination';
+                                configKey: 'destination';
+                                role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
+                            } | {
+                                purpose: 'domainCredential';
+                                domainId: string;
+                                role: 'basicAuth' | 'certificateChain' | 'privateKey';
+                            } | {
+                                purpose: 'registry';
+                                targetLinkId: string;
+                                registryOrigin: string;
+                            } | {
+                                purpose: 'variable';
+                                name: string;
+                                phase: 'build' | 'runtime';
+                            } | {
+                                service: string;
+                                purpose: 'dataRole';
+                                role: 'readOnlyPassword';
+                            } | {
+                                targetLinkId: string;
+                                purpose: 'dataRole';
+                                role: 'readOnlyPassword';
+                            };
+                        } | {
+                            kind: 'rebind';
+                            source: {
+                                kind: 'secret';
+                                ref: string;
+                                resourceRevision: number;
+                            };
+                            binding: {
+                                purpose: 'backupDestination';
+                                configKey: 'destination';
+                                role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
+                            } | {
+                                purpose: 'domainCredential';
+                                domainId: string;
+                                role: 'basicAuth' | 'certificateChain' | 'privateKey';
+                            } | {
+                                purpose: 'registry';
+                                targetLinkId: string;
+                                registryOrigin: string;
+                            } | {
+                                purpose: 'variable';
+                                name: string;
+                                phase: 'build' | 'runtime';
+                            } | {
+                                service: string;
+                                purpose: 'dataRole';
+                                role: 'readOnlyPassword';
+                            } | {
+                                targetLinkId: string;
+                                purpose: 'dataRole';
+                                role: 'readOnlyPassword';
+                            };
+                        } | {
+                            kind: 'useSameReference';
+                            binding: {
+                                purpose: 'backupDestination';
+                                configKey: 'destination';
+                                role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
+                            } | {
+                                purpose: 'domainCredential';
+                                domainId: string;
+                                role: 'basicAuth' | 'certificateChain' | 'privateKey';
+                            } | {
+                                purpose: 'registry';
+                                targetLinkId: string;
+                                registryOrigin: string;
+                            } | {
+                                purpose: 'variable';
+                                name: string;
+                                phase: 'build' | 'runtime';
+                            } | {
+                                service: string;
+                                purpose: 'dataRole';
+                                role: 'readOnlyPassword';
+                            } | {
+                                targetLinkId: string;
+                                purpose: 'dataRole';
+                                role: 'readOnlyPassword';
+                            };
+                        })[];
+                        values: ({
+                            kind: 'include';
+                            binding: {
+                                purpose: 'backupDestination';
+                                configKey: 'destination';
+                                role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
+                            } | {
+                                purpose: 'domainCredential';
+                                domainId: string;
+                                role: 'basicAuth' | 'certificateChain' | 'privateKey';
+                            } | {
+                                purpose: 'registry';
+                                targetLinkId: string;
+                                registryOrigin: string;
+                            } | {
+                                purpose: 'variable';
+                                name: string;
+                                phase: 'build' | 'runtime';
+                            } | {
+                                service: string;
+                                purpose: 'dataRole';
+                                role: 'readOnlyPassword';
+                            } | {
+                                targetLinkId: string;
+                                purpose: 'dataRole';
+                                role: 'readOnlyPassword';
+                            };
+                        } | {
+                            kind: 'omit';
+                            binding: {
+                                purpose: 'backupDestination';
+                                configKey: 'destination';
+                                role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
+                            } | {
+                                purpose: 'domainCredential';
+                                domainId: string;
+                                role: 'basicAuth' | 'certificateChain' | 'privateKey';
+                            } | {
+                                purpose: 'registry';
+                                targetLinkId: string;
+                                registryOrigin: string;
+                            } | {
+                                purpose: 'variable';
+                                name: string;
+                                phase: 'build' | 'runtime';
+                            } | {
+                                service: string;
+                                purpose: 'dataRole';
+                                role: 'readOnlyPassword';
+                            } | {
+                                targetLinkId: string;
+                                purpose: 'dataRole';
+                                role: 'readOnlyPassword';
+                            };
+                        } | {
+                            kind: 'remap';
+                            source: {
+                                kind: 'deploymentFact';
+                                fact: 'commitSha' | 'deploymentId' | 'environmentName' | 'primaryUrl';
+                            } | {
+                                kind: 'deploymentFact';
+                                fact: 'domainUrl';
+                                domainId: string;
+                            } | {
+                                kind: 'reference';
+                                environmentId: string;
+                                export: string;
+                                via: 'auto' | 'privateNetwork' | 'public';
+                            } | {
+                                kind: 'value';
+                                value: string;
+                            };
+                            binding: {
+                                purpose: 'backupDestination';
+                                configKey: 'destination';
+                                role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
+                            } | {
+                                purpose: 'domainCredential';
+                                domainId: string;
+                                role: 'basicAuth' | 'certificateChain' | 'privateKey';
+                            } | {
+                                purpose: 'registry';
+                                targetLinkId: string;
+                                registryOrigin: string;
+                            } | {
+                                purpose: 'variable';
+                                name: string;
+                                phase: 'build' | 'runtime';
+                            } | {
+                                service: string;
+                                purpose: 'dataRole';
+                                role: 'readOnlyPassword';
+                            } | {
+                                targetLinkId: string;
+                                purpose: 'dataRole';
+                                role: 'readOnlyPassword';
+                            };
+                        })[];
+                        data: {
+                            targetLinkId: string;
+                            kind: 'createEmpty' | 'omit' | 'restoreBackup' | 'reuse';
+                        }[];
+                        retainPreviousDeployments?: 'copy' | 'default' | undefined;
+                    };
+                };
+                copyPlan?: undefined | {
+                    bindings: ({
+                        access: 'pull' | 'pushPull';
+                        source: {
+                            kind: 'secret';
+                            ref: string;
+                            resourceRevision: number;
+                        };
+                        purpose: 'registry';
+                        targetLinkId: string;
+                        registryOrigin: string;
+                    } | {
+                        source: {
+                            kind: 'deploymentFact';
+                            fact: 'commitSha' | 'deploymentId' | 'environmentName' | 'primaryUrl';
+                        } | {
+                            kind: 'deploymentFact';
+                            fact: 'domainUrl';
+                            domainId: string;
+                        } | {
+                            kind: 'reference';
+                            environmentId: string;
+                            export: string;
+                            via: 'auto' | 'privateNetwork' | 'public';
+                        } | {
+                            kind: 'secret';
+                            ref: string;
+                            resourceRevision: number;
+                        } | {
+                            kind: 'value';
+                            value: string;
+                        };
+                        purpose: 'variable';
+                        name: string;
+                        phase: 'build' | 'runtime';
+                    } | {
+                        source: {
+                            kind: 'secret';
+                            ref: string;
+                            resourceRevision: number;
+                        };
+                        purpose: 'backupDestination';
+                        configKey: 'destination';
+                        role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
+                    } | {
+                        source: {
+                            kind: 'secret';
+                            ref: string;
+                            resourceRevision: number;
+                        };
+                        purpose: 'domainCredential';
+                        domainId: string;
+                        role: 'basicAuth' | 'certificateChain' | 'privateKey';
+                    } | {
+                        source: {
+                            kind: 'secret';
+                            ref: string;
+                            resourceRevision: number;
+                        };
+                        service: string;
+                        purpose: 'dataRole';
+                        role: 'readOnlyPassword';
+                    } | {
+                        source: {
+                            kind: 'secret';
+                            ref: string;
+                            resourceRevision: number;
+                        };
+                        targetLinkId: string;
+                        purpose: 'dataRole';
+                        role: 'readOnlyPassword';
+                    })[];
+                    sourceRuntimeTargetLinkId?: string | undefined;
+                };
+                copyIntentCommitment?: string | undefined;
+            };
+        } | {
+            sourceIndex: number;
+            itemIndex: number;
+            actionId: 'deployments.templates.instantiate';
+            input: {
+                mode: 'apply' | 'preview';
+                serverId: string;
+                machineId: string;
+                templateRef: {
+                    ref: {
+                        digest: string;
+                        pluginId: string;
+                        pluginVersion: string;
+                        occurrenceId: string;
+                        path: string;
+                        kind: 'packageContent';
+                    } | {
+                        kind: 'content';
+                        digest: string;
+                    } | {
+                        kind: 'gitTree';
+                        repo: string;
+                        path: string;
+                        commit: string;
+                        treeSha: string;
+                    } | {
+                        kind: 'version';
+                        version: string;
+                    } | {
+                        kind: 'wellKnown';
+                        indexUrl: string;
+                        name: string;
+                        digest: string;
+                        publishedDigest?: string | undefined;
+                    };
+                    sourceId: string;
+                    itemId: string;
+                    version: string;
+                    expectedContributorOccurrenceId?: string | undefined;
+                };
+                environment: {
+                    kind: 'create';
+                    name: string;
+                    requestKey: string;
+                    protection: 'nonProduction' | 'production';
+                    purpose: 'standard';
+                    deployerMode: 'chosen' | 'managers' | 'members';
+                    controllerMachineId: string;
+                    deployerPrincipals?: undefined | {
+                        principalKind: 'account' | 'teamGroup';
+                        principalId: string;
+                    }[];
+                    buildMachineId?: string | undefined;
+                    retainPreviousDeployments?: number | undefined;
+                } | {
+                    kind: 'existing';
+                    environmentId: string;
+                    expectedRevision: number;
+                };
+                target: {
+                    kind: 'existing';
+                    targetLinkId: string;
+                    expectedRevision: number;
+                    installationId: string;
+                } | {
+                    kind: 'new';
+                    installationId: string;
+                };
+                destination: {
+                    kind: 'stored';
+                    contentRevision: number;
+                    composeDigest: string;
+                } | {
+                    kind: 'stored';
+                };
+                bindings: {
+                    source: {
+                        kind: 'generated';
+                        key: string;
+                    } | {
+                        kind: 'secret';
+                        ref: string;
+                        resourceRevision: number;
+                    } | {
+                        kind: 'value';
+                        value: string;
+                    };
+                    purpose: 'variable';
+                    name: string;
+                    phase: 'build' | 'runtime';
+                }[];
+                projectSourceId?: string | undefined;
+                newProject?: undefined | {
+                    requestKey: string;
+                    name: string;
+                    owner: {
+                        kind: 'account';
+                        accountId: string;
+                    } | {
+                        kind: 'team';
+                        teamId: string;
+                    };
+                };
+                managedRetention?: 'keep' | 'until-delete' | undefined;
+                generatedSecretAudience?: undefined | {
+                    accountGrants?: string[] | undefined;
+                    teamGrants?: string[] | undefined;
+                    groupGrants?: string[] | undefined;
+                };
+                connectTo?: undefined | {
+                    service: string;
+                };
+                replace?: string[] | undefined;
+                domainBindings?: undefined | {
+                    templateDomainId: string;
+                    hostname: string;
+                }[];
+                deploy?: undefined | {
+                    requestKey: string;
+                };
+            };
+        })[] | undefined;
+        updates?: undefined | {
+            scope: 'all' | 'security';
+        };
+    } | {
+        homeId: string;
+        machineId: string;
+        targets: {
+            homeId: string;
+            machineId: string;
+            sources?: unknown;
+            exclusions?: undefined | {
+                ref: {
+                    pluginId: string;
+                    recipeId: string;
+                    revision: string;
+                };
+                reason: 'not_selected';
+            }[];
+            removeItemKeys?: string[] | undefined;
+            mode?: 'check' | 'effects' | undefined;
+            appChildren?: ({
+                sourceIndex: number;
+                itemIndex: number;
+                actionId: 'deployments.deploy';
+                input: {
+                    contentArtifactId: string;
+                    contentHeaderVersion: number;
+                    contentBodyVersion: number;
+                    targetLinkId: string;
+                    expectedTargetLinkRevision: number;
+                    requestKey: string;
+                    environmentId: string;
+                    expectedRevision: number;
+                    serverId: string;
+                    whenBusy?: 'refuse' | 'supersede' | undefined;
+                    pendingDeploy?: undefined | {
+                        t: 'encrypted';
+                        c: string;
+                    } | {
+                        t: 'plain';
+                        v: {
+                            sourceIntent: {
+                                kind: 'repository';
+                                projectSourceId: string;
+                                sourceRevision: number;
+                                sha: string;
+                                compose: {
+                                    profiles: string[];
+                                    services: string[];
+                                    path: string;
+                                    primaryService?: string | undefined;
+                                };
+                                pullRequestHead?: undefined | {
+                                    number: number;
+                                };
+                            } | {
+                                profiles: string[];
+                                services: string[];
+                                kind: 'stored';
+                                contentRevision: number;
+                                composeDigest: string;
+                                document: string;
+                                primaryService?: string | undefined;
+                            };
+                            requestKey: string;
+                            targetLinkId: string;
+                            actionOperationId: string;
+                            sourceMethod?: 'gitIntegration' | 'upload' | undefined;
+                            triggerOccurrence?: undefined | {
+                                automationId: string;
+                                triggerId: string;
+                                triggerRevision: number;
+                                occurrenceKey: string;
+                            };
+                        };
+                    };
+                };
+            } | {
+                sourceIndex: number;
+                itemIndex: number;
+                actionId: 'deployments.environments.create';
+                input: {
+                    protection: 'nonProduction' | 'production';
+                    purpose: 'preview' | 'standard';
+                    deployerMode: 'chosen' | 'managers' | 'members';
+                    controllerMachineId: string;
+                    contentArtifactId: string;
+                    contentHeaderVersion: number;
+                    contentBodyVersion: number;
+                    requestKey: string;
+                    serverId: string;
+                    projectSourceId?: string | undefined;
+                    newProject?: undefined | {
+                        requestKey: string;
+                        name: string;
+                        owner: {
+                            kind: 'account';
+                            accountId: string;
+                        } | {
+                            kind: 'team';
+                            teamId: string;
+                        };
+                    };
+                    deployerPrincipals?: undefined | {
+                        principalKind: 'account' | 'teamGroup';
+                        principalId: string;
+                    }[];
+                    buildMachineId?: string | undefined;
+                    managedRetention?: 'keep' | 'until-delete' | undefined;
+                    preview?: undefined | {
+                        templateEnvironmentId: string;
+                        expectedTemplateRevision: number;
+                        pullRequestId: string;
+                        runtimeTargetLinkId: string;
+                    };
+                    firstTargetLink?: undefined | {
+                        machines: {
+                            machineId: string;
+                            installationId: string;
+                        }[];
+                        contentArtifactId: string;
+                        contentHeaderVersion: number;
+                        contentBodyVersion: number;
+                    };
+                    copyFrom?: undefined | {
+                        environmentId: string;
+                        expectedRevision: number;
+                        choices: {
+                            secrets: ({
+                                kind: 'omit';
+                                binding: {
+                                    purpose: 'backupDestination';
+                                    configKey: 'destination';
+                                    role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
+                                } | {
+                                    purpose: 'domainCredential';
+                                    domainId: string;
+                                    role: 'basicAuth' | 'certificateChain' | 'privateKey';
+                                } | {
+                                    purpose: 'registry';
+                                    targetLinkId: string;
+                                    registryOrigin: string;
+                                } | {
+                                    purpose: 'variable';
+                                    name: string;
+                                    phase: 'build' | 'runtime';
+                                } | {
+                                    service: string;
+                                    purpose: 'dataRole';
+                                    role: 'readOnlyPassword';
+                                } | {
+                                    targetLinkId: string;
+                                    purpose: 'dataRole';
+                                    role: 'readOnlyPassword';
+                                };
+                            } | {
+                                kind: 'rebind';
+                                source: {
+                                    kind: 'secret';
+                                    ref: string;
+                                    resourceRevision: number;
+                                };
+                                binding: {
+                                    purpose: 'backupDestination';
+                                    configKey: 'destination';
+                                    role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
+                                } | {
+                                    purpose: 'domainCredential';
+                                    domainId: string;
+                                    role: 'basicAuth' | 'certificateChain' | 'privateKey';
+                                } | {
+                                    purpose: 'registry';
+                                    targetLinkId: string;
+                                    registryOrigin: string;
+                                } | {
+                                    purpose: 'variable';
+                                    name: string;
+                                    phase: 'build' | 'runtime';
+                                } | {
+                                    service: string;
+                                    purpose: 'dataRole';
+                                    role: 'readOnlyPassword';
+                                } | {
+                                    targetLinkId: string;
+                                    purpose: 'dataRole';
+                                    role: 'readOnlyPassword';
+                                };
+                            } | {
+                                kind: 'useSameReference';
+                                binding: {
+                                    purpose: 'backupDestination';
+                                    configKey: 'destination';
+                                    role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
+                                } | {
+                                    purpose: 'domainCredential';
+                                    domainId: string;
+                                    role: 'basicAuth' | 'certificateChain' | 'privateKey';
+                                } | {
+                                    purpose: 'registry';
+                                    targetLinkId: string;
+                                    registryOrigin: string;
+                                } | {
+                                    purpose: 'variable';
+                                    name: string;
+                                    phase: 'build' | 'runtime';
+                                } | {
+                                    service: string;
+                                    purpose: 'dataRole';
+                                    role: 'readOnlyPassword';
+                                } | {
+                                    targetLinkId: string;
+                                    purpose: 'dataRole';
+                                    role: 'readOnlyPassword';
+                                };
+                            })[];
+                            values: ({
+                                kind: 'include';
+                                binding: {
+                                    purpose: 'backupDestination';
+                                    configKey: 'destination';
+                                    role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
+                                } | {
+                                    purpose: 'domainCredential';
+                                    domainId: string;
+                                    role: 'basicAuth' | 'certificateChain' | 'privateKey';
+                                } | {
+                                    purpose: 'registry';
+                                    targetLinkId: string;
+                                    registryOrigin: string;
+                                } | {
+                                    purpose: 'variable';
+                                    name: string;
+                                    phase: 'build' | 'runtime';
+                                } | {
+                                    service: string;
+                                    purpose: 'dataRole';
+                                    role: 'readOnlyPassword';
+                                } | {
+                                    targetLinkId: string;
+                                    purpose: 'dataRole';
+                                    role: 'readOnlyPassword';
+                                };
+                            } | {
+                                kind: 'omit';
+                                binding: {
+                                    purpose: 'backupDestination';
+                                    configKey: 'destination';
+                                    role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
+                                } | {
+                                    purpose: 'domainCredential';
+                                    domainId: string;
+                                    role: 'basicAuth' | 'certificateChain' | 'privateKey';
+                                } | {
+                                    purpose: 'registry';
+                                    targetLinkId: string;
+                                    registryOrigin: string;
+                                } | {
+                                    purpose: 'variable';
+                                    name: string;
+                                    phase: 'build' | 'runtime';
+                                } | {
+                                    service: string;
+                                    purpose: 'dataRole';
+                                    role: 'readOnlyPassword';
+                                } | {
+                                    targetLinkId: string;
+                                    purpose: 'dataRole';
+                                    role: 'readOnlyPassword';
+                                };
+                            } | {
+                                kind: 'remap';
+                                source: {
+                                    kind: 'deploymentFact';
+                                    fact: 'commitSha' | 'deploymentId' | 'environmentName' | 'primaryUrl';
+                                } | {
+                                    kind: 'deploymentFact';
+                                    fact: 'domainUrl';
+                                    domainId: string;
+                                } | {
+                                    kind: 'reference';
+                                    environmentId: string;
+                                    export: string;
+                                    via: 'auto' | 'privateNetwork' | 'public';
+                                } | {
+                                    kind: 'value';
+                                    value: string;
+                                };
+                                binding: {
+                                    purpose: 'backupDestination';
+                                    configKey: 'destination';
+                                    role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
+                                } | {
+                                    purpose: 'domainCredential';
+                                    domainId: string;
+                                    role: 'basicAuth' | 'certificateChain' | 'privateKey';
+                                } | {
+                                    purpose: 'registry';
+                                    targetLinkId: string;
+                                    registryOrigin: string;
+                                } | {
+                                    purpose: 'variable';
+                                    name: string;
+                                    phase: 'build' | 'runtime';
+                                } | {
+                                    service: string;
+                                    purpose: 'dataRole';
+                                    role: 'readOnlyPassword';
+                                } | {
+                                    targetLinkId: string;
+                                    purpose: 'dataRole';
+                                    role: 'readOnlyPassword';
+                                };
+                            })[];
+                            data: {
+                                targetLinkId: string;
+                                kind: 'createEmpty' | 'omit' | 'restoreBackup' | 'reuse';
+                            }[];
+                            retainPreviousDeployments?: 'copy' | 'default' | undefined;
+                        };
+                    };
+                    copyPlan?: undefined | {
+                        bindings: ({
+                            access: 'pull' | 'pushPull';
+                            source: {
+                                kind: 'secret';
+                                ref: string;
+                                resourceRevision: number;
+                            };
+                            purpose: 'registry';
+                            targetLinkId: string;
+                            registryOrigin: string;
+                        } | {
+                            source: {
+                                kind: 'deploymentFact';
+                                fact: 'commitSha' | 'deploymentId' | 'environmentName' | 'primaryUrl';
+                            } | {
+                                kind: 'deploymentFact';
+                                fact: 'domainUrl';
+                                domainId: string;
+                            } | {
+                                kind: 'reference';
+                                environmentId: string;
+                                export: string;
+                                via: 'auto' | 'privateNetwork' | 'public';
+                            } | {
+                                kind: 'secret';
+                                ref: string;
+                                resourceRevision: number;
+                            } | {
+                                kind: 'value';
+                                value: string;
+                            };
+                            purpose: 'variable';
+                            name: string;
+                            phase: 'build' | 'runtime';
+                        } | {
+                            source: {
+                                kind: 'secret';
+                                ref: string;
+                                resourceRevision: number;
+                            };
+                            purpose: 'backupDestination';
+                            configKey: 'destination';
+                            role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
+                        } | {
+                            source: {
+                                kind: 'secret';
+                                ref: string;
+                                resourceRevision: number;
+                            };
+                            purpose: 'domainCredential';
+                            domainId: string;
+                            role: 'basicAuth' | 'certificateChain' | 'privateKey';
+                        } | {
+                            source: {
+                                kind: 'secret';
+                                ref: string;
+                                resourceRevision: number;
+                            };
+                            service: string;
+                            purpose: 'dataRole';
+                            role: 'readOnlyPassword';
+                        } | {
+                            source: {
+                                kind: 'secret';
+                                ref: string;
+                                resourceRevision: number;
+                            };
+                            targetLinkId: string;
+                            purpose: 'dataRole';
+                            role: 'readOnlyPassword';
+                        })[];
+                        sourceRuntimeTargetLinkId?: string | undefined;
+                    };
+                    copyIntentCommitment?: string | undefined;
+                };
+            } | {
+                sourceIndex: number;
+                itemIndex: number;
+                actionId: 'deployments.templates.instantiate';
+                input: {
+                    mode: 'apply' | 'preview';
+                    serverId: string;
+                    machineId: string;
+                    templateRef: {
+                        ref: {
+                            digest: string;
+                            pluginId: string;
+                            pluginVersion: string;
+                            occurrenceId: string;
+                            path: string;
+                            kind: 'packageContent';
+                        } | {
+                            kind: 'content';
+                            digest: string;
+                        } | {
+                            kind: 'gitTree';
+                            repo: string;
+                            path: string;
+                            commit: string;
+                            treeSha: string;
+                        } | {
+                            kind: 'version';
+                            version: string;
+                        } | {
+                            kind: 'wellKnown';
+                            indexUrl: string;
+                            name: string;
+                            digest: string;
+                            publishedDigest?: string | undefined;
+                        };
+                        sourceId: string;
+                        itemId: string;
+                        version: string;
+                        expectedContributorOccurrenceId?: string | undefined;
+                    };
+                    environment: {
+                        kind: 'create';
+                        name: string;
+                        requestKey: string;
+                        protection: 'nonProduction' | 'production';
+                        purpose: 'standard';
+                        deployerMode: 'chosen' | 'managers' | 'members';
+                        controllerMachineId: string;
+                        deployerPrincipals?: undefined | {
+                            principalKind: 'account' | 'teamGroup';
+                            principalId: string;
+                        }[];
+                        buildMachineId?: string | undefined;
+                        retainPreviousDeployments?: number | undefined;
+                    } | {
+                        kind: 'existing';
+                        environmentId: string;
+                        expectedRevision: number;
+                    };
+                    target: {
+                        kind: 'existing';
+                        targetLinkId: string;
+                        expectedRevision: number;
+                        installationId: string;
+                    } | {
+                        kind: 'new';
+                        installationId: string;
+                    };
+                    destination: {
+                        kind: 'stored';
+                        contentRevision: number;
+                        composeDigest: string;
+                    } | {
+                        kind: 'stored';
+                    };
+                    bindings: {
+                        source: {
+                            kind: 'generated';
+                            key: string;
+                        } | {
+                            kind: 'secret';
+                            ref: string;
+                            resourceRevision: number;
+                        } | {
+                            kind: 'value';
+                            value: string;
+                        };
+                        purpose: 'variable';
+                        name: string;
+                        phase: 'build' | 'runtime';
+                    }[];
+                    projectSourceId?: string | undefined;
+                    newProject?: undefined | {
+                        requestKey: string;
+                        name: string;
+                        owner: {
+                            kind: 'account';
+                            accountId: string;
+                        } | {
+                            kind: 'team';
+                            teamId: string;
+                        };
+                    };
+                    managedRetention?: 'keep' | 'until-delete' | undefined;
+                    generatedSecretAudience?: undefined | {
+                        accountGrants?: string[] | undefined;
+                        teamGrants?: string[] | undefined;
+                        groupGrants?: string[] | undefined;
+                    };
+                    connectTo?: undefined | {
+                        service: string;
+                    };
+                    replace?: string[] | undefined;
+                    domainBindings?: undefined | {
+                        templateDomainId: string;
+                        hostname: string;
+                    }[];
+                    deploy?: undefined | {
+                        requestKey: string;
+                    };
+                };
+            })[] | undefined;
+            updates?: undefined | {
+                scope: 'all' | 'security';
+            };
+        }[];
+        selectedMachineId?: string | undefined;
+    };
+    readonly "machines.setup.apply": {
+        homeId: string;
+        machineId: string;
+        targets: {
+            homeId: string;
+            machineId: string;
+            sources: unknown;
+            desiredRevision: number;
+            recipePlans: {
+                sourceIndex: number;
+                itemIndex: number;
+                plan: {
+                    v: 1;
+                    basis: {
+                        kind: 'adminAccess';
+                        machineId: string;
+                        operationId: string;
+                        previousPolicy: {
+                            version: 1;
+                            mode: 'ask';
+                            administratorUsername: string;
+                        } | {
+                            version: 1;
+                            mode: 'none';
+                        } | {
+                            version: 1;
+                            mode: 'preauthorized';
+                        };
+                        policy: {
+                            version: 1;
+                            mode: 'ask';
+                            administratorUsername: string;
+                        } | {
+                            version: 1;
+                            mode: 'none';
+                        } | {
+                            version: 1;
+                            mode: 'preauthorized';
+                        };
+                    } | {
+                        kind: 'agentIsolation';
+                        machineId: string;
+                        enabled: boolean;
+                        expectedPolicy: {
+                            enabled: boolean;
+                            memberProvisioning?: 'linuxUsersV1' | undefined;
+                        };
+                        review?: undefined | {
+                            roots: {
+                                rootId: string;
+                                path: string;
+                            }[];
+                            ancestorAcls: {
+                                path: string;
+                                add: 'x';
+                            }[];
+                            sessionsToReplace: number;
+                            memberProvisioning?: 'linuxUsersV1' | undefined;
+                        };
+                    } | {
+                        kind: 'bootstrap';
+                        managedId: string;
+                        operationId: string;
+                        admittedInputDigest: string;
+                    } | {
+                        kind: 'reboot';
+                        machineId: string;
+                        operationId: string;
+                    } | {
+                        kind: 'setup';
+                        machineId: string;
+                        desiredRevision: number;
+                        selection?: undefined | {
+                            ref: {
+                                pluginId: string;
+                                recipeId: string;
+                                revision: string;
+                            };
+                            inputs: unknown;
+                        };
+                    } | {
+                        kind: 'sshBootstrap';
+                        operationId: string;
+                        admittedInputDigest: string;
+                    } | {
+                        kind: 'updates';
+                        machineId: string;
+                        scope: 'all' | 'security';
+                    };
+                    steps: ({
+                        check: {
+                            executable: string;
+                            args: string[];
+                            unsatisfiedExitCodes: number[];
+                            stdoutJson?: unknown;
+                        } | {
+                            kind: 'kernel';
+                            capability: string;
+                            architectures?: string[] | undefined;
+                        } | {
+                            kind: 'userManagerGroups';
+                            username: string;
+                        };
+                        executable: string;
+                        args: string[];
+                        kind: 'command';
+                        id: string;
+                        remove?: undefined | {
+                            executable: string;
+                            args: string[];
+                        };
+                        affects?: 'dockerEngine' | 'none' | undefined | {
+                            services: string[];
+                        };
+                        requiredFacts?: ({
+                            kind: 'administrator';
+                        } | {
+                            kind: 'command';
+                            executable: string;
+                        } | {
+                            kind: 'init';
+                            system: 'launchd' | 'systemd' | 'windowsScm';
+                        } | {
+                            kind: 'journalReadGroup';
+                            group: string;
+                        } | {
+                            kind: 'kernel';
+                            capability: string;
+                            architectures?: string[] | undefined;
+                        } | {
+                            kind: 'packageManager';
+                            manager: string;
+                        } | {
+                            kind: 'path';
+                            path: string;
+                        })[] | undefined;
+                        review?: undefined | {
+                            title: string | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                            description?: string | undefined | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                        };
+                    } | {
+                        kind: 'firewall';
+                        rules: string;
+                        id: string;
+                        exposures?: undefined | {
+                            requirementId: string;
+                            hostAddress: string;
+                            hostPort: number;
+                            protocol: 'tcp' | 'udp';
+                            exposure: 'loopback' | 'privateNetwork' | 'public';
+                            containerPort?: number | undefined;
+                            providerId?: string | undefined;
+                            networkIdentity?: string | undefined;
+                        }[];
+                        requiredFacts?: ({
+                            kind: 'administrator';
+                        } | {
+                            kind: 'command';
+                            executable: string;
+                        } | {
+                            kind: 'init';
+                            system: 'launchd' | 'systemd' | 'windowsScm';
+                        } | {
+                            kind: 'journalReadGroup';
+                            group: string;
+                        } | {
+                            kind: 'kernel';
+                            capability: string;
+                            architectures?: string[] | undefined;
+                        } | {
+                            kind: 'packageManager';
+                            manager: string;
+                        } | {
+                            kind: 'path';
+                            path: string;
+                        })[] | undefined;
+                        review?: undefined | {
+                            title: string | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                            description?: string | undefined | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                        };
+                    } | {
+                        kind: 'group';
+                        name: string;
+                        members: string[];
+                        id: string;
+                        state?: 'absent' | 'present' | undefined;
+                        existingOnly?: true | undefined;
+                        requiredFacts?: ({
+                            kind: 'administrator';
+                        } | {
+                            kind: 'command';
+                            executable: string;
+                        } | {
+                            kind: 'init';
+                            system: 'launchd' | 'systemd' | 'windowsScm';
+                        } | {
+                            kind: 'journalReadGroup';
+                            group: string;
+                        } | {
+                            kind: 'kernel';
+                            capability: string;
+                            architectures?: string[] | undefined;
+                        } | {
+                            kind: 'packageManager';
+                            manager: string;
+                        } | {
+                            kind: 'path';
+                            path: string;
+                        })[] | undefined;
+                        review?: undefined | {
+                            title: string | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                            description?: string | undefined | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                        };
+                    } | {
+                        kind: 'package';
+                        manager: string;
+                        packages: {
+                            name: string;
+                            version?: string | undefined;
+                            kind?: 'cask' | 'formula' | undefined;
+                            source?: string | undefined;
+                            scope?: 'machine' | 'user' | undefined;
+                        }[];
+                        id: string;
+                        state?: 'absent' | 'present' | undefined;
+                        requiredFacts?: ({
+                            kind: 'administrator';
+                        } | {
+                            kind: 'command';
+                            executable: string;
+                        } | {
+                            kind: 'init';
+                            system: 'launchd' | 'systemd' | 'windowsScm';
+                        } | {
+                            kind: 'journalReadGroup';
+                            group: string;
+                        } | {
+                            kind: 'kernel';
+                            capability: string;
+                            architectures?: string[] | undefined;
+                        } | {
+                            kind: 'packageManager';
+                            manager: string;
+                        } | {
+                            kind: 'path';
+                            path: string;
+                        })[] | undefined;
+                        review?: undefined | {
+                            title: string | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                            description?: string | undefined | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                        };
+                    } | {
+                        kind: 'packageSource';
+                        manager: 'apt';
+                        path: string;
+                        keyPath: string;
+                        url: string;
+                        suite: string;
+                        components: string[];
+                        architectures: string[];
+                        keyUrl: string;
+                        keyFingerprint: string;
+                        id: string;
+                        requiredFacts?: ({
+                            kind: 'administrator';
+                        } | {
+                            kind: 'command';
+                            executable: string;
+                        } | {
+                            kind: 'init';
+                            system: 'launchd' | 'systemd' | 'windowsScm';
+                        } | {
+                            kind: 'journalReadGroup';
+                            group: string;
+                        } | {
+                            kind: 'kernel';
+                            capability: string;
+                            architectures?: string[] | undefined;
+                        } | {
+                            kind: 'packageManager';
+                            manager: string;
+                        } | {
+                            kind: 'path';
+                            path: string;
+                        })[] | undefined;
+                        review?: undefined | {
+                            title: string | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                            description?: string | undefined | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                        };
+                    } | {
+                        kind: 'pathTraversal';
+                        path: string;
+                        agentUsername: string;
+                        id: string;
+                        requiredFacts?: ({
+                            kind: 'administrator';
+                        } | {
+                            kind: 'command';
+                            executable: string;
+                        } | {
+                            kind: 'init';
+                            system: 'launchd' | 'systemd' | 'windowsScm';
+                        } | {
+                            kind: 'journalReadGroup';
+                            group: string;
+                        } | {
+                            kind: 'kernel';
+                            capability: string;
+                            architectures?: string[] | undefined;
+                        } | {
+                            kind: 'packageManager';
+                            manager: string;
+                        } | {
+                            kind: 'path';
+                            path: string;
+                        })[] | undefined;
+                        review?: undefined | {
+                            title: string | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                            description?: string | undefined | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                        };
+                    } | {
+                        kind: 'reboot';
+                        id: string;
+                        requiredFacts?: ({
+                            kind: 'administrator';
+                        } | {
+                            kind: 'command';
+                            executable: string;
+                        } | {
+                            kind: 'init';
+                            system: 'launchd' | 'systemd' | 'windowsScm';
+                        } | {
+                            kind: 'journalReadGroup';
+                            group: string;
+                        } | {
+                            kind: 'kernel';
+                            capability: string;
+                            architectures?: string[] | undefined;
+                        } | {
+                            kind: 'packageManager';
+                            manager: string;
+                        } | {
+                            kind: 'path';
+                            path: string;
+                        })[] | undefined;
+                        review?: undefined | {
+                            title: string | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                            description?: string | undefined | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                        };
+                    } | {
+                        kind: 'serviceUnit';
+                        unit: string;
+                        enabled: boolean;
+                        running: boolean;
+                        id: string;
+                        requiredFacts?: ({
+                            kind: 'administrator';
+                        } | {
+                            kind: 'command';
+                            executable: string;
+                        } | {
+                            kind: 'init';
+                            system: 'launchd' | 'systemd' | 'windowsScm';
+                        } | {
+                            kind: 'journalReadGroup';
+                            group: string;
+                        } | {
+                            kind: 'kernel';
+                            capability: string;
+                            architectures?: string[] | undefined;
+                        } | {
+                            kind: 'packageManager';
+                            manager: string;
+                        } | {
+                            kind: 'path';
+                            path: string;
+                        })[] | undefined;
+                        review?: undefined | {
+                            title: string | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                            description?: string | undefined | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                        };
+                    } | {
+                        kind: 'user';
+                        username: string;
+                        id: string;
+                        home?: string | undefined;
+                        shell?: string | undefined;
+                        system?: boolean | undefined;
+                        locked?: boolean | undefined;
+                        uid?: number | undefined;
+                        state?: 'absent' | 'present' | undefined;
+                        ownershipMarker?: string | undefined;
+                        supplementaryGroups?: string[] | undefined;
+                        requiredFacts?: ({
+                            kind: 'administrator';
+                        } | {
+                            kind: 'command';
+                            executable: string;
+                        } | {
+                            kind: 'init';
+                            system: 'launchd' | 'systemd' | 'windowsScm';
+                        } | {
+                            kind: 'journalReadGroup';
+                            group: string;
+                        } | {
+                            kind: 'kernel';
+                            capability: string;
+                            architectures?: string[] | undefined;
+                        } | {
+                            kind: 'packageManager';
+                            manager: string;
+                        } | {
+                            kind: 'path';
+                            path: string;
+                        })[] | undefined;
+                        review?: undefined | {
+                            title: string | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                            description?: string | undefined | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                        };
+                    } | {
+                        kind: 'workspaceAccess';
+                        path: string;
+                        group: string;
+                        agentUsername: string;
+                        id: string;
+                        requiredFacts?: ({
+                            kind: 'administrator';
+                        } | {
+                            kind: 'command';
+                            executable: string;
+                        } | {
+                            kind: 'init';
+                            system: 'launchd' | 'systemd' | 'windowsScm';
+                        } | {
+                            kind: 'journalReadGroup';
+                            group: string;
+                        } | {
+                            kind: 'kernel';
+                            capability: string;
+                            architectures?: string[] | undefined;
+                        } | {
+                            kind: 'packageManager';
+                            manager: string;
+                        } | {
+                            kind: 'path';
+                            path: string;
+                        })[] | undefined;
+                        review?: undefined | {
+                            title: string | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                            description?: string | undefined | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                        };
+                    } | {
+                        owner: string;
+                        group: string;
+                        mode: number;
+                        kind: 'directory';
+                        path: string;
+                        id: string;
+                        preserveExistingOwnership?: true | undefined;
+                        protectedAncestors?: true | undefined;
+                        ownershipMarker?: string | undefined;
+                        requiredFacts?: ({
+                            kind: 'administrator';
+                        } | {
+                            kind: 'command';
+                            executable: string;
+                        } | {
+                            kind: 'init';
+                            system: 'launchd' | 'systemd' | 'windowsScm';
+                        } | {
+                            kind: 'journalReadGroup';
+                            group: string;
+                        } | {
+                            kind: 'kernel';
+                            capability: string;
+                            architectures?: string[] | undefined;
+                        } | {
+                            kind: 'packageManager';
+                            manager: string;
+                        } | {
+                            kind: 'path';
+                            path: string;
+                        })[] | undefined;
+                        review?: undefined | {
+                            title: string | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                            description?: string | undefined | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                        };
+                    } | {
+                        owner: string;
+                        group: string;
+                        mode: number;
+                        kind: 'file';
+                        path: string;
+                        id: string;
+                        state?: 'absent' | 'present' | undefined;
+                        content?: undefined | {
+                            kind: 'iniKeys';
+                            sections: Record<string, Record<string, string>>;
+                        } | {
+                            kind: 'jsonMerge';
+                            value: Record<string, JSONType<true>>;
+                        } | {
+                            kind: 'literal';
+                            value: string;
+                        } | {
+                            kind: 'secretGrant';
+                            grantRef: string;
+                        } | {
+                            kind: 'template';
+                            value: string;
+                            variables: Record<string, string>;
+                        };
+                        expectedContentDigest?: string | undefined;
+                        ownershipMarker?: string | undefined;
+                        validate?: 'docker' | 'sudoers' | undefined | {
+                            kind: 'caddy';
+                        } | {
+                            kind: 'docker';
+                        } | {
+                            kind: 'nft';
+                        } | {
+                            kind: 'sshd';
+                            contexts: {
+                                user: string;
+                                host: string;
+                                address: string;
+                            }[];
+                        } | {
+                            kind: 'sudoers';
+                        };
+                        probe?: undefined | {
+                            kind: 'caddy';
+                        } | {
+                            kind: 'docker';
+                        } | {
+                            kind: 'nft';
+                        } | {
+                            kind: 'sshd';
+                            contexts: {
+                                user: string;
+                                host: string;
+                                address: string;
+                            }[];
+                        } | {
+                            kind: 'sudoers';
+                        };
+                        onChange?: undefined | {
+                            serviceStepId: string;
+                            action: 'reload' | 'restart';
+                        };
+                        requiredFacts?: ({
+                            kind: 'administrator';
+                        } | {
+                            kind: 'command';
+                            executable: string;
+                        } | {
+                            kind: 'init';
+                            system: 'launchd' | 'systemd' | 'windowsScm';
+                        } | {
+                            kind: 'journalReadGroup';
+                            group: string;
+                        } | {
+                            kind: 'kernel';
+                            capability: string;
+                            architectures?: string[] | undefined;
+                        } | {
+                            kind: 'packageManager';
+                            manager: string;
+                        } | {
+                            kind: 'path';
+                            path: string;
+                        })[] | undefined;
+                        review?: undefined | {
+                            title: string | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                            description?: string | undefined | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                        };
+                    })[];
+                    nativeFacts: {
+                        stepId: string;
+                        status: 'drifted' | 'satisfied' | 'unavailable' | 'unsupported';
+                        facts: Record<string, JSONType<true>>;
+                        reason?: string | undefined;
+                    }[];
+                    planDigest: string;
+                    checks?: ({
+                        check: {
+                            executable: string;
+                            args: string[];
+                            unsatisfiedExitCodes: number[];
+                            stdoutJson?: unknown;
+                        } | {
+                            kind: 'kernel';
+                            capability: string;
+                            architectures?: string[] | undefined;
+                        } | {
+                            kind: 'userManagerGroups';
+                            username: string;
+                        };
+                        executable: string;
+                        args: string[];
+                        kind: 'command';
+                        id: string;
+                        remove?: undefined | {
+                            executable: string;
+                            args: string[];
+                        };
+                        affects?: 'dockerEngine' | 'none' | undefined | {
+                            services: string[];
+                        };
+                        requiredFacts?: ({
+                            kind: 'administrator';
+                        } | {
+                            kind: 'command';
+                            executable: string;
+                        } | {
+                            kind: 'init';
+                            system: 'launchd' | 'systemd' | 'windowsScm';
+                        } | {
+                            kind: 'journalReadGroup';
+                            group: string;
+                        } | {
+                            kind: 'kernel';
+                            capability: string;
+                            architectures?: string[] | undefined;
+                        } | {
+                            kind: 'packageManager';
+                            manager: string;
+                        } | {
+                            kind: 'path';
+                            path: string;
+                        })[] | undefined;
+                        review?: undefined | {
+                            title: string | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                            description?: string | undefined | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                        };
+                    } | {
+                        kind: 'kernel';
+                        capability: string;
+                        id: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'package';
+                        manager: string;
+                        packages: {
+                            name: string;
+                            version?: string | undefined;
+                            kind?: 'cask' | 'formula' | undefined;
+                            source?: string | undefined;
+                            scope?: 'machine' | 'user' | undefined;
+                        }[];
+                        id: string;
+                        state?: 'absent' | 'present' | undefined;
+                        requiredFacts?: ({
+                            kind: 'administrator';
+                        } | {
+                            kind: 'command';
+                            executable: string;
+                        } | {
+                            kind: 'init';
+                            system: 'launchd' | 'systemd' | 'windowsScm';
+                        } | {
+                            kind: 'journalReadGroup';
+                            group: string;
+                        } | {
+                            kind: 'kernel';
+                            capability: string;
+                            architectures?: string[] | undefined;
+                        } | {
+                            kind: 'packageManager';
+                            manager: string;
+                        } | {
+                            kind: 'path';
+                            path: string;
+                        })[] | undefined;
+                        review?: undefined | {
+                            title: string | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                            description?: string | undefined | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                        };
+                    })[] | undefined;
+                    checkFacts?: undefined | {
+                        stepId: string;
+                        status: 'drifted' | 'satisfied' | 'unavailable' | 'unsupported';
+                        facts: Record<string, JSONType<true>>;
+                        reason?: string | undefined;
+                    }[];
+                    selectedCheckIds?: string[] | undefined;
+                };
+            }[];
+            exclusions?: undefined | {
+                ref: {
+                    pluginId: string;
+                    recipeId: string;
+                    revision: string;
+                };
+                reason: 'not_selected';
+            }[];
+            removeItemKeys?: string[] | undefined;
+            removalPlans?: undefined | {
+                itemKey: string;
+                plan: {
+                    v: 1;
+                    basis: {
+                        kind: 'adminAccess';
+                        machineId: string;
+                        operationId: string;
+                        previousPolicy: {
+                            version: 1;
+                            mode: 'ask';
+                            administratorUsername: string;
+                        } | {
+                            version: 1;
+                            mode: 'none';
+                        } | {
+                            version: 1;
+                            mode: 'preauthorized';
+                        };
+                        policy: {
+                            version: 1;
+                            mode: 'ask';
+                            administratorUsername: string;
+                        } | {
+                            version: 1;
+                            mode: 'none';
+                        } | {
+                            version: 1;
+                            mode: 'preauthorized';
+                        };
+                    } | {
+                        kind: 'agentIsolation';
+                        machineId: string;
+                        enabled: boolean;
+                        expectedPolicy: {
+                            enabled: boolean;
+                            memberProvisioning?: 'linuxUsersV1' | undefined;
+                        };
+                        review?: undefined | {
+                            roots: {
+                                rootId: string;
+                                path: string;
+                            }[];
+                            ancestorAcls: {
+                                path: string;
+                                add: 'x';
+                            }[];
+                            sessionsToReplace: number;
+                            memberProvisioning?: 'linuxUsersV1' | undefined;
+                        };
+                    } | {
+                        kind: 'bootstrap';
+                        managedId: string;
+                        operationId: string;
+                        admittedInputDigest: string;
+                    } | {
+                        kind: 'reboot';
+                        machineId: string;
+                        operationId: string;
+                    } | {
+                        kind: 'setup';
+                        machineId: string;
+                        desiredRevision: number;
+                        selection?: undefined | {
+                            ref: {
+                                pluginId: string;
+                                recipeId: string;
+                                revision: string;
+                            };
+                            inputs: unknown;
+                        };
+                    } | {
+                        kind: 'sshBootstrap';
+                        operationId: string;
+                        admittedInputDigest: string;
+                    } | {
+                        kind: 'updates';
+                        machineId: string;
+                        scope: 'all' | 'security';
+                    };
+                    steps: ({
+                        check: {
+                            executable: string;
+                            args: string[];
+                            unsatisfiedExitCodes: number[];
+                            stdoutJson?: unknown;
+                        } | {
+                            kind: 'kernel';
+                            capability: string;
+                            architectures?: string[] | undefined;
+                        } | {
+                            kind: 'userManagerGroups';
+                            username: string;
+                        };
+                        executable: string;
+                        args: string[];
+                        kind: 'command';
+                        id: string;
+                        remove?: undefined | {
+                            executable: string;
+                            args: string[];
+                        };
+                        affects?: 'dockerEngine' | 'none' | undefined | {
+                            services: string[];
+                        };
+                        requiredFacts?: ({
+                            kind: 'administrator';
+                        } | {
+                            kind: 'command';
+                            executable: string;
+                        } | {
+                            kind: 'init';
+                            system: 'launchd' | 'systemd' | 'windowsScm';
+                        } | {
+                            kind: 'journalReadGroup';
+                            group: string;
+                        } | {
+                            kind: 'kernel';
+                            capability: string;
+                            architectures?: string[] | undefined;
+                        } | {
+                            kind: 'packageManager';
+                            manager: string;
+                        } | {
+                            kind: 'path';
+                            path: string;
+                        })[] | undefined;
+                        review?: undefined | {
+                            title: string | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                            description?: string | undefined | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                        };
+                    } | {
+                        kind: 'firewall';
+                        rules: string;
+                        id: string;
+                        exposures?: undefined | {
+                            requirementId: string;
+                            hostAddress: string;
+                            hostPort: number;
+                            protocol: 'tcp' | 'udp';
+                            exposure: 'loopback' | 'privateNetwork' | 'public';
+                            containerPort?: number | undefined;
+                            providerId?: string | undefined;
+                            networkIdentity?: string | undefined;
+                        }[];
+                        requiredFacts?: ({
+                            kind: 'administrator';
+                        } | {
+                            kind: 'command';
+                            executable: string;
+                        } | {
+                            kind: 'init';
+                            system: 'launchd' | 'systemd' | 'windowsScm';
+                        } | {
+                            kind: 'journalReadGroup';
+                            group: string;
+                        } | {
+                            kind: 'kernel';
+                            capability: string;
+                            architectures?: string[] | undefined;
+                        } | {
+                            kind: 'packageManager';
+                            manager: string;
+                        } | {
+                            kind: 'path';
+                            path: string;
+                        })[] | undefined;
+                        review?: undefined | {
+                            title: string | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                            description?: string | undefined | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                        };
+                    } | {
+                        kind: 'group';
+                        name: string;
+                        members: string[];
+                        id: string;
+                        state?: 'absent' | 'present' | undefined;
+                        existingOnly?: true | undefined;
+                        requiredFacts?: ({
+                            kind: 'administrator';
+                        } | {
+                            kind: 'command';
+                            executable: string;
+                        } | {
+                            kind: 'init';
+                            system: 'launchd' | 'systemd' | 'windowsScm';
+                        } | {
+                            kind: 'journalReadGroup';
+                            group: string;
+                        } | {
+                            kind: 'kernel';
+                            capability: string;
+                            architectures?: string[] | undefined;
+                        } | {
+                            kind: 'packageManager';
+                            manager: string;
+                        } | {
+                            kind: 'path';
+                            path: string;
+                        })[] | undefined;
+                        review?: undefined | {
+                            title: string | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                            description?: string | undefined | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                        };
+                    } | {
+                        kind: 'package';
+                        manager: string;
+                        packages: {
+                            name: string;
+                            version?: string | undefined;
+                            kind?: 'cask' | 'formula' | undefined;
+                            source?: string | undefined;
+                            scope?: 'machine' | 'user' | undefined;
+                        }[];
+                        id: string;
+                        state?: 'absent' | 'present' | undefined;
+                        requiredFacts?: ({
+                            kind: 'administrator';
+                        } | {
+                            kind: 'command';
+                            executable: string;
+                        } | {
+                            kind: 'init';
+                            system: 'launchd' | 'systemd' | 'windowsScm';
+                        } | {
+                            kind: 'journalReadGroup';
+                            group: string;
+                        } | {
+                            kind: 'kernel';
+                            capability: string;
+                            architectures?: string[] | undefined;
+                        } | {
+                            kind: 'packageManager';
+                            manager: string;
+                        } | {
+                            kind: 'path';
+                            path: string;
+                        })[] | undefined;
+                        review?: undefined | {
+                            title: string | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                            description?: string | undefined | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                        };
+                    } | {
+                        kind: 'packageSource';
+                        manager: 'apt';
+                        path: string;
+                        keyPath: string;
+                        url: string;
+                        suite: string;
+                        components: string[];
+                        architectures: string[];
+                        keyUrl: string;
+                        keyFingerprint: string;
+                        id: string;
+                        requiredFacts?: ({
+                            kind: 'administrator';
+                        } | {
+                            kind: 'command';
+                            executable: string;
+                        } | {
+                            kind: 'init';
+                            system: 'launchd' | 'systemd' | 'windowsScm';
+                        } | {
+                            kind: 'journalReadGroup';
+                            group: string;
+                        } | {
+                            kind: 'kernel';
+                            capability: string;
+                            architectures?: string[] | undefined;
+                        } | {
+                            kind: 'packageManager';
+                            manager: string;
+                        } | {
+                            kind: 'path';
+                            path: string;
+                        })[] | undefined;
+                        review?: undefined | {
+                            title: string | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                            description?: string | undefined | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                        };
+                    } | {
+                        kind: 'pathTraversal';
+                        path: string;
+                        agentUsername: string;
+                        id: string;
+                        requiredFacts?: ({
+                            kind: 'administrator';
+                        } | {
+                            kind: 'command';
+                            executable: string;
+                        } | {
+                            kind: 'init';
+                            system: 'launchd' | 'systemd' | 'windowsScm';
+                        } | {
+                            kind: 'journalReadGroup';
+                            group: string;
+                        } | {
+                            kind: 'kernel';
+                            capability: string;
+                            architectures?: string[] | undefined;
+                        } | {
+                            kind: 'packageManager';
+                            manager: string;
+                        } | {
+                            kind: 'path';
+                            path: string;
+                        })[] | undefined;
+                        review?: undefined | {
+                            title: string | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                            description?: string | undefined | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                        };
+                    } | {
+                        kind: 'reboot';
+                        id: string;
+                        requiredFacts?: ({
+                            kind: 'administrator';
+                        } | {
+                            kind: 'command';
+                            executable: string;
+                        } | {
+                            kind: 'init';
+                            system: 'launchd' | 'systemd' | 'windowsScm';
+                        } | {
+                            kind: 'journalReadGroup';
+                            group: string;
+                        } | {
+                            kind: 'kernel';
+                            capability: string;
+                            architectures?: string[] | undefined;
+                        } | {
+                            kind: 'packageManager';
+                            manager: string;
+                        } | {
+                            kind: 'path';
+                            path: string;
+                        })[] | undefined;
+                        review?: undefined | {
+                            title: string | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                            description?: string | undefined | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                        };
+                    } | {
+                        kind: 'serviceUnit';
+                        unit: string;
+                        enabled: boolean;
+                        running: boolean;
+                        id: string;
+                        requiredFacts?: ({
+                            kind: 'administrator';
+                        } | {
+                            kind: 'command';
+                            executable: string;
+                        } | {
+                            kind: 'init';
+                            system: 'launchd' | 'systemd' | 'windowsScm';
+                        } | {
+                            kind: 'journalReadGroup';
+                            group: string;
+                        } | {
+                            kind: 'kernel';
+                            capability: string;
+                            architectures?: string[] | undefined;
+                        } | {
+                            kind: 'packageManager';
+                            manager: string;
+                        } | {
+                            kind: 'path';
+                            path: string;
+                        })[] | undefined;
+                        review?: undefined | {
+                            title: string | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                            description?: string | undefined | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                        };
+                    } | {
+                        kind: 'user';
+                        username: string;
+                        id: string;
+                        home?: string | undefined;
+                        shell?: string | undefined;
+                        system?: boolean | undefined;
+                        locked?: boolean | undefined;
+                        uid?: number | undefined;
+                        state?: 'absent' | 'present' | undefined;
+                        ownershipMarker?: string | undefined;
+                        supplementaryGroups?: string[] | undefined;
+                        requiredFacts?: ({
+                            kind: 'administrator';
+                        } | {
+                            kind: 'command';
+                            executable: string;
+                        } | {
+                            kind: 'init';
+                            system: 'launchd' | 'systemd' | 'windowsScm';
+                        } | {
+                            kind: 'journalReadGroup';
+                            group: string;
+                        } | {
+                            kind: 'kernel';
+                            capability: string;
+                            architectures?: string[] | undefined;
+                        } | {
+                            kind: 'packageManager';
+                            manager: string;
+                        } | {
+                            kind: 'path';
+                            path: string;
+                        })[] | undefined;
+                        review?: undefined | {
+                            title: string | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                            description?: string | undefined | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                        };
+                    } | {
+                        kind: 'workspaceAccess';
+                        path: string;
+                        group: string;
+                        agentUsername: string;
+                        id: string;
+                        requiredFacts?: ({
+                            kind: 'administrator';
+                        } | {
+                            kind: 'command';
+                            executable: string;
+                        } | {
+                            kind: 'init';
+                            system: 'launchd' | 'systemd' | 'windowsScm';
+                        } | {
+                            kind: 'journalReadGroup';
+                            group: string;
+                        } | {
+                            kind: 'kernel';
+                            capability: string;
+                            architectures?: string[] | undefined;
+                        } | {
+                            kind: 'packageManager';
+                            manager: string;
+                        } | {
+                            kind: 'path';
+                            path: string;
+                        })[] | undefined;
+                        review?: undefined | {
+                            title: string | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                            description?: string | undefined | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                        };
+                    } | {
+                        owner: string;
+                        group: string;
+                        mode: number;
+                        kind: 'directory';
+                        path: string;
+                        id: string;
+                        preserveExistingOwnership?: true | undefined;
+                        protectedAncestors?: true | undefined;
+                        ownershipMarker?: string | undefined;
+                        requiredFacts?: ({
+                            kind: 'administrator';
+                        } | {
+                            kind: 'command';
+                            executable: string;
+                        } | {
+                            kind: 'init';
+                            system: 'launchd' | 'systemd' | 'windowsScm';
+                        } | {
+                            kind: 'journalReadGroup';
+                            group: string;
+                        } | {
+                            kind: 'kernel';
+                            capability: string;
+                            architectures?: string[] | undefined;
+                        } | {
+                            kind: 'packageManager';
+                            manager: string;
+                        } | {
+                            kind: 'path';
+                            path: string;
+                        })[] | undefined;
+                        review?: undefined | {
+                            title: string | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                            description?: string | undefined | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                        };
+                    } | {
+                        owner: string;
+                        group: string;
+                        mode: number;
+                        kind: 'file';
+                        path: string;
+                        id: string;
+                        state?: 'absent' | 'present' | undefined;
+                        content?: undefined | {
+                            kind: 'iniKeys';
+                            sections: Record<string, Record<string, string>>;
+                        } | {
+                            kind: 'jsonMerge';
+                            value: Record<string, JSONType<true>>;
+                        } | {
+                            kind: 'literal';
+                            value: string;
+                        } | {
+                            kind: 'secretGrant';
+                            grantRef: string;
+                        } | {
+                            kind: 'template';
+                            value: string;
+                            variables: Record<string, string>;
+                        };
+                        expectedContentDigest?: string | undefined;
+                        ownershipMarker?: string | undefined;
+                        validate?: 'docker' | 'sudoers' | undefined | {
+                            kind: 'caddy';
+                        } | {
+                            kind: 'docker';
+                        } | {
+                            kind: 'nft';
+                        } | {
+                            kind: 'sshd';
+                            contexts: {
+                                user: string;
+                                host: string;
+                                address: string;
+                            }[];
+                        } | {
+                            kind: 'sudoers';
+                        };
+                        probe?: undefined | {
+                            kind: 'caddy';
+                        } | {
+                            kind: 'docker';
+                        } | {
+                            kind: 'nft';
+                        } | {
+                            kind: 'sshd';
+                            contexts: {
+                                user: string;
+                                host: string;
+                                address: string;
+                            }[];
+                        } | {
+                            kind: 'sudoers';
+                        };
+                        onChange?: undefined | {
+                            serviceStepId: string;
+                            action: 'reload' | 'restart';
+                        };
+                        requiredFacts?: ({
+                            kind: 'administrator';
+                        } | {
+                            kind: 'command';
+                            executable: string;
+                        } | {
+                            kind: 'init';
+                            system: 'launchd' | 'systemd' | 'windowsScm';
+                        } | {
+                            kind: 'journalReadGroup';
+                            group: string;
+                        } | {
+                            kind: 'kernel';
+                            capability: string;
+                            architectures?: string[] | undefined;
+                        } | {
+                            kind: 'packageManager';
+                            manager: string;
+                        } | {
+                            kind: 'path';
+                            path: string;
+                        })[] | undefined;
+                        review?: undefined | {
+                            title: string | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                            description?: string | undefined | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                        };
+                    })[];
+                    nativeFacts: {
+                        stepId: string;
+                        status: 'drifted' | 'satisfied' | 'unavailable' | 'unsupported';
+                        facts: Record<string, JSONType<true>>;
+                        reason?: string | undefined;
+                    }[];
+                    planDigest: string;
+                    checks?: ({
+                        check: {
+                            executable: string;
+                            args: string[];
+                            unsatisfiedExitCodes: number[];
+                            stdoutJson?: unknown;
+                        } | {
+                            kind: 'kernel';
+                            capability: string;
+                            architectures?: string[] | undefined;
+                        } | {
+                            kind: 'userManagerGroups';
+                            username: string;
+                        };
+                        executable: string;
+                        args: string[];
+                        kind: 'command';
+                        id: string;
+                        remove?: undefined | {
+                            executable: string;
+                            args: string[];
+                        };
+                        affects?: 'dockerEngine' | 'none' | undefined | {
+                            services: string[];
+                        };
+                        requiredFacts?: ({
+                            kind: 'administrator';
+                        } | {
+                            kind: 'command';
+                            executable: string;
+                        } | {
+                            kind: 'init';
+                            system: 'launchd' | 'systemd' | 'windowsScm';
+                        } | {
+                            kind: 'journalReadGroup';
+                            group: string;
+                        } | {
+                            kind: 'kernel';
+                            capability: string;
+                            architectures?: string[] | undefined;
+                        } | {
+                            kind: 'packageManager';
+                            manager: string;
+                        } | {
+                            kind: 'path';
+                            path: string;
+                        })[] | undefined;
+                        review?: undefined | {
+                            title: string | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                            description?: string | undefined | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                        };
+                    } | {
+                        kind: 'kernel';
+                        capability: string;
+                        id: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'package';
+                        manager: string;
+                        packages: {
+                            name: string;
+                            version?: string | undefined;
+                            kind?: 'cask' | 'formula' | undefined;
+                            source?: string | undefined;
+                            scope?: 'machine' | 'user' | undefined;
+                        }[];
+                        id: string;
+                        state?: 'absent' | 'present' | undefined;
+                        requiredFacts?: ({
+                            kind: 'administrator';
+                        } | {
+                            kind: 'command';
+                            executable: string;
+                        } | {
+                            kind: 'init';
+                            system: 'launchd' | 'systemd' | 'windowsScm';
+                        } | {
+                            kind: 'journalReadGroup';
+                            group: string;
+                        } | {
+                            kind: 'kernel';
+                            capability: string;
+                            architectures?: string[] | undefined;
+                        } | {
+                            kind: 'packageManager';
+                            manager: string;
+                        } | {
+                            kind: 'path';
+                            path: string;
+                        })[] | undefined;
+                        review?: undefined | {
+                            title: string | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                            description?: string | undefined | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                        };
+                    })[] | undefined;
+                    checkFacts?: undefined | {
+                        stepId: string;
+                        status: 'drifted' | 'satisfied' | 'unavailable' | 'unsupported';
+                        facts: Record<string, JSONType<true>>;
+                        reason?: string | undefined;
+                    }[];
+                    selectedCheckIds?: string[] | undefined;
+                };
+            }[];
+            appChildren?: ({
+                sourceIndex: number;
+                itemIndex: number;
+                actionId: 'deployments.deploy';
+                input: {
+                    contentArtifactId: string;
+                    contentHeaderVersion: number;
+                    contentBodyVersion: number;
+                    targetLinkId: string;
+                    expectedTargetLinkRevision: number;
+                    requestKey: string;
+                    environmentId: string;
+                    expectedRevision: number;
+                    serverId: string;
+                    whenBusy?: 'refuse' | 'supersede' | undefined;
+                    pendingDeploy?: undefined | {
+                        t: 'encrypted';
+                        c: string;
+                    } | {
+                        t: 'plain';
+                        v: {
+                            sourceIntent: {
+                                kind: 'repository';
+                                projectSourceId: string;
+                                sourceRevision: number;
+                                sha: string;
+                                compose: {
+                                    profiles: string[];
+                                    services: string[];
+                                    path: string;
+                                    primaryService?: string | undefined;
+                                };
+                                pullRequestHead?: undefined | {
+                                    number: number;
+                                };
+                            } | {
+                                profiles: string[];
+                                services: string[];
+                                kind: 'stored';
+                                contentRevision: number;
+                                composeDigest: string;
+                                document: string;
+                                primaryService?: string | undefined;
+                            };
+                            requestKey: string;
+                            targetLinkId: string;
+                            actionOperationId: string;
+                            sourceMethod?: 'gitIntegration' | 'upload' | undefined;
+                            triggerOccurrence?: undefined | {
+                                automationId: string;
+                                triggerId: string;
+                                triggerRevision: number;
+                                occurrenceKey: string;
+                            };
+                        };
+                    };
+                };
+            } | {
+                sourceIndex: number;
+                itemIndex: number;
+                actionId: 'deployments.environments.create';
+                input: {
+                    protection: 'nonProduction' | 'production';
+                    purpose: 'preview' | 'standard';
+                    deployerMode: 'chosen' | 'managers' | 'members';
+                    controllerMachineId: string;
+                    contentArtifactId: string;
+                    contentHeaderVersion: number;
+                    contentBodyVersion: number;
+                    requestKey: string;
+                    serverId: string;
+                    projectSourceId?: string | undefined;
+                    newProject?: undefined | {
+                        requestKey: string;
+                        name: string;
+                        owner: {
+                            kind: 'account';
+                            accountId: string;
+                        } | {
+                            kind: 'team';
+                            teamId: string;
+                        };
+                    };
+                    deployerPrincipals?: undefined | {
+                        principalKind: 'account' | 'teamGroup';
+                        principalId: string;
+                    }[];
+                    buildMachineId?: string | undefined;
+                    managedRetention?: 'keep' | 'until-delete' | undefined;
+                    preview?: undefined | {
+                        templateEnvironmentId: string;
+                        expectedTemplateRevision: number;
+                        pullRequestId: string;
+                        runtimeTargetLinkId: string;
+                    };
+                    firstTargetLink?: undefined | {
+                        machines: {
+                            machineId: string;
+                            installationId: string;
+                        }[];
+                        contentArtifactId: string;
+                        contentHeaderVersion: number;
+                        contentBodyVersion: number;
+                    };
+                    copyFrom?: undefined | {
+                        environmentId: string;
+                        expectedRevision: number;
+                        choices: {
+                            secrets: ({
+                                kind: 'omit';
+                                binding: {
+                                    purpose: 'backupDestination';
+                                    configKey: 'destination';
+                                    role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
+                                } | {
+                                    purpose: 'domainCredential';
+                                    domainId: string;
+                                    role: 'basicAuth' | 'certificateChain' | 'privateKey';
+                                } | {
+                                    purpose: 'registry';
+                                    targetLinkId: string;
+                                    registryOrigin: string;
+                                } | {
+                                    purpose: 'variable';
+                                    name: string;
+                                    phase: 'build' | 'runtime';
+                                } | {
+                                    service: string;
+                                    purpose: 'dataRole';
+                                    role: 'readOnlyPassword';
+                                } | {
+                                    targetLinkId: string;
+                                    purpose: 'dataRole';
+                                    role: 'readOnlyPassword';
+                                };
+                            } | {
+                                kind: 'rebind';
+                                source: {
+                                    kind: 'secret';
+                                    ref: string;
+                                    resourceRevision: number;
+                                };
+                                binding: {
+                                    purpose: 'backupDestination';
+                                    configKey: 'destination';
+                                    role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
+                                } | {
+                                    purpose: 'domainCredential';
+                                    domainId: string;
+                                    role: 'basicAuth' | 'certificateChain' | 'privateKey';
+                                } | {
+                                    purpose: 'registry';
+                                    targetLinkId: string;
+                                    registryOrigin: string;
+                                } | {
+                                    purpose: 'variable';
+                                    name: string;
+                                    phase: 'build' | 'runtime';
+                                } | {
+                                    service: string;
+                                    purpose: 'dataRole';
+                                    role: 'readOnlyPassword';
+                                } | {
+                                    targetLinkId: string;
+                                    purpose: 'dataRole';
+                                    role: 'readOnlyPassword';
+                                };
+                            } | {
+                                kind: 'useSameReference';
+                                binding: {
+                                    purpose: 'backupDestination';
+                                    configKey: 'destination';
+                                    role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
+                                } | {
+                                    purpose: 'domainCredential';
+                                    domainId: string;
+                                    role: 'basicAuth' | 'certificateChain' | 'privateKey';
+                                } | {
+                                    purpose: 'registry';
+                                    targetLinkId: string;
+                                    registryOrigin: string;
+                                } | {
+                                    purpose: 'variable';
+                                    name: string;
+                                    phase: 'build' | 'runtime';
+                                } | {
+                                    service: string;
+                                    purpose: 'dataRole';
+                                    role: 'readOnlyPassword';
+                                } | {
+                                    targetLinkId: string;
+                                    purpose: 'dataRole';
+                                    role: 'readOnlyPassword';
+                                };
+                            })[];
+                            values: ({
+                                kind: 'include';
+                                binding: {
+                                    purpose: 'backupDestination';
+                                    configKey: 'destination';
+                                    role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
+                                } | {
+                                    purpose: 'domainCredential';
+                                    domainId: string;
+                                    role: 'basicAuth' | 'certificateChain' | 'privateKey';
+                                } | {
+                                    purpose: 'registry';
+                                    targetLinkId: string;
+                                    registryOrigin: string;
+                                } | {
+                                    purpose: 'variable';
+                                    name: string;
+                                    phase: 'build' | 'runtime';
+                                } | {
+                                    service: string;
+                                    purpose: 'dataRole';
+                                    role: 'readOnlyPassword';
+                                } | {
+                                    targetLinkId: string;
+                                    purpose: 'dataRole';
+                                    role: 'readOnlyPassword';
+                                };
+                            } | {
+                                kind: 'omit';
+                                binding: {
+                                    purpose: 'backupDestination';
+                                    configKey: 'destination';
+                                    role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
+                                } | {
+                                    purpose: 'domainCredential';
+                                    domainId: string;
+                                    role: 'basicAuth' | 'certificateChain' | 'privateKey';
+                                } | {
+                                    purpose: 'registry';
+                                    targetLinkId: string;
+                                    registryOrigin: string;
+                                } | {
+                                    purpose: 'variable';
+                                    name: string;
+                                    phase: 'build' | 'runtime';
+                                } | {
+                                    service: string;
+                                    purpose: 'dataRole';
+                                    role: 'readOnlyPassword';
+                                } | {
+                                    targetLinkId: string;
+                                    purpose: 'dataRole';
+                                    role: 'readOnlyPassword';
+                                };
+                            } | {
+                                kind: 'remap';
+                                source: {
+                                    kind: 'deploymentFact';
+                                    fact: 'commitSha' | 'deploymentId' | 'environmentName' | 'primaryUrl';
+                                } | {
+                                    kind: 'deploymentFact';
+                                    fact: 'domainUrl';
+                                    domainId: string;
+                                } | {
+                                    kind: 'reference';
+                                    environmentId: string;
+                                    export: string;
+                                    via: 'auto' | 'privateNetwork' | 'public';
+                                } | {
+                                    kind: 'value';
+                                    value: string;
+                                };
+                                binding: {
+                                    purpose: 'backupDestination';
+                                    configKey: 'destination';
+                                    role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
+                                } | {
+                                    purpose: 'domainCredential';
+                                    domainId: string;
+                                    role: 'basicAuth' | 'certificateChain' | 'privateKey';
+                                } | {
+                                    purpose: 'registry';
+                                    targetLinkId: string;
+                                    registryOrigin: string;
+                                } | {
+                                    purpose: 'variable';
+                                    name: string;
+                                    phase: 'build' | 'runtime';
+                                } | {
+                                    service: string;
+                                    purpose: 'dataRole';
+                                    role: 'readOnlyPassword';
+                                } | {
+                                    targetLinkId: string;
+                                    purpose: 'dataRole';
+                                    role: 'readOnlyPassword';
+                                };
+                            })[];
+                            data: {
+                                targetLinkId: string;
+                                kind: 'createEmpty' | 'omit' | 'restoreBackup' | 'reuse';
+                            }[];
+                            retainPreviousDeployments?: 'copy' | 'default' | undefined;
+                        };
+                    };
+                    copyPlan?: undefined | {
+                        bindings: ({
+                            access: 'pull' | 'pushPull';
+                            source: {
+                                kind: 'secret';
+                                ref: string;
+                                resourceRevision: number;
+                            };
+                            purpose: 'registry';
+                            targetLinkId: string;
+                            registryOrigin: string;
+                        } | {
+                            source: {
+                                kind: 'deploymentFact';
+                                fact: 'commitSha' | 'deploymentId' | 'environmentName' | 'primaryUrl';
+                            } | {
+                                kind: 'deploymentFact';
+                                fact: 'domainUrl';
+                                domainId: string;
+                            } | {
+                                kind: 'reference';
+                                environmentId: string;
+                                export: string;
+                                via: 'auto' | 'privateNetwork' | 'public';
+                            } | {
+                                kind: 'secret';
+                                ref: string;
+                                resourceRevision: number;
+                            } | {
+                                kind: 'value';
+                                value: string;
+                            };
+                            purpose: 'variable';
+                            name: string;
+                            phase: 'build' | 'runtime';
+                        } | {
+                            source: {
+                                kind: 'secret';
+                                ref: string;
+                                resourceRevision: number;
+                            };
+                            purpose: 'backupDestination';
+                            configKey: 'destination';
+                            role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
+                        } | {
+                            source: {
+                                kind: 'secret';
+                                ref: string;
+                                resourceRevision: number;
+                            };
+                            purpose: 'domainCredential';
+                            domainId: string;
+                            role: 'basicAuth' | 'certificateChain' | 'privateKey';
+                        } | {
+                            source: {
+                                kind: 'secret';
+                                ref: string;
+                                resourceRevision: number;
+                            };
+                            service: string;
+                            purpose: 'dataRole';
+                            role: 'readOnlyPassword';
+                        } | {
+                            source: {
+                                kind: 'secret';
+                                ref: string;
+                                resourceRevision: number;
+                            };
+                            targetLinkId: string;
+                            purpose: 'dataRole';
+                            role: 'readOnlyPassword';
+                        })[];
+                        sourceRuntimeTargetLinkId?: string | undefined;
+                    };
+                    copyIntentCommitment?: string | undefined;
+                };
+            } | {
+                sourceIndex: number;
+                itemIndex: number;
+                actionId: 'deployments.templates.instantiate';
+                input: {
+                    mode: 'apply' | 'preview';
+                    serverId: string;
+                    machineId: string;
+                    templateRef: {
+                        ref: {
+                            digest: string;
+                            pluginId: string;
+                            pluginVersion: string;
+                            occurrenceId: string;
+                            path: string;
+                            kind: 'packageContent';
+                        } | {
+                            kind: 'content';
+                            digest: string;
+                        } | {
+                            kind: 'gitTree';
+                            repo: string;
+                            path: string;
+                            commit: string;
+                            treeSha: string;
+                        } | {
+                            kind: 'version';
+                            version: string;
+                        } | {
+                            kind: 'wellKnown';
+                            indexUrl: string;
+                            name: string;
+                            digest: string;
+                            publishedDigest?: string | undefined;
+                        };
+                        sourceId: string;
+                        itemId: string;
+                        version: string;
+                        expectedContributorOccurrenceId?: string | undefined;
+                    };
+                    environment: {
+                        kind: 'create';
+                        name: string;
+                        requestKey: string;
+                        protection: 'nonProduction' | 'production';
+                        purpose: 'standard';
+                        deployerMode: 'chosen' | 'managers' | 'members';
+                        controllerMachineId: string;
+                        deployerPrincipals?: undefined | {
+                            principalKind: 'account' | 'teamGroup';
+                            principalId: string;
+                        }[];
+                        buildMachineId?: string | undefined;
+                        retainPreviousDeployments?: number | undefined;
+                    } | {
+                        kind: 'existing';
+                        environmentId: string;
+                        expectedRevision: number;
+                    };
+                    target: {
+                        kind: 'existing';
+                        targetLinkId: string;
+                        expectedRevision: number;
+                        installationId: string;
+                    } | {
+                        kind: 'new';
+                        installationId: string;
+                    };
+                    destination: {
+                        kind: 'stored';
+                        contentRevision: number;
+                        composeDigest: string;
+                    } | {
+                        kind: 'stored';
+                    };
+                    bindings: {
+                        source: {
+                            kind: 'generated';
+                            key: string;
+                        } | {
+                            kind: 'secret';
+                            ref: string;
+                            resourceRevision: number;
+                        } | {
+                            kind: 'value';
+                            value: string;
+                        };
+                        purpose: 'variable';
+                        name: string;
+                        phase: 'build' | 'runtime';
+                    }[];
+                    projectSourceId?: string | undefined;
+                    newProject?: undefined | {
+                        requestKey: string;
+                        name: string;
+                        owner: {
+                            kind: 'account';
+                            accountId: string;
+                        } | {
+                            kind: 'team';
+                            teamId: string;
+                        };
+                    };
+                    managedRetention?: 'keep' | 'until-delete' | undefined;
+                    generatedSecretAudience?: undefined | {
+                        accountGrants?: string[] | undefined;
+                        teamGrants?: string[] | undefined;
+                        groupGrants?: string[] | undefined;
+                    };
+                    connectTo?: undefined | {
+                        service: string;
+                    };
+                    replace?: string[] | undefined;
+                    domainBindings?: undefined | {
+                        templateDomainId: string;
+                        hostname: string;
+                    }[];
+                    deploy?: undefined | {
+                        requestKey: string;
+                    };
+                };
+            })[] | undefined;
+        }[];
+    };
+    readonly "machines.setup.remove": {
+        homeId: string;
+        machineId: string;
+        sources: unknown;
+        desiredRevision: number;
+        removeItemKeys: string[];
+        removalPlans: {
+            itemKey: string;
+            plan: {
+                v: 1;
+                basis: {
+                    kind: 'adminAccess';
+                    machineId: string;
+                    operationId: string;
+                    previousPolicy: {
+                        version: 1;
+                        mode: 'ask';
+                        administratorUsername: string;
+                    } | {
+                        version: 1;
+                        mode: 'none';
+                    } | {
+                        version: 1;
+                        mode: 'preauthorized';
+                    };
+                    policy: {
+                        version: 1;
+                        mode: 'ask';
+                        administratorUsername: string;
+                    } | {
+                        version: 1;
+                        mode: 'none';
+                    } | {
+                        version: 1;
+                        mode: 'preauthorized';
+                    };
+                } | {
+                    kind: 'agentIsolation';
+                    machineId: string;
+                    enabled: boolean;
+                    expectedPolicy: {
+                        enabled: boolean;
+                        memberProvisioning?: 'linuxUsersV1' | undefined;
+                    };
+                    review?: undefined | {
+                        roots: {
+                            rootId: string;
+                            path: string;
+                        }[];
+                        ancestorAcls: {
+                            path: string;
+                            add: 'x';
+                        }[];
+                        sessionsToReplace: number;
+                        memberProvisioning?: 'linuxUsersV1' | undefined;
+                    };
+                } | {
+                    kind: 'bootstrap';
+                    managedId: string;
+                    operationId: string;
+                    admittedInputDigest: string;
+                } | {
+                    kind: 'reboot';
+                    machineId: string;
+                    operationId: string;
+                } | {
+                    kind: 'setup';
+                    machineId: string;
+                    desiredRevision: number;
+                    selection?: undefined | {
+                        ref: {
+                            pluginId: string;
+                            recipeId: string;
+                            revision: string;
+                        };
+                        inputs: unknown;
+                    };
+                } | {
+                    kind: 'sshBootstrap';
+                    operationId: string;
+                    admittedInputDigest: string;
+                } | {
+                    kind: 'updates';
+                    machineId: string;
+                    scope: 'all' | 'security';
+                };
+                steps: ({
+                    check: {
+                        executable: string;
+                        args: string[];
+                        unsatisfiedExitCodes: number[];
+                        stdoutJson?: unknown;
+                    } | {
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'userManagerGroups';
+                        username: string;
+                    };
+                    executable: string;
+                    args: string[];
+                    kind: 'command';
+                    id: string;
+                    remove?: undefined | {
+                        executable: string;
+                        args: string[];
+                    };
+                    affects?: 'dockerEngine' | 'none' | undefined | {
+                        services: string[];
+                    };
+                    requiredFacts?: ({
+                        kind: 'administrator';
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'init';
+                        system: 'launchd' | 'systemd' | 'windowsScm';
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    } | {
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    })[] | undefined;
+                    review?: undefined | {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        description?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    };
+                } | {
+                    kind: 'firewall';
+                    rules: string;
+                    id: string;
+                    exposures?: undefined | {
+                        requirementId: string;
+                        hostAddress: string;
+                        hostPort: number;
+                        protocol: 'tcp' | 'udp';
+                        exposure: 'loopback' | 'privateNetwork' | 'public';
+                        containerPort?: number | undefined;
+                        providerId?: string | undefined;
+                        networkIdentity?: string | undefined;
+                    }[];
+                    requiredFacts?: ({
+                        kind: 'administrator';
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'init';
+                        system: 'launchd' | 'systemd' | 'windowsScm';
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    } | {
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    })[] | undefined;
+                    review?: undefined | {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        description?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    };
+                } | {
+                    kind: 'group';
+                    name: string;
+                    members: string[];
+                    id: string;
+                    state?: 'absent' | 'present' | undefined;
+                    existingOnly?: true | undefined;
+                    requiredFacts?: ({
+                        kind: 'administrator';
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'init';
+                        system: 'launchd' | 'systemd' | 'windowsScm';
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    } | {
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    })[] | undefined;
+                    review?: undefined | {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        description?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    };
+                } | {
+                    kind: 'package';
+                    manager: string;
+                    packages: {
+                        name: string;
+                        version?: string | undefined;
+                        kind?: 'cask' | 'formula' | undefined;
+                        source?: string | undefined;
+                        scope?: 'machine' | 'user' | undefined;
+                    }[];
+                    id: string;
+                    state?: 'absent' | 'present' | undefined;
+                    requiredFacts?: ({
+                        kind: 'administrator';
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'init';
+                        system: 'launchd' | 'systemd' | 'windowsScm';
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    } | {
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    })[] | undefined;
+                    review?: undefined | {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        description?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    };
+                } | {
+                    kind: 'packageSource';
+                    manager: 'apt';
+                    path: string;
+                    keyPath: string;
+                    url: string;
+                    suite: string;
+                    components: string[];
+                    architectures: string[];
+                    keyUrl: string;
+                    keyFingerprint: string;
+                    id: string;
+                    requiredFacts?: ({
+                        kind: 'administrator';
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'init';
+                        system: 'launchd' | 'systemd' | 'windowsScm';
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    } | {
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    })[] | undefined;
+                    review?: undefined | {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        description?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    };
+                } | {
+                    kind: 'pathTraversal';
+                    path: string;
+                    agentUsername: string;
+                    id: string;
+                    requiredFacts?: ({
+                        kind: 'administrator';
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'init';
+                        system: 'launchd' | 'systemd' | 'windowsScm';
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    } | {
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    })[] | undefined;
+                    review?: undefined | {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        description?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    };
+                } | {
+                    kind: 'reboot';
+                    id: string;
+                    requiredFacts?: ({
+                        kind: 'administrator';
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'init';
+                        system: 'launchd' | 'systemd' | 'windowsScm';
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    } | {
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    })[] | undefined;
+                    review?: undefined | {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        description?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    };
+                } | {
+                    kind: 'serviceUnit';
+                    unit: string;
+                    enabled: boolean;
+                    running: boolean;
+                    id: string;
+                    requiredFacts?: ({
+                        kind: 'administrator';
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'init';
+                        system: 'launchd' | 'systemd' | 'windowsScm';
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    } | {
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    })[] | undefined;
+                    review?: undefined | {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        description?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    };
+                } | {
+                    kind: 'user';
+                    username: string;
+                    id: string;
+                    home?: string | undefined;
+                    shell?: string | undefined;
+                    system?: boolean | undefined;
+                    locked?: boolean | undefined;
+                    uid?: number | undefined;
+                    state?: 'absent' | 'present' | undefined;
+                    ownershipMarker?: string | undefined;
+                    supplementaryGroups?: string[] | undefined;
+                    requiredFacts?: ({
+                        kind: 'administrator';
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'init';
+                        system: 'launchd' | 'systemd' | 'windowsScm';
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    } | {
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    })[] | undefined;
+                    review?: undefined | {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        description?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    };
+                } | {
+                    kind: 'workspaceAccess';
+                    path: string;
+                    group: string;
+                    agentUsername: string;
+                    id: string;
+                    requiredFacts?: ({
+                        kind: 'administrator';
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'init';
+                        system: 'launchd' | 'systemd' | 'windowsScm';
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    } | {
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    })[] | undefined;
+                    review?: undefined | {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        description?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    };
+                } | {
+                    owner: string;
+                    group: string;
+                    mode: number;
+                    kind: 'directory';
+                    path: string;
+                    id: string;
+                    preserveExistingOwnership?: true | undefined;
+                    protectedAncestors?: true | undefined;
+                    ownershipMarker?: string | undefined;
+                    requiredFacts?: ({
+                        kind: 'administrator';
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'init';
+                        system: 'launchd' | 'systemd' | 'windowsScm';
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    } | {
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    })[] | undefined;
+                    review?: undefined | {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        description?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    };
+                } | {
+                    owner: string;
+                    group: string;
+                    mode: number;
+                    kind: 'file';
+                    path: string;
+                    id: string;
+                    state?: 'absent' | 'present' | undefined;
+                    content?: undefined | {
+                        kind: 'iniKeys';
+                        sections: Record<string, Record<string, string>>;
+                    } | {
+                        kind: 'jsonMerge';
+                        value: Record<string, JSONType<true>>;
+                    } | {
+                        kind: 'literal';
+                        value: string;
+                    } | {
+                        kind: 'secretGrant';
+                        grantRef: string;
+                    } | {
+                        kind: 'template';
+                        value: string;
+                        variables: Record<string, string>;
+                    };
+                    expectedContentDigest?: string | undefined;
+                    ownershipMarker?: string | undefined;
+                    validate?: 'docker' | 'sudoers' | undefined | {
+                        kind: 'caddy';
+                    } | {
+                        kind: 'docker';
+                    } | {
+                        kind: 'nft';
+                    } | {
+                        kind: 'sshd';
+                        contexts: {
+                            user: string;
+                            host: string;
+                            address: string;
+                        }[];
+                    } | {
+                        kind: 'sudoers';
+                    };
+                    probe?: undefined | {
+                        kind: 'caddy';
+                    } | {
+                        kind: 'docker';
+                    } | {
+                        kind: 'nft';
+                    } | {
+                        kind: 'sshd';
+                        contexts: {
+                            user: string;
+                            host: string;
+                            address: string;
+                        }[];
+                    } | {
+                        kind: 'sudoers';
+                    };
+                    onChange?: undefined | {
+                        serviceStepId: string;
+                        action: 'reload' | 'restart';
+                    };
+                    requiredFacts?: ({
+                        kind: 'administrator';
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'init';
+                        system: 'launchd' | 'systemd' | 'windowsScm';
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    } | {
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    })[] | undefined;
+                    review?: undefined | {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        description?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    };
+                })[];
+                nativeFacts: {
+                    stepId: string;
+                    status: 'drifted' | 'satisfied' | 'unavailable' | 'unsupported';
+                    facts: Record<string, JSONType<true>>;
+                    reason?: string | undefined;
+                }[];
+                planDigest: string;
+                checks?: ({
+                    check: {
+                        executable: string;
+                        args: string[];
+                        unsatisfiedExitCodes: number[];
+                        stdoutJson?: unknown;
+                    } | {
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'userManagerGroups';
+                        username: string;
+                    };
+                    executable: string;
+                    args: string[];
+                    kind: 'command';
+                    id: string;
+                    remove?: undefined | {
+                        executable: string;
+                        args: string[];
+                    };
+                    affects?: 'dockerEngine' | 'none' | undefined | {
+                        services: string[];
+                    };
+                    requiredFacts?: ({
+                        kind: 'administrator';
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'init';
+                        system: 'launchd' | 'systemd' | 'windowsScm';
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    } | {
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    })[] | undefined;
+                    review?: undefined | {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        description?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    };
+                } | {
+                    kind: 'kernel';
+                    capability: string;
+                    id: string;
+                    architectures?: string[] | undefined;
+                } | {
+                    kind: 'package';
+                    manager: string;
+                    packages: {
+                        name: string;
+                        version?: string | undefined;
+                        kind?: 'cask' | 'formula' | undefined;
+                        source?: string | undefined;
+                        scope?: 'machine' | 'user' | undefined;
+                    }[];
+                    id: string;
+                    state?: 'absent' | 'present' | undefined;
+                    requiredFacts?: ({
+                        kind: 'administrator';
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'init';
+                        system: 'launchd' | 'systemd' | 'windowsScm';
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    } | {
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    })[] | undefined;
+                    review?: undefined | {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        description?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    };
+                })[] | undefined;
+                checkFacts?: undefined | {
+                    stepId: string;
+                    status: 'drifted' | 'satisfied' | 'unavailable' | 'unsupported';
+                    facts: Record<string, JSONType<true>>;
+                    reason?: string | undefined;
+                }[];
+                selectedCheckIds?: string[] | undefined;
+            };
+        }[];
+        exclusions?: undefined | {
+            ref: {
+                pluginId: string;
+                recipeId: string;
+                revision: string;
+            };
+            reason: 'not_selected';
+        }[];
+    };
+    readonly "machines.setup.updates.apply": {
+        homeId: string;
+        machineId: string;
+        scope: 'all' | 'security';
+        plan: {
+            v: 1;
+            basis: {
+                kind: 'adminAccess';
+                machineId: string;
+                operationId: string;
+                previousPolicy: {
+                    version: 1;
+                    mode: 'ask';
+                    administratorUsername: string;
+                } | {
+                    version: 1;
+                    mode: 'none';
+                } | {
+                    version: 1;
+                    mode: 'preauthorized';
+                };
+                policy: {
+                    version: 1;
+                    mode: 'ask';
+                    administratorUsername: string;
+                } | {
+                    version: 1;
+                    mode: 'none';
+                } | {
+                    version: 1;
+                    mode: 'preauthorized';
+                };
+            } | {
+                kind: 'agentIsolation';
+                machineId: string;
+                enabled: boolean;
+                expectedPolicy: {
+                    enabled: boolean;
+                    memberProvisioning?: 'linuxUsersV1' | undefined;
+                };
+                review?: undefined | {
+                    roots: {
+                        rootId: string;
+                        path: string;
+                    }[];
+                    ancestorAcls: {
+                        path: string;
+                        add: 'x';
+                    }[];
+                    sessionsToReplace: number;
+                    memberProvisioning?: 'linuxUsersV1' | undefined;
+                };
+            } | {
+                kind: 'bootstrap';
+                managedId: string;
+                operationId: string;
+                admittedInputDigest: string;
+            } | {
+                kind: 'reboot';
+                machineId: string;
+                operationId: string;
+            } | {
+                kind: 'setup';
+                machineId: string;
+                desiredRevision: number;
+                selection?: undefined | {
+                    ref: {
+                        pluginId: string;
+                        recipeId: string;
+                        revision: string;
+                    };
+                    inputs: unknown;
+                };
+            } | {
+                kind: 'sshBootstrap';
+                operationId: string;
+                admittedInputDigest: string;
+            } | {
+                kind: 'updates';
+                machineId: string;
+                scope: 'all' | 'security';
+            };
+            steps: ({
+                check: {
+                    executable: string;
+                    args: string[];
+                    unsatisfiedExitCodes: number[];
+                    stdoutJson?: unknown;
+                } | {
+                    kind: 'kernel';
+                    capability: string;
+                    architectures?: string[] | undefined;
+                } | {
+                    kind: 'userManagerGroups';
+                    username: string;
+                };
+                executable: string;
+                args: string[];
+                kind: 'command';
+                id: string;
+                remove?: undefined | {
+                    executable: string;
+                    args: string[];
+                };
+                affects?: 'dockerEngine' | 'none' | undefined | {
+                    services: string[];
+                };
+                requiredFacts?: ({
+                    kind: 'administrator';
+                } | {
+                    kind: 'command';
+                    executable: string;
+                } | {
+                    kind: 'init';
+                    system: 'launchd' | 'systemd' | 'windowsScm';
+                } | {
+                    kind: 'journalReadGroup';
+                    group: string;
+                } | {
+                    kind: 'kernel';
+                    capability: string;
+                    architectures?: string[] | undefined;
+                } | {
+                    kind: 'packageManager';
+                    manager: string;
+                } | {
+                    kind: 'path';
+                    path: string;
+                })[] | undefined;
+                review?: undefined | {
+                    title: string | {
+                        key: string;
+                        fallback: string;
+                        params?: Record<string, number | string> | undefined;
+                    };
+                    description?: string | undefined | {
+                        key: string;
+                        fallback: string;
+                        params?: Record<string, number | string> | undefined;
+                    };
+                };
+            } | {
+                kind: 'firewall';
+                rules: string;
+                id: string;
+                exposures?: undefined | {
+                    requirementId: string;
+                    hostAddress: string;
+                    hostPort: number;
+                    protocol: 'tcp' | 'udp';
+                    exposure: 'loopback' | 'privateNetwork' | 'public';
+                    containerPort?: number | undefined;
+                    providerId?: string | undefined;
+                    networkIdentity?: string | undefined;
+                }[];
+                requiredFacts?: ({
+                    kind: 'administrator';
+                } | {
+                    kind: 'command';
+                    executable: string;
+                } | {
+                    kind: 'init';
+                    system: 'launchd' | 'systemd' | 'windowsScm';
+                } | {
+                    kind: 'journalReadGroup';
+                    group: string;
+                } | {
+                    kind: 'kernel';
+                    capability: string;
+                    architectures?: string[] | undefined;
+                } | {
+                    kind: 'packageManager';
+                    manager: string;
+                } | {
+                    kind: 'path';
+                    path: string;
+                })[] | undefined;
+                review?: undefined | {
+                    title: string | {
+                        key: string;
+                        fallback: string;
+                        params?: Record<string, number | string> | undefined;
+                    };
+                    description?: string | undefined | {
+                        key: string;
+                        fallback: string;
+                        params?: Record<string, number | string> | undefined;
+                    };
+                };
+            } | {
+                kind: 'group';
+                name: string;
+                members: string[];
+                id: string;
+                state?: 'absent' | 'present' | undefined;
+                existingOnly?: true | undefined;
+                requiredFacts?: ({
+                    kind: 'administrator';
+                } | {
+                    kind: 'command';
+                    executable: string;
+                } | {
+                    kind: 'init';
+                    system: 'launchd' | 'systemd' | 'windowsScm';
+                } | {
+                    kind: 'journalReadGroup';
+                    group: string;
+                } | {
+                    kind: 'kernel';
+                    capability: string;
+                    architectures?: string[] | undefined;
+                } | {
+                    kind: 'packageManager';
+                    manager: string;
+                } | {
+                    kind: 'path';
+                    path: string;
+                })[] | undefined;
+                review?: undefined | {
+                    title: string | {
+                        key: string;
+                        fallback: string;
+                        params?: Record<string, number | string> | undefined;
+                    };
+                    description?: string | undefined | {
+                        key: string;
+                        fallback: string;
+                        params?: Record<string, number | string> | undefined;
+                    };
+                };
+            } | {
+                kind: 'package';
+                manager: string;
+                packages: {
+                    name: string;
+                    version?: string | undefined;
+                    kind?: 'cask' | 'formula' | undefined;
+                    source?: string | undefined;
+                    scope?: 'machine' | 'user' | undefined;
+                }[];
+                id: string;
+                state?: 'absent' | 'present' | undefined;
+                requiredFacts?: ({
+                    kind: 'administrator';
+                } | {
+                    kind: 'command';
+                    executable: string;
+                } | {
+                    kind: 'init';
+                    system: 'launchd' | 'systemd' | 'windowsScm';
+                } | {
+                    kind: 'journalReadGroup';
+                    group: string;
+                } | {
+                    kind: 'kernel';
+                    capability: string;
+                    architectures?: string[] | undefined;
+                } | {
+                    kind: 'packageManager';
+                    manager: string;
+                } | {
+                    kind: 'path';
+                    path: string;
+                })[] | undefined;
+                review?: undefined | {
+                    title: string | {
+                        key: string;
+                        fallback: string;
+                        params?: Record<string, number | string> | undefined;
+                    };
+                    description?: string | undefined | {
+                        key: string;
+                        fallback: string;
+                        params?: Record<string, number | string> | undefined;
+                    };
+                };
+            } | {
+                kind: 'packageSource';
+                manager: 'apt';
+                path: string;
+                keyPath: string;
+                url: string;
+                suite: string;
+                components: string[];
+                architectures: string[];
+                keyUrl: string;
+                keyFingerprint: string;
+                id: string;
+                requiredFacts?: ({
+                    kind: 'administrator';
+                } | {
+                    kind: 'command';
+                    executable: string;
+                } | {
+                    kind: 'init';
+                    system: 'launchd' | 'systemd' | 'windowsScm';
+                } | {
+                    kind: 'journalReadGroup';
+                    group: string;
+                } | {
+                    kind: 'kernel';
+                    capability: string;
+                    architectures?: string[] | undefined;
+                } | {
+                    kind: 'packageManager';
+                    manager: string;
+                } | {
+                    kind: 'path';
+                    path: string;
+                })[] | undefined;
+                review?: undefined | {
+                    title: string | {
+                        key: string;
+                        fallback: string;
+                        params?: Record<string, number | string> | undefined;
+                    };
+                    description?: string | undefined | {
+                        key: string;
+                        fallback: string;
+                        params?: Record<string, number | string> | undefined;
+                    };
+                };
+            } | {
+                kind: 'pathTraversal';
+                path: string;
+                agentUsername: string;
+                id: string;
+                requiredFacts?: ({
+                    kind: 'administrator';
+                } | {
+                    kind: 'command';
+                    executable: string;
+                } | {
+                    kind: 'init';
+                    system: 'launchd' | 'systemd' | 'windowsScm';
+                } | {
+                    kind: 'journalReadGroup';
+                    group: string;
+                } | {
+                    kind: 'kernel';
+                    capability: string;
+                    architectures?: string[] | undefined;
+                } | {
+                    kind: 'packageManager';
+                    manager: string;
+                } | {
+                    kind: 'path';
+                    path: string;
+                })[] | undefined;
+                review?: undefined | {
+                    title: string | {
+                        key: string;
+                        fallback: string;
+                        params?: Record<string, number | string> | undefined;
+                    };
+                    description?: string | undefined | {
+                        key: string;
+                        fallback: string;
+                        params?: Record<string, number | string> | undefined;
+                    };
+                };
+            } | {
+                kind: 'reboot';
+                id: string;
+                requiredFacts?: ({
+                    kind: 'administrator';
+                } | {
+                    kind: 'command';
+                    executable: string;
+                } | {
+                    kind: 'init';
+                    system: 'launchd' | 'systemd' | 'windowsScm';
+                } | {
+                    kind: 'journalReadGroup';
+                    group: string;
+                } | {
+                    kind: 'kernel';
+                    capability: string;
+                    architectures?: string[] | undefined;
+                } | {
+                    kind: 'packageManager';
+                    manager: string;
+                } | {
+                    kind: 'path';
+                    path: string;
+                })[] | undefined;
+                review?: undefined | {
+                    title: string | {
+                        key: string;
+                        fallback: string;
+                        params?: Record<string, number | string> | undefined;
+                    };
+                    description?: string | undefined | {
+                        key: string;
+                        fallback: string;
+                        params?: Record<string, number | string> | undefined;
+                    };
+                };
+            } | {
+                kind: 'serviceUnit';
+                unit: string;
+                enabled: boolean;
+                running: boolean;
+                id: string;
+                requiredFacts?: ({
+                    kind: 'administrator';
+                } | {
+                    kind: 'command';
+                    executable: string;
+                } | {
+                    kind: 'init';
+                    system: 'launchd' | 'systemd' | 'windowsScm';
+                } | {
+                    kind: 'journalReadGroup';
+                    group: string;
+                } | {
+                    kind: 'kernel';
+                    capability: string;
+                    architectures?: string[] | undefined;
+                } | {
+                    kind: 'packageManager';
+                    manager: string;
+                } | {
+                    kind: 'path';
+                    path: string;
+                })[] | undefined;
+                review?: undefined | {
+                    title: string | {
+                        key: string;
+                        fallback: string;
+                        params?: Record<string, number | string> | undefined;
+                    };
+                    description?: string | undefined | {
+                        key: string;
+                        fallback: string;
+                        params?: Record<string, number | string> | undefined;
+                    };
+                };
+            } | {
+                kind: 'user';
+                username: string;
+                id: string;
+                home?: string | undefined;
+                shell?: string | undefined;
+                system?: boolean | undefined;
+                locked?: boolean | undefined;
+                uid?: number | undefined;
+                state?: 'absent' | 'present' | undefined;
+                ownershipMarker?: string | undefined;
+                supplementaryGroups?: string[] | undefined;
+                requiredFacts?: ({
+                    kind: 'administrator';
+                } | {
+                    kind: 'command';
+                    executable: string;
+                } | {
+                    kind: 'init';
+                    system: 'launchd' | 'systemd' | 'windowsScm';
+                } | {
+                    kind: 'journalReadGroup';
+                    group: string;
+                } | {
+                    kind: 'kernel';
+                    capability: string;
+                    architectures?: string[] | undefined;
+                } | {
+                    kind: 'packageManager';
+                    manager: string;
+                } | {
+                    kind: 'path';
+                    path: string;
+                })[] | undefined;
+                review?: undefined | {
+                    title: string | {
+                        key: string;
+                        fallback: string;
+                        params?: Record<string, number | string> | undefined;
+                    };
+                    description?: string | undefined | {
+                        key: string;
+                        fallback: string;
+                        params?: Record<string, number | string> | undefined;
+                    };
+                };
+            } | {
+                kind: 'workspaceAccess';
+                path: string;
+                group: string;
+                agentUsername: string;
+                id: string;
+                requiredFacts?: ({
+                    kind: 'administrator';
+                } | {
+                    kind: 'command';
+                    executable: string;
+                } | {
+                    kind: 'init';
+                    system: 'launchd' | 'systemd' | 'windowsScm';
+                } | {
+                    kind: 'journalReadGroup';
+                    group: string;
+                } | {
+                    kind: 'kernel';
+                    capability: string;
+                    architectures?: string[] | undefined;
+                } | {
+                    kind: 'packageManager';
+                    manager: string;
+                } | {
+                    kind: 'path';
+                    path: string;
+                })[] | undefined;
+                review?: undefined | {
+                    title: string | {
+                        key: string;
+                        fallback: string;
+                        params?: Record<string, number | string> | undefined;
+                    };
+                    description?: string | undefined | {
+                        key: string;
+                        fallback: string;
+                        params?: Record<string, number | string> | undefined;
+                    };
+                };
+            } | {
+                owner: string;
+                group: string;
+                mode: number;
+                kind: 'directory';
+                path: string;
+                id: string;
+                preserveExistingOwnership?: true | undefined;
+                protectedAncestors?: true | undefined;
+                ownershipMarker?: string | undefined;
+                requiredFacts?: ({
+                    kind: 'administrator';
+                } | {
+                    kind: 'command';
+                    executable: string;
+                } | {
+                    kind: 'init';
+                    system: 'launchd' | 'systemd' | 'windowsScm';
+                } | {
+                    kind: 'journalReadGroup';
+                    group: string;
+                } | {
+                    kind: 'kernel';
+                    capability: string;
+                    architectures?: string[] | undefined;
+                } | {
+                    kind: 'packageManager';
+                    manager: string;
+                } | {
+                    kind: 'path';
+                    path: string;
+                })[] | undefined;
+                review?: undefined | {
+                    title: string | {
+                        key: string;
+                        fallback: string;
+                        params?: Record<string, number | string> | undefined;
+                    };
+                    description?: string | undefined | {
+                        key: string;
+                        fallback: string;
+                        params?: Record<string, number | string> | undefined;
+                    };
+                };
+            } | {
+                owner: string;
+                group: string;
+                mode: number;
+                kind: 'file';
+                path: string;
+                id: string;
+                state?: 'absent' | 'present' | undefined;
+                content?: undefined | {
+                    kind: 'iniKeys';
+                    sections: Record<string, Record<string, string>>;
+                } | {
+                    kind: 'jsonMerge';
+                    value: Record<string, JSONType<true>>;
+                } | {
+                    kind: 'literal';
+                    value: string;
+                } | {
+                    kind: 'secretGrant';
+                    grantRef: string;
+                } | {
+                    kind: 'template';
+                    value: string;
+                    variables: Record<string, string>;
+                };
+                expectedContentDigest?: string | undefined;
+                ownershipMarker?: string | undefined;
+                validate?: 'docker' | 'sudoers' | undefined | {
+                    kind: 'caddy';
+                } | {
+                    kind: 'docker';
+                } | {
+                    kind: 'nft';
+                } | {
+                    kind: 'sshd';
+                    contexts: {
+                        user: string;
+                        host: string;
+                        address: string;
+                    }[];
+                } | {
+                    kind: 'sudoers';
+                };
+                probe?: undefined | {
+                    kind: 'caddy';
+                } | {
+                    kind: 'docker';
+                } | {
+                    kind: 'nft';
+                } | {
+                    kind: 'sshd';
+                    contexts: {
+                        user: string;
+                        host: string;
+                        address: string;
+                    }[];
+                } | {
+                    kind: 'sudoers';
+                };
+                onChange?: undefined | {
+                    serviceStepId: string;
+                    action: 'reload' | 'restart';
+                };
+                requiredFacts?: ({
+                    kind: 'administrator';
+                } | {
+                    kind: 'command';
+                    executable: string;
+                } | {
+                    kind: 'init';
+                    system: 'launchd' | 'systemd' | 'windowsScm';
+                } | {
+                    kind: 'journalReadGroup';
+                    group: string;
+                } | {
+                    kind: 'kernel';
+                    capability: string;
+                    architectures?: string[] | undefined;
+                } | {
+                    kind: 'packageManager';
+                    manager: string;
+                } | {
+                    kind: 'path';
+                    path: string;
+                })[] | undefined;
+                review?: undefined | {
+                    title: string | {
+                        key: string;
+                        fallback: string;
+                        params?: Record<string, number | string> | undefined;
+                    };
+                    description?: string | undefined | {
+                        key: string;
+                        fallback: string;
+                        params?: Record<string, number | string> | undefined;
+                    };
+                };
+            })[];
+            nativeFacts: {
+                stepId: string;
+                status: 'drifted' | 'satisfied' | 'unavailable' | 'unsupported';
+                facts: Record<string, JSONType<true>>;
+                reason?: string | undefined;
+            }[];
+            planDigest: string;
+            checks?: ({
+                check: {
+                    executable: string;
+                    args: string[];
+                    unsatisfiedExitCodes: number[];
+                    stdoutJson?: unknown;
+                } | {
+                    kind: 'kernel';
+                    capability: string;
+                    architectures?: string[] | undefined;
+                } | {
+                    kind: 'userManagerGroups';
+                    username: string;
+                };
+                executable: string;
+                args: string[];
+                kind: 'command';
+                id: string;
+                remove?: undefined | {
+                    executable: string;
+                    args: string[];
+                };
+                affects?: 'dockerEngine' | 'none' | undefined | {
+                    services: string[];
+                };
+                requiredFacts?: ({
+                    kind: 'administrator';
+                } | {
+                    kind: 'command';
+                    executable: string;
+                } | {
+                    kind: 'init';
+                    system: 'launchd' | 'systemd' | 'windowsScm';
+                } | {
+                    kind: 'journalReadGroup';
+                    group: string;
+                } | {
+                    kind: 'kernel';
+                    capability: string;
+                    architectures?: string[] | undefined;
+                } | {
+                    kind: 'packageManager';
+                    manager: string;
+                } | {
+                    kind: 'path';
+                    path: string;
+                })[] | undefined;
+                review?: undefined | {
+                    title: string | {
+                        key: string;
+                        fallback: string;
+                        params?: Record<string, number | string> | undefined;
+                    };
+                    description?: string | undefined | {
+                        key: string;
+                        fallback: string;
+                        params?: Record<string, number | string> | undefined;
+                    };
+                };
+            } | {
+                kind: 'kernel';
+                capability: string;
+                id: string;
+                architectures?: string[] | undefined;
+            } | {
+                kind: 'package';
+                manager: string;
+                packages: {
+                    name: string;
+                    version?: string | undefined;
+                    kind?: 'cask' | 'formula' | undefined;
+                    source?: string | undefined;
+                    scope?: 'machine' | 'user' | undefined;
+                }[];
+                id: string;
+                state?: 'absent' | 'present' | undefined;
+                requiredFacts?: ({
+                    kind: 'administrator';
+                } | {
+                    kind: 'command';
+                    executable: string;
+                } | {
+                    kind: 'init';
+                    system: 'launchd' | 'systemd' | 'windowsScm';
+                } | {
+                    kind: 'journalReadGroup';
+                    group: string;
+                } | {
+                    kind: 'kernel';
+                    capability: string;
+                    architectures?: string[] | undefined;
+                } | {
+                    kind: 'packageManager';
+                    manager: string;
+                } | {
+                    kind: 'path';
+                    path: string;
+                })[] | undefined;
+                review?: undefined | {
+                    title: string | {
+                        key: string;
+                        fallback: string;
+                        params?: Record<string, number | string> | undefined;
+                    };
+                    description?: string | undefined | {
+                        key: string;
+                        fallback: string;
+                        params?: Record<string, number | string> | undefined;
+                    };
+                };
+            })[] | undefined;
+            checkFacts?: undefined | {
+                stepId: string;
+                status: 'drifted' | 'satisfied' | 'unavailable' | 'unsupported';
+                facts: Record<string, JSONType<true>>;
+                reason?: string | undefined;
+            }[];
+            selectedCheckIds?: string[] | undefined;
+        };
     };
 };
 export type ManagedMachinesActionResultById = {
@@ -7230,5 +11966,6802 @@ export type ManagedMachinesActionResultById = {
             disposition: 'unavailable' | 'pending';
             reason: string;
         } | undefined;
+    };
+    readonly "machines.setup.plan": {
+        desiredRevision: number;
+        sources: MachineSetupSourceV1;
+        exclusions: {
+            ref: {
+                pluginId: string;
+                recipeId: string;
+                revision: string;
+            };
+            reason: 'not_selected';
+        }[];
+        support: {
+            sourceIndex: number;
+            itemIndex: number;
+            status: 'drifted' | 'satisfied' | 'unavailable' | 'unsupported' | 'unverifiable';
+            reason?: 'admin_access_unavailable' | 'foreign_effect_conflict' | 'native_effect_failed' | 'needs_admin_to_check' | 'package_manager_busy' | 'plan_changed' | 'private_scope_unenforceable' | 'remove_unsupported' | 'required_fact_unavailable' | 'validation_failed' | undefined;
+        }[];
+        sourceFacts?: MachineSetupSourceFactsMapV1 | undefined;
+        appOrigins?: undefined | {
+            sourceIndex: number;
+            itemIndex: number;
+            kind: 'new' | 'retained' | 'unknown';
+        }[];
+        removeItemKeys?: string[] | undefined;
+        removalOffers?: ({
+            status: 'eligible';
+            selected: boolean;
+            itemKey: string;
+            item: {
+                kind: 'setupRecipe';
+                selection: {
+                    ref: {
+                        pluginId: string;
+                        recipeId: string;
+                        revision: string;
+                    };
+                    inputs: PluginJsonValueV2;
+                };
+            } | {
+                kind: 'softwareRecipe';
+                selection: {
+                    ref: {
+                        pluginId: string;
+                        recipeId: string;
+                        revision: string;
+                    };
+                    inputs: PluginJsonValueV2;
+                };
+            };
+        } | {
+            status: 'notEligible';
+            selected: false;
+            reason: 'needsCheck' | 'preExisting' | 'unknownOrigin' | 'unsupported';
+            itemKey: string;
+            item: {
+                kind: 'setupRecipe';
+                selection: {
+                    ref: {
+                        pluginId: string;
+                        recipeId: string;
+                        revision: string;
+                    };
+                    inputs: PluginJsonValueV2;
+                };
+            } | {
+                kind: 'softwareRecipe';
+                selection: {
+                    ref: {
+                        pluginId: string;
+                        recipeId: string;
+                        revision: string;
+                    };
+                    inputs: PluginJsonValueV2;
+                };
+            };
+        })[] | undefined;
+        removalPlans?: undefined | {
+            itemKey: string;
+            plan: {
+                v: 1;
+                basis: {
+                    kind: 'adminAccess';
+                    machineId: string;
+                    operationId: string;
+                    previousPolicy: {
+                        version: 1;
+                        mode: 'ask';
+                        administratorUsername: string;
+                    } | {
+                        version: 1;
+                        mode: 'none';
+                    } | {
+                        version: 1;
+                        mode: 'preauthorized';
+                    };
+                    policy: {
+                        version: 1;
+                        mode: 'ask';
+                        administratorUsername: string;
+                    } | {
+                        version: 1;
+                        mode: 'none';
+                    } | {
+                        version: 1;
+                        mode: 'preauthorized';
+                    };
+                } | {
+                    kind: 'agentIsolation';
+                    machineId: string;
+                    enabled: boolean;
+                    expectedPolicy: {
+                        enabled: boolean;
+                        memberProvisioning?: 'linuxUsersV1' | undefined;
+                    };
+                    review?: undefined | {
+                        roots: {
+                            rootId: string;
+                            path: string;
+                        }[];
+                        ancestorAcls: {
+                            path: string;
+                            add: 'x';
+                        }[];
+                        sessionsToReplace: number;
+                        memberProvisioning?: 'linuxUsersV1' | undefined;
+                    };
+                } | {
+                    kind: 'bootstrap';
+                    managedId: string;
+                    operationId: string;
+                    admittedInputDigest: string;
+                } | {
+                    kind: 'reboot';
+                    machineId: string;
+                    operationId: string;
+                } | {
+                    kind: 'setup';
+                    machineId: string;
+                    desiredRevision: number;
+                    selection?: undefined | {
+                        ref: {
+                            pluginId: string;
+                            recipeId: string;
+                            revision: string;
+                        };
+                        inputs: PluginJsonValueV2;
+                    };
+                } | {
+                    kind: 'sshBootstrap';
+                    operationId: string;
+                    admittedInputDigest: string;
+                } | {
+                    kind: 'updates';
+                    machineId: string;
+                    scope: 'all' | 'security';
+                };
+                steps: ({
+                    check: {
+                        executable: string;
+                        args: string[];
+                        unsatisfiedExitCodes: number[];
+                        stdoutJson?: InputPredicate | undefined;
+                    } | {
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'userManagerGroups';
+                        username: string;
+                    };
+                    executable: string;
+                    args: string[];
+                    kind: 'command';
+                    id: string;
+                    remove?: undefined | {
+                        executable: string;
+                        args: string[];
+                    };
+                    affects?: 'dockerEngine' | 'none' | undefined | {
+                        services: string[];
+                    };
+                    requiredFacts?: ({
+                        kind: 'administrator';
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'init';
+                        system: 'launchd' | 'systemd' | 'windowsScm';
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    } | {
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    })[] | undefined;
+                    review?: undefined | {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        description?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    };
+                } | {
+                    kind: 'firewall';
+                    rules: string;
+                    id: string;
+                    exposures?: undefined | {
+                        requirementId: string;
+                        hostAddress: string;
+                        hostPort: number;
+                        protocol: 'tcp' | 'udp';
+                        exposure: 'loopback' | 'privateNetwork' | 'public';
+                        containerPort?: number | undefined;
+                        providerId?: string | undefined;
+                        networkIdentity?: string | undefined;
+                    }[];
+                    requiredFacts?: ({
+                        kind: 'administrator';
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'init';
+                        system: 'launchd' | 'systemd' | 'windowsScm';
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    } | {
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    })[] | undefined;
+                    review?: undefined | {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        description?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    };
+                } | {
+                    kind: 'group';
+                    name: string;
+                    members: string[];
+                    id: string;
+                    state?: 'absent' | 'present' | undefined;
+                    existingOnly?: true | undefined;
+                    requiredFacts?: ({
+                        kind: 'administrator';
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'init';
+                        system: 'launchd' | 'systemd' | 'windowsScm';
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    } | {
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    })[] | undefined;
+                    review?: undefined | {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        description?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    };
+                } | {
+                    kind: 'package';
+                    manager: string;
+                    packages: {
+                        name: string;
+                        version?: string | undefined;
+                        kind?: 'cask' | 'formula' | undefined;
+                        source?: string | undefined;
+                        scope?: 'machine' | 'user' | undefined;
+                    }[];
+                    id: string;
+                    state?: 'absent' | 'present' | undefined;
+                    requiredFacts?: ({
+                        kind: 'administrator';
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'init';
+                        system: 'launchd' | 'systemd' | 'windowsScm';
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    } | {
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    })[] | undefined;
+                    review?: undefined | {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        description?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    };
+                } | {
+                    kind: 'packageSource';
+                    manager: 'apt';
+                    path: string;
+                    keyPath: string;
+                    url: string;
+                    suite: string;
+                    components: string[];
+                    architectures: string[];
+                    keyUrl: string;
+                    keyFingerprint: string;
+                    id: string;
+                    requiredFacts?: ({
+                        kind: 'administrator';
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'init';
+                        system: 'launchd' | 'systemd' | 'windowsScm';
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    } | {
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    })[] | undefined;
+                    review?: undefined | {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        description?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    };
+                } | {
+                    kind: 'pathTraversal';
+                    path: string;
+                    agentUsername: string;
+                    id: string;
+                    requiredFacts?: ({
+                        kind: 'administrator';
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'init';
+                        system: 'launchd' | 'systemd' | 'windowsScm';
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    } | {
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    })[] | undefined;
+                    review?: undefined | {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        description?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    };
+                } | {
+                    kind: 'reboot';
+                    id: string;
+                    requiredFacts?: ({
+                        kind: 'administrator';
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'init';
+                        system: 'launchd' | 'systemd' | 'windowsScm';
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    } | {
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    })[] | undefined;
+                    review?: undefined | {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        description?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    };
+                } | {
+                    kind: 'serviceUnit';
+                    unit: string;
+                    enabled: boolean;
+                    running: boolean;
+                    id: string;
+                    requiredFacts?: ({
+                        kind: 'administrator';
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'init';
+                        system: 'launchd' | 'systemd' | 'windowsScm';
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    } | {
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    })[] | undefined;
+                    review?: undefined | {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        description?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    };
+                } | {
+                    kind: 'user';
+                    username: string;
+                    id: string;
+                    home?: string | undefined;
+                    shell?: string | undefined;
+                    system?: boolean | undefined;
+                    locked?: boolean | undefined;
+                    uid?: number | undefined;
+                    state?: 'absent' | 'present' | undefined;
+                    ownershipMarker?: string | undefined;
+                    supplementaryGroups?: string[] | undefined;
+                    requiredFacts?: ({
+                        kind: 'administrator';
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'init';
+                        system: 'launchd' | 'systemd' | 'windowsScm';
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    } | {
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    })[] | undefined;
+                    review?: undefined | {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        description?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    };
+                } | {
+                    kind: 'workspaceAccess';
+                    path: string;
+                    group: string;
+                    agentUsername: string;
+                    id: string;
+                    requiredFacts?: ({
+                        kind: 'administrator';
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'init';
+                        system: 'launchd' | 'systemd' | 'windowsScm';
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    } | {
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    })[] | undefined;
+                    review?: undefined | {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        description?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    };
+                } | {
+                    owner: string;
+                    group: string;
+                    mode: number;
+                    kind: 'directory';
+                    path: string;
+                    id: string;
+                    preserveExistingOwnership?: true | undefined;
+                    protectedAncestors?: true | undefined;
+                    ownershipMarker?: string | undefined;
+                    requiredFacts?: ({
+                        kind: 'administrator';
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'init';
+                        system: 'launchd' | 'systemd' | 'windowsScm';
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    } | {
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    })[] | undefined;
+                    review?: undefined | {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        description?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    };
+                } | {
+                    owner: string;
+                    group: string;
+                    mode: number;
+                    kind: 'file';
+                    path: string;
+                    id: string;
+                    state?: 'absent' | 'present' | undefined;
+                    content?: undefined | {
+                        kind: 'iniKeys';
+                        sections: Record<string, Record<string, string>>;
+                    } | {
+                        kind: 'jsonMerge';
+                        value: Record<string, JSONType>;
+                    } | {
+                        kind: 'literal';
+                        value: string;
+                    } | {
+                        kind: 'secretGrant';
+                        grantRef: string;
+                    } | {
+                        kind: 'template';
+                        value: string;
+                        variables: Record<string, string>;
+                    };
+                    expectedContentDigest?: string | undefined;
+                    ownershipMarker?: string | undefined;
+                    validate?: 'docker' | 'sudoers' | undefined | {
+                        kind: 'caddy';
+                    } | {
+                        kind: 'docker';
+                    } | {
+                        kind: 'nft';
+                    } | {
+                        kind: 'sshd';
+                        contexts: {
+                            user: string;
+                            host: string;
+                            address: string;
+                        }[];
+                    } | {
+                        kind: 'sudoers';
+                    };
+                    probe?: undefined | {
+                        kind: 'caddy';
+                    } | {
+                        kind: 'docker';
+                    } | {
+                        kind: 'nft';
+                    } | {
+                        kind: 'sshd';
+                        contexts: {
+                            user: string;
+                            host: string;
+                            address: string;
+                        }[];
+                    } | {
+                        kind: 'sudoers';
+                    };
+                    onChange?: undefined | {
+                        serviceStepId: string;
+                        action: 'reload' | 'restart';
+                    };
+                    requiredFacts?: ({
+                        kind: 'administrator';
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'init';
+                        system: 'launchd' | 'systemd' | 'windowsScm';
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    } | {
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    })[] | undefined;
+                    review?: undefined | {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        description?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    };
+                })[];
+                nativeFacts: {
+                    stepId: string;
+                    status: 'drifted' | 'satisfied' | 'unavailable' | 'unsupported';
+                    facts: Record<string, JSONType>;
+                    reason?: string | undefined;
+                }[];
+                planDigest: string;
+                checks?: ({
+                    check: {
+                        executable: string;
+                        args: string[];
+                        unsatisfiedExitCodes: number[];
+                        stdoutJson?: InputPredicate | undefined;
+                    } | {
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'userManagerGroups';
+                        username: string;
+                    };
+                    executable: string;
+                    args: string[];
+                    kind: 'command';
+                    id: string;
+                    remove?: undefined | {
+                        executable: string;
+                        args: string[];
+                    };
+                    affects?: 'dockerEngine' | 'none' | undefined | {
+                        services: string[];
+                    };
+                    requiredFacts?: ({
+                        kind: 'administrator';
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'init';
+                        system: 'launchd' | 'systemd' | 'windowsScm';
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    } | {
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    })[] | undefined;
+                    review?: undefined | {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        description?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    };
+                } | {
+                    kind: 'kernel';
+                    capability: string;
+                    id: string;
+                    architectures?: string[] | undefined;
+                } | {
+                    kind: 'package';
+                    manager: string;
+                    packages: {
+                        name: string;
+                        version?: string | undefined;
+                        kind?: 'cask' | 'formula' | undefined;
+                        source?: string | undefined;
+                        scope?: 'machine' | 'user' | undefined;
+                    }[];
+                    id: string;
+                    state?: 'absent' | 'present' | undefined;
+                    requiredFacts?: ({
+                        kind: 'administrator';
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'init';
+                        system: 'launchd' | 'systemd' | 'windowsScm';
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    } | {
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    })[] | undefined;
+                    review?: undefined | {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        description?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    };
+                })[] | undefined;
+                checkFacts?: undefined | {
+                    stepId: string;
+                    status: 'drifted' | 'satisfied' | 'unavailable' | 'unsupported';
+                    facts: Record<string, JSONType>;
+                    reason?: string | undefined;
+                }[];
+                selectedCheckIds?: string[] | undefined;
+            };
+        }[];
+        recipeTitles?: undefined | {
+            ref: {
+                pluginId: string;
+                recipeId: string;
+                revision: string;
+            };
+            title: string | {
+                key: string;
+                fallback: string;
+                params?: Record<string, number | string> | undefined;
+            };
+        }[];
+        recipePlans?: undefined | {
+            sourceIndex: number;
+            itemIndex: number;
+            plan: {
+                v: 1;
+                basis: {
+                    kind: 'adminAccess';
+                    machineId: string;
+                    operationId: string;
+                    previousPolicy: {
+                        version: 1;
+                        mode: 'ask';
+                        administratorUsername: string;
+                    } | {
+                        version: 1;
+                        mode: 'none';
+                    } | {
+                        version: 1;
+                        mode: 'preauthorized';
+                    };
+                    policy: {
+                        version: 1;
+                        mode: 'ask';
+                        administratorUsername: string;
+                    } | {
+                        version: 1;
+                        mode: 'none';
+                    } | {
+                        version: 1;
+                        mode: 'preauthorized';
+                    };
+                } | {
+                    kind: 'agentIsolation';
+                    machineId: string;
+                    enabled: boolean;
+                    expectedPolicy: {
+                        enabled: boolean;
+                        memberProvisioning?: 'linuxUsersV1' | undefined;
+                    };
+                    review?: undefined | {
+                        roots: {
+                            rootId: string;
+                            path: string;
+                        }[];
+                        ancestorAcls: {
+                            path: string;
+                            add: 'x';
+                        }[];
+                        sessionsToReplace: number;
+                        memberProvisioning?: 'linuxUsersV1' | undefined;
+                    };
+                } | {
+                    kind: 'bootstrap';
+                    managedId: string;
+                    operationId: string;
+                    admittedInputDigest: string;
+                } | {
+                    kind: 'reboot';
+                    machineId: string;
+                    operationId: string;
+                } | {
+                    kind: 'setup';
+                    machineId: string;
+                    desiredRevision: number;
+                    selection?: undefined | {
+                        ref: {
+                            pluginId: string;
+                            recipeId: string;
+                            revision: string;
+                        };
+                        inputs: PluginJsonValueV2;
+                    };
+                } | {
+                    kind: 'sshBootstrap';
+                    operationId: string;
+                    admittedInputDigest: string;
+                } | {
+                    kind: 'updates';
+                    machineId: string;
+                    scope: 'all' | 'security';
+                };
+                steps: ({
+                    check: {
+                        executable: string;
+                        args: string[];
+                        unsatisfiedExitCodes: number[];
+                        stdoutJson?: InputPredicate | undefined;
+                    } | {
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'userManagerGroups';
+                        username: string;
+                    };
+                    executable: string;
+                    args: string[];
+                    kind: 'command';
+                    id: string;
+                    remove?: undefined | {
+                        executable: string;
+                        args: string[];
+                    };
+                    affects?: 'dockerEngine' | 'none' | undefined | {
+                        services: string[];
+                    };
+                    requiredFacts?: ({
+                        kind: 'administrator';
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'init';
+                        system: 'launchd' | 'systemd' | 'windowsScm';
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    } | {
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    })[] | undefined;
+                    review?: undefined | {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        description?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    };
+                } | {
+                    kind: 'firewall';
+                    rules: string;
+                    id: string;
+                    exposures?: undefined | {
+                        requirementId: string;
+                        hostAddress: string;
+                        hostPort: number;
+                        protocol: 'tcp' | 'udp';
+                        exposure: 'loopback' | 'privateNetwork' | 'public';
+                        containerPort?: number | undefined;
+                        providerId?: string | undefined;
+                        networkIdentity?: string | undefined;
+                    }[];
+                    requiredFacts?: ({
+                        kind: 'administrator';
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'init';
+                        system: 'launchd' | 'systemd' | 'windowsScm';
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    } | {
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    })[] | undefined;
+                    review?: undefined | {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        description?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    };
+                } | {
+                    kind: 'group';
+                    name: string;
+                    members: string[];
+                    id: string;
+                    state?: 'absent' | 'present' | undefined;
+                    existingOnly?: true | undefined;
+                    requiredFacts?: ({
+                        kind: 'administrator';
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'init';
+                        system: 'launchd' | 'systemd' | 'windowsScm';
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    } | {
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    })[] | undefined;
+                    review?: undefined | {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        description?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    };
+                } | {
+                    kind: 'package';
+                    manager: string;
+                    packages: {
+                        name: string;
+                        version?: string | undefined;
+                        kind?: 'cask' | 'formula' | undefined;
+                        source?: string | undefined;
+                        scope?: 'machine' | 'user' | undefined;
+                    }[];
+                    id: string;
+                    state?: 'absent' | 'present' | undefined;
+                    requiredFacts?: ({
+                        kind: 'administrator';
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'init';
+                        system: 'launchd' | 'systemd' | 'windowsScm';
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    } | {
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    })[] | undefined;
+                    review?: undefined | {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        description?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    };
+                } | {
+                    kind: 'packageSource';
+                    manager: 'apt';
+                    path: string;
+                    keyPath: string;
+                    url: string;
+                    suite: string;
+                    components: string[];
+                    architectures: string[];
+                    keyUrl: string;
+                    keyFingerprint: string;
+                    id: string;
+                    requiredFacts?: ({
+                        kind: 'administrator';
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'init';
+                        system: 'launchd' | 'systemd' | 'windowsScm';
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    } | {
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    })[] | undefined;
+                    review?: undefined | {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        description?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    };
+                } | {
+                    kind: 'pathTraversal';
+                    path: string;
+                    agentUsername: string;
+                    id: string;
+                    requiredFacts?: ({
+                        kind: 'administrator';
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'init';
+                        system: 'launchd' | 'systemd' | 'windowsScm';
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    } | {
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    })[] | undefined;
+                    review?: undefined | {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        description?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    };
+                } | {
+                    kind: 'reboot';
+                    id: string;
+                    requiredFacts?: ({
+                        kind: 'administrator';
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'init';
+                        system: 'launchd' | 'systemd' | 'windowsScm';
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    } | {
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    })[] | undefined;
+                    review?: undefined | {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        description?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    };
+                } | {
+                    kind: 'serviceUnit';
+                    unit: string;
+                    enabled: boolean;
+                    running: boolean;
+                    id: string;
+                    requiredFacts?: ({
+                        kind: 'administrator';
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'init';
+                        system: 'launchd' | 'systemd' | 'windowsScm';
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    } | {
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    })[] | undefined;
+                    review?: undefined | {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        description?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    };
+                } | {
+                    kind: 'user';
+                    username: string;
+                    id: string;
+                    home?: string | undefined;
+                    shell?: string | undefined;
+                    system?: boolean | undefined;
+                    locked?: boolean | undefined;
+                    uid?: number | undefined;
+                    state?: 'absent' | 'present' | undefined;
+                    ownershipMarker?: string | undefined;
+                    supplementaryGroups?: string[] | undefined;
+                    requiredFacts?: ({
+                        kind: 'administrator';
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'init';
+                        system: 'launchd' | 'systemd' | 'windowsScm';
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    } | {
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    })[] | undefined;
+                    review?: undefined | {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        description?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    };
+                } | {
+                    kind: 'workspaceAccess';
+                    path: string;
+                    group: string;
+                    agentUsername: string;
+                    id: string;
+                    requiredFacts?: ({
+                        kind: 'administrator';
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'init';
+                        system: 'launchd' | 'systemd' | 'windowsScm';
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    } | {
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    })[] | undefined;
+                    review?: undefined | {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        description?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    };
+                } | {
+                    owner: string;
+                    group: string;
+                    mode: number;
+                    kind: 'directory';
+                    path: string;
+                    id: string;
+                    preserveExistingOwnership?: true | undefined;
+                    protectedAncestors?: true | undefined;
+                    ownershipMarker?: string | undefined;
+                    requiredFacts?: ({
+                        kind: 'administrator';
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'init';
+                        system: 'launchd' | 'systemd' | 'windowsScm';
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    } | {
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    })[] | undefined;
+                    review?: undefined | {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        description?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    };
+                } | {
+                    owner: string;
+                    group: string;
+                    mode: number;
+                    kind: 'file';
+                    path: string;
+                    id: string;
+                    state?: 'absent' | 'present' | undefined;
+                    content?: undefined | {
+                        kind: 'iniKeys';
+                        sections: Record<string, Record<string, string>>;
+                    } | {
+                        kind: 'jsonMerge';
+                        value: Record<string, JSONType>;
+                    } | {
+                        kind: 'literal';
+                        value: string;
+                    } | {
+                        kind: 'secretGrant';
+                        grantRef: string;
+                    } | {
+                        kind: 'template';
+                        value: string;
+                        variables: Record<string, string>;
+                    };
+                    expectedContentDigest?: string | undefined;
+                    ownershipMarker?: string | undefined;
+                    validate?: 'docker' | 'sudoers' | undefined | {
+                        kind: 'caddy';
+                    } | {
+                        kind: 'docker';
+                    } | {
+                        kind: 'nft';
+                    } | {
+                        kind: 'sshd';
+                        contexts: {
+                            user: string;
+                            host: string;
+                            address: string;
+                        }[];
+                    } | {
+                        kind: 'sudoers';
+                    };
+                    probe?: undefined | {
+                        kind: 'caddy';
+                    } | {
+                        kind: 'docker';
+                    } | {
+                        kind: 'nft';
+                    } | {
+                        kind: 'sshd';
+                        contexts: {
+                            user: string;
+                            host: string;
+                            address: string;
+                        }[];
+                    } | {
+                        kind: 'sudoers';
+                    };
+                    onChange?: undefined | {
+                        serviceStepId: string;
+                        action: 'reload' | 'restart';
+                    };
+                    requiredFacts?: ({
+                        kind: 'administrator';
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'init';
+                        system: 'launchd' | 'systemd' | 'windowsScm';
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    } | {
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    })[] | undefined;
+                    review?: undefined | {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        description?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    };
+                })[];
+                nativeFacts: {
+                    stepId: string;
+                    status: 'drifted' | 'satisfied' | 'unavailable' | 'unsupported';
+                    facts: Record<string, JSONType>;
+                    reason?: string | undefined;
+                }[];
+                planDigest: string;
+                checks?: ({
+                    check: {
+                        executable: string;
+                        args: string[];
+                        unsatisfiedExitCodes: number[];
+                        stdoutJson?: InputPredicate | undefined;
+                    } | {
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'userManagerGroups';
+                        username: string;
+                    };
+                    executable: string;
+                    args: string[];
+                    kind: 'command';
+                    id: string;
+                    remove?: undefined | {
+                        executable: string;
+                        args: string[];
+                    };
+                    affects?: 'dockerEngine' | 'none' | undefined | {
+                        services: string[];
+                    };
+                    requiredFacts?: ({
+                        kind: 'administrator';
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'init';
+                        system: 'launchd' | 'systemd' | 'windowsScm';
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    } | {
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    })[] | undefined;
+                    review?: undefined | {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        description?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    };
+                } | {
+                    kind: 'kernel';
+                    capability: string;
+                    id: string;
+                    architectures?: string[] | undefined;
+                } | {
+                    kind: 'package';
+                    manager: string;
+                    packages: {
+                        name: string;
+                        version?: string | undefined;
+                        kind?: 'cask' | 'formula' | undefined;
+                        source?: string | undefined;
+                        scope?: 'machine' | 'user' | undefined;
+                    }[];
+                    id: string;
+                    state?: 'absent' | 'present' | undefined;
+                    requiredFacts?: ({
+                        kind: 'administrator';
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'init';
+                        system: 'launchd' | 'systemd' | 'windowsScm';
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    } | {
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    })[] | undefined;
+                    review?: undefined | {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        description?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    };
+                })[] | undefined;
+                checkFacts?: undefined | {
+                    stepId: string;
+                    status: 'drifted' | 'satisfied' | 'unavailable' | 'unsupported';
+                    facts: Record<string, JSONType>;
+                    reason?: string | undefined;
+                }[];
+                selectedCheckIds?: string[] | undefined;
+            };
+        }[];
+        appChildren?: ({
+            sourceIndex: number;
+            itemIndex: number;
+            actionId: 'deployments.deploy';
+            input: {
+                contentArtifactId: string;
+                contentHeaderVersion: number;
+                contentBodyVersion: number;
+                targetLinkId: string;
+                expectedTargetLinkRevision: number;
+                requestKey: string;
+                environmentId: string;
+                expectedRevision: number;
+                serverId: string;
+                whenBusy?: 'refuse' | 'supersede' | undefined;
+                pendingDeploy?: undefined | {
+                    t: 'encrypted';
+                    c: string;
+                } | {
+                    t: 'plain';
+                    v: {
+                        sourceIntent: {
+                            kind: 'repository';
+                            projectSourceId: string;
+                            sourceRevision: number;
+                            sha: string;
+                            compose: {
+                                profiles: string[];
+                                services: string[];
+                                path: string;
+                                primaryService?: string | undefined;
+                            };
+                            pullRequestHead?: undefined | {
+                                number: number;
+                            };
+                        } | {
+                            profiles: string[];
+                            services: string[];
+                            kind: 'stored';
+                            contentRevision: number;
+                            composeDigest: string;
+                            document: string;
+                            primaryService?: string | undefined;
+                        };
+                        requestKey: string;
+                        targetLinkId: string;
+                        actionOperationId: string;
+                        sourceMethod?: 'gitIntegration' | 'upload' | undefined;
+                        triggerOccurrence?: undefined | {
+                            automationId: string;
+                            triggerId: string;
+                            triggerRevision: number;
+                            occurrenceKey: string;
+                        };
+                    };
+                };
+            };
+        } | {
+            sourceIndex: number;
+            itemIndex: number;
+            actionId: 'deployments.environments.create';
+            input: {
+                protection: 'nonProduction' | 'production';
+                purpose: 'preview' | 'standard';
+                deployerMode: 'chosen' | 'managers' | 'members';
+                controllerMachineId: string;
+                contentArtifactId: string;
+                contentHeaderVersion: number;
+                contentBodyVersion: number;
+                requestKey: string;
+                serverId: string;
+                projectSourceId?: string | undefined;
+                newProject?: undefined | {
+                    requestKey: string;
+                    name: string;
+                    owner: {
+                        kind: 'account';
+                        accountId: string;
+                    } | {
+                        kind: 'team';
+                        teamId: string;
+                    };
+                };
+                deployerPrincipals?: undefined | {
+                    principalKind: 'account' | 'teamGroup';
+                    principalId: string;
+                }[];
+                buildMachineId?: string | undefined;
+                managedRetention?: 'keep' | 'until-delete' | undefined;
+                preview?: undefined | {
+                    templateEnvironmentId: string;
+                    expectedTemplateRevision: number;
+                    pullRequestId: string;
+                    runtimeTargetLinkId: string;
+                };
+                firstTargetLink?: undefined | {
+                    machines: {
+                        machineId: string;
+                        installationId: string;
+                    }[];
+                    contentArtifactId: string;
+                    contentHeaderVersion: number;
+                    contentBodyVersion: number;
+                };
+                copyFrom?: undefined | {
+                    environmentId: string;
+                    expectedRevision: number;
+                    choices: {
+                        secrets: ({
+                            kind: 'omit';
+                            binding: {
+                                purpose: 'backupDestination';
+                                configKey: 'destination';
+                                role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
+                            } | {
+                                purpose: 'domainCredential';
+                                domainId: string;
+                                role: 'basicAuth' | 'certificateChain' | 'privateKey';
+                            } | {
+                                purpose: 'registry';
+                                targetLinkId: string;
+                                registryOrigin: string;
+                            } | {
+                                purpose: 'variable';
+                                name: string;
+                                phase: 'build' | 'runtime';
+                            } | {
+                                service: string;
+                                purpose: 'dataRole';
+                                role: 'readOnlyPassword';
+                            } | {
+                                targetLinkId: string;
+                                purpose: 'dataRole';
+                                role: 'readOnlyPassword';
+                            };
+                        } | {
+                            kind: 'rebind';
+                            source: {
+                                kind: 'secret';
+                                ref: string;
+                                resourceRevision: number;
+                            };
+                            binding: {
+                                purpose: 'backupDestination';
+                                configKey: 'destination';
+                                role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
+                            } | {
+                                purpose: 'domainCredential';
+                                domainId: string;
+                                role: 'basicAuth' | 'certificateChain' | 'privateKey';
+                            } | {
+                                purpose: 'registry';
+                                targetLinkId: string;
+                                registryOrigin: string;
+                            } | {
+                                purpose: 'variable';
+                                name: string;
+                                phase: 'build' | 'runtime';
+                            } | {
+                                service: string;
+                                purpose: 'dataRole';
+                                role: 'readOnlyPassword';
+                            } | {
+                                targetLinkId: string;
+                                purpose: 'dataRole';
+                                role: 'readOnlyPassword';
+                            };
+                        } | {
+                            kind: 'useSameReference';
+                            binding: {
+                                purpose: 'backupDestination';
+                                configKey: 'destination';
+                                role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
+                            } | {
+                                purpose: 'domainCredential';
+                                domainId: string;
+                                role: 'basicAuth' | 'certificateChain' | 'privateKey';
+                            } | {
+                                purpose: 'registry';
+                                targetLinkId: string;
+                                registryOrigin: string;
+                            } | {
+                                purpose: 'variable';
+                                name: string;
+                                phase: 'build' | 'runtime';
+                            } | {
+                                service: string;
+                                purpose: 'dataRole';
+                                role: 'readOnlyPassword';
+                            } | {
+                                targetLinkId: string;
+                                purpose: 'dataRole';
+                                role: 'readOnlyPassword';
+                            };
+                        })[];
+                        values: ({
+                            kind: 'include';
+                            binding: {
+                                purpose: 'backupDestination';
+                                configKey: 'destination';
+                                role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
+                            } | {
+                                purpose: 'domainCredential';
+                                domainId: string;
+                                role: 'basicAuth' | 'certificateChain' | 'privateKey';
+                            } | {
+                                purpose: 'registry';
+                                targetLinkId: string;
+                                registryOrigin: string;
+                            } | {
+                                purpose: 'variable';
+                                name: string;
+                                phase: 'build' | 'runtime';
+                            } | {
+                                service: string;
+                                purpose: 'dataRole';
+                                role: 'readOnlyPassword';
+                            } | {
+                                targetLinkId: string;
+                                purpose: 'dataRole';
+                                role: 'readOnlyPassword';
+                            };
+                        } | {
+                            kind: 'omit';
+                            binding: {
+                                purpose: 'backupDestination';
+                                configKey: 'destination';
+                                role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
+                            } | {
+                                purpose: 'domainCredential';
+                                domainId: string;
+                                role: 'basicAuth' | 'certificateChain' | 'privateKey';
+                            } | {
+                                purpose: 'registry';
+                                targetLinkId: string;
+                                registryOrigin: string;
+                            } | {
+                                purpose: 'variable';
+                                name: string;
+                                phase: 'build' | 'runtime';
+                            } | {
+                                service: string;
+                                purpose: 'dataRole';
+                                role: 'readOnlyPassword';
+                            } | {
+                                targetLinkId: string;
+                                purpose: 'dataRole';
+                                role: 'readOnlyPassword';
+                            };
+                        } | {
+                            kind: 'remap';
+                            source: {
+                                kind: 'deploymentFact';
+                                fact: 'commitSha' | 'deploymentId' | 'environmentName' | 'primaryUrl';
+                            } | {
+                                kind: 'deploymentFact';
+                                fact: 'domainUrl';
+                                domainId: string;
+                            } | {
+                                kind: 'reference';
+                                environmentId: string;
+                                export: string;
+                                via: 'auto' | 'privateNetwork' | 'public';
+                            } | {
+                                kind: 'value';
+                                value: string;
+                            };
+                            binding: {
+                                purpose: 'backupDestination';
+                                configKey: 'destination';
+                                role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
+                            } | {
+                                purpose: 'domainCredential';
+                                domainId: string;
+                                role: 'basicAuth' | 'certificateChain' | 'privateKey';
+                            } | {
+                                purpose: 'registry';
+                                targetLinkId: string;
+                                registryOrigin: string;
+                            } | {
+                                purpose: 'variable';
+                                name: string;
+                                phase: 'build' | 'runtime';
+                            } | {
+                                service: string;
+                                purpose: 'dataRole';
+                                role: 'readOnlyPassword';
+                            } | {
+                                targetLinkId: string;
+                                purpose: 'dataRole';
+                                role: 'readOnlyPassword';
+                            };
+                        })[];
+                        data: {
+                            targetLinkId: string;
+                            kind: 'createEmpty' | 'omit' | 'restoreBackup' | 'reuse';
+                        }[];
+                        retainPreviousDeployments?: 'copy' | 'default' | undefined;
+                    };
+                };
+                copyPlan?: undefined | {
+                    bindings: ({
+                        access: 'pull' | 'pushPull';
+                        source: {
+                            kind: 'secret';
+                            ref: string;
+                            resourceRevision: number;
+                        };
+                        purpose: 'registry';
+                        targetLinkId: string;
+                        registryOrigin: string;
+                    } | {
+                        source: {
+                            kind: 'deploymentFact';
+                            fact: 'commitSha' | 'deploymentId' | 'environmentName' | 'primaryUrl';
+                        } | {
+                            kind: 'deploymentFact';
+                            fact: 'domainUrl';
+                            domainId: string;
+                        } | {
+                            kind: 'reference';
+                            environmentId: string;
+                            export: string;
+                            via: 'auto' | 'privateNetwork' | 'public';
+                        } | {
+                            kind: 'secret';
+                            ref: string;
+                            resourceRevision: number;
+                        } | {
+                            kind: 'value';
+                            value: string;
+                        };
+                        purpose: 'variable';
+                        name: string;
+                        phase: 'build' | 'runtime';
+                    } | {
+                        source: {
+                            kind: 'secret';
+                            ref: string;
+                            resourceRevision: number;
+                        };
+                        purpose: 'backupDestination';
+                        configKey: 'destination';
+                        role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
+                    } | {
+                        source: {
+                            kind: 'secret';
+                            ref: string;
+                            resourceRevision: number;
+                        };
+                        purpose: 'domainCredential';
+                        domainId: string;
+                        role: 'basicAuth' | 'certificateChain' | 'privateKey';
+                    } | {
+                        source: {
+                            kind: 'secret';
+                            ref: string;
+                            resourceRevision: number;
+                        };
+                        service: string;
+                        purpose: 'dataRole';
+                        role: 'readOnlyPassword';
+                    } | {
+                        source: {
+                            kind: 'secret';
+                            ref: string;
+                            resourceRevision: number;
+                        };
+                        targetLinkId: string;
+                        purpose: 'dataRole';
+                        role: 'readOnlyPassword';
+                    })[];
+                    sourceRuntimeTargetLinkId?: string | undefined;
+                };
+                copyIntentCommitment?: string | undefined;
+            };
+        } | {
+            sourceIndex: number;
+            itemIndex: number;
+            actionId: 'deployments.templates.instantiate';
+            input: {
+                mode: 'apply' | 'preview';
+                serverId: string;
+                machineId: string;
+                templateRef: {
+                    ref: {
+                        digest: string;
+                        pluginId: string;
+                        pluginVersion: string;
+                        occurrenceId: string;
+                        path: string;
+                        kind: 'packageContent';
+                    } | {
+                        kind: 'content';
+                        digest: string;
+                    } | {
+                        kind: 'gitTree';
+                        repo: string;
+                        path: string;
+                        commit: string;
+                        treeSha: string;
+                    } | {
+                        kind: 'version';
+                        version: string;
+                    } | {
+                        kind: 'wellKnown';
+                        indexUrl: string;
+                        name: string;
+                        digest: string;
+                        publishedDigest?: string | undefined;
+                    };
+                    sourceId: string;
+                    itemId: string;
+                    version: string;
+                    expectedContributorOccurrenceId?: string | undefined;
+                };
+                environment: {
+                    kind: 'create';
+                    name: string;
+                    requestKey: string;
+                    protection: 'nonProduction' | 'production';
+                    purpose: 'standard';
+                    deployerMode: 'chosen' | 'managers' | 'members';
+                    controllerMachineId: string;
+                    deployerPrincipals?: undefined | {
+                        principalKind: 'account' | 'teamGroup';
+                        principalId: string;
+                    }[];
+                    buildMachineId?: string | undefined;
+                    retainPreviousDeployments?: number | undefined;
+                } | {
+                    kind: 'existing';
+                    environmentId: string;
+                    expectedRevision: number;
+                };
+                target: {
+                    kind: 'existing';
+                    targetLinkId: string;
+                    expectedRevision: number;
+                    installationId: string;
+                } | {
+                    kind: 'new';
+                    installationId: string;
+                };
+                destination: {
+                    kind: 'stored';
+                    contentRevision: number;
+                    composeDigest: string;
+                } | {
+                    kind: 'stored';
+                };
+                bindings: {
+                    source: {
+                        kind: 'generated';
+                        key: string;
+                    } | {
+                        kind: 'secret';
+                        ref: string;
+                        resourceRevision: number;
+                    } | {
+                        kind: 'value';
+                        value: string;
+                    };
+                    purpose: 'variable';
+                    name: string;
+                    phase: 'build' | 'runtime';
+                }[];
+                projectSourceId?: string | undefined;
+                newProject?: undefined | {
+                    requestKey: string;
+                    name: string;
+                    owner: {
+                        kind: 'account';
+                        accountId: string;
+                    } | {
+                        kind: 'team';
+                        teamId: string;
+                    };
+                };
+                managedRetention?: 'keep' | 'until-delete' | undefined;
+                generatedSecretAudience?: undefined | {
+                    accountGrants?: string[] | undefined;
+                    teamGrants?: string[] | undefined;
+                    groupGrants?: string[] | undefined;
+                };
+                connectTo?: undefined | {
+                    service: string;
+                };
+                replace?: string[] | undefined;
+                domainBindings?: undefined | {
+                    templateDomainId: string;
+                    hostname: string;
+                }[];
+                deploy?: undefined | {
+                    requestKey: string;
+                };
+            };
+        })[] | undefined;
+        appReviews?: undefined | {
+            sourceIndex: number;
+            itemIndex: number;
+            actionId: 'deployments.templates.instantiate';
+            review: {
+                bindings: {
+                    source: {
+                        kind: 'deploymentFact';
+                        fact: 'commitSha' | 'deploymentId' | 'environmentName' | 'primaryUrl';
+                    } | {
+                        kind: 'deploymentFact';
+                        fact: 'domainUrl';
+                        domainId: string;
+                    } | {
+                        kind: 'reference';
+                        environmentId: string;
+                        export: string;
+                        via: 'auto' | 'privateNetwork' | 'public';
+                    } | {
+                        kind: 'secret';
+                        ref: string;
+                        resourceRevision: number;
+                    } | {
+                        kind: 'value';
+                        value: string;
+                    };
+                    purpose: 'variable';
+                    name: string;
+                    phase: 'build' | 'runtime';
+                }[];
+                generatedSecrets: {
+                    name: string;
+                    phase: 'build' | 'runtime';
+                    key: string;
+                    profile: {
+                        kind: 'alphanumeric-characters';
+                        characters: number;
+                    } | {
+                        kind: 'base64-bytes';
+                        bytes: number;
+                    } | {
+                        kind: 'base64url-32-bytes';
+                    } | {
+                        kind: 'hex-32-bytes';
+                    } | {
+                        kind: 'hex-bytes';
+                        bytes: number;
+                    } | {
+                        kind: 'lowercase-alphanumeric-characters';
+                        characters: number;
+                    } | {
+                        kind: 'lowercase-username';
+                    } | {
+                        kind: 'uuid-v4';
+                    };
+                }[];
+                domains: {
+                    key: string;
+                    service: string;
+                    containerPort: number;
+                    protocol: 'http' | 'https' | 'tcp';
+                    required: boolean;
+                    healthCheck: {
+                        path: string;
+                        expectStatus: number;
+                    };
+                    hostname: string;
+                    path?: string | undefined;
+                }[];
+                profiles: string[];
+                services: string[];
+                templateRef: {
+                    ref: {
+                        digest: string;
+                        pluginId: string;
+                        pluginVersion: string;
+                        occurrenceId: string;
+                        path: string;
+                        kind: 'packageContent';
+                    } | {
+                        kind: 'content';
+                        digest: string;
+                    } | {
+                        kind: 'gitTree';
+                        repo: string;
+                        path: string;
+                        commit: string;
+                        treeSha: string;
+                    } | {
+                        kind: 'version';
+                        version: string;
+                    } | {
+                        kind: 'wellKnown';
+                        indexUrl: string;
+                        name: string;
+                        digest: string;
+                        publishedDigest?: string | undefined;
+                    };
+                    sourceId: string;
+                    itemId: string;
+                    version: string;
+                    expectedContributorOccurrenceId?: string | undefined;
+                };
+                minimumResources?: undefined | {
+                    memoryBytes?: number | undefined;
+                    freeDiskBytes?: number | undefined;
+                    architectures?: ('amd64' | 'arm64')[] | undefined;
+                };
+                firstRunSetup?: true | undefined;
+                creationDefaults?: undefined | {
+                    values: {
+                        retainPreviousDeployments: number;
+                        buildMachineId?: string | undefined;
+                        controllerMachineId?: string | undefined;
+                    };
+                    sources: {
+                        buildMachineId?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
+                        controllerMachineId?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
+                        retainPreviousDeployments?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
+                    };
+                };
+                creationDefaultsBasis?: undefined | {
+                    projectSourceId: string;
+                    sourceRevision: number;
+                    projectDefaultsRevision: number;
+                    content: null | {
+                        contentArtifactId: string;
+                        contentHeaderVersion: number;
+                        contentBodyVersion: number;
+                    };
+                };
+                capacity?: undefined | {
+                    resource: 'freeDiskBytes' | 'memoryBytes';
+                    minimumBytes: number;
+                    observedBytes: null | number;
+                    observedAt: null | number;
+                    state: 'meetsMinimum' | 'shortfall' | 'unknown';
+                }[];
+                deploy?: undefined | {
+                    requestKey: string;
+                };
+                primaryService?: string | undefined;
+            };
+        }[];
+        review?: undefined | {
+            target: {
+                homeId: string;
+                machineId: string;
+            };
+            administratorRequired: boolean | null;
+            downtime: 'none' | 'possible' | 'unknown';
+            apps?: undefined | {
+                sourceIndex: number;
+                itemIndex: number;
+                kind: 'completed' | 'failed' | 'new' | 'not_completed' | 'unknown';
+                environmentId?: string | undefined;
+            }[];
+            host?: undefined | {
+                machineId: null | string;
+                machines: {
+                    machineId: string;
+                    online: boolean;
+                }[];
+            };
+        };
+        updates?: undefined | {
+            observation: {
+                status: 'drifted' | 'satisfied' | 'unavailable' | 'unsupported' | 'unverifiable';
+                reason?: 'admin_access_unavailable' | 'foreign_effect_conflict' | 'native_effect_failed' | 'needs_admin_to_check' | 'package_manager_busy' | 'plan_changed' | 'private_scope_unenforceable' | 'remove_unsupported' | 'required_fact_unavailable' | 'validation_failed' | undefined;
+                backend?: string | undefined;
+                pendingSecurity?: number | undefined;
+                pendingAll?: number | undefined;
+                rebootNeeded?: boolean | undefined;
+            };
+            plan?: undefined | {
+                v: 1;
+                basis: {
+                    kind: 'adminAccess';
+                    machineId: string;
+                    operationId: string;
+                    previousPolicy: {
+                        version: 1;
+                        mode: 'ask';
+                        administratorUsername: string;
+                    } | {
+                        version: 1;
+                        mode: 'none';
+                    } | {
+                        version: 1;
+                        mode: 'preauthorized';
+                    };
+                    policy: {
+                        version: 1;
+                        mode: 'ask';
+                        administratorUsername: string;
+                    } | {
+                        version: 1;
+                        mode: 'none';
+                    } | {
+                        version: 1;
+                        mode: 'preauthorized';
+                    };
+                } | {
+                    kind: 'agentIsolation';
+                    machineId: string;
+                    enabled: boolean;
+                    expectedPolicy: {
+                        enabled: boolean;
+                        memberProvisioning?: 'linuxUsersV1' | undefined;
+                    };
+                    review?: undefined | {
+                        roots: {
+                            rootId: string;
+                            path: string;
+                        }[];
+                        ancestorAcls: {
+                            path: string;
+                            add: 'x';
+                        }[];
+                        sessionsToReplace: number;
+                        memberProvisioning?: 'linuxUsersV1' | undefined;
+                    };
+                } | {
+                    kind: 'bootstrap';
+                    managedId: string;
+                    operationId: string;
+                    admittedInputDigest: string;
+                } | {
+                    kind: 'reboot';
+                    machineId: string;
+                    operationId: string;
+                } | {
+                    kind: 'setup';
+                    machineId: string;
+                    desiredRevision: number;
+                    selection?: undefined | {
+                        ref: {
+                            pluginId: string;
+                            recipeId: string;
+                            revision: string;
+                        };
+                        inputs: PluginJsonValueV2;
+                    };
+                } | {
+                    kind: 'sshBootstrap';
+                    operationId: string;
+                    admittedInputDigest: string;
+                } | {
+                    kind: 'updates';
+                    machineId: string;
+                    scope: 'all' | 'security';
+                };
+                steps: ({
+                    check: {
+                        executable: string;
+                        args: string[];
+                        unsatisfiedExitCodes: number[];
+                        stdoutJson?: InputPredicate | undefined;
+                    } | {
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'userManagerGroups';
+                        username: string;
+                    };
+                    executable: string;
+                    args: string[];
+                    kind: 'command';
+                    id: string;
+                    remove?: undefined | {
+                        executable: string;
+                        args: string[];
+                    };
+                    affects?: 'dockerEngine' | 'none' | undefined | {
+                        services: string[];
+                    };
+                    requiredFacts?: ({
+                        kind: 'administrator';
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'init';
+                        system: 'launchd' | 'systemd' | 'windowsScm';
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    } | {
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    })[] | undefined;
+                    review?: undefined | {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        description?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    };
+                } | {
+                    kind: 'firewall';
+                    rules: string;
+                    id: string;
+                    exposures?: undefined | {
+                        requirementId: string;
+                        hostAddress: string;
+                        hostPort: number;
+                        protocol: 'tcp' | 'udp';
+                        exposure: 'loopback' | 'privateNetwork' | 'public';
+                        containerPort?: number | undefined;
+                        providerId?: string | undefined;
+                        networkIdentity?: string | undefined;
+                    }[];
+                    requiredFacts?: ({
+                        kind: 'administrator';
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'init';
+                        system: 'launchd' | 'systemd' | 'windowsScm';
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    } | {
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    })[] | undefined;
+                    review?: undefined | {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        description?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    };
+                } | {
+                    kind: 'group';
+                    name: string;
+                    members: string[];
+                    id: string;
+                    state?: 'absent' | 'present' | undefined;
+                    existingOnly?: true | undefined;
+                    requiredFacts?: ({
+                        kind: 'administrator';
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'init';
+                        system: 'launchd' | 'systemd' | 'windowsScm';
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    } | {
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    })[] | undefined;
+                    review?: undefined | {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        description?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    };
+                } | {
+                    kind: 'package';
+                    manager: string;
+                    packages: {
+                        name: string;
+                        version?: string | undefined;
+                        kind?: 'cask' | 'formula' | undefined;
+                        source?: string | undefined;
+                        scope?: 'machine' | 'user' | undefined;
+                    }[];
+                    id: string;
+                    state?: 'absent' | 'present' | undefined;
+                    requiredFacts?: ({
+                        kind: 'administrator';
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'init';
+                        system: 'launchd' | 'systemd' | 'windowsScm';
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    } | {
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    })[] | undefined;
+                    review?: undefined | {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        description?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    };
+                } | {
+                    kind: 'packageSource';
+                    manager: 'apt';
+                    path: string;
+                    keyPath: string;
+                    url: string;
+                    suite: string;
+                    components: string[];
+                    architectures: string[];
+                    keyUrl: string;
+                    keyFingerprint: string;
+                    id: string;
+                    requiredFacts?: ({
+                        kind: 'administrator';
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'init';
+                        system: 'launchd' | 'systemd' | 'windowsScm';
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    } | {
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    })[] | undefined;
+                    review?: undefined | {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        description?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    };
+                } | {
+                    kind: 'pathTraversal';
+                    path: string;
+                    agentUsername: string;
+                    id: string;
+                    requiredFacts?: ({
+                        kind: 'administrator';
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'init';
+                        system: 'launchd' | 'systemd' | 'windowsScm';
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    } | {
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    })[] | undefined;
+                    review?: undefined | {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        description?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    };
+                } | {
+                    kind: 'reboot';
+                    id: string;
+                    requiredFacts?: ({
+                        kind: 'administrator';
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'init';
+                        system: 'launchd' | 'systemd' | 'windowsScm';
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    } | {
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    })[] | undefined;
+                    review?: undefined | {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        description?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    };
+                } | {
+                    kind: 'serviceUnit';
+                    unit: string;
+                    enabled: boolean;
+                    running: boolean;
+                    id: string;
+                    requiredFacts?: ({
+                        kind: 'administrator';
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'init';
+                        system: 'launchd' | 'systemd' | 'windowsScm';
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    } | {
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    })[] | undefined;
+                    review?: undefined | {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        description?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    };
+                } | {
+                    kind: 'user';
+                    username: string;
+                    id: string;
+                    home?: string | undefined;
+                    shell?: string | undefined;
+                    system?: boolean | undefined;
+                    locked?: boolean | undefined;
+                    uid?: number | undefined;
+                    state?: 'absent' | 'present' | undefined;
+                    ownershipMarker?: string | undefined;
+                    supplementaryGroups?: string[] | undefined;
+                    requiredFacts?: ({
+                        kind: 'administrator';
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'init';
+                        system: 'launchd' | 'systemd' | 'windowsScm';
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    } | {
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    })[] | undefined;
+                    review?: undefined | {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        description?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    };
+                } | {
+                    kind: 'workspaceAccess';
+                    path: string;
+                    group: string;
+                    agentUsername: string;
+                    id: string;
+                    requiredFacts?: ({
+                        kind: 'administrator';
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'init';
+                        system: 'launchd' | 'systemd' | 'windowsScm';
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    } | {
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    })[] | undefined;
+                    review?: undefined | {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        description?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    };
+                } | {
+                    owner: string;
+                    group: string;
+                    mode: number;
+                    kind: 'directory';
+                    path: string;
+                    id: string;
+                    preserveExistingOwnership?: true | undefined;
+                    protectedAncestors?: true | undefined;
+                    ownershipMarker?: string | undefined;
+                    requiredFacts?: ({
+                        kind: 'administrator';
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'init';
+                        system: 'launchd' | 'systemd' | 'windowsScm';
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    } | {
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    })[] | undefined;
+                    review?: undefined | {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        description?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    };
+                } | {
+                    owner: string;
+                    group: string;
+                    mode: number;
+                    kind: 'file';
+                    path: string;
+                    id: string;
+                    state?: 'absent' | 'present' | undefined;
+                    content?: undefined | {
+                        kind: 'iniKeys';
+                        sections: Record<string, Record<string, string>>;
+                    } | {
+                        kind: 'jsonMerge';
+                        value: Record<string, JSONType>;
+                    } | {
+                        kind: 'literal';
+                        value: string;
+                    } | {
+                        kind: 'secretGrant';
+                        grantRef: string;
+                    } | {
+                        kind: 'template';
+                        value: string;
+                        variables: Record<string, string>;
+                    };
+                    expectedContentDigest?: string | undefined;
+                    ownershipMarker?: string | undefined;
+                    validate?: 'docker' | 'sudoers' | undefined | {
+                        kind: 'caddy';
+                    } | {
+                        kind: 'docker';
+                    } | {
+                        kind: 'nft';
+                    } | {
+                        kind: 'sshd';
+                        contexts: {
+                            user: string;
+                            host: string;
+                            address: string;
+                        }[];
+                    } | {
+                        kind: 'sudoers';
+                    };
+                    probe?: undefined | {
+                        kind: 'caddy';
+                    } | {
+                        kind: 'docker';
+                    } | {
+                        kind: 'nft';
+                    } | {
+                        kind: 'sshd';
+                        contexts: {
+                            user: string;
+                            host: string;
+                            address: string;
+                        }[];
+                    } | {
+                        kind: 'sudoers';
+                    };
+                    onChange?: undefined | {
+                        serviceStepId: string;
+                        action: 'reload' | 'restart';
+                    };
+                    requiredFacts?: ({
+                        kind: 'administrator';
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'init';
+                        system: 'launchd' | 'systemd' | 'windowsScm';
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    } | {
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    })[] | undefined;
+                    review?: undefined | {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        description?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    };
+                })[];
+                nativeFacts: {
+                    stepId: string;
+                    status: 'drifted' | 'satisfied' | 'unavailable' | 'unsupported';
+                    facts: Record<string, JSONType>;
+                    reason?: string | undefined;
+                }[];
+                planDigest: string;
+                checks?: ({
+                    check: {
+                        executable: string;
+                        args: string[];
+                        unsatisfiedExitCodes: number[];
+                        stdoutJson?: InputPredicate | undefined;
+                    } | {
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'userManagerGroups';
+                        username: string;
+                    };
+                    executable: string;
+                    args: string[];
+                    kind: 'command';
+                    id: string;
+                    remove?: undefined | {
+                        executable: string;
+                        args: string[];
+                    };
+                    affects?: 'dockerEngine' | 'none' | undefined | {
+                        services: string[];
+                    };
+                    requiredFacts?: ({
+                        kind: 'administrator';
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'init';
+                        system: 'launchd' | 'systemd' | 'windowsScm';
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    } | {
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    })[] | undefined;
+                    review?: undefined | {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        description?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    };
+                } | {
+                    kind: 'kernel';
+                    capability: string;
+                    id: string;
+                    architectures?: string[] | undefined;
+                } | {
+                    kind: 'package';
+                    manager: string;
+                    packages: {
+                        name: string;
+                        version?: string | undefined;
+                        kind?: 'cask' | 'formula' | undefined;
+                        source?: string | undefined;
+                        scope?: 'machine' | 'user' | undefined;
+                    }[];
+                    id: string;
+                    state?: 'absent' | 'present' | undefined;
+                    requiredFacts?: ({
+                        kind: 'administrator';
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'init';
+                        system: 'launchd' | 'systemd' | 'windowsScm';
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    } | {
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    })[] | undefined;
+                    review?: undefined | {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        description?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    };
+                })[] | undefined;
+                checkFacts?: undefined | {
+                    stepId: string;
+                    status: 'drifted' | 'satisfied' | 'unavailable' | 'unsupported';
+                    facts: Record<string, JSONType>;
+                    reason?: string | undefined;
+                }[];
+                selectedCheckIds?: string[] | undefined;
+            };
+        };
+    } | {
+        targets: ({
+            homeId: string;
+            machineId: string;
+            plan: {
+                desiredRevision: number;
+                sources: MachineSetupSourceV1;
+                exclusions: {
+                    ref: {
+                        pluginId: string;
+                        recipeId: string;
+                        revision: string;
+                    };
+                    reason: 'not_selected';
+                }[];
+                support: {
+                    sourceIndex: number;
+                    itemIndex: number;
+                    status: 'drifted' | 'satisfied' | 'unavailable' | 'unsupported' | 'unverifiable';
+                    reason?: 'admin_access_unavailable' | 'foreign_effect_conflict' | 'native_effect_failed' | 'needs_admin_to_check' | 'package_manager_busy' | 'plan_changed' | 'private_scope_unenforceable' | 'remove_unsupported' | 'required_fact_unavailable' | 'validation_failed' | undefined;
+                }[];
+                sourceFacts?: MachineSetupSourceFactsMapV1 | undefined;
+                appOrigins?: undefined | {
+                    sourceIndex: number;
+                    itemIndex: number;
+                    kind: 'new' | 'retained' | 'unknown';
+                }[];
+                removeItemKeys?: string[] | undefined;
+                removalOffers?: ({
+                    status: 'eligible';
+                    selected: boolean;
+                    itemKey: string;
+                    item: {
+                        kind: 'setupRecipe';
+                        selection: {
+                            ref: {
+                                pluginId: string;
+                                recipeId: string;
+                                revision: string;
+                            };
+                            inputs: PluginJsonValueV2;
+                        };
+                    } | {
+                        kind: 'softwareRecipe';
+                        selection: {
+                            ref: {
+                                pluginId: string;
+                                recipeId: string;
+                                revision: string;
+                            };
+                            inputs: PluginJsonValueV2;
+                        };
+                    };
+                } | {
+                    status: 'notEligible';
+                    selected: false;
+                    reason: 'needsCheck' | 'preExisting' | 'unknownOrigin' | 'unsupported';
+                    itemKey: string;
+                    item: {
+                        kind: 'setupRecipe';
+                        selection: {
+                            ref: {
+                                pluginId: string;
+                                recipeId: string;
+                                revision: string;
+                            };
+                            inputs: PluginJsonValueV2;
+                        };
+                    } | {
+                        kind: 'softwareRecipe';
+                        selection: {
+                            ref: {
+                                pluginId: string;
+                                recipeId: string;
+                                revision: string;
+                            };
+                            inputs: PluginJsonValueV2;
+                        };
+                    };
+                })[] | undefined;
+                removalPlans?: undefined | {
+                    itemKey: string;
+                    plan: {
+                        v: 1;
+                        basis: {
+                            kind: 'adminAccess';
+                            machineId: string;
+                            operationId: string;
+                            previousPolicy: {
+                                version: 1;
+                                mode: 'ask';
+                                administratorUsername: string;
+                            } | {
+                                version: 1;
+                                mode: 'none';
+                            } | {
+                                version: 1;
+                                mode: 'preauthorized';
+                            };
+                            policy: {
+                                version: 1;
+                                mode: 'ask';
+                                administratorUsername: string;
+                            } | {
+                                version: 1;
+                                mode: 'none';
+                            } | {
+                                version: 1;
+                                mode: 'preauthorized';
+                            };
+                        } | {
+                            kind: 'agentIsolation';
+                            machineId: string;
+                            enabled: boolean;
+                            expectedPolicy: {
+                                enabled: boolean;
+                                memberProvisioning?: 'linuxUsersV1' | undefined;
+                            };
+                            review?: undefined | {
+                                roots: {
+                                    rootId: string;
+                                    path: string;
+                                }[];
+                                ancestorAcls: {
+                                    path: string;
+                                    add: 'x';
+                                }[];
+                                sessionsToReplace: number;
+                                memberProvisioning?: 'linuxUsersV1' | undefined;
+                            };
+                        } | {
+                            kind: 'bootstrap';
+                            managedId: string;
+                            operationId: string;
+                            admittedInputDigest: string;
+                        } | {
+                            kind: 'reboot';
+                            machineId: string;
+                            operationId: string;
+                        } | {
+                            kind: 'setup';
+                            machineId: string;
+                            desiredRevision: number;
+                            selection?: undefined | {
+                                ref: {
+                                    pluginId: string;
+                                    recipeId: string;
+                                    revision: string;
+                                };
+                                inputs: PluginJsonValueV2;
+                            };
+                        } | {
+                            kind: 'sshBootstrap';
+                            operationId: string;
+                            admittedInputDigest: string;
+                        } | {
+                            kind: 'updates';
+                            machineId: string;
+                            scope: 'all' | 'security';
+                        };
+                        steps: ({
+                            check: {
+                                executable: string;
+                                args: string[];
+                                unsatisfiedExitCodes: number[];
+                                stdoutJson?: InputPredicate | undefined;
+                            } | {
+                                kind: 'kernel';
+                                capability: string;
+                                architectures?: string[] | undefined;
+                            } | {
+                                kind: 'userManagerGroups';
+                                username: string;
+                            };
+                            executable: string;
+                            args: string[];
+                            kind: 'command';
+                            id: string;
+                            remove?: undefined | {
+                                executable: string;
+                                args: string[];
+                            };
+                            affects?: 'dockerEngine' | 'none' | undefined | {
+                                services: string[];
+                            };
+                            requiredFacts?: ({
+                                kind: 'administrator';
+                            } | {
+                                kind: 'command';
+                                executable: string;
+                            } | {
+                                kind: 'init';
+                                system: 'launchd' | 'systemd' | 'windowsScm';
+                            } | {
+                                kind: 'journalReadGroup';
+                                group: string;
+                            } | {
+                                kind: 'kernel';
+                                capability: string;
+                                architectures?: string[] | undefined;
+                            } | {
+                                kind: 'packageManager';
+                                manager: string;
+                            } | {
+                                kind: 'path';
+                                path: string;
+                            })[] | undefined;
+                            review?: undefined | {
+                                title: string | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                                description?: string | undefined | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                            };
+                        } | {
+                            kind: 'firewall';
+                            rules: string;
+                            id: string;
+                            exposures?: undefined | {
+                                requirementId: string;
+                                hostAddress: string;
+                                hostPort: number;
+                                protocol: 'tcp' | 'udp';
+                                exposure: 'loopback' | 'privateNetwork' | 'public';
+                                containerPort?: number | undefined;
+                                providerId?: string | undefined;
+                                networkIdentity?: string | undefined;
+                            }[];
+                            requiredFacts?: ({
+                                kind: 'administrator';
+                            } | {
+                                kind: 'command';
+                                executable: string;
+                            } | {
+                                kind: 'init';
+                                system: 'launchd' | 'systemd' | 'windowsScm';
+                            } | {
+                                kind: 'journalReadGroup';
+                                group: string;
+                            } | {
+                                kind: 'kernel';
+                                capability: string;
+                                architectures?: string[] | undefined;
+                            } | {
+                                kind: 'packageManager';
+                                manager: string;
+                            } | {
+                                kind: 'path';
+                                path: string;
+                            })[] | undefined;
+                            review?: undefined | {
+                                title: string | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                                description?: string | undefined | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                            };
+                        } | {
+                            kind: 'group';
+                            name: string;
+                            members: string[];
+                            id: string;
+                            state?: 'absent' | 'present' | undefined;
+                            existingOnly?: true | undefined;
+                            requiredFacts?: ({
+                                kind: 'administrator';
+                            } | {
+                                kind: 'command';
+                                executable: string;
+                            } | {
+                                kind: 'init';
+                                system: 'launchd' | 'systemd' | 'windowsScm';
+                            } | {
+                                kind: 'journalReadGroup';
+                                group: string;
+                            } | {
+                                kind: 'kernel';
+                                capability: string;
+                                architectures?: string[] | undefined;
+                            } | {
+                                kind: 'packageManager';
+                                manager: string;
+                            } | {
+                                kind: 'path';
+                                path: string;
+                            })[] | undefined;
+                            review?: undefined | {
+                                title: string | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                                description?: string | undefined | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                            };
+                        } | {
+                            kind: 'package';
+                            manager: string;
+                            packages: {
+                                name: string;
+                                version?: string | undefined;
+                                kind?: 'cask' | 'formula' | undefined;
+                                source?: string | undefined;
+                                scope?: 'machine' | 'user' | undefined;
+                            }[];
+                            id: string;
+                            state?: 'absent' | 'present' | undefined;
+                            requiredFacts?: ({
+                                kind: 'administrator';
+                            } | {
+                                kind: 'command';
+                                executable: string;
+                            } | {
+                                kind: 'init';
+                                system: 'launchd' | 'systemd' | 'windowsScm';
+                            } | {
+                                kind: 'journalReadGroup';
+                                group: string;
+                            } | {
+                                kind: 'kernel';
+                                capability: string;
+                                architectures?: string[] | undefined;
+                            } | {
+                                kind: 'packageManager';
+                                manager: string;
+                            } | {
+                                kind: 'path';
+                                path: string;
+                            })[] | undefined;
+                            review?: undefined | {
+                                title: string | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                                description?: string | undefined | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                            };
+                        } | {
+                            kind: 'packageSource';
+                            manager: 'apt';
+                            path: string;
+                            keyPath: string;
+                            url: string;
+                            suite: string;
+                            components: string[];
+                            architectures: string[];
+                            keyUrl: string;
+                            keyFingerprint: string;
+                            id: string;
+                            requiredFacts?: ({
+                                kind: 'administrator';
+                            } | {
+                                kind: 'command';
+                                executable: string;
+                            } | {
+                                kind: 'init';
+                                system: 'launchd' | 'systemd' | 'windowsScm';
+                            } | {
+                                kind: 'journalReadGroup';
+                                group: string;
+                            } | {
+                                kind: 'kernel';
+                                capability: string;
+                                architectures?: string[] | undefined;
+                            } | {
+                                kind: 'packageManager';
+                                manager: string;
+                            } | {
+                                kind: 'path';
+                                path: string;
+                            })[] | undefined;
+                            review?: undefined | {
+                                title: string | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                                description?: string | undefined | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                            };
+                        } | {
+                            kind: 'pathTraversal';
+                            path: string;
+                            agentUsername: string;
+                            id: string;
+                            requiredFacts?: ({
+                                kind: 'administrator';
+                            } | {
+                                kind: 'command';
+                                executable: string;
+                            } | {
+                                kind: 'init';
+                                system: 'launchd' | 'systemd' | 'windowsScm';
+                            } | {
+                                kind: 'journalReadGroup';
+                                group: string;
+                            } | {
+                                kind: 'kernel';
+                                capability: string;
+                                architectures?: string[] | undefined;
+                            } | {
+                                kind: 'packageManager';
+                                manager: string;
+                            } | {
+                                kind: 'path';
+                                path: string;
+                            })[] | undefined;
+                            review?: undefined | {
+                                title: string | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                                description?: string | undefined | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                            };
+                        } | {
+                            kind: 'reboot';
+                            id: string;
+                            requiredFacts?: ({
+                                kind: 'administrator';
+                            } | {
+                                kind: 'command';
+                                executable: string;
+                            } | {
+                                kind: 'init';
+                                system: 'launchd' | 'systemd' | 'windowsScm';
+                            } | {
+                                kind: 'journalReadGroup';
+                                group: string;
+                            } | {
+                                kind: 'kernel';
+                                capability: string;
+                                architectures?: string[] | undefined;
+                            } | {
+                                kind: 'packageManager';
+                                manager: string;
+                            } | {
+                                kind: 'path';
+                                path: string;
+                            })[] | undefined;
+                            review?: undefined | {
+                                title: string | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                                description?: string | undefined | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                            };
+                        } | {
+                            kind: 'serviceUnit';
+                            unit: string;
+                            enabled: boolean;
+                            running: boolean;
+                            id: string;
+                            requiredFacts?: ({
+                                kind: 'administrator';
+                            } | {
+                                kind: 'command';
+                                executable: string;
+                            } | {
+                                kind: 'init';
+                                system: 'launchd' | 'systemd' | 'windowsScm';
+                            } | {
+                                kind: 'journalReadGroup';
+                                group: string;
+                            } | {
+                                kind: 'kernel';
+                                capability: string;
+                                architectures?: string[] | undefined;
+                            } | {
+                                kind: 'packageManager';
+                                manager: string;
+                            } | {
+                                kind: 'path';
+                                path: string;
+                            })[] | undefined;
+                            review?: undefined | {
+                                title: string | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                                description?: string | undefined | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                            };
+                        } | {
+                            kind: 'user';
+                            username: string;
+                            id: string;
+                            home?: string | undefined;
+                            shell?: string | undefined;
+                            system?: boolean | undefined;
+                            locked?: boolean | undefined;
+                            uid?: number | undefined;
+                            state?: 'absent' | 'present' | undefined;
+                            ownershipMarker?: string | undefined;
+                            supplementaryGroups?: string[] | undefined;
+                            requiredFacts?: ({
+                                kind: 'administrator';
+                            } | {
+                                kind: 'command';
+                                executable: string;
+                            } | {
+                                kind: 'init';
+                                system: 'launchd' | 'systemd' | 'windowsScm';
+                            } | {
+                                kind: 'journalReadGroup';
+                                group: string;
+                            } | {
+                                kind: 'kernel';
+                                capability: string;
+                                architectures?: string[] | undefined;
+                            } | {
+                                kind: 'packageManager';
+                                manager: string;
+                            } | {
+                                kind: 'path';
+                                path: string;
+                            })[] | undefined;
+                            review?: undefined | {
+                                title: string | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                                description?: string | undefined | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                            };
+                        } | {
+                            kind: 'workspaceAccess';
+                            path: string;
+                            group: string;
+                            agentUsername: string;
+                            id: string;
+                            requiredFacts?: ({
+                                kind: 'administrator';
+                            } | {
+                                kind: 'command';
+                                executable: string;
+                            } | {
+                                kind: 'init';
+                                system: 'launchd' | 'systemd' | 'windowsScm';
+                            } | {
+                                kind: 'journalReadGroup';
+                                group: string;
+                            } | {
+                                kind: 'kernel';
+                                capability: string;
+                                architectures?: string[] | undefined;
+                            } | {
+                                kind: 'packageManager';
+                                manager: string;
+                            } | {
+                                kind: 'path';
+                                path: string;
+                            })[] | undefined;
+                            review?: undefined | {
+                                title: string | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                                description?: string | undefined | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                            };
+                        } | {
+                            owner: string;
+                            group: string;
+                            mode: number;
+                            kind: 'directory';
+                            path: string;
+                            id: string;
+                            preserveExistingOwnership?: true | undefined;
+                            protectedAncestors?: true | undefined;
+                            ownershipMarker?: string | undefined;
+                            requiredFacts?: ({
+                                kind: 'administrator';
+                            } | {
+                                kind: 'command';
+                                executable: string;
+                            } | {
+                                kind: 'init';
+                                system: 'launchd' | 'systemd' | 'windowsScm';
+                            } | {
+                                kind: 'journalReadGroup';
+                                group: string;
+                            } | {
+                                kind: 'kernel';
+                                capability: string;
+                                architectures?: string[] | undefined;
+                            } | {
+                                kind: 'packageManager';
+                                manager: string;
+                            } | {
+                                kind: 'path';
+                                path: string;
+                            })[] | undefined;
+                            review?: undefined | {
+                                title: string | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                                description?: string | undefined | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                            };
+                        } | {
+                            owner: string;
+                            group: string;
+                            mode: number;
+                            kind: 'file';
+                            path: string;
+                            id: string;
+                            state?: 'absent' | 'present' | undefined;
+                            content?: undefined | {
+                                kind: 'iniKeys';
+                                sections: Record<string, Record<string, string>>;
+                            } | {
+                                kind: 'jsonMerge';
+                                value: Record<string, JSONType>;
+                            } | {
+                                kind: 'literal';
+                                value: string;
+                            } | {
+                                kind: 'secretGrant';
+                                grantRef: string;
+                            } | {
+                                kind: 'template';
+                                value: string;
+                                variables: Record<string, string>;
+                            };
+                            expectedContentDigest?: string | undefined;
+                            ownershipMarker?: string | undefined;
+                            validate?: 'docker' | 'sudoers' | undefined | {
+                                kind: 'caddy';
+                            } | {
+                                kind: 'docker';
+                            } | {
+                                kind: 'nft';
+                            } | {
+                                kind: 'sshd';
+                                contexts: {
+                                    user: string;
+                                    host: string;
+                                    address: string;
+                                }[];
+                            } | {
+                                kind: 'sudoers';
+                            };
+                            probe?: undefined | {
+                                kind: 'caddy';
+                            } | {
+                                kind: 'docker';
+                            } | {
+                                kind: 'nft';
+                            } | {
+                                kind: 'sshd';
+                                contexts: {
+                                    user: string;
+                                    host: string;
+                                    address: string;
+                                }[];
+                            } | {
+                                kind: 'sudoers';
+                            };
+                            onChange?: undefined | {
+                                serviceStepId: string;
+                                action: 'reload' | 'restart';
+                            };
+                            requiredFacts?: ({
+                                kind: 'administrator';
+                            } | {
+                                kind: 'command';
+                                executable: string;
+                            } | {
+                                kind: 'init';
+                                system: 'launchd' | 'systemd' | 'windowsScm';
+                            } | {
+                                kind: 'journalReadGroup';
+                                group: string;
+                            } | {
+                                kind: 'kernel';
+                                capability: string;
+                                architectures?: string[] | undefined;
+                            } | {
+                                kind: 'packageManager';
+                                manager: string;
+                            } | {
+                                kind: 'path';
+                                path: string;
+                            })[] | undefined;
+                            review?: undefined | {
+                                title: string | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                                description?: string | undefined | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                            };
+                        })[];
+                        nativeFacts: {
+                            stepId: string;
+                            status: 'drifted' | 'satisfied' | 'unavailable' | 'unsupported';
+                            facts: Record<string, JSONType>;
+                            reason?: string | undefined;
+                        }[];
+                        planDigest: string;
+                        checks?: ({
+                            check: {
+                                executable: string;
+                                args: string[];
+                                unsatisfiedExitCodes: number[];
+                                stdoutJson?: InputPredicate | undefined;
+                            } | {
+                                kind: 'kernel';
+                                capability: string;
+                                architectures?: string[] | undefined;
+                            } | {
+                                kind: 'userManagerGroups';
+                                username: string;
+                            };
+                            executable: string;
+                            args: string[];
+                            kind: 'command';
+                            id: string;
+                            remove?: undefined | {
+                                executable: string;
+                                args: string[];
+                            };
+                            affects?: 'dockerEngine' | 'none' | undefined | {
+                                services: string[];
+                            };
+                            requiredFacts?: ({
+                                kind: 'administrator';
+                            } | {
+                                kind: 'command';
+                                executable: string;
+                            } | {
+                                kind: 'init';
+                                system: 'launchd' | 'systemd' | 'windowsScm';
+                            } | {
+                                kind: 'journalReadGroup';
+                                group: string;
+                            } | {
+                                kind: 'kernel';
+                                capability: string;
+                                architectures?: string[] | undefined;
+                            } | {
+                                kind: 'packageManager';
+                                manager: string;
+                            } | {
+                                kind: 'path';
+                                path: string;
+                            })[] | undefined;
+                            review?: undefined | {
+                                title: string | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                                description?: string | undefined | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                            };
+                        } | {
+                            kind: 'kernel';
+                            capability: string;
+                            id: string;
+                            architectures?: string[] | undefined;
+                        } | {
+                            kind: 'package';
+                            manager: string;
+                            packages: {
+                                name: string;
+                                version?: string | undefined;
+                                kind?: 'cask' | 'formula' | undefined;
+                                source?: string | undefined;
+                                scope?: 'machine' | 'user' | undefined;
+                            }[];
+                            id: string;
+                            state?: 'absent' | 'present' | undefined;
+                            requiredFacts?: ({
+                                kind: 'administrator';
+                            } | {
+                                kind: 'command';
+                                executable: string;
+                            } | {
+                                kind: 'init';
+                                system: 'launchd' | 'systemd' | 'windowsScm';
+                            } | {
+                                kind: 'journalReadGroup';
+                                group: string;
+                            } | {
+                                kind: 'kernel';
+                                capability: string;
+                                architectures?: string[] | undefined;
+                            } | {
+                                kind: 'packageManager';
+                                manager: string;
+                            } | {
+                                kind: 'path';
+                                path: string;
+                            })[] | undefined;
+                            review?: undefined | {
+                                title: string | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                                description?: string | undefined | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                            };
+                        })[] | undefined;
+                        checkFacts?: undefined | {
+                            stepId: string;
+                            status: 'drifted' | 'satisfied' | 'unavailable' | 'unsupported';
+                            facts: Record<string, JSONType>;
+                            reason?: string | undefined;
+                        }[];
+                        selectedCheckIds?: string[] | undefined;
+                    };
+                }[];
+                recipeTitles?: undefined | {
+                    ref: {
+                        pluginId: string;
+                        recipeId: string;
+                        revision: string;
+                    };
+                    title: string | {
+                        key: string;
+                        fallback: string;
+                        params?: Record<string, number | string> | undefined;
+                    };
+                }[];
+                recipePlans?: undefined | {
+                    sourceIndex: number;
+                    itemIndex: number;
+                    plan: {
+                        v: 1;
+                        basis: {
+                            kind: 'adminAccess';
+                            machineId: string;
+                            operationId: string;
+                            previousPolicy: {
+                                version: 1;
+                                mode: 'ask';
+                                administratorUsername: string;
+                            } | {
+                                version: 1;
+                                mode: 'none';
+                            } | {
+                                version: 1;
+                                mode: 'preauthorized';
+                            };
+                            policy: {
+                                version: 1;
+                                mode: 'ask';
+                                administratorUsername: string;
+                            } | {
+                                version: 1;
+                                mode: 'none';
+                            } | {
+                                version: 1;
+                                mode: 'preauthorized';
+                            };
+                        } | {
+                            kind: 'agentIsolation';
+                            machineId: string;
+                            enabled: boolean;
+                            expectedPolicy: {
+                                enabled: boolean;
+                                memberProvisioning?: 'linuxUsersV1' | undefined;
+                            };
+                            review?: undefined | {
+                                roots: {
+                                    rootId: string;
+                                    path: string;
+                                }[];
+                                ancestorAcls: {
+                                    path: string;
+                                    add: 'x';
+                                }[];
+                                sessionsToReplace: number;
+                                memberProvisioning?: 'linuxUsersV1' | undefined;
+                            };
+                        } | {
+                            kind: 'bootstrap';
+                            managedId: string;
+                            operationId: string;
+                            admittedInputDigest: string;
+                        } | {
+                            kind: 'reboot';
+                            machineId: string;
+                            operationId: string;
+                        } | {
+                            kind: 'setup';
+                            machineId: string;
+                            desiredRevision: number;
+                            selection?: undefined | {
+                                ref: {
+                                    pluginId: string;
+                                    recipeId: string;
+                                    revision: string;
+                                };
+                                inputs: PluginJsonValueV2;
+                            };
+                        } | {
+                            kind: 'sshBootstrap';
+                            operationId: string;
+                            admittedInputDigest: string;
+                        } | {
+                            kind: 'updates';
+                            machineId: string;
+                            scope: 'all' | 'security';
+                        };
+                        steps: ({
+                            check: {
+                                executable: string;
+                                args: string[];
+                                unsatisfiedExitCodes: number[];
+                                stdoutJson?: InputPredicate | undefined;
+                            } | {
+                                kind: 'kernel';
+                                capability: string;
+                                architectures?: string[] | undefined;
+                            } | {
+                                kind: 'userManagerGroups';
+                                username: string;
+                            };
+                            executable: string;
+                            args: string[];
+                            kind: 'command';
+                            id: string;
+                            remove?: undefined | {
+                                executable: string;
+                                args: string[];
+                            };
+                            affects?: 'dockerEngine' | 'none' | undefined | {
+                                services: string[];
+                            };
+                            requiredFacts?: ({
+                                kind: 'administrator';
+                            } | {
+                                kind: 'command';
+                                executable: string;
+                            } | {
+                                kind: 'init';
+                                system: 'launchd' | 'systemd' | 'windowsScm';
+                            } | {
+                                kind: 'journalReadGroup';
+                                group: string;
+                            } | {
+                                kind: 'kernel';
+                                capability: string;
+                                architectures?: string[] | undefined;
+                            } | {
+                                kind: 'packageManager';
+                                manager: string;
+                            } | {
+                                kind: 'path';
+                                path: string;
+                            })[] | undefined;
+                            review?: undefined | {
+                                title: string | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                                description?: string | undefined | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                            };
+                        } | {
+                            kind: 'firewall';
+                            rules: string;
+                            id: string;
+                            exposures?: undefined | {
+                                requirementId: string;
+                                hostAddress: string;
+                                hostPort: number;
+                                protocol: 'tcp' | 'udp';
+                                exposure: 'loopback' | 'privateNetwork' | 'public';
+                                containerPort?: number | undefined;
+                                providerId?: string | undefined;
+                                networkIdentity?: string | undefined;
+                            }[];
+                            requiredFacts?: ({
+                                kind: 'administrator';
+                            } | {
+                                kind: 'command';
+                                executable: string;
+                            } | {
+                                kind: 'init';
+                                system: 'launchd' | 'systemd' | 'windowsScm';
+                            } | {
+                                kind: 'journalReadGroup';
+                                group: string;
+                            } | {
+                                kind: 'kernel';
+                                capability: string;
+                                architectures?: string[] | undefined;
+                            } | {
+                                kind: 'packageManager';
+                                manager: string;
+                            } | {
+                                kind: 'path';
+                                path: string;
+                            })[] | undefined;
+                            review?: undefined | {
+                                title: string | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                                description?: string | undefined | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                            };
+                        } | {
+                            kind: 'group';
+                            name: string;
+                            members: string[];
+                            id: string;
+                            state?: 'absent' | 'present' | undefined;
+                            existingOnly?: true | undefined;
+                            requiredFacts?: ({
+                                kind: 'administrator';
+                            } | {
+                                kind: 'command';
+                                executable: string;
+                            } | {
+                                kind: 'init';
+                                system: 'launchd' | 'systemd' | 'windowsScm';
+                            } | {
+                                kind: 'journalReadGroup';
+                                group: string;
+                            } | {
+                                kind: 'kernel';
+                                capability: string;
+                                architectures?: string[] | undefined;
+                            } | {
+                                kind: 'packageManager';
+                                manager: string;
+                            } | {
+                                kind: 'path';
+                                path: string;
+                            })[] | undefined;
+                            review?: undefined | {
+                                title: string | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                                description?: string | undefined | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                            };
+                        } | {
+                            kind: 'package';
+                            manager: string;
+                            packages: {
+                                name: string;
+                                version?: string | undefined;
+                                kind?: 'cask' | 'formula' | undefined;
+                                source?: string | undefined;
+                                scope?: 'machine' | 'user' | undefined;
+                            }[];
+                            id: string;
+                            state?: 'absent' | 'present' | undefined;
+                            requiredFacts?: ({
+                                kind: 'administrator';
+                            } | {
+                                kind: 'command';
+                                executable: string;
+                            } | {
+                                kind: 'init';
+                                system: 'launchd' | 'systemd' | 'windowsScm';
+                            } | {
+                                kind: 'journalReadGroup';
+                                group: string;
+                            } | {
+                                kind: 'kernel';
+                                capability: string;
+                                architectures?: string[] | undefined;
+                            } | {
+                                kind: 'packageManager';
+                                manager: string;
+                            } | {
+                                kind: 'path';
+                                path: string;
+                            })[] | undefined;
+                            review?: undefined | {
+                                title: string | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                                description?: string | undefined | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                            };
+                        } | {
+                            kind: 'packageSource';
+                            manager: 'apt';
+                            path: string;
+                            keyPath: string;
+                            url: string;
+                            suite: string;
+                            components: string[];
+                            architectures: string[];
+                            keyUrl: string;
+                            keyFingerprint: string;
+                            id: string;
+                            requiredFacts?: ({
+                                kind: 'administrator';
+                            } | {
+                                kind: 'command';
+                                executable: string;
+                            } | {
+                                kind: 'init';
+                                system: 'launchd' | 'systemd' | 'windowsScm';
+                            } | {
+                                kind: 'journalReadGroup';
+                                group: string;
+                            } | {
+                                kind: 'kernel';
+                                capability: string;
+                                architectures?: string[] | undefined;
+                            } | {
+                                kind: 'packageManager';
+                                manager: string;
+                            } | {
+                                kind: 'path';
+                                path: string;
+                            })[] | undefined;
+                            review?: undefined | {
+                                title: string | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                                description?: string | undefined | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                            };
+                        } | {
+                            kind: 'pathTraversal';
+                            path: string;
+                            agentUsername: string;
+                            id: string;
+                            requiredFacts?: ({
+                                kind: 'administrator';
+                            } | {
+                                kind: 'command';
+                                executable: string;
+                            } | {
+                                kind: 'init';
+                                system: 'launchd' | 'systemd' | 'windowsScm';
+                            } | {
+                                kind: 'journalReadGroup';
+                                group: string;
+                            } | {
+                                kind: 'kernel';
+                                capability: string;
+                                architectures?: string[] | undefined;
+                            } | {
+                                kind: 'packageManager';
+                                manager: string;
+                            } | {
+                                kind: 'path';
+                                path: string;
+                            })[] | undefined;
+                            review?: undefined | {
+                                title: string | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                                description?: string | undefined | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                            };
+                        } | {
+                            kind: 'reboot';
+                            id: string;
+                            requiredFacts?: ({
+                                kind: 'administrator';
+                            } | {
+                                kind: 'command';
+                                executable: string;
+                            } | {
+                                kind: 'init';
+                                system: 'launchd' | 'systemd' | 'windowsScm';
+                            } | {
+                                kind: 'journalReadGroup';
+                                group: string;
+                            } | {
+                                kind: 'kernel';
+                                capability: string;
+                                architectures?: string[] | undefined;
+                            } | {
+                                kind: 'packageManager';
+                                manager: string;
+                            } | {
+                                kind: 'path';
+                                path: string;
+                            })[] | undefined;
+                            review?: undefined | {
+                                title: string | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                                description?: string | undefined | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                            };
+                        } | {
+                            kind: 'serviceUnit';
+                            unit: string;
+                            enabled: boolean;
+                            running: boolean;
+                            id: string;
+                            requiredFacts?: ({
+                                kind: 'administrator';
+                            } | {
+                                kind: 'command';
+                                executable: string;
+                            } | {
+                                kind: 'init';
+                                system: 'launchd' | 'systemd' | 'windowsScm';
+                            } | {
+                                kind: 'journalReadGroup';
+                                group: string;
+                            } | {
+                                kind: 'kernel';
+                                capability: string;
+                                architectures?: string[] | undefined;
+                            } | {
+                                kind: 'packageManager';
+                                manager: string;
+                            } | {
+                                kind: 'path';
+                                path: string;
+                            })[] | undefined;
+                            review?: undefined | {
+                                title: string | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                                description?: string | undefined | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                            };
+                        } | {
+                            kind: 'user';
+                            username: string;
+                            id: string;
+                            home?: string | undefined;
+                            shell?: string | undefined;
+                            system?: boolean | undefined;
+                            locked?: boolean | undefined;
+                            uid?: number | undefined;
+                            state?: 'absent' | 'present' | undefined;
+                            ownershipMarker?: string | undefined;
+                            supplementaryGroups?: string[] | undefined;
+                            requiredFacts?: ({
+                                kind: 'administrator';
+                            } | {
+                                kind: 'command';
+                                executable: string;
+                            } | {
+                                kind: 'init';
+                                system: 'launchd' | 'systemd' | 'windowsScm';
+                            } | {
+                                kind: 'journalReadGroup';
+                                group: string;
+                            } | {
+                                kind: 'kernel';
+                                capability: string;
+                                architectures?: string[] | undefined;
+                            } | {
+                                kind: 'packageManager';
+                                manager: string;
+                            } | {
+                                kind: 'path';
+                                path: string;
+                            })[] | undefined;
+                            review?: undefined | {
+                                title: string | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                                description?: string | undefined | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                            };
+                        } | {
+                            kind: 'workspaceAccess';
+                            path: string;
+                            group: string;
+                            agentUsername: string;
+                            id: string;
+                            requiredFacts?: ({
+                                kind: 'administrator';
+                            } | {
+                                kind: 'command';
+                                executable: string;
+                            } | {
+                                kind: 'init';
+                                system: 'launchd' | 'systemd' | 'windowsScm';
+                            } | {
+                                kind: 'journalReadGroup';
+                                group: string;
+                            } | {
+                                kind: 'kernel';
+                                capability: string;
+                                architectures?: string[] | undefined;
+                            } | {
+                                kind: 'packageManager';
+                                manager: string;
+                            } | {
+                                kind: 'path';
+                                path: string;
+                            })[] | undefined;
+                            review?: undefined | {
+                                title: string | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                                description?: string | undefined | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                            };
+                        } | {
+                            owner: string;
+                            group: string;
+                            mode: number;
+                            kind: 'directory';
+                            path: string;
+                            id: string;
+                            preserveExistingOwnership?: true | undefined;
+                            protectedAncestors?: true | undefined;
+                            ownershipMarker?: string | undefined;
+                            requiredFacts?: ({
+                                kind: 'administrator';
+                            } | {
+                                kind: 'command';
+                                executable: string;
+                            } | {
+                                kind: 'init';
+                                system: 'launchd' | 'systemd' | 'windowsScm';
+                            } | {
+                                kind: 'journalReadGroup';
+                                group: string;
+                            } | {
+                                kind: 'kernel';
+                                capability: string;
+                                architectures?: string[] | undefined;
+                            } | {
+                                kind: 'packageManager';
+                                manager: string;
+                            } | {
+                                kind: 'path';
+                                path: string;
+                            })[] | undefined;
+                            review?: undefined | {
+                                title: string | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                                description?: string | undefined | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                            };
+                        } | {
+                            owner: string;
+                            group: string;
+                            mode: number;
+                            kind: 'file';
+                            path: string;
+                            id: string;
+                            state?: 'absent' | 'present' | undefined;
+                            content?: undefined | {
+                                kind: 'iniKeys';
+                                sections: Record<string, Record<string, string>>;
+                            } | {
+                                kind: 'jsonMerge';
+                                value: Record<string, JSONType>;
+                            } | {
+                                kind: 'literal';
+                                value: string;
+                            } | {
+                                kind: 'secretGrant';
+                                grantRef: string;
+                            } | {
+                                kind: 'template';
+                                value: string;
+                                variables: Record<string, string>;
+                            };
+                            expectedContentDigest?: string | undefined;
+                            ownershipMarker?: string | undefined;
+                            validate?: 'docker' | 'sudoers' | undefined | {
+                                kind: 'caddy';
+                            } | {
+                                kind: 'docker';
+                            } | {
+                                kind: 'nft';
+                            } | {
+                                kind: 'sshd';
+                                contexts: {
+                                    user: string;
+                                    host: string;
+                                    address: string;
+                                }[];
+                            } | {
+                                kind: 'sudoers';
+                            };
+                            probe?: undefined | {
+                                kind: 'caddy';
+                            } | {
+                                kind: 'docker';
+                            } | {
+                                kind: 'nft';
+                            } | {
+                                kind: 'sshd';
+                                contexts: {
+                                    user: string;
+                                    host: string;
+                                    address: string;
+                                }[];
+                            } | {
+                                kind: 'sudoers';
+                            };
+                            onChange?: undefined | {
+                                serviceStepId: string;
+                                action: 'reload' | 'restart';
+                            };
+                            requiredFacts?: ({
+                                kind: 'administrator';
+                            } | {
+                                kind: 'command';
+                                executable: string;
+                            } | {
+                                kind: 'init';
+                                system: 'launchd' | 'systemd' | 'windowsScm';
+                            } | {
+                                kind: 'journalReadGroup';
+                                group: string;
+                            } | {
+                                kind: 'kernel';
+                                capability: string;
+                                architectures?: string[] | undefined;
+                            } | {
+                                kind: 'packageManager';
+                                manager: string;
+                            } | {
+                                kind: 'path';
+                                path: string;
+                            })[] | undefined;
+                            review?: undefined | {
+                                title: string | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                                description?: string | undefined | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                            };
+                        })[];
+                        nativeFacts: {
+                            stepId: string;
+                            status: 'drifted' | 'satisfied' | 'unavailable' | 'unsupported';
+                            facts: Record<string, JSONType>;
+                            reason?: string | undefined;
+                        }[];
+                        planDigest: string;
+                        checks?: ({
+                            check: {
+                                executable: string;
+                                args: string[];
+                                unsatisfiedExitCodes: number[];
+                                stdoutJson?: InputPredicate | undefined;
+                            } | {
+                                kind: 'kernel';
+                                capability: string;
+                                architectures?: string[] | undefined;
+                            } | {
+                                kind: 'userManagerGroups';
+                                username: string;
+                            };
+                            executable: string;
+                            args: string[];
+                            kind: 'command';
+                            id: string;
+                            remove?: undefined | {
+                                executable: string;
+                                args: string[];
+                            };
+                            affects?: 'dockerEngine' | 'none' | undefined | {
+                                services: string[];
+                            };
+                            requiredFacts?: ({
+                                kind: 'administrator';
+                            } | {
+                                kind: 'command';
+                                executable: string;
+                            } | {
+                                kind: 'init';
+                                system: 'launchd' | 'systemd' | 'windowsScm';
+                            } | {
+                                kind: 'journalReadGroup';
+                                group: string;
+                            } | {
+                                kind: 'kernel';
+                                capability: string;
+                                architectures?: string[] | undefined;
+                            } | {
+                                kind: 'packageManager';
+                                manager: string;
+                            } | {
+                                kind: 'path';
+                                path: string;
+                            })[] | undefined;
+                            review?: undefined | {
+                                title: string | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                                description?: string | undefined | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                            };
+                        } | {
+                            kind: 'kernel';
+                            capability: string;
+                            id: string;
+                            architectures?: string[] | undefined;
+                        } | {
+                            kind: 'package';
+                            manager: string;
+                            packages: {
+                                name: string;
+                                version?: string | undefined;
+                                kind?: 'cask' | 'formula' | undefined;
+                                source?: string | undefined;
+                                scope?: 'machine' | 'user' | undefined;
+                            }[];
+                            id: string;
+                            state?: 'absent' | 'present' | undefined;
+                            requiredFacts?: ({
+                                kind: 'administrator';
+                            } | {
+                                kind: 'command';
+                                executable: string;
+                            } | {
+                                kind: 'init';
+                                system: 'launchd' | 'systemd' | 'windowsScm';
+                            } | {
+                                kind: 'journalReadGroup';
+                                group: string;
+                            } | {
+                                kind: 'kernel';
+                                capability: string;
+                                architectures?: string[] | undefined;
+                            } | {
+                                kind: 'packageManager';
+                                manager: string;
+                            } | {
+                                kind: 'path';
+                                path: string;
+                            })[] | undefined;
+                            review?: undefined | {
+                                title: string | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                                description?: string | undefined | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                            };
+                        })[] | undefined;
+                        checkFacts?: undefined | {
+                            stepId: string;
+                            status: 'drifted' | 'satisfied' | 'unavailable' | 'unsupported';
+                            facts: Record<string, JSONType>;
+                            reason?: string | undefined;
+                        }[];
+                        selectedCheckIds?: string[] | undefined;
+                    };
+                }[];
+                appChildren?: ({
+                    sourceIndex: number;
+                    itemIndex: number;
+                    actionId: 'deployments.deploy';
+                    input: {
+                        contentArtifactId: string;
+                        contentHeaderVersion: number;
+                        contentBodyVersion: number;
+                        targetLinkId: string;
+                        expectedTargetLinkRevision: number;
+                        requestKey: string;
+                        environmentId: string;
+                        expectedRevision: number;
+                        serverId: string;
+                        whenBusy?: 'refuse' | 'supersede' | undefined;
+                        pendingDeploy?: undefined | {
+                            t: 'encrypted';
+                            c: string;
+                        } | {
+                            t: 'plain';
+                            v: {
+                                sourceIntent: {
+                                    kind: 'repository';
+                                    projectSourceId: string;
+                                    sourceRevision: number;
+                                    sha: string;
+                                    compose: {
+                                        profiles: string[];
+                                        services: string[];
+                                        path: string;
+                                        primaryService?: string | undefined;
+                                    };
+                                    pullRequestHead?: undefined | {
+                                        number: number;
+                                    };
+                                } | {
+                                    profiles: string[];
+                                    services: string[];
+                                    kind: 'stored';
+                                    contentRevision: number;
+                                    composeDigest: string;
+                                    document: string;
+                                    primaryService?: string | undefined;
+                                };
+                                requestKey: string;
+                                targetLinkId: string;
+                                actionOperationId: string;
+                                sourceMethod?: 'gitIntegration' | 'upload' | undefined;
+                                triggerOccurrence?: undefined | {
+                                    automationId: string;
+                                    triggerId: string;
+                                    triggerRevision: number;
+                                    occurrenceKey: string;
+                                };
+                            };
+                        };
+                    };
+                } | {
+                    sourceIndex: number;
+                    itemIndex: number;
+                    actionId: 'deployments.environments.create';
+                    input: {
+                        protection: 'nonProduction' | 'production';
+                        purpose: 'preview' | 'standard';
+                        deployerMode: 'chosen' | 'managers' | 'members';
+                        controllerMachineId: string;
+                        contentArtifactId: string;
+                        contentHeaderVersion: number;
+                        contentBodyVersion: number;
+                        requestKey: string;
+                        serverId: string;
+                        projectSourceId?: string | undefined;
+                        newProject?: undefined | {
+                            requestKey: string;
+                            name: string;
+                            owner: {
+                                kind: 'account';
+                                accountId: string;
+                            } | {
+                                kind: 'team';
+                                teamId: string;
+                            };
+                        };
+                        deployerPrincipals?: undefined | {
+                            principalKind: 'account' | 'teamGroup';
+                            principalId: string;
+                        }[];
+                        buildMachineId?: string | undefined;
+                        managedRetention?: 'keep' | 'until-delete' | undefined;
+                        preview?: undefined | {
+                            templateEnvironmentId: string;
+                            expectedTemplateRevision: number;
+                            pullRequestId: string;
+                            runtimeTargetLinkId: string;
+                        };
+                        firstTargetLink?: undefined | {
+                            machines: {
+                                machineId: string;
+                                installationId: string;
+                            }[];
+                            contentArtifactId: string;
+                            contentHeaderVersion: number;
+                            contentBodyVersion: number;
+                        };
+                        copyFrom?: undefined | {
+                            environmentId: string;
+                            expectedRevision: number;
+                            choices: {
+                                secrets: ({
+                                    kind: 'omit';
+                                    binding: {
+                                        purpose: 'backupDestination';
+                                        configKey: 'destination';
+                                        role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
+                                    } | {
+                                        purpose: 'domainCredential';
+                                        domainId: string;
+                                        role: 'basicAuth' | 'certificateChain' | 'privateKey';
+                                    } | {
+                                        purpose: 'registry';
+                                        targetLinkId: string;
+                                        registryOrigin: string;
+                                    } | {
+                                        purpose: 'variable';
+                                        name: string;
+                                        phase: 'build' | 'runtime';
+                                    } | {
+                                        service: string;
+                                        purpose: 'dataRole';
+                                        role: 'readOnlyPassword';
+                                    } | {
+                                        targetLinkId: string;
+                                        purpose: 'dataRole';
+                                        role: 'readOnlyPassword';
+                                    };
+                                } | {
+                                    kind: 'rebind';
+                                    source: {
+                                        kind: 'secret';
+                                        ref: string;
+                                        resourceRevision: number;
+                                    };
+                                    binding: {
+                                        purpose: 'backupDestination';
+                                        configKey: 'destination';
+                                        role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
+                                    } | {
+                                        purpose: 'domainCredential';
+                                        domainId: string;
+                                        role: 'basicAuth' | 'certificateChain' | 'privateKey';
+                                    } | {
+                                        purpose: 'registry';
+                                        targetLinkId: string;
+                                        registryOrigin: string;
+                                    } | {
+                                        purpose: 'variable';
+                                        name: string;
+                                        phase: 'build' | 'runtime';
+                                    } | {
+                                        service: string;
+                                        purpose: 'dataRole';
+                                        role: 'readOnlyPassword';
+                                    } | {
+                                        targetLinkId: string;
+                                        purpose: 'dataRole';
+                                        role: 'readOnlyPassword';
+                                    };
+                                } | {
+                                    kind: 'useSameReference';
+                                    binding: {
+                                        purpose: 'backupDestination';
+                                        configKey: 'destination';
+                                        role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
+                                    } | {
+                                        purpose: 'domainCredential';
+                                        domainId: string;
+                                        role: 'basicAuth' | 'certificateChain' | 'privateKey';
+                                    } | {
+                                        purpose: 'registry';
+                                        targetLinkId: string;
+                                        registryOrigin: string;
+                                    } | {
+                                        purpose: 'variable';
+                                        name: string;
+                                        phase: 'build' | 'runtime';
+                                    } | {
+                                        service: string;
+                                        purpose: 'dataRole';
+                                        role: 'readOnlyPassword';
+                                    } | {
+                                        targetLinkId: string;
+                                        purpose: 'dataRole';
+                                        role: 'readOnlyPassword';
+                                    };
+                                })[];
+                                values: ({
+                                    kind: 'include';
+                                    binding: {
+                                        purpose: 'backupDestination';
+                                        configKey: 'destination';
+                                        role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
+                                    } | {
+                                        purpose: 'domainCredential';
+                                        domainId: string;
+                                        role: 'basicAuth' | 'certificateChain' | 'privateKey';
+                                    } | {
+                                        purpose: 'registry';
+                                        targetLinkId: string;
+                                        registryOrigin: string;
+                                    } | {
+                                        purpose: 'variable';
+                                        name: string;
+                                        phase: 'build' | 'runtime';
+                                    } | {
+                                        service: string;
+                                        purpose: 'dataRole';
+                                        role: 'readOnlyPassword';
+                                    } | {
+                                        targetLinkId: string;
+                                        purpose: 'dataRole';
+                                        role: 'readOnlyPassword';
+                                    };
+                                } | {
+                                    kind: 'omit';
+                                    binding: {
+                                        purpose: 'backupDestination';
+                                        configKey: 'destination';
+                                        role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
+                                    } | {
+                                        purpose: 'domainCredential';
+                                        domainId: string;
+                                        role: 'basicAuth' | 'certificateChain' | 'privateKey';
+                                    } | {
+                                        purpose: 'registry';
+                                        targetLinkId: string;
+                                        registryOrigin: string;
+                                    } | {
+                                        purpose: 'variable';
+                                        name: string;
+                                        phase: 'build' | 'runtime';
+                                    } | {
+                                        service: string;
+                                        purpose: 'dataRole';
+                                        role: 'readOnlyPassword';
+                                    } | {
+                                        targetLinkId: string;
+                                        purpose: 'dataRole';
+                                        role: 'readOnlyPassword';
+                                    };
+                                } | {
+                                    kind: 'remap';
+                                    source: {
+                                        kind: 'deploymentFact';
+                                        fact: 'commitSha' | 'deploymentId' | 'environmentName' | 'primaryUrl';
+                                    } | {
+                                        kind: 'deploymentFact';
+                                        fact: 'domainUrl';
+                                        domainId: string;
+                                    } | {
+                                        kind: 'reference';
+                                        environmentId: string;
+                                        export: string;
+                                        via: 'auto' | 'privateNetwork' | 'public';
+                                    } | {
+                                        kind: 'value';
+                                        value: string;
+                                    };
+                                    binding: {
+                                        purpose: 'backupDestination';
+                                        configKey: 'destination';
+                                        role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
+                                    } | {
+                                        purpose: 'domainCredential';
+                                        domainId: string;
+                                        role: 'basicAuth' | 'certificateChain' | 'privateKey';
+                                    } | {
+                                        purpose: 'registry';
+                                        targetLinkId: string;
+                                        registryOrigin: string;
+                                    } | {
+                                        purpose: 'variable';
+                                        name: string;
+                                        phase: 'build' | 'runtime';
+                                    } | {
+                                        service: string;
+                                        purpose: 'dataRole';
+                                        role: 'readOnlyPassword';
+                                    } | {
+                                        targetLinkId: string;
+                                        purpose: 'dataRole';
+                                        role: 'readOnlyPassword';
+                                    };
+                                })[];
+                                data: {
+                                    targetLinkId: string;
+                                    kind: 'createEmpty' | 'omit' | 'restoreBackup' | 'reuse';
+                                }[];
+                                retainPreviousDeployments?: 'copy' | 'default' | undefined;
+                            };
+                        };
+                        copyPlan?: undefined | {
+                            bindings: ({
+                                access: 'pull' | 'pushPull';
+                                source: {
+                                    kind: 'secret';
+                                    ref: string;
+                                    resourceRevision: number;
+                                };
+                                purpose: 'registry';
+                                targetLinkId: string;
+                                registryOrigin: string;
+                            } | {
+                                source: {
+                                    kind: 'deploymentFact';
+                                    fact: 'commitSha' | 'deploymentId' | 'environmentName' | 'primaryUrl';
+                                } | {
+                                    kind: 'deploymentFact';
+                                    fact: 'domainUrl';
+                                    domainId: string;
+                                } | {
+                                    kind: 'reference';
+                                    environmentId: string;
+                                    export: string;
+                                    via: 'auto' | 'privateNetwork' | 'public';
+                                } | {
+                                    kind: 'secret';
+                                    ref: string;
+                                    resourceRevision: number;
+                                } | {
+                                    kind: 'value';
+                                    value: string;
+                                };
+                                purpose: 'variable';
+                                name: string;
+                                phase: 'build' | 'runtime';
+                            } | {
+                                source: {
+                                    kind: 'secret';
+                                    ref: string;
+                                    resourceRevision: number;
+                                };
+                                purpose: 'backupDestination';
+                                configKey: 'destination';
+                                role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
+                            } | {
+                                source: {
+                                    kind: 'secret';
+                                    ref: string;
+                                    resourceRevision: number;
+                                };
+                                purpose: 'domainCredential';
+                                domainId: string;
+                                role: 'basicAuth' | 'certificateChain' | 'privateKey';
+                            } | {
+                                source: {
+                                    kind: 'secret';
+                                    ref: string;
+                                    resourceRevision: number;
+                                };
+                                service: string;
+                                purpose: 'dataRole';
+                                role: 'readOnlyPassword';
+                            } | {
+                                source: {
+                                    kind: 'secret';
+                                    ref: string;
+                                    resourceRevision: number;
+                                };
+                                targetLinkId: string;
+                                purpose: 'dataRole';
+                                role: 'readOnlyPassword';
+                            })[];
+                            sourceRuntimeTargetLinkId?: string | undefined;
+                        };
+                        copyIntentCommitment?: string | undefined;
+                    };
+                } | {
+                    sourceIndex: number;
+                    itemIndex: number;
+                    actionId: 'deployments.templates.instantiate';
+                    input: {
+                        mode: 'apply' | 'preview';
+                        serverId: string;
+                        machineId: string;
+                        templateRef: {
+                            ref: {
+                                digest: string;
+                                pluginId: string;
+                                pluginVersion: string;
+                                occurrenceId: string;
+                                path: string;
+                                kind: 'packageContent';
+                            } | {
+                                kind: 'content';
+                                digest: string;
+                            } | {
+                                kind: 'gitTree';
+                                repo: string;
+                                path: string;
+                                commit: string;
+                                treeSha: string;
+                            } | {
+                                kind: 'version';
+                                version: string;
+                            } | {
+                                kind: 'wellKnown';
+                                indexUrl: string;
+                                name: string;
+                                digest: string;
+                                publishedDigest?: string | undefined;
+                            };
+                            sourceId: string;
+                            itemId: string;
+                            version: string;
+                            expectedContributorOccurrenceId?: string | undefined;
+                        };
+                        environment: {
+                            kind: 'create';
+                            name: string;
+                            requestKey: string;
+                            protection: 'nonProduction' | 'production';
+                            purpose: 'standard';
+                            deployerMode: 'chosen' | 'managers' | 'members';
+                            controllerMachineId: string;
+                            deployerPrincipals?: undefined | {
+                                principalKind: 'account' | 'teamGroup';
+                                principalId: string;
+                            }[];
+                            buildMachineId?: string | undefined;
+                            retainPreviousDeployments?: number | undefined;
+                        } | {
+                            kind: 'existing';
+                            environmentId: string;
+                            expectedRevision: number;
+                        };
+                        target: {
+                            kind: 'existing';
+                            targetLinkId: string;
+                            expectedRevision: number;
+                            installationId: string;
+                        } | {
+                            kind: 'new';
+                            installationId: string;
+                        };
+                        destination: {
+                            kind: 'stored';
+                            contentRevision: number;
+                            composeDigest: string;
+                        } | {
+                            kind: 'stored';
+                        };
+                        bindings: {
+                            source: {
+                                kind: 'generated';
+                                key: string;
+                            } | {
+                                kind: 'secret';
+                                ref: string;
+                                resourceRevision: number;
+                            } | {
+                                kind: 'value';
+                                value: string;
+                            };
+                            purpose: 'variable';
+                            name: string;
+                            phase: 'build' | 'runtime';
+                        }[];
+                        projectSourceId?: string | undefined;
+                        newProject?: undefined | {
+                            requestKey: string;
+                            name: string;
+                            owner: {
+                                kind: 'account';
+                                accountId: string;
+                            } | {
+                                kind: 'team';
+                                teamId: string;
+                            };
+                        };
+                        managedRetention?: 'keep' | 'until-delete' | undefined;
+                        generatedSecretAudience?: undefined | {
+                            accountGrants?: string[] | undefined;
+                            teamGrants?: string[] | undefined;
+                            groupGrants?: string[] | undefined;
+                        };
+                        connectTo?: undefined | {
+                            service: string;
+                        };
+                        replace?: string[] | undefined;
+                        domainBindings?: undefined | {
+                            templateDomainId: string;
+                            hostname: string;
+                        }[];
+                        deploy?: undefined | {
+                            requestKey: string;
+                        };
+                    };
+                })[] | undefined;
+                appReviews?: undefined | {
+                    sourceIndex: number;
+                    itemIndex: number;
+                    actionId: 'deployments.templates.instantiate';
+                    review: {
+                        bindings: {
+                            source: {
+                                kind: 'deploymentFact';
+                                fact: 'commitSha' | 'deploymentId' | 'environmentName' | 'primaryUrl';
+                            } | {
+                                kind: 'deploymentFact';
+                                fact: 'domainUrl';
+                                domainId: string;
+                            } | {
+                                kind: 'reference';
+                                environmentId: string;
+                                export: string;
+                                via: 'auto' | 'privateNetwork' | 'public';
+                            } | {
+                                kind: 'secret';
+                                ref: string;
+                                resourceRevision: number;
+                            } | {
+                                kind: 'value';
+                                value: string;
+                            };
+                            purpose: 'variable';
+                            name: string;
+                            phase: 'build' | 'runtime';
+                        }[];
+                        generatedSecrets: {
+                            name: string;
+                            phase: 'build' | 'runtime';
+                            key: string;
+                            profile: {
+                                kind: 'alphanumeric-characters';
+                                characters: number;
+                            } | {
+                                kind: 'base64-bytes';
+                                bytes: number;
+                            } | {
+                                kind: 'base64url-32-bytes';
+                            } | {
+                                kind: 'hex-32-bytes';
+                            } | {
+                                kind: 'hex-bytes';
+                                bytes: number;
+                            } | {
+                                kind: 'lowercase-alphanumeric-characters';
+                                characters: number;
+                            } | {
+                                kind: 'lowercase-username';
+                            } | {
+                                kind: 'uuid-v4';
+                            };
+                        }[];
+                        domains: {
+                            key: string;
+                            service: string;
+                            containerPort: number;
+                            protocol: 'http' | 'https' | 'tcp';
+                            required: boolean;
+                            healthCheck: {
+                                path: string;
+                                expectStatus: number;
+                            };
+                            hostname: string;
+                            path?: string | undefined;
+                        }[];
+                        profiles: string[];
+                        services: string[];
+                        templateRef: {
+                            ref: {
+                                digest: string;
+                                pluginId: string;
+                                pluginVersion: string;
+                                occurrenceId: string;
+                                path: string;
+                                kind: 'packageContent';
+                            } | {
+                                kind: 'content';
+                                digest: string;
+                            } | {
+                                kind: 'gitTree';
+                                repo: string;
+                                path: string;
+                                commit: string;
+                                treeSha: string;
+                            } | {
+                                kind: 'version';
+                                version: string;
+                            } | {
+                                kind: 'wellKnown';
+                                indexUrl: string;
+                                name: string;
+                                digest: string;
+                                publishedDigest?: string | undefined;
+                            };
+                            sourceId: string;
+                            itemId: string;
+                            version: string;
+                            expectedContributorOccurrenceId?: string | undefined;
+                        };
+                        minimumResources?: undefined | {
+                            memoryBytes?: number | undefined;
+                            freeDiskBytes?: number | undefined;
+                            architectures?: ('amd64' | 'arm64')[] | undefined;
+                        };
+                        firstRunSetup?: true | undefined;
+                        creationDefaults?: undefined | {
+                            values: {
+                                retainPreviousDeployments: number;
+                                buildMachineId?: string | undefined;
+                                controllerMachineId?: string | undefined;
+                            };
+                            sources: {
+                                buildMachineId?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
+                                controllerMachineId?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
+                                retainPreviousDeployments?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
+                            };
+                        };
+                        creationDefaultsBasis?: undefined | {
+                            projectSourceId: string;
+                            sourceRevision: number;
+                            projectDefaultsRevision: number;
+                            content: null | {
+                                contentArtifactId: string;
+                                contentHeaderVersion: number;
+                                contentBodyVersion: number;
+                            };
+                        };
+                        capacity?: undefined | {
+                            resource: 'freeDiskBytes' | 'memoryBytes';
+                            minimumBytes: number;
+                            observedBytes: null | number;
+                            observedAt: null | number;
+                            state: 'meetsMinimum' | 'shortfall' | 'unknown';
+                        }[];
+                        deploy?: undefined | {
+                            requestKey: string;
+                        };
+                        primaryService?: string | undefined;
+                    };
+                }[];
+                review?: undefined | {
+                    target: {
+                        homeId: string;
+                        machineId: string;
+                    };
+                    administratorRequired: boolean | null;
+                    downtime: 'none' | 'possible' | 'unknown';
+                    apps?: undefined | {
+                        sourceIndex: number;
+                        itemIndex: number;
+                        kind: 'completed' | 'failed' | 'new' | 'not_completed' | 'unknown';
+                        environmentId?: string | undefined;
+                    }[];
+                    host?: undefined | {
+                        machineId: null | string;
+                        machines: {
+                            machineId: string;
+                            online: boolean;
+                        }[];
+                    };
+                };
+                updates?: undefined | {
+                    observation: {
+                        status: 'drifted' | 'satisfied' | 'unavailable' | 'unsupported' | 'unverifiable';
+                        reason?: 'admin_access_unavailable' | 'foreign_effect_conflict' | 'native_effect_failed' | 'needs_admin_to_check' | 'package_manager_busy' | 'plan_changed' | 'private_scope_unenforceable' | 'remove_unsupported' | 'required_fact_unavailable' | 'validation_failed' | undefined;
+                        backend?: string | undefined;
+                        pendingSecurity?: number | undefined;
+                        pendingAll?: number | undefined;
+                        rebootNeeded?: boolean | undefined;
+                    };
+                    plan?: undefined | {
+                        v: 1;
+                        basis: {
+                            kind: 'adminAccess';
+                            machineId: string;
+                            operationId: string;
+                            previousPolicy: {
+                                version: 1;
+                                mode: 'ask';
+                                administratorUsername: string;
+                            } | {
+                                version: 1;
+                                mode: 'none';
+                            } | {
+                                version: 1;
+                                mode: 'preauthorized';
+                            };
+                            policy: {
+                                version: 1;
+                                mode: 'ask';
+                                administratorUsername: string;
+                            } | {
+                                version: 1;
+                                mode: 'none';
+                            } | {
+                                version: 1;
+                                mode: 'preauthorized';
+                            };
+                        } | {
+                            kind: 'agentIsolation';
+                            machineId: string;
+                            enabled: boolean;
+                            expectedPolicy: {
+                                enabled: boolean;
+                                memberProvisioning?: 'linuxUsersV1' | undefined;
+                            };
+                            review?: undefined | {
+                                roots: {
+                                    rootId: string;
+                                    path: string;
+                                }[];
+                                ancestorAcls: {
+                                    path: string;
+                                    add: 'x';
+                                }[];
+                                sessionsToReplace: number;
+                                memberProvisioning?: 'linuxUsersV1' | undefined;
+                            };
+                        } | {
+                            kind: 'bootstrap';
+                            managedId: string;
+                            operationId: string;
+                            admittedInputDigest: string;
+                        } | {
+                            kind: 'reboot';
+                            machineId: string;
+                            operationId: string;
+                        } | {
+                            kind: 'setup';
+                            machineId: string;
+                            desiredRevision: number;
+                            selection?: undefined | {
+                                ref: {
+                                    pluginId: string;
+                                    recipeId: string;
+                                    revision: string;
+                                };
+                                inputs: PluginJsonValueV2;
+                            };
+                        } | {
+                            kind: 'sshBootstrap';
+                            operationId: string;
+                            admittedInputDigest: string;
+                        } | {
+                            kind: 'updates';
+                            machineId: string;
+                            scope: 'all' | 'security';
+                        };
+                        steps: ({
+                            check: {
+                                executable: string;
+                                args: string[];
+                                unsatisfiedExitCodes: number[];
+                                stdoutJson?: InputPredicate | undefined;
+                            } | {
+                                kind: 'kernel';
+                                capability: string;
+                                architectures?: string[] | undefined;
+                            } | {
+                                kind: 'userManagerGroups';
+                                username: string;
+                            };
+                            executable: string;
+                            args: string[];
+                            kind: 'command';
+                            id: string;
+                            remove?: undefined | {
+                                executable: string;
+                                args: string[];
+                            };
+                            affects?: 'dockerEngine' | 'none' | undefined | {
+                                services: string[];
+                            };
+                            requiredFacts?: ({
+                                kind: 'administrator';
+                            } | {
+                                kind: 'command';
+                                executable: string;
+                            } | {
+                                kind: 'init';
+                                system: 'launchd' | 'systemd' | 'windowsScm';
+                            } | {
+                                kind: 'journalReadGroup';
+                                group: string;
+                            } | {
+                                kind: 'kernel';
+                                capability: string;
+                                architectures?: string[] | undefined;
+                            } | {
+                                kind: 'packageManager';
+                                manager: string;
+                            } | {
+                                kind: 'path';
+                                path: string;
+                            })[] | undefined;
+                            review?: undefined | {
+                                title: string | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                                description?: string | undefined | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                            };
+                        } | {
+                            kind: 'firewall';
+                            rules: string;
+                            id: string;
+                            exposures?: undefined | {
+                                requirementId: string;
+                                hostAddress: string;
+                                hostPort: number;
+                                protocol: 'tcp' | 'udp';
+                                exposure: 'loopback' | 'privateNetwork' | 'public';
+                                containerPort?: number | undefined;
+                                providerId?: string | undefined;
+                                networkIdentity?: string | undefined;
+                            }[];
+                            requiredFacts?: ({
+                                kind: 'administrator';
+                            } | {
+                                kind: 'command';
+                                executable: string;
+                            } | {
+                                kind: 'init';
+                                system: 'launchd' | 'systemd' | 'windowsScm';
+                            } | {
+                                kind: 'journalReadGroup';
+                                group: string;
+                            } | {
+                                kind: 'kernel';
+                                capability: string;
+                                architectures?: string[] | undefined;
+                            } | {
+                                kind: 'packageManager';
+                                manager: string;
+                            } | {
+                                kind: 'path';
+                                path: string;
+                            })[] | undefined;
+                            review?: undefined | {
+                                title: string | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                                description?: string | undefined | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                            };
+                        } | {
+                            kind: 'group';
+                            name: string;
+                            members: string[];
+                            id: string;
+                            state?: 'absent' | 'present' | undefined;
+                            existingOnly?: true | undefined;
+                            requiredFacts?: ({
+                                kind: 'administrator';
+                            } | {
+                                kind: 'command';
+                                executable: string;
+                            } | {
+                                kind: 'init';
+                                system: 'launchd' | 'systemd' | 'windowsScm';
+                            } | {
+                                kind: 'journalReadGroup';
+                                group: string;
+                            } | {
+                                kind: 'kernel';
+                                capability: string;
+                                architectures?: string[] | undefined;
+                            } | {
+                                kind: 'packageManager';
+                                manager: string;
+                            } | {
+                                kind: 'path';
+                                path: string;
+                            })[] | undefined;
+                            review?: undefined | {
+                                title: string | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                                description?: string | undefined | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                            };
+                        } | {
+                            kind: 'package';
+                            manager: string;
+                            packages: {
+                                name: string;
+                                version?: string | undefined;
+                                kind?: 'cask' | 'formula' | undefined;
+                                source?: string | undefined;
+                                scope?: 'machine' | 'user' | undefined;
+                            }[];
+                            id: string;
+                            state?: 'absent' | 'present' | undefined;
+                            requiredFacts?: ({
+                                kind: 'administrator';
+                            } | {
+                                kind: 'command';
+                                executable: string;
+                            } | {
+                                kind: 'init';
+                                system: 'launchd' | 'systemd' | 'windowsScm';
+                            } | {
+                                kind: 'journalReadGroup';
+                                group: string;
+                            } | {
+                                kind: 'kernel';
+                                capability: string;
+                                architectures?: string[] | undefined;
+                            } | {
+                                kind: 'packageManager';
+                                manager: string;
+                            } | {
+                                kind: 'path';
+                                path: string;
+                            })[] | undefined;
+                            review?: undefined | {
+                                title: string | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                                description?: string | undefined | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                            };
+                        } | {
+                            kind: 'packageSource';
+                            manager: 'apt';
+                            path: string;
+                            keyPath: string;
+                            url: string;
+                            suite: string;
+                            components: string[];
+                            architectures: string[];
+                            keyUrl: string;
+                            keyFingerprint: string;
+                            id: string;
+                            requiredFacts?: ({
+                                kind: 'administrator';
+                            } | {
+                                kind: 'command';
+                                executable: string;
+                            } | {
+                                kind: 'init';
+                                system: 'launchd' | 'systemd' | 'windowsScm';
+                            } | {
+                                kind: 'journalReadGroup';
+                                group: string;
+                            } | {
+                                kind: 'kernel';
+                                capability: string;
+                                architectures?: string[] | undefined;
+                            } | {
+                                kind: 'packageManager';
+                                manager: string;
+                            } | {
+                                kind: 'path';
+                                path: string;
+                            })[] | undefined;
+                            review?: undefined | {
+                                title: string | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                                description?: string | undefined | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                            };
+                        } | {
+                            kind: 'pathTraversal';
+                            path: string;
+                            agentUsername: string;
+                            id: string;
+                            requiredFacts?: ({
+                                kind: 'administrator';
+                            } | {
+                                kind: 'command';
+                                executable: string;
+                            } | {
+                                kind: 'init';
+                                system: 'launchd' | 'systemd' | 'windowsScm';
+                            } | {
+                                kind: 'journalReadGroup';
+                                group: string;
+                            } | {
+                                kind: 'kernel';
+                                capability: string;
+                                architectures?: string[] | undefined;
+                            } | {
+                                kind: 'packageManager';
+                                manager: string;
+                            } | {
+                                kind: 'path';
+                                path: string;
+                            })[] | undefined;
+                            review?: undefined | {
+                                title: string | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                                description?: string | undefined | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                            };
+                        } | {
+                            kind: 'reboot';
+                            id: string;
+                            requiredFacts?: ({
+                                kind: 'administrator';
+                            } | {
+                                kind: 'command';
+                                executable: string;
+                            } | {
+                                kind: 'init';
+                                system: 'launchd' | 'systemd' | 'windowsScm';
+                            } | {
+                                kind: 'journalReadGroup';
+                                group: string;
+                            } | {
+                                kind: 'kernel';
+                                capability: string;
+                                architectures?: string[] | undefined;
+                            } | {
+                                kind: 'packageManager';
+                                manager: string;
+                            } | {
+                                kind: 'path';
+                                path: string;
+                            })[] | undefined;
+                            review?: undefined | {
+                                title: string | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                                description?: string | undefined | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                            };
+                        } | {
+                            kind: 'serviceUnit';
+                            unit: string;
+                            enabled: boolean;
+                            running: boolean;
+                            id: string;
+                            requiredFacts?: ({
+                                kind: 'administrator';
+                            } | {
+                                kind: 'command';
+                                executable: string;
+                            } | {
+                                kind: 'init';
+                                system: 'launchd' | 'systemd' | 'windowsScm';
+                            } | {
+                                kind: 'journalReadGroup';
+                                group: string;
+                            } | {
+                                kind: 'kernel';
+                                capability: string;
+                                architectures?: string[] | undefined;
+                            } | {
+                                kind: 'packageManager';
+                                manager: string;
+                            } | {
+                                kind: 'path';
+                                path: string;
+                            })[] | undefined;
+                            review?: undefined | {
+                                title: string | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                                description?: string | undefined | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                            };
+                        } | {
+                            kind: 'user';
+                            username: string;
+                            id: string;
+                            home?: string | undefined;
+                            shell?: string | undefined;
+                            system?: boolean | undefined;
+                            locked?: boolean | undefined;
+                            uid?: number | undefined;
+                            state?: 'absent' | 'present' | undefined;
+                            ownershipMarker?: string | undefined;
+                            supplementaryGroups?: string[] | undefined;
+                            requiredFacts?: ({
+                                kind: 'administrator';
+                            } | {
+                                kind: 'command';
+                                executable: string;
+                            } | {
+                                kind: 'init';
+                                system: 'launchd' | 'systemd' | 'windowsScm';
+                            } | {
+                                kind: 'journalReadGroup';
+                                group: string;
+                            } | {
+                                kind: 'kernel';
+                                capability: string;
+                                architectures?: string[] | undefined;
+                            } | {
+                                kind: 'packageManager';
+                                manager: string;
+                            } | {
+                                kind: 'path';
+                                path: string;
+                            })[] | undefined;
+                            review?: undefined | {
+                                title: string | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                                description?: string | undefined | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                            };
+                        } | {
+                            kind: 'workspaceAccess';
+                            path: string;
+                            group: string;
+                            agentUsername: string;
+                            id: string;
+                            requiredFacts?: ({
+                                kind: 'administrator';
+                            } | {
+                                kind: 'command';
+                                executable: string;
+                            } | {
+                                kind: 'init';
+                                system: 'launchd' | 'systemd' | 'windowsScm';
+                            } | {
+                                kind: 'journalReadGroup';
+                                group: string;
+                            } | {
+                                kind: 'kernel';
+                                capability: string;
+                                architectures?: string[] | undefined;
+                            } | {
+                                kind: 'packageManager';
+                                manager: string;
+                            } | {
+                                kind: 'path';
+                                path: string;
+                            })[] | undefined;
+                            review?: undefined | {
+                                title: string | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                                description?: string | undefined | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                            };
+                        } | {
+                            owner: string;
+                            group: string;
+                            mode: number;
+                            kind: 'directory';
+                            path: string;
+                            id: string;
+                            preserveExistingOwnership?: true | undefined;
+                            protectedAncestors?: true | undefined;
+                            ownershipMarker?: string | undefined;
+                            requiredFacts?: ({
+                                kind: 'administrator';
+                            } | {
+                                kind: 'command';
+                                executable: string;
+                            } | {
+                                kind: 'init';
+                                system: 'launchd' | 'systemd' | 'windowsScm';
+                            } | {
+                                kind: 'journalReadGroup';
+                                group: string;
+                            } | {
+                                kind: 'kernel';
+                                capability: string;
+                                architectures?: string[] | undefined;
+                            } | {
+                                kind: 'packageManager';
+                                manager: string;
+                            } | {
+                                kind: 'path';
+                                path: string;
+                            })[] | undefined;
+                            review?: undefined | {
+                                title: string | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                                description?: string | undefined | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                            };
+                        } | {
+                            owner: string;
+                            group: string;
+                            mode: number;
+                            kind: 'file';
+                            path: string;
+                            id: string;
+                            state?: 'absent' | 'present' | undefined;
+                            content?: undefined | {
+                                kind: 'iniKeys';
+                                sections: Record<string, Record<string, string>>;
+                            } | {
+                                kind: 'jsonMerge';
+                                value: Record<string, JSONType>;
+                            } | {
+                                kind: 'literal';
+                                value: string;
+                            } | {
+                                kind: 'secretGrant';
+                                grantRef: string;
+                            } | {
+                                kind: 'template';
+                                value: string;
+                                variables: Record<string, string>;
+                            };
+                            expectedContentDigest?: string | undefined;
+                            ownershipMarker?: string | undefined;
+                            validate?: 'docker' | 'sudoers' | undefined | {
+                                kind: 'caddy';
+                            } | {
+                                kind: 'docker';
+                            } | {
+                                kind: 'nft';
+                            } | {
+                                kind: 'sshd';
+                                contexts: {
+                                    user: string;
+                                    host: string;
+                                    address: string;
+                                }[];
+                            } | {
+                                kind: 'sudoers';
+                            };
+                            probe?: undefined | {
+                                kind: 'caddy';
+                            } | {
+                                kind: 'docker';
+                            } | {
+                                kind: 'nft';
+                            } | {
+                                kind: 'sshd';
+                                contexts: {
+                                    user: string;
+                                    host: string;
+                                    address: string;
+                                }[];
+                            } | {
+                                kind: 'sudoers';
+                            };
+                            onChange?: undefined | {
+                                serviceStepId: string;
+                                action: 'reload' | 'restart';
+                            };
+                            requiredFacts?: ({
+                                kind: 'administrator';
+                            } | {
+                                kind: 'command';
+                                executable: string;
+                            } | {
+                                kind: 'init';
+                                system: 'launchd' | 'systemd' | 'windowsScm';
+                            } | {
+                                kind: 'journalReadGroup';
+                                group: string;
+                            } | {
+                                kind: 'kernel';
+                                capability: string;
+                                architectures?: string[] | undefined;
+                            } | {
+                                kind: 'packageManager';
+                                manager: string;
+                            } | {
+                                kind: 'path';
+                                path: string;
+                            })[] | undefined;
+                            review?: undefined | {
+                                title: string | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                                description?: string | undefined | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                            };
+                        })[];
+                        nativeFacts: {
+                            stepId: string;
+                            status: 'drifted' | 'satisfied' | 'unavailable' | 'unsupported';
+                            facts: Record<string, JSONType>;
+                            reason?: string | undefined;
+                        }[];
+                        planDigest: string;
+                        checks?: ({
+                            check: {
+                                executable: string;
+                                args: string[];
+                                unsatisfiedExitCodes: number[];
+                                stdoutJson?: InputPredicate | undefined;
+                            } | {
+                                kind: 'kernel';
+                                capability: string;
+                                architectures?: string[] | undefined;
+                            } | {
+                                kind: 'userManagerGroups';
+                                username: string;
+                            };
+                            executable: string;
+                            args: string[];
+                            kind: 'command';
+                            id: string;
+                            remove?: undefined | {
+                                executable: string;
+                                args: string[];
+                            };
+                            affects?: 'dockerEngine' | 'none' | undefined | {
+                                services: string[];
+                            };
+                            requiredFacts?: ({
+                                kind: 'administrator';
+                            } | {
+                                kind: 'command';
+                                executable: string;
+                            } | {
+                                kind: 'init';
+                                system: 'launchd' | 'systemd' | 'windowsScm';
+                            } | {
+                                kind: 'journalReadGroup';
+                                group: string;
+                            } | {
+                                kind: 'kernel';
+                                capability: string;
+                                architectures?: string[] | undefined;
+                            } | {
+                                kind: 'packageManager';
+                                manager: string;
+                            } | {
+                                kind: 'path';
+                                path: string;
+                            })[] | undefined;
+                            review?: undefined | {
+                                title: string | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                                description?: string | undefined | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                            };
+                        } | {
+                            kind: 'kernel';
+                            capability: string;
+                            id: string;
+                            architectures?: string[] | undefined;
+                        } | {
+                            kind: 'package';
+                            manager: string;
+                            packages: {
+                                name: string;
+                                version?: string | undefined;
+                                kind?: 'cask' | 'formula' | undefined;
+                                source?: string | undefined;
+                                scope?: 'machine' | 'user' | undefined;
+                            }[];
+                            id: string;
+                            state?: 'absent' | 'present' | undefined;
+                            requiredFacts?: ({
+                                kind: 'administrator';
+                            } | {
+                                kind: 'command';
+                                executable: string;
+                            } | {
+                                kind: 'init';
+                                system: 'launchd' | 'systemd' | 'windowsScm';
+                            } | {
+                                kind: 'journalReadGroup';
+                                group: string;
+                            } | {
+                                kind: 'kernel';
+                                capability: string;
+                                architectures?: string[] | undefined;
+                            } | {
+                                kind: 'packageManager';
+                                manager: string;
+                            } | {
+                                kind: 'path';
+                                path: string;
+                            })[] | undefined;
+                            review?: undefined | {
+                                title: string | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                                description?: string | undefined | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                            };
+                        })[] | undefined;
+                        checkFacts?: undefined | {
+                            stepId: string;
+                            status: 'drifted' | 'satisfied' | 'unavailable' | 'unsupported';
+                            facts: Record<string, JSONType>;
+                            reason?: string | undefined;
+                        }[];
+                        selectedCheckIds?: string[] | undefined;
+                    };
+                };
+            };
+            appChildren?: ({
+                sourceIndex: number;
+                itemIndex: number;
+                actionId: 'deployments.deploy';
+                input: {
+                    contentArtifactId: string;
+                    contentHeaderVersion: number;
+                    contentBodyVersion: number;
+                    targetLinkId: string;
+                    expectedTargetLinkRevision: number;
+                    requestKey: string;
+                    environmentId: string;
+                    expectedRevision: number;
+                    serverId: string;
+                    whenBusy?: 'refuse' | 'supersede' | undefined;
+                    pendingDeploy?: undefined | {
+                        t: 'encrypted';
+                        c: string;
+                    } | {
+                        t: 'plain';
+                        v: {
+                            sourceIntent: {
+                                kind: 'repository';
+                                projectSourceId: string;
+                                sourceRevision: number;
+                                sha: string;
+                                compose: {
+                                    profiles: string[];
+                                    services: string[];
+                                    path: string;
+                                    primaryService?: string | undefined;
+                                };
+                                pullRequestHead?: undefined | {
+                                    number: number;
+                                };
+                            } | {
+                                profiles: string[];
+                                services: string[];
+                                kind: 'stored';
+                                contentRevision: number;
+                                composeDigest: string;
+                                document: string;
+                                primaryService?: string | undefined;
+                            };
+                            requestKey: string;
+                            targetLinkId: string;
+                            actionOperationId: string;
+                            sourceMethod?: 'gitIntegration' | 'upload' | undefined;
+                            triggerOccurrence?: undefined | {
+                                automationId: string;
+                                triggerId: string;
+                                triggerRevision: number;
+                                occurrenceKey: string;
+                            };
+                        };
+                    };
+                };
+            } | {
+                sourceIndex: number;
+                itemIndex: number;
+                actionId: 'deployments.environments.create';
+                input: {
+                    protection: 'nonProduction' | 'production';
+                    purpose: 'preview' | 'standard';
+                    deployerMode: 'chosen' | 'managers' | 'members';
+                    controllerMachineId: string;
+                    contentArtifactId: string;
+                    contentHeaderVersion: number;
+                    contentBodyVersion: number;
+                    requestKey: string;
+                    serverId: string;
+                    projectSourceId?: string | undefined;
+                    newProject?: undefined | {
+                        requestKey: string;
+                        name: string;
+                        owner: {
+                            kind: 'account';
+                            accountId: string;
+                        } | {
+                            kind: 'team';
+                            teamId: string;
+                        };
+                    };
+                    deployerPrincipals?: undefined | {
+                        principalKind: 'account' | 'teamGroup';
+                        principalId: string;
+                    }[];
+                    buildMachineId?: string | undefined;
+                    managedRetention?: 'keep' | 'until-delete' | undefined;
+                    preview?: undefined | {
+                        templateEnvironmentId: string;
+                        expectedTemplateRevision: number;
+                        pullRequestId: string;
+                        runtimeTargetLinkId: string;
+                    };
+                    firstTargetLink?: undefined | {
+                        machines: {
+                            machineId: string;
+                            installationId: string;
+                        }[];
+                        contentArtifactId: string;
+                        contentHeaderVersion: number;
+                        contentBodyVersion: number;
+                    };
+                    copyFrom?: undefined | {
+                        environmentId: string;
+                        expectedRevision: number;
+                        choices: {
+                            secrets: ({
+                                kind: 'omit';
+                                binding: {
+                                    purpose: 'backupDestination';
+                                    configKey: 'destination';
+                                    role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
+                                } | {
+                                    purpose: 'domainCredential';
+                                    domainId: string;
+                                    role: 'basicAuth' | 'certificateChain' | 'privateKey';
+                                } | {
+                                    purpose: 'registry';
+                                    targetLinkId: string;
+                                    registryOrigin: string;
+                                } | {
+                                    purpose: 'variable';
+                                    name: string;
+                                    phase: 'build' | 'runtime';
+                                } | {
+                                    service: string;
+                                    purpose: 'dataRole';
+                                    role: 'readOnlyPassword';
+                                } | {
+                                    targetLinkId: string;
+                                    purpose: 'dataRole';
+                                    role: 'readOnlyPassword';
+                                };
+                            } | {
+                                kind: 'rebind';
+                                source: {
+                                    kind: 'secret';
+                                    ref: string;
+                                    resourceRevision: number;
+                                };
+                                binding: {
+                                    purpose: 'backupDestination';
+                                    configKey: 'destination';
+                                    role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
+                                } | {
+                                    purpose: 'domainCredential';
+                                    domainId: string;
+                                    role: 'basicAuth' | 'certificateChain' | 'privateKey';
+                                } | {
+                                    purpose: 'registry';
+                                    targetLinkId: string;
+                                    registryOrigin: string;
+                                } | {
+                                    purpose: 'variable';
+                                    name: string;
+                                    phase: 'build' | 'runtime';
+                                } | {
+                                    service: string;
+                                    purpose: 'dataRole';
+                                    role: 'readOnlyPassword';
+                                } | {
+                                    targetLinkId: string;
+                                    purpose: 'dataRole';
+                                    role: 'readOnlyPassword';
+                                };
+                            } | {
+                                kind: 'useSameReference';
+                                binding: {
+                                    purpose: 'backupDestination';
+                                    configKey: 'destination';
+                                    role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
+                                } | {
+                                    purpose: 'domainCredential';
+                                    domainId: string;
+                                    role: 'basicAuth' | 'certificateChain' | 'privateKey';
+                                } | {
+                                    purpose: 'registry';
+                                    targetLinkId: string;
+                                    registryOrigin: string;
+                                } | {
+                                    purpose: 'variable';
+                                    name: string;
+                                    phase: 'build' | 'runtime';
+                                } | {
+                                    service: string;
+                                    purpose: 'dataRole';
+                                    role: 'readOnlyPassword';
+                                } | {
+                                    targetLinkId: string;
+                                    purpose: 'dataRole';
+                                    role: 'readOnlyPassword';
+                                };
+                            })[];
+                            values: ({
+                                kind: 'include';
+                                binding: {
+                                    purpose: 'backupDestination';
+                                    configKey: 'destination';
+                                    role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
+                                } | {
+                                    purpose: 'domainCredential';
+                                    domainId: string;
+                                    role: 'basicAuth' | 'certificateChain' | 'privateKey';
+                                } | {
+                                    purpose: 'registry';
+                                    targetLinkId: string;
+                                    registryOrigin: string;
+                                } | {
+                                    purpose: 'variable';
+                                    name: string;
+                                    phase: 'build' | 'runtime';
+                                } | {
+                                    service: string;
+                                    purpose: 'dataRole';
+                                    role: 'readOnlyPassword';
+                                } | {
+                                    targetLinkId: string;
+                                    purpose: 'dataRole';
+                                    role: 'readOnlyPassword';
+                                };
+                            } | {
+                                kind: 'omit';
+                                binding: {
+                                    purpose: 'backupDestination';
+                                    configKey: 'destination';
+                                    role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
+                                } | {
+                                    purpose: 'domainCredential';
+                                    domainId: string;
+                                    role: 'basicAuth' | 'certificateChain' | 'privateKey';
+                                } | {
+                                    purpose: 'registry';
+                                    targetLinkId: string;
+                                    registryOrigin: string;
+                                } | {
+                                    purpose: 'variable';
+                                    name: string;
+                                    phase: 'build' | 'runtime';
+                                } | {
+                                    service: string;
+                                    purpose: 'dataRole';
+                                    role: 'readOnlyPassword';
+                                } | {
+                                    targetLinkId: string;
+                                    purpose: 'dataRole';
+                                    role: 'readOnlyPassword';
+                                };
+                            } | {
+                                kind: 'remap';
+                                source: {
+                                    kind: 'deploymentFact';
+                                    fact: 'commitSha' | 'deploymentId' | 'environmentName' | 'primaryUrl';
+                                } | {
+                                    kind: 'deploymentFact';
+                                    fact: 'domainUrl';
+                                    domainId: string;
+                                } | {
+                                    kind: 'reference';
+                                    environmentId: string;
+                                    export: string;
+                                    via: 'auto' | 'privateNetwork' | 'public';
+                                } | {
+                                    kind: 'value';
+                                    value: string;
+                                };
+                                binding: {
+                                    purpose: 'backupDestination';
+                                    configKey: 'destination';
+                                    role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
+                                } | {
+                                    purpose: 'domainCredential';
+                                    domainId: string;
+                                    role: 'basicAuth' | 'certificateChain' | 'privateKey';
+                                } | {
+                                    purpose: 'registry';
+                                    targetLinkId: string;
+                                    registryOrigin: string;
+                                } | {
+                                    purpose: 'variable';
+                                    name: string;
+                                    phase: 'build' | 'runtime';
+                                } | {
+                                    service: string;
+                                    purpose: 'dataRole';
+                                    role: 'readOnlyPassword';
+                                } | {
+                                    targetLinkId: string;
+                                    purpose: 'dataRole';
+                                    role: 'readOnlyPassword';
+                                };
+                            })[];
+                            data: {
+                                targetLinkId: string;
+                                kind: 'createEmpty' | 'omit' | 'restoreBackup' | 'reuse';
+                            }[];
+                            retainPreviousDeployments?: 'copy' | 'default' | undefined;
+                        };
+                    };
+                    copyPlan?: undefined | {
+                        bindings: ({
+                            access: 'pull' | 'pushPull';
+                            source: {
+                                kind: 'secret';
+                                ref: string;
+                                resourceRevision: number;
+                            };
+                            purpose: 'registry';
+                            targetLinkId: string;
+                            registryOrigin: string;
+                        } | {
+                            source: {
+                                kind: 'deploymentFact';
+                                fact: 'commitSha' | 'deploymentId' | 'environmentName' | 'primaryUrl';
+                            } | {
+                                kind: 'deploymentFact';
+                                fact: 'domainUrl';
+                                domainId: string;
+                            } | {
+                                kind: 'reference';
+                                environmentId: string;
+                                export: string;
+                                via: 'auto' | 'privateNetwork' | 'public';
+                            } | {
+                                kind: 'secret';
+                                ref: string;
+                                resourceRevision: number;
+                            } | {
+                                kind: 'value';
+                                value: string;
+                            };
+                            purpose: 'variable';
+                            name: string;
+                            phase: 'build' | 'runtime';
+                        } | {
+                            source: {
+                                kind: 'secret';
+                                ref: string;
+                                resourceRevision: number;
+                            };
+                            purpose: 'backupDestination';
+                            configKey: 'destination';
+                            role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
+                        } | {
+                            source: {
+                                kind: 'secret';
+                                ref: string;
+                                resourceRevision: number;
+                            };
+                            purpose: 'domainCredential';
+                            domainId: string;
+                            role: 'basicAuth' | 'certificateChain' | 'privateKey';
+                        } | {
+                            source: {
+                                kind: 'secret';
+                                ref: string;
+                                resourceRevision: number;
+                            };
+                            service: string;
+                            purpose: 'dataRole';
+                            role: 'readOnlyPassword';
+                        } | {
+                            source: {
+                                kind: 'secret';
+                                ref: string;
+                                resourceRevision: number;
+                            };
+                            targetLinkId: string;
+                            purpose: 'dataRole';
+                            role: 'readOnlyPassword';
+                        })[];
+                        sourceRuntimeTargetLinkId?: string | undefined;
+                    };
+                    copyIntentCommitment?: string | undefined;
+                };
+            } | {
+                sourceIndex: number;
+                itemIndex: number;
+                actionId: 'deployments.templates.instantiate';
+                input: {
+                    mode: 'apply' | 'preview';
+                    serverId: string;
+                    machineId: string;
+                    templateRef: {
+                        ref: {
+                            digest: string;
+                            pluginId: string;
+                            pluginVersion: string;
+                            occurrenceId: string;
+                            path: string;
+                            kind: 'packageContent';
+                        } | {
+                            kind: 'content';
+                            digest: string;
+                        } | {
+                            kind: 'gitTree';
+                            repo: string;
+                            path: string;
+                            commit: string;
+                            treeSha: string;
+                        } | {
+                            kind: 'version';
+                            version: string;
+                        } | {
+                            kind: 'wellKnown';
+                            indexUrl: string;
+                            name: string;
+                            digest: string;
+                            publishedDigest?: string | undefined;
+                        };
+                        sourceId: string;
+                        itemId: string;
+                        version: string;
+                        expectedContributorOccurrenceId?: string | undefined;
+                    };
+                    environment: {
+                        kind: 'create';
+                        name: string;
+                        requestKey: string;
+                        protection: 'nonProduction' | 'production';
+                        purpose: 'standard';
+                        deployerMode: 'chosen' | 'managers' | 'members';
+                        controllerMachineId: string;
+                        deployerPrincipals?: undefined | {
+                            principalKind: 'account' | 'teamGroup';
+                            principalId: string;
+                        }[];
+                        buildMachineId?: string | undefined;
+                        retainPreviousDeployments?: number | undefined;
+                    } | {
+                        kind: 'existing';
+                        environmentId: string;
+                        expectedRevision: number;
+                    };
+                    target: {
+                        kind: 'existing';
+                        targetLinkId: string;
+                        expectedRevision: number;
+                        installationId: string;
+                    } | {
+                        kind: 'new';
+                        installationId: string;
+                    };
+                    destination: {
+                        kind: 'stored';
+                        contentRevision: number;
+                        composeDigest: string;
+                    } | {
+                        kind: 'stored';
+                    };
+                    bindings: {
+                        source: {
+                            kind: 'generated';
+                            key: string;
+                        } | {
+                            kind: 'secret';
+                            ref: string;
+                            resourceRevision: number;
+                        } | {
+                            kind: 'value';
+                            value: string;
+                        };
+                        purpose: 'variable';
+                        name: string;
+                        phase: 'build' | 'runtime';
+                    }[];
+                    projectSourceId?: string | undefined;
+                    newProject?: undefined | {
+                        requestKey: string;
+                        name: string;
+                        owner: {
+                            kind: 'account';
+                            accountId: string;
+                        } | {
+                            kind: 'team';
+                            teamId: string;
+                        };
+                    };
+                    managedRetention?: 'keep' | 'until-delete' | undefined;
+                    generatedSecretAudience?: undefined | {
+                        accountGrants?: string[] | undefined;
+                        teamGrants?: string[] | undefined;
+                        groupGrants?: string[] | undefined;
+                    };
+                    connectTo?: undefined | {
+                        service: string;
+                    };
+                    replace?: string[] | undefined;
+                    domainBindings?: undefined | {
+                        templateDomainId: string;
+                        hostname: string;
+                    }[];
+                    deploy?: undefined | {
+                        requestKey: string;
+                    };
+                };
+            })[] | undefined;
+        } | {
+            homeId: string;
+            machineId: string;
+            status: 'unavailable';
+            reason: 'offline';
+            errorCode: 'machine_offline';
+        })[];
+        review: {
+            machineId: null | string;
+            machines: {
+                machineId: string;
+                online: boolean;
+            }[];
+        };
+    };
+    readonly "machines.setup.apply": {
+        operationId: string;
+        terminalId?: string | undefined;
+        runId?: string | undefined;
+    };
+    readonly "machines.setup.remove": {
+        operationId: string;
+        terminalId?: string | undefined;
+        runId?: string | undefined;
+    };
+    readonly "machines.setup.updates.apply": {
+        operationId: string;
+        terminalId?: string | undefined;
+        runId?: string | undefined;
     };
 };

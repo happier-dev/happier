@@ -969,6 +969,30 @@ Ordinary Action Wait returns an already-recorded uncertain observation even whil
 the operation retains process custody. Retirement still waits for actual physical
 settlement; observing uncertainty neither claims an exit nor releases that custody.
 
+OS updates use the same development setup owner. A Plan request with
+`updates: { scope: 'security' | 'all' }` checks the target's native package
+metadata; `mode: 'effects'` also returns exact candidate versions for review.
+`machines.setup.updates.apply` consumes that reviewed plan through the existing
+finite setup task and administrator interpreter. It never rewrites desired
+Software and never reboots. Package updates may restart services; review reports
+possible downtime when packages will change.
+
+The native owner publishes counts and the reboot-needed fact at
+`daemonState.setup.updates`, through the normal Machine publication owner. Equal
+observations produce no publication. Reads occur on explicit Security demand
+(open, reconnect or refresh), before an updates Apply, and after native
+setup/Software/updates settlement, without a polling timer. A missing count or
+reboot fact stays unknown. Native unavailable/unverifiable observations retain
+last-known counts and reboot state at the publication owner; the Security hook
+labels those facts stale, as it does during refresh or while offline. The data port also exposes explicit refresh for the separately composed P30
+reboot consumer to call after reboot settlement.
+Linux APT uses python-apt's native security classification and the
+`/var/run/reboot-required` marker. DNF4 uses its security advisory query and
+`needs-restarting -r`. Missing native inspection support is typed unavailable;
+unrepresentable package candidates are not silently omitted. macOS, Windows and
+unsupported native managers return typed unsupported. These are 0.3 development
+contracts; the Security page composition is owned separately from the data hook.
+
 ### Sessionless Project Services (0.3 development)
 
 `daemon/local/services/launch/projectDeclarations.ts` owns reviewed declaration

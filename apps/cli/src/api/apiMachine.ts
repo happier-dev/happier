@@ -1,3 +1,4 @@
+import { createMachineDaemonStatePublication } from './machine/machineDaemonStatePublication';
 import { registerDaemonMachineReachabilityRpcHandlers, executeDaemonMachineReachabilityAction,
     prepareDaemonMachineReachabilityReviewedChildren, type DaemonMachineReachabilityRoutes } from '@/machines/reachability/createDaemonMachineReachabilityRoutes';
 import { createApiMachineServicesBinding } from './machine/machineServicesBinding';
@@ -535,6 +536,8 @@ agentIsolation?: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').Ho
 
 export type ApiMachineDaemonStatePublicationOptions = Readonly<{
     allowWhileQuiescing?: boolean;
+    /** Only the canonical activity subscription may publish this cheap invalidation. */
+    managedActivityChanged?: true;
 }>;
 
 export type MachinePublicationOutcome = 'published' | 'unchanged' | 'suppressed';
@@ -669,6 +672,25 @@ type AccountChangesSyncDemand = {
 };
 
 export class ApiMachineClient {
+    private readonly publishDaemonState = createMachineDaemonStatePublication({
+        getMachine: () => this.machine,
+        shouldSuppress: allowWhileQuiescing => this.shouldSuppressMachinePublication(allowWhileQuiescing),
+        prepareWrite: async () => {
+            if (!this.machineContentReady) {
+                await this.refreshMachineFromServer();
+                if (!this.machineContentReady) throw new Error('Machine content key is unavailable');
+            }
+            if (!this.socket) throw new Error('Machine socket is not connected');
+            const codec = this.machineContentCodec;
+            return { socket: this.socket, codec, expectedDataEncryptionKey: this.readOwnerEnvelopeForWrite(),
+                isCurrent: () => this.machineContentReady && this.machineContentCodec === codec };
+        },
+        retireAndRefreshContent: async () => { this.retireMachineContent(); await this.refreshMachineFromServer(); },
+        needsPersistedIrohEndpointWithdrawal: () => this.pendingPersistedIrohEndpointWithdrawal,
+        acknowledgeDaemonStatePublication: () => { this.pendingPersistedIrohEndpointWithdrawal = false; },
+        discardUnverifiedIrohEndpoint: state => this.discardUnverifiedIrohEndpoint(state),
+        synchronizeIrohMachineEndpointAuthority: (state, hadEndpoint) => this.synchronizeIrohMachineEndpointAuthority(state, hadEndpoint),
+    });
     private socket: Socket<ServerToDaemonEvents, DaemonToServerEvents> | null = null;
     private keepAliveInterval: NodeJS.Timeout | null = null;
     private rpcHandlerManager: RpcHandlerManager;
@@ -4461,70 +4483,7 @@ export class ApiMachineClient {
             return 'suppressed';
         }
         this.readOwnerEnvelopeForWrite();
-        return await backoff(async () => {
-            if (this.shouldSuppressMachinePublication(options?.allowWhileQuiescing)) {
-                return 'suppressed';
-            }
-            if (!this.socket) {
-                throw new Error('Machine socket is not connected');
-            }
-            const previousIrohEndpoint = this.machine.daemonState?.peerMediation?.iroh?.endpoint ?? null;
-            if (!this.machineContentReady) {
-                await this.refreshMachineFromServer();
-                if (!this.machineContentReady) throw new Error('Machine content key is unavailable');
-            }
-            const codec = this.machineContentCodec;
-            const expectedVersion = this.machine.daemonStateVersion;
-            const expectedDataEncryptionKey = this.readOwnerEnvelopeForWrite();
-            const currentState = this.machine.daemonState === null ? null : StoredMachinePublishedDaemonStateV1Schema.parse(this.machine.daemonState);
-            const updated = parseMachinePublishedDaemonStateV1(handler(currentState));
-            if (isDeepStrictEqual(currentState, updated)) {
-                return 'unchanged';
-            }
-
-            const answer = MachineUpdateStateResponseSchema.parse(await emitSocketWithAck({
-                socket: this.socket,
-                event: 'machine-update-state',
-                timeoutMs: null,
-                payload: {
-                    machineId: this.machine.id,
-                    daemonState: codec.encodeStored(updated),
-                    expectedVersion,
-                    expectedDataEncryptionKey,
-                },
-            }));
-
-            if ((codec !== this.machineContentCodec || !this.machineContentReady)
-                && !('result' in answer && answer.result === 'key-mismatch')) {
-                throw Object.assign(new Error('Machine content key changed during publication'), { retryable: false });
-            }
-            if (!('result' in answer)) throw Object.assign(new Error('Machine content publication requires a client update'), { code: answer.error, retryable: false });
-            if (answer.result === 'key-mismatch') {
-                this.retireMachineContent();
-                await this.refreshMachineFromServer();
-                throw new Error('Machine content key mismatch');
-            }
-            if (answer.result === 'success') {
-                if (answer.version >= this.machine.daemonStateVersion) {
-                    this.machine.daemonState = answer.daemonState === null ? null : StoredMachinePublishedDaemonStateV1Schema.parse(codec.decodeStored(answer.daemonState));
-                    this.machine.daemonStateVersion = answer.version;
-                    if (this.machine.keyBasis) this.machine.keyBasis = { ...this.machine.keyBasis, daemonStateVersion: answer.version };
-                    await this.synchronizeIrohMachineEndpointAuthority(this.machine.daemonState, previousIrohEndpoint !== null);
-                }
-                logger.debug('[API MACHINE] Daemon state updated successfully');
-                return 'published';
-            } else if (answer.result === 'version-mismatch') {
-                if (answer.version > this.machine.daemonStateVersion) {
-                    this.machine.daemonStateVersion = answer.version;
-                    this.machine.daemonState = this.discardUnverifiedIrohEndpoint(
-                        answer.daemonState === null ? null : StoredMachinePublishedDaemonStateV1Schema.parse(codec.decodeStored(answer.daemonState)),
-                    );
-                    if (this.machine.keyBasis) this.machine.keyBasis = { ...this.machine.keyBasis, daemonStateVersion: answer.version };
-                }
-                throw new Error('Daemon state version mismatch'); // Triggers retry
-            }
-            throw new Error('Unexpected machine daemon-state update acknowledgement');
-        });
+        return await this.publishDaemonState(handler, options);
     }
 
     private getDaemonTerminalSessionMutationOutbox(
@@ -6047,6 +6006,45 @@ getAgentIsolationSnapshot(): AgentIsolationSnapshot {
 
 
 private agentIsolationPublicationFailed = false;
+
+    /** Setup-native observations are published through the Machine state owner. */
+    async publishMachineSetupUpdates(
+        updates: NonNullable<import('@happier-dev/protocol').MachineSetupObservationV1['updates']>,
+    ): Promise<MachinePublicationOutcome> {
+        return this.updateDaemonState(state => {
+            if (!state) throw new Error('Machine daemon state is unavailable');
+            const previous = state.setup?.updates;
+            const retainLastKnown = updates.status === 'unavailable' || updates.status === 'unverifiable';
+            const published = retainLastKnown ? {
+                ...(previous?.pendingAll !== undefined ? { pendingAll: previous.pendingAll } : {}),
+                ...(previous?.pendingSecurity !== undefined ? { pendingSecurity: previous.pendingSecurity } : {}),
+                ...(previous?.rebootNeeded !== undefined ? { rebootNeeded: previous.rebootNeeded } : {}),
+                ...updates,
+            } : updates;
+            return { ...state, setup: {
+                ...(state.setup ?? { version: 1 as const, desiredRevision: this.machine.metadata?.setup?.revision ?? 0,
+                    status: 'unverifiable' as const, reason: 'required_fact_unavailable' as const, recipes: [] }),
+                updates: published,
+            } };
+        });
+    }
+
+    /** Native demand produces facts; the existing publisher suppresses equal observations. */
+    async refreshMachineSetupUpdates(options: Readonly<{
+        signal?: AbortSignal;
+        runNative?: (command: import('@happier-dev/cli-common/machineSetup').MachineSetupNativeCommand)
+            => Promise<import('@happier-dev/cli-common/machineSetup').MachineSetupNativeCommandResult>;
+    }> = {}): Promise<NonNullable<import('@happier-dev/protocol').MachineSetupObservationV1['updates']>> {
+        const { observeNativeUpdates, runMachineSetupNativeCommand } = await import('@happier-dev/cli-common/machineSetup');
+        const { observation } = await observeNativeUpdates({ run: (executable, args, env) => {
+            options.signal?.throwIfAborted();
+            return (options.runNative ?? runMachineSetupNativeCommand)({ executable, args,
+                ...(env ? { env } : {}), ...(options.signal ? { signal: options.signal } : {}) });
+        } });
+        await this.publishMachineSetupUpdates(observation);
+        return observation;
+    }
+
 
 
 

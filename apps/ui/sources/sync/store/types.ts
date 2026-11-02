@@ -7,7 +7,7 @@ import type { FeedItem } from '../domains/social/feedTypes';
 import type { RelationshipUpdatedEvent, UserProfile } from '../domains/social/friendTypes';
 import type { LocalSettings } from '../domains/settings/localSettings';
 import type { ReviewCommentDraft } from '../domains/input/reviewComments/reviewCommentTypes';
-import type { Session, Machine, ScmStatus, ScmWorkingSnapshot } from '../domains/state/storageTypes';
+import type { Session, ScmStatus, ScmWorkingSnapshot } from '../domains/state/storageTypes';
 import type { ScmCommitSelectionPatch } from '../domains/state/storageTypes';
 import type { PermissionMode } from '../domains/permissions/permissionTypes';
 import type { WorkflowRunsDomain } from './domains/workflowRuns';
@@ -25,9 +25,8 @@ import type { SessionListRenderableSession } from '../domains/session/listing/se
 import type { ConcurrentSessionListCacheByServerId } from '../domains/session/listing/concurrentSessionListCache';
 import type { SessionListQueryMembership } from '../domains/session/listing/sessionListQueryController';
 import type { SessionListIndexItem } from '../domains/sessionList/sessionListIndex';
-import type { MachineDisplayRenderable } from '../domains/machines/machineDisplayRenderable';
 import type { CustomerInfo } from '../domains/purchases/types';
-import type { ApplyMachinesOptions, MachinePresence } from './domains/machines';
+import type { MachinesDomain } from './domains/machines';
 import type { MachinePoolsDomain } from './domains/machinePools';
 import type { ProjectAccountRowsDomain } from './domains/projectAccountRows';
 import type { MessagesDomain, SessionMessages } from './domains/messages';
@@ -186,22 +185,7 @@ export interface SessionsDomainSlice extends Pick<SessionsDomain,
     deleteSession: (sessionId: string, serverId?: string | null) => void;
 }
 
-export interface MachinesDomainSlice {
-    machines: Record<string, Machine>;
-    machineDisplayById: Record<string, MachineDisplayRenderable>;
-    machinePresenceById: Record<string, MachinePresence>;
-    machinePresenceByServerId: Record<string, Record<string, MachinePresence>>;
-    /**
-     * Server-scoped machine lists used for multi-server group/picker contexts.
-     * Active server machines still live in `machines` (record) for fast lookup.
-     */
-    machineListByServerId: Record<string, Machine[] | null>;
-    machineListStatusByServerId: Record<string, 'idle' | 'loading' | 'signedOut' | 'error'>;
-    applyMachines: (machines: Machine[], replace?: boolean, options?: ApplyMachinesOptions) => void;
-    replaceMachineDisplays: import('./domains/machines').MachinesDomain['replaceMachineDisplays'];
-    markMachineListSettled: import('./domains/machines').MachinesDomain['markMachineListSettled'];
-    markMachineListUnavailable: (serverId: string) => void;
-}
+export type MachinesDomainSlice = MachinesDomain;
 
 export interface MessagesDomainSlice {
     sessionMessages: Record<string, SessionMessages>;

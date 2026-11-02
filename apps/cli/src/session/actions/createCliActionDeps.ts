@@ -1342,6 +1342,8 @@ export function createCliActionDeps(params: CliActionDepsParams,
     managedMachineReferences,
     machineSetupPlan: setupDeps.machineSetupPlan,
     prepareMachineSetupApply: setupDeps.prepareMachineSetupApply,
+    machineSetupRemove: machineDeps.machineSetupRemove,
+    machineSetupUpdatesApply: machineDeps.machineSetupUpdatesApply,
     machineSetupApply: request => request.context.actionCaller?.kind === 'workflowRun'
       || request.context.externalActionExecutionAuthorization?.binding.workflowActionOrigin
       || request.context.externalActionExecutionAuthorization?.binding.managedContinuation

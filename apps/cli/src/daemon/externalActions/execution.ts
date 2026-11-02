@@ -1244,6 +1244,33 @@ resolveServerFeaturesSnapshot?: () =>
               },
               machineActionDirectTargetTransport: {
                 machineId: params.machineId,
+                machineSetupRemove: async request => {
+                  if (request.input.machineId !== params.machineId)
+                    return { ok: false as const, errorCode: 'target_mismatch', error: 'target_mismatch' };
+                  const origin = await params.resolveCurrentMachineExecutionOriginContext?.(request.signal ?? request.context.signal);
+                  if (!origin || !externalActionInstallationIdentity || origin.machineId !== params.machineId)
+                    return { ok: false as const, errorCode: 'target_unavailable', error: 'target_unavailable' };
+                  const ingress = resolveRequesterIngress(request.context, 'manage');
+                  const { createMachineSetupRemoveAction } = await import('@/machines/setup/machineSetupAction');
+                  return createMachineSetupRemoveAction({ apiMachine: apiMachineForSessions, machineId: params.machineId,
+                    homeId: origin.serverIdentityId, installation: externalActionInstallationIdentity, ownerRemainder })({ ...request,
+                      context: { ...request.context, ...(ingress?.machineAdmission ? { machineAdmission: ingress.machineAdmission,
+                        verifyMachineAdmissionCurrent: ingress.verifyMachineAdmissionCurrent } : {}) } });
+                },
+                machineSetupUpdatesApply: async request => {
+                  if (request.input.machineId !== params.machineId)
+                    return { ok: false as const, errorCode: 'target_mismatch', error: 'target_mismatch' };
+                  const origin = await params.resolveCurrentMachineExecutionOriginContext?.(request.signal ?? request.context.signal);
+                  if (!origin || !externalActionInstallationIdentity || origin.machineId !== params.machineId)
+                    return { ok: false as const, errorCode: 'target_unavailable', error: 'target_unavailable' };
+                  const ingress = resolveRequesterIngress(request.context, 'manage');
+                  const { createMachineSetupUpdatesAction } = await import('@/machines/setup/machineSetupUpdatesAction');
+                  return createMachineSetupUpdatesAction({ apiMachine: apiMachineForSessions, machineId: params.machineId,
+                    homeId: origin.serverIdentityId, installation: externalActionInstallationIdentity, ownerRemainder })({ ...request,
+                      context: { ...request.context, ...(ingress?.machineAdmission ? { machineAdmission: ingress.machineAdmission,
+                        verifyMachineAdmissionCurrent: ingress.verifyMachineAdmissionCurrent } : {}) } });
+                },
+
                 machineServiceAction: request => apiMachineForSessions.executeMachineServiceAction(request),
                 openProject: async (input, context) => {
                   const ingress = resolveRequesterIngress(context);

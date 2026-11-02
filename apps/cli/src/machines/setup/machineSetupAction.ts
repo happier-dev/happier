@@ -1,3 +1,6 @@
+import { logger } from '@/ui/logger';
+import { machineSetupPlansRequireAdministratorV1 } from '@happier-dev/cli-common/machineSetup';
+import { prepareMachineSetupUpdatesPlanV1 } from './machineSetupUpdatesAction';
 import { homedir } from 'node:os';
 import type { ActionExecuteResult, ActionExecutorDeps } from '@happier-dev/protocol';
 import { MachineSetupResolveResultV1Schema, MachineSetupReportInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
@@ -89,7 +92,7 @@ function observeInitialPresence(sources: MachineSetupSourceV1,
 
 /** Saved copies use the captured content port; new selections demand exact native checks. */
 export function createMachineSetupPlanAction(params: Readonly<{
-  apiMachine: Pick<ApiMachineClient, 'getMachineSetupDesiredSnapshot'> & Partial<Pick<ApiMachineClient, 'resolveMachineSetupRuntime' | 'captureMachineAdminAccess'>>;
+  apiMachine: Pick<ApiMachineClient, 'getMachineSetupDesiredSnapshot'> & Partial<Pick<ApiMachineClient, 'resolveMachineSetupRuntime' | 'captureMachineAdminAccess' | 'refreshMachineSetupUpdates' | 'publishMachineSetupUpdates'>>;
   machineId: string; homeId: string;
   installation?: MachineSetupInstallation;
   acquirePluginRuntimeRegistryLease?: () => Promise<PluginRuntimeRegistryLease>;
@@ -125,6 +128,30 @@ export function createMachineSetupPlanAction(params: Readonly<{
     }
     const current = await params.apiMachine.getMachineSetupDesiredSnapshot();
     if ((signal ?? context.signal)?.aborted) return fail('cancelled');
+    if (input.updates) {
+      if (current.status !== 'ready') return fail(`machine_setup_content_${current.status}`);
+      if (!params.apiMachine.refreshMachineSetupUpdates || !params.apiMachine.publishMachineSetupUpdates) return fail('target_unavailable');
+      const options = { ...(signal ?? context.signal ? { signal: signal ?? context.signal } : {}),
+        ...(params.runNative ? { runNative: params.runNative } : {}) };
+      try {
+        const updates = input.mode === 'effects'
+          ? await prepareMachineSetupUpdatesPlanV1({ machineId: params.machineId, scope: input.updates.scope, ...options })
+          : { observation: await params.apiMachine.refreshMachineSetupUpdates(options) };
+        if (input.mode === 'effects') await params.apiMachine.publishMachineSetupUpdates(updates.observation);
+        return { desiredRevision: current.policy.revision, sources: current.policy.sources,
+          exclusions: current.policy.exclusions, support: [], updates,
+          ...(input.mode === 'effects' ? { review: { target: { homeId: input.homeId, machineId: input.machineId },
+            administratorRequired: 'plan' in updates && updates.plan ? machineSetupPlansRequireAdministratorV1([updates.plan]) : null,
+            downtime: 'plan' in updates && updates.plan ? updates.plan.steps.length ? 'possible' as const : 'none' as const : 'unknown' as const,
+          } } : {}),
+        };
+      } catch (error) {
+        const code = (signal ?? context.signal)?.aborted ? 'cancelled'
+          : error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
+            ? error.code : 'machine_setup_request_failed';
+        return fail(code);
+      }
+    }
     let recipeLease: PluginRuntimeRegistryLease | undefined;
     let result: Awaited<ReturnType<typeof prepareMachineSetupPlanV1>>;
     try {
@@ -199,6 +226,7 @@ function createMachineSetupTargetAction(params: MachineSetupActionParameters, mo
       const acquireRecipes = async () => recipeLease ??= await (
         (await import('@/plugins/runtime/reload/runtimeLease')).acquireAuthoritativePluginRuntimeRegistryLease)();
       let reportedRunning = false;
+      let nativeStarted = false;
       const report = async (state: 'running' | 'succeeded' | 'failed', errorCode?: string) => {
         if (!creation) return;
         await request('/v1/machines/setup/report', MachineSetupReportInputV1Schema.parse({ homeId: input.homeId, machineId: input.machineId,
@@ -328,6 +356,7 @@ function createMachineSetupTargetAction(params: MachineSetupActionParameters, mo
             homeServerIdentityId: context.externalActionExecutionAuthorization!.binding.serverIdentityId,
             installationId: params.installation.installationId, requesterAccountId, rootPath: homedir() } } satisfies
           Omit<Parameters<typeof applyMachineSetup>[0], 'setup' | 'recipePlans'>;
+        nativeStarted = true;
         const result = mode === 'remove' ? await removeMachineSetup({ ...nativeInput,
           plans: (planned.removalPlans ?? []).map(entry => entry.plan) })
           : await applyMachineSetup({ ...nativeInput, setup: [...setups], recipePlans: input.recipePlans,
@@ -361,7 +390,13 @@ function createMachineSetupTargetAction(params: MachineSetupActionParameters, mo
         return fail(code);
       } finally {
         try { await recipeLease?.release(); }
-        finally { custody.dispose(); secretContext?.withdrawCatalog(); }
+        finally {
+          custody.dispose(); secretContext?.withdrawCatalog();
+          if (nativeStarted) {
+            try { await params.apiMachine.refreshMachineSetupUpdates(); }
+            catch (error) { logger.warn('[Machine setup] Updates observation refresh failed after settlement', error); }
+          }
+        }
       }
     };
     // Detached replay has no retained operation. Bind observation once, as the

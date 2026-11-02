@@ -1,3 +1,5 @@
+import { retainMachineRecord } from './areStoredMachinesEqual';
+import { indexMachineInventory } from './machines/machineInventory';
 import type { Machine, Session } from '../../domains/state/storageTypes';
 import { isPersistentMachine } from '@happier-dev/protocol/machines/machineKind';
 import {
@@ -42,6 +44,8 @@ export type MachinesDomain = {
     machinePresenceById: Record<string, MachinePresence>;
     machinePresenceByServerId: Record<string, Record<string, MachinePresence>>;
     machineListByServerId: Record<string, Machine[] | null>;
+    /** Exact rows for Home-scoped reads; published with the ordered inventory. */
+    machineRecordsByServerId: Record<string, Record<string, Machine>>;
     machineListStatusByServerId: Record<string, 'idle' | 'loading' | 'signedOut' | 'error'>;
     applyMachines: (machines: Machine[], replace?: boolean, options?: ApplyMachinesOptions) => void;
     replaceMachineDisplays: (machines: MachineDisplayRenderable[], options?: ApplyMachinesOptions & Readonly<{ replace?: boolean }>) => void;
@@ -162,16 +166,7 @@ function retainMachineForPresenceOnly(previous: Machine | undefined, next: Machi
         previous.activeAt = next.activeAt;
         return previous;
     }
-    let retained = next;
-    const retainField = <K extends keyof Machine>(key: K) => {
-        if (previous[key] === next[key] || !areSessionValuesDeepEqual(previous[key], next[key])) return;
-        if (retained === next) retained = { ...next };
-        retained[key] = previous[key];
-    };
-    for (const key of ['metadata', 'daemonState', 'availability', 'access', 'keyBasis', 'operationProtocolCapabilities'] as const) {
-        retainField(key);
-    }
-    return retained;
+    return retainMachineRecord(previous, next);
 }
 
 function retainMachineDisplayForPresenceOnly(
@@ -249,6 +244,7 @@ export function createMachinesDomain<S extends MachinesDomain & MachinesDomainDe
         machinePresenceById: {},
         machinePresenceByServerId: {},
         machineListByServerId: {},
+        machineRecordsByServerId: {},
         machineListStatusByServerId: {},
         markMachineListSettled: (serverIdRaw) =>
             set((state) => {
@@ -341,6 +337,10 @@ export function createMachinesDomain<S extends MachinesDomain & MachinesDomainDe
                         [sourceServerId]: nextScopedMachines ?? null,
                     }
                     : state.machineListByServerId;
+                const machineRecordsByServerId = sourceServerId
+                    && (nextScopedMachines !== currentScopedMachines || !state.machineRecordsByServerId[sourceServerId])
+                    ? { ...state.machineRecordsByServerId, [sourceServerId]: indexMachineInventory(nextScopedMachines) }
+                    : state.machineRecordsByServerId;
                 // Socket/exact rows and warm hydration are not a completed list.
                 // Only the list reader settles it; incremental rows preserve a
                 // completed read or its failure until that owner reports recovery.
@@ -390,11 +390,13 @@ export function createMachinesDomain<S extends MachinesDomain & MachinesDomainDe
 
                 if (!shouldUpdateActiveProjection) {
                     if (machineListByServerId === state.machineListByServerId
+                        && machineRecordsByServerId === state.machineRecordsByServerId
                         && machineListStatusByServerId === state.machineListStatusByServerId
                         && machinePresenceByServerId === state.machinePresenceByServerId) return state;
                     return {
                         ...state,
                         machineListByServerId,
+                        machineRecordsByServerId,
                         machineListStatusByServerId,
                         machinePresenceByServerId,
                     };
@@ -460,6 +462,7 @@ export function createMachinesDomain<S extends MachinesDomain & MachinesDomainDe
                     mergedMachines === state.machines
                     && mergedMachineDisplays === state.machineDisplayById
                     && machineListByServerId === state.machineListByServerId
+                    && machineRecordsByServerId === state.machineRecordsByServerId
                     && machineListStatusByServerId === state.machineListStatusByServerId
                     && machinePresenceById === state.machinePresenceById
                     && machinePresenceByServerId === state.machinePresenceByServerId
@@ -536,6 +539,7 @@ export function createMachinesDomain<S extends MachinesDomain & MachinesDomainDe
                     machineDisplayById: mergedMachineDisplays,
                     sessionListIndexByServerId: nextSessionListIndexByServerId,
                     machineListByServerId,
+                    machineRecordsByServerId,
                     machineListStatusByServerId,
                     machinePresenceById,
                     machinePresenceByServerId,

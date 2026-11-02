@@ -25,7 +25,7 @@ export function createCliMachineActionDeps(
     callMachineAction: CliMachineActionCall;
     isMachineActionServerScopeCurrent: CliMachineActionServerScopeCurrent;
   }>,
-): Pick<ActionExecutorDeps, 'machineCommandRun' | 'machineWorkSummaryGet' | 'actionOperationAction' | 'machinePageAction' | 'machineTerminalAction' | 'machineAgentInstallStart' | 'machineAgentInstallRead' | 'machineAgentInstallCancel' | 'machineSetupPlan' | 'machineSetupApply'> {
+): Pick<ActionExecutorDeps, 'machineCommandRun' | 'machineWorkSummaryGet' | 'actionOperationAction' | 'machinePageAction' | 'machineTerminalAction' | 'machineAgentInstallStart' | 'machineAgentInstallRead' | 'machineAgentInstallCancel' | 'machineSetupPlan' | 'machineSetupApply' | 'machineSetupRemove' | 'machineSetupUpdatesApply'> {
   return {
     machineCommandRun: async (input, context) => {
       context.signal?.throwIfAborted();
@@ -254,7 +254,32 @@ export function createCliMachineActionDeps(
         method: RPC_METHODS.MACHINE_SETUP_PLAN, request: input, context, effectActionId: 'machines.setup.plan',
         authority: context.authority, exactMachine: true, timeoutMs: null, ...(signal ? { signal } : {}) });
     },
-    machineSetupApply: async ({ input, context, signal }) => {
+    machineSetupUpdatesApply: async request => {
+      const { input, context, signal } = request;
+      const direct = params.machineActionDirectTargetTransport;
+      if (direct?.machineId === input.machineId && direct.machineSetupUpdatesApply) return direct.machineSetupUpdatesApply(request);
+      if (!params.credentials && direct?.machineId !== input.machineId) {
+        return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
+      }
+      return await callMachineAction({ machineId: input.machineId, serverId: context.serverId ?? params.serverId,
+        method: RPC_METHODS.MACHINE_SETUP_UPDATES_APPLY, request: input, context, effectActionId: 'machines.setup.updates.apply',
+        authority: context.authority, exactMachine: true, timeoutMs: null, ...(signal ? { signal } : {}) });
+    },
+    machineSetupRemove: async request => {
+      const { input, context, signal } = request;
+      const direct = params.machineActionDirectTargetTransport;
+      if (direct?.machineId === input.machineId && direct.machineSetupRemove) return direct.machineSetupRemove(request);
+      if (!params.credentials && direct?.machineId !== input.machineId) {
+        return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
+      }
+      return await callMachineAction({ machineId: input.machineId, serverId: context.serverId ?? params.serverId,
+        method: RPC_METHODS.MACHINE_SETUP_REMOVE, request: input, context, effectActionId: 'machines.setup.remove',
+        authority: context.authority, exactMachine: true, timeoutMs: null, ...(signal ? { signal } : {}) });
+    },
+    machineSetupApply: async request => {
+      const { input, context, signal } = request;
+      const direct = params.machineActionDirectTargetTransport;
+      if (direct?.machineId === input.machineId && direct.machineSetupApply) return direct.machineSetupApply(request);
       if (!params.credentials && params.machineActionDirectTargetTransport?.machineId !== input.machineId) {
         return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
       }

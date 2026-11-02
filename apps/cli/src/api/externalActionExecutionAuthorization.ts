@@ -356,7 +356,7 @@ export function requiresOriginalAccountMachineActionProof(actionId: string, inpu
     || detachedRunLaunch
     || actionId === 'projects.worker.status' || actionId === 'projects.worker.copy.inspect' || actionId === 'projects.worker.copy.retire'
     || actionId === 'projects.execution.output.read' || actionId === 'projects.execution.output.copy'
-    || actionId === 'machines.environment.apply' || isMachineTerminalActionId(actionId)
+    || actionId === 'machines.environment.apply' || actionId === 'machines.setup.updates.apply' || isMachineTerminalActionId(actionId)
     || actionId === 'machines.managed.acquire' || actionId === 'machines.managed.inspect'
     || actionId === 'machines.managed.bootstrap.retry' || MANAGED_CONTROL_ACTION_IDS_V1.some(id => id === actionId);
 }

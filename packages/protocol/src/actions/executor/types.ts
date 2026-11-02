@@ -3147,6 +3147,20 @@ export type ActionExecutorDeps = Readonly<{
     phase: 'prepare' | 'dispatch';
   }>) => Promise<ActionApprovedOperationAdmissionV1 | null>;
 
+  /** Exact native target; source copies carry review/CAS context, not setup execution. */
+  machineSetupRemove?: (args: Readonly<{
+    input: import('../../machines/managed/actionsV1.js').MachineSetupRemoveInputV1;
+    context: ActionExecutorContext;
+    signal?: AbortSignal;
+  }>) => Promise<unknown>;
+
+  /** On-demand exact native package updates reuse the setup operation owner. */
+  machineSetupUpdatesApply?: (args: Readonly<{
+    input: import('../../machines/managed/actionsV1.js').MachineSetupUpdatesApplyInputV1;
+    context: ActionExecutorContext;
+    signal?: AbortSignal;
+  }>) => Promise<unknown>;
+
   machineSetupApply?: (args: Readonly<{
     input: import('../../machines/managed/actionsV1.js').MachineSetupApplyInputV1;
     context: ActionExecutorContext;

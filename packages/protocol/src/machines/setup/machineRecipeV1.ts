@@ -449,6 +449,7 @@ export const MachineSetupEffectBasisV1Schema = z.discriminatedUnion('kind', [
     ...MachineSetupBootstrapBasisV1Schema.options,
     z.object({ kind: z.literal('setup'), machineId: z.string().min(1), desiredRevision: z.number().int().nonnegative(),
         selection: MachineRecipeSelectionV1Schema.optional() }).strict(),
+    z.object({ kind: z.literal('updates'), machineId: z.string().min(1), scope: z.enum(['security', 'all']) }).strict(),
     // Administrator policy is its own admitted Machine operation, not a
     // desired setup revision. Both reviewed policies participate in the digest.
     z.object({ kind: z.literal('adminAccess'), machineId: z.string().min(1), operationId: z.string().min(1),

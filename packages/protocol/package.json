@@ -8860,6 +8860,11 @@
       "types": "./dist/actions/settings/sessionAutoFollowSettingsAction.d.ts",
       "default": "./dist/actions/settings/sessionAutoFollowSettingsAction.js"
     },
+    "./machines/agentIsolationV1": {
+      "happier-source": "./src/machines/agentIsolationV1.ts",
+      "types": "./dist/machines/agentIsolationV1.d.ts",
+      "default": "./dist/machines/agentIsolationV1.js"
+    },
     "./machines/adminAccessV1": {
       "happier-source": "./src/machines/adminAccessV1.ts",
       "types": "./dist/machines/adminAccessV1.d.ts",
@@ -8894,6 +8899,11 @@
       "happier-source": "./src/machines/managed/machineSetupV1.ts",
       "types": "./dist/machines/managed/machineSetupV1.d.ts",
       "default": "./dist/machines/managed/machineSetupV1.js"
+    },
+    "./machines/setup/machineSetupObservationV1": {
+      "happier-source": "./src/machines/setup/machineSetupObservationV1.ts",
+      "types": "./dist/machines/setup/machineSetupObservationV1.d.ts",
+      "default": "./dist/machines/setup/machineSetupObservationV1.js"
     },
     "./machines/setup/machineSetupSourcesV1": {
       "happier-source": "./src/machines/setup/machineSetupSourcesV1.ts",

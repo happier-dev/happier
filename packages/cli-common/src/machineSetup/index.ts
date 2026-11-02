@@ -403,3 +403,4 @@ export async function applyMachineSetupEffectPlans(input: Readonly<{
         establishment?.password.fill(0);
     }
 }
+export { observeNativeUpdates, createNativeUpdatesSteps, type NativeUpdatesObservation, type NativeUpdatesCandidates } from './nativeUpdates.js';

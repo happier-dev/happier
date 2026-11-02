@@ -5,6 +5,7 @@ import type { Machine } from '@/sync/domains/state/storageTypes';
 type ServerScopedMachineState = Readonly<{
     machines: Readonly<Record<string, Machine | undefined>>;
     machineListByServerId?: Readonly<Record<string, readonly Machine[] | null | undefined>>;
+    machineRecordsByServerId?: Readonly<Record<string, Readonly<Record<string, Machine | undefined>> | undefined>>;
     machineListStatusByServerId?: Readonly<Record<string, 'idle' | 'loading' | 'signedOut' | 'error' | undefined>>;
 }>;
 
@@ -30,6 +31,8 @@ export function resolveServerScopedMachine(
                 return activeMachines ??= Object.values(state.machines).filter((machine): machine is Machine => Boolean(machine));
             },
             machineListByServerId: state.machineListByServerId ?? {},
+            machineRecordsByServerId: state.machineRecordsByServerId,
+            activeMachineRecords: state.machines,
             machineListStatusByServerId: state.machineListStatusByServerId,
         });
     }

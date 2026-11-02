@@ -104,6 +104,11 @@ export type MachineServiceActionDirectTargetInvocation = Parameters<NonNullable<
 
 export type MachineActionDirectTargetTransport = Readonly<{
   machineId: string;
+  /** Exact receiving daemon's native setup leaf; composition stays at the Action owner. */
+  machineSetupApply?: NonNullable<ActionExecutorDeps['machineSetupApply']>;
+  /** Exact receiving daemon's declared-removal leaf. */
+  machineSetupRemove?: NonNullable<ActionExecutorDeps['machineSetupRemove']>;
+  machineSetupUpdatesApply?: NonNullable<ActionExecutorDeps['machineSetupUpdatesApply']>;
   /** Only the installed registered owner consumes an already Home-admitted Project root. */
   openProject?: NonNullable<ActionExecutorDeps['projectsOpen']>;
   /** Exact installed service owner; never re-enter its receiving Machine RPC dispatcher. */

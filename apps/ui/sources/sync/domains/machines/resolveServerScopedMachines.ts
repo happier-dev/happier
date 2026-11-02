@@ -171,17 +171,23 @@ export function resolveServerScopedMachineInventoryKeys(params: Readonly<{
     ])].filter(Boolean);
 }
 
-export function resolveServerScopedMachineInventory<T extends MachineLike>(params: Readonly<{
+type MachineInventoryStatus = 'idle' | 'loading' | 'signedOut' | 'error' | undefined;
+type MachineInventoryInput<T extends MachineLike> = Readonly<{
     serverId: string;
     activeServerId: string;
     serverIdAliases?: readonly string[];
     activeMachines: ReadonlyArray<T>;
     machineListByServerId: Readonly<Record<string, ReadonlyArray<T> | null | undefined>>;
-    machineListStatusByServerId?: Readonly<Record<string, 'idle' | 'loading' | 'signedOut' | 'error' | undefined>>;
-}>, resolveScopeId: ProfileScopeResolver = captureServerProfileScopeResolver()): Readonly<{
-    machines: ReadonlyArray<T> | null;
-    status: 'idle' | 'loading' | 'signedOut' | 'error' | undefined;
-}> {
+    machineListStatusByServerId?: Readonly<Record<string, MachineInventoryStatus>>;
+}>;
+
+/** Ordered and exact readers consume one source decision, including the loading fallback. */
+function resolveMachineInventorySource(
+    params: Omit<MachineInventoryInput<MachineLike>, 'activeMachines'>,
+    hasActiveMachines: () => boolean,
+    resolveScopeId: ProfileScopeResolver,
+): Readonly<{ kind: 'active'; status: MachineInventoryStatus }>
+    | Readonly<{ kind: 'scoped'; serverId: string | undefined; status: MachineInventoryStatus }> {
     const activeServerId = String(params.activeServerId ?? '').trim();
     const serverIds = resolveServerScopedMachineInventoryKeys(params, resolveScopeId);
     const statusServerId = serverIds.find((serverId) => params.machineListStatusByServerId?.[serverId] !== undefined);
@@ -189,17 +195,26 @@ export function resolveServerScopedMachineInventory<T extends MachineLike>(param
     // A refresh does not surrender the canonical Home's retained answer to an
     // older profile-alias snapshot. Rows and readiness resolve the same ordered keys.
     const scopedServerId = serverIds.find((serverId) => Array.isArray(params.machineListByServerId[serverId]));
-    const scopedMachines = scopedServerId ? params.machineListByServerId[scopedServerId] : null;
     if (scopedServerId && params.machineListStatusByServerId?.[scopedServerId] === 'idle') {
-        return { machines: scopedMachines ?? null, status };
+        return { kind: 'scoped', serverId: scopedServerId, status };
     }
     const targetsActiveServer = activeServerId.length > 0
         && serverIds.some((serverId) => areServerProfileIdentifiersEquivalent(serverId, activeServerId, resolveScopeId));
-    if (targetsActiveServer && (params.activeMachines.length > 0 || status === 'idle')) {
-        return { machines: params.activeMachines, status };
+    if (targetsActiveServer && (hasActiveMachines() || status === 'idle')) {
+        return { kind: 'active', status };
     }
 
-    return { machines: scopedMachines ?? null, status };
+    return { kind: 'scoped', serverId: scopedServerId, status };
+}
+
+export function resolveServerScopedMachineInventory<T extends MachineLike>(params: MachineInventoryInput<T>,
+    resolveScopeId: ProfileScopeResolver = captureServerProfileScopeResolver()): Readonly<{
+    machines: ReadonlyArray<T> | null;
+    status: MachineInventoryStatus;
+}> {
+    const source = resolveMachineInventorySource(params, () => params.activeMachines.length > 0, resolveScopeId);
+    return { machines: source.kind === 'active' ? params.activeMachines
+        : source.serverId ? params.machineListByServerId[source.serverId] ?? null : null, status: source.status };
 }
 
 export function resolveServerScopedMachines<T extends MachineLike>(params: Parameters<typeof resolveServerScopedMachineInventory<T>>[0], resolveScopeId?: ProfileScopeResolver): ReadonlyArray<T> | null {
@@ -223,19 +238,26 @@ export function selectMachineInventoryRowsById<T extends Readonly<{ id: string }
  * Looks up one requested machine after server scope resolution. It deliberately
  * does not choose another machine when the requested id is absent.
  */
-export function resolveExactServerScopedMachine<T extends MachineWithId>(params: Readonly<{
+export function resolveExactServerScopedMachine<T extends MachineWithId>(params: MachineInventoryInput<T> & Readonly<{
     machineId: string;
-    serverId: string;
-    activeServerId: string;
-    serverIdAliases?: readonly string[];
-    activeMachines: ReadonlyArray<T>;
-    machineListByServerId: Readonly<Record<string, ReadonlyArray<T> | null | undefined>>;
-    machineListStatusByServerId?: Readonly<Record<string, 'idle' | 'loading' | 'signedOut' | 'error' | undefined>>;
+    /** The inventory writer publishes these alongside its ordered rows. Partial-state callers may omit them. */
+    machineRecordsByServerId?: Readonly<Record<string, Readonly<Record<string, T | undefined>> | undefined>>;
+    activeMachineRecords?: Readonly<Record<string, T | undefined>>;
 }>): T | null {
     const machineId = String(params.machineId ?? '').trim();
     if (!machineId) return null;
 
-    const machines = resolveServerScopedMachines<T>(params);
+    const source = resolveMachineInventorySource(params, () => {
+        if (!params.activeMachineRecords) return params.activeMachines.length > 0;
+        if (params.activeMachineRecords[machineId]) return true;
+        for (const id in params.activeMachineRecords) if (params.activeMachineRecords[id]) return true;
+        return false;
+    }, captureServerProfileScopeResolver());
+    const records = source.kind === 'active' ? params.activeMachineRecords
+        : source.serverId ? params.machineRecordsByServerId?.[source.serverId] : undefined;
+    if (records) return records[machineId] ?? null;
+    const machines = source.kind === 'active' ? params.activeMachines
+        : source.serverId ? params.machineListByServerId[source.serverId] : null;
     return machines?.find((machine) => machine.id === machineId) ?? null;
 }
 

@@ -7,12 +7,14 @@ import { MachineRecipeReferenceV1Schema, MachineRecipePackageObservationV1Schema
 export const MachineSetupObservationStatusV1Schema = lazyZodSchema(() => z.enum([
     'satisfied', 'drifted', 'unsupported', 'unavailable', 'unverifiable',
 ]));
-export const MachineSetupObservationReasonV1Schema = lazyZodSchema(() => z.enum([
-    'required_fact_unavailable', 'needs_admin_to_check', 'package_manager_busy',
-    'foreign_effect_conflict', 'private_scope_unenforceable', 'remove_unsupported',
-    'plan_changed', 'validation_failed', 'native_effect_failed', 'admin_access_unavailable',
-]));
+import { MachineSetupObservationReasonV1Schema } from './machineSetupObservationReasonV1.js';
+export { MachineSetupObservationReasonV1Schema } from './machineSetupObservationReasonV1.js';
 const backend = () => z.string().check(z.regex(/^[a-z][a-zA-Z0-9_.-]*$/));
+export const MachineSetupUpdatesObservationV1Schema = lazyZodSchema(() => z.strictObject({
+    status: MachineSetupObservationStatusV1Schema, reason: z.optional(MachineSetupObservationReasonV1Schema),
+    backend: z.optional(backend()), pendingSecurity: z.optional(z.number().check(z.int(), z.nonnegative())),
+    pendingAll: z.optional(z.number().check(z.int(), z.nonnegative())), rebootNeeded: z.optional(z.boolean()),
+}));
 
 /** Public native facts are a compact projection, never the private effect-plan facts bag. */
 export const MachineSetupPublishedStepObservationV1Schema = lazyZodSchema(() => z.strictObject({
@@ -34,11 +36,7 @@ export const MachineSetupObservationV1Schema = lazyZodSchema(() => z.strictObjec
         sourceIndex: z.number().check(z.int(), z.nonnegative()), status: MachineSetupObservationStatusV1Schema,
         reason: z.optional(MachineSetupObservationReasonV1Schema),
     }))),
-    updates: z.optional(z.strictObject({
-        status: MachineSetupObservationStatusV1Schema, reason: z.optional(MachineSetupObservationReasonV1Schema),
-        backend: z.optional(backend()), pendingSecurity: z.optional(z.number().check(z.int(), z.nonnegative())),
-        pendingAll: z.optional(z.number().check(z.int(), z.nonnegative())), rebootNeeded: z.optional(z.boolean()),
-    })),
+    updates: z.optional(MachineSetupUpdatesObservationV1Schema),
 }));
 export const MachineSetupObservationV1ReadSchema = createStoredReadSchema(MachineSetupObservationV1Schema);
 export type MachineSetupObservationV1 = z.infer<typeof MachineSetupObservationV1Schema>;

@@ -4995,6 +4995,10 @@ export type DeploymentsActionInputById = {
                                 kind: 'sshBootstrap';
                                 operationId: string;
                                 admittedInputDigest: string;
+                            } | {
+                                kind: 'updates';
+                                machineId: string;
+                                scope: 'all' | 'security';
                             };
                             steps: ({
                                 check: {
@@ -5791,6 +5795,10 @@ export type DeploymentsActionInputById = {
                                 kind: 'sshBootstrap';
                                 operationId: string;
                                 admittedInputDigest: string;
+                            } | {
+                                kind: 'updates';
+                                machineId: string;
+                                scope: 'all' | 'security';
                             };
                             steps: ({
                                 check: {

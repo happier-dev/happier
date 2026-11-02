@@ -8,6 +8,7 @@ export const CURRENT_SESSION_PRESENTATION_UNBIND_RPC_METHOD = 'session.presentat
 export const CURRENT_SESSION_PRESENTATION_APPLY_RPC_METHOD = 'session.presentation.apply' as const;
 
 export const RPC_METHODS = {
+  MACHINE_SETUP_UPDATES_APPLY: 'machines.setup.updates.apply',
   DAEMON_DEPLOYMENT_CHILD: 'daemon.deployments.child.v1',
   DAEMON_SERVICE_HEALTH_DELIVER: 'daemon.serviceHealth.deliver.v1',
   MACHINES_SERVICE_LOGS_READ: 'machines.services.logs.read',
