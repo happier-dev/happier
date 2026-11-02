@@ -278,12 +278,6 @@
       "import": "./dist/tailscale/index.js",
       "default": "./dist/tailscale/index.js"
     },
-    "./tailscale/taskContract": {
-      "happier-source": "./src/tailscale/taskContract.ts",
-      "types": "./dist/tailscale/taskContract.d.ts",
-      "import": "./dist/tailscale/taskContract.js",
-      "default": "./dist/tailscale/taskContract.js"
-    },
     "./process": {
       "happier-source": "./src/process/index.ts",
       "types": "./dist/process/index.d.ts",
