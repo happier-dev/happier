@@ -5,6 +5,7 @@ import { WorkspaceRouteEntry } from '@/components/appShell/workspace/createWorks
 import { ExternalSessionsBrowseSurface } from '@/components/sessions/external/browse/ExternalSessionsBrowseModal';
 import { ExternalSessionsBrowseRouteGate } from '@/components/sessions/external/browse/ExternalSessionsBrowseRouteGate';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
+import { DAEMON_AGENT_CATALOG_SECTIONS } from '@/agents/backendCatalog/agentCatalogSections';
 import {
     canBrowseExternalSessions,
     resolveExternalSessionBrowseLockedSource,
@@ -47,6 +48,7 @@ const ExternalSessionsBrowseRouteContent = React.memo(function ExternalSessionsB
         serverId: resolvedScope?.serverId ?? null,
         enabled: resolvedScope !== null,
         refreshKey: projectionRefreshKey,
+        sections: DAEMON_AGENT_CATALOG_SECTIONS,
     });
     // The projection owner retains Account-scoped metadata while refreshing.
     // Keep Browse mounted so invalidation cannot discard its query and hits;

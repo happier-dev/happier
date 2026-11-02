@@ -168,6 +168,62 @@ const composerSurfaceCatalog = [{
 }] as const;
 
 describe('loadDaemonMergedProjectionCacheEntry', () => {
+    it('shares one cold Browse inventory read for 512 unrelated contributions and reopens without Describe', async () => {
+        const { loadDaemonMergedProjectionCacheEntry } = await import('./loadDaemonMergedProjectionInputs');
+        const { DAEMON_AGENT_CATALOG_SECTIONS } = await import('./agentCatalogSections');
+        const account = createAccountLifetime('account-a');
+        onTestFinished(() => account.retire());
+        const snapshot = buildDeferredDaemonProjectionSections(DaemonContributionRegistryProjectionDescribeResponseSchema.parse({
+            protocolVersion: 1, projectionDigest: 'a'.repeat(64), projection: {
+                ...daemonProjection(7),
+                agentsById: { codex: { id: 'codex', title: 'Codex' } },
+                resourcesById: Object.fromEntries(Array.from({ length: 512 }, (_, index) => [
+                    `acme.review/unused-${index}`,
+                    { id: `unused-${index}`, pluginId: 'acme.review', resourceKind: 'config', scope: 'global', contentType: 'application/json' },
+                ])),
+            },
+        }));
+        const manifestReady = createDeferred<void>();
+        const reads: Array<Readonly<{ sectionRead?: { digest: string; offset: number; includeDigests?: readonly string[] }; sectionFrameVersion?: 2 }>> = [];
+        network.setRpcAckResponder(async call => {
+            if (call.method !== RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) throw new Error('Unexpected RPC');
+            const request = call.payload as (typeof reads)[number];
+            reads.push(request);
+            if (!request.sectionRead) {
+                await manifestReady.promise;
+                return { ok: true, result: snapshot.manifest };
+            }
+            const { digest, offset, includeDigests } = request.sectionRead;
+            return { ok: true, result: snapshot.read(digest, offset, includeDigests, request.sectionFrameVersion) };
+        });
+        const params = { ...projectionScope, accountLifetime: account.lifetime, sections: DAEMON_AGENT_CATALOG_SECTIONS, reuseFreshReady: true };
+        const first = loadDaemonMergedProjectionCacheEntry(params);
+        const concurrent = loadDaemonMergedProjectionCacheEntry(params);
+        try {
+            await vi.waitFor(() => expect(reads).toHaveLength(1));
+            manifestReady.resolve();
+            const [answer, shared] = await Promise.all([first, concurrent]);
+            expect(answer).toMatchObject({ kind: 'ready', inputs: { pluginProjectionV2: { agentsById: { codex: { title: 'Codex' } } } } });
+            expect(shared).toBe(answer);
+            // One manifest, one packed section-index frame, one packed body
+            // frame. Digest-addressed indexes disclose the bodies to request;
+            // both phases retain the existing wire-frame size boundary.
+            console.info('BROWSE_INVENTORY_COST', JSON.stringify({ contributions: 512, describes: reads.length,
+                manifests: reads.filter(read => !read.sectionRead).length }));
+            expect.soft(reads).toHaveLength(3);
+            const digests = reads.flatMap(read => read.sectionRead
+                ? [read.sectionRead.digest, ...read.sectionRead.includeDigests ?? []] : []);
+            expect.soft(digests).not.toContain(snapshot.manifest.sections.resourcesById);
+            expect.soft(digests).not.toContain(snapshot.manifest.sections.actionsById);
+            const beforeReopen = reads.length;
+            expect(await loadDaemonMergedProjectionCacheEntry(params)).toBe(answer);
+            expect(reads.length - beforeReopen).toBe(0);
+        } finally {
+            manifestReady.resolve();
+            await Promise.allSettled([first, concurrent]);
+        }
+    });
+
     it.each(['in-progress', 'once', 'held-upgrade', 'again', 'cancelled', 'retired'] as const)('finishes projection sections or re-establishes a superseded manifest (%s)', async scenario => {
         const { RpcHandlerManager } = await import(new URL('../../../../cli/src/api/rpc/RpcHandlerManager.ts', import.meta.url).href);
         const { registerDaemonContributionRegistryProjectionHandler } = await import(new URL('../../../../cli/src/rpc/handlers/daemonContributionRegistryProjection.ts', import.meta.url).href);

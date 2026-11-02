@@ -12,6 +12,7 @@ import { readSessionListRowsForServerId } from '@/sync/domains/session/listing/s
 import { resolveVisibleMachinesForActiveServerFromState } from '@/sync/store/domains/machines/resolveMachinesForActiveServerFromState';
 import { isMachineReachable } from '@/sync/domains/machines/reachability/machineReachability';
 import { loadDaemonMergedProjectionInputs } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
+import { DAEMON_AGENT_CATALOG_SECTIONS } from '@/agents/backendCatalog/agentCatalogSections';
 import { listExternalSessionBrowseProviderIds, resolveExternalSessionBrowseSourceOptions,
     resolveExternalSessionBrowseContentSearchSupported } from '@/components/sessions/external/browse/resolveExternalSessionBrowseSourceOptions';
 import { authorizeMemorySearchResult, captureMemorySearchSessionReadAuthority,
@@ -26,7 +27,7 @@ export async function readConversationSearchSources(input: Readonly<{
     const { serverId, accountId } = input.accountLifetime.scope;
     input.signal?.throwIfAborted();
     if (!input.accountLifetime.isCurrent()) return [];
-    const inputs = await loadDaemonMergedProjectionInputs({ machineId: input.machineId, serverId, accountLifetime: input.accountLifetime, signal: input.signal });
+    const inputs = await loadDaemonMergedProjectionInputs({ machineId: input.machineId, serverId, accountLifetime: input.accountLifetime, signal: input.signal, sections: DAEMON_AGENT_CATALOG_SECTIONS });
     input.signal?.throwIfAborted();
     const projection = inputs?.pluginProjectionV2;
     if (!projection || !input.accountLifetime.isCurrent()) return [];

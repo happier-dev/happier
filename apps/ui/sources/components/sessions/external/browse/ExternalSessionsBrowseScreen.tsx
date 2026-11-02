@@ -14,6 +14,7 @@ import {
     type ResolvedAgentCatalogEntry,
 } from '@/agents/backendCatalog/agentCatalogProjection';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
+import { DAEMON_AGENT_CATALOG_SECTIONS } from '@/agents/backendCatalog/agentCatalogSections';
 import { AgentCatalogIdentityIcon } from '@/agents/presentation/AgentCatalogIdentityIcon';
 import { useMachineAdministrationTargetFilter } from '@/components/settings/machines/MachineAdministrationTargetSelector';
 import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
@@ -199,6 +200,7 @@ export const ExternalSessionsBrowseScreen = React.memo((props: Readonly<{
         serverId: effectiveSelectedServerId,
         enabled: effectiveSelectedMachineId !== null,
         refreshKey: daemonProjectionRefreshKey,
+        sections: DAEMON_AGENT_CATALOG_SECTIONS,
         retainInputsAcrossScopeChange: true,
     });
     const daemonMergedProjectionInputs = daemonMergedProjection.inputs;
