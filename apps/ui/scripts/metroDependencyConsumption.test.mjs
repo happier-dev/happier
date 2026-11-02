@@ -110,6 +110,12 @@ test('Metro watcher and HTTP/HMR readers consume completed installs and stop on 
   }), { code: 'HAPPIER_DEPENDENCY_REFRESH_FAILED' });
   await assert.rejects(bundler.getDependencies([entry], transform, resolve, { lazy: false, shallow: false }),
     { code: 'HAPPIER_DEPENDENCY_REFRESH_FAILED' });
+  const pendingPublication = changed(generated, 'change');
+  await owner.withDependencyRefresh({ installDir: root, env, force: true }, async () => {});
+  await pendingPublication;
+  const repairedOutput = await metro.build({ entryFile: entry, dev: true, minify: false, platform: 'web', runModule: true });
+  const repairedSandbox = {}; vm.runInNewContext(repairedOutput.code, repairedSandbox);
+  assert.equal(repairedSandbox.installedValue, 'unfinished', 'repair without package writes must publish the queued file-map batch');
   const recovered = changed(generated, 'change');
   await owner.withDependencyRefresh({ installDir: root, env, force: true }, () =>
     writeFile(generated, 'module.exports = "recovered";'));

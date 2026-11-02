@@ -307,8 +307,10 @@ The Node fallback watcher renews directory handles when installation replaces
 their filesystem identities, preserving later package-file notifications.
 The watcher and `/status` remain available during that wait. A failed installation
 leaves its generation unpublished; new readers report the refresh owner's typed
-installation or readiness failure until a successful repair. Already
-admitted readers and the installer's own prerequisite work reuse their existing
+installation or readiness failure until a successful repair.
+Queued file-map work waits for the owner's next publication, including a repair
+that writes no package files; it holds no dependency reader while waiting.
+Already admitted readers and the installer's own prerequisite work reuse their existing
 admission. Pending starts and foreign Expo processes do not veto installation.
 
 JSON lock holders and waiters publish complete owner records atomically.

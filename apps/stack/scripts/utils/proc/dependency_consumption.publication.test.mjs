@@ -7,6 +7,39 @@ import { createTempFixture } from '../../testkit/core/temp_fixture.mjs';
 import { assertDependenciesReady, markDependencyMutation, waitForDependencyRefresh,
   withDependencyConsumption, withDependencyRefresh, withDependencyRefreshLock } from './dependency_refresh.mjs';
 
+test('queued publication consumers survive failed installation and repair without package writes', { timeout: 60_000 }, async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-consume-repair-' });
+  const options = { installDir: fixture.root, env: { ...process.env,
+    HAPPIER_STACK_HOME_DIR: fixture.root, HAPPIER_STACK_SKIP_REFRESH_DEPS: '0', HAPPIER_STACK_DISABLE_REFRESH_DEPS: '0' } };
+  await writeFile(fixture.path('package.json'), '{"private":true}');
+  await mkdir(fixture.path('node_modules'));
+  await withDependencyRefresh({ ...options, force: true }, async () => {});
+  await assert.rejects(withDependencyRefresh({ ...options, force: true }, async () => {
+    throw new Error('fixture installation failed');
+  }), { code: 'HAPPIER_DEPENDENCY_REFRESH_FAILED' });
+  const controller = new AbortController();
+  let result;
+  const consume = withDependencyConsumption({ ...options, signal: controller.signal, waitForPublication: true }, () => 'repaired');
+  void consume.then(value => { result = value; }, error => { result = error.code; });
+  try {
+    await new Promise(resolve => setTimeout(resolve, 100));
+    assert.equal(result, undefined, 'queued file-map work must remain pending after a failed install');
+    await withDependencyRefresh({ ...options, force: true }, async () => {});
+    assert.equal(await consume, 'repaired');
+    await assert.rejects(withDependencyRefresh({ ...options, force: true }, async () => {
+      throw new Error('fixture installation failed again');
+    }), { code: 'HAPPIER_DEPENDENCY_REFRESH_FAILED' });
+    const cancelled = withDependencyConsumption({ ...options, signal: controller.signal, waitForPublication: true }, () => assert.fail('unfinished bytes consumed'));
+    void cancelled.catch(() => {});
+    await new Promise(resolve => setTimeout(resolve, 100));
+    controller.abort();
+    await assert.rejects(cancelled, { name: 'AbortError' });
+  } finally {
+    controller.abort();
+    await consume.catch(() => {});
+  }
+});
+
 test('consumers wait for active installation then receive its failure and recover after retry', async t => {
   const fixture = await createTempFixture(t, { prefix: 'hstack-consume-publication-' });
   const options = { installDir: fixture.root, env: { ...process.env,

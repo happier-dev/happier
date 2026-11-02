@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHash, randomUUID } from 'node:crypto';
-import { existsSync, lstatSync, realpathSync } from 'node:fs';
+import { existsSync, lstatSync, readFileSync, realpathSync } from 'node:fs';
 import { lstat, readFile, readdir, readlink, realpath, rm, unlink } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -135,16 +135,40 @@ export async function withDependencyRefreshLock({ installDir, env = process.env,
 
 /** Finite readers share the installer's existing exclusion boundary. Acquire
  * only after capacity admission; preparation and repairs precede consumption. */
-export async function withDependencyConsumption({ installDir, env = process.env, signal, wait = true }, consume) {
+export async function withDependencyConsumption({ installDir, env = process.env, signal, wait = true, waitForPublication = false }, consume) {
   const lockPath = resolveDependencyRefreshLockPath(installDir, env);
   if (dependencyWriters.getStore()?.get(lockPath)?.active) return await consume(env);
-  return await withDependencyReadLock({
-    lockPath, env, signal, wait,
-    onAdmit: async () => {
-      const publication = await readJsonIfExists(`${lockPath}.generation`);
-      assertDependencyPublicationComplete(installDir, publication);
-    },
-  }, consume);
+  const generationPath = `${lockPath}.generation`;
+  let observer;
+  try {
+    for (;;) {
+      let admissionFailure;
+      try {
+        return await withDependencyReadLock({
+          lockPath, env, signal, wait,
+          onAdmit: async () => {
+            const publication = await readJsonIfExists(generationPath);
+            try { assertDependencyPublicationComplete(installDir, publication); }
+            catch (error) { admissionFailure = { error, publication }; throw error; }
+          },
+        }, consume);
+      } catch (error) {
+        if (!wait || !waitForPublication || error !== admissionFailure?.error) throw error;
+        // A queued file-map batch must survive a failed installation even when
+        // repair changes no package files. Wait outside reader custody: the
+        // next writer must be able to finish before this batch is admitted.
+        observer ??= createFileChangeObserver([dirname(generationPath)], {
+          isRelevant: (_directory, filename) => filename == null || String(filename) === basename(generationPath),
+        });
+        const readSnapshot = () => {
+          try { return JSON.stringify(JSON.parse(readFileSync(generationPath, 'utf8'))); }
+          catch (error) { if (error.code === 'ENOENT') return JSON.stringify(null); throw error; }
+        };
+        await observer.wait({ snapshot: JSON.stringify(admissionFailure.publication), readSnapshot,
+          maxWaitMs: DEFAULT_FILE_CHANGE_CATCH_UP_MS, signal });
+      }
+    }
+  } finally { observer?.close(); }
 }
 
 export function callerHoldsDependencyConsumption({ installDir, env = process.env }) {
