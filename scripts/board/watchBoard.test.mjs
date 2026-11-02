@@ -18,9 +18,10 @@ async function fixture(t) {
   await Promise.all([fs.writeFile(board, '# Board\n'), fs.writeFile(second, '# Second\n')]);
   return { root, board, second, seen };
 }
-function start(t, fixture, extra = [], heartbeat = 10000) {
+function start(t, fixture, extra = [], heartbeat = 10000, wakeOnBacklog = true) {
   const child = spawn(process.execPath, [watcher, '--board', fixture.board, '--board', fixture.second,
-    '--name', 'Programme', '--name', 'LANE', '--seen', fixture.seen, '--heartbeat-ms', String(heartbeat), ...extra],
+    '--name', 'Programme', '--name', 'LANE', '--seen', fixture.seen, '--heartbeat-ms', String(heartbeat),
+    ...(wakeOnBacklog ? ['--wake-on-backlog'] : []), ...extra],
   { cwd: fixture.root, stdio: ['ignore', 'pipe', 'pipe'] });
   t.after(() => child.kill());
   let stdout = '';
@@ -37,6 +38,64 @@ function start(t, fixture, extra = [], heartbeat = 10000) {
     listeners.add(notify); notify(); done.catch(reject);
   }) };
 }
+
+test('ignores either caller name as sender, including broadcasts and regex matches', async (t) => {
+  const f = await fixture(t);
+  await fs.writeFile(f.seen, JSON.stringify({ heading: 'previous heading' }) + '\n');
+  const own = [heading('LANE'), heading('Programme', 'RULING'), heading('ALL leads', 'URGENT')]
+    .map((line, i) => line.replace('Writer →', `${i === 1 ? 'Programme' : 'LANE'} →`));
+  const other = heading('LANE', 'ASK', 'from someone else');
+  await fs.writeFile(f.board, [...own, other].join('\n'));
+  assert.deepEqual(await start(t, f, ['--wake-regex', 'act']).done, [other]);
+});
+
+test('deduplicates exact report line text across history and body-only edits', async (t) => {
+  const f = await fixture(t);
+  const report = path.join(f.root, 'lanes', 'lane.md');
+  const terminal = 'STATUS: DONE — original evidence';
+  await fs.writeFile(f.seen, [terminal, 'STATUS: IN_PROGRESS'].map((line) => JSON.stringify({ report, line })).join('\n') + '\n');
+  await fs.writeFile(report, terminal + '\nchanged body\n');
+  assert.deepEqual(await start(t, f, [], 80, false).done, ['HEARTBEAT']);
+  await fs.writeFile(report, terminal + '\nanother body\n');
+  assert.deepEqual(await start(t, f, [], 80, false).done, ['HEARTBEAT']);
+  const changed = 'STATUS: DONE — new evidence';
+  await fs.writeFile(report, changed + '\nbody\n');
+  assert.deepEqual(await start(t, f).done, [`${report}: ${changed}`]);
+  const otherReport = path.join(f.root, 'lanes', 'other.md');
+  await fs.writeFile(otherReport, changed + '\n');
+  assert.deepEqual(await start(t, f).done, [`${otherReport}: ${changed}`]);
+});
+
+test('empty seen history silently baselines every current item and later delivers new work', async (t) => {
+  const f = await fixture(t);
+  await fs.writeFile(f.seen, '');
+  const backlog = Array.from({ length: 100 }, (_, i) => heading('LANE', 'ASK', `backlog ${i}`));
+  const report = path.join(f.root, 'lanes', 'lane.md');
+  await fs.writeFile(report, 'STATUS: DONE\n');
+  await fs.writeFile(f.board, backlog.join('\n'));
+  assert.deepEqual(await start(t, f, [], 80, false).done, ['HEARTBEAT']);
+  const recorded = (await fs.readFile(f.seen, 'utf8')).trim().split('\n').map(JSON.parse);
+  assert.deepEqual(recorded.filter((item) => item.heading).map((item) => item.heading), backlog);
+  assert.deepEqual(recorded.filter((item) => item.report), [{ report, line: 'STATUS: DONE' }]);
+  const added = heading('Programme', 'ASK', 'new work');
+  await fs.appendFile(f.second, added + '\n');
+  assert.deepEqual(await start(t, f).done, [added]);
+});
+
+test('wake-on-backlog opts into current board and terminal-report delivery', async (t) => {
+  const f = await fixture(t);
+  const report = path.join(f.root, 'lanes', 'lane.md');
+  await fs.writeFile(report, 'STATUS: DONE\n');
+  await fs.writeFile(f.board, heading('LANE') + '\n');
+  assert.deepEqual(await start(t, f, ['--wake-on-backlog']).done, [`${report}: STATUS: DONE`, heading('LANE')]);
+});
+
+test('an initially empty board baselines once and delivers work on re-arm', async (t) => {
+  const f = await fixture(t);
+  assert.deepEqual(await start(t, f, [], 80, false).done, ['HEARTBEAT']);
+  await fs.writeFile(f.board, heading('LANE') + '\n');
+  assert.deepEqual(await start(t, f, [], 10000, false).done, [heading('LANE')]);
+});
 
 test('filters before delivery, never truncates addressed headings, and persists only delivered items', { timeout: 15000 }, async (t) => {
   const f = await fixture(t);

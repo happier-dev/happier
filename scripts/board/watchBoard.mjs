@@ -3,13 +3,14 @@ import { watch } from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 
-const usage = 'Usage: node scripts/board/watchBoard.mjs --board <path> [--board <path>] --name <programme> [--name <lane>] --seen <caller.jsonl> --heartbeat-ms <ms> [--reports <directory-or-*.md>] [--wake-regex <regex>]';
+const usage = 'Usage: node scripts/board/watchBoard.mjs --board <path> [--board <path>] --name <programme> [--name <lane>] --seen <caller.jsonl> --heartbeat-ms <ms> [--reports <directory-or-*.md>] [--wake-regex <regex>] [--wake-on-backlog]';
 
 async function main() {
   const { values } = parseArgs({ options: {
     board: { type: 'string', multiple: true }, name: { type: 'string', multiple: true },
     seen: { type: 'string' }, reports: { type: 'string', multiple: true },
     'heartbeat-ms': { type: 'string' }, 'wake-regex': { type: 'string' },
+    'wake-on-backlog': { type: 'boolean' },
   } });
   const heartbeat = Number(values['heartbeat-ms']);
   if (!values.board?.length || !values.name?.length || !values.seen || !Number.isSafeInteger(heartbeat) || heartbeat <= 0) throw new Error(usage);
@@ -19,14 +20,16 @@ async function main() {
   const wakeRegex = values['wake-regex'] === undefined ? undefined : new RegExp(values['wake-regex']);
   const seenPath = path.resolve(values.seen);
   const seen = new Set();
-  const reports = new Map();
+  const reports = new Set();
+  const reportKey = (file, line) => JSON.stringify([file, line]);
   let history = '';
   try { history = await fs.readFile(seenPath, 'utf8'); } catch (error) { if (error.code !== 'ENOENT') throw error; }
   for (const line of history.split('\n').filter(Boolean)) {
     const item = JSON.parse(line);
     if (item.heading) seen.add(item.heading);
-    else if (item.report) reports.set(item.report, item.line);
+    else if (item.report) reports.add(reportKey(item.report, item.line));
   }
+  const baseline = history.trim() === '' && !values['wake-on-backlog'];
   await fs.mkdir(path.dirname(seenPath), { recursive: true });
   const record = (item) => fs.appendFile(seenPath, JSON.stringify(item) + '\n');
   const watchers = new Map();
@@ -50,6 +53,7 @@ async function main() {
   };
   async function scan(initial) {
     let wake = false;
+    const silent = initial && baseline;
     // Establish report baselines before emitting initial board headings. A caller
     // can act on delivered output immediately without racing report initialization.
     for (const root of roots) {
@@ -66,11 +70,11 @@ async function main() {
         if (!entry.isFile() || !entry.name.endsWith('.md')) continue;
         const file = path.join(root, entry.name);
         const line = (await read(file)).split(/\r?\n/, 1)[0];
-        if (reports.get(file) === line) continue;
-        const hadBaseline = reports.has(file);
-        reports.set(file, line);
+        const key = reportKey(file, line);
+        if (reports.has(key)) continue;
+        reports.add(key);
         await record({ report: file, line });
-        if ((!initial || hadBaseline) && /^(?:STATUS:\s*)?(DONE|BLOCKED|IMPLEMENTED_NOT_VERIFIED)\b/.test(line)) {
+        if (!silent && /^(?:STATUS:\s*)?(DONE|BLOCKED|IMPLEMENTED_NOT_VERIFIED)\b/.test(line)) {
           process.stdout.write(`${file}: ${line}\n`);
           wake = true;
         }
@@ -79,18 +83,22 @@ async function main() {
     for (const board of boards) {
       const headings = (await read(board)).match(/^### [^\r\n]*/gm) ?? [];
       for (const heading of headings) {
-        const match = / → (.+?) — ([^—]+?) — /.exec(heading);
+        const match = /^### .*? — (.+?) → (.+?) — ([^—]+?) — /.exec(heading);
         if (!match) continue;
-        const addressees = match[1].split(',').map((name) => name.trim());
-        const broadcast = addressees.some((name) => name.toLowerCase() === 'all leads') && ['URGENT', 'RULING', 'HOLD'].includes(match[2]);
+        if (names.has(match[1].trim())) continue;
+        const addressees = match[2].split(',').map((name) => name.trim());
+        const broadcast = addressees.some((name) => name.toLowerCase() === 'all leads') && ['URGENT', 'RULING', 'HOLD'].includes(match[3]);
         if (!broadcast && !addressees.some((name) => names.has(name))) continue;
         if (seen.has(heading)) continue;
         await record({ heading });
         seen.add(heading);
+        if (silent) continue;
         process.stdout.write(heading + '\n');
-        if (broadcast || ['ASK', 'URGENT', 'RULING'].includes(match[2]) || wakeRegex?.test(heading)) wake = true;
+        if (broadcast || ['ASK', 'URGENT', 'RULING'].includes(match[3]) || wakeRegex?.test(heading)) wake = true;
       }
     }
+    // Persist initialization even when there were no current items to record.
+    if (silent) await record({ baseline: true });
     return wake;
   }
   let expired = false;
