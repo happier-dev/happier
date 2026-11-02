@@ -163,7 +163,7 @@ function resourceMode(row: MachineFacts): 'plain' | 'e2ee' | null {
     const mode = resolveEffectiveAccountEncryptionModeFromAccountRow(row.account);
     return mode.status === 'ready' ? mode.mode : null;
 }
-function resourceContentMatchesMode(row: MachineFacts, mode: 'plain' | 'e2ee'): boolean {
+export function resourceContentMatchesMode(row: Pick<MachineFacts, 'metadata' | 'daemonState' | 'dataEncryptionKey'>, mode: 'plain' | 'e2ee'): boolean {
     return machineStoredContentMatchesAccountMode({
         mode, metadata: row.metadata, storedRead: true,
         ...(row.daemonState === null ? {} : { daemonState: row.daemonState }),
