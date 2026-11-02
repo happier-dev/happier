@@ -220,6 +220,10 @@ const COMMAND_RULES = [
     'apps/ui/scripts/activitySurfacesValidationContract.test.mjs',
     'apps/stack/scripts/utils/dev_targets/remote_dependency_bootstrap.test.mjs',
     'apps/stack/scripts/utils/dev_targets/remote_validation_preparation.test.mjs',
+    'apps/stack/scripts/utils/dev_targets/qa_browser.test.mjs',
+    'apps/stack/scripts/utils/stack/stop_remote.test.mjs',
+    'apps/stack/scripts/utils/proc/ownership_killProcessGroupOwnedByStack.test.mjs',
+    'apps/stack/scripts/utils/proc/native_process_identity.test.mjs',
     'apps/stack/scripts/utils/proc/workspace_build_admission.test.mjs',
     'apps/stack/scripts/utils/test/test_process.test.mjs',
     'apps/stack/scripts/utils/dev_targets/remote_commands.test.mjs',
@@ -1336,7 +1340,12 @@ export function buildRemoteExecCommand(
 export function buildRemoteQaBrowserStopCommand(target, { stackName }) {
   if (target.platform !== 'posix') throw new Error('[dev-targets] QA browser retirement requires a POSIX host');
   const paths = resolveRemoteStackStatePaths(target, { stackName, runtimeMode: 'controlled' });
-  return wrapRemoteScript(target, `set -e; cd -- ${posixQuote(target.repoDir)}; exec node --import=./apps/stack/bin/localSourceRuntimeBootstrap.mjs ./apps/stack/scripts/utils/dev_targets/qa_browser.mjs --stop-stack ${posixQuote(stackName)} ${posixQuote(paths.stackEnvPath)}`);
+  const helper = `${String(target.repoDir).replace(/[\\/]+$/, '')}/apps/stack/scripts/utils/dev_targets/qa_browser_retirement.mjs`;
+  // Retirement only needs OS ownership/lifecycle leaves. Neither mirror admission
+  // nor an inherited source-runtime preload may acquire dependency custody here.
+  // Replace the login shell on both paths so its EXIT/logout hooks cannot
+  // overwrite the unavailable-helper status before SSH returns it.
+  return wrapRemoteScript(target, `set -e; if ! test -f ${posixQuote(helper)}; then echo 'browser cleanup helper unavailable' >&2; exec /bin/sh -c 'exit 127'; fi; exec env -u NODE_OPTIONS node --experimental-strip-types ${posixQuote(helper)} --stop-stack ${posixQuote(stackName)} ${posixQuote(paths.stackEnvPath)}`);
 }
 
 export function buildRemoteCancelCommand(target, { executionId } = {}) {

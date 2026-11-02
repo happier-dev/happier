@@ -1,7 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, rm, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { access, copyFile, mkdir, rm, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
+import { spawnTestProcess } from '../../testkit/core/spawn_test_process.mjs';
+import { buildRemoteQaBrowserStopCommand, resolveRemoteStackStatePaths } from '../dev_targets/remote_commands.mjs';
 import { createServer } from 'node:net';
 import { once } from 'node:events';
 import { createTempFixture } from '../../testkit/core/temp_fixture.mjs';
@@ -9,6 +11,7 @@ import { spawnDetachedInlineNodeTestProcess } from '../../testkit/core/spawn_tes
 import { completeInterruptedStackStopBeforeStart, stopStackWithEnv as stopStackWithEnvImpl } from './stop.mjs';
 import { captureDevTargetSyncFixture } from '../../testkit/core/dev_target_sync.mjs';
 import { runCaptureResult } from '../proc/proc.mjs';
+import { withDependencyConsumption, withDependencyRefresh, withDependencyRefreshLock } from '../proc/dependency_refresh.mjs';
 import { readStackRuntimeStateFile, recordStackRuntimeStart, recordStackRuntimeUpdate } from './runtime_state.mjs';
 import { resolveMutagenSessionName } from '../dev_targets/mutagen_project.mjs';
 import { resolveRuntimeBuildAuthority } from '../../runtime/shared/runtime_build_authority.mjs';
@@ -16,8 +19,8 @@ import { resolveRuntimeBuildAuthority } from '../../runtime/shared/runtime_build
 function stopStackWithEnvOwner(input, dependencies = {}) {
   const capture = dependencies.runCaptureResultImpl;
   if (!capture) return stopStackWithEnvImpl(input, dependencies);
-  // Browser cleanup now admits authored source through the same real mirror
-  // owner as ordinary commands. Only the external Mutagen response is a fixture.
+  // Native service retirement can still need synchronization fixtures; browser
+  // retirement contacts its host directly without source preparation.
   return stopStackWithEnvImpl(input, { ...dependencies, runCaptureResultImpl: (command, args, options) =>
     captureDevTargetSyncFixture(command, args) ?? capture(command, args, options) });
 }
@@ -29,7 +32,7 @@ function stopStackWithEnv(input, dependencies = {}) {
     // These external SSH fixtures own native service state, not a browser.
     // Supply the actual browser inventory wire shape while keeping all Stack
     // decisions, retirement, ownership and persistence logic real.
-    if (command === 'ssh' && String(args.at(-1)).includes('qa_browser.mjs --stop-stack')) {
+    if (command === 'ssh' && String(args.at(-1)).includes('qa_browser_retirement.mjs')) {
       return { ok: true, exitCode: 0, out: JSON.stringify({ stackName: input.stackName, pids: [] }), err: '' };
     }
     return capture(command, args, options);
@@ -57,6 +60,136 @@ async function fixture(t, { inheritedTargets = false, targetName = 'linux1' } = 
     json: true, noDocker: true, autoSweep: false } };
 }
 
+for (const dependencyState of ['failed', 'locked']) test(`browser retirement ignores ${dependencyState} dependencies and reclaims only owned processes`, { skip: process.platform === 'win32' }, async t => {
+  const f = await fixture(t);
+  await rm(f.statePath);
+  const mirror = join(f.baseDir, 'mirror');
+  // A source mirror with no installed packages and a real failed/held
+  // publication. Only the package-manager callback and SSH are external fixtures.
+  const files = [
+    'apps/stack/bin/localSourceRuntimeBootstrap.mjs',
+    'apps/stack/scripts/utils/dev_targets/qa_browser.mjs',
+    'apps/stack/scripts/utils/dev_targets/qa_browser_retirement.mjs',
+    'apps/stack/scripts/utils/proc/ownership.mjs',
+    'apps/stack/scripts/utils/proc/proc.mjs',
+    'apps/stack/scripts/utils/proc/pids.mjs',
+    'apps/stack/scripts/utils/proc/terminate.mjs',
+    'apps/stack/scripts/utils/proc/boundedLog.mjs',
+    'apps/stack/scripts/utils/process/resolveCommandInvocation.mjs',
+    'packages/cli-common/processInstance.mjs',
+    'packages/cli-common/src/process/processLiveness.ts',
+    'packages/cli-common/windowsCommandInvocation.mjs',
+  ];
+  for (const relative of files) {
+    const destination = join(mirror, relative);
+    await mkdir(dirname(destination), { recursive: true });
+    try { await copyFile(new URL(`../../../../../${relative}`, import.meta.url), destination); }
+    catch (error) { if (error.code !== 'ENOENT' || !relative.endsWith('qa_browser_retirement.mjs')) throw error; }
+  }
+  await writeFile(join(mirror, 'package.json'), JSON.stringify({ private: true }));
+  const dependencyEnv = { ...process.env, HAPPIER_STACK_HOME_DIR: join(f.baseDir, 'dependency-home'),
+    HAPPIER_STACK_SKIP_REFRESH_DEPS: '0', HAPPIER_STACK_DISABLE_REFRESH_DEPS: '0' };
+  const dependencyOptions = { installDir: mirror, env: dependencyEnv };
+  if (dependencyState === 'failed') {
+    await assert.rejects(withDependencyRefresh({ ...dependencyOptions, force: true }, async () => {
+      throw new Error('fixture package manager failed');
+    }), { code: 'HAPPIER_DEPENDENCY_REFRESH_FAILED' });
+  } else {
+    const entered = Promise.withResolvers();
+    const release = Promise.withResolvers();
+    const holder = withDependencyRefreshLock(dependencyOptions, async () => {
+      entered.resolve(); await release.promise;
+    });
+    t.after(async () => { release.resolve(); await holder; });
+    await Promise.race([entered.promise, holder.then(() => assert.fail('writer exited before admission'))]);
+  }
+  let admitted = false;
+  await assert.rejects(withDependencyConsumption({ ...dependencyOptions, wait: false }, () => { admitted = true; }));
+  assert.equal(admitted, false, 'the fixture must really refuse dependency consumption');
+  const preload = join(f.baseDir, 'unrelated-dependency-preload.mjs');
+  const publicationEntered = join(f.baseDir, 'publication-entered');
+  const shellStartup = join(f.baseDir, 'shell-startup');
+  // A host's noninteractive startup can replace a shell exit status. The
+  // cleanup command must preserve unavailable-helper status through that OS boundary.
+  await writeFile(shellStartup, "trap 'exit 1' EXIT\n");
+  await writeFile(preload, `import { writeFileSync } from 'node:fs';
+import { withDependencyConsumption } from ${JSON.stringify(new URL('../proc/dependency_refresh.mjs', import.meta.url).href)};
+writeFileSync(${JSON.stringify(publicationEntered)}, 'entered');
+await withDependencyConsumption({ installDir: ${JSON.stringify(mirror)}, env: { ...process.env,
+  HAPPIER_STACK_HOME_DIR: ${JSON.stringify(dependencyEnv.HAPPIER_STACK_HOME_DIR)} }, wait: false }, () => {});
+`);
+  const healthy = { ...f.target, name: 'reachable', ssh: 'test-reachable', repoDir: mirror };
+  const offline = { ...healthy, name: 'offline', ssh: 'test-offline' };
+  await writeFile(join(f.baseDir, 'dev-targets.json'), JSON.stringify({ version: 1, targets: [healthy, offline] }));
+  const paths = resolveRemoteStackStatePaths(healthy, { stackName: f.input.stackName, runtimeMode: 'controlled' });
+  const profile = join(f.baseDir, 'browser-profile');
+  await mkdir(profile);
+  const children = [];
+  async function browser(stackName, envPath, kind) {
+    const child = spawnTestProcess(process.execPath, ['-e', `
+      const fs = require('node:fs');
+      process.on('SIGTERM', () => { fs.rmSync(${JSON.stringify(profile)}, { recursive: true, force: true }); process.exit(0); });
+      setInterval(() => {}, 1000);
+      console.log('ready');
+    `], { env: { ...process.env, NODE_OPTIONS: '', HAPPIER_STACK_STACK: stackName,
+      HAPPIER_STACK_ENV_FILE: envPath, HAPPIER_STACK_PROCESS_KIND: kind }, stdio: ['ignore', 'pipe', 'pipe'] });
+    children.push(child);
+    await once(child.stdout, 'data');
+    return child;
+  }
+  t.after(async () => {
+    for (const child of children) {
+      if (child.exitCode != null || child.signalCode != null) continue;
+      const exited = once(child, 'exit'); child.kill('SIGTERM'); await exited;
+    }
+  });
+  const owned = await browser(f.input.stackName, paths.stackEnvPath, 'browser');
+  const neighbor = await browser(`${f.input.stackName}-neighbor`, paths.stackEnvPath, 'browser');
+  const otherKind = await browser(f.input.stackName, paths.stackEnvPath, 'session');
+  const otherEnv = await browser(f.input.stackName, `${paths.stackEnvPath}-neighbor`, 'browser');
+  const remoteEnv = { ...process.env, NODE_OPTIONS: `--import=${preload}`, BASH_ENV: shellStartup };
+  const direct = await runCaptureResult('/bin/bash', ['-c', buildRemoteQaBrowserStopCommand(healthy, { stackName: f.input.stackName })], { env: remoteEnv });
+  assert.equal(direct.ok, true, direct.err);
+  assert.deepEqual(JSON.parse(direct.out), { stackName: f.input.stackName, pids: [owned.pid] });
+  await assert.rejects(access(profile), { code: 'ENOENT' });
+  await assert.rejects(access(publicationEntered), { code: 'ENOENT' });
+  const secondOwned = await browser(f.input.stackName, paths.stackEnvPath, 'browser');
+  let preparation = 0;
+  const captureRemote = async (command, args) => {
+    if (command !== 'ssh') { preparation++; return { ok: false, exitCode: 1, out: '', err: `dependency publication ${dependencyState}` }; }
+    if (args.includes('test-offline')) return { ok: false, exitCode: 255, out: '', err: 'host offline' };
+    return runCaptureResult('/bin/bash', ['-c', args.at(-1)], { env: remoteEnv });
+  };
+  const stopped = await stopStackWithEnvImpl(f.input, { runCaptureResultImpl: captureRemote });
+  assert.equal(stopped.finalization.finalized, true);
+  assert.deepEqual(stopped.errors, []);
+  assert.equal(preparation, 0, 'retirement must not consume source synchronization or dependency publication');
+  assert.deepEqual(stopped.browsers.remote, [{ target: 'reachable', stackName: f.input.stackName, pids: [secondOwned.pid] }]);
+  assert.equal(stopped.browsers.warnings[0].code, 'browser_cleanup_unreachable:offline');
+  assert.match(stopped.browsers.warnings[0].error, /host offline/);
+  assert.equal(stopped.browsers.warnings.length, 1);
+  await rm(join(mirror, 'apps/stack/scripts/utils/proc/ownership.mjs'));
+  const incomplete = await stopStackWithEnvImpl(f.input, { runCaptureResultImpl: captureRemote });
+  assert.equal(incomplete.finalization.finalized, true, 'an incomplete source helper must settle unavailable');
+  assert.match(incomplete.browsers.warnings.find(warning => warning.code.endsWith(':reachable')).error, /source module missing/);
+  await rm(join(mirror, 'apps/stack/scripts/utils/dev_targets/qa_browser_retirement.mjs'));
+  const unavailable = await stopStackWithEnvImpl(f.input, { runCaptureResultImpl: captureRemote });
+  assert.equal(unavailable.finalization.finalized, true, 'an unpublished native helper must remain optional');
+  assert.deepEqual(unavailable.browsers.warnings.map(warning => warning.code).sort(), [
+    'browser_cleanup_unreachable:offline', 'browser_cleanup_unreachable:reachable',
+  ]);
+  assert.match(unavailable.browsers.warnings.find(warning => warning.code.endsWith(':reachable')).error, /helper unavailable/);
+  for (const relative of ['apps/stack/scripts/utils/proc/ownership.mjs', 'apps/stack/scripts/utils/dev_targets/qa_browser_retirement.mjs']) {
+    await copyFile(new URL(`../../../../../${relative}`, import.meta.url), join(mirror, relative));
+  }
+  const recoveredOwned = await browser(f.input.stackName, paths.stackEnvPath, 'browser');
+  const recovered = await stopStackWithEnvImpl(f.input, { runCaptureResultImpl: captureRemote });
+  assert.equal(recovered.finalization.finalized, true);
+  assert.deepEqual(recovered.browsers.remote, [{ target: 'reachable', stackName: f.input.stackName, pids: [recoveredOwned.pid] }]);
+  assert.deepEqual(recovered.browsers.warnings.map(warning => warning.code), ['browser_cleanup_unreachable:offline']);
+  for (const child of [neighbor, otherKind, otherEnv]) assert.equal(child.exitCode, null, 'foreign process must survive');
+});
+
 test('unreachable browser target warns without preventing stack stop or reachable browser cleanup', async t => {
   const f = await fixture(t, { targetName: 'linux3' });
   await rm(f.statePath);
@@ -69,8 +202,54 @@ test('unreachable browser target warns without preventing stack stop or reachabl
       : { ok: true, exitCode: 0, out: JSON.stringify({ stackName: f.input.stackName, pids: [1234] }), err: '' } });
   assert.equal(stopped.finalization.finalized, true, 'disposable browser confirmation must not block local stop');
   assert.deepEqual(stopped.errors, []);
-  assert.deepEqual(stopped.browsers.warnings.map(warning => warning.code), ['browser_cleanup_unconfirmed:linux3']);
+  assert.deepEqual(stopped.browsers.warnings.map(warning => warning.code), ['browser_cleanup_unreachable:linux3']);
   assert.deepEqual(stopped.browsers.remote, [{ target: 'linux1', stackName: f.input.stackName, pids: [1234] }]);
+});
+
+test('unreachable browser hosts warn while reachable browsers are reaped and recovered hosts join the next sweep', async t => {
+  const f = await fixture(t, { targetName: 'nl1' });
+  await rm(f.statePath);
+  const names = ['nl1', 'nl3', 'windows1-linux', 'windows2-linux'];
+  const targets = names.map(name => ({ ...f.target, name, ssh: `test-${name}` }));
+  await writeFile(join(f.baseDir, 'dev-targets.json'), JSON.stringify({ version: 1, targets }));
+  let recovered = false;
+  const reaped = [];
+  const capture = async (command, args) => {
+    assert.equal(command, 'ssh');
+    const name = names.find(name => args.includes(`test-${name}`));
+    assert.ok(name, 'cleanup must address a configured worker');
+    if (!recovered && ['windows1-linux', 'windows2-linux'].includes(name)) {
+      return { ok: false, exitCode: 255, out: '', err: 'fixture host unreachable' };
+    }
+    reaped.push(name);
+    return { ok: true, exitCode: 0, out: JSON.stringify({ stackName: f.input.stackName, pids: [1234, 5678] }), err: '' };
+  };
+  const stopped = await stopStackWithEnvImpl(f.input, { runCaptureResultImpl: capture });
+  assert.equal(stopped.finalization.finalized, true);
+  assert.deepEqual(stopped.errors, []);
+  assert.deepEqual(stopped.browsers.warnings.map(warning => warning.code).sort(), [
+    'browser_cleanup_unreachable:windows1-linux', 'browser_cleanup_unreachable:windows2-linux',
+  ]);
+  assert.deepEqual(reaped.sort(), ['nl1', 'nl3']);
+  assert.ok(stopped.browsers.remote.every(result => result.pids.length === 2), 'each reachable worker confirms the entire marked browser sweep');
+  recovered = true;
+  reaped.length = 0;
+  const retried = await stopStackWithEnvImpl(f.input, { runCaptureResultImpl: capture });
+  assert.equal(retried.finalization.finalized, true);
+  assert.deepEqual(retried.browsers.warnings, []);
+  assert.deepEqual(reaped.sort(), [...names].sort(), 'recovery must not leave a worker excluded from later orphan cleanup');
+});
+
+test('contacted browser workers with invalid cleanup confirmation fail closed', async t => {
+  const f = await fixture(t);
+  await rm(f.statePath);
+  for (const out of ['not-json', JSON.stringify({ stackName: 'other-stack', pids: [] }),
+    JSON.stringify({ stackName: f.input.stackName, pids: [0] })]) {
+    const stopped = await stopStackWithEnvOwner(f.input, { runCaptureResultImpl: async () => ({ ok: true, exitCode: 0, out, err: '' }) });
+    assert.equal(stopped.finalization.finalized, false, 'a contacted worker must positively confirm this Stack browser cleanup');
+    assert.equal(stopped.finalization.reason, 'browser_cleanup_incomplete');
+    assert.equal(stopped.errors[0].step, 'browsers');
+  }
 });
 
 for (const platform of ['posix', 'windows']) {
@@ -367,7 +546,7 @@ test('parent stop releases recorded local forwards after remote retirement and p
 test('parent stop retires a native target without a healthy source synchronization', async t => {
   const f = await fixture(t);
   let nativeAlive = true;
-  const result = await stopStackWithEnvImpl(f.input, { runCaptureResultImpl: async (commandName, args) => {
+  const result = await stopStackWithEnv(f.input, { runCaptureResultImpl: async (commandName, args) => {
     if (commandName === 'mutagen' || args.includes('mutagen')) return { ok: false, exitCode: 1, err: 'beta transition problem' };
     const command = String(args.at(-1));
     if (command.includes('stack stop')) {
@@ -378,7 +557,7 @@ test('parent stop retires a native target without a healthy source synchronizati
   } });
   assert.equal(nativeAlive, false);
   assert.equal(result.finalization.finalized, true);
-  assert.match(result.browsers.warnings[0].error, /beta transition problem/);
+  assert.deepEqual(result.browsers.warnings, [], 'browser cleanup does not consume source synchronization');
   assert.equal(await readStackRuntimeStateFile(f.statePath), null);
 });
 

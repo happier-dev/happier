@@ -191,11 +191,13 @@ A source start superseded by a newer start is terminal for the older controller.
 It closes its own SSH workers, forwards and owner-death watchdog without retiring
 the replacement runtime or publishing another retry.
 
-Source-based remote control helpers use the command executor's mirror admission
-and freshness barrier. A missing or unhealthy mirror leaves browser retirement
-unconfirmed with a target-specific warning; cleanup does not execute stale helper
-code from that mirror. A reachable helper failure still prevents stop finalization,
-and both JSON and console output retain its sanitized cause.
+In 0.3 development, remote browser retirement runs the native process-ownership
+helper without source-runtime bootstrap, mirror admission or dependency publication.
+An unreachable host or missing retirement helper leaves cleanup unconfirmed with
+`browser_cleanup_unreachable:<target>` and allows stop to proceed. The existing
+sweep reclaims marked browsers on the next contact. A reachable helper's ownership
+failure or invalid confirmation still prevents finalization; JSON and console
+output retain its sanitized cause.
 
 Scan and transition problems block remote dispatch, including `.project/` data
 and captures. Refusals name the problem paths. Known transient races use the

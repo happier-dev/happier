@@ -56,6 +56,7 @@ test('killProcessGroupOwnedByStack routes Windows owned cleanup through the tree
     json: true,
     platform: 'win32',
     processInstanceFingerprint: predecessorFingerprint,
+    observePidLivenessImpl: () => ({ status: 'alive' }),
     readProcessInstanceFingerprintSyncImpl: (_pid, options) => (
       options?.expectedFingerprint === predecessorFingerprint
         ? predecessorFingerprint
@@ -104,6 +105,7 @@ test('killProcessGroupOwnedByStack snapshots and rechecks a POSIX incarnation ar
     envPath: '/tmp/t/env',
     json: true,
     platform: 'linux',
+    observePidLivenessImpl: () => ({ status: 'alive' }),
     readProcessInstanceFingerprintSyncImpl: () => {
       fingerprintReads += 1;
       return 'linux-proc:1234';

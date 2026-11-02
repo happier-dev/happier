@@ -8,13 +8,14 @@ import { fileURLToPath } from 'node:url';
 import { createInterface } from 'node:readline';
 import timers from 'node:timers/promises';
 import { appendBoundedTail, redactFailureDiagnostic, runCaptureResult, spawnProc, killProcessTree } from '../proc/proc.mjs';
-import { prepareDevTargetSourceCommand, runDevTargetCommand } from './executor.mjs';
+import { runDevTargetCommand } from './executor.mjs';
 import { resolveDevTargetSshConfigFile } from './mutagen_runtime.mjs';
 import { classifyDevTargetSshDiagnostic, resolveDevTargetSshDiagnostic, runDevTargetSshProcess } from './ssh_transport.mjs';
 import { resolveRetryDelayMs } from './supervisor.mjs';
 import { buildRemoteQaBrowserStopCommand, buildSshForwardArgs, buildSshWorkerArgs, resolveRemoteStackStatePaths } from './remote_commands.mjs';
 import { loadControlledRuntimeConfig } from './service_placement.mjs';
-import { killPidOwnedByStack, listPsPidsForEnvQueries, observePsEnvLine } from '../proc/ownership.mjs';
+import { requireSessionName, stopQaBrowsers } from './qa_browser_retirement.mjs';
+export { stopQaBrowsers } from './qa_browser_retirement.mjs';
 import { resolveExplicitStackEnvFilePath, resolveStackEnvPath } from '../paths/paths.mjs';
 
 const READY_MARKER = 'HSTACK_QA_BROWSER=';
@@ -93,10 +94,6 @@ async function cleanupQaBrowserProfile({ session, profile, env = process.env }, 
   await rm(profilePath, { recursive: true, force: true });
 }
 
-function requireSessionName(name) {
-  if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(name ?? '')) throw new Error('[dev-targets] browser requires a simple lane session name');
-  return name;
-}
 
 async function unusedPort() {
   return (await unusedPorts(1))[0];
@@ -260,33 +257,6 @@ export async function runQaBrowserWorker({ sessionName, proxy = false, trustSpki
   }
 }
 
-/** Retire only browsers carrying this Stack's exact existing ownership bindings. */
-export async function stopQaBrowsers({ stackName, envPath }) {
-  requireSessionName(stackName);
-  if (!envPath) throw new Error('[dev-targets] browser retirement requires the Stack env path');
-  const inventory = async () => (await listPsPidsForEnvQueries([{ needles: [
-    `HAPPIER_STACK_STACK=${stackName}`, `HAPPIER_STACK_ENV_FILE=${envPath}`, 'HAPPIER_STACK_PROCESS_KIND=browser',
-  ] }]))[0].filter(pid => pid !== process.pid);
-  const pids = [];
-  const stop = async (pid, worker) => {
-    const result = await killPidOwnedByStack(pid, { stackName, envPath, json: true,
-      signal: 'SIGTERM', ...(worker ? { graceMs: Infinity } : {}) });
-    if (!result.killed) throw new Error(`[dev-targets] browser pid ${pid} cleanup unconfirmed: ${result.reason}`);
-    pids.push(pid);
-  };
-  // The worker must close detached Chromium before any sweep can signal its
-  // close subprocess. Wait for that lifecycle rather than adding a deadline.
-  for (const pid of await inventory()) {
-    const observed = await observePsEnvLine(pid);
-    if (observed.status === 'ok' && /qa_browser\.mjs\s+--worker(?:\s|$)/.test(observed.line)) await stop(pid, true);
-  }
-  // Older orphaned browser/agent-browser processes can have lost their worker.
-  // Re-enumerate after graceful close and use the same ownership/identity owner.
-  for (const pid of await inventory()) await stop(pid, false);
-  if ((await inventory()).length) throw new Error('[dev-targets] Stack browser cleanup is incomplete');
-  return { stackName, pids };
-}
-
 export async function stopStackQaBrowsers({ stackName, baseDir, sourceDir, env }, { capture = runCaptureResult } = {}) {
   const local = await stopQaBrowsers({ stackName, envPath: resolveExplicitStackEnvFilePath(env) });
   if (env.HAPPIER_STACK_NO_DEV_TARGETS === '1') return { local, remote: [], warnings: [] };
@@ -295,13 +265,6 @@ export async function stopStackQaBrowsers({ stackName, baseDir, sourceDir, env }
   // have browsers on any configured POSIX target and no runtime state at all.
   const targets = loaded.config.targets.filter(target => target.platform === 'posix');
   const results = await Promise.allSettled(targets.map(async target => {
-    try {
-      await prepareDevTargetSourceCommand({ target, stackBaseDir: loaded.authority.producerStackBaseDir ?? baseDir,
-        sourceDir, env }, { runCaptureResult: input => capture(input.command, input.args, { env: input.env }) });
-    } catch (error) {
-      return { warning: { code: `browser_cleanup_unconfirmed:${target.name}`,
-        error: redactFailureDiagnostic(error instanceof Error ? error.message : String(error), env) } };
-    }
     const sshConfig = resolveDevTargetSshConfigFile(target, { stackBaseDir: loaded.authority.producerStackBaseDir ?? baseDir, env });
     let result;
     try {
@@ -310,13 +273,13 @@ export async function stopStackQaBrowsers({ stackName, baseDir, sourceDir, env }
         remoteCommand: buildRemoteQaBrowserStopCommand(target, { stackName }),
       }), { env, capture });
     } catch (error) {
-      return { warning: { code: `browser_cleanup_unconfirmed:${target.name}`,
+      return { warning: { code: `browser_cleanup_unreachable:${target.name}`,
         error: redactFailureDiagnostic(error instanceof Error ? error.message : String(error), env) } };
     }
     // SSH transport loss cannot confirm disposable browser retirement, but it
     // must not prevent the reachable Stack resources from stopping.
-    if (!result.ok && (result.exitCode === 255 || result.exitCode == null)) {
-      return { warning: { code: `browser_cleanup_unconfirmed:${target.name}`,
+    if (!result.ok && (result.exitCode === 255 || result.exitCode === 127 || result.exitCode == null)) {
+      return { warning: { code: `browser_cleanup_unreachable:${target.name}`,
         error: redactFailureDiagnostic(result.err || result.error?.message || 'browser cleanup transport unavailable', env) } };
     }
     if (!result.ok) throw new Error(`[dev-targets] ${target.name} browser cleanup failed: ${redactFailureDiagnostic(result.err || result.exitCode, env)}`);
@@ -324,7 +287,7 @@ export async function stopStackQaBrowsers({ stackName, baseDir, sourceDir, env }
     try { observed = JSON.parse(result.out.trim()); } catch { /* Missing confirmation is not retirement. */ }
     if (observed?.stackName !== stackName || !Array.isArray(observed.pids)
       || !observed.pids.every(pid => Number.isSafeInteger(pid) && pid > 1)) {
-      return { warning: { code: `browser_cleanup_unconfirmed:${target.name}`, error: 'invalid browser cleanup confirmation' } };
+      throw new Error(`[dev-targets] ${target.name} invalid browser cleanup confirmation`);
     }
     return { target: target.name, ...observed };
   }));

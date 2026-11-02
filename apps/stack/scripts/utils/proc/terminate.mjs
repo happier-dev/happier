@@ -1,6 +1,8 @@
 import { isPidAlive } from './pids.mjs';
 import { spawn } from 'node:child_process';
-import { readProcessInstanceFingerprintSync } from '@happier-dev/cli-common/processInstance';
+// Admission must load this OS boundary before installed-tree custody exists.
+// Use the same dependency-free public source leaf as the PID/lock owners.
+import { readProcessInstanceFingerprintSync } from '../../../../../packages/cli-common/processInstance.mjs';
 
 function resolveProcessBoundary(boundary = {}) {
   return {

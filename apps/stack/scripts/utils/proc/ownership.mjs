@@ -3,7 +3,34 @@ import { observePidLiveness } from './pids.mjs';
 import { terminateProcessGroup, terminateProcessPid } from './terminate.mjs';
 import { readdir, readFile } from 'node:fs/promises';
 import { setTimeout as delay } from 'node:timers/promises';
-import { readProcessInstanceFingerprintSync } from '@happier-dev/cli-common/processInstance';
+// OS retirement also runs before dependencies can be installed or published.
+import { readProcessInstanceFingerprintSync } from '../../../../../packages/cli-common/processInstance.mjs';
+import { isPidProvablyAbsent } from '../../../../../packages/cli-common/src/process/processLiveness.ts';
+import { uptime } from 'node:os';
+
+// Retirement concerns the recorded instance, not whoever currently holds its
+// PID. A failed probe or missing fingerprint alone never proves retirement.
+export function isRecordedStackProcessRetired(pid, {
+  processInstanceFingerprint = null,
+  recordedStartedAt = null,
+  platform = process.platform,
+  // Preserve Stack's existing Linux-zombie retirement proof as well as ESRCH.
+  isPidProvablyAbsentImpl = candidate => isPidProvablyAbsent(candidate)
+    || observePidLiveness(candidate).status === 'dead',
+  readProcessInstanceFingerprintSyncImpl = readProcessInstanceFingerprintSync,
+} = {}) {
+  if (isPidProvablyAbsentImpl(Number(pid))) return true;
+  const startedAtMs = typeof recordedStartedAt === 'number'
+    ? recordedStartedAt : Date.parse(recordedStartedAt);
+  if (Number.isFinite(startedAtMs) && startedAtMs > 0) {
+    const bootedAtMs = Date.now() - uptime() * 1000;
+    if (startedAtMs < bootedAtMs) return true;
+  }
+  const expected = String(processInstanceFingerprint ?? '').trim();
+  if (!expected) return false;
+  const observed = readProcessInstanceFingerprintSyncImpl(pid, { platform, expectedFingerprint: expected });
+  return Boolean(observed && observed !== expected);
+}
 
 function normalizeNeedles(needles) {
   const raw = Array.isArray(needles) ? needles : [];
@@ -446,10 +473,20 @@ async function resolveOwnedProcessIncarnation(pid, {
   cliHomeDir,
   platform = process.platform,
   processInstanceFingerprint = null,
+  recordedStartedAt = null,
   resolvePidStackOwnershipImpl = resolvePidStackOwnership,
   readProcessInstanceFingerprintSyncImpl = readProcessInstanceFingerprintSync,
   observePidLivenessImpl = observePidLiveness,
 } = {}) {
+  const liveness = observePidLivenessImpl(pid);
+  if (isRecordedStackProcessRetired(pid, {
+    processInstanceFingerprint, recordedStartedAt, platform,
+    // Reuse the canonical observation, including Linux zombies, when the
+    // termination caller already supplies that OS boundary.
+    isPidProvablyAbsentImpl: () => liveness.status === 'dead',
+    readProcessInstanceFingerprintSyncImpl,
+  })) return { owned: false, alreadyExited: true, reason: 'already_exited' };
+  if (liveness.status === 'inconclusive') return { owned: false, reason: 'process_liveness_inconclusive' };
   const suppliedFingerprint = String(processInstanceFingerprint ?? '').trim();
   if (platform === 'win32' && !suppliedFingerprint) {
     const liveness = observePidLivenessImpl(pid);
@@ -463,8 +500,12 @@ async function resolveOwnedProcessIncarnation(pid, {
     expectedFingerprint: suppliedFingerprint || null,
   });
   const expectedFingerprint = suppliedFingerprint || beforeFingerprint;
-  if (suppliedFingerprint && beforeFingerprint && beforeFingerprint !== suppliedFingerprint) {
-    return { owned: false, reason: 'process_instance_changed' };
+  if (suppliedFingerprint && isRecordedStackProcessRetired(pid, {
+    processInstanceFingerprint: suppliedFingerprint,
+    isPidProvablyAbsentImpl: () => false,
+    readProcessInstanceFingerprintSyncImpl: () => beforeFingerprint,
+  })) {
+    return { owned: false, alreadyExited: true, reason: 'already_exited' };
   }
 
   if (platform === 'win32') {
@@ -500,8 +541,12 @@ async function resolveOwnedProcessIncarnation(pid, {
       ? { owned: false, alreadyExited: true, reason: 'already_exited' }
       : { owned: false, reason: 'process_instance_unavailable' };
   }
-  if (afterFingerprint !== expectedFingerprint) {
-    return { owned: false, reason: 'process_instance_changed' };
+  if (isRecordedStackProcessRetired(pid, {
+    processInstanceFingerprint: expectedFingerprint,
+    isPidProvablyAbsentImpl: () => false,
+    readProcessInstanceFingerprintSyncImpl: () => afterFingerprint,
+  })) {
+    return { owned: false, alreadyExited: true, reason: 'already_exited' };
   }
   return { owned: true, processInstanceFingerprint: expectedFingerprint, ownership };
 }
@@ -516,6 +561,7 @@ export async function killPidOwnedByStack(pid, {
   graceMs = 800,
   platform = process.platform,
   processInstanceFingerprint = null,
+  recordedStartedAt = null,
   resolvePidStackOwnershipImpl = resolvePidStackOwnership,
   readProcessInstanceFingerprintSyncImpl = readProcessInstanceFingerprintSync,
   observePidLivenessImpl = observePidLiveness,
@@ -527,6 +573,7 @@ export async function killPidOwnedByStack(pid, {
     cliHomeDir,
     platform,
     processInstanceFingerprint,
+    recordedStartedAt,
     resolvePidStackOwnershipImpl,
     readProcessInstanceFingerprintSyncImpl,
     observePidLivenessImpl,
@@ -563,6 +610,7 @@ export async function killProcessGroupOwnedByStack(
     resolvePidStackOwnershipImpl = resolvePidStackOwnership,
     getProcessGroupIdImpl = getProcessGroupId,
     processInstanceFingerprint = null,
+    recordedStartedAt = null,
     readProcessInstanceFingerprintSyncImpl = readProcessInstanceFingerprintSync,
     observePidLivenessImpl = observePidLiveness,
     terminateProcessPidImpl = terminateProcessPid,
@@ -575,6 +623,7 @@ export async function killProcessGroupOwnedByStack(
     cliHomeDir,
     platform,
     processInstanceFingerprint,
+    recordedStartedAt,
     resolvePidStackOwnershipImpl,
     readProcessInstanceFingerprintSyncImpl,
     observePidLivenessImpl,

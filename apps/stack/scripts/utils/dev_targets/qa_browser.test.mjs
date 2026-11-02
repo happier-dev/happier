@@ -196,7 +196,7 @@ test('managed control EOF retires its browser without requiring a later signal',
   await assert.rejects(access(browser.profile), { code: 'ENOENT' });
 });
 
-test('source control refuses a missing mirror before dispatching its browser helper', async t => {
+test('browser retirement does not admit or synchronize a source mirror', async t => {
   const { root } = await createTempFixture(t, { prefix: 'hstack-browser-missing-mirror-' });
   const stackName = 'fixture-missing-mirror';
   const sourceDir = join(root, 'source');
@@ -219,11 +219,9 @@ test('source control refuses a missing mirror before dispatching its browser hel
       return { ok: true, exitCode: 0, out: '[]' };
     },
   });
-  assert.equal(dispatched, false, 'an unsynchronized mirror cannot supply executable source helpers');
-  assert.equal(result.remote.length, 0);
-  assert.equal(result.warnings.length, 1);
-  assert.equal(result.warnings[0].code, 'browser_cleanup_unconfirmed:self-stale');
-  assert.match(result.warnings[0].error, /synchronization is missing/);
+  assert.equal(dispatched, true, 'browser retirement must contact its host without source admission');
+  assert.deepEqual(result.remote, [{ target: 'self-stale', stackName, pids: [] }]);
+  assert.deepEqual(result.warnings, []);
 });
 
 // Real CDP transport at the external Chromium boundary; the worker's launch,
@@ -339,7 +337,7 @@ test('browser cleanup reuses SSH and recovers a refused channel before dispatchi
     },
   });
   assert.deepEqual(unconfirmed.remote, []);
-  assert.equal(unconfirmed.warnings[0]?.code, 'browser_cleanup_unconfirmed:nl1');
+  assert.equal(unconfirmed.warnings[0]?.code, 'browser_cleanup_unreachable:nl1');
   assert.deepEqual(transports, [false], 'ambiguous loss after dispatch must not replay retirement');
 });
 
