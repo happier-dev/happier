@@ -14,7 +14,7 @@ const unavailable = () => new ComputerDriverError('computer_display_unavailable'
   'Managed desktop unavailable. Install the virtual-display recipe on this Machine.');
 
 /** Linux-only, lazy daemon-lifetime desktop. Never mutates the daemon/Agent environment. */
-export function createComputerDesktop() {
+export function createComputerDesktop(options?: Readonly<{ runtimeRoot?: string }>) {
   let connection: ComputerDesktopConnection | undefined;
   let initialization: Promise<ComputerDesktopConnection> | undefined;
   let closed = false;
@@ -60,7 +60,7 @@ export function createComputerDesktop() {
   });
   const start = async (xvfb: string, dbus: string, gdbus: string, wm: string, openbox: boolean): Promise<ComputerDesktopConnection> => {
     try {
-      runtimeDirectory = await mkdtemp(join(tmpdir(), 'happier-desktop-'));
+      runtimeDirectory = await mkdtemp(join(options?.runtimeRoot ?? tmpdir(), 'happier-desktop-'));
       // Enable only this session, without changing the person's persistent desktop preferences.
       const environment: NodeJS.ProcessEnv = { ...process.env, XDG_RUNTIME_DIR: runtimeDirectory, XDG_CONFIG_HOME: runtimeDirectory,
         GSETTINGS_BACKEND: 'memory', NO_AT_BRIDGE: '0', GTK_A11Y: 'always' };
