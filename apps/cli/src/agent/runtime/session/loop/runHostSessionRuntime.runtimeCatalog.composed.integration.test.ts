@@ -4096,6 +4096,19 @@ describe('runHostSessionRuntime', () => {
     harness.config.runtimeActivityApplicability = 'supported';
     harness.session.hasPendingProviderInput.mockReturnValue(false);
     harness.session.reconcilePendingProviderInputCustodyBeforeMaterialization = async () => true;
+    const sourceClient = createTestApiSessionClient(ApiSessionClient, harness.opts.credentials!.token,
+      createPlainSessionFixture({ id: harness.session.sessionId, metadata: harness.session.getMetadataSnapshot() }), {
+        transport: { ...harness.session.getServerBinding(),
+          createSessionSocketTransport: () => { throw new Error('Session socket is supplied by the network boundary fixture'); },
+        },
+      });
+    onTestFinished(() => sourceClient.close());
+    const executionSnapshots: number[] = [];
+    harness.session.subscribeExecutionRunActivitySnapshots = (observe: (count: number) => void) =>
+      sourceClient.subscribeExecutionRunActivitySnapshots(count => {
+        executionSnapshots.push(count);
+        observe(count);
+      });
     let tail: RuntimeActivitySnapshotTail = { sequence: 0, custody: null, settlement: null };
     // Home mutation acknowledgement is the transport boundary. The host's real
     // Runtime Activity projection supplies the value; this fixture commits it.
@@ -4117,37 +4130,82 @@ describe('runHostSessionRuntime', () => {
     await hostSubagentStore.upsert({ actor: { kind: 'host' }, input: {
       id: childId, parentSessionId: harness.session.sessionId, origin: 'agent', kind: 'native',
     } });
-    harness.deps.runPermissionModePromptLoopFn = async params => {
+    harness.deps.runPermissionModePromptLoopFn = async (params: Parameters<typeof runPermissionModePromptLoop>[0]) => {
       vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
       expect(params.inputConsumer).toBeDefined();
+      expect(executionSnapshots).toEqual([0]);
+      const liveRead = vi.spyOn(params.inputConsumer!, 'readLiveWork');
+      let sequence = 0;
+      const emitEligibleUsage = () => {
+        harness.runtime.emitRuntimeMessage({ kind: 'usage-observed', sequence: ++sequence,
+          sessionId: harness.session.sessionId, emittedAtMs: Date.now(), usage: {},
+          promptCache: { lastUseAtMs: Date.now(), ttlMs: 1000 } });
+        harness.runtime.emitRuntimeMessage({ kind: 'usage-observed', sequence: ++sequence,
+          sessionId: harness.session.sessionId, emittedAtMs: Date.now(), usage: {},
+          context: { v: 1, modelId: null, usedTokens: 0, windowTokens: null, totalProcessedTokens: null,
+            baselineTokens: null, isAutoCompactEnabled: null, categories: null,
+            observedAtMs: Date.now(), source: 'provider_turn' } });
+      };
       if (producer === 'idle') {
-        harness.runtime.emitRuntimeMessage({ kind: 'runtime-activity-snapshot', sequence: 1,
+        harness.runtime.emitRuntimeMessage({ kind: 'runtime-activity-snapshot', sequence: ++sequence,
           sessionId: harness.session.sessionId, emittedAtMs: Date.now(), state: 'idle', activeCount: 0 });
         await Promise.resolve(); await Promise.resolve();
       }
       expect(await params.inputConsumer!.readLiveWork()).toMatchObject({ agents: 'active', agentsActiveCount: 1 });
+      liveRead.mockClear();
+      emitEligibleUsage();
+      expect(liveRead).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(900);
+      expect(liveRead).toHaveBeenCalledOnce();
+      expect(compact).not.toHaveBeenCalled();
       await hostSubagentStore.complete({ actor: { kind: 'host' }, id: childId, parentSessionId: harness.session.sessionId });
+      // The held Pending row remains owned by the Home queue transport.
+      harness.session.hasPendingProviderInput.mockReturnValue(true);
+      harness.session.getPendingMessageEditHoldIds = () => ['held-idle-input'];
+      expect(await params.inputConsumer!.readLiveWork()).toMatchObject({ input: 'active', agents: 'settled' });
+      liveRead.mockClear();
+      emitEligibleUsage();
+      expect(liveRead).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(900);
+      expect(liveRead).toHaveBeenCalledOnce();
+      expect(compact).not.toHaveBeenCalled();
+      harness.session.hasPendingProviderInput.mockReturnValue(false);
+      harness.session.getPendingMessageEditHoldIds = () => [];
       const facts = await params.inputConsumer!.readLiveWork();
-      expect(facts).toMatchObject({ input: 'settled', agents: 'settled', attention: 'settled',
+      expect(facts).toMatchObject({ session: producer === 'idle' ? 'settled' : 'unknown',
+        input: 'settled', agents: 'settled', agentsActiveCount: 0, attention: 'settled',
         nativeRuntimeActivity: producer === 'idle' ? 'settled' : 'unknown' });
-      if (producer === 'idle') expect(facts).toMatchObject({ session: 'settled', settledAt: expect.any(Number) });
+      if (producer === 'idle') {
+        expect(Number.isSafeInteger(facts.settledAt)).toBe(true);
+        expect(facts.settledAt).toBeGreaterThanOrEqual(0);
+      } else expect(facts.settledAt).toBeUndefined();
       const readyBefore = harness.metrics.defaultReadyCalls;
       const turnsBefore = harness.runtime.beginTurn.mock.calls.length;
       const eventsBefore = harness.session.enqueueSessionEventCommitted.mock.calls.length;
-      harness.runtime.emitRuntimeMessage({ kind: 'usage-observed', sequence: 2,
-        sessionId: harness.session.sessionId, emittedAtMs: Date.now(), usage: {},
-        promptCache: { lastUseAtMs: Date.now(), ttlMs: 1000 } });
-      harness.runtime.emitRuntimeMessage({ kind: 'usage-observed', sequence: 3,
-        sessionId: harness.session.sessionId, emittedAtMs: Date.now(), usage: {},
-        context: { v: 1, modelId: null, usedTokens: 0, windowTokens: null, totalProcessedTokens: null,
-          baselineTokens: null, isAutoCompactEnabled: null, categories: null,
-          observedAtMs: Date.now(), source: 'provider_turn' } });
+      liveRead.mockClear();
+      emitEligibleUsage();
+      expect(liveRead).not.toHaveBeenCalled();
       await vi.advanceTimersByTimeAsync(900);
+      expect(liveRead).toHaveBeenCalledOnce();
       expect(compact).toHaveBeenCalledTimes(producer === 'idle' ? 1 : 0);
       if (producer === 'idle') expect(compact).toHaveBeenCalledWith(expect.objectContaining({ trigger: 'idle', compactionId: expect.any(String) }), { signal: expect.any(AbortSignal) });
       expect(harness.runtime.beginTurn).toHaveBeenCalledTimes(turnsBefore);
       expect(harness.metrics.defaultReadyCalls).toBe(readyBefore);
       expect(harness.session.enqueueSessionEventCommitted).toHaveBeenCalledTimes(eventsBefore);
+      // The consumed idle period cannot compact again from its own usage.
+      if (producer === 'idle') {
+        emitEligibleUsage();
+        await vi.advanceTimersByTimeAsync(900);
+        expect(compact).toHaveBeenCalledOnce();
+        expect(liveRead).toHaveBeenCalledOnce();
+      }
+      vi.useRealTimers();
+      harness.queue.push({ text: 'Continue after idle maintenance.', localId: null }, { permissionMode: 'default' });
+      let completed = false;
+      await runPermissionModePromptLoop({ ...params, shouldExit: () => completed,
+        sendReady: () => { completed = true; } });
+      expect(harness.runtime.sendPrompt).toHaveBeenCalledWith(expect.stringContaining('Continue after idle maintenance.'));
+      expect(completed).toBe(true);
     };
     try {
       await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
