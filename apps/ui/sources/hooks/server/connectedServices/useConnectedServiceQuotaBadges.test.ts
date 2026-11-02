@@ -29,7 +29,7 @@ const { fetchAccountEncryptionModeSpy, getConnectedServiceQuotaSnapshotPlainSpy,
     (...args: Parameters<typeof fetchAccountEncryptionMode>) => ReturnType<typeof fetchAccountEncryptionMode>
   >(async () => ({ mode: 'e2ee', updatedAt: 0 })),
   getConnectedServiceQuotaSnapshotPlainSpy: vi.fn<
-    (...args: Parameters<typeof getConnectedServiceQuotaSnapshotPlain>) => ReturnType<typeof getConnectedServiceQuotaSnapshotPlain>
+    (...args: Parameters<typeof getConnectedServiceQuotaSnapshotPlain>) => Promise<import('@happier-dev/protocol').ConnectedServiceQuotaSnapshotV1 | null>
   >(async () => null),
   getConnectedServiceQuotaSnapshotSealedSpy: vi.fn<
     (...args: Parameters<typeof getConnectedServiceQuotaSnapshotSealed>) => ReturnType<typeof getConnectedServiceQuotaSnapshotSealed>
@@ -58,7 +58,10 @@ vi.mock('@/sync/api/account/apiConnectedServicesQuotasV2', () => ({
 }));
 
 vi.mock('@/sync/api/account/apiConnectedServicesQuotasV3', () => ({
-  getConnectedServiceQuotaSnapshotPlain: getConnectedServiceQuotaSnapshotPlainSpy,
+  getConnectedServiceQuotaSnapshotPlain: async (...args: Parameters<typeof getConnectedServiceQuotaSnapshotPlain>) => {
+    const snapshot = await getConnectedServiceQuotaSnapshotPlainSpy(...args);
+    return snapshot ? { snapshot, metadata: { fetchedAt: snapshot.fetchedAt, staleAfterMs: snapshot.staleAfterMs, status: 'ok' } } : null;
+  },
 }));
 
 beforeEach(() => {

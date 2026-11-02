@@ -1,3 +1,4 @@
+import { ConnectedServiceQuotaReadMetadataSchema, type ConnectedServiceQuotaReadMetadata } from './connectedServiceQuotaReadMetadata';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { serverFetch } from '@/sync/http/client';
 import { HappyError } from '@/utils/errors/errors';
@@ -14,19 +15,14 @@ function extractErrorCode(json: unknown): string | null {
 
 const ConnectedServiceQuotasV3ResponseSchema = z.object({
   content: StoredJsonContentEnvelopeSchema,
-  metadata: z.object({
-    fetchedAt: z.number().int().nonnegative(),
-    staleAfterMs: z.number().int().nonnegative(),
-    status: z.enum(['ok', 'unavailable', 'estimated', 'error']),
-    refreshRequestedAt: z.number().int().nonnegative().optional(),
-  }),
+  metadata: ConnectedServiceQuotaReadMetadataSchema,
 });
 
 export async function getConnectedServiceQuotaSnapshotPlain(
   credentials: AuthCredentials,
   params: Readonly<{ serviceId: ConnectedServiceId; profileId: string }>,
   opts?: Readonly<{ signal?: AbortSignal }>,
-): Promise<ConnectedServiceQuotaSnapshotV1 | null> {
+): Promise<Readonly<{ snapshot: ConnectedServiceQuotaSnapshotV1; metadata: ConnectedServiceQuotaReadMetadata }> | null> {
   return await backoff(async () => {
     const response = await serverFetch(
       `/v3/connect/${encodeURIComponent(params.serviceId)}/profiles/${encodeURIComponent(params.profileId)}/quotas`,
@@ -69,7 +65,7 @@ export async function getConnectedServiceQuotaSnapshotPlain(
     if (!snapshot.success) {
       throw new Error(`Invalid quota snapshot response for ${params.serviceId}`);
     }
-    return snapshot.data;
+    return { snapshot: snapshot.data, metadata: parsed.data.metadata };
   });
 }
 

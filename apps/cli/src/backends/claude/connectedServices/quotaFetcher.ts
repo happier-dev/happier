@@ -645,12 +645,18 @@ export function createClaudeSubscriptionQuotaFetcher(params?: Readonly<{
   resetUsageUrl.searchParams.set('at_wall', '1');
   resetUsageUrl.searchParams.set('skip_spend', '1');
 
-  function observeRateLimit(response: Response, record: ConnectedServiceCredentialRecordV1, now: number): void {
+  function observeProviderBackoff(response: Response, record: ConnectedServiceCredentialRecordV1, now: number): number | null {
+    const retryAfter = parseRetryAfterHeader(response.headers?.get?.('retry-after'), { nowMs: now });
+    if (response.ok || (response.status !== 429 && retryAfter.retryAfterMs === null)) return null;
     const key = buildCredentialBackoffKey(record);
-    if (!key || response.status !== 429) return;
-    const retryAfter = parseRetryAfterHeader(response.headers?.get?.('retry-after'), { nowMs: nowMs() });
-    retryAfterBackoffByCredentialKey.set(key, now + Math.max(15 * 60_000, retryAfter.retryAfterMs ?? 5 * 60_000));
-    providerBackoffCredentialKeys.add(key);
+    if (key) {
+      const backoffMs = response.status === 429
+        ? Math.max(15 * 60_000, retryAfter.retryAfterMs ?? 5 * 60_000)
+        : retryAfter.retryAfterMs ?? 0;
+      retryAfterBackoffByCredentialKey.set(key, now + backoffMs);
+      providerBackoffCredentialKeys.add(key);
+    }
+    return retryAfter.retryAfterMs;
   }
 
   async function fetchProfileContext(record: Extract<ConnectedServiceCredentialRecordV1, { kind: 'oauth' }>, now: number, signal: AbortSignal) {
@@ -664,7 +670,7 @@ export function createClaudeSubscriptionQuotaFetcher(params?: Readonly<{
         headers.set('User-Agent', userAgent);
         headers.set('anthropic-beta', betaHeaderValue);
         const response = await fetch(url, { ...init, headers });
-        observeRateLimit(response, record, now);
+        observeProviderBackoff(response, record, now);
         return response;
       },
     });
@@ -674,7 +680,7 @@ export function createClaudeSubscriptionQuotaFetcher(params?: Readonly<{
     if (record.kind !== 'oauth') return undefined;
     const response = await fetchUsage({ usageUrl: resetUsageUrl.toString(), accessToken: record.oauth.accessToken,
       betaHeaderValue, userAgent, signal });
-    observeRateLimit(response, record, now);
+    observeProviderBackoff(response, record, now);
     if (!response.ok) await throwUsageError(response);
     const payload: unknown = await response.json();
     return { inventory: parseClaudeQuotaResets(payload, now), payload };
@@ -701,7 +707,6 @@ export function createClaudeSubscriptionQuotaFetcher(params?: Readonly<{
   }
 
   async function throwUsageError(response: Response): Promise<never> {
-    const body = await response.text().catch(() => '');
     if (response.status === 401) {
       throw new ConnectedServiceQuotaFetchError(
         'Anthropic usage fetch failed (401): reconnect Claude in Happier and retry.',
@@ -709,13 +714,18 @@ export function createClaudeSubscriptionQuotaFetcher(params?: Readonly<{
       );
     }
     if (response.status === 403) {
+      const body = await response.text().catch(() => '');
       const scopeMatch = body.match(/scope requirement\s+([a-z0-9:_-]+)/i);
       const requiredScope = scopeMatch?.[1] ? String(scopeMatch[1]).trim() : '';
       if (requiredScope) {
         throw createMissingClaudeCodeScopeQuotaError();
       }
     }
-    throw new Error(`Anthropic usage fetch failed (${response.status}): ${response.statusText}`);
+    throw new ConnectedServiceQuotaFetchError(
+      `Anthropic usage fetch failed (${response.status}): ${response.statusText}`,
+      { status: response.status, quotaFetchErrorCode: response.status === 403 ? 'auth_failure' : 'provider_backoff',
+        retryAfterMs: parseRetryAfterHeader(response.headers?.get?.('retry-after'), { nowMs: nowMs() }).retryAfterMs },
+    );
   }
 
   return {
@@ -772,7 +782,7 @@ export function createClaudeSubscriptionQuotaFetcher(params?: Readonly<{
         throw new ConnectedServiceQuotaFetchError('Claude reset outcome is unknown after a transport failure.', {
           quotaFetchErrorCode: 'network', recoveryCreditConsumeOutcomeUnknown: true });
       }
-      observeRateLimit(response, record, now);
+      observeProviderBackoff(response, record, now);
       if (!response.ok) {
         throw new ConnectedServiceQuotaFetchError('Claude reset request failed.', {
           status: response.status, quotaFetchErrorCode: response.status === 401 || response.status === 403 ? 'auth_failure' : 'provider_backoff',
@@ -796,7 +806,7 @@ export function createClaudeSubscriptionQuotaFetcher(params?: Readonly<{
       throw new ConnectedServiceQuotaFetchError('Claude reset returned an unknown outcome.', {
         quotaFetchErrorCode: 'malformed', recoveryCreditConsumeOutcomeUnknown: true });
     },
-    fetch: async ({ record, now, signal }) => {
+    fetch: async ({ record, now, signal, force }) => {
       if (record.kind !== 'oauth') return null;
       const planLabel = resolveClaudeSubscriptionPlanLabel(record);
       const providerAccountId = record.oauth.providerAccountId?.trim() || null;
@@ -823,8 +833,15 @@ export function createClaudeSubscriptionQuotaFetcher(params?: Readonly<{
       }
       const backoffKey = buildCredentialBackoffKey(record);
       const backoffUntil = backoffKey ? (retryAfterBackoffByCredentialKey.get(backoffKey) ?? 0) : 0;
+      // Explicit refresh may bypass the local read cooldown, never a provider boundary.
       if (backoffUntil > now) {
-        return null;
+        if (backoffKey && providerBackoffCredentialKeys.has(backoffKey)) {
+          if (force === true) throw new ConnectedServiceQuotaFetchError('Claude quota read deferred by provider Retry-After', {
+            quotaFetchErrorCode: 'provider_backoff', retryAfterMs: backoffUntil - now,
+          });
+          return null;
+        }
+        if (force !== true) return null;
       }
       if (backoffKey) providerBackoffCredentialKeys.delete(backoffKey);
       if (backoffKey) {
@@ -839,12 +856,8 @@ export function createClaudeSubscriptionQuotaFetcher(params?: Readonly<{
         signal,
       });
 
-      if (!response.ok && response.status === 429) {
-        observeRateLimit(response, record, now);
-        return null;
-      }
-
-      if (!response.ok && response.status >= 500 && response.status < 600) {
+      const retryAfterMs = observeProviderBackoff(response, record, now);
+      if (!response.ok && response.status >= 500 && response.status < 600 && !(retryAfterMs !== null && retryAfterMs > 0)) {
         response = await fetchUsage({
           usageUrl,
           accessToken: record.oauth.accessToken,
@@ -852,6 +865,7 @@ export function createClaudeSubscriptionQuotaFetcher(params?: Readonly<{
           userAgent,
           signal,
         });
+        observeProviderBackoff(response, record, now);
       }
 
       if (!response.ok) await throwUsageError(response);

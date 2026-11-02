@@ -1662,6 +1662,89 @@ describe("providerAccountUsage storage", () => {
         }));
     });
 
+    it.each([undefined, "failure-material"])("settles a first equal-time failure without losing later requests (fingerprint %s)", async (materialFingerprint) => {
+        const user = await db.account.create({ data: { publicKey: null, encryptionMode: "plain" }, select: { id: true } });
+        const base = createUsageSnapshot({ fetchedAt: 1000 });
+        await writeProviderAccountUsageRecord({
+            accountId: user.id, recordId: base.recordId, recordKey: base.recordKey,
+            payloadMode: "plain_json_v1", status: "ok", snapshot: base,
+            fetchedAt: base.fetchedAtMs, staleAfterMs: base.staleAfterMs,
+            refreshRequestedAt: 1000, metadata: { materialFingerprint: "success-material" },
+        });
+        const write = () => writeProviderAccountUsageRecordWithPolicy({
+            accountId: user.id, recordId: base.recordId, recordKey: base.recordKey,
+            payloadMode: "plain_json_v1", status: "error", fetchedAt: base.fetchedAtMs, staleAfterMs: base.staleAfterMs,
+            refreshErrorAt: 1000, materialFingerprint,
+            snapshot: { ...base, state: "error_last_known_good", diagnostics: [{ kind: "provider_http", status: 429, observedAtMs: 1000 }] },
+        });
+        expect(await write()).toBe("written");
+        const read = () => readProviderAccountUsageRecord({ accountId: user.id, recordId: base.recordId });
+        expect(await read()).toMatchObject({ fetchedAt: 1000, status: "error", metadata: { refreshErrorAt: 1000 }, snapshot: { state: "error_last_known_good" } });
+        expect(await read()).not.toHaveProperty("refreshRequestedAt");
+        await db.providerAccountUsageRecord.updateMany({ where: { accountId: user.id }, data: { refreshRequestedAt: new Date(1000) } });
+        expect(await write()).toBe("written");
+        expect(await read()).toMatchObject({ metadata: { refreshErrorAt: 1000 }, status: "error" });
+        expect(await read()).not.toHaveProperty("refreshRequestedAt");
+        // Replaying the same failure cannot settle a later request or erase the recorded outcome.
+        await db.providerAccountUsageRecord.updateMany({ where: { accountId: user.id }, data: { refreshRequestedAt: new Date(1001) } });
+        expect(await write()).toBe(materialFingerprint === undefined ? "stale" : "noop");
+        expect(await read()).toMatchObject({ fetchedAt: 1000, metadata: { refreshErrorAt: 1000 }, refreshRequestedAt: 1001 });
+        expect(await writeProviderAccountUsageRecordWithPolicy({
+            accountId: user.id, recordId: base.recordId, recordKey: base.recordKey,
+            payloadMode: "plain_json_v1", status: "error", fetchedAt: base.fetchedAtMs, staleAfterMs: base.staleAfterMs,
+            refreshErrorAt: 2000,
+            snapshot: { ...base, state: "error_last_known_good", diagnostics: [{ kind: "provider_http", status: 429, observedAtMs: 2000 }] },
+        })).toBe("written");
+        // A newer successful observation supersedes the earlier failure even at the same millisecond.
+        expect(await writeProviderAccountUsageRecordWithPolicy({
+            accountId: user.id, recordId: base.recordId, recordKey: base.recordKey,
+            payloadMode: "plain_json_v1", status: "ok", fetchedAt: 2000, staleAfterMs: base.staleAfterMs,
+            snapshot: { ...base, fetchedAtMs: 2000 },
+        })).toBe("written");
+        expect(await read()).toMatchObject({ fetchedAt: 2000, status: "ok", snapshot: { state: "loaded_data" } });
+        expect((await read())?.metadata ?? {}).not.toHaveProperty("refreshErrorAt");
+        expect(await writeProviderAccountUsageRecordWithPolicy({
+            accountId: user.id, recordId: base.recordId, recordKey: base.recordKey,
+            payloadMode: "plain_json_v1", status: "error", fetchedAt: base.fetchedAtMs, staleAfterMs: base.staleAfterMs,
+            refreshErrorAt: 2000,
+            snapshot: { ...base, state: "error_last_known_good", diagnostics: [{ kind: "provider_http", status: 429, observedAtMs: 2000 }] },
+        })).toBe("stale");
+        expect(await read()).toMatchObject({ fetchedAt: 2000, status: "ok", snapshot: { state: "loaded_data" } });
+        expect((await read())?.metadata ?? {}).not.toHaveProperty("refreshErrorAt");
+    });
+
+    it("does not let a lagging equal-observation failure overwrite a newer failure outcome", async () => {
+        const user = await db.account.create({ data: { publicKey: null, encryptionMode: "plain" }, select: { id: true } });
+        const base = createUsageSnapshot({ fetchedAt: 1000 });
+        const write = (refreshErrorAt: number, client?: Parameters<typeof writeProviderAccountUsageRecordWithPolicy>[0]["client"]) => writeProviderAccountUsageRecordWithPolicy({
+            accountId: user.id, recordId: base.recordId, recordKey: base.recordKey,
+            payloadMode: "plain_json_v1", status: "error", fetchedAt: base.fetchedAtMs, staleAfterMs: base.staleAfterMs,
+            refreshErrorAt, snapshot: { ...base, state: "error_last_known_good", diagnostics: [{ kind: "provider_http", status: 429, observedAtMs: refreshErrorAt }] },
+            ...(client ? { client } : {}),
+        });
+        expect(await write(3000)).toBe("written");
+        const laggingRow = await db.providerAccountUsageRecord.findUniqueOrThrow({ where: { accountId_recordId: { accountId: user.id, recordId: base.recordId } } });
+        expect(await write(5000)).toBe("written");
+        let first = true;
+        const client = {
+            account: db.account,
+            providerAccountUsageRecord: {
+                findUnique: async (args: Parameters<typeof db.providerAccountUsageRecord.findUnique>[0]) => {
+                    if (first) { first = false; return laggingRow; }
+                    return await db.providerAccountUsageRecord.findUnique(args);
+                },
+                create: db.providerAccountUsageRecord.create.bind(db.providerAccountUsageRecord),
+                updateMany: db.providerAccountUsageRecord.updateMany.bind(db.providerAccountUsageRecord),
+            },
+            // Real Prisma boundary with one lagging read; all mutations use the isolated SQLite database.
+        } as unknown as Pick<typeof db, "account" | "providerAccountUsageRecord">;
+        expect(await write(4000, client)).toBe("stale");
+        expect(await readProviderAccountUsageRecord({ accountId: user.id, recordId: base.recordId })).toMatchObject({
+            fetchedAt: 1000, status: "error", metadata: { refreshErrorAt: 5000 },
+            snapshot: { diagnostics: [{ observedAtMs: 5000 }] },
+        });
+    });
+
     it("refreshes provider usage through the connected-service source relation and returns not_found when no source is linked", async () => {
         const user = await db.account.create({ data: { publicKey: null, encryptionMode: "plain" }, select: { id: true } });
         await createProfileBinding({ accountId: user.id });

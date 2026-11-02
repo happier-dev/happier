@@ -1,3 +1,4 @@
+import { ConnectedServiceQuotaReadMetadataSchema, type ConnectedServiceQuotaReadMetadata } from './connectedServiceQuotaReadMetadata';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { serverFetch } from '@/sync/http/client';
 import { HappyError } from '@/utils/errors/errors';
@@ -14,12 +15,7 @@ function extractErrorCode(json: unknown): string | null {
 
 const ConnectedServiceQuotasV2ResponseSchema = z.object({
   sealed: SealedConnectedServiceQuotaSnapshotV1Schema,
-  metadata: z.object({
-    fetchedAt: z.number().int().nonnegative(),
-    staleAfterMs: z.number().int().nonnegative(),
-    status: z.enum(['ok', 'unavailable', 'estimated', 'error']),
-    refreshRequestedAt: z.number().int().nonnegative().optional(),
-  }),
+  metadata: ConnectedServiceQuotaReadMetadataSchema,
 });
 
 export async function getConnectedServiceQuotaSnapshotSealed(
@@ -28,12 +24,7 @@ export async function getConnectedServiceQuotaSnapshotSealed(
   opts?: Readonly<{ signal?: AbortSignal }>,
 ): Promise<Readonly<{
   sealed: SealedConnectedServiceQuotaSnapshotV1;
-  metadata: {
-    fetchedAt: number;
-    staleAfterMs: number;
-    status: 'ok' | 'unavailable' | 'estimated' | 'error';
-    refreshRequestedAt?: number;
-  };
+  metadata: ConnectedServiceQuotaReadMetadata;
 } | null>> {
   return await backoff(async () => {
     const response = await serverFetch(

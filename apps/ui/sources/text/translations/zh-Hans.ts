@@ -4751,6 +4751,8 @@ export const zhHans: TranslationStructure = {
   },
 
   errors: {
+    quotaRefreshFailed: "无法刷新用量。请重试。",
+    quotaRefreshRetryAt: ({ time }: { time: string }) => `无法刷新用量。请在 ${time} 后重试。`,
     machineRpcDecryptionFailed: "无法解密此机器的数据。请使用匹配的账户密钥登录后重试。",
     machineRpcContextUnavailable: "此机器的连接不可用。请刷新机器列表后重试。",
     networkError: "发生网络错误",

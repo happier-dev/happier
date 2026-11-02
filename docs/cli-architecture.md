@@ -1830,6 +1830,39 @@ can supply ownership evidence when process inventory is incomplete, but cannot
 override recorded foreign-home or foreign-scope facts. The child-environment
 builder publishes the resolved home even when the daemon inherited no home override.
 
+### Connected-service quota refresh outcomes (development)
+
+An explicit quota refresh records a request, then the daemon quota coordinator
+publishes its outcome through the existing Provider Account Usage owner.
+Protocol's `isProviderAccountUsageRefreshRequestSettled` is the completion rule:
+either the provider observation time or a recorded failure time must reach the
+request time. The server's usage-record write policy clears the request marker;
+the UI consumes that lifecycle fact after opening the quota response.
+
+A failed or deferred read uses `error_last_known_good` with a diagnostic whose
+`observedAtMs` records the failure. Existing meters and their provider observation
+time remain unchanged, so a failed refresh cannot make stale evidence eligible
+for account selection. A first-read failure carries no meters and observation
+time zero. The quota projection exposes the diagnostic as evidence, including the
+retry time when known. The failure writer uses the same verified credential
+identity and source-link authorization as the successful observation writer.
+
+Force remains necessary for the fetcher's local cached-read cooldown. It never
+bypasses coordinator failure backoff or provider Retry-After. An explicit request
+inside that boundary records a deferred failure with the existing retry time,
+without sending another provider request. Ordinary and forced acquisition have
+different sharing keys because force changes the fetcher's result; equivalent
+waiters still share the existing fetch owner and cancellation behavior.
+Outcome-persistence failures reach the normal file log and retain the existing
+persistence scheduler's retry lifecycle.
+
+The UI has no refresh deadline. While retained polling observes a pending request,
+it keeps the refresh pending until a readable server result clears the marker, a
+read fails, or the consumer cancels it. The quota store has no authoritative daemon
+availability fact; if no daemon serves an accepted request, that request can
+remain pending. The [compatibility notes](compatibility.md#quota-refresh-outcomes-02-development)
+describe the released plain/sealed wire shapes and mixed-version limits.
+
 ### Usage-limit reset continuation (development)
 
 `createSessionUsageLimitRecoveryRuntime` owns ordinary usage-limit waits in a
@@ -1876,9 +1909,9 @@ provider failure backoff also governs observation probes. An unavailable-proof
 wait preserves a later provider retry boundary instead of probing before it.
 The shared fetch owner rechecks backoff before starting new provider work, so a
 poll waiting for a lease or credential cannot bypass a concurrent probe's failure.
-Sharing includes credential revision and provider-visible account context. The
-post-reset refresh deliberately starts a new observation so it cannot reuse a
-quota read begun before the provider consumed the recovery credit.
+Sharing includes credential revision, provider-visible account context and the
+force flag. The post-reset refresh deliberately starts a new observation so it
+cannot reuse a quota read begun before the provider consumed the recovery credit.
 
 In development source, group probes report provider-backoff deferrals per member
 with their retry boundaries. These are completed admission decisions rather than

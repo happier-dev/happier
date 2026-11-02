@@ -5014,6 +5014,8 @@ export const pt: TranslationStructure = {
   },
 
   errors: {
+    quotaRefreshFailed: "Não foi possível atualizar o uso. Tente novamente.",
+    quotaRefreshRetryAt: ({ time }: { time: string }) => `Não foi possível atualizar o uso. Tente novamente após ${time}.`,
     machineRpcDecryptionFailed: "Não foi possível descriptografar os dados desta máquina. Entre com a chave de conta correspondente e tente novamente.",
     machineRpcContextUnavailable: "A conexão com esta máquina está indisponível. Atualize suas máquinas e tente novamente.",
     networkError: "Ocorreu um erro de rede",

@@ -5177,6 +5177,8 @@ localTailscale: {
   },
 
   errors: {
+    quotaRefreshFailed: "使用状況を更新できませんでした。もう一度お試しください。",
+    quotaRefreshRetryAt: ({ time }: { time: string }) => `使用状況を更新できませんでした。${time}以降に再試行してください。`,
     machineRpcDecryptionFailed: "このマシンのデータを復号できません。対応するアカウントキーでサインインして、もう一度お試しください。",
     machineRpcContextUnavailable: "このマシンに接続できません。マシン一覧を更新して、もう一度お試しください。",
     networkError: "ネットワークエラーが発生しました",

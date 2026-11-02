@@ -1,5 +1,6 @@
 import {
   ConnectedServiceUsageSourceV1Schema,
+  getProviderAccountUsageRefreshErrorAt,
   compareConnectedServiceQuotaObservationRecency,
   isConnectedServiceQuotaObservationAtOrBeforeNow,
   ProviderAccountUsageRecordIdSchema,
@@ -11,6 +12,8 @@ import {
   type ProviderAccountUsageSnapshotV1,
   type SealedProviderAccountUsageSnapshotV1,
 } from '@happier-dev/protocol';
+
+import { logger } from '@/ui/logger';
 
 import { requireEncryptionCredentials, type Credentials } from '@/persistence';
 
@@ -30,6 +33,7 @@ export type ProviderAccountUsagePersistenceMetadata = Readonly<{
   staleAfterMs: number;
   status: ProviderAccountUsagePersistenceStatus;
   materialFingerprint?: string;
+  refreshErrorAt?: number;
 }>;
 
 export type ProviderAccountUsageApi = Readonly<{
@@ -98,7 +102,7 @@ export function buildProviderAccountUsageSnapshotRoute(params: Readonly<{
   return `/${params.version}/connect/provider-account-usage/${encodeURIComponent(recordId)}`;
 }
 
-function deriveProviderAccountUsageStatus(snapshot: ProviderAccountUsageSnapshotV1): ProviderAccountUsagePersistenceStatus {
+export function deriveProviderAccountUsageStatus(snapshot: ProviderAccountUsageSnapshotV1): ProviderAccountUsagePersistenceStatus {
   if (snapshot.state === 'error_last_known_good') return 'error';
   if (snapshot.meters.length === 0) return 'ok';
   const statuses = snapshot.meters.map((meter) => meter.status);
@@ -237,12 +241,15 @@ export function createProviderAccountUsagePersistenceScheduler(params: Readonly<
       snapshot: payload.snapshot,
       randomBytes: params.randomBytes,
     });
+    const refreshErrorAt = getProviderAccountUsageRefreshErrorAt(payload.snapshot);
     await params.api.registerProviderAccountUsageSnapshotSealed({
       recordId: payload.recordId,
       recordKey: payload.snapshot.recordKey,
       ...(payload.source ? { source: payload.source } : {}),
       sealed,
-      metadata,
+      // Released V3 plain metadata is strict. V2 sealed metadata is additive; plain
+      // servers derive failure completion from the already-supported snapshot diagnostics.
+      metadata: { ...metadata, ...(refreshErrorAt !== undefined ? { refreshErrorAt } : {}) },
     });
     stateByPersistenceKey.set(_key, payload.materialState);
   }
@@ -259,7 +266,14 @@ export function createProviderAccountUsagePersistenceScheduler(params: Readonly<
 
   const scheduler = createConnectedServiceQuotaPersistenceScheduler<string, ProviderAccountUsagePersistencePayload>({
     run: async (key, payload) => {
-      await persistPayload(key, payload);
+      try {
+        await persistPayload(key, payload);
+      } catch (error) {
+        // Keep scheduler retries and confirmation callbacks intact while making transport
+        // failures observable without logging account identifiers or provider payloads.
+        logger.warnFile('[accountUsage] Failed to persist provider account usage; queued for retry');
+        throw error;
+      }
       releasePersistedCallbacks(key);
     },
     maxConcurrent: 2,

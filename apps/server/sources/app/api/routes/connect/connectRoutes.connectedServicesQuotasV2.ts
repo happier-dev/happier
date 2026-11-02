@@ -82,6 +82,7 @@ export function connectConnectedServicesQuotasV2Routes(app: Fastify) {
                         staleAfterMs: z.number().int().nonnegative(),
                         status: z.enum(["ok", "unavailable", "estimated", "error"]),
                         refreshRequestedAt: z.number().int().nonnegative().optional(),
+                        refreshErrorAt: z.number().int().nonnegative().optional(),
                     }),
                 }),
                 404: z.union([NotFoundSchema, z.object({ error: z.literal("connect_quotas_not_found") })]),
@@ -113,6 +114,7 @@ export function connectConnectedServicesQuotasV2Routes(app: Fastify) {
                 staleAfterMs: record.staleAfterMs ?? 0,
                 status: normalizeResponseStatus(record.status),
                 ...(record.refreshRequestedAt !== undefined ? { refreshRequestedAt: record.refreshRequestedAt } : {}),
+                ...(record.metadata?.refreshErrorAt !== undefined ? { refreshErrorAt: record.metadata.refreshErrorAt } : {}),
             },
         });
     });

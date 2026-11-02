@@ -565,6 +565,8 @@ export {
   ProviderAccountSubjectRefV1Schema,
   ProviderAccountUsageConfidenceV1Schema,
   ProviderAccountUsageDiagnosticV1Schema,
+  getProviderAccountUsageRefreshErrorAt,
+  isProviderAccountUsageRefreshRequestSettled,
   ProviderAccountUsageQuotaScopeV1Schema,
   ProviderAccountUsageRecordIdSchema,
   ProviderAccountUsageRecordKeyV1Schema,

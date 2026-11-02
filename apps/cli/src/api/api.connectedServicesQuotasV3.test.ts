@@ -261,13 +261,14 @@ describe('ApiClient connected services quotas v3', () => {
             meters: [],
           },
         },
-        metadata: { fetchedAt: 1, staleAfterMs: 300_000, status: 'ok' },
+        metadata: { fetchedAt: 1, staleAfterMs: 300_000, status: 'error', refreshErrorAt: 2_000 },
       },
     });
 
     const api = await ApiClient.create(createTestCredentials());
 
     const res = await api.getConnectedServiceQuotaSnapshotPlain({ serviceId: 'openai-codex', profileId: 'work' });
+    expect(res?.metadata).toMatchObject({ status: 'error', refreshErrorAt: 2_000 });
     expect(res?.content?.v?.serviceId).toBe('openai-codex');
     expect(axios.get).toHaveBeenCalledWith(
       expect.stringContaining('/v3/connect/openai-codex/profiles/work/quotas'),
@@ -483,7 +484,7 @@ describe('ApiClient connected services quotas v3', () => {
       status: 200,
       data: {
         content: { t: 'plain', v: snapshot },
-        metadata: { fetchedAt: 1_000, staleAfterMs: 300_000, status: 'ok' },
+        metadata: { fetchedAt: 1_000, staleAfterMs: 300_000, status: 'error', refreshErrorAt: 2_000 },
         sources: [source],
       },
     });
@@ -491,6 +492,7 @@ describe('ApiClient connected services quotas v3', () => {
     const api = await ApiClient.create(createTestCredentials());
 
     const res = await api.getProviderAccountUsageSnapshotPlain({ recordId: snapshot.recordId });
+    expect(res?.metadata).toMatchObject({ status: 'error', refreshErrorAt: 2_000 });
 
     expect(res?.content).toEqual({ t: 'plain', v: snapshot });
     expect(res?.sources).toEqual([source]);

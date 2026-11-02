@@ -151,10 +151,17 @@ export function createProviderAccountUsageStore(): ProviderAccountUsageStore {
         })
       : 'incoming_newer';
     const olderUsage = recency === 'incoming_older' || recency === 'incoming_future';
-    const usage = olderUsage && existing ? existing : parsed;
+    const olderOutcome = existing && parsed.observedAtMs < existing.observedAtMs;
+    const usage = existing && (olderUsage || (recency === 'same' && olderOutcome)) ? existing : parsed;
+    // Failure time describes the refresh outcome; it must not replace newer provider data.
+    const outcome = existing && olderOutcome ? existing : parsed;
+    const refreshOutcome = outcome.state === 'error_last_known_good'
+      ? { state: outcome.state, diagnostics: outcome.diagnostics, observedAtMs: outcome.observedAtMs }
+      : {};
     const subscription = mergeProviderAccountSubscription(existing?.subscription, parsed.subscription);
     const next = ProviderAccountUsageSnapshotV1Schema.parse({
       ...usage,
+      ...refreshOutcome,
       ...(subscription ? { subscription } : {}),
       recordId: targetRecordId,
       recordKey: targetRecordKey,

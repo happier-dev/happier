@@ -62,6 +62,8 @@ function buildMaterialSnapshot(snapshot: ProviderAccountUsageSnapshotV1): JsonVa
     // Subscription freshness has its own clock: a successful refresh must publish
     // even when the quota data and billing period are unchanged.
     subscription: snapshot.subscription ?? null,
+    // Each refresh failure is an outcome even when its last good meters are unchanged.
+    diagnostics: snapshot.state === 'error_last_known_good' ? snapshot.diagnostics ?? null : null,
     meters: snapshot.meters,
   });
 }

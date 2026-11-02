@@ -50,7 +50,7 @@ const {
     (...args: Parameters<typeof fetchAccountEncryptionMode>) => ReturnType<typeof fetchAccountEncryptionMode>
   >(async () => ({ mode: 'e2ee', updatedAt: 0 })),
   getConnectedServiceQuotaSnapshotPlainSpy: vi.fn<
-    (...args: Parameters<typeof getConnectedServiceQuotaSnapshotPlain>) => ReturnType<typeof getConnectedServiceQuotaSnapshotPlain>
+    (...args: Parameters<typeof getConnectedServiceQuotaSnapshotPlain>) => Promise<import('@happier-dev/protocol').ConnectedServiceQuotaSnapshotV1 | null>
   >(async () => null),
   getConnectedServiceQuotaSnapshotSealedSpy: vi.fn<
     (...args: Parameters<typeof getConnectedServiceQuotaSnapshotSealed>) => ReturnType<typeof getConnectedServiceQuotaSnapshotSealed>
@@ -78,7 +78,10 @@ vi.mock('@/sync/api/account/apiConnectedServicesQuotasV2', () => ({
   requestConnectedServiceQuotaSnapshotRefresh: requestConnectedServiceQuotaSnapshotRefreshSpy,
 }));
 vi.mock('@/sync/api/account/apiConnectedServicesQuotasV3', () => ({
-  getConnectedServiceQuotaSnapshotPlain: getConnectedServiceQuotaSnapshotPlainSpy,
+  getConnectedServiceQuotaSnapshotPlain: async (...args: Parameters<typeof getConnectedServiceQuotaSnapshotPlain>) => {
+    const snapshot = await getConnectedServiceQuotaSnapshotPlainSpy(...args);
+    return snapshot ? { snapshot, metadata: { fetchedAt: snapshot.fetchedAt, staleAfterMs: snapshot.staleAfterMs, status: 'ok' } } : null;
+  },
   requestConnectedServiceQuotaSnapshotRefreshV3: requestConnectedServiceQuotaSnapshotRefreshV3Spy,
 }));
 vi.mock('@/sync/domains/state/storage', async () => {
@@ -294,8 +297,8 @@ describe('useConnectedServiceQuotaSnapshot', () => {
 
   it('does not restart an equivalent automatic load while the first quota request is unresolved', async () => {
     fetchAccountEncryptionModeSpy.mockResolvedValue({ mode: 'plain', updatedAt: 0 });
-    let resolvePlain!: (value: Awaited<ReturnType<typeof getConnectedServiceQuotaSnapshotPlain>>) => void;
-    const pendingPlain = new Promise<Awaited<ReturnType<typeof getConnectedServiceQuotaSnapshotPlain>>>((r) => { resolvePlain = r; });
+    let resolvePlain!: (value: Awaited<Promise<import('@happier-dev/protocol').ConnectedServiceQuotaSnapshotV1 | null>>) => void;
+    const pendingPlain = new Promise<Awaited<Promise<import('@happier-dev/protocol').ConnectedServiceQuotaSnapshotV1 | null>>>((r) => { resolvePlain = r; });
     getConnectedServiceQuotaSnapshotPlainSpy.mockReturnValue(pendingPlain);
 
     const hook = await mountHook({ serviceId: 'anthropic', profileId: 'work' });
@@ -408,8 +411,8 @@ describe('useConnectedServiceQuotaSnapshot', () => {
 
   it('does not fall back to the sealed quota endpoint after credentials change while a plaintext miss is pending', async () => {
     fetchAccountEncryptionModeSpy.mockResolvedValue({ mode: 'plain', updatedAt: 0 });
-    let resolveOldPlain!: (value: Awaited<ReturnType<typeof getConnectedServiceQuotaSnapshotPlain>>) => void;
-    const pendingOldPlain = new Promise<Awaited<ReturnType<typeof getConnectedServiceQuotaSnapshotPlain>>>((r) => { resolveOldPlain = r; });
+    let resolveOldPlain!: (value: Awaited<Promise<import('@happier-dev/protocol').ConnectedServiceQuotaSnapshotV1 | null>>) => void;
+    const pendingOldPlain = new Promise<Awaited<Promise<import('@happier-dev/protocol').ConnectedServiceQuotaSnapshotV1 | null>>>((r) => { resolveOldPlain = r; });
     getConnectedServiceQuotaSnapshotPlainSpy
       .mockReturnValueOnce(pendingOldPlain)
       .mockResolvedValue(snapshotFor('work', 2, 'New account'));
@@ -468,8 +471,8 @@ describe('useConnectedServiceQuotaSnapshot', () => {
 
   it('ignores stale automatic load results after the quota profile changes', async () => {
     fetchAccountEncryptionModeSpy.mockResolvedValue({ mode: 'plain', updatedAt: 0 });
-    let resolveWork!: (value: Awaited<ReturnType<typeof getConnectedServiceQuotaSnapshotPlain>>) => void;
-    const pendingWork = new Promise<Awaited<ReturnType<typeof getConnectedServiceQuotaSnapshotPlain>>>((r) => { resolveWork = r; });
+    let resolveWork!: (value: Awaited<Promise<import('@happier-dev/protocol').ConnectedServiceQuotaSnapshotV1 | null>>) => void;
+    const pendingWork = new Promise<Awaited<Promise<import('@happier-dev/protocol').ConnectedServiceQuotaSnapshotV1 | null>>>((r) => { resolveWork = r; });
     const personalSnapshot = snapshotFor('personal', 2, 'Personal');
     getConnectedServiceQuotaSnapshotPlainSpy.mockImplementation(async (_creds, request) => (
       request.profileId === 'work' ? await pendingWork : personalSnapshot
@@ -489,8 +492,8 @@ describe('useConnectedServiceQuotaSnapshot', () => {
   it('clears the current snapshot when the quota profile changes before the next load resolves', async () => {
     fetchAccountEncryptionModeSpy.mockResolvedValue({ mode: 'plain', updatedAt: 0 });
     const workSnapshot = snapshotFor('work', 1, 'Work');
-    let resolvePersonal!: (value: Awaited<ReturnType<typeof getConnectedServiceQuotaSnapshotPlain>>) => void;
-    const pendingPersonal = new Promise<Awaited<ReturnType<typeof getConnectedServiceQuotaSnapshotPlain>>>((r) => { resolvePersonal = r; });
+    let resolvePersonal!: (value: Awaited<Promise<import('@happier-dev/protocol').ConnectedServiceQuotaSnapshotV1 | null>>) => void;
+    const pendingPersonal = new Promise<Awaited<Promise<import('@happier-dev/protocol').ConnectedServiceQuotaSnapshotV1 | null>>>((r) => { resolvePersonal = r; });
     getConnectedServiceQuotaSnapshotPlainSpy.mockImplementation(async (_creds, request) => (
       request.profileId === 'work' ? workSnapshot : await pendingPersonal
     ));

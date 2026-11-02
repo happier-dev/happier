@@ -4563,6 +4563,8 @@ export const fr: TranslationStructure = {
     },
 
     errors: {
+        quotaRefreshFailed: "Impossible d’actualiser l’utilisation. Réessaie.",
+        quotaRefreshRetryAt: ({ time }: { time: string }) => `Impossible d’actualiser l’utilisation. Réessaie après ${time}.`,
         machineRpcDecryptionFailed: "Impossible de déchiffrer les données de cette machine. Connecte-toi avec la clé de compte correspondante et réessaie.",
         machineRpcContextUnavailable: "La connexion à cette machine est indisponible. Actualise tes machines et réessaie.",
         networkError: 'Erreur réseau',

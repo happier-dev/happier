@@ -12,6 +12,7 @@ import {
 } from "@happier-dev/protocol";
 import { validateProviderAccountUsageRecordWrite } from "./schemas";
 import type {
+    ProviderAccountUsageRecordMetadata,
     StoredProviderAccountUsageRecord,
     UpsertProviderAccountUsageRecordParams,
 } from "./types";
@@ -25,6 +26,7 @@ type ParsedProviderAccountUsageRecordWrite = ReturnType<typeof validateProviderA
 export type ProviderAccountUsageRecordCurrentGuard = Readonly<{
     fetchedAt: number | null;
     refreshRequestedAt?: number;
+    metadata?: ProviderAccountUsageRecordMetadata;
 }>;
 
 function toNullableDate(value: number | undefined): Date | undefined {
@@ -119,9 +121,14 @@ function zodProviderAccountUsageMetadata(raw: unknown) {
         throw new ProviderAccountUsagePayloadInvariantError("Stored provider account usage materialFingerprint must be a string");
     }
     const subscription = (raw as { subscription?: unknown }).subscription;
+    const refreshErrorAt = (raw as { refreshErrorAt?: unknown }).refreshErrorAt;
+    if (refreshErrorAt !== undefined && (typeof refreshErrorAt !== "number" || !Number.isSafeInteger(refreshErrorAt) || refreshErrorAt < 0)) {
+        throw new ProviderAccountUsagePayloadInvariantError("Stored provider account usage refreshErrorAt must be a nonnegative integer");
+    }
     const recoveryCreditDetails = (raw as { recoveryCreditDetails?: unknown }).recoveryCreditDetails;
     return {
         ...(materialFingerprint ? { materialFingerprint } : {}),
+        ...(refreshErrorAt !== undefined ? { refreshErrorAt } : {}),
         ...(subscription !== undefined ? { subscription: ProviderAccountSubscriptionV1Schema.parse(subscription) } : {}),
         ...(recoveryCreditDetails !== undefined ? { recoveryCreditDetails: ConnectedServiceQuotaRecoveryCreditDetailsByIdV1Schema.parse(recoveryCreditDetails) } : {}),
     };
@@ -202,6 +209,7 @@ function buildProviderAccountUsageRecordCurrentWhere(
         recordId: parsed.recordId,
         fetchedAt: guard.fetchedAt === null ? null : new Date(guard.fetchedAt),
         refreshRequestedAt: guard.refreshRequestedAt === undefined ? null : new Date(guard.refreshRequestedAt),
+        metadata: { equals: guard.metadata ? guard.metadata as Prisma.InputJsonValue : prismaRuntime.AnyNull },
     };
 }
 

@@ -4459,6 +4459,8 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
     },
 
     errors: {
+        quotaRefreshFailed: "無法重新整理用量。請再試一次。",
+        quotaRefreshRetryAt: ({ time }: { time: string }) => `無法重新整理用量。請在 ${time} 後重試。`,
         machineRpcDecryptionFailed: "無法解密此機器的資料。請使用相符的帳戶金鑰登入後再試。",
         machineRpcContextUnavailable: "此機器的連線無法使用。請重新整理機器清單後再試。",
         networkError: '發生網路錯誤',
