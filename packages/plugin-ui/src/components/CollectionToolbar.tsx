@@ -1,8 +1,10 @@
 import {
   createContext,
   useContext,
+  useEffect,
   useRef,
   useState,
+  type ComponentRef,
   type ReactElement,
   type ReactNode,
 } from 'react';
@@ -16,6 +18,7 @@ import { Select, type SelectOption } from './Form.js';
 import { Icon } from './Icon.js';
 import { Row, Stack } from './Layout.js';
 import { Menu, SheetMenu, type MenuGroup, type MenuItem, type MenuRadioGroup } from './Overlay.js';
+import { usePluginTheme } from './PluginUiProvider.js';
 import { Status } from './Status.js';
 import type { TextTone } from './Text.js';
 
@@ -31,13 +34,25 @@ export const CollectionToolbarCompactContext = createContext<boolean | null>(
 );
 
 /**
- * Collection's report that its one wide row no longer fits: the trailing controls wrapped under the leading ones.
- * Collection then folds at that width (and anything narrower), measured from the page's real controls rather than
- * from a guessed width.
+ * How the toolbar tells Collection whether its one wide row fits. Widths are the toolbar row's own, from its layout.
+ *
+ * `width`: the room the toolbar has, wide or folded, so a folded toolbar learns when the window gives it enough again.
+ *
+ * `overflow`: the trailing controls wrapped under the leading ones at this width. Collection then folds at that width
+ * (and anything narrower), measured from the page's real controls rather than from a guessed width.
+ *
+ * `shrank`: while folded, something the wide row draws got smaller (a shorter view name or freshness, a selection or
+ * accessory gone). What the row needed is no longer known, so Collection forgets it and the wide row measures itself
+ * again; if it still does not fit it reports `overflow` and folds, so nothing flips back and forth.
  *
  * @internal Provided only by `Collection`.
  */
-export const CollectionToolbarOverflowContext = createContext<(() => void) | null>(null);
+export type CollectionToolbarFitReport = Readonly<{
+  width: (widthPx: number) => void;
+  overflow: (widthPx: number) => void;
+  shrank: () => void;
+}>;
+export const CollectionToolbarOverflowContext = createContext<CollectionToolbarFitReport | null>(null);
 
 /** The list's freshness, said in words. A `muted` tone is the healthy, quiet state. */
 export type CollectionToolbarFreshness = Readonly<{
@@ -128,31 +143,46 @@ export function CollectionToolbar(props: CollectionToolbarProps): ReactElement {
 function WideToolbar(props: CollectionToolbarProps): ReactElement {
   const { slots, freshness, refresh } = props;
   const chrome = useHappierPageChromeInternal();
-  const reportOverflow = useContext(CollectionToolbarOverflowContext);
-  // Where the two groups landed. Trailing controls under the leading ones are two scattered rows: fold instead.
-  // Both are centred on one line, so a shorter group sits a little lower without having wrapped: it wrapped only
-  // when it starts below the leading group's bottom.
-  type Placement = Readonly<{ y: number; height: number }>;
-  const placed = useRef<{ lead: Placement | null; trail: Placement | null }>({ lead: null, trail: null });
-  const place = (group: 'lead' | 'trail', layout: Placement) => {
-    placed.current[group] = { y: layout.y, height: layout.height };
-    const { lead, trail } = placed.current;
-    if (lead !== null && trail !== null && trail.y >= lead.y + lead.height) reportOverflow?.();
+  const fit = useContext(CollectionToolbarOverflowContext);
+  const { spacing } = usePluginTheme();
+  const rowRef = useRef<ComponentRef<typeof View>>(null);
+  const leadRef = useRef<ComponentRef<typeof View>>(null);
+  const trailRef = useRef<ComponentRef<typeof View>>(null);
+  // A delivered layout event can describe a box before its siblings settled. Read all three current widths
+  // together, including every control in both clusters, rather than mixing independently cached heights.
+  // The leading cluster grows into its line's free room: when the trailing cluster wraps, the lead fills that
+  // line and their widths plus the shared gap exceed the row. Controls may still wrap inside either cluster.
+  const measure = () => {
+    const row = rowRef.current;
+    const lead = leadRef.current;
+    const trail = trailRef.current;
+    if (row === null || lead === null || trail === null) return;
+    const widths: Partial<Record<'row' | 'lead' | 'trail', number>> = {};
+    // In-window measurement preserves fractional web widths; `measure` rounds each box independently.
+    const read = (name: keyof typeof widths, box: ComponentRef<typeof View>) => box.measureInWindow((_x, _y, width) => {
+      widths[name] = width;
+      const { row: rowWidth, lead: leadWidth, trail: trailWidth } = widths;
+      if (rowWidth === undefined || leadWidth === undefined || trailWidth === undefined || rowWidth <= 0) return;
+      if (leadWidth + trailWidth + spacing.small > rowWidth) fit?.overflow(rowWidth);
+      else fit?.width(rowWidth);
+    });
+    read('row', row);
+    read('lead', lead);
+    read('trail', trail);
   };
   const primary = props.primary === undefined ? null : (
     <Button title={props.primary.label} variant="primary" onPress={props.primary.onPress}
       {...(props.primary.testID === undefined ? {} : { testID: props.primary.testID })} />
   );
   return (
-    <Row
-      gap="small"
-      wrap
-      align="center"
-      justify="space-between"
+    <View
+      ref={rowRef}
+      style={[wideRowStyle, { gap: spacing.small, justifyContent: 'space-between' }]}
+      onLayout={measure}
       testID={props.testID}
     >
-      <Row gap="small" wrap align="center" style={leadStyle}
-        onLayout={(event) => place('lead', event.nativeEvent.layout)}
+      <View ref={leadRef} style={[wideRowStyle, leadStyle, { gap: spacing.small }]}
+        onLayout={measure}
         {...(props.testID === undefined ? {} : { testID: `${props.testID}:lead` })}>
         {slots?.title ?? null}
         {slots?.search ?? null}
@@ -160,11 +190,11 @@ function WideToolbar(props: CollectionToolbarProps): ReactElement {
         {props.refine?.render() ?? null}
         {slots?.selection ?? null}
         {props.accessory ?? null}
-      </Row>
+      </View>
       {/* It wraps too: a narrow window would otherwise push the arrangement switch off the right edge. Bounded by
           the toolbar's width, or a wrapping row sized to its content never has a reason to wrap. */}
-      <Row gap="xsmall" wrap align="center" style={trailStyle}
-        onLayout={(event) => place('trail', event.nativeEvent.layout)}
+      <View ref={trailRef} style={[wideRowStyle, trailStyle, { gap: spacing.xsmall }]}
+        onLayout={measure}
         {...(props.testID === undefined ? {} : { testID: `${props.testID}:trail` })}>
         {freshness == null ? null : (
           <Status
@@ -190,14 +220,45 @@ function WideToolbar(props: CollectionToolbarProps): ReactElement {
         {slots?.pageActions != null && chrome?.renderNavigationActions !== undefined
           ? chrome.renderNavigationActions(primary)
           : <>{slots?.pageActions ?? null}{primary}</>}
-      </Row>
-    </Row>
+      </View>
+    </View>
   );
 }
 
 function CompactToolbar(props: CollectionToolbarProps): ReactElement {
   const { slots, freshness, refine } = props;
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const fit = useContext(CollectionToolbarOverflowContext);
+  // The widths the folded row can still see of what the wide row draws: the lens as drawn here, and the sizes of
+  // the rest. When any of them gets smaller the wide row may fit again (`CollectionToolbarFitReport.shrank`).
+  const [widths, setWidths] = useState<Partial<Record<'title' | 'lens' | 'selection' | 'accessory' | 'pageActions', number>>>({});
+  const measured = (slot: keyof typeof widths, content: ReactNode, style: HappierPortableStyle = compactLensStyle) => content == null ? null : (
+    <View style={style} onLayout={(event) => {
+      const width = Math.round(event.nativeEvent.layout.width);
+      setWidths((previous) => previous[slot] === width ? previous : { ...previous, [slot]: width });
+    }}>{content}</View>
+  );
+  const wideContent = [
+    props.lens == null ? 0 : widths.lens ?? 0,
+    slots?.title == null ? 0 : widths.title ?? 0,
+    slots?.pageActions == null ? 0 : widths.pageActions ?? 0,
+    freshness == null ? 0 : freshness.label.length,
+    props.refresh === undefined ? 0 : 1,
+    slots?.selection == null ? 0 : widths.selection ?? 0,
+    props.accessory == null ? 0 : widths.accessory ?? 0,
+    refine === undefined ? 0 : refine.label.length + String(refine.activeCount ?? '').length,
+    props.primary === undefined ? 0 : props.primary.label.length,
+    props.more === undefined ? 0 : 1,
+    props.views === undefined ? 0 : props.views.options.reduce((sum, option) => sum + String(option.label).length, 0),
+  ];
+  const seen = useRef<readonly number[] | null>(null);
+  const contentKey = wideContent.join(',');
+  useEffect(() => {
+    const sizes = contentKey.split(',').map(Number);
+    const previous = seen.current;
+    seen.current = sizes;
+    if (previous !== null && sizes.some((size, index) => size < previous[index]!)) fit?.shrank();
+  }, [contentKey, fit]);
   const search = slots?.search ?? null;
   const filters =
     refine === undefined ? null : (
@@ -245,19 +306,19 @@ function CompactToolbar(props: CollectionToolbarProps): ReactElement {
     freshness == null || freshness.tone === 'muted' ? null : freshness;
   const head = slots?.title != null || search !== null;
   return (
-    <Stack gap="small" testID={props.testID}>
+    <Stack gap="small" testID={props.testID} onLayout={(event) => fit?.width(event.nativeEvent.layout.width)}>
       {head ? (
         <Row gap="small" align="center">
-          {slots?.title ?? null}
+          {measured('title', slots?.title)}
           {search}
           {buttons}
         </Row>
       ) : null}
       <Row gap="small" align="center">
         <Row gap="small" align="center" style={compactLeadStyle}>
-          {props.lens ?? null}
-          {slots?.selection ?? null}
-          {props.accessory ?? null}
+          {measured('lens', props.lens, compactLensStyle)}
+          {measured('selection', slots?.selection)}
+          {measured('accessory', props.accessory)}
         </Row>
         <View style={compactFreshnessStyle}>
           {said === null ? null : (
@@ -272,7 +333,7 @@ function CompactToolbar(props: CollectionToolbarProps): ReactElement {
         </View>
         <Views views={props.views} compact />
         {head ? null : buttons}
-        {slots?.pageActions ?? null}
+        {measured('pageActions', slots?.pageActions)}
       </Row>
     </Stack>
   );
@@ -337,6 +398,10 @@ function Views(
   );
 }
 
+const wideRowStyle: HappierPortableStyle = {
+  flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center',
+  flexShrink: 1, maxWidth: '100%', minWidth: 0,
+};
 /** The leading controls take the toolbar's free width and wrap inside it. */
 // Sized by content (name, search, lens, filters), not from zero: where that and the trailing controls do not fit on
 // one line (a narrow window), the trailing controls wrap below and the search keeps the row.
@@ -349,6 +414,7 @@ const leadStyle: HappierPortableStyle = {
 // It keeps the toolbar's trailing edge when it wraps below the leading controls (a list narrowed beside a detail
 // pane): freshness, Refresh, the switch and Run on stay where the eye finds them, never stranded on the left.
 const trailStyle: HappierPortableStyle = { maxWidth: '100%', minWidth: 0, marginLeft: 'auto', justifyContent: 'flex-end' };
+const compactLensStyle: HappierPortableStyle = { flexShrink: 1, minWidth: 0 };
 const compactLeadStyle: HappierPortableStyle = { flexShrink: 1, minWidth: 0 };
 /** The sheet's quiet Clear and its one primary end the footer together. */
 const sheetFooterStyle: HappierPortableStyle = { flexGrow: 1 };

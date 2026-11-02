@@ -26,7 +26,7 @@ import { resolveHappierPageTextStyle, resolveHappierTextStepStyle } from '../pre
 import { HAPPIER_ROW_TITLE_META_GAP_PX, resolveHappierRowTitleMetaPlacement } from '../presentation/layout/pageRowMetrics.js';
 import { useHappierPageSection } from '../presentation/layout/PageSection.js';
 import { useHappierPageChromeInternal } from '../presentation/layout/pageChrome.js';
-import { CollectionToolbarCompactContext, CollectionToolbarOverflowContext } from './CollectionToolbar.js';
+import { CollectionToolbarCompactContext, CollectionToolbarOverflowContext, type CollectionToolbarFitReport } from './CollectionToolbar.js';
 import { HAPPIER_RADIUS_V1 } from '../environment/radius.js';
 import { HappierStatusDot } from '../presentation/status/StatusDot.js';
 import { PluginUiIconGlyph, type IconName } from './Icon.js';
@@ -1988,14 +1988,17 @@ export function Collection<Item>(props: CollectionProps<Item>): ReactElement {
   // toolbar reports when its trailing controls wrapped, and the Collection folds at that width from then on, so it
   // never draws two scattered rows and never flips back and forth while the width stays within that need.
   const [toolbarNeedPx, setToolbarNeedPx] = useState(0);
-  const toolbarWidthRef = useRef<number | null>(null);
-  toolbarWidthRef.current = size?.width ?? null;
-  const reportToolbarOverflow = useCallback(() => {
-    const width = toolbarWidthRef.current;
-    if (width !== null) setToolbarNeedPx((need) => Math.max(need, Math.ceil(width) + 1));
-  }, []);
+  const [toolbarRowPx, setToolbarRowPx] = useState<number | null>(null);
+  const toolbarFit = useMemo<CollectionToolbarFitReport>(() => ({
+    width: setToolbarRowPx,
+    overflow: (width) => {
+      setToolbarRowPx(width);
+      setToolbarNeedPx((need) => Math.max(need, Math.ceil(width) + 1));
+    },
+    shrank: () => setToolbarNeedPx(0),
+  }), []);
   const compactToolbar = size === null ? pageChrome?.showsTitle === true
-    : size.width < Math.max(HAPPIER_PAGE_METRICS.toolbarFoldBelowWidthPx, toolbarNeedPx);
+    : size.width < HAPPIER_PAGE_METRICS.toolbarFoldBelowWidthPx || (toolbarRowPx !== null && toolbarRowPx < toolbarNeedPx);
   const header = typeof props.header === 'function' ? props.header({
     title: props.title === undefined || pageChrome?.showsTitle === true ? null : (
       <HappierText variant="heading" tone="neutral" accessibilityRole="header" numberOfLines={1}>{props.title}</HappierText>
@@ -2286,7 +2289,7 @@ export function Collection<Item>(props: CollectionProps<Item>): ReactElement {
 
   const toolbarHeader = header == null ? header : (
     <CollectionToolbarCompactContext.Provider value={compactToolbar}>
-      <CollectionToolbarOverflowContext.Provider value={reportToolbarOverflow}>{header}</CollectionToolbarOverflowContext.Provider>
+      <CollectionToolbarOverflowContext.Provider value={toolbarFit}>{header}</CollectionToolbarOverflowContext.Provider>
     </CollectionToolbarCompactContext.Provider>
   );
 

@@ -4928,6 +4928,57 @@ describe('the Collection toolbar', () => {
       ...container.querySelectorAll<HTMLElement>('[role="button"], button'),
     ].find((node) => node.getAttribute('aria-label') === label) ?? null;
 
+  function reportToolbarLayout(view: ReturnType<typeof mount>, id: string, y: number, width: number, height: number) {
+    const node = view.query(id) as unknown as {
+      measureInWindow: (callback: (...values: number[]) => void) => void;
+      __reactLayoutHandler?: (event: HappierLayoutChangeEvent) => void;
+    };
+    // jsdom supplies no layout: the native measurement and layout event expose the same platform box.
+    node.measureInWindow = (callback) => callback(0, y, width, height);
+    act(() => node.__reactLayoutHandler?.({ nativeEvent: { layout: { x: 0, y, width, height } } }));
+  }
+
+  it('uses the current boxes when freshness arrives, instead of folding on an earlier row height', () => {
+    const view = mount({ search, header: toolbarHeader([]), renderPopover: openPopover });
+    view.measure(1440);
+    // Native layout delivery can lag the boxes being read: the trailing cluster has settled on the first line
+    // by the time the earlier, two-line row report arrives. Keep the native measurement boundary real in shape.
+    const boxes: Record<string, { width: number; height: number }> = {
+      toolbar: { width: 1300.4, height: 36 },
+      'toolbar:lead': { width: 850.6, height: 36 },
+      'toolbar:trail': { width: 441.8, height: 32 },
+    };
+    let nativeReads = 0;
+    for (const id of Object.keys(boxes)) {
+      const node = view.query(id)! as HTMLElement & { measureInWindow: (callback: (...values: number[]) => void) => void };
+      node.measureInWindow = (callback) => {
+        nativeReads += 1;
+        callback(0, 0, boxes[id]!.width, boxes[id]!.height);
+      };
+    }
+    const layout = (id: string, height: number) => act(() => {
+      const node = view.query(id) as unknown as { __reactLayoutHandler?: (event: HappierLayoutChangeEvent) => void };
+      node.__reactLayoutHandler?.({ nativeEvent: { layout: { x: 0, y: 0, width: 1300, height } } });
+    });
+    layout('toolbar:lead', 36);
+    layout('toolbar:trail', 32);
+    layout('toolbar', 76);
+    expect(view.query('refine:toolbar')).not.toBeNull();
+    expect(button(view.query('toolbar')!, 'Refresh')).not.toBeNull();
+    // Each event reads the three real boxes, independent of how many controls their clusters contain.
+    expect(nativeReads).toBe(9);
+    boxes['toolbar:lead'] = { width: 850, height: 76 };
+    boxes.toolbar = { width: 1300, height: 76 };
+    layout('toolbar', 76);
+    expect(view.query('refine:toolbar')).not.toBeNull();
+    // True outer wrapping fills the leading line (flexGrow: 1); even maxWidth-constrained clusters overflow
+    // their shared room. Internal wrapping inside a cluster keeps its existing composition policy.
+    boxes['toolbar:lead'] = { width: 1300, height: 36 };
+    layout('toolbar', 76);
+    expect(view.query('refine:toolbar')).toBeNull();
+    view.unmount();
+  });
+
   it('keeps every control in one row on a wide page', () => {
     const calls: string[] = [];
     const view = mount({
@@ -4999,6 +5050,19 @@ describe('the Collection toolbar', () => {
     view.unmount();
   });
 
+  it('keeps its one row on a page beside the open Projects column, where the controls still fit', () => {
+    const view = mount({
+      search,
+      header: toolbarHeader([]),
+      renderPopover: openPopover,
+    });
+    // A 1440 window with the Projects column open leaves a plugin page about this wide (lab a2 draws one row).
+    view.measure(1028);
+    expect(view.query('refine:toolbar')).not.toBeNull();
+    expect(button(view.query('toolbar')!, 'Filters: 2')).toBeNull();
+    view.unmount();
+  });
+
   it('folds as soon as its one row no longer fits its real controls, not at a guessed width', () => {
     const view = mount({
       search,
@@ -5008,18 +5072,16 @@ describe('the Collection toolbar', () => {
     // Wider than the fold width, but this page's controls (a long freshness, Run on) need more than one row.
     view.measure(1120);
     expect(view.query('refine:toolbar')).not.toBeNull();
-    const layout = (testID: string, y: number, height: number) => {
-      const node = view.query(testID) as unknown as {
-        __reactLayoutHandler?: (event: HappierLayoutChangeEvent) => void;
-      };
-      act(() => node.__reactLayoutHandler?.({ nativeEvent: { layout: { x: 0, y, width: 400, height } } }));
+    const layout = (testID: string, y: number, height: number, width: number) => {
+      reportToolbarLayout(view, testID, y, width, height);
     };
-    layout('toolbar:lead', 0, 36);
-    // A shorter trailing group centred on the same line sits a little lower; that is one row, not a wrap.
-    layout('toolbar:trail', 2, 32);
+    layout('toolbar:lead', 0, 36, 650);
+    // A shorter trailing group centred on the same line: the row is as tall as its taller group, one row.
+    layout('toolbar:trail', 2, 32, 300);
+    layout('toolbar', 0, 36, 1000);
     expect(view.query('refine:toolbar')).not.toBeNull();
-    // The trailing controls wrapped under the leading ones: the row is two scattered rows, so it folds instead.
-    layout('toolbar:trail', 44, 32);
+    // Freshness makes the trailing cluster wider; the current widths no longer fit the same 1000px row.
+    layout('toolbar:trail', 44, 32, 450);
     const toolbar = view.query('toolbar')!;
     expect(view.query('refine:toolbar')).toBeNull();
     expect(button(toolbar, 'Filters: 2')).not.toBeNull();
@@ -5027,9 +5089,70 @@ describe('the Collection toolbar', () => {
     view.measure(1100);
     view.measure(1120);
     expect(view.query('refine:toolbar')).toBeNull();
-    // A window wide enough for the row it needed gets the one row back.
+    // A window wide enough for the row it needed gets the one row back once the folded row reports that room.
     view.measure(1440);
+    act(() => (view.query('toolbar') as unknown as { __reactLayoutHandler?: (event: HappierLayoutChangeEvent) => void })
+      .__reactLayoutHandler?.({ nativeEvent: { layout: { x: 0, y: 0, width: 1440, height: 80 } } }));
     expect(view.query('refine:toolbar')).not.toBeNull();
+    view.unmount();
+  });
+
+  it('judges the fit by sizes, never by a position a group reported before it moved', () => {
+    const view = mount({ search, header: toolbarHeader([]), renderPopover: openPopover });
+    view.measure(1120);
+    const layout = (testID: string, y: number, height: number) => {
+      reportToolbarLayout(view, testID, y, testID === 'toolbar' ? 1120 : 400, height);
+    };
+    // The trailing group once sat under the leading one; it moved back up without resizing, so it said nothing more.
+    // The row itself is one line tall: it fits, and the toolbar keeps its one row.
+    layout('toolbar:trail', 44, 32);
+    layout('toolbar:lead', 0, 36);
+    layout('toolbar', 0, 36);
+    expect(view.query('refine:toolbar')).not.toBeNull();
+    view.unmount();
+  });
+
+  it('folds at the width its row wrapped at, never at a width the page reported before it narrowed', () => {
+    const view = mount({ search, header: toolbarHeader([]), renderPopover: openPopover });
+    view.measure(1300);
+    expect(view.query('refine:toolbar')).not.toBeNull();
+    const layout = (testID: string, y: number, height: number, width: number) => {
+      reportToolbarLayout(view, testID, y, width, height);
+    };
+    // The window narrows: the wide row lays out at its new width and wraps before the page reports its own width.
+    layout('toolbar:lead', 0, 36, 620);
+    layout('toolbar:trail', 44, 32, 620);
+    layout('toolbar', 0, 76, 620);
+    view.measure(620);
+    expect(view.query('refine:toolbar')).toBeNull();
+    // Widened again, the folded row reports the room it now has: the one row comes back.
+    view.measure(1300);
+    layout('toolbar', 0, 80, 1300);
+    expect(view.query('refine:toolbar')).not.toBeNull();
+    view.unmount();
+  });
+
+  it('measures its one row again when the folded controls get shorter at the same width, and settles', async () => {
+    const long = { tone: 'neutral' as const, label: 'Updated 4 minutes ago · 2 sources could not be read' };
+    const view = mount({ search, header: toolbarHeader([], long), renderPopover: openPopover });
+    view.measure(1120);
+    const layout = (testID: string, y: number, height: number) => {
+      reportToolbarLayout(view, testID, y, 400, height);
+    };
+    layout('toolbar:lead', 0, 36);
+    layout('toolbar:trail', 44, 32);
+    layout('toolbar', 0, 76);
+    expect(view.query('refine:toolbar')).toBeNull();
+    // The long freshness is gone: the controls the row needed room for got shorter, so the wide row is tried again.
+    await view.update({ search, header: toolbarHeader([]), renderPopover: openPopover });
+    expect(view.query('refine:toolbar')).not.toBeNull();
+    // It still does not fit: it folds again and stays folded while nothing shrinks.
+    layout('toolbar:lead', 0, 36);
+    layout('toolbar:trail', 44, 32);
+    layout('toolbar', 0, 76);
+    expect(view.query('refine:toolbar')).toBeNull();
+    await view.update({ search, header: toolbarHeader([]), renderPopover: openPopover });
+    expect(view.query('refine:toolbar')).toBeNull();
     view.unmount();
   });
 
