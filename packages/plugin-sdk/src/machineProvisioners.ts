@@ -23,7 +23,7 @@ export type MachineProvisionerContributionV1 = Readonly<{
   platforms: readonly ('darwin' | 'linux' | 'win32')[];
   prerequisites: readonly Readonly<{ kind: 'managedDependency' | 'systemTool'; id: string | PluginContributionRef }>[];
   billing: Readonly<{ location: 'local' | 'cloud' | 'unknown'; stoppedBilling: 'billed' | 'not-billed' | 'unknown'; storageCharges?: readonly MachineProvisionerPriceV1[] }>;
-  retention: Readonly<{ supportedIntents: readonly MachineProvisionerNativeIntentV1[]; finiteOnly?: boolean; nativeExpiry?: Readonly<{ kind: 'unused'; afterMs: number }> | Readonly<{ kind: 'deadline'; at: number }> }>;
+  retention: Readonly<{ supportedIntents: readonly MachineProvisionerNativeIntentV1[]; guestLocalStop?: canonical.MachineProvisionerContributionV1['retention']['guestLocalStop']; finiteOnly?: boolean; nativeExpiry?: Readonly<{ kind: 'unused'; afterMs: number }> | Readonly<{ kind: 'deadline'; at: number }> }>;
   actions: Readonly<{ check: string; options?: string; acquire: string; bootstrap: string; inspect: string; power?: string; destroy: string; rebuild?: string }>;
   /** Existing options Action field and its raw native input unit; not actual expiry. */
   nativeDurationInput?: Readonly<{ path: string; unit: 'milliseconds' | 'seconds' }>;

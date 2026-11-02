@@ -64,6 +64,8 @@ export const BillingCapabilitiesV1Schema = lazyDefinition(() => z.strictObject({
 }));
 export const RetentionCapabilitiesV1Schema = lazyDefinition(() => z.strictObject({
   supportedIntents: z.array(SupportedNativeIntentSchema),
+  /** Leaf-qualified native Stop effect only; the host's admin owner decides promptless poweroff availability. */
+  guestLocalStop: z.optional(z.enum(['poweroff', 'process-exit'])),
   /** Omission is unknown; expiry and supported power operations do not imply this fact. */
   finiteOnly: z.optional(z.boolean()),
   nativeExpiry: z.optional(z.union([
