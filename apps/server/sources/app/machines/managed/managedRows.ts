@@ -247,12 +247,12 @@ export async function acquireManagedMachinePublicationAccountsInTx(tx: Tx, targe
 export async function inManagedMachinePublicationTx<T>(
     target: ManagedPublicationTarget,
     write: (tx: Tx) => Promise<T>,
-    admission?: Readonly<{ intent: 'content' | 'exclusive'; additionalAccountIds?: readonly string[] }>,
+    admission?: Readonly<{ intent: 'content' | 'exclusive'; additionalAccountIds?: readonly string[]; transactionClass?: string }>,
 ): Promise<ResolvedTransactionResult<T>> {
     return inTx(async tx => {
         await acquireManagedMachinePublicationAccountsInTx(tx, target, admission);
         return write(tx);
-    });
+    }, { transactionClass: admission?.transactionClass });
 }
 
 /** The existing unique enrollment association is the ordinary Machine fact owner. */

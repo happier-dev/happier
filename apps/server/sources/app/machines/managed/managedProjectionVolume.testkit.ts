@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { readFile, readdir } from 'node:fs/promises';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import fastify, { type FastifyRequest } from 'fastify';
 import { serializerCompiler, validatorCompiler, type ZodTypeProvider } from 'fastify-type-provider-zod';
@@ -14,12 +15,15 @@ import { createReleaseLessDeclarationV1 } from '@/app/plugins/availability/curre
 import { createPluginAvailabilityOperations } from '@/app/plugins/availability/operations';
 import { registerManagedMachineRoutes } from './managedRoutes';
 import { resolveManagedDeclarationInTx, type StoredManagedMachine } from './managedRows';
+import { admitManagedAcquire } from './managedAcquire';
+import { PrismaClient } from '@prisma/client';
 
 interface QueryMeasurement {
     model: string;
     method: string;
     milliseconds: number;
     bytes: number;
+    rows: number;
     pluginIds: string[];
 }
 
@@ -31,6 +35,14 @@ async function measure<T>(phase: string, operation: () => Promise<T>) {
     const observe = (tx: Tx): Tx => new Proxy(tx, {
         get(owner, property, txReceiver) {
             const delegate: unknown = Reflect.get(owner, property, txReceiver);
+            if ((property === '$queryRaw' || property === '$queryRawUnsafe') && typeof delegate === 'function') return async (...input: unknown[]) => {
+                const began = performance.now();
+                const result: unknown = await Reflect.apply(delegate, owner, input);
+                queries.push({ model: '$raw', method: String(property), milliseconds: performance.now() - began,
+                    rows: Array.isArray(result) ? result.length : result === null ? 0 : 1,
+                    bytes: 0, pluginIds: [] });
+                return result;
+            };
             if (typeof delegate === 'function') return delegate.bind(owner);
             if (typeof property !== 'string' || !/^[a-z][A-Za-z]+$/.test(property) || !delegate || typeof delegate !== 'object') return delegate;
             return new Proxy(delegate, {
@@ -42,7 +54,7 @@ async function measure<T>(phase: string, operation: () => Promise<T>) {
                         const result: unknown = await Reflect.apply(call, model, input);
                         const milliseconds = performance.now() - began;
                         const rows: unknown[] = Array.isArray(result) ? result : [result];
-                        queries.push({ model: property, method: String(method), milliseconds,
+                        queries.push({ model: property, method: String(method), milliseconds, rows: rows.filter(row => row !== null).length,
                             bytes: Buffer.byteLength(JSON.stringify(result, (_key, value: unknown) => typeof value === 'bigint' ? String(value) : value) ?? ''),
                             pluginIds: rows.flatMap(row => row && typeof row === 'object' && 'pluginId' in row && typeof row.pluginId === 'string' ? [row.pluginId] : []) });
                         return result;
@@ -76,30 +88,116 @@ async function measure<T>(phase: string, operation: () => Promise<T>) {
                 bytes: selected.reduce((sum, query) => sum + query.bytes, 0) };
         };
         console.info('managed-projection-volume', JSON.stringify({ phase, elapsedMs, queryMs,
+            queries: queries.length, rows: queries.reduce((sum, query) => sum + query.rows, 0),
+            statementGroups: queries.map(query => `${query.model}.${query.method}:${query.rows}`),
             outsideQueryMs: elapsedMs - queryMs,
             materializations: summarize('pluginMachineMaterialization'),
             intents: summarize('accountPluginIntent'), releases: summarize('accountPluginRelease') }));
     }
 }
 
+/** Use Prisma's ordered SQL event stream, including the transaction owner's raw publication work. */
+async function measurePostgresCreate<T>(operation: () => Promise<T>) {
+    const client = new PrismaClient({ log: [{ emit: 'event', level: 'query' }] });
+    const statements: string[] = [];
+    let finishBarrier: (() => void) | undefined;
+    client.$on('query', event => {
+        if (event.query.includes('managed_create_cost_barrier')) finishBarrier?.();
+        else statements.push(event.query);
+    });
+    await client.$connect();
+    const original = db.$transaction;
+    // Rebind the genuine database boundary; admission, queries and publication stay real.
+    db.$transaction = new Proxy(original, { apply(_owner, _receiver, args) {
+        return Reflect.apply(client.$transaction, client, args);
+    } });
+    try {
+        const start = performance.now();
+        const value = await operation();
+        const barrier = new Promise<void>(resolve => { finishBarrier = resolve; });
+        await Promise.all([client.$queryRaw`SELECT 1 AS managed_create_cost_barrier`, barrier]);
+        const groups: Record<string, number> = {};
+        for (const sql of statements) {
+            const key = sql.split(/\s+/, 2).join(' ');
+            groups[key] = (groups[key] ?? 0) + 1;
+        }
+        console.info('managed-create-sql-cost', JSON.stringify({ elapsedMs: performance.now() - start,
+            statements: statements.length, groups }));
+        return { value, statements };
+    } finally {
+        db.$transaction = original;
+        await client.$disconnect();
+    }
+}
+
+/** A new admission selects its preset and provider, regardless of retained allocation volume. */
+export async function exerciseManagedPresetAcquireCost() {
+    const homeId = `srv_${'a'.repeat(32)}`;
+    const account = await db.account.create({ data: { encryptionMode: 'plain' } });
+    const controller = { machineId: randomUUID(), installationId: randomUUID() };
+    await db.machine.create({ data: { id: controller.machineId, accountId: account.id, metadata: '{}',
+        installationId: controller.installationId, pluginMaterializationRevision: 1n } });
+    const manifest = await seedBundledManagedAvailability(account.id, homeId, controller, ['machine-lima.json']);
+    const launch = { provider: { pluginId: manifest.id, localId: 'lima' }, schemaVersion: 1, name: 'Preset cost guest',
+        choices: { store: '/tmp/cost-guests', image: 'fixture:image', arch: 'x86_64',
+            vmType: 'qemu', cpus: 2, memoryGiB: 2, diskGiB: 10, mounts: [] } };
+    const preset = await db.managedMachinePreset.create({ data: {
+        id: randomUUID(), homeId, custodianAccountId: account.id, name: 'Cost preset', launch,
+        controllerMachineId: controller.machineId, controllerInstallationId: controller.installationId,
+    } });
+    const create = (requestId = randomUUID()) => admitManagedAcquire({ custodianAccountId: account.id, requesterAccountId: account.id,
+        requestEnvelopeDigest: 'preset-cost-envelope', input: { requestId, continuationPresent: false,
+            input: { enrollmentIdentity: { kind: 'guestProcess', role: 'sandbox' }, selection: { kind: 'preset',
+                homeId, id: preset.id, revision: preset.revision },
+                controller, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } } });
+    const firstRequestId = randomUUID();
+    const empty = await measurePostgresCreate(() => measure('preset-create-empty', () => create(firstRequestId)));
+    // OPEN-S0B observed128 retained managed allocations. They must not be loaded by Create.
+    await db.managedMachine.createMany({ data: Array.from({ length: 128 }, () => ({ homeId,
+        custodianAccountId: account.id, controllerMachineId: controller.machineId,
+        controllerInstallationId: controller.installationId, admittedActionRequestId: randomUUID(),
+        admittedInput: {}, launch, allocation: 'confirmed-absent',
+        retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false })) });
+    const retained = await measurePostgresCreate(() => measure('preset-create-128-historical', create));
+    expect(empty.value.value.replayed).toBe(false);
+    expect(retained.value.value.replayed).toBe(false);
+    expect(retained.value.value.machine.id).not.toBe(empty.value.value.machine.id);
+    expect(retained.value.queries.length).toBe(empty.value.queries.length);
+    // SET LOCAL refresh frequency can vary with elapsed time; actual data statements must not scale.
+    const dataStatements = (statements: readonly string[]) => statements.filter(sql => /^(SELECT|INSERT|UPDATE|DELETE|WITH)\b/u.test(sql));
+    expect(dataStatements(retained.statements).length).toBe(dataStatements(empty.statements).length);
+    for (const result of [empty.value, retained.value]) {
+        expect(result.queries.reduce((sum, query) => sum + query.rows, 0))
+            .toBe(empty.value.queries.reduce((sum, query) => sum + query.rows, 0));
+        expect([...new Set(result.queries.flatMap(query => query.pluginIds))]).toEqual([manifest.id]);
+    }
+    // A Prisma deadline is a database-boundary failure. Keep the real admission
+    // and storage error classifier so this checks the caller-visible attribution.
+    const original = db.$transaction;
+    db.$transaction = new Proxy(original, { apply() {
+        return Promise.reject(Object.assign(new Error('A query cannot be executed on an expired transaction.'), { code: 'P2028' }));
+    } });
+    try {
+        await expect(create()).rejects.toMatchObject({ code: 'database_transaction_timeout', transactionClass: 'managed-machine-acquire' });
+        await expect(create(firstRequestId)).rejects.toMatchObject({ code: 'database_transaction_timeout', transactionClass: 'managed-machine-acquire-replay' });
+    } finally {
+        db.$transaction = original;
+    }
+}
+
 /** Seed the actual bundled declaration/materialization volume on a disposable controller. */
 export async function seedBundledManagedAvailability(accountId: string, homeId: string,
-    controller: Readonly<{ machineId: string; installationId: string }>) {
-    const pluginsRoot = new URL('../../../../../../packages/plugins/', import.meta.url);
-    const manifests = [];
-    for (const directory of await readdir(pluginsRoot, { withFileTypes: true })) {
-        if (!directory.isDirectory()) continue;
-        const path = new URL(`${directory.name}/.happier-plugin/plugin.json`, pluginsRoot);
-        let source: string;
-        try { source = await readFile(path, 'utf8'); }
-        catch (error) {
-            if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') continue;
-            throw error;
-        }
-        manifests.push(PluginManifestV2Schema.parse(JSON.parse(source)));
-    }
+    controller: Readonly<{ machineId: string; installationId: string }>, filenames?: readonly string[]) {
+    // Consume the generator-normalized declarations as fixture data, without
+    // importing the CLI's source graph into the server compilation.
+    const manifestDirectory = fileURLToPath(new URL('../../../../../cli/assets/bundled-plugin-manifests/', import.meta.url));
+    const manifestFiles = (await readdir(manifestDirectory, { withFileTypes: true }))
+        .filter(entry => entry.isFile() && entry.name.endsWith('.json') && (!filenames || filenames.includes(entry.name)))
+        .map(entry => entry.name).sort();
+    const manifests = await Promise.all(manifestFiles.map(async name =>
+        PluginManifestV2Schema.parse(JSON.parse(await readFile(join(manifestDirectory, name), 'utf8')))));
     const manifest = manifests.find(candidate => candidate.id === 'happier.machine.lima');
-    if (!manifest) throw new Error(`Missing bundled Lima manifest at ${fileURLToPath(pluginsRoot)}`);
+    if (!manifest) throw new Error(`Missing bundled Lima manifest at ${manifestDirectory}`);
     console.info('managed-projection-fixture', JSON.stringify({ plugins: manifests.length,
         manifestBytes: manifests.reduce((sum, item) => sum + Buffer.byteLength(JSON.stringify(item)), 0) }));
     for (const candidate of manifests) {

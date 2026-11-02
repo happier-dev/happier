@@ -69,7 +69,7 @@ export async function admitManagedAcquire(params: Readonly<{
             const existing = await existingAdmission(tx);
             if (!existing) throw new ManagedMachineError("managed_not_found");
             return existing;
-        });
+        }, { transactionClass: 'managed-machine-acquire-replay' });
         if (retained) return replay();
         const execute = () => inManagedMachinePublicationTx({ controllerMachineId: review.controller.machineId }, async (tx) => {
             await requireManagedControllerInTx(tx, { homeId: review.homeId, custodianAccountId: params.custodianAccountId, controller: review.controller });
@@ -125,7 +125,8 @@ export async function admitManagedAcquire(params: Readonly<{
             } });
             await invalidateManagedMachineInTx(tx, row);
             return { machine: projectManagedMachine(row, declaration), replayed: false };
-        }, { intent: 'exclusive', additionalAccountIds: [params.requesterAccountId, params.custodianAccountId] });
+        }, { intent: 'exclusive', additionalAccountIds: [params.requesterAccountId, params.custodianAccountId],
+            transactionClass: 'managed-machine-acquire' });
         // Entering this owner can submit a write even if Prisma later rejects its
         // COMMIT acknowledgement. Its rollback attempt may also fail silently.
         transactionStarted = true;
