@@ -18,6 +18,7 @@ import {
   ConnectedServiceAuthGroupStateV1Schema,
   ConnectedServiceCredentialRevisionV1Schema,
   ConnectedServiceCredentialHealthV1Schema,
+  ConnectedServiceCredentialRefreshFailureKindV1Schema,
   isConnectedServiceCredentialHealthStatusUsable,
 } from './connectedServiceSchemas.js';
 import {
@@ -140,6 +141,11 @@ const QualifiedConnectedAccountProfileV4Shape = {
     'needs_reauth',
     'refresh_failed_retryable',
   ]),
+  /** Observed credential-health failure while reauthentication is required; absent when unknown. */
+  statusReason: z.optional(ConnectedServiceCredentialRefreshFailureKindV1Schema),
+  /** Stored health observations; omitted when no observation is available. */
+  lastRefreshFailureAt: z.optional(z.number().check(z.int(), z.nonnegative())),
+  providerHttpStatus: z.optional(z.number().check(z.int(), z.minimum(100), z.maximum(599))),
   authenticationModeId: zMini.nullable(QualifiedConnectedAccountModeIdV4ZodSchema),
   configurationReady: z.boolean(),
   configurationRevision:
@@ -147,6 +153,7 @@ const QualifiedConnectedAccountProfileV4Shape = {
   kind: z.optional(z.nullable(z.enum(['oauth', 'token']))),
   expiresAt: z.optional(z.nullable(z.number().check(z.int(), z.nonnegative()))),
   lastUsedAt: z.optional(z.nullable(z.number().check(z.int(), z.nonnegative()))),
+  lastRefreshSuccessAt: z.optional(z.number().check(z.int(), z.nonnegative())),
   ...QualifiedConnectedAccountPresentationMetadataV4Schema.shape,
 } as const;
 

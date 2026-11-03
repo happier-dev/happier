@@ -1004,6 +1004,24 @@ The source Account keeps credential custody. A Team resource stores a typed refe
 current source plus audience and use policy; it does not copy a Provider definition or create a
 second credential store.
 
+In 0.3 development, the qualified account profile's optional `statusReason`
+projects the existing credential health `lastRefreshFailureKind` when its status
+is `needs_reauth`. The server list owner supplies the same field to account lists
+and the Account profile; consumers do not classify provider errors themselves.
+The field reuses the Protocol refresh-failure enum. Current reauthentication
+producers emit `invalid_grant`, `invalid_client`, `provider_401`, `provider_403`
+and `missing_refresh_token`; unclassified token-endpoint rejections emit `unknown`.
+Absence means no observed cause, including legacy
+authentication modes requiring reconnection. A connected account does not expose
+a retained historical failure as `statusReason`. These categories do not establish whether a token
+expired, was revoked, or was signed out elsewhere. Pool exclusions and individual
+authentication-attempt errors remain separate facts, not account sign-out causes.
+
+The same owner-only metadata projection includes stored health observations
+`lastRefreshFailureAt`, `lastRefreshSuccessAt` and `providerHttpStatus` only when
+present. It does not expose credential content or raw provider error text and
+does not backfill missing observations.
+
 For brokered Connected Account and Pool sources, the daemon's model projector reads
 the CLIProxyAPI contribution's credential-free catalog for the exact upstream
 purpose. The plugin generates those rows from its pinned SDK source. This read

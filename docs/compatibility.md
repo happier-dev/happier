@@ -2088,6 +2088,23 @@ its dedicated migration procedure owns that external operation.
 
 ### Connected personal metadata (development)
 
+Qualified Connected Account V4 profiles add optional presentation `statusReason`,
+sourced from credential health using the existing closed refresh-failure enum.
+The profile, nested qualified identity and list envelopes remain closed; there
+is no new union member, wire epoch, package version or persisted field. New
+readers accept profiles without the field. The inspected scoped-clean moving
+`../0.2` frontier at `2b8fe93db6cb8ec2969f81e738a2f818a7dd8106` has no V4
+profile or V4 list client. Older strict 0.3 development V4 readers require matching
+Protocol source; they cannot be described as ignoring unknown profile fields.
+This follows the unpublished development cut, with no compatibility adapter or
+change to released V2 profiles. The field is display evidence and never changes
+credential selection, admission, retry or routing authority.
+
+The same development profile optionally projects stored health
+`lastRefreshFailureAt`, `lastRefreshSuccessAt` and `providerHttpStatus`, omitting
+unknown observations. It retains the same closed envelopes and development
+compatibility boundary described above.
+
 The inspected moving `../0.2` Settings definitions produce profile labels,
 default-auth pool-adoption dismissals, exact global/per-Machine CLI warning
 booleans and sparse account/pool-member disclosure keys. The development reader

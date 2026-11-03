@@ -1937,6 +1937,16 @@ async function listQualifiedConnectedAccountEntriesByFilterInTx(
                 status: legacyMode?.support === "unsupported"
                     ? "needs_reauth"
                     : metadata.status,
+                ...(legacyMode?.support !== "unsupported" && metadata.status === "needs_reauth"
+                    && metadata.health?.lastRefreshFailureKind !== undefined
+                    ? { statusReason: metadata.health.lastRefreshFailureKind }
+                    : {}),
+                ...(metadata.health?.lastRefreshFailureAt !== undefined
+                    ? { lastRefreshFailureAt: metadata.health.lastRefreshFailureAt }
+                    : {}),
+                ...(metadata.health?.providerHttpStatus !== undefined
+                    ? { providerHttpStatus: metadata.health.providerHttpStatus }
+                    : {}),
                 authenticationModeId:
                     projectQualifiedConnectedAccountPublicAuthenticationModeId({
                         service: rowService,
@@ -1949,6 +1959,9 @@ async function listQualifiedConnectedAccountEntriesByFilterInTx(
                 kind: metadata.kind,
                 expiresAt: qualifiedConnectedAccountListTimestamp(row.expiresAt),
                 lastUsedAt: qualifiedConnectedAccountListTimestamp(row.lastUsedAt),
+                ...(metadata.health?.lastRefreshSuccessAt !== undefined
+                    ? { lastRefreshSuccessAt: metadata.health.lastRefreshSuccessAt }
+                    : {}),
                 ...(metadata.savedSecretResourceIds.length
                     ? { savedSecretResourceIds: [...metadata.savedSecretResourceIds] }
                     : {}),
