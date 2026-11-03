@@ -166,7 +166,6 @@ function providerSpec<Id extends ProviderActionIdV1>(id: Id, title: string, summ
     requiredAuthority: 'account_automation', executionPlacement: isProviderActionMachineRequiredV1({ actionId: id }) ? 'machine' : 'account', placements: [],
     executionPlacementForInput: input => isProviderActionMachineRequiredV1(parseProviderActionRequestV1(id, input)) ? 'machine' : 'account',
     executionPlacements: resolveProviderActionExecutionPlacementsV1(id),
-    ...(id === 'providers.defaults.set' ? { originalExecution: { accountRoot: 'allowed' as const } } : {}),
     surfaces: { ui: true, cli: true, agent: true, mcp: true, voice: false, rpc: true },
     bindings: { rpcMethod: id, mcpToolName: id.replaceAll('.', '_') },
     inputSchema: inputs[id], outputSchema: outputs[id],

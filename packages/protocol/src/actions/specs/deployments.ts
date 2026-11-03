@@ -22,7 +22,6 @@ function deploymentSpec<TId extends DeploymentActionIdV1>(id: TId, title: string
     ...(id !== 'deployments.environments.create' && id !== 'deployments.environments.list' && id !== 'deployments.publish'
       ? { approvalScope: 'environment' } : {}),
     executionPlacement: id === 'deployments.backups.restore' || id === 'deployments.prepare' || id === 'deployments.templates.instantiate' ? 'machine' : 'account', requiredAuthority: 'account_automation', placements: [],
-    originalExecution: { accountRoot: 'allowed' },
     // Machine placement uses the original Action dispatcher, not a standalone RPC method.
     surfaces: { ui: true, cli: true, agent: true, mcp: true, voice: false, rpc: false },
     bindings: { mcpToolName: id.replaceAll('.', '_') },

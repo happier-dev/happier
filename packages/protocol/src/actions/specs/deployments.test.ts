@@ -289,7 +289,7 @@ describe('Deployment Action front door', () => {
       expect(spec.inputSchema.safeParse({ ...input, environmentId: 'other' }).success).toBe(false);
       expect(spec.inputSchema.safeParse({ ...input, repair: true }).success).toBe(false);
       expect(spec).toMatchObject({ safety: 'safe', sideEffectClass: 'read', approvalScope: 'environment',
-        executionPlacement: 'account', originalExecution: { accountRoot: 'allowed' } });
+        executionPlacement: 'account' });
       expect(spec.serverTransport).toBeUndefined();
       expect(spec.operation).toBeUndefined();
       expect(resolveActionApprovalRouting({ actionId: spec.id, spec, context: { surface: 'agent' } }).required).toBe(false);
