@@ -14235,6 +14235,7 @@
     "check:exports": "node scripts/generate-exports.mjs --check"
   },
   "dependencies": {
+    "diff": "^8.0.2",
     "@zip.js/zip.js": "2.7.73",
     "es-module-lexer": "^1.7.0",
     "parse5": "^7.2.1",
