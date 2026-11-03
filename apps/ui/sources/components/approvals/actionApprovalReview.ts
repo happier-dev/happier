@@ -5,7 +5,7 @@ import { resolveApprovalRequestApproveAdmission, resolveApprovalVisualPreview,
     readPluginInstallApprovalPendingReview } from '@happier-dev/protocol/actions/actionApprovalPresentation';
 import type { ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { isComputerApprovalAction } from './computerApprovalModel';
-import { isConfidentialSecretApprovalAction, readConfidentialSecretApproval } from './confidentialSecretApprovalModel';
+import { isConfidentialSecretApprovalAction, readConfidentialActionInputsApproval, readConfidentialSecretApproval } from './confidentialSecretApprovalModel';
 import { readResourceProposalApproval } from './resourceProposal/readResourceProposalApproval';
 import { readPromptDocUpdateApproval } from './promptDocApprovalModel';
 import { readCapabilityEnableApproval } from '@/components/sessions/capabilities/capabilityEnableApproval';
@@ -16,6 +16,8 @@ export type ActionApprovalReview = Readonly<{
     admission: ReturnType<typeof resolveApprovalRequestApproveAdmission> | null;
     confidentialAction: boolean;
     confidential: ReturnType<typeof readConfidentialSecretApproval>;
+    /** Declared secret inputs the consuming Action is waiting for; chosen privately, never by plain Approve. */
+    confidentialInputs: ReturnType<typeof readConfidentialActionInputsApproval>;
     capabilityEnable: ReturnType<typeof readCapabilityEnableApproval>;
     promptDocUpdate: ReturnType<typeof readPromptDocUpdateApproval>;
     resourceProposal: ReturnType<typeof readResourceProposalApproval>;
@@ -36,6 +38,7 @@ export function readActionApprovalReview(request: ApprovalRequest): ActionApprov
     const admission = request.status === 'open' ? resolveApprovalRequestApproveAdmission(request) : null;
     const confidentialAction = isConfidentialSecretApprovalAction(request.actionId);
     const confidential = readConfidentialSecretApproval(request);
+    const confidentialInputs = readConfidentialActionInputsApproval(request);
     const capabilityEnable = readCapabilityEnableApproval(request);
     const promptDocUpdate = readPromptDocUpdateApproval(request);
     const resourceProposal = readResourceProposalApproval(request);
@@ -44,7 +47,7 @@ export function readActionApprovalReview(request: ApprovalRequest): ActionApprov
     const spec = actionId.success ? getActionSpec(actionId.data) : null;
     // Specialized review owns its picker, private entry, refreshed resource selection or visual.
     // A compact row cannot substitute an unchanged decision for one of those interactions.
-    const requiresReview = confidentialAction || isComputerApprovalAction(request.actionId)
+    const requiresReview = confidentialAction || confidentialInputs !== null || isComputerApprovalAction(request.actionId)
         || capabilityEnable !== null || promptDocUpdate !== null || resourceProposal !== null
         || visualPreview !== null || request.handoffTargetReplacementApproval !== undefined
         || Boolean(spec?.approvalNarrowing || spec?.approvalInputCustody === 'live_only'
@@ -54,7 +57,7 @@ export function readActionApprovalReview(request: ApprovalRequest): ActionApprov
         || isProjectSetupTrustRequestV1(request.actionId, request.actionArgs);
     const simple = request.v === 2 && request.status === 'open' && admission?.status === 'available'
         && spec !== null && spec.inputSchema.safeParse(request.actionArgs).success && !requiresReview;
-    return { admission, confidentialAction, confidential, capabilityEnable, promptDocUpdate, resourceProposal,
+    return { admission, confidentialAction, confidential, confidentialInputs, capabilityEnable, promptDocUpdate, resourceProposal,
         visualPreview, simple, workspaceFileSource: readApprovalFileSource(request),
         approveVerb: spec?.confirmVerb !== undefined ? resolveActionConfirmVerb(spec.confirmVerb) : null,
         irreversible: spec?.irreversible === true };

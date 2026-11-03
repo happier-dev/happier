@@ -202,7 +202,10 @@ export const ApprovalDetailScreen = React.memo((props: Readonly<{
   const request = parsed?.request ?? null;
   const confidentialAction = review?.confidentialAction ?? false;
   const confidentialApproval = review?.confidential ?? null;
-  const confidentialReviewKey = confidentialApproval && parsed?.kind === 'built_in'
+  const confidentialInputs = review?.confidentialInputs ?? null;
+  const secretPrompt = confidentialAction || confidentialInputs !== null;
+  const confidentialPrompt = confidentialApproval ?? confidentialInputs;
+  const confidentialReviewKey = (confidentialApproval || confidentialInputs) && parsed?.kind === 'built_in'
     ? JSON.stringify([parsed.request.actionId, parsed.request.actionArgs,
         parsed.request.v === 2 ? parsed.request.executionOriginV1 : null, parsed.request.createdBy])
     : null;
@@ -380,7 +383,7 @@ export const ApprovalDetailScreen = React.memo((props: Readonly<{
     async (decision: 'approve' | 'reject' | 'cancel', choice?: Readonly<{ keepUndo?: boolean }>) => {
       if (!parsed || decisionInFlightRef.current || parsed.request.status !== 'open') return;
       // Fails closed for a programmatic press too, not only for the dimmed control.
-      if (decision === 'approve' && (approvalWithheld || confidentialAction || proposal?.approveWithheld)) return;
+      if (decision === 'approve' && (approvalWithheld || secretPrompt || proposal?.approveWithheld)) return;
 
       try {
         decisionInFlightRef.current = true;
@@ -496,7 +499,7 @@ export const ApprovalDetailScreen = React.memo((props: Readonly<{
         setIsDeciding(false);
       }
     },
-    [approvalWithheld, confidentialAction, computerChoice, decideActionApproval, parsed, proposal, props.artifactId, refreshArtifact, replayRoute, requestedServerId, sessionId, setRecordedDecision],
+    [approvalWithheld, secretPrompt, computerChoice, decideActionApproval, parsed, proposal, props.artifactId, refreshArtifact, replayRoute, requestedServerId, sessionId, setRecordedDecision],
   );
 
   const requestTitle = useApprovalRequestTitle(
@@ -789,8 +792,8 @@ export const ApprovalDetailScreen = React.memo((props: Readonly<{
         </ItemGroup>
       ) : null}
 
-      {confidentialApproval ? <ConfidentialSecretApproval key={confidentialReviewKey} artifactId={props.artifactId}
-        approval={confidentialApproval} serverId={approvalServerId} isOpen={parsed.request.status === 'open' && !answeredWhileOpen}
+      {confidentialPrompt ? <ConfidentialSecretApproval key={confidentialReviewKey} artifactId={props.artifactId}
+        approval={confidentialPrompt} serverId={approvalServerId} isOpen={parsed.request.status === 'open' && !answeredWhileOpen}
         unavailable={approvalRouteUnavailable} isDeciding={isDeciding} onDecision={decide} /> : null}
 
       {capabilityEnable && parsed.kind === 'built_in' && artifact && sessionId ? (
@@ -799,14 +802,14 @@ export const ApprovalDetailScreen = React.memo((props: Readonly<{
             serverId={approvalServerId ?? null} disabled={isDeciding || approvalRouteUnavailable}
             onDismiss={() => { void decide('cancel'); }} />
         </ItemGroup>
-      ) : parsed.request.status === 'open' && !answeredWhileOpen && !confidentialApproval
+      ) : parsed.request.status === 'open' && !answeredWhileOpen && !confidentialApproval && !confidentialInputs
         && (!requesterConfirmation || requesterMayDecide) ? (
         <ItemGroup surface="none">
           {/* Dismiss closes without an answer; Reject answers no. Consent remains with decide. */}
           <ApprovalDecisionBar testID="approvals.actions" busy={isDeciding && !homeUnavailable}
-            irreversible={review?.irreversible === true && !confidentialAction}
+            irreversible={review?.irreversible === true && !secretPrompt}
             layout={handoffTargetPresentation ? 'stacked' : 'inline'}
-            approve={!confidentialAction ? {
+            approve={!secretPrompt ? {
               testID: 'approvals.approve', label: handoffTargetPresentation?.decisionLabel ?? projectCommandDecisions?.approve ?? proposalLabels?.approve
                 ?? discussionDraftDecisions?.approve ?? review?.approveVerb ?? undefined,
               disabled: isDeciding || approvalWithheld || approvalRouteUnavailable || Boolean(proposal?.approveWithheld),

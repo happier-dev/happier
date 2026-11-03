@@ -13,7 +13,7 @@ import {
     type SharedSavedSecretCreateInputV1,
 } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
 import { openSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
-import { PrivateSecretContinuationV1Schema } from '@happier-dev/protocol/approvals/privateSecretContinuationV1';
+import { PrivateConfidentialContinuationV1Schema, PrivateSecretContinuationV1Schema } from '@happier-dev/protocol/approvals/privateSecretContinuationV1';
 import { BrowserAutomationSecretFillRequestV1Schema } from '@happier-dev/protocol/browser/automation/v1';
 import { ComputerSecretFillRequestV1Schema } from '@happier-dev/protocol/computer/v1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
@@ -99,9 +99,11 @@ installDisconnectedServerSocketBoundary(socket => {
         if (!payload || typeof payload !== 'object') throw new Error('invalid_network_request');
         const method = Reflect.get(payload, 'method');
         if (method !== `machine-1:${RPC_METHODS.APPROVAL_REQUEST_SECRET_CONTINUE}`) throw new Error('unexpected_network_method');
-        const continuation = PrivateSecretContinuationV1Schema.parse(Reflect.get(payload, 'params'));
+        const continuation = PrivateConfidentialContinuationV1Schema.parse(Reflect.get(payload, 'params'));
         deliveries.push(JSON.parse(JSON.stringify(continuation)));
         await holdPrivateReply;
+        // A consuming Action answers with its ordinary, value-free execution result.
+        if ('kind' in continuation) return { ok: true, result: { ok: true, result: { ok: true } } };
         if (uncertain) throw new Error('one-time-value network error must not be shown');
         if (refusal) return { ok: true, result: { status: 'refused', code: refusal } };
         if (submitUnknown) return { ok: true, result: { status: 'filled', code: 'filled', submit: { status: 'unknown', code: 'submit_unknown' } } };
@@ -202,6 +204,38 @@ describe('confidential approval human continuation', () => {
     });
     afterEach(async () => { await standardCleanup(); await connection?.dispose(); connection = undefined; });
 
+    it('answers a consuming Action\'s declared secret input in the same prompt, privately, never by plain Approve', async () => {
+        const serverId = resolveServerProfileScopeIdForIdentifier(connection!.home.id);
+        const actionArgs = { channelId: 'webhook-release-alerts' };
+        const request = ApprovalRequestV2Schema.parse({ v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
+            createdBy: { surface: 'agent', sessionId: 'session-1' }, requestedSurface: 'agent',
+            actionId: 'notifications.webhooks.signingSecret.set', summary: 'Set the webhook signing secret', actionArgs,
+            preview: { actionId: 'notifications.webhooks.signingSecret.set', actionArgs, confidentialInputs: { kind: 'action_inputs', paths: ['secret'] } },
+            executionOriginV1: { v: 1, authority: 'present_user', surface: 'agent', caller: { kind: 'host' },
+                serverId, serverIdentityId: 'srv_confidential-home', sessionId: 'session-1', machineId: 'machine-1',
+                target: { kind: 'session', sessionId: 'session-1' }, actionId: 'notifications.webhooks.signingSecret.set',
+                requestId: 'approval-operation-inputs' } });
+        storage.getState().applyArtifacts([{ id: 'approval-1', title: 'Set the webhook signing secret', header: buildApprovalRequestArtifactHeaderV1(request),
+            body: JSON.stringify(request), headerVersion: 2, bodyVersion: 2, seq: 2, createdAt: 1, updatedAt: 2,
+            isDecrypted: true, storageMode: 'plain', ownerAccountId: 'account-a', access: 'owner' }]);
+        const { ApprovalDetailScreen } = await import('./ApprovalDetailScreen');
+        const screen = await renderScreen(<ApprovalDetailScreen artifactId="approval-1" />);
+        // The declared field is asked for by its own name, masked; the generic Approve cannot answer it.
+        await vi.waitFor(() => expect(screen.findByTestId('approvals.secret-value')?.props.secureTextEntry).toBe(true));
+        expect(screen.findByTestId('approvals.secret-value')?.props.accessibilityLabel).toBe('Signing secret');
+        expect(Boolean(screen.findByTestId('approvals.approve'))).toBe(false);
+        await enterOnceValue(screen);
+        await vi.waitFor(() => expect(screen.findByTestId('approvals.secret-continue')?.props.disabled).toBe(false));
+        await screen.pressByTestIdAsync('approvals.secret-continue');
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain('approvals.confidential.inputsDone'));
+        expect(deliveries).toEqual([expect.objectContaining({ kind: 'action_inputs', artifactId: 'approval-1',
+            requestId: 'approval-operation-inputs', actionId: 'notifications.webhooks.signingSecret.set', request: actionArgs,
+            machineId: 'machine-1', accountEncryptionMode: 'plain',
+            choices: [{ path: 'secret', choice: { kind: 'once', value: 'one-time-value' } }] })]);
+        expect(writes).toEqual([]);
+        expect(storage.getState().artifacts['approval-1']?.body).not.toContain('one-time-value');
+        expect(screen.findByTestId('approvals.secret-value')?.props.value ?? '').toBe('');
+    });
     it('masks the one-time choice, keeps Remember off, privately delivers once and clears the human input', async () => {
         const { ApprovalDetailScreen } = await import('./ApprovalDetailScreen');
         const screen = await renderScreen(<ApprovalDetailScreen artifactId="approval-1" />);
@@ -314,11 +348,16 @@ describe('confidential approval human continuation', () => {
         savedResourceForChoice = true;
         const { ApprovalDetailScreen } = await import('./ApprovalDetailScreen');
         const screen = await renderScreen(<ApprovalDetailScreen artifactId="approval-1" />);
-        await vi.waitFor(() => expect(screen.findByTestId('approvals.secret-source:saved')).toBeTruthy());
-        await vi.waitFor(() => expect(screen.findByTestId('approvals.secret-value')?.props.editable).toBe(true));
-        await screen.pressByTestIdAsync('approvals.secret-source:saved');
+        await enterOnceValue(screen);
+        await act(async () => { screen.findByTestId('approvals.secret-remember')?.props.onValueChange(true); });
+        // One value input: a Saved Secret is picked from the same prompt, not a separate mode.
+        expect(screen.findByTestId(`saved-secret:${savedResourceRef}`)).toBeFalsy();
+        await screen.pressByTestIdAsync('approvals.secret-saved.header');
         await vi.waitFor(() => expect(screen.findByTestId(`saved-secret:${savedResourceRef}`)).toBeTruthy());
         await act(async () => { screen.pressByTestId(`saved-secret:${savedResourceRef}`); });
+        // Picking it replaces the typed value; there is nothing new to save.
+        expect(screen.findByTestId('approvals.secret-value')?.props.value ?? '').toBe('');
+        expect(screen.findByTestId('approvals.secret-remember')).toBeFalsy();
         await continueChoice(screen);
         expect(deliveries).toEqual([expect.objectContaining({ choice: { kind: 'saved', ref: savedResourceRef, fingerprint: `shared:${savedResourceRef}:1`, revision: 1 } })]);
         expect(JSON.stringify(deliveries)).not.toContain(personal[0].encryptedValue.value);
@@ -543,7 +582,8 @@ describe('confidential approval human continuation', () => {
         await vi.waitFor(() => expect(screen.findByTestId('approvals.secret-value')).toBeTruthy());
         await enterOnceValue(screen);
         await act(async () => { screen.findByTestId('approvals.secret-remember')?.props.onValueChange(true); });
-        await act(async () => { screen.changeTextByTestId('approvals.secret-name', 'Remembered password'); });
+        // Save for next time names the secret after the reviewed site; the person may rename it.
+        expect(screen.findByTestId('approvals.secret-name')?.props.value).toBe('example.com');
         await continueChoice(screen);
         expect(deliveries).toHaveLength(1);
         expect(screen.getTextContent()).toContain('approvals.confidential.rememberSaved');
@@ -551,7 +591,7 @@ describe('confidential approval human continuation', () => {
         expect(writes.filter(path => path === '/v2/account/settings')).toEqual([]);
         const produced = SharedSavedSecretCreateInputV1Schema.parse(rememberedResource);
         expect(openSavedSecretResourceStoredContentV1({ resourceId: produced.resourceId, mode: 'plain', storedContent: produced.storedContent }))
-            .toMatchObject({ name: 'Remembered password', kind: 'apiKey', value: 'one-time-value' });
+            .toMatchObject({ name: 'example.com', kind: 'apiKey', value: 'one-time-value' });
         expect(JSON.stringify(logged)).not.toContain('one-time-value');
         for (const spy of logSpies) spy.mockRestore();
         expect(storage.getState().artifacts['approval-1']?.body).not.toContain('one-time-value');

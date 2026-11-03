@@ -99,6 +99,9 @@ export const ApprovalPromptCard = React.memo(function ApprovalPromptCard(props: 
     const onDismissFailure = React.useCallback(() => dismissFailure(artifactId), [artifactId, dismissFailure]);
     const confidentialAction = review.confidentialAction;
     const confidentialApproval = review.confidential;
+    // Declared secret inputs are chosen on the approval's own page, like a fill; plain Approve cannot answer them.
+    const confidentialInputs = review.confidentialInputs;
+    const secretPrompt = confidentialAction || confidentialInputs !== null;
     const actionFields = React.useMemo(() => confidentialAction ? null
         : approveAdmission?.presentation ?? describeApprovalRequestFields(props.approval), [confidentialAction, approveAdmission, props.approval]);
     // An agent's finite Project command reads as its exact command, target and identity (lab `s-agent` ADHOC).
@@ -127,7 +130,7 @@ export const ApprovalPromptCard = React.memo(function ApprovalPromptCard(props: 
     const proposal = useResourceProposalCheck(props.approval, approvalHome.serverId, props.artifact.id);
     const proposalLabels = proposal ? resolveResourceProposalLabels(proposal) : null;
     const proposalMode = useResourceProposalApprovalMode(props.approval);
-    const approvalWithheld = confidentialAction ? confidentialApproval === null || transcriptSource.navigate === null
+    const approvalWithheld = secretPrompt ? (confidentialAction && confidentialApproval === null) || transcriptSource.navigate === null
         : approveAdmission?.status === 'unavailable' || Boolean(proposal?.approveWithheld);
     const sourceInteraction = transcriptSource.useInteraction();
     // Runtime permission prompts need a live process; artifact decisions use the
@@ -152,9 +155,10 @@ export const ApprovalPromptCard = React.memo(function ApprovalPromptCard(props: 
 
     const onDecision = React.useCallback(async (decision: 'approve' | 'reject', choice?: Readonly<{ keepUndo?: boolean }>) => {
         if (decisionDisabled || isDeciding || (decision === 'approve' && approvalWithheld)) return;
-        if (decision === 'approve' && confidentialAction) {
-            if (!confidentialApproval || !transcriptSource.navigate) return;
-            const home = confidentialApproval.expectedServerIdentityId ?? confidentialApproval.request.serverId;
+        if (decision === 'approve' && secretPrompt) {
+            const home = confidentialApproval ? confidentialApproval.expectedServerIdentityId ?? confidentialApproval.request.serverId
+                : confidentialInputs?.expectedServerIdentityId ?? approvalHome.serverId;
+            if (!home || !transcriptSource.navigate) return;
             navigateWithBlurOnWeb(() => transcriptSource.navigate?.(`/inbox/approvals/${encodeURIComponent(props.artifact.id)}?serverId=${encodeURIComponent(home)}`));
             return;
         }
@@ -175,7 +179,7 @@ export const ApprovalPromptCard = React.memo(function ApprovalPromptCard(props: 
         } finally {
             setIsDeciding(false);
         }
-    }, [approvalWithheld, confidentialAction, confidentialApproval, computerChoice, decisionDisabled, decide, isDeciding, proposal, props.artifact.id, transcriptSource]);
+    }, [approvalHome.serverId, approvalWithheld, secretPrompt, confidentialApproval, confidentialInputs, computerChoice, decisionDisabled, decide, isDeciding, proposal, props.artifact.id, transcriptSource]);
 
     const viewToolButton = canOpenToolRoute ? <ApprovalOpenButton testID="approval-prompt-view-tool" onPress={onViewTool} /> : null;
     // An Agent asking to turn a skill or MCP server on for its session reads as that request (P8 U8.5, lab xi Q).
@@ -228,9 +232,9 @@ export const ApprovalPromptCard = React.memo(function ApprovalPromptCard(props: 
                     glyph="minus-circle" tone="quiet" />
             ) : undefined) : (
                 <ApprovalDecisionFooter
-                    approveLabel={confidentialAction ? t('approvals.confidential.review')
+                    approveLabel={secretPrompt ? t('approvals.confidential.review')
                         : projectCommandDecisions?.approve ?? proposalLabels?.approve ?? review.approveVerb ?? undefined}
-                    irreversible={review.irreversible && !confidentialAction}
+                    irreversible={review.irreversible && !secretPrompt}
                     rejectLabel={projectCommandDecisions?.reject ?? proposalLabels?.reject}
                     disabled={accessDisabled}
                     decisionDisabled={approvalRouteUnavailable}
