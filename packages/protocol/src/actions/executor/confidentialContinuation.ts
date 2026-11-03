@@ -49,9 +49,12 @@ export function createConfidentialApprovalContinuation(deps: Pick<ActionExecutor
       let request: ApprovalRequest = stored.data;
       const origin = stored.data.executionOriginV1;
       const homeId = origin.serverIdentityId ?? origin.serverId;
+      // Browser and daemon profile labels can differ. Their Home binding comes
+      // from the host-authenticated identity, never the private answer's label.
+      const isBoundHome = (serverId: string) => serverId === homeId || serverId === origin.serverId
+        || (!!origin.serverIdentityId && ctx.serverIdentityId === origin.serverIdentityId);
       if (request.actionId !== continuation.actionId || origin.requestId !== continuation.requestId
-        || (ctx.serverId && ctx.serverId !== homeId && ctx.serverId !== origin.serverId
-          && (!origin.serverIdentityId || ctx.serverIdentityId !== origin.serverIdentityId))
+        || (ctx.serverId && !isBoundHome(ctx.serverId))
         || (ctx.serverIdentityId && origin.serverIdentityId && ctx.serverIdentityId !== origin.serverIdentityId)
         || !sameStrictJsonValue(request.actionArgs, continuation.request)
         || (!('kind' in continuation) && continuation.submit && !continuation.request.submit)) {
@@ -59,7 +62,7 @@ export function createConfidentialApprovalContinuation(deps: Pick<ActionExecutor
       }
       if ('kind' in continuation) {
         if (continuation.machineId !== origin.machineId
-          || continuation.serverId !== homeId && continuation.serverId !== origin.serverId) {
+          || !isBoundHome(continuation.serverId)) {
           return { ok: false, errorCode: 'approval_stale', error: 'approval_stale' };
         }
       }

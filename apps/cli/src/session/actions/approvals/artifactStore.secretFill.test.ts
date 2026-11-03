@@ -1,10 +1,11 @@
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
 import { ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
-import type { ApprovalRequest } from '@happier-dev/protocol';
+import type { ActionDefinitionV1, ApprovalRequest } from '@happier-dev/protocol';
 import { createCliApprovalsArtifactStore } from './artifactStore';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { authorizeMachineRpcRequest } from '@/api/machine/machineRpcAuthorization';
@@ -14,7 +15,7 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { AccountSettingsSchema, FeaturesResponseSchema, normalizeActionsSettingsV1 } from '@happier-dev/protocol';
 import { createCliActionExecutorFromCredentials } from '../createCliActionExecutorFromCredentials';
 import { installDaemonMachineAdmissionTransport } from '@/daemon/machineAdmissionTransport';
-import { createConfidentialSecretFillExecutor } from '@/daemon/surfaces/confidentialSecretFill';
+import { createConfidentialActionInputsExecutor, createConfidentialSecretFillExecutor } from '@/daemon/surfaces/confidentialSecretFill';
 import { resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { configuration, reloadConfiguration } from '@/configuration';
@@ -30,7 +31,7 @@ import { createRequesterSessionControlRuntimeFixture } from '@/daemon/testkit/re
 import { ConnectedServiceRuntimeRegistry } from '@/daemon/connectedServices/runtimeRegistry/registry';
 import { join } from 'node:path';
 
-const http = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), request: vi.fn() }));
+const http = vi.hoisted(() => ({ defaults: {}, get: vi.fn(), post: vi.fn(), request: vi.fn() }));
 // Only authenticated HTTP/storage is substituted: codecs, approval transitions and Artifact CAS remain real.
 vi.mock('axios', () => ({ default: http }));
 // The listener is an OS boundary; daemon startup and its executor composition remain real.
@@ -295,6 +296,100 @@ describe('confidential continuation Artifact custody', () => {
       expect(JSON.stringify(stored)).not.toContain(value);
       expect(ApprovalRequestV2Schema.parse(stored).executionOriginV1).toEqual(approval.executionOriginV1);
     } finally { uninstall(); }
+  });
+  it.each([
+    { name: 'global canonical Home', localHome: 'srv_verified_home', sessionId: undefined },
+    { name: 'global portable Home alias', localHome: 'local-home', sessionId: undefined },
+    { name: 'global browser and daemon Home aliases differ', localHome: 'daemon-home', answerHome: 'browser-home', sessionId: undefined },
+    { name: 'Session portable Home alias', localHome: 'local-home', sessionId: 'session' },
+  ])('approves private declared Action inputs without changing the reviewed binding: $name', async ({ localHome, answerHome, sessionId }) => {
+    const definition: ActionDefinitionV1 = {
+      kindVersion: 1, id: 'com.acme.credentials/actions/connect', title: 'Connect', description: 'Connect service',
+      safety: 'safe', placements: [], slash: null, bindings: null, examples: null,
+      surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: true, api: false, plugin: true },
+      inputHints: { fields: [{ path: 'token', title: 'Token', widget: 'secret', required: true }] },
+      inputSchema: { type: 'object' },
+    };
+    const reviewed = { action: { pluginId: 'com.acme.credentials', localId: 'connect' }, input: {} };
+    let created: ApprovalRequest | null = null;
+    expect(await createActionExecutor({ ...createUnavailableActionTransportDeps(),
+      listContributedActionDefinitions: () => [definition],
+      approvalsCreate: async ({ request }) => { created = request; return { artifactId: 'approval' }; },
+      isActionApprovalRequired: () => false,
+    }).execute('action.invoke', reviewed, { surface: 'ui', authority: 'present_user',
+      serverId: 'srv_verified_home', serverIdentityId: 'srv_verified_home', defaultSessionId: sessionId,
+      defaultSessionMachineId: 'machine', actionRequestId: 'request', actionCaller: { kind: 'host' },
+      externalActionTarget: sessionId ? { kind: 'session', sessionId } : { kind: 'machine', machineId: 'machine' },
+    })).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+    const approval = ApprovalRequestV2Schema.parse(created);
+    expect(approval.executionOriginV1.target).toEqual(sessionId ? { kind: 'session', sessionId } : { kind: 'machine', machineId: 'machine' });
+    let record = { id: 'approval', ownerAccountId: 'alice', access: 'owner', encryptionMode: 'plain',
+      dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+      header: encodePlainArtifactStoredContent(buildApprovalRequestArtifactHeaderV1(approval)),
+      body: encodePlainArtifactStoredContent({ body: JSON.stringify(approval) }),
+      headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 };
+    http.get.mockImplementation(async (url: string) => ({ status: 200,
+      data: url.endsWith('/encryption') ? { mode: 'plain', updatedAt: 1 } : { ...record } }));
+    http.post.mockImplementation(async (_url: string, input: { header: string; body: string; expectedHeaderVersion: number; expectedBodyVersion: number }) => {
+      if (input.expectedHeaderVersion !== record.headerVersion || input.expectedBodyVersion !== record.bodyVersion) {
+        return { status: 409, data: { success: false, error: 'version-mismatch' } };
+      }
+      record = { ...record, header: input.header, body: input.body,
+        headerVersion: record.headerVersion + 1, bodyVersion: record.bodyVersion + 1 };
+      return { status: 200, data: { success: true, headerVersion: record.headerVersion, bodyVersion: record.bodyVersion } };
+    });
+    const token = `fixture.${Buffer.from(JSON.stringify({ sub: 'alice',
+      provenance: { v: 1, kind: 'terminal', authority: 'account_automation' } })).toString('base64url')}.signature`;
+    const credentials = { token, encryption: null, credentialProvenance: 'stored_session' as const };
+    const scopeKey = resolveAccountSettingsScopeKeyForToken(credentials.token)!;
+    const settings = AccountSettingsSchema.parse({});
+    setActiveAccountSettingsSnapshot({ source: 'network', scopeKey, loadedAtMs: 1,
+      settingsVersion: 1, settingsSecretsReadKeys: [], settings });
+    const value = 'PRIVATE-DECLARED-ACTION-ONCE-1103';
+    let effects = 0;
+    const executor = createCliActionExecutorFromCredentials({ credentials, readCredentials: async () => credentials,
+      serverId: localHome, serverIdentityId: 'srv_verified_home', serverApiUrl: 'https://verified-home.example.test',
+      resolveServerFeaturesSnapshot: async () => ({ status: 'ready', provenance: 'authenticated',
+        features: FeaturesResponseSchema.parse({ features: {}, capabilities: { serverIdentity: { serverIdentityId: 'srv_verified_home' } } }) }),
+      machineId: 'machine', pluginActionExecutionOwner: 'current_process',
+      actionsSettingsProvider: { getActionsSettings: () => normalizeActionsSettingsV1({}), getAccountSettings: () => settings },
+      listContributedActionDefinitions: () => [definition],
+      confidentialActionInputs: createConfidentialActionInputsExecutor({ expectedScopeKey: scopeKey, expectedAccountId: 'alice',
+        serverId: localHome, machineId: 'machine', readAccountMode: async () => 'plain',
+        readHostIdentity: async () => ({ machineId: 'machine', serverIdentityId: 'srv_verified_home' }) }),
+      // Home authorization and the contributed effect are external boundaries; admission, materialization and storage stay real.
+      isApprovalExecutionOriginCurrent: async () => true,
+      invokeContributedAction: async ({ input }) => {
+        expect(input).toEqual({ token: value });
+        effects++;
+        return { ok: true, result: { connected: true } };
+      },
+    });
+    const rpc = new RpcHandlerManager({ scopePrefix: 'machine', encryptionMode: 'plain', logger: () => {},
+      authorizeRequest: input => authorizeMachineRpcRequest(input, { machineId: 'machine',
+        resolveCustodianAccountId: async () => 'alice', resolveInstallationId: () => 'installation', verifyMachineAdmission: async () => true }) });
+    registerApprovalRpcHandlers({ rpcHandlerManager: rpc, actionExecutor: executor.bindInvocation(new AbortController().signal) });
+    const answer = (request: typeof reviewed) => rpc.handleRequest({ method: `machine:${RPC_METHODS.APPROVAL_REQUEST_SECRET_CONTINUE}`,
+      callerAuthority: 'present_user', machineAdmission: { actorAccountId: 'alice', custodianAccountId: 'alice',
+        machineId: 'machine', installationId: 'installation', role: 'manage', encryptionMode: 'plain' },
+      params: { v: 1, kind: 'action_inputs', artifactId: 'approval', requestId: 'request', actionId: 'action.invoke', request,
+        serverId: answerHome ?? localHome, machineId: 'machine', accountEncryptionMode: 'plain',
+        choices: [{ path: 'input.token', choice: { kind: 'once', value } }] } });
+    const store = createCliApprovalsArtifactStore({ credentials, getAccountEncryptionMode: async () => 'plain' });
+    expect(await answer({ ...reviewed, input: { destination: 'changed' } })).toMatchObject({ ok: false, errorCode: 'approval_stale' });
+    expect(ApprovalRequestV2Schema.parse(await store.approvalsGet({ artifactId: 'approval', serverId: localHome })).status).toBe('open');
+    expect(effects).toBe(0);
+    expect(await answer(reviewed)).toEqual({ ok: true, result: { connected: true } });
+    expect(await answer(reviewed)).toEqual({ ok: true, result: { connected: true } });
+    expect(effects).toBe(1);
+    const stored = ApprovalRequestV2Schema.parse(await store.approvalsGet({ artifactId: 'approval', serverId: localHome }));
+    expect(stored.status).toBe('executed');
+    expect(stored.actionArgs).toEqual(reviewed);
+    expect(stored.executionOriginV1).toEqual(approval.executionOriginV1);
+    expect(computeActionInputApprovalDigestV1(stored.actionId, stored.actionArgs))
+      .toBe(computeActionInputApprovalDigestV1(approval.actionId, approval.actionArgs));
+    expect(JSON.stringify(stored)).not.toContain(value);
+    expect(JSON.stringify(record)).not.toContain(value);
   });
   it('rechecks the deciding custodian human admission after preparation through the real relay handler', async () => {
     let created: ApprovalRequest | null = null;

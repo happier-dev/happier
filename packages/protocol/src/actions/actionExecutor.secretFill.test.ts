@@ -198,18 +198,21 @@ describe('confidential secret-fill approval continuation', () => {
       },
     });
     const input = { action: { pluginId: 'com.acme.credentials', localId: 'connect' }, input: {} };
-    expect(await executor.execute('action.invoke', input, context)).toMatchObject({ ok: true,
+    expect(await executor.execute('action.invoke', input, { ...context, serverIdentityId: 'verified-home' })).toMatchObject({ ok: true,
       result: { kind: 'approval_request_created' } });
     const privateChoice = { v: 1, kind: 'action_inputs', artifactId: 'approval', requestId: 'request',
-      actionId: 'action.invoke', request: input, serverId: 'home', machineId: 'machine',
+      actionId: 'action.invoke', request: input, serverId: 'browser-home', machineId: 'machine',
       accountEncryptionMode: 'plain', choices: [{ path: 'input.token', choice: { kind: 'once', value: marker } }] };
-    const human = { surface: 'ui', authority: 'present_user', serverId: 'home' } as const;
+    const human = { surface: 'ui', authority: 'present_user', serverId: 'home', serverIdentityId: 'verified-home' } as const;
+    expect(await executor.continueConfidentialApprovalRequest(privateChoice, { ...human, serverIdentityId: 'foreign-home' }))
+      .toMatchObject({ ok: false, errorCode: 'approval_stale' });
     for (const changed of [
-      { ...privateChoice, machineId: 'sibling' }, { ...privateChoice, serverId: 'sibling-home' },
+      { ...privateChoice, machineId: 'sibling' },
       { ...privateChoice, choices: [] },
       { ...privateChoice, choices: [...privateChoice.choices, ...privateChoice.choices] },
       { ...privateChoice, choices: [{ path: 'serverId', choice: { kind: 'once', value: marker } }] },
       { ...privateChoice, request: { ...input, action: { ...input.action, localId: 'sibling' } } },
+      { ...privateChoice, request: { ...input, input: { token: marker } } },
     ]) expect(await executor.continueConfidentialApprovalRequest(changed, human)).toMatchObject({ ok: false, errorCode: 'approval_stale' });
     expect(effects).toBe(0);
     expect(await executor.continueConfidentialApprovalRequest(privateChoice, human)).toMatchObject({ ok: true });
