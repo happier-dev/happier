@@ -4,7 +4,7 @@ import { isSessionEncryptionModeAllowedByStoragePolicy } from '@happier-dev/prot
 import { TeamRoleV1Schema } from '@happier-dev/protocol/teams';
 import { parseEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
 import { SavedSecretCatalogEntryV1Schema, type SavedSecretCatalogEntryV1, type SavedSecretCatalogCorruptEntryV1, type SavedSecretCatalogResultV1, type SavedSecretResourceEnvelopeCensusRecipientV1 } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
-import { describeSavedSecretResourceContentV1, SavedSecretResourceStoredContentV1Schema, type SavedSecretResourceStoredContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
+import { canShareSavedSecretResourceContentV1, describeSavedSecretResourceContentV1, SavedSecretResourceStoredContentV1Schema, type SavedSecretResourceStoredContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
 import { type AccountSettingsStoredContentEnvelope } from '@happier-dev/protocol/account/settings/accountSettingsStoredContentEnvelope';
 import { acceptsManagedResourceDispositions, readManagedResourceDependenciesInTx } from '@/app/machines/managed/managedRead';
 import { isTeamPrincipalRoleV1 } from "@happier-dev/protocol/teams";
@@ -1228,6 +1228,10 @@ export async function createSavedSecretResourceInTx(
     const recipients = [...new Set(input.accountGrants ?? [])].filter((accountId) => accountId !== input.accountId);
     const teams = [...new Set(input.teamGrants ?? [])];
     const groups = [...new Set(input.groupGrants ?? [])];
+    if (input.storedContent.t === 'plain' && !canShareSavedSecretResourceContentV1(input.storedContent.v)
+        && (recipients.length > 0 || teams.length > 0 || groups.length > 0)) {
+        return { ok: false, error: 'recipient_mode_unsupported' };
+    }
     const requestedEnvelopes = input.keyEnvelopes ?? [];
     const existing = await tx.savedSecretResource.findUnique({
         where: { id: input.resourceId },
@@ -1373,7 +1377,7 @@ export async function setSavedSecretResourceGrantsInTx(
 ): Promise<SavedSecretResourceServiceResult<{ resourceId: string; revision: number }>> {
     const existing = await tx.savedSecretResource.findUnique({
         where: { id: input.resourceId },
-        select: { ownerAccountId: true, revision: true, encryptionMode: true },
+        select: { ownerAccountId: true, revision: true, encryptionMode: true, storedContent: true },
     });
     if (!existing) return { ok: false, error: "resource_not_found" };
     if (existing.ownerAccountId !== input.accountId) return { ok: false, error: "forbidden" };
@@ -1382,6 +1386,11 @@ export async function setSavedSecretResourceGrantsInTx(
     const accountIds = [...new Set(input.accountGrants)].filter((id) => id !== input.accountId);
     const teamIds = [...new Set(input.teamGrants)];
     const groupIds = [...new Set(input.groupGrants)];
+    const content = readStoredContent(input.resourceId, existing.storedContent);
+    if (content?.t === 'plain' && !canShareSavedSecretResourceContentV1(content.v)
+        && (accountIds.length > 0 || teamIds.length > 0 || groupIds.length > 0)) {
+        return { ok: false, error: 'recipient_mode_unsupported' };
+    }
     const recheckAudience = await acquireSavedSecretPublicationAccountsInTx(tx, input.accountId, async () => [
         ...await listAuthorizedAccountIdsForResourceInTx(tx, input.resourceId),
         ...await resolveSavedSecretAudienceAccountIdsInTx(tx, { ownerAccountId: input.accountId, accountIds, teamIds, groupIds }),
@@ -1564,12 +1573,17 @@ export async function updateSavedSecretResourceInTx(
 ): Promise<SavedSecretResourceServiceResult<{ resourceId: string; revision: number }>> {
     const resource = await tx.savedSecretResource.findUnique({
         where: { id: input.resourceId },
-        select: { ownerAccountId: true, encryptionMode: true, revision: true },
+        select: { ownerAccountId: true, encryptionMode: true, revision: true,
+            _count: { select: { accountGrants: true, teamGrants: true, groupGrants: true } } },
     });
     if (!resource) return { ok: false, error: "resource_not_found" };
     if (resource.ownerAccountId !== input.accountId) return { ok: false, error: "forbidden" };
     if (resource.revision !== input.expectedRevision) return { ok: false, error: "resource_changed" };
     const nextMode = input.toMode ?? resource.encryptionMode;
+    if (input.storedContent.t === 'plain' && !canShareSavedSecretResourceContentV1(input.storedContent.v)
+        && (resource._count.accountGrants > 0 || resource._count.teamGrants > 0 || resource._count.groupGrants > 0)) {
+        return { ok: false, error: 'recipient_mode_unsupported' };
+    }
     if ((nextMode === "plain" && input.storedContent.t !== "plain")
         || (nextMode === "e2ee" && input.storedContent.t !== "encrypted")) {
         return { ok: false, error: "invalid_resource" };

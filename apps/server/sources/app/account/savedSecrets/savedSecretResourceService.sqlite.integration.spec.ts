@@ -153,6 +153,39 @@ describe("Saved Secret resource service (SQLite integration)", () => {
         ]);
     });
 
+    it('keeps Plain external references personal at create and grant mutation', async () => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' }, select: { id: true } });
+        const recipient = await db.account.create({ data: { encryptionMode: 'plain' }, select: { id: true } });
+        await db.userRelationship.createMany({ data: [
+            { fromUserId: owner.id, toUserId: recipient.id, status: 'friend' },
+            { fromUserId: recipient.id, toUserId: owner.id, status: 'friend' },
+        ] });
+        const storedContent = { t: 'plain' as const, v: { v: 2 as const, name: 'Vault token', kind: 'token' as const,
+            source: { kind: 'external' as const, contribution: { pluginId: 'acme.vault', localId: 'vault' },
+                account: 'my-account', reference: 'op://vault/item/token' } } };
+        const input = { accountId: owner.id, resourceId: 'external-personal', displayName: 'Vault token', kind: 'token' as const,
+            encryptionMode: 'plain' as const, storedContent };
+        expect(await inTx(tx => createSavedSecretResourceInTx(tx, { ...input, resourceId: 'external-shared', accountGrants: [recipient.id] })))
+            .toEqual({ ok: false, error: 'recipient_mode_unsupported' });
+        expect(await inTx(tx => createSavedSecretResourceInTx(tx, input))).toEqual({ ok: true, value: { resourceId: input.resourceId, revision: 1 } });
+        expect(await inTx(tx => setSavedSecretResourceGrantsInTx(tx, { accountId: owner.id, resourceId: input.resourceId,
+            expectedRevision: 1, accountGrants: [recipient.id], teamGrants: [], groupGrants: [] })))
+            .toEqual({ ok: false, error: 'recipient_mode_unsupported' });
+        expect(await db.savedSecretAccountGrant.count({ where: { resourceId: input.resourceId } })).toBe(0);
+        await expect(inTx(tx => promoteSavedSecretResourceInTx(tx, { ...input, resourceId: 'external-promote',
+            accountGrants: [recipient.id], nextSettings: null,
+            referenceCensus: { scope: 'catalogs', accountMode: 'plain', catalogs: {} },
+            profileMutations: [] }))).rejects.toMatchObject({ error: 'recipient_mode_unsupported' });
+        const inlineShared = { ...input, resourceId: 'inline-shared', accountGrants: [recipient.id],
+            storedContent: { t: 'plain' as const, v: { v: 1 as const, name: input.displayName, kind: input.kind, value: 'inline' } } };
+        expect(await inTx(tx => createSavedSecretResourceInTx(tx, inlineShared))).toMatchObject({ ok: true });
+        expect(await inTx(tx => updateSavedSecretResourceInTx(tx, { accountId: owner.id, resourceId: inlineShared.resourceId,
+            expectedRevision: 1, displayName: input.displayName, kind: input.kind, storedContent })))
+            .toEqual({ ok: false, error: 'recipient_mode_unsupported' });
+        expect(await inTx(tx => updateSavedSecretResourceInTx(tx, { accountId: owner.id, resourceId: input.resourceId,
+            expectedRevision: 1, displayName: input.displayName, kind: input.kind, storedContent })))
+            .toEqual({ ok: true, value: { resourceId: input.resourceId, revision: 2 } });
+    });
     it.each(['plain', 'e2ee'] as const)('creates and retries a resource-only external-reference batch in a %s Account without changing Settings or catalogs', async mode => {
         const material = createE2eeAccountMaterial();
         const owner = await db.account.create({ data: mode === 'e2ee' ? material.account : { encryptionMode: mode } });
