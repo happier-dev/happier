@@ -17,6 +17,8 @@ type FindingDraft = {
   bodyLines: string[];
 };
 
+type JsonSpan = { text: string; start: number; end: number };
+
 const REVIEW_COMMENTS_HEADER_PATTERN = /^(?:Full review comments|Review comment):\s*$/i;
 const FINDING_BULLET_PATTERN = /^\s*-\s+(.+?)\s+(?:--|[-\u2013\u2014])\s+(.+):(\d+)(?:-(\d+))?\s*$/u;
 const INDENTED_BODY_LINE_PATTERN = /^(?: {2,}|\t)(.*)$/;
@@ -86,9 +88,9 @@ function canStartJsonValue(text: string, start: number): boolean {
   return tail.startsWith('"') && key.complete && /^\s*:/.test(key.rest);
 }
 
-function extractJsonSpans(text: string): string[] {
+function extractJsonSpans(text: string): JsonSpan[] {
   // Keep outer JSON values whole; JSON.parse owns syntax validation.
-  const spans: string[] = [];
+  const spans: JsonSpan[] = [];
   for (let start = 0; start < text.length; start += 1) {
     if (text[start] !== '{' && text[start] !== '[') continue;
     if (!canStartJsonValue(text, start)) continue;
@@ -111,10 +113,17 @@ function extractJsonSpans(text: string): string[] {
         if (depth === 0) break;
       }
     }
-    spans.push(text.slice(start, end + 1));
+    spans.push({ text: text.slice(start, end + 1), start, end: Math.min(end + 1, text.length) });
     start = end;
   }
   return spans;
+}
+
+function isInlineOverviewExample(text: string, span: JsonSpan, overviewEnd: number): boolean {
+  if (span.end > overviewEnd) return false;
+  const lineStart = text.lastIndexOf('\n', span.start - 1) + 1;
+  const prefix = text.slice(lineStart, span.start).trim();
+  return prefix.length > 0 && !prefix.endsWith(':') && !/^(?:`{3,}|~{3,})/.test(prefix);
 }
 
 function firstNonEmptyParagraph(text: string): string {
@@ -162,11 +171,16 @@ function toFinding(draft: FindingDraft): ReviewFinding {
   };
 }
 
-function parseNativeFindings(text: string): { findings: ReviewFinding[]; textOutsideFindings: string } {
+function parseNativeFindings(text: string): {
+  findings: ReviewFinding[];
+  textOutsideFindings: string;
+  overviewEnd: number;
+} {
   const lines = text.split('\n');
   const outsideLines = [...lines];
   const findings: ReviewFinding[] = [];
   let inComments = false;
+  let overviewEnd = 0;
   let current: FindingDraft | null = null;
 
   const flush = () => {
@@ -182,6 +196,7 @@ function parseNativeFindings(text: string): { findings: ReviewFinding[]; textOut
     if (!inComments) {
       if (REVIEW_COMMENTS_HEADER_PATTERN.test(trimmed)) {
         inComments = true;
+        overviewEnd = lines.slice(0, lineIndex).join('\n').length;
         outsideLines[lineIndex] = '';
       }
       continue;
@@ -219,7 +234,7 @@ function parseNativeFindings(text: string): { findings: ReviewFinding[]; textOut
   }
 
   flush();
-  return { findings, textOutsideFindings: outsideLines.join('\n') };
+  return { findings, textOutsideFindings: outsideLines.join('\n'), overviewEnd };
 }
 
 export function parseCodexNativeReviewText(rawText: string): ParsedCodexNativeReview | null {
@@ -231,11 +246,12 @@ export function parseCodexNativeReviewText(rawText: string): ParsedCodexNativeRe
   let jsonReview: z.infer<typeof CODEX_JSON_REVIEW_SCHEMA> | null = null;
   // Native prose can quote JSON examples that are unrelated to review output.
   for (const span of extractJsonSpans(prose.textOutsideFindings)) {
+    if (textFindings.length > 0 && isInlineOverviewExample(prose.textOutsideFindings, span, prose.overviewEnd)) continue;
     let json: unknown;
     try {
-      json = JSON.parse(span);
+      json = JSON.parse(span.text);
     } catch {
-      if (hasReviewFieldText(span)) return null;
+      if (hasReviewFieldText(span.text)) return null;
       continue;
     }
     if (!hasReviewFields(json)) {

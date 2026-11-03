@@ -170,6 +170,22 @@ describe('normalizeReviewOutput codex reviews', () => {
     });
   });
 
+  it.each([
+    'The code turns malformed responses into `{"findings":[]}`.',
+    'The API returns {"findings":[]} when authorization is missing.',
+    'The API wrongly returns {"overall_correctness":false}.',
+  ])('keeps inline JSON examples in a native prose overview: %s', (overview) => {
+    const payload = parseFindingsPayload(normalizeCodex([
+      overview,
+      '',
+      'Review comment:',
+      '- Preserve authorization -- /repo/auth.ts:10-12',
+      '  The write skips authorization.',
+    ].join('\n')));
+    expect(payload.findings).toHaveLength(1);
+    expect(payload.overviewMarkdown).toContain(overview);
+  });
+
   it('fails clearly for empty Codex native review output', () => {
     const result = normalizeCodex('   \n  ');
 
@@ -231,6 +247,7 @@ describe('normalizeReviewOutput codex reviews', () => {
     JSON.stringify({ result: nativeReview }),
     JSON.stringify([{ result: nativeReview }]),
     `Review comment:\n- Preface observation -- /preface.ts:3\n  Preliminary text.\n\n${JSON.stringify(nativeReview)}`,
+    `Review result: ${JSON.stringify(nativeReview)}\n\nReview comment:\n- Preface observation -- /preface.ts:3\n  Preliminary text.`,
   ])('rejects ambiguous review envelopes instead of dropping findings: %s', (rawText) => {
     const result = normalizeCodex(rawText);
     expect(result.status).toBe('failed');

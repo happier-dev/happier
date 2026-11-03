@@ -1118,7 +1118,7 @@ export function createCodexAppServerRuntime(params: Readonly<{
     setOnPromptAcceptedByProvider: (_callback: CodexAppServerPromptAcceptedCallback | null) => void;
     setOnUndeliverablePrompts: (_callback: CodexAppServerUndeliverablePromptsCallback | null) => void;
     startReview: (_request: CodexAppServerReviewStartRequest) => Promise<void | UnsupportedSessionRuntimeMethodResult>;
-    startInlineReview: (_input: unknown) => Promise<Readonly<{ ok: true; reviewTurnId: string | null }> | UnsupportedSessionRuntimeMethodResult | Readonly<{ ok: false; errorCode: 'invalid_parameters' | 'inline_review_not_supported'; error: string }>>;
+    startInlineReview: (_input: unknown) => Promise<Readonly<{ ok: true; reviewTurnId: string | null }> | UnsupportedSessionRuntimeMethodResult | Readonly<{ ok: false; errorCode: 'invalid_parameters' | 'inline_review_not_supported' | 'invalid_output'; error: string }>>;
     handleUserMessage: (_request: Readonly<{
         text: string;
         localId?: string;
@@ -1576,7 +1576,7 @@ export function createCodexAppServerRuntime(params: Readonly<{
     const nativeReviewCompletionTextByStreamScope = new Map<string, string>();
     const rawAssistantFinalByItemKey = new Map<string, PendingRawAssistantFinal>();
     const persistedMediaDedupeKeys = new Set<string>();
-    let activeInlineReview = false;
+    let activeInlineReview: { outputError: string | null } | null = null;
     const canSteerPrompt = (): boolean => {
         return Boolean(
             pendingTurn
@@ -2267,9 +2267,8 @@ export function createCodexAppServerRuntime(params: Readonly<{
 
     const commitInlineReviewFindings = (
         update: Extract<CodexAppServerStreamUpdate, { type: 'review-mode-completed' }>,
-    ): void => {
+    ): boolean => {
         const reviewText = update.review.trim();
-        if (!reviewText) return;
 
         const reviewTurnId = latestPendingTurnId ?? pendingTurn?.turnId ?? 'unknown-turn';
         const sessionId = trimSessionId(params.session.sessionId) ?? 'current-session';
@@ -2281,11 +2280,15 @@ export function createCodexAppServerRuntime(params: Readonly<{
             rawText: reviewText,
             generatedAtMs: Date.now(),
         });
-        if (!payload) return;
+        if (!payload) {
+            if (activeInlineReview) activeInlineReview.outputError = 'Codex review output could not be parsed.';
+            return false;
+        }
+        if (activeInlineReview) activeInlineReview.outputError = null;
 
         const commitSession = params.transcriptSession ?? params.session;
         const sendAgentMessageCommitted = commitSession.sendAgentMessageCommitted;
-        if (typeof sendAgentMessageCommitted !== 'function') return;
+        if (typeof sendAgentMessageCommitted !== 'function') return false;
         startDetachedProviderProjection('review-mode-completed:transcript-ack', () => (
             sendAgentMessageCommitted.call(
                 commitSession,
@@ -2302,6 +2305,7 @@ export function createCodexAppServerRuntime(params: Readonly<{
                 },
             )
         ));
+        return true;
     };
 
     const applyStreamUpdate = async (update: CodexAppServerStreamUpdate, context: StreamUpdateContext): Promise<void> => {
@@ -2445,8 +2449,7 @@ export function createCodexAppServerRuntime(params: Readonly<{
             deletePendingRawAssistantFinalForNormalizedItem(context.streamScopeId, update.itemId);
             nativeReviewCompletionTextByStreamScope.set(context.streamScopeId, update.review);
             if (activeInlineReview && !context.sidechainId) {
-                commitInlineReviewFindings(update);
-                return;
+                if (commitInlineReviewFindings(update)) return;
             }
             appendStreamFinal(itemKey, update.review, assistantTextByItemId, (deltaText) => {
                 itemTranscriptBridge.appendAssistantDelta({
@@ -4742,7 +4745,7 @@ export function createCodexAppServerRuntime(params: Readonly<{
 
     const startInlineReview = async (
         input: unknown,
-    ): Promise<Readonly<{ ok: true; reviewTurnId: string | null }> | UnsupportedSessionRuntimeMethodResult | Readonly<{ ok: false; errorCode: 'invalid_parameters' | 'inline_review_not_supported'; error: string }>> => {
+    ): Promise<Readonly<{ ok: true; reviewTurnId: string | null }> | UnsupportedSessionRuntimeMethodResult | Readonly<{ ok: false; errorCode: 'invalid_parameters' | 'inline_review_not_supported' | 'invalid_output'; error: string }>> => {
         const parsedInlineInput = ReviewStartInputSchema.safeParse(input);
         if (!parsedInlineInput.success || parsedInlineInput.data.engineIds.length !== 1 || parsedInlineInput.data.engineIds[0] !== 'codex') {
             return { ok: false, errorCode: 'inline_review_not_supported', error: 'inline_review_not_supported' };
@@ -4762,14 +4765,18 @@ export function createCodexAppServerRuntime(params: Readonly<{
             await startOrLoad({});
         }
 
-        activeInlineReview = true;
+        const inlineReviewState: { outputError: string | null } = { outputError: 'Codex review did not return usable output.' };
+        activeInlineReview = inlineReviewState;
         let reviewTurnResult: string | void | UnsupportedSessionRuntimeMethodResult;
         try {
             reviewTurnResult = await startReviewTurn(resolved.request);
         } finally {
-            activeInlineReview = false;
+            if (activeInlineReview === inlineReviewState) activeInlineReview = null;
         }
         if (reviewTurnResult && typeof reviewTurnResult === 'object') return reviewTurnResult;
+        if (inlineReviewState.outputError) {
+            return { ok: false, errorCode: 'invalid_output', error: inlineReviewState.outputError };
+        }
         return { ok: true, reviewTurnId: reviewTurnResult ?? null };
     };
 

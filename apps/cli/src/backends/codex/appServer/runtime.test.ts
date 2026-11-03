@@ -143,6 +143,7 @@ async function writeFakeCodexAppServerScript(params: Readonly<{
     emitGoalContinuationUsageLimitFailure?: boolean;
     emitGoalContinuationItemsBeforeStarted?: boolean;
     rejectReviewStartMethodUnavailable?: boolean;
+    inlineReviewTexts?: readonly string[];
     rejectStructuredTurnInput?: boolean;
     rejectStructuredSteerInput?: boolean;
     rejectSteerExpectedTurnId?: boolean;
@@ -189,6 +190,7 @@ async function writeFakeCodexAppServerScript(params: Readonly<{
         'let loginStartCount = 0;',
         'let accountReadCount = 0;',
         'let interruptCount = 0;',
+        'let reviewStartCount = 0;',
         `let nativeGoal = ${JSON.stringify(params.nativeGoal ?? null)};`,
         'const resumedThreadIds = new Set();',
         `const managedAllowedApprovalPolicies = ${JSON.stringify(params.managedAllowedApprovalPolicies ?? null)};`,
@@ -515,12 +517,12 @@ async function writeFakeCodexAppServerScript(params: Readonly<{
         '            process.stdout.write(JSON.stringify({ id: msg.id, error: { code: -32601, message: "Method not found: review/start" } }) + "\\n");',
         '            continue;',
         '        }',
-        '        const turnId = "turn-review-native";',
+        '        const turnId = reviewStartCount === 0 ? "turn-review-native" : `turn-review-native-${reviewStartCount + 1}`;',
         '        if (typeof msg.params?.target?.instructions === "string" && msg.params.target.instructions.includes("invalid-review-input")) {',
         '            process.stdout.write(JSON.stringify({ id: msg.id, error: { code: -32602, message: "invalid params: review target is invalid" } }) + "\\n");',
         '            continue;',
         '        }',
-        '        const reviewText = typeof msg.params?.target?.instructions === "string" && msg.params.target.instructions.includes("different-final") ? "Native review body" : "Native review text";',
+        `        const reviewText = ${JSON.stringify(params.inlineReviewTexts ?? [])}[reviewStartCount++] ?? (typeof msg.params?.target?.instructions === "string" && msg.params.target.instructions.includes("different-final") ? "Native review body" : "Native review text");`,
         '        const finalText = typeof msg.params?.target?.instructions === "string" && msg.params.target.instructions.includes("different-final") ? "Different final assistant text" : reviewText;',
         '        const completionDelayMs = typeof msg.params?.target?.instructions === "string" && msg.params.target.instructions.includes("delayed-review") ? 50 : 15;',
         '        process.stdout.write(JSON.stringify({ id: msg.id, result: { turn: { id: turnId }, reviewThreadId: msg.params?.threadId ?? null } }) + "\\n");',
@@ -1760,6 +1762,7 @@ describe('createCodexAppServerRuntime', () => {
             emitGoalContinuationUsageLimitFailure?: boolean;
             emitGoalContinuationItemsBeforeStarted?: boolean;
             rejectReviewStartMethodUnavailable?: boolean;
+            inlineReviewTexts?: readonly string[];
             rejectStructuredTurnInput?: boolean;
             rejectStructuredSteerInput?: boolean;
             rejectSteerExpectedTurnId?: boolean;
@@ -1831,6 +1834,7 @@ describe('createCodexAppServerRuntime', () => {
             emitGoalContinuationUsageLimitFailure: options.emitGoalContinuationUsageLimitFailure,
             emitGoalContinuationItemsBeforeStarted: options.emitGoalContinuationItemsBeforeStarted,
             rejectReviewStartMethodUnavailable: options.rejectReviewStartMethodUnavailable,
+            inlineReviewTexts: options.inlineReviewTexts,
             rejectStructuredTurnInput: options.rejectStructuredTurnInput,
             rejectStructuredSteerInput: options.rejectStructuredSteerInput,
             rejectSteerExpectedTurnId: options.rejectSteerExpectedTurnId,
@@ -5601,6 +5605,47 @@ describe('createCodexAppServerRuntime', () => {
                 findings: [],
             },
         });
+    });
+
+    it.each(['{"findings":[', ''])('reports invalid inline review output and recovers on the next review: %j', async (rawReview) => {
+        const { root } = await createRuntimeFixture('happier-codex-app-server-runtime-inline-review-invalid-', {
+            inlineReviewTexts: [rawReview],
+        });
+        const session = {
+            sessionId: 'sess-inline-review-invalid',
+            updateMetadata: vi.fn(),
+            sendAgentMessageCommitted: vi.fn(async () => {}),
+            sendCodexMessage: vi.fn(),
+        };
+        const runtime = createCodexAppServerRuntime({
+            directory: root,
+            onThinkingChange: vi.fn(),
+            session: session as unknown as ApiSessionClient,
+        });
+
+        const input = {
+            engineIds: ['codex'],
+            instructions: 'Review current changes',
+            runLocation: 'current_session',
+            changeType: 'uncommitted',
+            base: { kind: 'none' },
+        };
+        const result = await runtime.startInlineReview(input);
+
+        expect(result).toMatchObject({ ok: false, errorCode: 'invalid_output' });
+        const committedCalls = session.sendAgentMessageCommitted.mock.calls as unknown as Array<
+            [string, { type?: string; message?: string; text?: string; sidechainId?: string | null }, { localId?: string; meta?: { happier?: unknown } }]
+        >;
+        const rawMessages = committedCalls.filter(([, body]) => body.type === 'message' && !body.sidechainId && body.message === rawReview);
+        expect(new Set(rawMessages.map(([, , options]) => options.localId)).size).toBe(rawReview ? 1 : 0);
+        if (rawReview) expect(rawMessages[0]?.[2]?.meta?.happier).toBeUndefined();
+
+        await expect(runtime.startInlineReview(input)).resolves.toMatchObject({ ok: true, reviewTurnId: 'turn-review-native-2' });
+        const recoveredCalls = session.sendAgentMessageCommitted.mock.calls as unknown as Array<
+            [string, { type?: string; message?: string }, { meta?: { happier?: unknown } }]
+        >;
+        const recoveredMessage = recoveredCalls.find(([, body]) => body.type === 'message' && body.message === 'Native review text');
+        expect(recoveredMessage?.[2]?.meta?.happier).toMatchObject({ kind: 'review_findings.v2' });
     });
 
     it('starts an app-server thread before inline native review when none is active', async () => {
