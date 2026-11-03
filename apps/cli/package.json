@@ -172,6 +172,7 @@
     "@happier-dev/plugins-minimax",
     "@happier-dev/plugins-ohmypi",
     "@happier-dev/plugins-ollama",
+    "@happier-dev/plugins-onepassword",
     "@happier-dev/plugins-openai",
     "@happier-dev/plugins-openai-compat",
     "@happier-dev/plugins-openai-models",
