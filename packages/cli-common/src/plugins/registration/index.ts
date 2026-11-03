@@ -1,3 +1,7 @@
+export * from './targetedContributions.js';
+export * from './targetedContributionAdmission.js';
+export * from './admittedTargetedOperation.js';
+export * from './actionFailureProjection.js';
 export * from './actionInputParser.js';
 
 
@@ -6,7 +10,3 @@ export { createPluginRegistrationScope } from './scope.js';
 export { redactPluginInvocationResultData } from './actionResultRedaction.js';
 
 export { createPluginAccountActionSettingsService } from './accountActionSettings.js';
-
-export { StableTargetedContributionsOwner } from './targetedContributions.js';
-
-export { dropTargetedContributionAdmissionDiagnostics } from './targetedContributionAdmission.js';
