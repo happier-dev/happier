@@ -11,14 +11,15 @@ import type { RpcHandlerContext } from '@/api/rpc/types';
 import { updateSettings } from '@/persistence';
 import { registerDaemonMachineAgentIsolationRpcHandlers } from '@/rpc/handlers/daemonMachineAgentIsolation';
 import { dispatchManagedMachineAgentIsolation } from '@/api/externalActionExecutionAuthorization';
-import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { ExternalActionExecutionAuthorizationV1Schema, ExternalActionExecutionAuthorizationRequestV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { ManagedAcquireInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { MachineAgentIsolationPreviewResultV1Schema } from '@happier-dev/protocol';
 import { executeExternalAction } from './executeExternalAction';
-import { normalizeActionsSettingsV1, setActionApprovalOverride } from '@happier-dev/protocol/actions/actionSettings';
+import { createHostReviewedChildPortV1, type ActionExecutorContext } from '@happier-dev/protocol/actions/actionExecutor';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { normalizeStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 
 const boundary = vi.hoisted(() => ({ control: null as Parameters<typeof startDaemonControlServer>[0] | null }));
 // The control listener, Home transport and native OS are boundaries. The
@@ -28,13 +29,11 @@ vi.mock('@/daemon/controlServer', () => ({ startDaemonControlServer: async (inpu
     return { port: 43129, stop: async () => {} };
 } }));
 
-it('preserves Home Manage admission for a fresh owner Create isolation child through the installed factory', async () => {
+it('preserves Home Manage admission and reviewed Create consent for an isolation child with default Ask', async () => {
     onTestFinished(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); boundary.control = null; });
     const homeId = 'srv_managed_isolation', serverId = 'managed-isolation-home', serverUrl = 'https://session-home.test';
     const h = await createInstalledProjectAgentDaemonFixture(() => boundary.control, undefined, true, undefined, undefined, {
         ordinaryAccountSession: true,
-        accountSettings: { actionsSettingsV1: setActionApprovalOverride({ settings: normalizeActionsSettingsV1(undefined),
-            actionId: 'machines.agentIsolation.set', surface: 'ui', approvalRequired: false }) },
         externalActionAccountId: 'requester', serverId, homeServerIdentityId: homeId,
         machineAccess: { custodianAccountId: 'requester', role: 'manage' },
         resolveCurrentMachineExecutionOriginContext: async () => ({ serverIdentityId: homeId, machineId: 'machine' }),
@@ -100,6 +99,12 @@ it('preserves Home Manage admission for a fresh owner Create isolation child thr
         retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false });
     const writeHome = vi.mocked(axios.post).getMockImplementation();
     if (!writeHome) throw new Error('Missing Home boundary');
+    const readHome = vi.mocked(axios.get).getMockImplementation();
+    if (!readHome) throw new Error('Missing Home read boundary');
+    vi.mocked(axios.get).mockImplementation(async (...args) => String(args[0]).endsWith('/v1/machines/controller')
+        ? { status: 200, data: { machine: { id: 'controller', metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0,
+            access: { custodian: { accountId: 'requester', displayName: 'Owner' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' } } } }
+        : readHome(...args));
     vi.mocked(axios.post).mockImplementation(async (...args) => {
         const url = String(args[0]);
         if (url.endsWith('/v1/machines/managed/controller/context')) return { status: 200, data: { requestId: 'creation',
@@ -110,6 +115,7 @@ it('preserves Home Manage admission for a fresh owner Create isolation child thr
             const body = ExternalActionExecutionAuthorizationRequestV1Schema.parse(args[1]);
             const childAuthorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'guest-home-proof', binding: {
                 ...controllerAuthorization.binding, actionId, machineId: 'machine', installationId: h.f.installation.installationId,
+                admittedMachineRole: admission.role,
                 target: { kind: 'machine', machineId: 'machine' }, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(body.envelope),
                 managedContinuation: { ...body.managedContinuation, controller: managed.controller, acquireRequestEnvelopeDigest: controllerAuthorization.binding.requestEnvelopeDigest },
             } });
@@ -134,14 +140,18 @@ it('preserves Home Manage admission for a fresh owner Create isolation child thr
         actionId: 'machines.managed.acquire', requestId: 'creation', machineId: 'controller',
         installationId: 'controller-installation', target: { kind: 'machine', machineId: 'controller' }, requestEnvelopeDigest: 'a'.repeat(43),
     } });
-    const childResult = await dispatchManagedMachineAgentIsolation({ actionId, input: childInput, serverId,
-        authorization: controllerAuthorization, authority: 'present_user', installationId: 'controller-installation', privateKey: controllerKeys.secretKey,
-        serverHttpBaseUrl: serverUrl, continuation: { managedId: 'managed', creationRequestId: 'creation', expectedIntentRevision: 0 },
-        invocation: { surface: 'ui', authority: 'present_user', caller: { kind: 'host' }, presentUserConfirmation: {
-            actionId: 'machines.managed.acquire', requestId: 'creation', accountId: 'requester', serverId: homeId,
-            target: { kind: 'machine', machineId: 'controller' }, inputDigest: computeActionInputApprovalDigestV1('machines.managed.acquire', input),
-        } },
-    });
+    const context: ActionExecutorContext = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+        runtimeAccountId: 'requester', externalActionExecutionAuthorization: controllerAuthorization,
+        externalActionTarget: controllerAuthorization.binding.target, signal: new AbortController().signal };
+    const declaration = getActionSpec('machines.managed.acquire').hostReviewedChildren;
+    const children = typeof declaration === 'function' ? declaration(input) : declaration ?? [];
+    const reviewed = createHostReviewedChildPortV1({ actionId: 'machines.managed.acquire', input, context, reviewAdmitted: true,
+        plan: { children }, policies: children.map(child => ({ action: child.action, role: child.role, surface: 'ui' })),
+        execute: async (_input, context) => dispatchManagedMachineAgentIsolation({ actionId, input: childInput, serverId, context,
+            authorization: controllerAuthorization, authority: 'present_user', installationId: 'controller-installation', privateKey: controllerKeys.secretKey,
+            serverHttpBaseUrl: serverUrl, continuation: { managedId: 'managed', creationRequestId: 'creation', expectedIntentRevision: 0 },
+        }) });
+    const childResult = await reviewed.invoke({ action: actionId, role: actionId, input: normalizeStrictJsonValue(childInput) });
     expect(childResult, JSON.stringify(childResult)).toMatchObject({ ok: true, result: { kind: 'accepted' } });
     expect(h.machine.getMachineMetadataSnapshot()).toMatchObject({ status: 'ready', metadata: {
         agentIsolation: { enabled: true, memberProvisioning: 'linuxUsersV1' },
