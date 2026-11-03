@@ -1,12 +1,13 @@
-import type { TeamCredentialResourceCatalogEntryV1, TeamResourceConnectedServiceSelectionV2 } from '@happier-dev/protocol';
+import type { TeamCredentialResourceCatalogEntryV1 } from '@happier-dev/protocol';
 import { CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
 import { readTeamCredentialDeliveryReadinessV1 } from '@happier-dev/protocol/teams/credentials/readinessV1';
 import type { ProviderErrorCodeV1 } from '@happier-dev/protocol/providers/errors';
+import type { TeamCredentialRouteV1 } from '@happier-dev/protocol/teams/credentials/deliveryV1';
 
 /** Forward the Home's readiness fact; brokered allowances do not govern Direct delivery. */
 export function readTeamCredentialLaunchReadinessRefusal(
   resource: Pick<TeamCredentialResourceCatalogEntryV1, 'readiness' | 'deliveryUnavailableReason'>,
-  deliveryMode: TeamResourceConnectedServiceSelectionV2['deliveryMode'],
+  deliveryMode: TeamCredentialRouteV1,
 ): 'team_credential_usage_limit' | 'broker_unavailable' | 'update_required'
   | typeof CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceCredentialReconnectRequired | ProviderErrorCodeV1 | null {
   const readiness = readTeamCredentialDeliveryReadinessV1(resource.readiness, deliveryMode);
