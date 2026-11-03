@@ -259,6 +259,9 @@ export async function readManagedNativeCredentialBindingForGuestInTx(tx: Tx, inp
         || target.machine.controllerInstallationId !== facet.controllerInstallationId) return unavailable;
     const resource = await tx.teamCredentialResource.findUnique({ where: { id: request.resourceId }, select: { teamId: true } });
     if (resource?.teamId !== request.teamId) return unavailable;
+    if (accepted.submission || accepted.installation === 'unknown') {
+        return { status: 'unavailable', reason: 'installation_unknown' };
+    }
     // This exact owning guest may inspect a no-effect birth after USE ends;
     // material disclosure below still requires current Session and Team admission.
     if (accepted.installation === 'prepared') return { status: 'prepared', binding: facet };

@@ -1,3 +1,10 @@
+import { MACHINE_PLAIN_DATA_KEY_MARKER, encodePlainMachineStoredContent } from '@happier-dev/protocol';
+import { createNativeSessionTeamCredentialFixture, TEST_AUTHENTICATION } from './sessionBinding.testkit';
+import { writeSessionTeamCredentialBindingsInTx, stampSessionTeamCredentialNativeDeliveryInTx,
+    completeSessionTeamCredentialNativeDeliveryInTx, submitSessionTeamCredentialNativeDeliveryInTx,
+    readQualifiedSessionTeamCredentialNativeDeliveriesForManagedMachineInTx } from './sessionBinding';
+import { readSessionTeamCredentialNativeSelectionInTx } from './nativeDeliveryRead';
+import { createSessionMachineAccessKeyInTx } from '@/app/accessKeys/sessionMachineAccessKeyMutations';
 import tweetnacl from 'tweetnacl';
 import { computeTeamCredentialNativeBindingReadDigestV1 } from '@happier-dev/protocol/teams/credentials/directMaterialV1';
 import { signMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
@@ -119,6 +126,75 @@ describe("Team credential resource routes (SQLite integration)", () => {
         expect(response.statusCode).toBe(200);
         expect(response.json()).toEqual({ status: 'unavailable', reason: 'binding_unavailable' });
         expect(response.body).not.toContain('placeholder');
+    });
+
+    it('discloses only a confirmed native placeholder to the accepted current installed Session guest', async () => {
+        const f = await createNativeSessionTeamCredentialFixture();
+        const keys = tweetnacl.sign.keyPair();
+        await db.machine.update({ where: { id: f.guest.id }, data: { active: true,
+            metadata: encodePlainMachineStoredContent({ host: 'guest', platform: 'linux', happyCliVersion: 'test',
+                homeDir: '/home/guest', happyHomeDir: '/home/guest/.happier' }),
+            dataEncryptionKey: new Uint8Array(Buffer.from(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64')),
+            installationPublicKey: new Uint8Array(keys.publicKey) } });
+        await db.session.update({ where: { id: f.session.id }, data: { active: true } });
+        await expect(inTx(tx => createSessionMachineAccessKeyInTx(tx, { accountId: f.creator.id,
+            machineId: f.guest.id, sessionId: f.session.id, data: 'opaque-native-key' }))).resolves.toMatchObject({ ok: true });
+        await expect(inTx(tx => writeSessionTeamCredentialBindingsInTx(tx, { sessionId: f.session.id,
+            accountId: f.creator.id, intents: [f.intent], authentication: TEST_AUTHENTICATION }))).resolves.toEqual({ ok: true });
+        const pending = await inTx(tx => readSessionTeamCredentialNativeSelectionInTx(tx, { sessionId: f.session.id }));
+        if (!pending.ok) throw new Error(pending.code);
+        const facet = pending.binding.safeFacet;
+        const body = { purpose: 'vendor_native_binding' as const, homeId: f.homeId, teamId: f.team.id, resourceId: f.credential.id,
+            sessionId: f.session.id, managedId: f.row.id, bindingKey: facet.bindingKey,
+            expectedResourceRevision: f.credential.revision, expectedSourceRevision: facet.sourceRevision,
+            expectedProviderTicket: facet.providerTicket, machineId: f.guest.id, installationId: f.guest.installationId! };
+        const sign = (value: typeof body, privateKey = keys.secretKey) => ({ ...value, proof: signMachineInstallationProof({
+            payload: { version: 1, machineId: value.machineId, installationId: value.installationId, accountId: f.creator.id,
+                nativeCredentialBindingRead: { requestBodyDigest: computeTeamCredentialNativeBindingReadDigestV1(value) } }, privateKey }) });
+        const path = `/v2/teams/${f.team.id}/credential-resources/${f.credential.id}/direct-material`;
+        const read = (value = sign(body), actor = f.creator.id) => post(path, actor, value);
+        expect((await read()).json()).toEqual({ status: 'prepared', binding: facet });
+        await expect(inTx(tx => stampSessionTeamCredentialNativeDeliveryInTx(tx, { sessionId: f.session.id,
+            accountId: f.creator.id, response: f.sourceResponse, authentication: TEST_AUTHENTICATION }))).resolves.toMatchObject({ ok: true });
+        expect((await read()).json()).toEqual({ status: 'prepared', binding: facet });
+        const complete = async (outcome: 'confirmed' | 'unknown', onSubmitted?: () => Promise<void>) => {
+            const mutation = { sessionId: f.session.id, accountId: f.creator.id, bindingKey: facet.bindingKey,
+                requestId: crypto.randomUUID(), expectedResourceRevision: f.credential.revision,
+                expectedSourceRevision: facet.sourceRevision, expectedProviderTicket: facet.providerTicket,
+                operation: 'install' as const, authentication: TEST_AUTHENTICATION };
+            const submitted = await inTx(tx => submitSessionTeamCredentialNativeDeliveryInTx(tx, mutation));
+            if (!submitted.ok) return submitted;
+            const cohort = await inTx(tx => readQualifiedSessionTeamCredentialNativeDeliveriesForManagedMachineInTx(tx, {
+                accountId: mutation.accountId, request: { ...mutation, managedId: pending.binding.managedId },
+                authentication: mutation.authentication,
+            }));
+            if (!cohort.ok) throw new Error('Expected qualified submitted native cohort');
+            const completion = { ...mutation, outcome, appliedPolicy: {
+                ownedBindingKeys: cohort.ownedBindings.map(row => row.safeFacet.bindingKey),
+                desiredBindingKeys: cohort.desiredBindings.map(row => row.safeFacet.bindingKey),
+            } };
+            await onSubmitted?.();
+            return inTx(tx => completeSessionTeamCredentialNativeDeliveryInTx(tx, completion));
+        };
+        await expect(complete('confirmed', async () => {
+            expect((await read()).json()).toEqual({ status: 'unavailable', reason: 'installation_unknown' });
+        })).resolves.toMatchObject({ ok: true });
+        const ready = await read();
+        expect(ready.statusCode, ready.body).toBe(200);
+        expect(ready.json()).toMatchObject({ status: 'ready', binding: facet, placeholder: expect.any(String),
+            model: { selection: { deliveryMode: 'vendor-native', modelId: f.intent.resourceId ? f.intent.providerModelSelection?.modelId : '' } } });
+        expect(ready.body).not.toContain('authorizationTicket');
+        expect(ready.body).not.toContain('selectedSecretBindingId');
+        const foreignSession = await db.session.create({ data: { accountId: f.creator.id, tag: crypto.randomUUID(), metadata: '{}', encryptionMode: 'plain' } });
+        for (const value of [sign({ ...body, sessionId: foreignSession.id }), sign({ ...body, machineId: f.controller.id }),
+            { ...sign(body), bindingKey: 'tampered-binding' }]) {
+            expect((await read(value)).json()).toEqual({ status: 'unavailable', reason: 'binding_unavailable' });
+        }
+        expect((await read(sign(body), f.stranger.id)).json()).toEqual({ status: 'unavailable', reason: 'binding_unavailable' });
+        await expect(complete('unknown')).resolves.toMatchObject({ ok: true });
+        expect((await read()).json()).toEqual({ status: 'unavailable', reason: 'installation_unknown' });
+        await db.machine.update({ where: { id: f.guest.id }, data: { installationId: crypto.randomUUID() } });
+        expect((await read()).json()).toEqual({ status: 'unavailable', reason: 'binding_unavailable' });
     });
 
     async function get(url: string, actorAccountId: string, authenticationEvidence?: unknown) {
