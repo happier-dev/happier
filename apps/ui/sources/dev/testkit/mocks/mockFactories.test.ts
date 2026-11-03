@@ -1266,10 +1266,15 @@ describe('UI testkit mock factories', () => {
         expect(moduleMock.areServerProfileIdentifiersEquivalent('legacy-a', 'identity-a')).toBe(true);
     });
 
-    it('creates a capturing LegendList mock that stores props, renders rows, and assigns ref handles', async () => {
-        const { createCapturingLegendListMock } = await import('./legendList');
-
-        const legendListMock = createCapturingLegendListMock({ renderItems: true });
+    it('preserves LegendList package exports while capturing props, rendering rows, and assigning ref handles', async () => {
+        const { createLegendListModuleMock } = await import('./legendList');
+        let state: import('./legendList').CapturingLegendListMockState | undefined;
+        const module = await createLegendListModuleMock({ renderItems: true }, (captured) => { state = captured; });
+        if (!state) throw new Error('Expected the module factory to expose its captured recycler state');
+        const legendListMock = { module, state };
+        const original = await vi.importActual<typeof import('@legendapp/list/react-native')>('@legendapp/list/react-native');
+        expect(Reflect.get(module, 'internal')).toBeDefined();
+        expect(Reflect.get(module, 'internal')).toBe(Reflect.get(original, 'internal'));
         const ref = React.createRef<typeof legendListMock.state.refHandle>();
         const { renderScreen } = await import('../render/renderScreen');
         const screen = await renderScreen(React.createElement(legendListMock.module.LegendList, {

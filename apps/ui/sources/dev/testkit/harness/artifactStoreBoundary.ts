@@ -2,12 +2,14 @@ import { ARTIFACT_PLAIN_DATA_KEY_MARKER, decodePlainArtifactStoredContent, encod
 import { ArtifactCoarseKindV1Schema, ArtifactStoredKindV1Schema, ArtifactKindWriteBatchInputV1Schema,
     ArtifactKindWriteBatchResponseV1Schema, type ArtifactCoarseKindV1, ArtifactKindCoverageV1Schema, decodeArtifactKindV1, deriveArtifactStoredKindV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
 import { ArtifactAccessGrantsListResponseV1Schema, ArtifactAccessRecipientCensusResponseV1Schema,
+    ArtifactAccessGrantSetInputV1Schema, ArtifactAccessGrantMutationResponseV1Schema,
     ArtifactReadBatchHttpInputV1Schema, ArtifactReadBatchResponseV1Schema, ArtifactReadHeadersBatchResponseV1Schema,
     type ArtifactAccessGrantRowV1, type ArtifactAccessLevelV1 } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import { encodeBase64, decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { Buffer } from 'buffer';
 
 import type { Artifact, DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
+
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { AuthTokenProvenanceSchema } from '@happier-dev/protocol/auth/authToken';
 import { CoordinationMessageRefV1Schema, type CoordinationMessageRefV1 } from '@happier-dev/protocol/discussions/messageRefs';
@@ -50,6 +52,8 @@ export type ArtifactStoreBoundary = Readonly<{
     replaceStoredRow(artifact: Artifact): void;
     /** A committed Account grant, seeded outside this client's HTTP mutations. */
     seedAccountGrant(artifactId: string, accountId: string, accessLevel: ArtifactAccessLevelV1): void;
+    /** Semantic grants actually persisted by this Home boundary. */
+    readGrants(artifactId: string): readonly ArtifactAccessGrantRowV1[];
     /** Every stored row, in creation order. */
     list(): Artifact[];
     /**
@@ -206,12 +210,16 @@ export function createArtifactStoreBoundary(params: Readonly<{
     admitMemoryDecisionSource?: (source: CoordinationMessageRefV1) => boolean;
 }>): ArtifactStoreBoundary {
     const rows = new Map<string, StoredArtifactFixture>();
-    const accountGrants = new Map<string, Map<string, ArtifactAccessGrantRowV1>>();
+    const grants = new Map<string, Map<string, ArtifactAccessGrantRowV1>>();
+    const principalKey = (principal: ArtifactAccessGrantRowV1['principal']) => JSON.stringify(principal.kind === 'account'
+        ? ['account', principal.accountId] : ['team', principal.teamId]);
+    const directAccountRecipients = (artifactId: string) => [...(grants.get(artifactId)?.values() ?? [])]
+        .flatMap(grant => grant.principal.kind === 'account' ? [grant.principal.accountId] : []);
     // Mirror Account.seq and the Home's coalesced (Account, kind, entityId) ledger.
     // Keep publication at this boundary so HTTP writes and externally seeded
     // commits are equally visible to the real warm-inventory reader.
     const accountChanges = new Map<string, { cursor: number; entries: Map<string, ChangeEntry> }>();
-    const publish = (row: Artifact, accountIds = [row.ownerAccountId, ...(accountGrants.get(row.id)?.keys() ?? [])]) => {
+    const publish = (row: Artifact, accountIds = [row.ownerAccountId, ...directAccountRecipients(row.id)]) => {
         for (const accountId of new Set(accountIds)) {
             const ledger = accountChanges.get(accountId) ?? { cursor: 0, entries: new Map<string, ChangeEntry>() };
             ledger.entries.set(row.id, { cursor: ++ledger.cursor, kind: 'artifact', entityId: row.id,
@@ -241,7 +249,7 @@ export function createArtifactStoreBoundary(params: Readonly<{
     };
 
     const accessFor = (row: Artifact, accountId: string): Artifact['access'] | null =>
-        row.ownerAccountId === accountId ? 'owner' : accountGrants.get(row.id)?.get(accountId)?.accessLevel ?? null;
+        row.ownerAccountId === accountId ? 'owner' : grants.get(row.id)?.get(principalKey({ kind: 'account', accountId }))?.accessLevel ?? null;
     const readableRow = (row: Artifact, accountId: string): Artifact | null => {
         const access = accessFor(row, accountId);
         // Grant seeding publishes no recipient key envelope. As on the Home,
@@ -263,7 +271,7 @@ export function createArtifactStoreBoundary(params: Readonly<{
             callerProvenanceDataEncryptionKey: plain ? null : row.provenanceDataEncryptionKey ?? null,
             // No Account content-key binding is published in this boundary.
             // Local key possession is not server recipient readiness.
-            recipients: [row.ownerAccountId, ...(accountGrants.get(row.id)?.keys() ?? [])].sort().map(recipientAccountId => ({ recipientAccountId,
+            recipients: [row.ownerAccountId, ...directAccountRecipients(row.id)].sort().map(recipientAccountId => ({ recipientAccountId,
                 contentKey: { status: 'unavailable', reason: plain ? 'plain_account' : 'encryption_setup_required' },
                 contentPublicKeyFingerprint: null, encryptedDataKey: null,
                 encryptedProvenanceDataKey: null, recipientContentPublicKeyFingerprint: null })),
@@ -451,8 +459,25 @@ export function createArtifactStoreBoundary(params: Readonly<{
                 const row = rows.get(decodeURIComponent(grantsTarget[1]!));
                 const access = row ? accessFor(row, callerAccountId) : null;
                 return Promise.resolve(row && access ? json(ArtifactAccessGrantsListResponseV1Schema.parse({
-                    artifactId: row.id, ownerAccountId: row.ownerAccountId, access, grants: [...(accountGrants.get(row.id)?.values() ?? [])],
+                    artifactId: row.id, ownerAccountId: row.ownerAccountId, access, grants: [...(grants.get(row.id)?.values() ?? [])],
                 })) : json({ error: 'artifact_not_found' }, 404));
+            }
+            if (grantsTarget && method === 'PUT') {
+                const row = rows.get(decodeURIComponent(grantsTarget[1]!));
+                if (!row || row.ownerAccountId !== callerAccountId) return Promise.resolve(json({ error: 'artifact_access_forbidden' }, 403));
+                const input = ArtifactAccessGrantSetInputV1Schema.safeParse(parseBody(init));
+                if (!input.success || input.data.artifactId !== row.id) return Promise.resolve(json({ error: 'Invalid parameters' }, 400));
+                const selected = grants.get(row.id) ?? new Map<string, ArtifactAccessGrantRowV1>();
+                const key = principalKey(input.data.principal);
+                const previous = selected.get(key);
+                const changed = previous?.accessLevel !== input.data.accessLevel;
+                selected.set(key, { principal: input.data.principal, accessLevel: input.data.accessLevel,
+                    createdByAccountId: previous?.createdByAccountId ?? callerAccountId, createdAt: previous?.createdAt ?? Date.now(),
+                    display: { name: null, username: null } });
+                grants.set(row.id, selected);
+                if (changed) publish(row);
+                return Promise.resolve(json(ArtifactAccessGrantMutationResponseV1Schema.parse({ artifactId: row.id,
+                    ownerAccountId: row.ownerAccountId, access: 'owner', grants: [...selected.values()], changed })));
             }
             if (method === 'DELETE') {
                 const target = /^\/v1\/artifacts\/([^/]+)(?:\/revision\/(\d+)\/(\d+))?$/.exec(url.pathname);
@@ -467,7 +492,7 @@ export function createArtifactStoreBoundary(params: Readonly<{
                 }
                 rows.delete(artifactId);
                 publish(row);
-                accountGrants.delete(artifactId);
+                grants.delete(artifactId);
                 return Promise.resolve(json({ success: true }));
             }
             const artifactId = decodeURIComponent(url.pathname.slice(ARTIFACTS_PATH.length + 1));
@@ -493,12 +518,16 @@ export function createArtifactStoreBoundary(params: Readonly<{
         seedAccountGrant(artifactId: string, accountId: string, accessLevel: ArtifactAccessLevelV1): void {
             const row = rows.get(artifactId);
             if (!row || row.ownerAccountId === accountId) throw new Error('An Account grant needs an existing Artifact and a non-owner recipient');
-            const grants = accountGrants.get(artifactId) ?? new Map<string, ArtifactAccessGrantRowV1>();
-            grants.set(accountId, { principal: { kind: 'account', accountId }, accessLevel,
-                createdByAccountId: row.ownerAccountId, createdAt: grants.get(accountId)?.createdAt ?? Date.now(),
+            const selected = grants.get(artifactId) ?? new Map<string, ArtifactAccessGrantRowV1>();
+            const key = principalKey({ kind: 'account', accountId });
+            selected.set(key, { principal: { kind: 'account', accountId }, accessLevel,
+                createdByAccountId: row.ownerAccountId, createdAt: selected.get(key)?.createdAt ?? Date.now(),
                 display: { name: null, username: null } });
-            accountGrants.set(artifactId, grants);
+            grants.set(artifactId, selected);
             publish(row, [accountId]);
+        },
+        readGrants(artifactId: string): readonly ArtifactAccessGrantRowV1[] {
+            return [...(grants.get(artifactId)?.values() ?? [])];
         },
         list(): Artifact[] {
             return [...rows.values()].map((row) => ({ ...row }));
@@ -520,7 +549,7 @@ export function createArtifactStoreBoundary(params: Readonly<{
         clear(): void {
             for (const row of rows.values()) publish(row);
             rows.clear();
-            accountGrants.clear();
+            grants.clear();
             pendingBeforeUpdate = null;
             pendingAfterCreate = null;
         },

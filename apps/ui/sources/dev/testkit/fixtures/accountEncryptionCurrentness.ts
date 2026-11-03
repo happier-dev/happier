@@ -1,3 +1,5 @@
+import { isDataKeyAuthCredentials, isLegacyAuthCredentials, type AuthCredentials } from '@/auth/storage/tokenStorage';
+import { decodeBase64 } from '@/encryption/base64';
 import type { AccountEncryptionCurrentnessResponse } from '@happier-dev/protocol';
 import { createAccountScopedCryptoMaterialSnapshotV1 } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
@@ -43,4 +45,23 @@ export function createPlainAccountEncryptionCurrentnessFixture(input: Readonly<{
             reason: 'plain_account',
         }),
     });
+}
+
+/**
+ * The currentness a Home reports for exactly the material these credentials hold.
+ * Keyless credentials belong to a plain Account, which has no E2EE material.
+ */
+export function createAccountEncryptionCurrentnessFixtureForCredentials(
+    credentials: AuthCredentials,
+): AccountEncryptionCurrentnessResponse {
+    if (isLegacyAuthCredentials(credentials)) {
+        return createLegacyAccountEncryptionCurrentnessFixture({ secret: decodeBase64(credentials.secret, 'base64url') });
+    }
+    if (isDataKeyAuthCredentials(credentials)) {
+        return createDataKeyAccountEncryptionCurrentnessFixture({
+            machineKey: decodeBase64(credentials.encryption.machineKey, 'base64'),
+            publicKey: decodeBase64(credentials.encryption.publicKey, 'base64'),
+        });
+    }
+    return createPlainAccountEncryptionCurrentnessFixture();
 }

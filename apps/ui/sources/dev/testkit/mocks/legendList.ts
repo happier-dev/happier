@@ -56,6 +56,22 @@ type CapturingLegendListMockOptions = Readonly<{
     resolveState?: () => Partial<LegendListMockState> | null | undefined;
 }>;
 
+/**
+ * Canonical vi.mock factory for the whole package. Replace only the recycler;
+ * retain exports consumed by the real section-list adapter and capture its state
+ * through the callback when a test needs to inspect the native boundary.
+ */
+export async function createLegendListModuleMock(
+    options: Omit<CapturingLegendListMockOptions, 'original'> = {},
+    captureState?: (state: CapturingLegendListMockState) => void,
+): Promise<Omit<typeof import('@legendapp/list/react-native'), 'LegendList'>
+    & ReturnType<typeof createCapturingLegendListMock>['module']> {
+    const original = await vi.importActual<typeof import('@legendapp/list/react-native')>('@legendapp/list/react-native');
+    const captured = createCapturingLegendListMock(options);
+    captureState?.(captured.state);
+    return { ...original, ...captured.module };
+}
+
 export function createCapturingLegendListMock(
     options: CapturingLegendListMockOptions = {},
 ): Readonly<{

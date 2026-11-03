@@ -6,6 +6,27 @@ import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from
 import { createArtifactStoreBoundary } from './artifactStoreBoundary';
 
 describe('Artifact store HTTP boundary', () => {
+    it('persists a semantic Team grant without manufacturing Account access or recipient keys', async () => {
+        let caller = 'owner';
+        const boundary = createArtifactStoreBoundary({ ownerAccountId: () => caller, encryptionMode: 'plain' });
+        await boundary.handle('/v1/artifacts', { method: 'POST', body: JSON.stringify({ id: 'team-content',
+            header: 'header', body: 'body', dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER }) });
+        const path = '/v1/artifacts/team-content/access/grants';
+        const put = () => boundary.handle(path, { method: 'PUT', body: JSON.stringify({ artifactId: 'team-content',
+            principal: { kind: 'team', teamId: 'team' }, accessLevel: 'admin' }) });
+        expect(await (await put())!.json()).toMatchObject({ changed: true, access: 'owner', grants: [
+            { principal: { kind: 'team', teamId: 'team' }, accessLevel: 'admin' },
+        ] });
+        expect(await (await put())!.json()).toMatchObject({ changed: false });
+        expect(await (await boundary.handle(path))!.json()).toMatchObject({ grants: boundary.readGrants('team-content') });
+        caller = 'team';
+        expect((await boundary.handle('/v1/artifacts/team-content'))?.status).toBe(404);
+        expect((await put())?.status).toBe(403);
+        caller = 'owner';
+        expect(await (await boundary.handle('/v1/artifacts/team-content/access/recipients'))!.json()).toMatchObject({
+            recipients: [{ recipientAccountId: 'owner' }],
+        });
+    });
     it('serves coarse kind and exact presence instead of echoing the stored write hint', async () => {
         for (const mode of ['plain', 'e2ee'] as const) {
             const boundary = createArtifactStoreBoundary({ ownerAccountId: () => 'owner', encryptionMode: mode });
