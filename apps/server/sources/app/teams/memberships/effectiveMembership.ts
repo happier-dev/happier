@@ -1,4 +1,5 @@
 import type { Tx } from "@/storage/inTx";
+import type { Prisma } from "@prisma/client";
 import {
     AccountStatus,
     TeamMembershipStatus,
@@ -63,27 +64,17 @@ export function isEffectiveTeamMembership(
 }
 
 /**
- * Resolve one immutable membership lifetime by id inside the caller's transaction.
- *
- * Callers that persisted a membership id earlier — historical key preparation is the
- * current one — must also state which Account they believe owns that lifetime.
- * Provider Account replacement deliberately moves `accountId` while preserving the
- * lifetime, so an id alone would silently retarget historical work at whoever holds
- * the membership now. A changed Account is therefore rejected rather than served.
- *
- * A membership id that belongs to another Team resolves as absent: a caller holding
- * an id must not learn that it exists somewhere else.
+ * Load current membership lifetimes and their effectiveness facts as one set.
+ * Callers scope the acquisition by Account, Team, or retained lifetime ids;
+ * inactive rows remain represented so restoration and history retain their facts.
+ * No context is retained beyond the caller's deciding transaction.
  */
-export async function resolveTeamMembershipContextInTx(
+export async function resolveTeamMembershipContextsInTx(
     tx: Tx,
-    params: Readonly<{
-        teamId: string;
-        teamMembershipId: string;
-        expectedAccountId: string;
-    }>,
-): Promise<TeamMembershipContextResolution> {
-    const membership = await tx.teamMembership.findUnique({
-        where: { id: params.teamMembershipId },
+    params: Readonly<{ where: Prisma.TeamMembershipWhereInput }>,
+): Promise<readonly TeamMembershipLifetimeContext[]> {
+    const memberships = await tx.teamMembership.findMany({
+        where: params.where,
         select: {
             id: true,
             teamId: true,
@@ -96,28 +87,41 @@ export async function resolveTeamMembershipContextInTx(
         },
     });
 
+    return memberships.map(membership => ({
+        teamMembershipId: membership.id,
+        teamId: membership.teamId,
+        accountId: membership.accountId,
+        role: membership.role,
+        status: membership.status,
+        sessionAccessStartsAt: membership.sessionAccessStartsAt,
+        historyAccess: sessionHistoryAccessOf(membership.sessionAccessStartsAt),
+        effective: isEffectiveTeamMembership({
+            accountStatus: membership.account.status,
+            membershipStatus: membership.status,
+            teamArchivedAt: membership.team.archivedAt,
+        }),
+    }));
+}
+
+/**
+ * Resolve one immutable lifetime through the same context acquisition owner.
+ * Provider Account replacement preserves the lifetime id but moves `accountId`;
+ * reject that retargeting, and conceal ids belonging to another Team.
+ */
+export async function resolveTeamMembershipContextInTx(
+    tx: Tx,
+    params: Readonly<{
+        teamId: string;
+        teamMembershipId: string;
+        expectedAccountId: string;
+    }>,
+): Promise<TeamMembershipContextResolution> {
+    const [membership] = await resolveTeamMembershipContextsInTx(tx, { where: { id: params.teamMembershipId } });
     if (!membership || membership.teamId !== params.teamId) {
         return { ok: false, error: "team_membership_not_found" };
     }
     if (membership.accountId !== params.expectedAccountId) {
         return { ok: false, error: "team_membership_account_changed" };
     }
-
-    return {
-        ok: true,
-        membership: {
-            teamMembershipId: membership.id,
-            teamId: membership.teamId,
-            accountId: membership.accountId,
-            role: membership.role,
-            status: membership.status,
-            sessionAccessStartsAt: membership.sessionAccessStartsAt,
-            historyAccess: sessionHistoryAccessOf(membership.sessionAccessStartsAt),
-            effective: isEffectiveTeamMembership({
-                accountStatus: membership.account.status,
-                membershipStatus: membership.status,
-                teamArchivedAt: membership.team.archivedAt,
-            }),
-        },
-    };
+    return { ok: true, membership };
 }

@@ -1,4 +1,5 @@
 import type { Tx } from "@/storage/inTx";
+import { portableQueryChunks } from "@/storage/portableQueryChunks";
 import {
     AccountStatus,
     TeamMembershipStatus,
@@ -76,25 +77,43 @@ export async function resolveTeamGroupMembershipsForAccountInTx(
     tx: Tx,
     params: Readonly<{ teamId: string; accountId: string; credentialResourceId?: string }>,
 ): Promise<readonly TeamGroupMembershipLifetimeContext[]> {
-    const memberships = await tx.teamGroupMembership.findMany({
-        where: {
-            teamMembership: { teamId: params.teamId, accountId: params.accountId },
-            group: {
-                teamId: params.teamId,
-                ...(params.credentialResourceId ? { credentialGrants: { some: { resourceId: params.credentialResourceId } } } : {}),
+    return resolveTeamGroupMembershipsForAccountsInTx(tx, { ...params, accountIds: [params.accountId] });
+}
+
+/** Resolve one recipient set through the same Group lifetime projection owner. */
+export async function resolveTeamGroupMembershipsForAccountsInTx(
+    tx: Tx,
+    params: Readonly<{ teamId: string; accountIds: readonly string[]; credentialResourceId?: string }>,
+): Promise<readonly TeamGroupMembershipLifetimeContext[]> {
+    const contexts: TeamGroupMembershipLifetimeContext[] = [];
+    for (const accountIds of portableQueryChunks({
+        values: [...new Set(params.accountIds)], bindingsPerValue: 1,
+        // Two Team predicates, optional resource equality, and Prisma's OFFSET bind.
+        fixedBindings: params.credentialResourceId ? 4 : 3,
+    })) {
+        const memberships = await tx.teamGroupMembership.findMany({
+            where: {
+                teamMembership: { teamId: params.teamId, accountId: { in: [...accountIds] } },
+                group: {
+                    teamId: params.teamId,
+                    ...(params.credentialResourceId ? { credentialGrants: { some: { resourceId: params.credentialResourceId } } } : {}),
+                },
             },
-        },
-        select: {
-            nativeContribution: true, sessionAccessStartsAt: true,
-            group: { select: { id: true, teamId: true, archivedAt: true } },
-            teamMembership: {
-                select: { id: true, status: true, account: { select: { status: true } }, team: { select: { archivedAt: true } } },
+            select: {
+                nativeContribution: true, sessionAccessStartsAt: true,
+                group: { select: { id: true, teamId: true, archivedAt: true } },
+                teamMembership: {
+                    select: { id: true, accountId: true, status: true, account: { select: { status: true } }, team: { select: { archivedAt: true } } },
+                },
             },
-        },
-    });
-    return memberships.map(row => projectTeamGroupMembershipLifetime({
-        ...row, membership: row.teamMembership, accountId: params.accountId,
-    }));
+        });
+        for (const row of memberships) {
+            contexts.push(projectTeamGroupMembershipLifetime({
+                ...row, membership: row.teamMembership, accountId: row.teamMembership.accountId,
+            }));
+        }
+    }
+    return contexts;
 }
 
 function projectTeamGroupMembershipLifetime(input: Readonly<{

@@ -19,6 +19,20 @@ const input: TeamCredentialEntitlementInput = {
 };
 
 describe("current Team credential audience entitlement", () => {
+    it("intersects explicitly opted-in native consent with the exact independent audience routes", () => {
+        const resource = { ...input.resource,
+            disclosureCeiling: JSON.stringify({ policy: { preferredAllowedModes: ["vendor-native", "brokered"] }, experimentalBindingConfirmations: [] }),
+            allMembersDeliveryMode: null, groupGrants: [],
+            memberGrants: [{ teamMembershipId: membership.teamMembershipId, deliveryMode: '["vendor-native"]' }],
+        };
+        expect(projectTeamCredentialEntitlement({ ...input, resource })).toMatchObject({
+            ok: true, allowedRoutes: ["vendor-native"], mayBroker: false, mayReceiveDirect: false,
+            deliveryPolicy: { preferredAllowedModes: ["vendor-native", "brokered"] },
+        });
+        expect(projectTeamCredentialEntitlement({ ...input, resource: { ...resource, disclosureCeiling: "direct_allowed" } }))
+            .toEqual({ ok: false, reason: "resource_corrupt" });
+    });
+
     it("retains overlapping audiences and independent broker/direct capabilities", () => {
         expect(projectTeamCredentialEntitlement(input)).toEqual({
             ok: true, resourceId: "resource", resourceRevision: 3,
@@ -27,6 +41,8 @@ describe("current Team credential audience entitlement", () => {
                 { kind: "team_member", teamMembershipId: "member-current" },
             ],
             mayBroker: true, mayReceiveDirect: true,
+            allowedRoutes: ["brokered", "direct"],
+            deliveryPolicy: { preferredAllowedModes: ["brokered", "direct"] },
         });
     });
 

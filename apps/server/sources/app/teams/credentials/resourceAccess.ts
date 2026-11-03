@@ -1,7 +1,9 @@
-import { resolveTeamMembershipContextInTx, type TeamMembershipLifetimeContext } from "../memberships/effectiveMembership";
-import { resolveTeamGroupMembershipsForAccountInTx, type TeamGroupMembershipLifetimeContext } from "../groups/effectiveGroupMembership";
+import { resolveTeamMembershipContextInTx, resolveTeamMembershipContextsInTx, type TeamMembershipLifetimeContext } from "../memberships/effectiveMembership";
+import { resolveTeamGroupMembershipsForAccountInTx, resolveTeamGroupMembershipsForAccountsInTx, type TeamGroupMembershipLifetimeContext } from "../groups/effectiveGroupMembership";
 import type { Tx } from "@/storage/inTx";
-import { TeamCredentialDeliveryModeV1Schema, TeamCredentialDisclosureCeilingV1Schema, type TeamCredentialDeliveryModeV1 } from '@happier-dev/protocol/teams/credentials/resourceV1';
+import { portableQueryChunks } from "@/storage/portableQueryChunks";
+import { TEAM_CREDENTIAL_ROUTES_V1, type TeamCredentialRouteV1, type TeamCredentialDeliveryPolicyV1 } from '@happier-dev/protocol/teams/credentials/resourceV1';
+import { readTeamCredentialAllowedRoutes, readTeamCredentialDeliveryConfiguration } from './resourceDeliveryRead';
 import { isTeamPrincipalRoleV1 } from '@happier-dev/protocol/teams';
 
 export type TeamCredentialMatchedGrant =
@@ -32,6 +34,8 @@ export type TeamCredentialEntitlementDecision =
         resourceId: string;
         resourceRevision: number;
         matchedGrants: readonly TeamCredentialMatchedGrant[];
+        deliveryPolicy: TeamCredentialDeliveryPolicyV1;
+        allowedRoutes: readonly TeamCredentialRouteV1[];
         mayBroker: boolean;
         mayReceiveDirect: boolean;
     }>
@@ -42,6 +46,19 @@ export async function resolveTeamCredentialEntitlementInTx(
     tx: Tx,
     input: Readonly<{ resourceId: string; accountId: string }>,
 ): Promise<TeamCredentialEntitlementDecision> {
+    const entitlements = await resolveTeamCredentialEntitlementsInTx(tx, {
+        resourceId: input.resourceId, accountIds: [input.accountId],
+    });
+    return entitlements.get(input.accountId)!;
+}
+
+/** One current resource and membership fact set, with the existing decision per recipient. */
+export async function resolveTeamCredentialEntitlementsInTx(
+    tx: Tx,
+    input: Readonly<{ resourceId: string; accountIds: readonly string[] }>,
+): Promise<Map<string, TeamCredentialEntitlementDecision>> {
+    const accountIds = [...new Set(input.accountIds)];
+    if (accountIds.length === 0) return new Map();
     const resource = await tx.teamCredentialResource.findUnique({
         where: { id: input.resourceId },
         select: {
@@ -51,26 +68,32 @@ export async function resolveTeamCredentialEntitlementInTx(
             memberGrants: { select: { teamMembershipId: true, deliveryMode: true } },
         },
     });
-    if (!resource) return { ok: false, reason: "access_removed" };
-    const readMembership = async (accountId: string) => {
-        const row = await tx.teamMembership.findUnique({
-            where: { teamId_accountId: { teamId: resource.teamId, accountId } },
-            select: { id: true },
+    if (!resource) return new Map(accountIds.map(accountId => [accountId, { ok: false, reason: "access_removed" }]));
+    const membershipsByAccount = new Map<string, TeamMembershipLifetimeContext>();
+    for (const chunk of portableQueryChunks({
+        values: [...new Set([...accountIds, resource.custodianAccountId])], bindingsPerValue: 1, fixedBindings: 2,
+    })) {
+        const memberships = await resolveTeamMembershipContextsInTx(tx, {
+            where: { teamId: resource.teamId, accountId: { in: [...chunk] } },
         });
-        if (!row) return null;
-        const result = await resolveTeamMembershipContextInTx(tx, {
-            teamId: resource.teamId, teamMembershipId: row.id, expectedAccountId: accountId,
-        });
-        return result.ok ? result.membership : null;
-    };
-    const membership = await readMembership(input.accountId);
-    if (!membership?.effective) return { ok: false, reason: "access_removed" };
-    const custodianMembership = resource.custodianAccountId === input.accountId
-        ? membership : await readMembership(resource.custodianAccountId);
-    const groupMemberships = resource.groupGrants.length === 0 ? [] : await resolveTeamGroupMembershipsForAccountInTx(tx, {
-        teamId: resource.teamId, credentialResourceId: resource.id, accountId: input.accountId,
+        for (const membership of memberships) membershipsByAccount.set(membership.accountId, membership);
+    }
+    const effectiveAccountIds = accountIds.filter(accountId => membershipsByAccount.get(accountId)?.effective);
+    const groups = resource.groupGrants.length === 0 ? [] : await resolveTeamGroupMembershipsForAccountsInTx(tx, {
+        teamId: resource.teamId, credentialResourceId: resource.id, accountIds: effectiveAccountIds,
     });
-    return projectTeamCredentialEntitlement({ resource, membership, custodianMembership, groupMemberships });
+    const groupsByAccount = new Map<string, TeamGroupMembershipLifetimeContext[]>();
+    for (const group of groups) {
+        const memberships = groupsByAccount.get(group.accountId) ?? [];
+        memberships.push(group);
+        groupsByAccount.set(group.accountId, memberships);
+    }
+    return new Map(accountIds.map(accountId => [accountId, projectTeamCredentialEntitlement({
+        resource,
+        membership: membershipsByAccount.get(accountId) ?? null,
+        custodianMembership: membershipsByAccount.get(resource.custodianAccountId) ?? null,
+        groupMemberships: groupsByAccount.get(accountId) ?? [],
+    })]));
 }
 
 /**
@@ -154,28 +177,29 @@ export function projectTeamCredentialEntitlement(
     }
     if (!resource.enabled) return { ok: false, reason: "disabled" };
 
-    const ceiling = TeamCredentialDisclosureCeilingV1Schema.safeParse(resource.disclosureCeiling);
-    if (!ceiling.success) return { ok: false, reason: "resource_corrupt" };
+    const configuration = readTeamCredentialDeliveryConfiguration(resource.disclosureCeiling);
+    if (!configuration.success) return { ok: false, reason: "resource_corrupt" };
+    const allowed = configuration.data.policy.preferredAllowedModes;
 
     const matchedGrants: TeamCredentialMatchedGrant[] = [];
-    let mayBroker = false;
-    let mayReceiveDirect = false;
+    const entitledRoutes = new Set<TeamCredentialRouteV1>();
     for (const candidate of candidates) {
-        const mode = TeamCredentialDeliveryModeV1Schema.safeParse(candidate.mode);
-        if (!mode.success || (ceiling.data === "brokered_only" && mode.data !== "brokered")) {
+        const routes = readTeamCredentialAllowedRoutes(candidate.mode);
+        if (!routes.success || routes.data.some(route => !allowed.includes(route))) {
             return { ok: false, reason: "resource_corrupt" };
         }
         if (!candidate.matches) continue;
         matchedGrants.push(candidate.source);
-        mayBroker ||= mode.data === "brokered" || mode.data === "both";
-        mayReceiveDirect ||= mode.data === "direct" || mode.data === "both";
+        for (const route of routes.data) entitledRoutes.add(route);
     }
     return {
         ok: true,
         resourceId: resource.id,
         resourceRevision: resource.revision,
         matchedGrants,
-        mayBroker,
-        mayReceiveDirect,
+        deliveryPolicy: configuration.data.policy,
+        allowedRoutes: TEAM_CREDENTIAL_ROUTES_V1.filter(route => entitledRoutes.has(route)),
+        mayBroker: entitledRoutes.has('brokered'),
+        mayReceiveDirect: entitledRoutes.has('direct'),
     };
 }

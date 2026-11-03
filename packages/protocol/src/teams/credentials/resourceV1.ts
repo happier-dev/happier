@@ -82,12 +82,9 @@ export const TeamCredentialBrokerPlacementV1Schema = lazyZodSchema(() => z.discr
 ]));
 export type TeamCredentialBrokerPlacementV1 = z.infer<typeof TeamCredentialBrokerPlacementV1Schema>;
 
-/** Recipient catalog entries expose the selected usable path, never the administration-only union. */
-export const TeamCredentialRouteV1Schema = lazyZodSchema(() => z.enum([
-  'brokered',
-  'direct',
-]));
-export type TeamCredentialRouteV1 = z.infer<typeof TeamCredentialRouteV1Schema>;
+import { TeamCredentialRouteV1Schema } from './deliveryV1.js';
+export { TEAM_CREDENTIAL_ROUTES_V1, TeamCredentialRouteV1Schema, TeamCredentialAllowedRoutesV1Schema, TeamCredentialDeliveryPolicyV1Schema, TeamCredentialDeliveryConfigurationV1Schema } from './deliveryV1.js';
+export type { TeamCredentialRouteV1, TeamCredentialAllowedRoutesV1, TeamCredentialDeliveryPolicyV1, TeamCredentialDeliveryConfigurationV1 } from './deliveryV1.js';
 
 export const TeamCredentialRequestProtocolKindV1Schema = lazyZodSchema(() => z.enum([
   'openai_responses',
