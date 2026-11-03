@@ -18,6 +18,7 @@ import { projectUiSessionAwareness } from '@/sync/domains/session/awareness/sess
 import { normalizeSessionAddress, type SessionAddress } from '@/sync/domains/session/sessionAddress';
 import { t } from '@/text';
 import { voiceSettingsDefaults } from '@/sync/domains/settings/voiceSettings';
+import { isAgentThreadTextConversationTurnMeta } from '@happier-dev/protocol/messages/structured/conversationTurnOriginV1';
 interface SessionMetadata {
     summary?: { text?: string };
     path?: string;
@@ -213,7 +214,8 @@ export function summarizeAssistantMessagesForVoiceHuman(
 ): string | null {
     const resolved = resolvePrefs(prefs);
     const latestAssistantMessage = [...messages]
-        .filter((message): message is Extract<Message, { kind: 'agent-text' }> => message?.kind === 'agent-text' && !message.peer)
+        .filter((message): message is Extract<Message, { kind: 'agent-text' }> => message?.kind === 'agent-text'
+            && !message.peer && isAgentThreadTextConversationTurnMeta(message.meta))
         .sort((left, right) => left.createdAt - right.createdAt)
         .at(-1);
 
@@ -330,6 +332,9 @@ export function formatMessage(message: Message, prefs?: VoiceContextFormatterPre
 }
 
 function formatMessageWithPrefs(message: Message, prefs?: VoiceContextFormatterPrefs): string | null {
+    // Startup/reconnect context and live snippets describe the coding thread,
+    // never the Voice conversation persisted alongside it.
+    if (!isAgentThreadTextConversationTurnMeta('meta' in message ? message.meta : undefined)) return null;
     const resolved = resolvePrefs(prefs);
 
     // Lines

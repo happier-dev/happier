@@ -10,6 +10,7 @@ import {
   summarizeAgentRequestForVoiceHuman,
 } from './contextFormatters';
 import type { Message } from "@happier-dev/session-core/messages";
+import { isAgentThreadTextConversationTurnMeta } from '@happier-dev/protocol/messages/structured/conversationTurnOriginV1';
 import { readStoredSessionMessagesForAddress } from '@/sync/domains/messages/readStoredSessionMessagesForAddress';
 import { storage } from '@/sync/domains/state/storage';
 import { readVoicePrivacySettings } from '@/sync/domains/settings/readVoicePrivacySettings';
@@ -365,6 +366,10 @@ export const voiceHooks = {
     // This is the incumbent newly-applied sync channel, not a transcript scan.
     // Local microphone retirement is lifecycle, independent of provider disclosure toggles.
     getVoiceSessionLifecycleController()?.observeSyncedConversationMessages(address, messages);
+    // Voice writes into the attached Session too. Its own transcript is not a
+    // coding update: republishing it here asks the provider to answer itself.
+    messages = messages.filter(message => isAgentThreadTextConversationTurnMeta('meta' in message ? message.meta : undefined));
+    if (messages.length === 0) return;
     const sessionId = address.sessionId;
     if (VOICE_CONFIG.DISABLE_MESSAGES) return;
     const sink = getVoiceContextSinkForSession(sessionId);
