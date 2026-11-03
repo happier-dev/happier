@@ -262,7 +262,8 @@ describe('Connected Account private catalogs', () => {
       content: { t: 'plain', v: parsed },
     }).success).toBe(true);
     const refs = listConnectedConfigurationCatalogSavedSecretRefsV1(configuration.value);
-    expect(refs).toEqual([{ path: 'entries[0].secretRefs.token', secretId: oldRef }]);
+    expect(refs).toEqual([{ path: 'entries[0].secretRefs.token', secretId: oldRef,
+      service, modeId: 'native-api', fieldId: 'token' }]);
     expect(rewriteConnectedConfigurationCatalogSavedSecretRefsV1(configuration.value, oldRef, newRef))
       .toEqual({ ...configuration.value, entries: [{ ...configuration.value.entries[0], secretRefs: { token: newRef } }] });
   });

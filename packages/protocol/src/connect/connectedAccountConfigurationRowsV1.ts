@@ -246,9 +246,12 @@ export function sealConnectedAccountCatalogContentV1(input: Readonly<{
     payload: record, randomBytes: input.randomBytes ?? tweetnacl.randomBytes }) };
 }
 
-export function listConnectedConfigurationCatalogSavedSecretRefsV1(catalog: ConnectedConfigurationCatalogV1): readonly Readonly<{ path: string; secretId: string }>[] {
+export function listConnectedConfigurationCatalogSavedSecretRefsV1(catalog: ConnectedConfigurationCatalogV1): readonly Readonly<{
+  path: string; secretId: string; service: ConnectedConfigurationCatalogV1['entries'][number]['service']; modeId: string; fieldId: string;
+}>[] {
   return catalog.entries.flatMap((entry, index) => Object.entries(entry.secretRefs).map(([field, secretId]) => ({
     path: appendSavedSecretReferencePathV1(`entries[${index}].secretRefs`, field), secretId,
+    service: entry.service, modeId: entry.modeId, fieldId: field,
   })));
 }
 export function rewriteConnectedConfigurationCatalogSavedSecretRefsV1(catalog: ConnectedConfigurationCatalogV1, oldSecretId: string,
