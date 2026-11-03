@@ -1,3 +1,4 @@
+import { readMachineDeploymentReferencesV1 } from '@happier-dev/protocol/machines/machineReferenceCensusV1';
 import { MACHINE_REACHABILITY_ACTION_INPUT_SCHEMAS_V1 } from '@happier-dev/protocol';
 import { MACHINE_REACHABILITY_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol';
 import { createUsageSourceActionPort } from '@happier-dev/protocol/actions/executor/usageSourceActions';
@@ -24,13 +25,14 @@ import type { ActionExecutorDeps, ActionExecutorContext } from '@happier-dev/pro
 import { createMachineServiceControlAction } from './machineServiceControl';
 export function createCliMachineResourceActionDeps(
   params: Pick<CliActionDepsParams, 'credentials' | 'isCredentialCurrent' | 'token' | 'externalActionMachineInstallationId' | 'externalActionMachineRequestPrivateKey' | 'serverIdentityId' | 'machineActionDirectTargetTransport' | 'machineGuardAction' | 'savedSecretOperationContext' | 'serverHttpBaseUrl'>,
-  { projectHomeAdmission, callMachineAction, assertProjectRequesterCurrent, projectAccountAdmission, withProjectHome, projectHomeId, deploymentStorage, executionRunActionFailure }: Readonly<{
+  { projectHomeAdmission, callMachineAction, assertProjectRequesterCurrent, projectAccountAdmission, withProjectHome, projectHomeId, deploymentStorage, executionRunActionFailure, machineRebootReferences }: Readonly<{
     projectHomeAdmission: CliProjectAdmission['projectHomeAdmission'];
     callMachineAction: CliMachineActionCall;
     assertProjectRequesterCurrent: CliProjectAdmission['assertProjectRequesterCurrent'];
     projectAccountAdmission: CliProjectAdmission['projectAccountAdmission'];
     withProjectHome: CliProjectAdmission['withProjectHome'];
     projectHomeId: string;
+    machineRebootReferences?: ActionExecutorDeps['machineRebootReferences'];
     deploymentStorage: NonNullable<ActionExecutorDeps['deploymentAction']>;
     executionRunActionFailure: (code: string, message?: string, details?: unknown) => CliProjectAdmissionFailure;
   }>,
@@ -66,6 +68,9 @@ export function createCliMachineResourceActionDeps(
           canReadEnvironments: async environmentIds => new Set((await Promise.all(environmentIds.map(async environmentId =>
             await canReadServiceEnvironment(input.serverId, environmentId, context) === true ? environmentId : null)))
             .filter((environmentId): environmentId is string => environmentId !== null)),
+          ...(machineRebootReferences ? { readDeploymentReferences: () => readMachineDeploymentReferencesV1({
+            homeId: projectHomeId, machineId: input.machineId, signal,
+          }, page => machineRebootReferences({ input, context, cursor: page.cursor, signal })) } : {}),
           ...(signal ? { signal } : {}) });
         return callMachineAction({ machineId: input.machineId, serverId: input.serverId,
           method: RPC_METHODS.MACHINES_REBOOT, request: input, authority: context.authority,

@@ -1,3 +1,5 @@
+import { MachineDeploymentDomainReferenceV1Schema } from './machineDeploymentDomainReferenceV1.js';
+export { MachineDeploymentDomainReferenceV1Schema, type MachineDeploymentDomainReferenceV1 } from './machineDeploymentDomainReferenceV1.js';
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { readWorkBoardArtifactV1 } from '../boards/workBoardArtifactV1.js';
@@ -12,6 +14,7 @@ deploymentRoles: z.optional(z.readonly(z.array(z.enum(['runtime', 'data', 'retir
 
   kind: z.enum(['board', 'profile', 'machine_pool', 'workflow_assignment', 'automation_assignment', 'deployment_environment']),
   id: z.string().check(z.trim(), z.minLength(1)), name: z.string(),
+  deploymentDomains: z.optional(z.readonly(z.array(MachineDeploymentDomainReferenceV1Schema))),
 })));
 export const MachineReferenceCensusV1Schema = lazyZodSchema(() => z.readonly(z.strictObject({
   homeId: z.string().check(z.trim(), z.minLength(1)), machineId: z.nullable(z.string().check(z.trim(), z.minLength(1))),

@@ -33,7 +33,7 @@ import { parseToken } from '@/utils/auth/parseToken';
 import { createArtifactWithHeaderViaApi, decryptArtifactListItems, fetchArtifactWithBodyFromApi, fetchArtifactsWithBodiesFromApi, updateArtifactWithHeaderViaApi,
     fetchArtifactBodyRevisionsFromApi, fetchArtifactBinaryFromApi, restoreArtifactBodyRevisionViaApi, type ArtifactDataKeyCache } from '@/sync/engine/artifacts/syncArtifacts';
 import { listArtifactHeadersV1, type ArtifactListPageOptionsV1 } from '@happier-dev/protocol/artifacts/artifactListSelectionV1';
-import { createArtifactAccessApi, deleteArtifact as deleteArtifactApi, fetchArtifactListPage, fetchArtifactStorageUsage, encodeArtifactListCursor } from '@/sync/api/artifacts/apiArtifacts';
+import { createArtifactAccessApi, deleteArtifact as deleteArtifactApi, fetchArtifactListPage, fetchArtifactReadBatch, fetchArtifactStorageUsage, encodeArtifactListCursor } from '@/sync/api/artifacts/apiArtifacts';
 import { HappyError } from '@/utils/errors/errors';
 import type { Artifact, ArtifactBodyInput, ArtifactHeader, DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import { isEmbedWindowContext } from '@/embed/isEmbedWindowContext';
@@ -147,6 +147,7 @@ export async function captureLazyActionAccountContext(serverIdRaw: string, signa
             },
             fetchArtifact: async (_artifactId: string, _options?: ArtifactReadOptions) => unavailable(),
             readArtifact: async (_artifactId: string, _options?: ArtifactReadOptions): Promise<DecryptedArtifact | null> => artifactUnavailable(),
+            readArtifactHeaders: async (_artifactIds: readonly string[], _options?: Pick<ArtifactReadOptions, 'signal' | 'fresh'>): Promise<PromiseSettledResult<DecryptedArtifact | null>[]> => artifactUnavailable(),
             readArtifactContent: async (_artifactId: string, _options?: ArtifactContentReadOptions): Promise<ArtifactContentRead | null> => artifactUnavailable(),
             readArtifactContents: async (_ids: readonly string[], _options?: Parameters<WorkflowDefinitionArtifactOperations['read']>[1]):
                 Promise<PromiseSettledResult<Awaited<ReturnType<WorkflowDefinitionArtifactOperations['read']>>>[]> => artifactUnavailable(),
@@ -376,6 +377,30 @@ export async function captureLazyActionAccountContext(serverIdRaw: string, signa
             }
             return artifact;
         };
+        const readArtifactHeaders = async (artifactIds: readonly string[], options?: Pick<ArtifactReadOptions, 'signal' | 'fresh'>): Promise<PromiseSettledResult<DecryptedArtifact | null>[]> =>
+            withArtifactReadSignal(options?.signal, async borrowerSignal => {
+                assertCurrent();
+                if (artifactIds.length === 0) return [];
+                const params = await artifactParams();
+                const results = await fetchArtifactReadBatch(credentials, artifactIds, {
+                    request, readTransport, signal: borrowerSignal, fresh: options?.fresh, projection: 'headers',
+                });
+                assertCurrent();
+                const opened = await decryptArtifactListItems({ ...params,
+                    artifacts: results.flatMap(result => result.ok ? [result.artifact] : []),
+                    includeBody: false });
+                assertCurrent();
+                const byId = new Map(opened.flatMap(artifact => artifact ? [[artifact.id, artifact] as const] : []));
+                return Promise.allSettled(results.map(async result => {
+                    if (!result.ok) {
+                        if (result.error === 'artifact_not_found') return null;
+                        throw new HappyError(result.error, result.retryable, { code: result.error, status: result.status });
+                    }
+                    const artifact = byId.get(result.artifactId);
+                    if (!artifact) throw artifactContentUnavailable();
+                    return artifact;
+                }));
+            });
         const accessApi = createArtifactAccessApi(credentials, { request, readTransport, serverId });
         const prepareArtifact = async (artifactId: string, operationSignal?: AbortSignal) => {
             // A held pre-operation census cannot witness the resulting audience.
@@ -695,6 +720,7 @@ export async function captureLazyActionAccountContext(serverIdRaw: string, signa
             },
             fetchArtifact,
             readArtifact,
+            readArtifactHeaders,
             // Finite content observations use the same codec and authority without
             // invalidating the list that is currently reading them.
             readArtifactContent: (artifactId: string, options?: ArtifactContentReadOptions): Promise<ArtifactContentRead | null> => readArtifactDocument(false, artifactId, options),

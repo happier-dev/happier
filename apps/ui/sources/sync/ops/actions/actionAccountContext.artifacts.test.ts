@@ -44,7 +44,7 @@ import { executeDiscussionActionInAccountContext } from '@/sync/api/discussions/
 import { createArtifactActionsClient } from '@/components/artifacts/artifactActionsClient';
 import { createSessionReadBatchHttpBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { createDeferred } from '@/dev/testkit';
-import { createArtifactListHttpResponse, createArtifactReadBatchHttpResponse, projectArtifactStoredKind } from '@/dev/testkit/harness/artifactStoreBoundary';
+import { createArtifactListHttpResponse, createArtifactReadBatchHttpResponse, createPlainArtifactHttpFixture, projectArtifactStoredKind } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { decodeArtifactKindV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
 
 // HTTP, device credential storage and the native theme runtime are substituted boundaries.
@@ -80,6 +80,40 @@ function installSessionBatchHttpFixture(accountId: string, route: (url: unknown,
 afterEach(() => { runtimeFetch.mockReset(); vi.restoreAllMocks(); });
 
 describe('scoped Account workflow Artifact operations', () => {
+    it('opens only the demanded collection headers in one batch without bodies', async () => {
+        const home = await upsertAndActivateServer({ serverUrl: 'https://artifact-visible-header-batch.test', scope: 'tab' });
+        const token = `header.${encodeBase64(new TextEncoder().encode(JSON.stringify({ sub: 'artifact-account' })), 'base64url')}.signature`;
+        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token });
+        const rows = Array.from({ length: 1000 }, (_, index) => createPlainArtifactHttpFixture({
+            id: `environment-${index}`, title: `Environment ${index}`, header: { title: `Environment ${index}` },
+            rawHeader: { title: `Environment ${index}` }, body: 'Private unopened definition', isDecrypted: true,
+            headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1,
+        }, 'artifact-account'));
+        const demanded = rows.slice(300, 400).map(row => row.id);
+        const batches: unknown[] = [];
+        runtimeFetch.mockImplementation(async (input: unknown, init?: RequestInit) => {
+            const path = new URL(String(input)).pathname;
+            if (path === '/health' || path === '/v1/auth/ping') return json({});
+            if (path === '/v1/features') return json({ features: {}, capabilities: {} });
+            if (path === '/v1/account/encryption') return json({ mode: 'plain', updatedAt: 0 });
+            if (path === '/v1/artifacts/read') {
+                const request: unknown = JSON.parse(String(init?.body));
+                batches.push(request);
+                return createArtifactReadBatchHttpResponse(request, artifactId => ({ artifactId, ok: true,
+                    artifact: rows.find(row => row.id === artifactId), recipientCensus: null }));
+            }
+            throw new Error(`Unexpected route ${path}`);
+        });
+        const account = await captureLazyActionAccountContext(home.id);
+        try {
+            const opened = await account.readArtifactHeaders(demanded);
+            expect(opened).toHaveLength(100);
+            expect(opened.every(result => result.status === 'fulfilled' && result.value?.isDecrypted
+                && result.value.body === undefined)).toBe(true);
+            expect(opened[0]).toMatchObject({ status: 'fulfilled', value: { id: 'environment-300', title: 'Environment 300' } });
+            expect(batches).toEqual([{ artifactIds: demanded, projection: 'headers' }]);
+        } finally { account.dispose(); }
+    });
     it('shares neutral Artifact acquisition across captured invocations without borrowing caller cancellation', async () => {
         const home = await upsertAndActivateServer({ serverUrl: 'https://artifact-shared-captured-read.test', scope: 'tab' });
         const token = `header.${encodeBase64(new TextEncoder().encode(JSON.stringify({ sub: 'artifact-account' })), 'base64url')}.signature`;

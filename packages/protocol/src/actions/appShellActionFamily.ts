@@ -71,11 +71,18 @@ const InboxReadGroupSchema = z.strictObject({ key: z.string(), root: z.discrimin
 ]), items: z.array(InboxReadItemSchema) });
 // The mounted Inbox owns classification and navigation. This closed read projection
 // carries its admitted rows without copying source content or becoming another builder.
+export const InboxExpectedHealthOperationV1Schema = lazyZodSchema(() => z.strictObject({
+  kind: z.enum(['stop', 'restart', 'deploy', 'reboot']),
+  operation: z.strictObject({ serverId: z.string().check(z.minLength(1)), machineId: z.string().check(z.minLength(1)),
+    operationId: z.string().check(z.minLength(1)) }),
+}));
+export type InboxExpectedHealthOperationV1 = z.infer<typeof InboxExpectedHealthOperationV1Schema>;
 const InboxCanonicalItemSchema = lazyZodSchema(() => z.strictObject({
   key: z.string(), producer: z.enum(['live', 'notice']),
   type: z.enum(['decision', 'approval', 'blocked', 'update', 'mention']),
   view: z.enum(['needs_you', 'updates', 'mentions']),
   title: z.string(), context: z.nullable(z.string()), createdAt: z.number(), read: z.boolean(), pageRoute: z.string(),
+  expectedDuring: z.optional(InboxExpectedHealthOperationV1Schema),
   source: z.strictObject({ kind: z.string(), id: z.string(), serverId: z.string(), displayName: z.optional(z.nullable(z.string())) }),
   focus: z.discriminatedUnion('kind', [
     z.strictObject({ kind: z.literal('session'), serverId: z.string(), id: z.string(), jumpSeq: z.optional(z.number()) }),
@@ -99,6 +106,7 @@ export function projectInboxReadItemV1(item: z.infer<typeof InboxCanonicalItemSc
   return InboxCanonicalItemSchema.parse({ key: item.key, producer: item.producer, type: item.type, view: item.view,
     title: item.title, context: item.context, createdAt: item.createdAt, read: item.read, focus: item.focus,
     pageRoute: item.pageRoute,
+    ...(item.expectedDuring ? { expectedDuring: item.expectedDuring } : {}),
     source: { kind: item.source.kind, id: item.source.id, serverId: item.source.serverId,
       ...(item.source.displayName === undefined ? {} : { displayName: item.source.displayName }) },
     ...(item.question ? { question: item.question } : {}), ...(item.discussion ? { discussion: item.discussion } : {}),

@@ -594,3 +594,13 @@ a checkout and are unchanged.
 - Dockerfile: `Dockerfile`
 - Kubernetes manifests: `apps/server/deploy`
 - Env usage: `apps/server/sources` (`rg -n "process.env"`)
+
+In 0.3 development source, the mounted Inbox explains an existing service-health
+condition from an already-readable running stop, restart, deployment or reboot operation.
+Native control publishes its exact service and generation before dispatch;
+reboot captures running services and retained Domain placements for the admitted
+Machine installation. Domain explanations require the exact Environment, link
+and Domain probe subject, and never cover certificate failures. An unavailable,
+uncertain, foreign-Account or settled operation supplies no explanation. This
+presentation changes neither the health observation nor server-followed presence,
+and creates no second notice or persisted expectation.

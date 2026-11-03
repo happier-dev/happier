@@ -1,3 +1,5 @@
+import { MachineServiceHealthCheckSubjectV1Schema } from '../../deployments/healthCheckSubjectV1.js';
+import { MachineDeploymentDomainReferenceV1Schema } from '../../machines/machineDeploymentDomainReferenceV1.js';
 import { MachineServiceAdoptResultV1Schema } from '../../local/services/adoptionV1.js';
 import { MachineRebootResultV1Schema } from '../specs/machine/reboot.js';
 import { MachineVitalsHostFactsV1Schema } from '../../machines/vitals/machineVitalsSampleV1.js';
@@ -227,6 +229,11 @@ export const ManagedMachineBootstrapApprovalPromptV1Schema = lazyZodSchema(() =>
   z.strictObject({ kind: z.literal('daemon.replaceRemoteBackgroundServices'), message: ActionOperationProgressLabelV1Schema }),
 ]));
 export const ActionOperationDomainRefV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
+  z.strictObject({
+    kind: z.literal('machineService'), serverId: ActionOperationIdentifierV1Schema,
+    operation: z.enum(['start', 'stop', 'restart']), generation: ActionOperationIdentifierV1Schema,
+    subject: MachineServiceHealthCheckSubjectV1Schema,
+  }),
     z.strictObject({
     kind: z.literal('deployment'), serverId: ActionOperationIdentifierV1Schema,
     environmentId: ActionOperationIdentifierV1Schema, deploymentId: ActionOperationIdentifierV1Schema,
@@ -302,6 +309,7 @@ z.strictObject({
       expectedRunningServiceIds: z.readonly(z.array(z.string().check(z.minLength(1)))),
       expectedRunningServicesKnown: z.boolean(),
       dispatchStarted: z.literal(true),
+      domains: z.optional(z.readonly(z.array(MachineDeploymentDomainReferenceV1Schema))),
     })),
   }),
   z.strictObject({

@@ -42,3 +42,18 @@ export function createAccountNoticeArtifactFixture(
         })),
     });
 }
+
+/** C1's strict health notice shape, served through the same private Artifact fixture. */
+export function createServiceHealthNoticeArtifactFixture(
+    serverId: string,
+    overrides: Parameters<typeof createAccountNoticeArtifactFixture>[0] = {},
+): Extract<DecryptedArtifact, { isDecrypted: true }> {
+    const service = { kind: 'deployment', machineId: 'machine', environmentId: 'environment',
+        environmentInstanceId: 'instance', composeService: 'web', serviceId: 'instance/web' } as const;
+    return createAccountNoticeArtifactFixture({ ...overrides, header: {
+        title: 'Payments service needs attention', source: { kind: 'host', topic: 'service_health', subject: service },
+        page: { kind: 'host', page: 'machine_service', machine: { serverId, machineId: service.machineId }, service,
+            environment: { serverId, projectSourceId: 'project', environmentId: service.environmentId } },
+        healthPhase: 'open', type: 'update', ...overrides.header,
+    } });
+}

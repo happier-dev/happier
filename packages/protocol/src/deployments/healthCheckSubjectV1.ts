@@ -4,9 +4,12 @@ import { projectZodProtocolSchema } from '../plugins/actions/internalProtocolZod
 import { DeploymentIdentifierV1Schema as id } from './deploymentIdentifiersV1.js';
 
 /** The observation subject is independent of the Machine running its checks. */
+export const MachineServiceHealthCheckSubjectV1Schema = lazyZodSchema(() => z.strictObject({
+  kind: z.literal('machineService'), machineId: id, serviceId: id,
+}));
 export const HealthCheckSubjectV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('environment'), environmentId: id }),
-  z.strictObject({ kind: z.literal('machineService'), machineId: id, serviceId: id }),
+  MachineServiceHealthCheckSubjectV1Schema,
 ]));
 export type HealthCheckSubjectV1 = z.infer<typeof HealthCheckSubjectV1Schema>;
 export const HealthCheckSubjectV1ProtocolSchema = lazyDefinition(() => projectZodProtocolSchema(HealthCheckSubjectV1Schema));

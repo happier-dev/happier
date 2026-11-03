@@ -1,3 +1,6 @@
+import { actionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
+import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
+import { createServiceHealthNoticeArtifactFixture } from '@/dev/testkit/fixtures/usageNoticeFixtures';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -159,6 +162,40 @@ function enableDiscussionReads() {
 }
 
 describe('useInboxModel work groups (ORC R-10)', () => {
+    it('keeps one C1 health condition in Updates during its readable operation and restores blocking after settlement', async () => {
+        listRuns.mockResolvedValue(page([]));
+        const serverId = appliedSnapshot().serverId;
+        const artifact = createServiceHealthNoticeArtifactFixture(serverId, { header: { type: 'blocked' } });
+        seedArtifacts({ [artifact.id]: artifact });
+        const reboot: ActionOperationSnapshotV1 = {
+            version: 1, operationId: 'health-reboot', revision: 1, actionId: 'machines.reboot', state: 'running',
+            scope: { accountId: 'account-a', machineId: 'machine' }, title: 'Reboot', createdAt: Date.now(),
+            cancellation: 'unsupported', domainRef: { kind: 'machineReboot', serverId, machineId: 'machine',
+                installationId: 'installation-a', task: { id: 'task', taskKind: 'machine.reboot.v1' },
+                basis: { dispatchStarted: true, bootedAt: 1, expectedRunningServiceIds: ['instance/web'], expectedRunningServicesKnown: true } },
+        };
+        actionOperationStore.mergeSnapshots({ serverId, snapshots: [reboot] });
+        const screen = await renderModel();
+        try {
+            const rows = () => model!.items.filter(item => item.source.id === artifact.id);
+            expect(rows()).toEqual([expect.objectContaining({ view: 'updates', expectedDuring: {
+                kind: 'reboot', operation: { serverId, machineId: 'machine', operationId: 'health-reboot' },
+            } })]);
+            expect(await readInbox()).toMatchObject({ ok: true, result: { items: expect.arrayContaining([
+                expect.objectContaining({ expectedDuring: { kind: 'reboot', operation: {
+                    serverId, machineId: 'machine', operationId: 'health-reboot',
+                } } }),
+            ]) } });
+            await act(async () => model!.markItemOpened(rows()[0]!));
+            expect(model!.accountNotices[0]!.header).toMatchObject({ healthPhase: 'open', resolved: false });
+            await act(async () => actionOperationStore.mergeSnapshots({ serverId, snapshots: [{ ...reboot,
+                revision: 2, state: 'failed', settledAt: Date.now() }] }));
+            expect(rows()).toEqual([expect.objectContaining({ view: 'needs_you', type: 'blocked' })]);
+            expect(rows()[0]!.expectedDuring).toBeUndefined();
+            expect(readAccountNoticeArtifactHeader(storage.getState().artifacts[artifact.id]!, 'account-a'))
+                .toMatchObject({ type: 'blocked', healthPhase: 'open', resolved: false });
+        } finally { await screen.unmount(); actionOperationStore.reset(); }
+    });
     it('keeps a list-only lead title current and private without reading transcript bodies on unrelated arrivals', async () => {
         listRuns.mockResolvedValue(page([]));
         const serverId = appliedSnapshot().serverId;

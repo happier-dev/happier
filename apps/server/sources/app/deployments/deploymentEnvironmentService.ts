@@ -1,3 +1,5 @@
+import { DeploymentEnvironmentHeaderV1Schema } from '@happier-dev/protocol';
+import { deploymentContentReference } from './deploymentStoredContent';
 import { readDeploymentBindingSavedSecretRevisionsV1 } from '@happier-dev/deployment-protocol';
 import { projectEnvironmentSecretBindingRequiredUsesV1,
     type EnvironmentSecretRequiredUsesProjectionV1 } from '@happier-dev/deployments';
@@ -6,7 +8,7 @@ import { readTransactionDatabaseTime } from '@/storage/transactionDatabaseTime';
 import { getDbProviderFromEnv } from '@/storage/prisma';
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import type { Tx } from '@/storage/inTx';
-import { resolveDeploymentEnvironmentAdmissionInTx, deploymentFailure, type DeploymentAuthentication } from './deploymentAdmission';
+import { resolveDeploymentEnvironmentAdmissionInTx, deploymentFailure, canDeployDeploymentEnvironment, type DeploymentSourceAdmission, type DeploymentAuthentication } from './deploymentAdmission';
 
 export type DeploymentEnvironmentRow = NonNullable<Awaited<ReturnType<Tx['deploymentEnvironment']['findUnique']>>>;
 
@@ -87,3 +89,30 @@ export async function readCreatedDeploymentEnvironmentIdInTx(tx: Tx, actorAccoun
 }
 
 /** Create an independent private-content relationship after destination management and optional copy-source admission. */
+
+export function projectDeploymentEnvironmentHeader(row: DeploymentEnvironmentRow & Readonly<{ deployers?: readonly Readonly<{ principalKind: string; principalId: string }>[] }>, serverId: string, admission: DeploymentSourceAdmission) {
+    const canDeploy = canDeployDeploymentEnvironment(admission, row);
+    return DeploymentEnvironmentHeaderV1Schema.parse({
+        v: 1, id: row.id, serverId, projectSourceId: row.projectSourceId, revision: row.revision,
+        owner: admission.owner, protection: row.protection,
+        purpose: row.purpose, deployerMode: row.deployerMode,
+        ...(row.previewTemplateEnvironmentId ? { previewTemplateEnvironmentId: row.previewTemplateEnvironmentId,
+            previewRepositoryId: row.previewRepositoryId, previewPullRequestId: row.previewPullRequestId,
+            previewTargetLinkId: row.previewTargetLinkId } : {}),
+        ...(row.deployers ? { deployerPrincipals: row.deployers.map(({ principalKind, principalId }) => ({ principalKind, principalId })) } : {}),
+        controllerMachineId: row.controllerMachineId,
+        ...(row.buildMachineId ? { buildMachineId: row.buildMachineId } : {}),
+        // Full mode lives in protected content; null edge custody never implies Tunnel.
+        ...(row.edgeMachineId ? { ingress: { kind: 'edgeCaddy', edgeMachineId: row.edgeMachineId } } : {}),
+        ...(row.runtimeTargetLinkId ? { runtimeTargetLinkId: row.runtimeTargetLinkId } : {}),
+        ...deploymentContentReference(row),
+        capabilities: { role: admission.canManage ? 'manager' : canDeploy ? 'deployer' : 'reader',
+            read: true, deploy: canDeploy, manage: admission.canManage && !row.deletedAt,
+            manageBindings: admission.canManage && !row.deletedAt, manageTargets: admission.canManage && !row.deletedAt,
+            delete: admission.canManage && !row.deletedAt },
+        createdByAccountId: row.createdByAccountId, createdAtMs: row.createdAt.getTime(), updatedAtMs: row.updatedAt.getTime(),
+        ...(row.deletedAt ? { deletedAtMs: row.deletedAt.getTime() } : {}),
+    });
+}
+
+/** Every read and mutation resolves current Source authority rather than requester attribution. */

@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -13,7 +13,7 @@ import type { MachineActionDirectTargetTransport } from '@/session/actions/cliAc
 import type { RpcHandlerContext } from './rpc/types';
 import { readOrCreateInstallationIdentity } from '@/daemon/identity/store';
 import { createApiSessionSocketStub, resolveApiSessionSocketDefaultAck } from '@/testkit/backends/apiSessionSocketHarness';
-import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
+import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
 import { createDeferred } from '@/testkit/async/deferred';
 import { createSpawnRequestCoalescer } from '@/daemon/spawn/spawnRequestCoalescer';
 import { createSessionLiveWorkProducer } from '@/daemon/lifecycle/sessionLiveWorkProducer';
@@ -37,6 +37,13 @@ import { ACTION_OPERATION_RPC_METHODS_V1, ACTION_OPERATION_RPC_METHODS_V2, Actio
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 
+// The network boundary settles deterministically while the actual Account
+// observer, socket adapter and connection supervisor retain their real wiring.
+vi.mock('socket.io-client', async () => {
+    const { createApiSessionSocketStub } = await import('@/testkit/backends/apiSessionSocketHarness');
+    return { io: () => createApiSessionSocketStub() };
+});
+
 let directory: string;
 let cleanups: Array<() => Promise<void>>;
 beforeEach(async () => {
@@ -52,7 +59,7 @@ afterEach(async () => {
 });
 
 async function setupReboot(options: Readonly<{ busyStartup?: boolean; spawn?: MachineElevationSpawn;
-    readEncryption?: () => Promise<Readonly<{ mode: 'plain' }>> }> = {}) {
+    readReferences?: () => Promise<void> }> = {}) {
         const profile = await addServerProfile({ name: 'reboot', serverUrl: 'https://home.invalid', webappUrl: 'https://home.invalid' });
         // Captured Home descriptor through its actual profile-adoption owner.
         // Raw capability admission must not invent custody from Account equality.
@@ -115,11 +122,31 @@ async function setupReboot(options: Readonly<{ busyStartup?: boolean; spawn?: Ma
             },
         };
         const lifecycle: ApiMachineClientLifecycleDependencies = { managedActivity: { activity: inventory, admissionDrain: drain }, machineReboot };
-        const accountChannel = await createRequesterCurrentnessSocketHarness();
-        onTestFinished(() => accountChannel.close());
         const releaseHome = publishServerHttpRuntimeOrigin('https://home.invalid', 'https');
         // Installed ApiClient owns the authenticated connection's Home facts.
         // A saved profile descriptor alone is not current execution custody.
+        const homePosts = vi.spyOn(axios, 'post').mockResolvedValue({ status: 200, statusText: 'OK', headers: {},
+            config: { headers: new AxiosHeaders() }, data: { v: 1, ok: true } });
+        vi.spyOn(axios, 'get').mockImplementation(async url => {
+            if (String(url).endsWith('/v1/deployments/machine-references')) {
+                await options.readReferences?.();
+                return { status: 200, data: {
+                homeId: configuration.activeServerId, machineId: 'machine', coverage: 'complete', nextCursor: null,
+                references: [{ kind: 'deployment_environment', id: 'edge-environment', name: '', deploymentRoles: ['edge'],
+                    deploymentDomains: [{ environmentId: 'edge-environment', targetLinkId: 'runtime-link', domainId: 'actual-domain',
+                        machineId: 'machine', installationId: installation.installationId }] }],
+            } };
+            }
+            if (String(url).endsWith('/v1/account/profile')) return { status: 200, data: { id: 'owner' } };
+            if (String(url).includes('/v2/changes?')) return { status: 200,
+                data: { changes: [], nextCursor: 0 } };
+            if (String(url).endsWith('/v1/account/encryption/currentness')) return {
+                status: 200, data: createAccountEncryptionCurrentnessFixture({ mode: 'plain' }),
+            };
+            if (!String(url).endsWith('/v1/account/encryption')) throw new Error(`Unexpected Home GET ${url}`);
+            return { status: 200, statusText: 'OK', headers: {}, config: { headers: new AxiosHeaders() },
+                data: { mode: 'plain', updatedAt: 1 } };
+        });
         const api = await ApiClient.create(credentials);
         api.setServerFeaturesSnapshotProvider(() => ({ status: 'ready', features: FeaturesResponseSchema.parse({
             features: {}, capabilities: { serverIdentity: { serverIdentityId: 'srv_machine_reboot' } },
@@ -129,7 +156,7 @@ async function setupReboot(options: Readonly<{ busyStartup?: boolean; spawn?: Ma
                 happyHomeDir: '/users/worker/.happier', adminAccess: { version: 1, mode: 'ask', administratorUsername: 'operator' } },
             metadataVersion: 1, daemonState: { status: 'running' }, daemonStateVersion: 0,
         }, undefined, lifecycle);
-        // Socket and Home currentness are genuine transports. No Action policy,
+        // Socket and Home currentness substitute only transports. No Action policy,
         // inventory, drain, native admission, operation or lifecycle is mocked.
         const prompt = createDeferred<Extract<NonNullable<ActionOperationSnapshotV1['domainRef']>, { kind: 'machineReboot' }>>();
         const snapshots: ActionOperationSnapshotV1[] = [];
@@ -147,17 +174,6 @@ async function setupReboot(options: Readonly<{ busyStartup?: boolean; spawn?: Ma
             snapshots.push(parsed.data);
             if (parsed.data.domainRef?.kind === 'machineReboot' && parsed.data.domainRef.task.prompt) prompt.resolve(parsed.data.domainRef);
         } }));
-        const homePosts = vi.spyOn(axios, 'post').mockResolvedValue({ status: 200, statusText: 'OK', headers: {},
-            config: { headers: new AxiosHeaders() }, data: { v: 1, ok: true } });
-        vi.spyOn(axios, 'get').mockImplementation(async url => {
-            if (String(url).endsWith('/v1/account/profile')) return { status: 200, data: { id: 'owner' } };
-            // Existing legacy-Home compatibility: no currentness push route;
-            // exact Machine admission is still reverified by its real POST.
-            if (String(url).endsWith('/v1/account/encryption/currentness')) return { status: 404, data: {} };
-            if (!String(url).endsWith('/v1/account/encryption')) throw new Error(`Unexpected Home GET ${url}`);
-            return { status: 200, statusText: 'OK', headers: {}, config: { headers: new AxiosHeaders() },
-                data: { ...await (options.readEncryption?.() ?? Promise.resolve({ mode: 'plain' as const })), updatedAt: 1 } };
-        });
         client.registerLocalServicesRoutes({ machineId: 'machine', serverId: configuration.activeServerId, accountId: 'owner',
             // Same public CLI factory/direct-host port as installed startup.
             // No projectManagedServices is provided: reboot must not depend on
@@ -264,7 +280,7 @@ async function setupReboot(options: Readonly<{ busyStartup?: boolean; spawn?: Ma
             elevationProcesses: () => elevationProcesses, close };
 }
 
-function rebootProcessBoundary(options: Readonly<{ beforeRootPreparation?: () => void;
+function rebootProcessBoundary(options: Readonly<{ onRootReady?: () => void;
     beforeCommand?: () => void; loseDispatchReply?: boolean }> = {}) {
     const commands: Array<Readonly<{ executable: string; args: readonly string[] }>> = [];
     const passwords: string[] = [];
@@ -285,6 +301,7 @@ function rebootProcessBoundary(options: Readonly<{ beforeRootPreparation?: () =>
         });
         const rootOutput = new Writable({ write(chunk: Buffer, _encoding, done) {
             const record: unknown = JSON.parse(chunk.toString('utf8'));
+            if (record && typeof record === 'object' && 'type' in record && record.type === 'ready') options.onRootReady?.();
             const checked = record && typeof record === 'object' && 'result' in record && record.result
                 && typeof record.result === 'object' && 'status' in record.result && record.result.status === 'checked';
             // CHECK is an indispensable handshake, not the lost dispatch receipt.
@@ -296,7 +313,7 @@ function rebootProcessBoundary(options: Readonly<{ beforeRootPreparation?: () =>
             if (!allowed) return 1;
             return await runMachineSetupEffectInternal(launch.args.slice(launch.args.indexOf('effect-internal') + 1), {
                 stdin: rootInput, stdout: rootOutput, platform: 'linux', readUid: () => 0,
-                readNativeInit: async () => { options.beforeRootPreparation?.(); return 'systemd\n'; },
+                readNativeInit: async () => 'systemd\n',
                 runNative: async command => { options.beforeCommand?.(); commands.push(command); return { code: 0, stdout: '', stderr: '' }; },
             });
         }).then(code => { rootOutput.end(); stdout.end(); stderr.end(); return { code, signal: null }; });
@@ -315,21 +332,21 @@ async function answerReboot(f: Awaited<ReturnType<typeof setupReboot>>,
 
 describe('installed reboot public Action admission', () => {
     it('publishes the admitted before-basis before the sole OS dispatch and keeps ingress closed after dispatch', async () => {
-        let holdPublication = false;
         let rootFrameAdmissionBaseline: number | undefined;
         let finalMaintenanceBaseline: number | undefined;
-        const publication = createDeferred(), releasePublication = createDeferred();
-        const boundary = rebootProcessBoundary({ beforeRootPreparation: () => {
-            holdPublication = true;
-            // APPLY re-observes the same native fact. Keep the baseline from
-            // CHECK, before publication and the final maintenance admission.
+        let basisAtDispatch: ActionOperationSnapshotV1['domainRef'];
+        const boundary = rebootProcessBoundary({ onRootReady: () => {
+            // The actual privileged interpreter is ready, before the carrier
+            // publishes the basis and performs final maintenance admission.
             rootFrameAdmissionBaseline ??= f.admissionVerifications();
             finalMaintenanceBaseline ??= f.maintenanceReads();
+        }, beforeCommand: () => {
+            // The outside operation holder must already have the exact basis
+            // when the installed root interpreter crosses the OS boundary.
+            basisAtDispatch = [...f.snapshots].reverse().find(snapshot => snapshot.domainRef?.kind === 'machineReboot'
+                && snapshot.domainRef.basis?.dispatchStarted)?.domainRef;
         } });
-        const f = await setupReboot({ spawn: boundary.spawn, readEncryption: async () => {
-            if (holdPublication) { publication.resolve(); await releasePublication.promise; }
-            return { mode: 'plain' };
-        } });
+        const f = await setupReboot({ spawn: boundary.spawn });
         const invocation = f.invoke();
         try {
             const question = await Promise.race([f.prompt.promise, invocation.then(result => { throw new Error(`Reboot returned before Ask: ${JSON.stringify(result)}`); })]);
@@ -338,7 +355,7 @@ describe('installed reboot public Action admission', () => {
             // the daemon must not add another Home verification before Ask.
             expect(f.admissionVerifications()).toBe(0);
             expect(await answerReboot(f, question, f.contextForActor('foreign-manager')))
-                .toMatchObject({ errorCode: 'agent_isolation_unavailable' });
+                .toMatchObject({ ok: false, error: { code: 'permission_denied' } });
             expect(boundary.passwords).toEqual([]);
             expect((await f.control.inject({ method: 'POST', url: '/execution-run/admission',
                 headers: { 'x-happier-daemon-token': 'run-token' }, payload: {} })).json()).toEqual({ admitted: false, reason: 'daemon_draining' });
@@ -346,37 +363,31 @@ describe('installed reboot public Action admission', () => {
                 headers: { 'x-happier-daemon-token': 'control-token' }, payload: {} })).json())
                 .toMatchObject({ success: false, errorCode: 'daemon_draining' });
             const answer = answerReboot(f, question);
-            await publication.promise;
-            // Let the real stream/interpreter consume any already-written
-            // dispatch frame while the Home publication boundary is held.
-            await new Promise(resolve => setImmediate(resolve));
-            // A queued async snapshot is not yet an admitted outside holder.
-            expect(boundary.commands).toEqual([]);
-            releasePublication.resolve();
             expect(await answer).toMatchObject({ ok: true });
-            expect(await invocation).toMatchObject({ kind: 'accepted', bootedAt: 1000 });
+            const result = await invocation;
+            expect(basisAtDispatch).toMatchObject({ basis: { dispatchStarted: true,
+                domains: [{ environmentId: 'edge-environment', targetLinkId: 'runtime-link', domainId: 'actual-domain',
+                    machineId: 'machine', installationId: f.context.machineAdmission!.installationId }] } });
+            expect(result).toMatchObject({ kind: 'accepted', bootedAt: 1000 });
             expect(rootFrameAdmissionBaseline).toBeDefined();
             expect(f.admissionVerifications() - rootFrameAdmissionBaseline!).toBe(0);
             expect(finalMaintenanceBaseline).toBeDefined();
             expect(f.maintenanceReads() - finalMaintenanceBaseline!).toBe(1);
             expect(boundary.commands).toEqual([{ executable: 'systemctl', args: ['--no-block', 'reboot'], signal: expect.any(AbortSignal) }]);
-            expect(f.snapshots.some(snapshot => snapshot.domainRef?.kind === 'machineReboot'
-                && snapshot.domainRef.basis?.dispatchStarted === true)).toBe(true);
             expect(f.drain.isQuiescing()).toBe(true);
             await expect(f.nativeAdmission.run({ operation: { operationId: 'later', kind: 'service-control' }, keys: [] }, async () => {}))
                 .rejects.toMatchObject({ code: 'effect_in_progress' });
             expect(JSON.stringify(f.snapshots)).not.toContain('one-use-password');
             expect(boundary.passwords).toEqual(['one-use-password']);
-        } finally { releasePublication.resolve(); await f.close(); await invocation; }
+        } finally { await f.close(); await invocation; }
     });
 
     it('refuses an installation replacement at the final local dispatch boundary after root preparation', async () => {
         let holdPublication = false;
         const publication = createDeferred(), releasePublication = createDeferred();
-        const boundary = rebootProcessBoundary({ beforeRootPreparation: () => { holdPublication = true; } });
-        const f = await setupReboot({ spawn: boundary.spawn, readEncryption: async () => {
+        const boundary = rebootProcessBoundary({ onRootReady: () => { holdPublication = true; } });
+        const f = await setupReboot({ spawn: boundary.spawn, readReferences: async () => {
             if (holdPublication) { publication.resolve(); await releasePublication.promise; }
-            return { mode: 'plain' };
         } });
         const invocation = f.invoke();
         try {

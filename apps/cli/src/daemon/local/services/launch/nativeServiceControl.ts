@@ -21,6 +21,12 @@ export async function controlNativeServiceForHost(input: Readonly<{
         return { kind: 'outcome_unknown', operation };
     };
     try {
+        signal.throwIfAborted();
+        context.operationOwnerUpdate?.update({ domainRef: {
+            kind: 'machineService', serverId: handle.serverId, operation: input.operation,
+            generation: handle.instanceId,
+            subject: { kind: 'machineService', machineId: handle.machineId, serviceId: handle.serviceId },
+        } });
         const result = await handle.controlNative(input.operation, { operation: { ...operation, kind: 'serviceControl', signal }, signal });
         if (result.kind === 'outcome_unknown') return uncertain();
         if (result.kind === 'unsupported') return result;

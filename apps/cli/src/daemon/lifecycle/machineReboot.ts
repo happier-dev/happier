@@ -1,4 +1,5 @@
-import type { ActionExecuteResult, MachineRebootInputV1, MachineRebootResultV1 } from '@happier-dev/protocol';
+import type { ActionExecuteResult, ActionOperationDomainRefV1, MachineRebootInputV1, MachineRebootResultV1 } from '@happier-dev/protocol';
+import type { MachineDeploymentReferencesPageV1 } from '@happier-dev/protocol/machines/machineReferenceCensusV1';
 import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAdapter';
 import type { HostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
 import type { MachineVitalsSampler } from '@/daemon/vitals/createMachineVitalsSampler';
@@ -36,6 +37,7 @@ export type MachineRebootDirectTargetInvocation = Readonly<{
     signal?: AbortSignal;
     /** Captured original Account read; never accepted from the Action operand. */
     canReadEnvironments?: (environmentIds: readonly string[]) => Promise<ReadonlySet<string>>;
+    readDeploymentReferences?: () => Promise<MachineDeploymentReferencesPageV1>;
 }>;
 
 type RebootOperation = Pick<Parameters<Parameters<HostActionOperationRuntime['observeExecution']>[0]['execute']>[0],
@@ -107,7 +109,9 @@ export function createMachineRebootAction(input: Readonly<{
                         if (maintenance.kind !== 'eligible') return domain({ kind: 'blocked', reasons: [...maintenance.reasons] });
                         const host = routes.vitals.host();
                         if (!host) return domain({ kind: 'unavailable', reason: 'required_fact_unavailable' });
-                        let basis = { bootedAt: host.bootedAt, expectedRunningServiceIds: [] as string[], expectedRunningServicesKnown: false };
+                        let basis: Omit<NonNullable<Extract<ActionOperationDomainRefV1, { kind: 'machineReboot' }>['basis']>, 'dispatchStarted'> = {
+                            bootedAt: host.bootedAt, expectedRunningServiceIds: [], expectedRunningServicesKnown: false,
+                        };
                         const accepted = () => ({ kind: 'accepted' as const, operation: { operationId }, bootedAt: basis.bootedAt });
                         let finalMaintenance: Exclude<Awaited<ReturnType<typeof readMachineMaintenanceAdmission>>, { kind: 'eligible' }> | undefined;
                         const tasks = getLiveSystemTasksRunnerAdapter();
@@ -116,9 +120,7 @@ export function createMachineRebootAction(input: Readonly<{
                             operation.operationOwnerUpdate.update({ domainRef: { kind: 'machineReboot', serverId: request.input.serverId,
                                 machineId: target.machineId, installationId: target.installationId,
                                 task: { id: task.taskId, taskKind: 'machine.reboot.v1', ...(prompt ? { prompt } : {}) },
-                                ...(mayHaveDispatched ? { basis: { bootedAt: basis.bootedAt,
-                                    expectedRunningServiceIds: basis.expectedRunningServiceIds,
-                                    expectedRunningServicesKnown: basis.expectedRunningServicesKnown, dispatchStarted: true } } : {}) } });
+                                ...(mayHaveDispatched ? { basis: { ...basis, dispatchStarted: true } } : {}) } });
                         };
                         let outcome: ActionExecuteResult | undefined;
                         const task = await tasks.startAdmitted({ run: async taskContext => {
@@ -127,14 +129,19 @@ export function createMachineRebootAction(input: Readonly<{
                                 signal: taskSignal, async onRebootDispatch() {
                                     // Ask may have remained open while observation
                                     // adoption changed the current residency set.
-                                    const services = await routes.readServiceFacts({ serverId: target.serverId, machineId: target.machineId,
-                                        context: request.context,
-                                        requesterAccountId: scope.accountId,
-                                        ...(request.canReadEnvironments ? { canReadEnvironments: request.canReadEnvironments } : {}) }).catch(() => null);
+                                    const [services, references] = await Promise.all([
+                                        routes.readServiceFacts({ serverId: target.serverId, machineId: target.machineId,
+                                            context: request.context, requesterAccountId: scope.accountId,
+                                            ...(request.canReadEnvironments ? { canReadEnvironments: request.canReadEnvironments } : {}) }).catch(() => null),
+                                        request.readDeploymentReferences?.().catch(() => null) ?? null,
+                                    ]);
                                     basis = { bootedAt: routes.vitals.host()?.bootedAt ?? host.bootedAt,
                                         expectedRunningServiceIds: services?.services.filter(service => service.phase === 'running').map(service => service.serviceId) ?? [],
                                         expectedRunningServicesKnown: services?.coverage === 'complete'
-                                            && services.services.every(service => service.phase === 'running' || service.phase === 'stopped') };
+                                            && services.services.every(service => service.phase === 'running' || service.phase === 'stopped'),
+                                        ...(references ? { domains: references.references.flatMap(reference => reference.deploymentDomains ?? [])
+                                            .filter(domain => domain.machineId === target.machineId && domain.installationId === target.installationId) } : {}),
+                                    };
                                     // Set BEFORE writing the one irreversible frame.
                                     // Transport loss can no longer prove no dispatch.
                                     mayHaveDispatched = true;

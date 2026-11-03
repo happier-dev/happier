@@ -34,6 +34,19 @@ const baseSnapshot = {
 } as const;
 
 describe('Action operation v1 contract', () => {
+  it('retains exact reboot Domain subjects for current readers and omits them for released V1 readers', () => {
+    const domain = { environmentId: 'environment', targetLinkId: 'link', domainId: 'domain',
+      machineId: 'machine-1', installationId: 'installation' };
+    const domainRef = { kind: 'machineReboot', serverId: 'home', machineId: 'machine-1', installationId: 'installation',
+      task: { id: 'task', taskKind: 'machine.reboot.v1' }, basis: { bootedAt: 1, expectedRunningServiceIds: [],
+        expectedRunningServicesKnown: true, dispatchStarted: true, domains: [domain] } };
+    const operation = ActionOperationSnapshotV1Schema.parse({ ...baseSnapshot, actionId: 'machines.reboot',
+      state: 'running', startedAt: 110, domainRef });
+    expect(ActionOperationGetV1ResponseSchema.parse({ kind: 'found', operation })).toMatchObject({ operation: { domainRef } });
+    expect(projectActionOperationSnapshotForV1Reader(operation)).not.toHaveProperty('domainRef');
+    expect(ActionOperationDomainRefV1Schema.safeParse({ ...domainRef, basis: { ...domainRef.basis,
+      domains: [{ ...domain, endpoint: 'https://private' }] } }).success).toBe(false);
+  });
   it('retains closed Software Apply causes for current readers without native output', () => {
     const error = { errorCode: 'outcome_unknown', error: 'outcome_unknown', details: {
       kind: 'machineSetup', failure: { kind: 'native_effect_failed', reason: 'required_fact_unavailable' },

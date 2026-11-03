@@ -29,6 +29,7 @@ import { versionRoutes } from "./routes/version/versionRoutes";
 import { voiceRoutes } from "./routes/voice/voiceRoutes";
 import { artifactsRoutes } from "./routes/artifacts/artifactsRoutes";
 import { projectSourceRoutes } from "./routes/projects/projectSourceRoutes";
+import { registerDeploymentRoutes } from "./routes/deployments/deploymentRoutes";
 import { accessKeysRoutes } from "./routes/accessKeys/accessKeysRoutes";
 import { enableMonitoring } from "./utils/enableMonitoring";
 import { enableErrorHandlers } from "./utils/enableErrorHandlers";
@@ -222,6 +223,7 @@ export function registerApiRoutes(typed: Fastify, params: Readonly<{
     machinesRoutes(typed);
     artifactsRoutes(typed);
     projectSourceRoutes(typed);
+    registerDeploymentRoutes(typed);
     accessKeysRoutes(typed);
     devRoutes(typed);
     versionRoutes(typed);

@@ -6,13 +6,17 @@ import {
     type AccountNoticeArtifactHeaderV1,
 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
 import type { DecryptedArtifact } from './artifactTypes';
+import type { InboxExpectedHealthOperationV1 } from '@happier-dev/protocol/actions/appShellActionFamily';
 
 export type OpenUsageNoticeArtifact = Readonly<{
     artifact: DecryptedArtifact;
     header: UsageNoticeArtifactHeaderV1;
 }>;
 
-export type AccountNoticeArtifact = Readonly<{ artifact: DecryptedArtifact; header: AccountNoticeArtifactHeaderV1 }>;
+/** Readable operation navigation is transient presentation, never C1 identity or persisted expectation. */
+export type ExpectedHealthOperation = InboxExpectedHealthOperationV1;
+export type AccountNoticeArtifact = Readonly<{ artifact: DecryptedArtifact; header: AccountNoticeArtifactHeaderV1;
+    expectedDuring?: ExpectedHealthOperation }>;
 
 export function readAccountNoticeArtifactHeader(
     artifact: Parameters<typeof readOpenUsageNoticeArtifactHeader>[0],

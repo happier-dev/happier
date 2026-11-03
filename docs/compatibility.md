@@ -3986,6 +3986,16 @@ Run-on writer or store is added.
 
 ## SDK protocol evolution
 
+Unreleased 0.3 Action operation readers retain exact native service-control
+subjects and optional reboot Domain subjects in the existing `domainRef`.
+These facts explain a matching health notice only while its already-readable
+operation is running; they do not change health or Machine presence authority.
+Matching development Protocol, CLI and UI readers must refresh together because
+the current objects are closed. The released V1 projector continues omitting
+these domain references: the predecessor at `37a654157874` accepts only fork,
+spawn and handoff references. No migration, new wire epoch or server-side
+expectation record is introduced.
+
 Unreleased 0.3 Software Apply operation failures may carry closed
 `details: { kind: 'machineSetup', failure: { kind, reason? } }`, reusing the
 elevation owner's diagnostic schema. Current operation readers preserve this

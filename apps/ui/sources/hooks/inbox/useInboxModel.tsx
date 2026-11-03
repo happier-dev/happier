@@ -1,3 +1,4 @@
+import { projectExpectedHealthNotice } from '@/sync/domains/artifacts/projectExpectedHealthNotice';
 import * as React from 'react';
 import { readSessionManagerSessionIdV1 } from '@happier-dev/protocol/sessions/follow/sessionManagerV1';
 import { useHydrateSession } from '@/hooks/session/useHydrateSessionForRoute';
@@ -23,6 +24,7 @@ import { Modal } from '@/modal';
 import { t } from '@/text';
 import {
     useInboxActionOperations,
+    useActiveActionOperations,
 } from '@/sync/domains/actionOperations/useActionOperations';
 import type { InboxActionOperationEntry } from '@/sync/domains/actionOperations/actionOperationSelectors';
 import { actionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
@@ -167,6 +169,7 @@ function useCreateInboxModel(): InboxModel {
     const artifacts = useArtifacts();
     const artifactSource = useInboxArtifactSource();
     const profileScope = storage((state) => state.profileScope);
+    const readableOperations = useActiveActionOperations();
     const appPlugins = useAppShellPluginUiProjection();
     const pluginPackages = appPlugins.accountLifetime?.isCurrent()
         && areServerAccountScopesEqual(appPlugins.accountLifetime.scope, profileScope)
@@ -204,8 +207,8 @@ function useCreateInboxModel(): InboxModel {
     }), [artifacts, profileScope?.accountId]);
     const accountNotices = React.useMemo(() => artifacts.flatMap((artifact): AccountNoticeArtifact[] => {
         const header = readAccountNoticeArtifactHeader(artifact, profileScope?.accountId);
-        return header ? [{ artifact, header }] : [];
-    }), [artifacts, profileScope?.accountId]);
+        return header ? [projectExpectedHealthNotice({ artifact, header }, readableOperations, profileScope)] : [];
+    }), [artifacts, readableOperations, profileScope]);
     const openAccountNotices = React.useMemo(() => accountNotices.filter(entry => isOpenAccountNotice(entry.header)), [accountNotices]);
     const workflowAttention = useFullWorkflowAttentionSource();
     const workflowRunOnceDeliveries = React.useMemo(() => new Map(executionRuns.workflowFollows.map(follow =>

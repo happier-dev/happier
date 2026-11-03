@@ -31,6 +31,8 @@ export function classifyInboxExecutionRun(run: ExecutionRunPublicState): 'approv
     return run.attention?.kind === 'permission_required' ? 'approval' : isExecutionRunActive(run) ? 'update' : null;
 }
 export type InboxItem = Readonly<{
+    /** Exact readable operation explaining this existing health condition. */
+    expectedDuring?: AccountNoticeArtifact['expectedDuring'];
     key: string;
     producer: 'live' | 'notice';
     type: InboxItemType;
@@ -168,7 +170,7 @@ export function buildInboxItems(input: InboxItemsInput, previous: readonly Inbox
                 createdAt: entry.artifact.createdAt, header: entry.header,
                 pageRoute: resolveInboxItemPageRoute(focus, { notice: entry.header }),
                 pluginDisplayName: entry.header.source.kind === 'plugin' ? input.pluginDisplayNames?.get(entry.header.source.pluginId) : null });
-            if (row) rows.push(row);
+            if (row) rows.push(entry.expectedDuring ? { ...row, expectedDuring: entry.expectedDuring } : row);
         }
     }
     if (input.discussions) {
