@@ -1278,6 +1278,8 @@ export const ja: TranslationStructure = {
     support: "サポートに問い合わせる",
     invalidTitle: "組織ポリシーの確認が必要です",
     invalidBody: "管理者がポリシーを修正するまで、アカウントサービスやHomeの変更、新しいHomeの設定は利用できません。",
+    invalidNextStep: "ポリシーファイルが修正されたら、Happierを再起動してください。",
+    guide: "ポリシーガイド",
   },
   transcriptPassage: {
     quote: "引用",

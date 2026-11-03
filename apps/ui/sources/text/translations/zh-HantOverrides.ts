@@ -1284,6 +1284,8 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         support: '聯絡支援',
         invalidTitle: '組織原則需要處理',
         invalidBody: '在管理員修復原則之前，無法變更帳戶服務或 Home，也無法設定新的 Home。',
+        invalidNextStep: '原則檔案修復後，請重新啟動 Happier。',
+        guide: '原則指南',
     },
   panes: { mainColumn: paneMainColumnTranslations['zh-Hant'], emptyEditor: paneEmptyEditorTranslations['zh-Hant'], shortcutsSheet: paneShortcutsSheetTranslations['zh-Hant'] },
   capabilities: capabilityKitTranslations.zhHant,

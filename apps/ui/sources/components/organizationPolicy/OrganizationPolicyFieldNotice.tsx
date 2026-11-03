@@ -132,17 +132,42 @@ export function OrganizationPolicyManagedState(props: Readonly<{
     );
 }
 
-function SupportLink(props: Readonly<{ url: string; testID?: string }>) {
+function SupportLink(props: Readonly<{ url: string; label?: string; testID?: string }>) {
   const [, open] = useOpenExternalUrl(props.url);
+  const label = props.label ?? t('organizationPolicy.support');
   return (
     <HappierPressable
       testID={props.testID}
       accessibilityRole="link"
-      accessibilityLabel={t('organizationPolicy.support')}
+      accessibilityLabel={label}
       onPress={open}
     >
-      <Text style={styles.support}>{t('organizationPolicy.support')}</Text>
+      <Text style={styles.support}>{label}</Text>
     </HappierPressable>
+  );
+}
+
+const ORGANIZATION_POLICY_GUIDE_URL = 'https://docs.happier.dev/self-hosting/organization-policy';
+
+/**
+ * The way forward from an unreadable policy, for a surface the policy leaves with nothing to do.
+ * Native startup reads the file once, so the fix lands on restart; an unreadable file names no
+ * organization or support link, so the published guide is the help it can offer.
+ */
+export function OrganizationPolicyInvalidNextStep() {
+  if (readOrganizationPolicy().status !== 'invalid') return null;
+  return (
+    <View testID="organization-policy-invalid-next-step" style={styles.line}>
+      <Text style={styles.label}>{t('organizationPolicy.invalidNextStep')}</Text>
+      <Text style={styles.label} importantForAccessibility="no" accessibilityElementsHidden>
+        ·
+      </Text>
+      <SupportLink
+        url={ORGANIZATION_POLICY_GUIDE_URL}
+        label={t('organizationPolicy.guide')}
+        testID="organization-policy-invalid-next-step-guide"
+      />
+    </View>
   );
 }
 

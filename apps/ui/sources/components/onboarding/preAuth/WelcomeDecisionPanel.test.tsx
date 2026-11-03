@@ -341,6 +341,21 @@ describe('WelcomeDecisionPanel', () => {
         }
     });
 
+    it('gives an unreadable organization policy one way forward instead of an empty panel', async () => {
+        vi.stubGlobal('isTauri', true);
+        vi.stubGlobal('document', {});
+        vi.stubGlobal('window', { addEventListener: vi.fn(), removeEventListener: vi.fn(), __HAPPIER_WEB_RUNTIME_CONFIG__: {
+            organizationPolicyError: { path: 'home.url', code: 'invalid_format' },
+        } });
+        try {
+            const screen = await renderPanel().screenPromise;
+            expect(screen.findByTestId('organization-policy-invalid-next-step')).toBeTruthy();
+            expect(screen.findByTestId('organization-policy-invalid-next-step-guide')).toBeTruthy();
+        } finally {
+            vi.unstubAllGlobals();
+        }
+    });
+
     it('routes anonymous start and restore actions from stable controls', async () => {
         const { callbacks, screenPromise } = renderPanel();
         const screen = await screenPromise;

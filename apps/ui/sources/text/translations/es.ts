@@ -1294,6 +1294,8 @@ export const es: TranslationStructure = {
     support: "Contactar con soporte",
     invalidTitle: "La política de la organización requiere atención",
     invalidBody: "No se puede cambiar el servicio de cuenta o el Home ni configurar un Home nuevo hasta que tu administrador corrija la política.",
+    invalidNextStep: "Reinicia Happier cuando se haya corregido el archivo de la política.",
+    guide: "Guía de la política",
   },
   transcriptPassage: {
     quote: "Citar",

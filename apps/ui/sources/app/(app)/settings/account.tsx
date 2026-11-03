@@ -37,6 +37,7 @@ import { AccountServiceSettingsSection } from '@/components/settings/account/Acc
 import { AccountIdentifier } from '@/components/settings/account/AccountIdentifier';
 import { resolveAccountIdentityFacts } from '@/components/settings/account/accountIdentityFacts';
 import { parseToken } from '@/utils/auth/parseToken';
+import { readOrganizationPolicyFieldState } from '@/components/organizationPolicy/OrganizationPolicyFieldNotice';
 import { AccountSignInSecuritySection } from '@/components/settings/account/AccountSignInSecuritySection';
 import { useAccountSecurityProjection } from '@/components/settings/account/useAccountSecurityProjection';
 import { ACCOUNT_SETTINGS } from '@/components/settings/account/accountSettings';
@@ -198,6 +199,7 @@ export const WorkspaceRouteBody = React.memo(() => {
     // Only Link new device needs this device's scanner. Add another Home opens the
     // shared add_home restore entry, which falls back to pasting a pairing link.
     const showLinkNewDevice = canUseCurrentDeviceQrScanner();
+    const homePolicy = readOrganizationPolicyFieldState('home');
     // The Account ID on this Home is the subject of the signed-in credential.
     const accountId = React.useMemo(() => {
         if (!auth.credentials) return null;
@@ -216,13 +218,14 @@ export const WorkspaceRouteBody = React.memo(() => {
             title: t('settings.addYourPhone'),
             subtitle: t('settings.addYourPhoneSubtitle'),
         }] : []),
-        {
-            id: 'addHome',
+        // A Home fixed by organization policy cannot take another; the tile is left out, not offered dead.
+        ...(homePolicy.disabled ? [] : [{
+            id: 'addHome' as const,
             testID: 'settings-account-add-home',
-            icon: 'house',
+            icon: 'house' as const,
             title: t('settingsAccount.addAnotherHome'),
             subtitle: t('settingsAccount.addAnotherHomeSubtitle'),
-        },
+        }]),
         ...(showLinkNewDevice ? [{
             id: 'linkDevice' as const,
             testID: 'settings-account-link-new-device',

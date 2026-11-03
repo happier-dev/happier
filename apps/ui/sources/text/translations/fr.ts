@@ -1251,6 +1251,8 @@ export const fr: TranslationStructure = {
     support: "Contacter l’assistance",
     invalidTitle: "La politique de l’organisation nécessite votre attention",
     invalidBody: "Le changement de service de compte ou de Home et la création d’un Home sont indisponibles jusqu’à ce que votre administrateur corrige la politique.",
+    invalidNextStep: "Redémarrez Happier une fois le fichier de politique corrigé.",
+    guide: "Guide de la politique",
   },
   transcriptPassage: {
     quote: "Citer",

@@ -193,6 +193,26 @@ describe('Settings → Account (grouping)', () => {
         expect(screen.findByTestId('settings-account-add-home')).toBeTruthy();
     });
 
+    it('leaves out "Add another Home" while the organization policy fixes the Home', async () => {
+        windowDimensions = { width: 1200, height: 800 };
+        vi.stubGlobal('navigator', { maxTouchPoints: 0, userAgent: 'Mozilla/5.0 (X11; Linux x86_64)' } as any);
+        // Native startup hands the policy to the renderer through the web runtime config.
+        vi.stubGlobal('isTauri', true);
+        if (typeof document === 'undefined') vi.stubGlobal('document', {});
+        if (typeof window === 'undefined') vi.stubGlobal('window', { addEventListener: vi.fn(), removeEventListener: vi.fn() });
+        const runtime = window as unknown as { __HAPPIER_WEB_RUNTIME_CONFIG__?: unknown };
+        runtime.__HAPPIER_WEB_RUNTIME_CONFIG__ = { organizationPolicyJson: JSON.stringify({ schemaVersion: 1, organization: 'Example Co',
+            home: { url: 'https://home.example.test', locked: true } }) };
+        try {
+            const { default: AccountScreen } = await import('@/app/(app)/settings/account');
+            const screen = await renderScreen(<AccountScreen />);
+            expect(screen.findByTestId('settings-account-add-your-phone')).toBeTruthy();
+            expect(screen.findByTestId('settings-account-add-home')).toBeNull();
+        } finally {
+            delete runtime.__HAPPIER_WEB_RUNTIME_CONFIG__;
+        }
+    });
+
     it('shows "Add your phone" on desktop-sized web even when the viewport is narrow', async () => {
         windowDimensions = { width: 480, height: 700 };
         vi.stubGlobal('navigator', { maxTouchPoints: 0, userAgent: 'Mozilla/5.0 (X11; Linux x86_64)' } as any);

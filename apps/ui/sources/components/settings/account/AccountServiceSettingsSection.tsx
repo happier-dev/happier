@@ -757,7 +757,10 @@ export function AccountServiceSettingsSection(): React.ReactElement {
     const signInMethods = discovery?.authenticationActions ?? null;
     const primaryMethod = signInMethods ? projectAccountServiceMethodStrip(signInMethods).primary : null;
     const primaryMethodPresentation = primaryMethod ? describeAccountServiceAuthenticationAction(primaryMethod, serviceName) : null;
-    const changeServiceButton = (testID: string, display: 'secondary' | 'inverted') => (
+    // A service fixed by organization policy (or an unreadable policy) shows the managed value with
+    // the shared "Managed by" line; every way to change it is left out rather than offered dead.
+    const canChangeService = !policy.disabled;
+    const changeServiceButton = (testID: string, display: 'secondary' | 'inverted') => canChangeService ? (
         <RoundButton
             testID={testID}
             size="small"
@@ -768,9 +771,9 @@ export function AccountServiceSettingsSection(): React.ReactElement {
             trailing={changingService ? <Icon name="caret-up" size={14} color={theme.colors.text.secondary} /> : undefined}
             expanded={changingService}
             onPress={toggleChangingService}
-            disabled={busy || policy.disabled}
+            disabled={busy}
         />
-    );
+    ) : null;
     const noticeRow = (testID: string, title: string, body: string, actions: React.ReactNode) => (
         <Item
             testID={testID}
@@ -897,14 +900,14 @@ export function AccountServiceSettingsSection(): React.ReactElement {
                         icon: directoryRefreshing ? <ActivitySpinner size="small" /> : 'arrows-clockwise' as const,
                         disabled: directoryRefreshing,
                         onPress: () => { void refreshDirectory(); },
-                    }, {
+                    }, ...(canChangeService ? [{
                         id: 'settings-account-service-change',
                         inlineTestID: 'settings-account-service-change',
                         title: t('settingsAccount.accountServiceChangeService'),
                         icon: 'arrows-left-right' as const,
                         disabled: busy,
                         onPress: toggleChangingService,
-                    }, ...(account?.recoveryKey === 'password_unlock' || account?.recoveryKey === 'key_only' ? [{
+                    }] : []), ...(account?.recoveryKey === 'password_unlock' || account?.recoveryKey === 'key_only' ? [{
                         id: 'settings-account-service-view-recovery-key',
                         inlineTestID: 'settings-account-service-view-recovery-key',
                         title: t('settingsAccount.showRecoveryKey'),

@@ -16,7 +16,7 @@ import { formatAccountServiceHost } from '@/sync/domains/accountDirectory/accoun
 import { createServerUrlComparableKey } from '@/sync/domains/server/url/serverUrlCanonical';
 import { t } from '@/text';
 import { PhoneWelcomeDoorway } from '@/components/homes/journeys/phone/PhoneWelcomeDoorway';
-import { OrganizationPolicyFieldNotice, readOrganizationPolicyFieldState } from '@/components/organizationPolicy/OrganizationPolicyFieldNotice';
+import { OrganizationPolicyFieldNotice, OrganizationPolicyInvalidNextStep, readOrganizationPolicyFieldState } from '@/components/organizationPolicy/OrganizationPolicyFieldNotice';
 import { useViewportClass } from '@/utils/platform/useViewportClass';
 import { useReturningGreeting } from './useReturningGreeting';
 import { WELCOME_ACTION_TEXT_INSET, WelcomeActionCard } from './WelcomeActionCard';
@@ -329,6 +329,7 @@ export const WelcomeDecisionPanel = React.memo(function WelcomeDecisionPanel(pro
                 </Text>
             </View> : null}
             <OrganizationPolicyFieldNotice field={homePolicy.lock ? 'home' : servicePolicy.lock ? 'accountService' : 'personalHome'} />
+            <OrganizationPolicyInvalidNextStep />
             {model.showHomeStatus && hasHome && options.showAuthActions
                 && (options.serverAvailability === 'ready' || options.serverAvailability === 'legacy')
                 && options.authenticationActions !== undefined

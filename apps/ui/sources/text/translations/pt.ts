@@ -1330,6 +1330,8 @@ export const pt: TranslationStructure = {
     support: "Contactar o suporte",
     invalidTitle: "A política da organização precisa de atenção",
     invalidBody: "Não é possível alterar o serviço de conta ou o Home nem configurar um novo Home até o administrador corrigir a política.",
+    invalidNextStep: "Reinicie o Happier quando o ficheiro da política estiver corrigido.",
+    guide: "Guia da política",
   },
   transcriptPassage: {
     quote: "Citar",

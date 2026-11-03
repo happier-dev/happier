@@ -83,6 +83,32 @@ describe('Account Service settings continuation composition', () => {
         expect(getPendingDirectoryHomeEnrollment()).toBeNull();
     });
 
+    it('shows a sign-in service fixed by organization policy as managed, with no way to change it', async () => {
+        // Native startup hands the policy to the renderer through the web runtime config.
+        vi.stubGlobal('isTauri', true);
+        if (typeof document === 'undefined') vi.stubGlobal('document', {});
+        if (typeof window === 'undefined') vi.stubGlobal('window', { addEventListener: vi.fn(), removeEventListener: vi.fn() });
+        const runtime = window as unknown as { __HAPPIER_WEB_RUNTIME_CONFIG__?: unknown };
+        runtime.__HAPPIER_WEB_RUNTIME_CONFIG__ = { organizationPolicyJson: JSON.stringify({ schemaVersion: 1, organization: 'Example Co',
+            accountService: { url: fixture.service.endpointUrl, locked: true } }) };
+        try {
+            screen = await renderScreen(<ListPresentationProvider value="page"><AccountServiceSettingsSection /></ListPresentationProvider>);
+            // A desktop host keeps the saved sign-in in its secure storage, which this renderer test
+            // has no host for: the section settles on that trouble state, whose header and notice
+            // would otherwise both offer "Change service".
+            await vi.waitFor(() => expect(screen?.findByTestId('settings-account-service-custody')
+                ?? screen?.findByTestId('settings-account-service-identity')).not.toBeNull());
+            expect(screen.findByTestId('organization-policy-accountService')).not.toBeNull();
+            expect(screen.findByTestId('settings-account-service-change-service')).toBeNull();
+            expect(screen.findByTestId('settings-account-service-notice-change')).toBeNull();
+            const menuActions = screen.findAllByType(ItemRowActions).flatMap((node) => node.props.actions.map((action: { id: string }) => action.id));
+            expect(menuActions).not.toContain('settings-account-service-change');
+        } finally {
+            delete runtime.__HAPPIER_WEB_RUNTIME_CONFIG__;
+            vi.unstubAllGlobals();
+        }
+    });
+
     it('changes the sign-in service in place, saving it only on "Use"', async () => {
         const otherEndpoint = 'https://studio-accounts.test';
         const homeEndpoint = 'https://plain-home.test';

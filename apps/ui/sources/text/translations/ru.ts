@@ -1308,6 +1308,8 @@ export const ru: TranslationStructure = {
     support: "Связаться с поддержкой",
     invalidTitle: "Политика организации требует внимания",
     invalidBody: "Смена сервиса аккаунта или Home и настройка нового Home недоступны, пока администратор не исправит политику.",
+    invalidNextStep: "Перезапустите Happier после исправления файла политики.",
+    guide: "Руководство по политике",
   },
   transcriptPassage: {
     quote: "Цитировать",

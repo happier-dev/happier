@@ -22442,6 +22442,8 @@ const enOrganizationPolicy = {
     support: "Contact support",
     invalidTitle: "Organization policy needs attention",
     invalidBody: "Changing the account service or Home, and setting up a new Home, is unavailable until your administrator fixes the policy.",
+    invalidNextStep: "Restart Happier once the policy file is fixed.",
+    guide: "Policy guide",
   };
 
 export const en: TranslationStructure = {

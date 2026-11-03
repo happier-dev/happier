@@ -1294,6 +1294,8 @@ export const zhHans: TranslationStructure = {
     support: "联系支持",
     invalidTitle: "组织策略需要处理",
     invalidBody: "在管理员修复策略之前，无法更改账户服务或 Home，也无法设置新的 Home。",
+    invalidNextStep: "策略文件修复后，请重新启动 Happier。",
+    guide: "策略指南",
   },
   transcriptPassage: {
     quote: "引用",

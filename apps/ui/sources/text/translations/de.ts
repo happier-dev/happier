@@ -1086,6 +1086,8 @@ export const de: TranslationStructure = {
     support: "Support kontaktieren",
     invalidTitle: "Organisationsrichtlinie überprüfen",
     invalidBody: "Kontodienst und Home können erst wieder geändert und neue Homes eingerichtet werden, wenn die Administration die Richtlinie korrigiert hat.",
+    invalidNextStep: "Starte Happier neu, sobald die Richtliniendatei korrigiert ist.",
+    guide: "Anleitung zur Richtlinie",
   },
   transcriptPassage: {
     quote: "Zitieren",
