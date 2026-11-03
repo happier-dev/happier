@@ -729,12 +729,19 @@ describe('local voice engine agent behavior', () => {
 
         expect(ensureAgentRpc).toHaveBeenCalledTimes(1);
         expect(consoleInfoSpy.mock.calls.filter(([tag]) =>
-            tag === '[fireAndForget] localVoiceEngine.prewarmLocalVoiceAgentOnConnect',
+            tag === '[fireAndForget] localVoiceEngine.startLocalVoiceAgentOnConnect',
         )).toEqual([]);
         expect(getLocalVoiceState().status).toBe('recording');
     });
 
-    it('welcome (immediate) triggers a daemon welcome action during prewarm on connect', async () => {
+    it.each([
+        { mode: 'immediate', prewarmOnConnect: false },
+        { mode: 'immediate', prewarmOnConnect: true },
+        { mode: 'on_first_turn', prewarmOnConnect: false },
+        { mode: 'on_first_turn', prewarmOnConnect: true },
+        { mode: 'off', prewarmOnConnect: false },
+        { mode: 'off', prewarmOnConnect: true },
+    ] as const)('connect schedules one immediate welcome independently of prewarm (mode=$mode, prewarm=$prewarmOnConnect)', async ({ mode, prewarmOnConnect }) => {
         const storage = await getStorage();
         storage.__setState({
             settings: {
@@ -742,7 +749,7 @@ describe('local voice engine agent behavior', () => {
                 voice: {
                     ...storage.getState().settings.voice,
                     providerId: 'local_conversation',
-          welcome: { enabled: true, mode: 'immediate', templateId: null },
+                    welcome: { enabled: mode !== 'off', mode: mode === 'on_first_turn' ? mode : 'immediate', templateId: null },
                     providers: {
                         ...storage.getState().settings.voice.providers,
                         local_conversation: { schemaVersion: 1, config: {
@@ -759,8 +766,7 @@ describe('local voice engine agent behavior', () => {
                             },
                             agent: {
                                 ...readLocalConversationVoiceSettings(storage.getState().settings.voice).agent,
-                                prewarmOnConnect: true,
-
+                                prewarmOnConnect,
                             },
                         } },
                     },
@@ -780,11 +786,16 @@ describe('local voice engine agent behavior', () => {
         const { toggleLocalVoiceTurn } = localVoiceEngine;
         await toggleLocalVoiceTurn('s1');
 
-        await waitForLocalVoiceBoundaryEvent(`rpc:${SESSION_RPC_METHODS.EXECUTION_RUN_ACTION}`);
+        if (mode === 'immediate') {
+            await waitForLocalVoiceBoundaryEvent('speech');
+        } else if (prewarmOnConnect) {
+            await waitForLocalVoiceBoundaryEvent('agent-start');
+        }
+        await flushMicrotasks();
 
-        expect(welcomeActionRpc).toHaveBeenCalledTimes(1);
-        await waitForLocalVoiceBoundaryEvent('speech');
-        expect(expoSpeechSpeak).toHaveBeenCalled();
+        expect(ensureAgentRpc).toHaveBeenCalledTimes(mode === 'immediate' || prewarmOnConnect ? 1 : 0);
+        expect(welcomeActionRpc).toHaveBeenCalledTimes(mode === 'immediate' ? 1 : 0);
+        expect(expoSpeechSpeak).toHaveBeenCalledTimes(mode === 'immediate' ? 1 : 0);
     });
 
     it('prewarmOnConnect warms daemon inference when voice home becomes active', async () => {

@@ -1303,21 +1303,21 @@ export async function toggleLocalVoiceTurn(
   }
 
   const current = getCurrentLocalRuntimeCompatState();
-  const prewarmLocalVoiceAgentOnConnect = (params: Readonly<{ settings: any; config: any }>): void => {
+  const startLocalVoiceAgentOnConnect = (params: Readonly<{ settings: any; config: any }>): void => {
     const { config } = params;
-    if (config?.conversationMode !== 'agent' || config?.agent?.prewarmOnConnect !== true) return;
+    if (config?.conversationMode !== 'agent') return;
+
+    const welcome = voiceSettingsParse(params.settings?.voice).welcome;
+    const shouldWelcome = welcome.enabled && welcome.mode === 'immediate' && config?.tts?.autoSpeakReplies !== false;
+    // Immediate welcome is requested work; prewarm only opts into otherwise idle startup.
+    if (!shouldWelcome && config?.agent?.prewarmOnConnect !== true) return;
 
     fireAndForget(
       (async () => {
         const registerPlaybackStopper =
           playbackController.registerStopper.captureAttempt?.() ?? playbackController.registerStopper;
         const networkTimeoutMs = resolveVoiceNetworkTimeoutMs(config?.networkTimeoutMs, 15_000);
-        const welcome = voiceSettingsParse(params.settings?.voice).welcome;
-        const welcomeMode = welcome.mode;
-        const welcomeEnabled = welcome.enabled;
-        const canSpeakWelcome = config?.tts?.autoSpeakReplies !== false;
-
-        if (welcomeEnabled && welcomeMode === 'immediate' && canSpeakWelcome) {
+        if (shouldWelcome) {
           const assistantText = await voiceAgentSessions.ensureRunningAndMaybeWelcome(controlSessionId).catch(() => null);
           beginAutomaticCurrentUiContextUpdates(controlSessionId);
           const text = typeof assistantText === 'string' ? assistantText.trim() : '';
@@ -1345,7 +1345,7 @@ export async function toggleLocalVoiceTurn(
         if (isUnsupportedVoiceAgentPrewarmError(error)) return;
         throw error;
       }),
-      { tag: 'localVoiceEngine.prewarmLocalVoiceAgentOnConnect' },
+      { tag: 'localVoiceEngine.startLocalVoiceAgentOnConnect' },
     );
   };
 
@@ -1416,7 +1416,7 @@ export async function toggleLocalVoiceTurn(
     if (!await ensureLocalConversationBindingForSession(settings, sessionId, requestedTargetSessionAddress)) {
       return;
     }
-    prewarmLocalVoiceAgentOnConnect({ settings, config });
+    startLocalVoiceAgentOnConnect({ settings, config });
     prewarmDaemonVoiceInferenceOnConnect({ settings });
     inFlight = startLocalVoiceCapture({
       sessionId: resolveLocalConversationControlSessionId(settings, bargeInDecision.sessionId),
@@ -1436,7 +1436,7 @@ export async function toggleLocalVoiceTurn(
     if (!await ensureLocalConversationBindingForSession(settings, sessionId, requestedTargetSessionAddress)) {
       return;
     }
-    prewarmLocalVoiceAgentOnConnect({ settings, config });
+    startLocalVoiceAgentOnConnect({ settings, config });
     prewarmDaemonVoiceInferenceOnConnect({ settings });
     inFlight = startLocalVoiceCapture({
       sessionId: controlSessionId,
