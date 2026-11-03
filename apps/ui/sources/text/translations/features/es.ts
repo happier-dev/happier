@@ -186,6 +186,7 @@ type Copy = Shared_accountEncryptionRecoveryTranslations.Copy;
 const en = Shared_accountEncryptionRecoveryTranslations.en;
 
 const es: Copy = {
+    encryptionConversionLinksRetained: "No se ha cambiado el cifrado. Revoca los enlaces en los controles para compartir de cada artefacto y vuelve a intentarlo. Tu contenido no ha cambiado. Crea enlaces nuevos después de la conversión.",
     recoverAutomationTemplates: 'Recuperar disparadores anteriores',
     recoverAutomationTemplatesDescription: 'Usa las claves de este dispositivo para recuperar disparadores anteriores. Se conservan mientras las sesiones cifradas o los disparadores bloqueados las necesiten.',
     recoverAutomationTemplatesAction: 'Recuperar',

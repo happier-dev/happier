@@ -186,6 +186,7 @@ type Copy = Shared_accountEncryptionRecoveryTranslations.Copy;
 const en = Shared_accountEncryptionRecoveryTranslations.en;
 
 const fr: Copy = {
+    encryptionConversionLinksRetained: "Le chiffrement n’a pas changé. Révoque les liens dans les options de partage de chaque artefact, puis réessaie. Ton contenu reste inchangé. Crée de nouveaux liens après la conversion.",
     recoverAutomationTemplates: 'Récupérer les anciens déclencheurs',
     recoverAutomationTemplatesDescription: 'Utilise les clés de cet appareil pour récupérer les anciens déclencheurs. Elles restent disponibles tant que les sessions chiffrées ou les déclencheurs verrouillés en ont besoin.',
     recoverAutomationTemplatesAction: 'Récupérer',

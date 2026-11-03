@@ -186,6 +186,7 @@ type Copy = Shared_accountEncryptionRecoveryTranslations.Copy;
 const en = Shared_accountEncryptionRecoveryTranslations.en;
 
 const ja: Copy = {
+    encryptionConversionLinksRetained: "暗号化は変更されていません。各アーティファクトの共有設定でリンクを無効にしてから、もう一度お試しください。コンテンツは変更されていません。変換後に新しいリンクを作成してください。",
     recoverAutomationTemplates: '以前のトリガーを復元',
     recoverAutomationTemplatesDescription: 'この端末の鍵で以前のトリガーを復元します。暗号化されたセッションやロックされたトリガーに必要な鍵は保持します。',
     recoverAutomationTemplatesAction: '復元',

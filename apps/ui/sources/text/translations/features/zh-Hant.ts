@@ -186,6 +186,7 @@ type Copy = Shared_accountEncryptionRecoveryTranslations.Copy;
 const en = Shared_accountEncryptionRecoveryTranslations.en;
 
 const zhHant: Copy = {
+    encryptionConversionLinksRetained: "加密設定未變更。請在每個 Artifact 的分享設定中撤銷連結，然後重試。你的內容保持不變。轉換後請建立新連結。",
     recoverAutomationTemplates: '復原舊觸發器',
     recoverAutomationTemplatesDescription: '使用此裝置上的金鑰復原舊觸發器。只要加密工作階段或鎖定的觸發器仍需要金鑰，就會保留它們。',
     recoverAutomationTemplatesAction: '復原',

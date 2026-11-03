@@ -186,6 +186,7 @@ type Copy = Shared_accountEncryptionRecoveryTranslations.Copy;
 const en = Shared_accountEncryptionRecoveryTranslations.en;
 
 const pl: Copy = {
+    encryptionConversionLinksRetained: "Szyfrowanie nie zostało zmienione. Unieważnij linki w ustawieniach udostępniania każdego artefaktu i spróbuj ponownie. Twoja zawartość pozostaje bez zmian. Po konwersji utwórz nowe linki.",
     recoverAutomationTemplates: 'Odzyskaj starsze wyzwalacze',
     recoverAutomationTemplatesDescription: 'Użyj kluczy na tym urządzeniu, aby odzyskać starsze wyzwalacze. Klucze pozostają, dopóki potrzebują ich zaszyfrowane sesje lub zablokowane wyzwalacze.',
     recoverAutomationTemplatesAction: 'Odzyskaj',

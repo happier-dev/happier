@@ -186,6 +186,7 @@ type Copy = Shared_accountEncryptionRecoveryTranslations.Copy;
 const en = Shared_accountEncryptionRecoveryTranslations.en;
 
 const ca: Copy = {
+    encryptionConversionLinksRetained: "No s’ha canviat el xifrat. Revoca els enllaços als controls de compartició de cada artefacte i torna-ho a provar. El contingut no ha canviat. Crea enllaços nous després de la conversió.",
     recoverAutomationTemplates: 'Recupera els activadors anteriors',
     recoverAutomationTemplatesDescription: 'Fes servir les claus d’aquest dispositiu per recuperar activadors anteriors. Es conserven mentre les sessions xifrades o els activadors bloquejats les necessitin.',
     recoverAutomationTemplatesAction: 'Recupera',

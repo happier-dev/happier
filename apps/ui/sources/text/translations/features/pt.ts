@@ -186,6 +186,7 @@ type Copy = Shared_accountEncryptionRecoveryTranslations.Copy;
 const en = Shared_accountEncryptionRecoveryTranslations.en;
 
 const pt: Copy = {
+    encryptionConversionLinksRetained: "A criptografia não foi alterada. Revogue os links nos controles de compartilhamento de cada artefato e tente novamente. Seu conteúdo permanece inalterado. Crie novos links após a conversão.",
     recoverAutomationTemplates: 'Recuperar gatilhos anteriores',
     recoverAutomationTemplatesDescription: 'Use as chaves deste dispositivo para recuperar gatilhos anteriores. Elas permanecem enquanto sessões criptografadas ou gatilhos bloqueados precisarem delas.',
     recoverAutomationTemplatesAction: 'Recuperar',

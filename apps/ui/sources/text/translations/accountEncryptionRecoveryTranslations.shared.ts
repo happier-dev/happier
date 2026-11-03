@@ -5,6 +5,7 @@ export type Copy = typeof en;
 
 
 export const en = {
+    encryptionConversionLinksRetained: "Encryption was not changed. Revoke the links in each Artifact’s sharing controls, then try again. Your content is unchanged. Create new links after conversion.",
     recoverAutomationTemplates: 'Recover older triggers',
     recoverAutomationTemplatesDescription: 'Use the keys on this device to recover older triggers. Keys stay here while encrypted sessions or locked triggers still need them.',
     recoverAutomationTemplatesAction: 'Recover',

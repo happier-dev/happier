@@ -186,6 +186,7 @@ type Copy = Shared_accountEncryptionRecoveryTranslations.Copy;
 const en = Shared_accountEncryptionRecoveryTranslations.en;
 
 const ru: Copy = {
+    encryptionConversionLinksRetained: "Шифрование не изменено. Отзови ссылки в настройках общего доступа каждого артефакта и попробуй снова. Содержимое не изменилось. После преобразования создай новые ссылки.",
     recoverAutomationTemplates: 'Восстановить старые триггеры',
     recoverAutomationTemplatesDescription: 'Используйте ключи этого устройства для восстановления старых триггеров. Ключи сохраняются, пока нужны зашифрованным сессиям или заблокированным триггерам.',
     recoverAutomationTemplatesAction: 'Восстановить',

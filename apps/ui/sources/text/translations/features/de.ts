@@ -180,6 +180,7 @@ type Copy = Shared_accountEncryptionRecoveryTranslations.Copy;
 const en = Shared_accountEncryptionRecoveryTranslations.en;
 
 const de: Copy = {
+    encryptionConversionLinksRetained: "Die Verschlüsselung wurde nicht geändert. Widerrufe die Links in den Freigabeeinstellungen jedes Artefakts und versuche es erneut. Deine Inhalte sind unverändert. Erstelle nach der Umstellung neue Links.",
     recoverAutomationTemplates: 'Ältere Auslöser wiederherstellen',
     recoverAutomationTemplatesDescription: 'Ältere Auslöser mit den Schlüsseln auf diesem Gerät wiederherstellen. Verschlüsselte Sitzungen und gesperrte Auslöser behalten ihre Schlüssel.',
     recoverAutomationTemplatesAction: 'Wiederherstellen',

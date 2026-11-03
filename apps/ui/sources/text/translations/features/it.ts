@@ -186,6 +186,7 @@ type Copy = Shared_accountEncryptionRecoveryTranslations.Copy;
 const en = Shared_accountEncryptionRecoveryTranslations.en;
 
 const it: Copy = {
+    encryptionConversionLinksRetained: "La crittografia non è stata modificata. Revoca i link nei controlli di condivisione di ogni artefatto, poi riprova. I tuoi contenuti sono invariati. Crea nuovi link dopo la conversione.",
     recoverAutomationTemplates: 'Recupera i trigger precedenti',
     recoverAutomationTemplatesDescription: 'Usa le chiavi su questo dispositivo per recuperare i trigger precedenti. Vengono conservate finché sessioni crittografate o trigger bloccati ne hanno bisogno.',
     recoverAutomationTemplatesAction: 'Recupera',
