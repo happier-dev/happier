@@ -15,6 +15,7 @@ import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
+import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import type { QualifiedConnectedAccountUiGroup } from '@/sync/domains/connectedServices/qualifiedConnectedAccountUiSource';
 import { t } from '@/text';
 import { type QualifiedConnectedAccountRef } from '@happier-dev/protocol';
@@ -103,6 +104,13 @@ export type QualifiedAccountDetailViewProps = Readonly<{
     usedBySection?: React.ReactNode;
     worksOnSection?: React.ReactNode;
     machineSetupSection?: React.ReactNode;
+    /**
+     * The one quiet line saying which machine signing in again and removing run on, when none is usable.
+     * It is a row of the Sign-in group, not a sheet of its own.
+     */
+    machineScopeLine?: React.ReactNode;
+    /** A reconnect stays inside this account's existing Sign-in section. */
+    signInFlow?: React.ReactNode;
     /** How the account signed in ("Signed in with a code") and when a session last used it. */
     authenticationModeTitle?: string | null;
     lastUsedAt?: number | null;
@@ -206,6 +214,8 @@ export const QualifiedAccountDetailView = React.memo(function QualifiedAccountDe
             setDisconnectPending(false);
         }
     }, [disconnectPending, onDisconnect]);
+
+    const hasSignInRow = Boolean(onReconnect || props.authenticationModeTitle || props.signInFlow);
 
     return (
         <ItemList testID={testID} pageColumn="wide" onLayout={(event) => {
@@ -311,7 +321,7 @@ export const QualifiedAccountDetailView = React.memo(function QualifiedAccountDe
                     compactActionPlacement="full-width"
                     testID={`${testID}:signed-out-banner`}
                     title={t('connectedServicesSettings.detailSignedOutTitle', { service: serviceLabel })}
-                    action={onReconnect ? {
+                    action={onReconnect && !props.signInFlow ? {
                         label: t('connectedServicesSettings.signInAgain'),
                         display: 'default',
                         testID: `${testID}:signed-out-banner:sign-in-again`,
@@ -372,8 +382,6 @@ export const QualifiedAccountDetailView = React.memo(function QualifiedAccountDe
             ) : null}
             {props.sharedWithTeamsAdministration}
 
-            {props.worksOnSection ?? null}
-
             {props.onConfigureAccount ? (
                 <ItemGroup>
                     <Item
@@ -403,9 +411,9 @@ export const QualifiedAccountDetailView = React.memo(function QualifiedAccountDe
                 </ItemGroup>
             ) : null}
 
-            {onReconnect || props.authenticationModeTitle ? (
+            {hasSignInRow || props.worksOnSection || props.machineScopeLine ? (
                 <ItemGroup title={t('connectedServicesSettings.detailSignInTitle')}>
-                    <Item
+                    {hasSignInRow ? <Item
                         testID={`${testID}:sign-in`}
                         title={props.authenticationModeTitle ?? t('connectedServices.detail.actions.reconnect')}
                         subtitle={[
@@ -418,7 +426,8 @@ export const QualifiedAccountDetailView = React.memo(function QualifiedAccountDe
                         ].filter(Boolean).join(' · ')}
                         mode="info"
                         showChevron={false}
-                        rightElement={onReconnect ? (
+                        // Signed out, the banner above owns Sign in again; a running sign-in owns this section.
+                        rightElement={onReconnect && status !== 'needs_reauth' && !props.signInFlow ? (
                             <RoundButton
                                 testID={`${testID}:action:reconnect`}
                                 size="small"
@@ -428,7 +437,10 @@ export const QualifiedAccountDetailView = React.memo(function QualifiedAccountDe
                             />
                         ) : undefined}
                         rightElementOutsidePressable
-                    />
+                    /> : null}
+                    {props.signInFlow ? <SectionContentRow>{props.signInFlow}</SectionContentRow> : null}
+                    {props.worksOnSection ?? null}
+                    {props.machineScopeLine ?? null}
                 </ItemGroup>
             ) : null}
 

@@ -123,6 +123,9 @@ export const ConnectedAccountServiceContent = React.memo(function ConnectedAccou
     /** Explicit page execution admission; null keeps Account data readable without machine effects. */
     machineId?: string | null;
     machineSetupSection?: React.ReactNode;
+    machineScopeLine?: React.ReactNode;
+    /** The selected account retains its page while this controller-owned sign-in runs. */
+    signInFlow?: React.ReactNode;
     /** The account detail's in-place rename (lab D2). */
     onRenameAccount?(account: QualifiedConnectedAccountRef, label: string): void | boolean | Promise<void | boolean>;
     onConfigureAccount?(account: QualifiedConnectedAccountRef): void;
@@ -406,6 +409,8 @@ export const ConnectedAccountServiceContent = React.memo(function ConnectedAccou
             <QualifiedAccountDetail
                 machineId={props.machineId}
                 machineSetupSection={props.machineSetupSection}
+                machineScopeLine={props.machineScopeLine}
+                signInFlow={props.signInFlow}
                 account={account.ref}
                 serviceLabel={props.title}
                 legacyServiceId={props.legacyServiceId ?? null}

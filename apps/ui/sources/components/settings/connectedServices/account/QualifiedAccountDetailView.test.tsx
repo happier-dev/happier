@@ -241,6 +241,40 @@ describe('QualifiedAccountDetailView', () => {
         expect(screen.findByTestId('qualified-account-detail:row:email')).toBeNull();
     });
 
+    it('joins the machine line to the Sign-in group instead of drawing a sheet of its own', async () => {
+        const screen = await renderDetail({
+            status: 'connected',
+            onReconnect: vi.fn(),
+            authenticationModeTitle: 'Signed in with a code',
+            machineScopeLine: React.createElement('MachineLineProbe', { testID: 'machine-line-probe' }),
+        });
+        const signIn = screen.root.findAll((node) => node.props?.testID === 'qualified-account-detail:sign-in' && typeof node.props?.title === 'string')[0]!;
+        const probe = screen.root.findAll((node) => node.props?.testID === 'machine-line-probe')[0]!;
+        // The nearest group (sheet) around each is the same one.
+        const groupOf = (node: ReactTestInstance) => {
+            let current: ReactTestInstance | null = node.parent;
+            while (current && !(typeof current.props?.title === 'string' && current.props.title === 'Sign-in')) current = current.parent;
+            return current;
+        };
+        expect(groupOf(probe)).not.toBeNull();
+        expect(groupOf(probe)).toBe(groupOf(signIn));
+    });
+
+    it('offers Sign in again once: the signed-out banner owns it, and a running sign-in replaces it', async () => {
+        const onReconnect = vi.fn();
+        const signedOut = await renderDetail({ status: 'needs_reauth', onReconnect, authenticationModeTitle: 'Signed in with a browser' });
+        expect(signedOut.findByTestId('qualified-account-detail:signed-out-banner:sign-in-again')).toBeTruthy();
+        expect(signedOut.findByTestId('qualified-account-detail:action:reconnect')).toBeNull();
+        standardCleanup();
+
+        // The attempt runs inside its Sign-in section; nothing else offers to start another one.
+        const running = await renderDetail({ status: 'needs_reauth', onReconnect, authenticationModeTitle: 'Signed in with a browser',
+            signInFlow: <></> });
+        expect(running.findByTestId('qualified-account-detail:signed-out-banner')).toBeTruthy();
+        expect(running.findByTestId('qualified-account-detail:signed-out-banner:sign-in-again')).toBeNull();
+        expect(running.findByTestId('qualified-account-detail:action:reconnect')).toBeNull();
+    });
+
     it('says a signed-out account once, in its banner, never also as a header pill (lab csvc D2)', async () => {
         const screen = await renderDetail({ status: 'needs_reauth', onReconnect: vi.fn() });
 
@@ -388,7 +422,8 @@ describe('QualifiedAccountDetailView', () => {
         await screen.pressByTestIdAsync('qualified-account-detail:rename:save');
         expect(screen.findHostByTestId('qualified-account-detail:rename:input')).toBeNull();
 
-        screen.pressByTestId('qualified-account-detail:action:reconnect');
+        // Signed out, the banner owns Sign in again (the section row offers it only to a healthy account).
+        screen.pressByTestId('qualified-account-detail:signed-out-banner:sign-in-again');
         expect(onReconnect).toHaveBeenCalledTimes(1);
     });
 

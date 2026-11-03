@@ -114,6 +114,11 @@ export const MachineScopedSection = React.memo(function MachineScopedSection(pro
     /** Why the chosen machine is locked, when the domain knows ("Locked by its owner"). */
     lockedReason?: string | null;
     testIDPrefix: string;
+    /**
+     * The line only, for a caller that already owns the sheet it belongs to (an Account's Sign-in group):
+     * the machine's state then joins that group's rows instead of drawing a second sheet.
+     */
+    embedded?: boolean;
     children?: React.ReactNode;
 }>) {
     const [chipOpen, setChipOpen] = React.useState(false);
@@ -176,6 +181,7 @@ export const MachineScopedSection = React.memo(function MachineScopedSection(pro
         )} />;
     }
 
+    if (props.embedded) return <>{body}</>;
     return (
         <ItemGroup
             title={props.title}
