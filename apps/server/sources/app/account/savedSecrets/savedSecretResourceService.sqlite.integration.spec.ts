@@ -1,3 +1,5 @@
+import { SharedSavedSecretListOutputV1Schema } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
+import type { SavedSecretResourceContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
 import { listQualifiedConnectedAccounts, mutateQualifiedConnectedServiceCredential, readQualifiedConnectedServiceCredential } from '@/app/api/routes/connect/qualifiedConnectedAccounts/credentialRepository';
 import {
     ARTIFACT_PLAIN_DATA_KEY_MARKER,
@@ -151,6 +153,60 @@ describe("Saved Secret resource service (SQLite integration)", () => {
             () => db.userRelationship.deleteMany(),
             () => db.account.deleteMany(),
         ]);
+    });
+
+    it.each(['plain', 'e2ee'] as const)('lists value-free storage descriptors without opening %s content', async mode => {
+        const material = createE2eeAccountMaterial();
+        const owner = await db.account.create({ data: mode === 'e2ee' ? material.account : { encryptionMode: mode } });
+        const provider = { pluginId: 'happier.secret-source.onepassword', localId: 'onepassword' };
+        const variants: readonly Readonly<{ content: SavedSecretResourceContentV1; storage: object }>[] = [
+            { content: { v: 1, name: 'Value', kind: 'token', value: 'private-value-sentinel' }, storage: { kind: 'value' } },
+            { content: { v: 2, name: 'Passkey', kind: 'other', source: { kind: 'passkey', rpId: 'private-rp.example',
+                credentialId: 'AQID', userHandle: 'BAUG', privateKey: 'cHJpdmF0ZS1rZXk=', algorithm: -7,
+                signCount: 0, backupEligibility: true, backupState: true } }, storage: { kind: 'passkey' } },
+            { content: { v: 2, name: 'Linked', kind: 'token', source: { kind: 'external', contribution: provider,
+                account: 'private-account-sentinel', reference: 'op://private-vault/private-item/private-field' } },
+                storage: { kind: 'external', provider } },
+        ];
+        for (const [index, variant] of variants.entries()) {
+            const resourceId = `storage-${mode}-${index}`;
+            const storedContent = sealSavedSecretResourceStoredContentV1({ resourceId, mode, content: variant.content,
+                resourceDataKey: new Uint8Array(32).fill(7), randomBytes: length => new Uint8Array(length).fill(8) });
+            expect(await inTx(tx => createSavedSecretResourceInTx(tx, { accountId: owner.id, resourceId,
+                displayName: variant.content.name, kind: variant.content.kind, encryptionMode: mode, storedContent,
+                ...(mode === 'e2ee' ? { keyEnvelopes: [{ recipientAccountId: owner.id,
+                    encryptedDataKey: sealTestDataKey(material.contentPublicKey),
+                    recipientContentPublicKeyFingerprint: material.fingerprint }] } : {}) }))).toMatchObject({ ok: true });
+            const row = await db.savedSecretResource.findUniqueOrThrow({ where: { id: resourceId } });
+            // The incumbent default codec is the pre-descriptor reader: it drops
+            // the additive header and still returns the exact original material.
+            const legacyEnvelope = decodeSensitiveContentFromAtRestStorage({
+                keyPath: ['storage', 'saved_secret_resource', resourceId, 'v1'], value: row.storedContent });
+            expect(legacyEnvelope).not.toHaveProperty('storage');
+            expect(openSavedSecretResourceStoredContentV1({ resourceId, mode, storedContent: legacyEnvelope,
+                resourceDataKey: new Uint8Array(32).fill(7) })).toEqual(variant.content);
+        }
+        const entries = await inTx(tx => listSavedSecretResourcesForAccountInTx(tx, owner.id));
+        const wire = SharedSavedSecretListOutputV1Schema.parse({ resources: entries });
+        for (const variant of variants) {
+            expect(wire.resources.find(entry => 'name' in entry && entry.name === variant.content.name))
+                .toMatchObject({ storage: variant.storage });
+        }
+        const serialized = JSON.stringify(wire);
+        for (const privateFact of ['private-value-sentinel', 'private-rp.example', 'cHJpdmF0ZS1rZXk=',
+            'private-account-sentinel', 'op://private-vault/private-item/private-field', 'storedContent', 'recipientEnvelope']) {
+            expect(serialized).not.toContain(privateFact);
+        }
+        const resourceId = `storage-${mode}-2`;
+        const replacement = { v: 1 as const, name: 'Linked', kind: 'token' as const, value: 'replacement-private-value' };
+        expect(await inTx(tx => updateSavedSecretResourceInTx(tx, { accountId: owner.id, resourceId,
+            expectedRevision: 1, displayName: replacement.name, kind: replacement.kind,
+            storedContent: sealSavedSecretResourceStoredContentV1({ resourceId, mode, content: replacement,
+                resourceDataKey: new Uint8Array(32).fill(7), randomBytes: length => new Uint8Array(length).fill(9) }) })))
+            .toMatchObject({ ok: true });
+        const updated = await inTx(tx => listSavedSecretResourcesForAccountInTx(tx, owner.id));
+        expect(updated.find(entry => 'name' in entry && entry.name === replacement.name))
+            .toMatchObject({ storage: { kind: 'value' }, revision: 2 });
     });
 
     it('keeps Plain external references personal at create and grant mutation', async () => {
