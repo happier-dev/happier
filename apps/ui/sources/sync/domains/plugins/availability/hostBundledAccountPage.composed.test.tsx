@@ -15,6 +15,7 @@ import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createAccountNoticeArtifactFixture } from '@/dev/testkit/fixtures/usageNoticeFixtures';
+import { createPlainArtifactHttpFixture } from '@/dev/testkit/harness/artifactStoreBoundary';
 
 const packaged = vi.hoisted(() => ({
     bytes: new TextEncoder().encode(`
@@ -698,7 +699,7 @@ it('opens a private plugin Inbox notice through the existing admitted plugin pag
     const notice = createAccountNoticeArtifactFixture({ ownerAccountId: scope.accountId,
         header: { source: { kind: 'plugin', pluginId: 'happier.fixture', itemId: 'review' }, page: { pageId: 'account-page' } },
     });
-    storage.setState({ artifacts: { [notice.id]: notice }, isDataReady: true });
+    account.home.artifacts(scope.serverId).replaceStoredRow(createPlainArtifactHttpFixture(notice, scope.accountId));
     const { InboxModelProvider } = await import('@/hooks/inbox/useInboxModel');
     const { InboxItemDetail } = await import('@/components/inbox/detail/InboxItemDetail');
     const screen = await renderWithAppProviders(<AppPaneProvider><AppShellPluginUiProjectionProvider>
