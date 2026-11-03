@@ -49,6 +49,7 @@ import { classifyMachineAvailabilityState } from "@/app/machines/machineStateGua
 import { db, isPrismaErrorCode } from "@/storage/db";
 import { inReadSnapshot, inTx, TransactionReplayRequiredError, type Tx } from "@/storage/inTx";
 import { getActivePrismaRuntime } from "@/storage/prisma";
+import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import { warn } from "@/utils/logging/log";
 
 import {
@@ -1355,37 +1356,57 @@ function isClaimableMachineRowV1(
  * exact currentness reader once per candidate. A consumer of one plugin scopes
  * the database read before loading or parsing other plugins' declarations.
  */
+type ClaimableMaterializationTarget = Readonly<{
+    machineId: string;
+    machineInstallationId: string;
+    pluginId?: string;
+}>;
+
 export async function resolveCurrentClaimablePluginMachineMaterializationsTx(params: Readonly<{
     tx: Tx;
     accountId: string;
     serverIdentityId: string;
-    machineId: string;
-    machineInstallationId: string;
-    pluginId?: string;
     requiredMachineOperationCapability?: MachineOperationProtocolCapabilityNameV1;
-}>): Promise<readonly PluginMachineMaterializationV1[]> {
-    const machine = await params.tx.machine.findFirst({
-        where: {
-            accountId: params.accountId,
-            id: params.machineId,
-            installationId: params.machineInstallationId,
-        },
-        select: {
+}> & (ClaimableMaterializationTarget | Readonly<{ targets: readonly ClaimableMaterializationTarget[] }>)): Promise<readonly PluginMachineMaterializationV1[]> {
+    const targets = [...new Map(('targets' in params ? params.targets : [params]).map(target =>
+        [JSON.stringify([target.machineId, target.machineInstallationId, target.pluginId]), target])).values()];
+    if (targets.length === 0) return [];
+    const machineSelect = {
+            id: true, installationId: true,
             pluginMaterializationRevision: true,
             operationProtocolCapabilities: true,
             operationProtocolCapabilitiesRevision: true,
             revokedAt: true,
             replacedByMachineId: true,
-        },
-    });
-    if (!isClaimableMachineRowV1(machine, params.requiredMachineOperationCapability)) return [];
+    } as const;
+    let currentTargets: readonly ClaimableMaterializationTarget[];
+    if ('targets' in params) {
+        const machines = [];
+        for (const chunk of portableQueryChunks({ values: targets, bindingsPerValue: 2, fixedBindings: 2 })) {
+            machines.push(...await params.tx.machine.findMany({ where: { accountId: params.accountId,
+                OR: chunk.map(target => ({ id: target.machineId, installationId: target.machineInstallationId })) }, select: machineSelect }));
+        }
+        const currentInstallations = new Set(machines.filter(machine => isClaimableMachineRowV1(machine,
+            params.requiredMachineOperationCapability)).map(machine => JSON.stringify([machine.id, machine.installationId])));
+        currentTargets = targets.filter(target => currentInstallations.has(JSON.stringify([target.machineId, target.machineInstallationId])));
+    } else {
+        const machine = await params.tx.machine.findFirst({ where: { accountId: params.accountId,
+            id: params.machineId, installationId: params.machineInstallationId }, select: machineSelect });
+        currentTargets = isClaimableMachineRowV1(machine, params.requiredMachineOperationCapability) ? [params] : [];
+    }
+    if (currentTargets.length === 0) return [];
 
-    const rows = await params.tx.pluginMachineMaterialization.findMany({
+    const rows = [];
+    // Account, Home, enabled, trust and Prisma pagination accompany each
+    // exact Machine/plugin pair; transport chunks never limit domain results.
+    for (const chunk of portableQueryChunks({ values: currentTargets, bindingsPerValue: 2, fixedBindings: 5 })) {
+        rows.push(...await params.tx.pluginMachineMaterialization.findMany({
         where: {
             accountId: params.accountId,
             serverIdentityId: params.serverIdentityId,
-            machineId: params.machineId,
-            ...(params.pluginId === undefined ? {} : { pluginId: params.pluginId }),
+            ...('targets' in params ? { OR: chunk.map(target => ({ machineId: target.machineId,
+                ...(target.pluginId === undefined ? {} : { pluginId: target.pluginId }) })) }
+                : { machineId: params.machineId, ...(params.pluginId === undefined ? {} : { pluginId: params.pluginId }) }),
             enabled: true,
             trustState: "trusted",
         },
@@ -1403,24 +1424,29 @@ export async function resolveCurrentClaimablePluginMachineMaterializationsTx(par
             trustState: true,
             observedAt: true,
         },
-    });
+        }));
+    }
     if (rows.length === 0) return [];
 
     const portableRows = rows.filter((row) => row.portableRelease);
     const nonPortablePluginIds = [...new Set(rows.flatMap((row) => (
         row.portableRelease ? [] : [row.pluginId]
     )))];
-    const intents = nonPortablePluginIds.length === 0
-        ? []
-        : await params.tx.accountPluginIntent.findMany({
-            where: { accountId: params.accountId, pluginId: { in: nonPortablePluginIds } },
+    const intents = [];
+    for (const ids of portableQueryChunks({ values: nonPortablePluginIds, bindingsPerValue: 1, fixedBindings: 2 })) {
+        intents.push(...await params.tx.accountPluginIntent.findMany({
+            where: { accountId: params.accountId, pluginId: { in: [...ids] } },
             select: { pluginId: true, desiredVersion: true, releaseLessDeclaration: true },
-        });
+        }));
+    }
     const intentsByPluginId = new Map(intents.map((intent) => [intent.pluginId, intent] as const));
-    const releases = portableRows.length === 0 ? [] : await params.tx.accountPluginRelease.findMany({
+    const releases = [];
+    const releaseRefs = [...new Map(portableRows.map(row => [`${row.pluginId}\0${row.version}`, row])).values()];
+    for (const refs of portableQueryChunks({ values: releaseRefs, bindingsPerValue: 2, fixedBindings: 2 })) {
+        releases.push(...await params.tx.accountPluginRelease.findMany({
         where: {
             accountId: params.accountId,
-            OR: portableRows.map((row) => ({ pluginId: row.pluginId, version: row.version })),
+            OR: refs.map((row) => ({ pluginId: row.pluginId, version: row.version })),
         },
         select: {
             id: true,
@@ -1433,11 +1459,12 @@ export async function resolveCurrentClaimablePluginMachineMaterializationsTx(par
             uiSlots: true,
             packageAssetArchive: true,
         },
-    });
+        }));
+    }
     const releasesByRef = new Map(
         releases.map((release) => [`${release.pluginId}\0${release.version}`, release] as const),
     );
-    return rows.flatMap((row) => {
+    return [...new Map(rows.map(row => [JSON.stringify([row.machineId, row.materializationId]), row])).values()].flatMap((row) => {
         try {
             const materialization = materializationFromRow(row);
             if (!materialization.portableRelease) {

@@ -6,7 +6,7 @@ import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 } from '@happier-dev/protoc
 import { ConnectedServiceCredentialHealthV1Schema, type ConnectedServiceCredentialHealthV1 } from '@happier-dev/protocol/connect/connected-service-schemas';
 import { StoredJsonContentEnvelopeSchema, isStoredJsonContentEnvelopeModeCompatible, type StoredJsonContentEnvelope } from '@happier-dev/protocol/storage/storedJsonContentEnvelope';
 import { QualifiedConnectedAccountConfigurationTargetV4Schema, QualifiedConnectedAccountCredentialMetadataV4Schema, QualifiedConnectedAccountServiceRefSchema, QualifiedConnectedAccountProfileV4Schema } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
-import { QualifiedConnectedAccountRefSchema, type QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
+import { QualifiedConnectedAccountRefSchema, sameQualifiedConnectedAccountRef, type QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 import { PluginContributionLocalIdSchema } from '@happier-dev/protocol/plugins/contribution-identity';
 import { type QualifiedConnectedAccountConfigurationSnapshotV4, type QualifiedConnectedAccountConfigurationTargetV4, type QualifiedConnectedAccountCredentialMetadataV4, type QualifiedConnectedAccountCredentialSnapshotV4, type QualifiedConnectedAccountServiceRef, type QualifiedConnectedAccountProfileV4 } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import { acceptsManagedResourceDispositions, readManagedResourceDependenciesInTx } from '@/app/machines/managed/managedRead';
@@ -16,6 +16,8 @@ import { deriveAccountEncryptionCurrentnessFromRow } from "@/app/encryption/acco
 import { acquireAccountEncryptionTransitionFenceInTx } from "@/app/encryption/accountEncryptionTransition";
 import { acquireAccountCredentialSourceTeamAdmissionInTx } from '@/app/teams/teamChanges';
 import { db } from "@/storage/db";
+import { getDbProviderFromEnv, prismaRuntime } from "@/storage/prisma";
+import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import { inReadSnapshot, inTx, type Tx } from "@/storage/inTx";
 import {
     decodeAccountContentFromAtRestStorage,
@@ -1604,7 +1606,7 @@ export async function mutateQualifiedConnectedAccountConfiguration(
 
 type QualifiedConnectedAccountListStorage = Pick<
     Tx,
-    "serviceAccountToken"
+    "serviceAccountToken" | "$queryRaw"
 >;
 
 function qualifiedConnectedAccountMigrationKey(
@@ -1624,7 +1626,7 @@ function legacyConnectedAccountMigrationKey(
 }
 
 export async function isQualifiedConnectedAccountMigrationInventoryCompleteInTx(
-    tx: QualifiedConnectedAccountListStorage,
+    tx: Pick<Tx, "serviceAccountToken">,
     params: Readonly<{
         accountId: string;
         legacyCredentials: readonly Readonly<{
@@ -1722,33 +1724,92 @@ export async function isQualifiedConnectedAccountMigrationInventoryCompleteInTx(
     return rows.length === expectedRowCount;
 }
 
+type QualifiedConnectedAccountListRow = Pick<
+    Prisma.ServiceAccountTokenGetPayload<{}>,
+    "id" | "servicePluginId" | "serviceLocalId" | "qualifiedServiceDigest"
+    | "connectedAccountId" | "qualifiedIdentityDigest" | "authenticationModeId"
+    | "configurationRevision"
+> & {
+    metadata: unknown;
+    configurationContentPresent: number | bigint;
+    // SQLite raw DateTime columns are milliseconds; the other clients return Date.
+    expiresAt: Date | number | bigint | null;
+    lastUsedAt: Date | number | bigint | null;
+};
+
+function qualifiedConnectedAccountListTimestamp(value: QualifiedConnectedAccountListRow["expiresAt"]): number | null {
+    return value === null ? null : value instanceof Date ? value.getTime() : Number(value);
+}
+
+type QualifiedConnectedAccountListSelection = Readonly<{ accountId: string }> & (
+    | Readonly<{ service: QualifiedConnectedAccountServiceRef; services?: never; refs?: never }>
+    | Readonly<{ services: readonly QualifiedConnectedAccountServiceRef[]; service?: never; refs?: never }>
+    | Readonly<{ refs: readonly QualifiedConnectedAccountRef[]; service?: never; services?: never }>
+);
+
 async function listQualifiedConnectedAccountEntriesByFilterInTx(
     tx: QualifiedConnectedAccountListStorage,
     params: Readonly<{
         accountId: string;
         service?: QualifiedConnectedAccountServiceRef;
+        services?: readonly QualifiedConnectedAccountServiceRef[];
+        refs?: readonly QualifiedConnectedAccountRef[];
     }>,
 ): Promise<Array<Readonly<{
     profile: QualifiedConnectedAccountProfileV4;
     incarnation: string;
     directExportSupport: "supported" | "unsupported";
 }>>> {
-    const service = params.service
-        ? QualifiedConnectedAccountServiceRefSchema.parse(params.service)
+    const refsByDigest = params.refs === undefined ? null : new Map(params.refs.map(ref => {
+        const canonicalRef = QualifiedConnectedAccountRefSchema.parse(ref);
+        return [createQualifiedConnectedAccountIdentityDigest(canonicalRef), canonicalRef];
+    }));
+    if (refsByDigest?.size === 0) return [];
+    const services = params.services !== undefined
+        ? params.services.map(service => QualifiedConnectedAccountServiceRefSchema.parse(service))
+        : params.service
+            ? [QualifiedConnectedAccountServiceRefSchema.parse(params.service)]
         : null;
-    const qualifiedServiceDigest = service
-        ? createQualifiedConnectedAccountServiceDigest(service)
+    const servicesByDigest = services
+        ? new Map(services.map(service => [createQualifiedConnectedAccountServiceDigest(service), service]))
         : null;
-    const selectedRows = await tx.serviceAccountToken.findMany({
-        where: {
-            accountId: params.accountId,
-            ...(qualifiedServiceDigest ? { qualifiedServiceDigest } : {}),
-        },
-        orderBy: [
-            { connectedAccountId: "asc" },
-            { id: "asc" },
-        ],
-    });
+    const provider = getDbProviderFromEnv(process.env, "postgres");
+    const quote = provider === "mysql" ? "`" : '"';
+    // Identifiers below are fixed schema names; account/service values remain bound.
+    const identifier = (name: string) => prismaRuntime.raw(`${quote}${name}${quote}`);
+    const sql = prismaRuntime.sql;
+    const serviceFilter = servicesByDigest === null
+        ? prismaRuntime.empty
+        : servicesByDigest.size === 0
+            ? sql`AND 1 = 0`
+            : sql`AND ${identifier("qualified_service_digest")} IN (${prismaRuntime.join([...servicesByDigest.keys()])})`;
+    // Prisma select cannot project byte-column presence. Keep the sidecar check
+    // in this same statement snapshot without transferring either content body.
+    const selectedRows: QualifiedConnectedAccountListRow[] = [];
+    const identityChunks = refsByDigest === null ? [null]
+        : portableQueryChunks({ values: [...refsByDigest.keys()], bindingsPerValue: 1, fixedBindings: 1 });
+    for (const identities of identityChunks) {
+        const identityFilter = identities === null ? prismaRuntime.empty
+            : sql`AND ${identifier('qualified_identity_digest')} IN (${prismaRuntime.join([...identities])})`;
+        const chunkRows = await tx.$queryRaw<QualifiedConnectedAccountListRow[]>(sql`
+        SELECT ${identifier("id")},
+            ${identifier("service_plugin_id")} AS ${identifier("servicePluginId")},
+            ${identifier("service_local_id")} AS ${identifier("serviceLocalId")},
+            ${identifier("qualified_service_digest")} AS ${identifier("qualifiedServiceDigest")},
+            ${identifier("connected_account_id")} AS ${identifier("connectedAccountId")},
+            ${identifier("qualified_identity_digest")} AS ${identifier("qualifiedIdentityDigest")},
+            ${identifier("authentication_mode_id")} AS ${identifier("authenticationModeId")},
+            ${identifier("configuration_revision")} AS ${identifier("configurationRevision")},
+            CASE WHEN ${identifier("configuration_content")} IS NULL THEN 0 ELSE 1 END AS ${identifier("configurationContentPresent")},
+            ${identifier("metadata")}, ${identifier("expiresAt")}, ${identifier("lastUsedAt")}
+        FROM ${identifier("ServiceAccountToken")}
+        WHERE ${identifier("accountId")} = ${params.accountId}
+            ${serviceFilter}
+            ${identityFilter}
+        ORDER BY ${identifier("connected_account_id")} ASC, ${identifier("id")} ASC
+        `);
+        for (const row of chunkRows) selectedRows.push(row);
+    }
     const rows = selectedRows.filter((row) => {
         const canonicalValues = [
             row.servicePluginId,
@@ -1761,7 +1822,7 @@ async function listQualifiedConnectedAccountEntriesByFilterInTx(
         const presentCount = canonicalValues.filter(
             (value) => typeof value === "string" && value.length > 0,
         ).length;
-        if (presentCount === 0 && service === null) return false;
+        if (presentCount === 0 && servicesByDigest === null) return false;
         if (presentCount !== canonicalValues.length) {
             throw new Error(
                 "Qualified Connected Account canonical identity is incomplete",
@@ -1771,11 +1832,17 @@ async function listQualifiedConnectedAccountEntriesByFilterInTx(
     });
     return rows.map((row) => {
         const ref = parseStoredQualifiedConnectedAccountRef(row);
+        const selectedRef = refsByDigest?.get(row.qualifiedIdentityDigest ?? '');
+        if (refsByDigest !== null && (!selectedRef || !sameQualifiedConnectedAccountRef(ref, selectedRef))) {
+            throw new Error('Qualified Connected Account selected identity digest mismatch');
+        }
         const rowService = ref.service;
+        const service = servicesByDigest?.get(row.qualifiedServiceDigest ?? "");
         if (
-            service
+            servicesByDigest !== null
             && (
-                row.servicePluginId !== service.pluginId
+                !service
+                || row.servicePluginId !== service.pluginId
                 || row.serviceLocalId !== service.localId
             )
         ) {
@@ -1785,7 +1852,7 @@ async function listQualifiedConnectedAccountEntriesByFilterInTx(
         }
         if (
             (row.configurationRevision === null)
-            !== (row.configurationContent === null)
+            !== (Number(row.configurationContentPresent) === 0)
         ) {
             throw new Error(
                 "Qualified Connected Account configuration sidecar is incomplete",
@@ -1793,7 +1860,9 @@ async function listQualifiedConnectedAccountEntriesByFilterInTx(
         }
         const metadata = resolveQualifiedConnectedAccountStoredMetadata({
             rowId: row.id,
-            metadata: row.metadata,
+            metadata: provider === "sqlite" && typeof row.metadata === "string"
+                ? JSON.parse(row.metadata)
+                : row.metadata,
         });
         const legacyMode =
             classifyQualifiedConnectedAccountLegacyAuthenticationMode({
@@ -1821,8 +1890,8 @@ async function listQualifiedConnectedAccountEntriesByFilterInTx(
                 configurationReady: row.configurationRevision !== null,
                 configurationRevision: row.configurationRevision,
                 kind: metadata.kind,
-                expiresAt: row.expiresAt?.getTime() ?? null,
-                lastUsedAt: row.lastUsedAt?.getTime() ?? null,
+                expiresAt: qualifiedConnectedAccountListTimestamp(row.expiresAt),
+                lastUsedAt: qualifiedConnectedAccountListTimestamp(row.lastUsedAt),
                 ...metadata.presentation,
             }),
         };
@@ -1834,6 +1903,8 @@ async function listQualifiedConnectedAccountsByFilterInTx(
     params: Readonly<{
         accountId: string;
         service?: QualifiedConnectedAccountServiceRef;
+        services?: readonly QualifiedConnectedAccountServiceRef[];
+        refs?: readonly QualifiedConnectedAccountRef[];
     }>,
 ): Promise<QualifiedConnectedAccountProfileV4[]> {
     return (await listQualifiedConnectedAccountEntriesByFilterInTx(tx, params))
@@ -1876,10 +1947,7 @@ export async function listQualifiedConnectedAccountSourceOffersInTx(
 
 export async function listQualifiedConnectedAccountsInTx(
     tx: QualifiedConnectedAccountListStorage,
-    params: Readonly<{
-        accountId: string;
-        service: QualifiedConnectedAccountServiceRef;
-    }>,
+    params: QualifiedConnectedAccountListSelection,
 ): Promise<QualifiedConnectedAccountProfileV4[]> {
     return await listQualifiedConnectedAccountsByFilterInTx(tx, params);
 }
@@ -1964,10 +2032,7 @@ export async function listAllQualifiedConnectedAccountsForLegacyProjectionInTx(
 }
 
 export async function listQualifiedConnectedAccounts(
-    params: Readonly<{
-        accountId: string;
-        service: QualifiedConnectedAccountServiceRef;
-    }>,
+    params: QualifiedConnectedAccountListSelection,
 ): Promise<QualifiedConnectedAccountProfileV4[]> {
     // This projection reads one credential-row SELECT, then maps synchronously.
     // Its statement snapshot already keeps identities and revisions coherent;

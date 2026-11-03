@@ -57,7 +57,7 @@ export type AccountConnectedServicesProjection = Readonly<{
     connectedAccountGroupsV4: QualifiedConnectedAccountGroupV4[];
 }>;
 
-type AccountConnectedServicesProjectionStorage = Pick<Tx, "serviceAccountToken" | "connectedServiceAuthGroup">;
+type AccountConnectedServicesProjectionStorage = Pick<Tx, "serviceAccountToken" | "connectedServiceAuthGroup" | "$queryRaw">;
 
 type QualifiedConnectedAccountLegacyProjection = Awaited<
     ReturnType<
