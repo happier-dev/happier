@@ -28,6 +28,7 @@ export const RPC_METHODS = {
   MACHINES_SERVICE_DISCOVERY: 'machines.services.discovery',
 
   MACHINES_SERVICE_EXEC: 'machines.services.exec',
+  MACHINES_SERVICE_ADOPT: 'machines.services.adopt',
 
   MACHINES_SERVICE_LIST: 'machines.services.list',
 

@@ -269,6 +269,7 @@ import { MACHINE_PROCESSES_ACTION_SPECS } from './specs/machineProcesses.js';
 import { MACHINE_STORAGE_ACTION_SPECS } from './specs/storage.js';
 import { MACHINE_RESOURCES_ACTION_SPECS } from './specs/machineResources.js';
 import { MACHINE_SERVICE_ACTION_SPECS } from './specs/machine/services.js';
+import { MACHINE_SERVICE_ADOPT_SPEC } from './specs/machine/serviceAdoption.js';
 import { MACHINE_REBOOT_ACTION_SPECS } from './specs/machine/reboot.js';
 import { MACHINE_AGENT_ISOLATION_ACTION_SPECS } from './specs/machine/agentIsolation.js';
 import { MACHINE_ADMIN_ACCESS_ACTION_SPECS } from './specs/machine/adminAccess.js';
@@ -491,6 +492,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_FAMILIES: readonly (
   | (typeof MACHINE_STORAGE_ACTION_SPECS)[number]
   | (typeof MACHINE_RESOURCES_ACTION_SPECS)[number]
   | (typeof MACHINE_SERVICE_ACTION_SPECS)[number]
+  | typeof MACHINE_SERVICE_ADOPT_SPEC
   | (typeof MACHINE_REBOOT_ACTION_SPECS)[number]
   | (typeof MACHINE_AGENT_ISOLATION_ACTION_SPECS)[number]
   | (typeof MACHINE_ADMIN_ACCESS_ACTION_SPECS)[number]
@@ -537,6 +539,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_FAMILIES: readonly (
   ...MACHINE_STORAGE_ACTION_SPECS,
   ...MACHINE_RESOURCES_ACTION_SPECS,
   ...MACHINE_SERVICE_ACTION_SPECS,
+  MACHINE_SERVICE_ADOPT_SPEC,
   ...MACHINE_REBOOT_ACTION_SPECS,
   ...MACHINE_AGENT_ISOLATION_ACTION_SPECS,
   ...MACHINE_ADMIN_ACCESS_ACTION_SPECS,
