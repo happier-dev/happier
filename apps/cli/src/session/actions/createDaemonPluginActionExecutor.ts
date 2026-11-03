@@ -1,7 +1,7 @@
 import type { ActionExecuteResult, ActionExecutorContext, ActionId, ActionCaller, ActionExecutorDeps, WorkflowRunStartedByV1 } from '@happier-dev/protocol';
 import { resolveWorkflowRunStartedByForActionCallerV1 } from '@happier-dev/protocol/workflows/materializeWorkflowAcceptedSnapshotV1';
 import { parseQualifiedPluginActionId, formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
-import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { buildQualifiedPluginContributionKey, type PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import { PluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugins/contribution-identity';
 import { PUBLIC_ACTION_OUTPUT_SCHEMAS } from '@happier-dev/protocol/actions/actionSpecs';
 import { searchActionDefinitionSummaries } from '@happier-dev/protocol/actions/actionCatalog';
@@ -37,6 +37,17 @@ const PLUGIN_META_ACTION_IDS = new Set<string>([
 /** These IDs must reach the placement-aware plugin owner before root transport. */
 export function isPluginActionExecutionDispatchId(actionId: string): boolean {
   return PLUGIN_META_ACTION_IDS.has(actionId) || parseQualifiedPluginActionId(actionId) !== null;
+}
+
+/** Exact target shared by local placement and the daemon descriptor read. */
+export function readPluginActionExecutionReference(actionId: string, input: unknown): PluginContributionIdentityV1 | null {
+  const record = typeof input === 'object' && input !== null ? input : null;
+  const metadataId = record && (actionId === 'action.spec.get' && 'id' in record ? record.id
+    : actionId === 'action.options.resolve' && 'actionId' in record ? record.actionId : null);
+  const reference = PluginContributionIdentityV1Schema.safeParse(actionId === 'action.invoke'
+    && record && 'action' in record ? record.action
+    : parseQualifiedPluginActionId(typeof metadataId === 'string' ? metadataId : actionId));
+  return reference.success ? reference.data : null;
 }
 
 /**
@@ -130,20 +141,11 @@ export function createPluginActionExecutor(params: Readonly<{
       } } };
     }
     if (local && 'accountSelectionUnavailable' in local) {
-      const metadataActionId = typeof input === 'object' && input !== null
-        ? actionId === 'action.spec.get' && 'id' in input ? input.id
-          : actionId === 'action.options.resolve' && 'actionId' in input ? input.actionId : null
-        : null;
-      const metadataIdentity = typeof metadataActionId === 'string' ? parseQualifiedPluginActionId(metadataActionId) : null;
-      const reference = PluginContributionIdentityV1Schema.safeParse(actionId === 'action.invoke'
-        && typeof input === 'object' && input !== null && 'action' in input ? input.action : metadataIdentity ?? contributedIdentity);
+      const reference = readPluginActionExecutionReference(actionId, input);
       const unavailable = { matched: true as const, result: { ok: false as const,
         errorCode: 'plugin_action_execution_placement_unavailable', error: 'plugin_action_execution_placement_unavailable' } };
-      // An Account-classified receiver may read a current non-Account
-      // descriptor, but losing Account custody cannot admit an effect there.
-      if (!params.requestPluginActionExecution && actionId !== 'action.spec.get') return unavailable;
-      if (!reference.success) return unavailable;
-      const id = formatQualifiedPluginActionId(reference.data);
+      if (!reference) return unavailable;
+      const id = formatQualifiedPluginActionId(reference);
       // This is the incumbent semantic descriptor read, not a second catalog
       // or an endpoint capability probe. Unknown/Account placement refuses.
       const descriptor = params.requestPluginActionExecution
@@ -156,7 +158,8 @@ export function createPluginActionExecutor(params: Readonly<{
         || (parsed.data.actionSpec.executionPlacement !== 'machine'
           && !(parsed.data.actionSpec.executionPlacement === 'client'
             && (params.requestPluginActionExecution !== undefined || actionId === 'action.spec.get')))) return unavailable;
-      if (!params.requestPluginActionExecution || actionId === 'action.spec.get') return descriptor;
+      if (actionId === 'action.spec.get') return descriptor;
+      if (!params.requestPluginActionExecution) return { matched: false as const };
       // The daemon's ordinary final owner rechecks its current declaration and
       // refuses Account placement immediately before any handler invocation.
     }

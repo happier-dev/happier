@@ -16,12 +16,12 @@ import {
   hasStoredSessionCredentialProvenance,
   type StoredCredentials,
 } from '@/persistence';
-import { createDaemonPluginActionExecutor, createPluginActionExecutor } from './createDaemonPluginActionExecutor';
+import { createDaemonPluginActionExecutor, createPluginActionExecutor, readPluginActionExecutionReference } from './createDaemonPluginActionExecutor';
 import { createCommittedContributedActionSchemaReader, createCommittedInputTypeDeps } from '@/plugins/runtime/invocation/actions/createCommittedContributedActionDeps';
 import type { CliActionExactHomeTarget } from './createCliActionDeps';
 import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAdapter';
 import { clientActionUnavailable } from '@happier-dev/protocol/actions/clientDispatchV1';
-import type { ActionExecutorContext, ActionExecutorDeps, RuntimeActionExecute, ActionId } from '@happier-dev/protocol';
+import type { ActionExecuteResult, ActionExecutorContext, ActionExecutorDeps, RuntimeActionExecute, ActionId } from '@happier-dev/protocol';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import type {
   ExternalSessionPluginAdmissionOwner,
@@ -290,8 +290,15 @@ export function createCliActionExecutor(
       return await executeAccountPluginAction({ host: params, deps: harness.deps,
         actionId, input, ...(context ? { context } : {}) });
     };
+  // Options inherit the consuming Action's placement, even when a receiving
+  // daemon's own catalog intentionally excludes Account Actions.
+  const usesPluginPlacement = (actionId: string, input: unknown) => params.pluginActionExecutionOwner !== 'current_process'
+    || params.accountPluginActions === true
+    || (actionId === 'action.options.resolve' && readPluginActionExecutionReference(actionId, input) !== null);
   const pluginExecutor = params.pluginActionExecutionOwner === 'current_process'
-    ? params.accountPluginActions ? createPluginActionExecutor({ base, executeInCurrentProcess }) : null
+    ? createPluginActionExecutor({ base, executeInCurrentProcess: (actionId, input, context) =>
+      usesPluginPlacement(actionId, input) ? executeInCurrentProcess(actionId, input, context)
+        : Promise.resolve({ matched: false as const }) })
     : createDaemonPluginActionExecutor({ base, executeInCurrentProcess });
   const daemonAware = pluginExecutor ?? base;
   const resolveContext = async (context: RpcActionExecutorContext | undefined) => {
@@ -471,6 +478,13 @@ export function createCliActionExecutor(
       const resolvedContext = await measureActionStartPhaseV1(context, 'cli_context', () => resolveContext(context));
       if (!resolvedContext) return { kind: 'settled' as const,
         result: actionStartTargetUnavailableV1(context, 'cli_context', 'requester_projection_unavailable') };
+      if (actionId === 'action.options.resolve' && readPluginActionExecutionReference(actionId, input) !== null) {
+        // Preparation must not bypass the placement owner or run an effect.
+        // The same admitted invocation settles once when its caller runs it.
+        let result: Promise<ActionExecuteResult> | undefined;
+        return { kind: 'ready' as const, invocation: { run: () =>
+          result ??= pluginExecutor.execute(actionId, input, resolvedContext) } };
+      }
       // The daemon binds drafts before signing, but an unchanged signed reply
       // must still refuse if its current participant policy now requires a draft.
       // Already-bound drafts carry discussionReplyReturn and skip this recheck.
