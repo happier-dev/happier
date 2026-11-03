@@ -190,9 +190,9 @@ export function buildShareSheetSelectionStep<TRow extends ShareGrantRowModel>(in
         roster.push(...adapterSections.afterAccess ?? []);
         const publicLink = adapter.publicLink;
         if (publicLink) roster.push({ kind: 'static', id: 'public-link', options: [{
-            id: 'public-link', testID: `${idPrefix}${ns}-public-link`, label: t('session.sharing.publicLink'),
+            id: 'public-link', testID: `${idPrefix}${ns}-public-link`, label: publicLink.label ?? t('session.sharing.publicLink'),
             icon: () => <ShareHandoffIcon name="link" />,
-            accessibilityLabel: `${t('session.sharing.publicLink')}, ${publicLink.stateLabel}`,
+            accessibilityLabel: `${publicLink.label ?? t('session.sharing.publicLink')}, ${publicLink.stateLabel}`,
             rightAccessory: () => <SharePublicLinkState stateLabel={publicLink.stateLabel} />,
             onSelect: publicLink.onOpen ?? (() => input.onExpand('public-link')),
             ...(publicLink.renderContent ? { expandedContentInset: 'row', expandedContent: () => publicLink.renderContent!(context) } : {}),

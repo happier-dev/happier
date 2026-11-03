@@ -138,6 +138,7 @@ export type ShareSheetAdapter<TRow extends ShareGrantRowModel = ShareGrantRowMod
     linkPath?: string;
     /** The common public-link row; each domain supplies its current state and its existing editor. */
     publicLink?: Readonly<{
+        label?: string;
         stateLabel: string;
         onOpen?: () => void;
         renderContent?: (context: ShareSheetSectionContext) => ReactNode;
