@@ -1,3 +1,4 @@
+import { MachineServiceAdoptInputV1Schema } from '@happier-dev/protocol/local/services/adoptionV1';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions';
 import { type DeploymentPendingAdmissionV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import type { ActionOperationCancellation } from './actionOperationTypes';
@@ -509,6 +510,12 @@ return Object.freeze({async publishCurrentSnapshot(scope: Parameters<typeof stor
       if (snapshot) await deps.publishSnapshot?.(snapshot);
     },
 preparePendingDeploymentObservation,
+    /** Restore evidence stays under the same requester/Machine custody as its
+     * existing Action operation; another Account cannot select it by ID. */
+    async readRestorePreparation(request: Readonly<{ operationId: string; context?: ActionOperationRpcContext }>) {
+      const scope = await resolveObservedScope(request.context);
+      return scope ? store.get(scope, request.operationId) : null;
+    },
  store, runner, handlers, observeExecution, runActionOperation, observePluginExecution, attachOwner, activity,
     decideSetupReview,
     retireProjectFiniteOperations: runner.retireProjectFiniteOperations,
@@ -557,6 +564,13 @@ function carriesNativeConfirmation(context?: ConfirmationContext): boolean {
 }
 
 function readDeploymentOperationRequestId(actionId: string, input: unknown): string | undefined {
+  if (actionId === 'machines.services.adopt') {
+    const parsed = MachineServiceAdoptInputV1Schema.safeParse(input);
+    if (!parsed.success || parsed.data.mode !== 'apply') return undefined;
+    return computeCanonicalDomainSeparatedDigest('happier-deployment-operation-request-v1', [
+      'adopt', parsed.data.serverId, parsed.data.machineId, parsed.data.serviceId, parsed.data.requestKey,
+    ]);
+  }
   if (actionId === 'deployments.backups.restore') {
     const parsed = DeploymentActionInputSchemasV1[actionId].safeParse(input);
     if (!parsed.success || parsed.data.mode !== 'confirm') return undefined;

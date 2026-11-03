@@ -53,6 +53,7 @@ export async function prepareHostReviewedChildrenV1(params: Readonly<{
   existing?: PreparedCoreAdmission; approvalReplay: boolean; isSameHome: ActionHomeEquivalence;
 }>): Promise<Readonly<{ plan?: HostReviewedChildrenPlanV1; policies?: readonly HostReviewedChildPolicyV1[];
   executeAdmittedAction?: HostReviewedChildrenPreparationV1['executeAdmittedAction'];
+  approvalPreview?: HostReviewedChildrenPreparationV1['approvalPreview'];
   admittedReviewedChild?: true;
   reviewRequired: boolean }> | ActionExecuteFailure> {
   const { actionId, context, deps, existing } = params;
@@ -96,6 +97,7 @@ export async function prepareHostReviewedChildrenV1(params: Readonly<{
   if (retained && !witnessed || params.approvalReplay && plan && !witnessed)
     return { ok: false, errorCode: 'approval_stale', error: 'approval_stale' };
   return { ...(plan ? { plan, policies } : {}),
+    ...(prepared?.approvalPreview ? { approvalPreview: prepared.approvalPreview } : {}),
     ...(prepared?.executeAdmittedAction ? { executeAdmittedAction: prepared.executeAdmittedAction } : {}),
     reviewRequired: !witnessed && policies.some(policy => (policy.requiredActionIds?.length ?? 0) > 0) };
 }

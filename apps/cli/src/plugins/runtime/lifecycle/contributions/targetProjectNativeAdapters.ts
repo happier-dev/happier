@@ -1,3 +1,4 @@
+import { captureNativeComposeDefinition, type NativeComposeDefinitionCapture } from '@/daemon/local/services/launch/nativeComposeImport';
 import { PluginProjectNativeToolchainResultV1Schema } from '@happier-dev/protocol/plugins/contributions/projectNativeAdapters';
 import type { PluginProjectNativeToolchainRequestV1, PluginProjectNativeToolchainResultV1 } from '@happier-dev/plugin-sdk';
 import type { ManagedServiceNativeLogReadV1, ManagedServiceNativeLogWatchV1, ManagedServiceNativeLogResultV1 } from '@happier-dev/plugin-sdk/managed-services';
@@ -59,7 +60,10 @@ export type ProjectNativeAdapterProductionV1 = Readonly<{
 export type ProjectNativeAdapterProductionResultV1 = Readonly<{
     kind: 'ready'; production: ProjectNativeAdapterProductionV1;
 }> | PluginProjectNativeFailureV1;
-export type ProjectNativeServiceLifecycleCaptureV1 = Readonly<{ kind: 'ready'; lifecycle: ManagedServiceNativeLifecycleV1; release(): Promise<void> }> | Readonly<{
+export type ProjectNativeServiceLifecycleCaptureV1 = Readonly<{ kind: 'ready'; lifecycle: ManagedServiceNativeLifecycleV1;
+    /** Explicit adoption, bound to this exact retained watch and invocation. */
+    captureComposeDefinition?(profiles: readonly string[], options?: PluginCancellationOptions): Promise<NativeComposeDefinitionCapture>;
+    release(): Promise<void> }> | Readonly<{
     kind: 'refused';
     code: 'native_adapter_retired' | 'native_adapter_unsupported' | 'native_adapter_reference_mismatch';
 }>;
@@ -339,7 +343,18 @@ export async function resolveProjectNativeAdapter(params: Readonly<{
                 catch (error) { await subscription.dispose(); throw error; }
                 return subscription;
             }
-            return { kind: 'ready', release: async () => { released = true; await production?.release(); }, lifecycle: Object.freeze({
+            return { kind: 'ready', release: async () => { released = true; await production?.release(); },
+                ...(lifecycle.composeSource && retained ? { async captureComposeDefinition(profiles: readonly string[], options?: PluginCancellationOptions) {
+                    assertAvailable(options);
+                    const invocation = context();
+                    const captured = await lifecycle.composeSource!(retained, options, invocation);
+                    if (captured.kind !== 'ready') throw new PluginError({ code: captured.code });
+                    const result = await captureNativeComposeDefinition({ exec: invocation.services.exec, source: captured.source, profiles,
+                        options: { signal: options?.signal ? AbortSignal.any([invocation.signal, options.signal]) : invocation.signal } });
+                    assertAvailable(options);
+                    return result;
+                } } : {}), lifecycle: Object.freeze({
+
                 ...(lifecycle.discover ? { async discover(candidate: Readonly<{ serverId: string; machineId: string }>, options?: PluginCancellationOptions) {
                     assertAvailable(options);
                     if (!machine || machine.serverId !== candidate.serverId || machine.machineId !== candidate.machineId) {

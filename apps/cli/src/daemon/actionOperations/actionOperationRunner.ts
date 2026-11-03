@@ -1,3 +1,4 @@
+import { MachineServiceAdoptResultV1Schema } from '@happier-dev/protocol/local/services/adoptionV1';
 import { randomUUID } from 'node:crypto';
 
 import type {
@@ -303,6 +304,12 @@ export function createActionOperationRunner(deps: Readonly<{
               deps.store.updateObservation(operationId, { kind: 'outcome_uncertain', code: 'outcome_uncertain' });
               return executionResult;
             }
+          }
+          const adoption = action.actionId === 'machines.services.adopt' && executionResult.ok
+            ? MachineServiceAdoptResultV1Schema.safeParse(executionResult.result) : null;
+          if (adoption?.success && adoption.data.kind === 'partial') {
+            deps.store.updateObservation(operationId, { kind: 'outcome_uncertain', code: adoption.data.errorCode }, adoption.data);
+            return executionResult;
           }
           if (isUnconfirmedOwnedOutcome(action.actionId, executionResult) && !executionResult.ok) {
             deps.store.updateObservation(operationId, { kind: executionResult.errorCode === 'stop_unconfirmed' ? 'stop_unconfirmed' : 'outcome_uncertain',

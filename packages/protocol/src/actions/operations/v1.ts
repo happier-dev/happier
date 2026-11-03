@@ -1,3 +1,4 @@
+import { MachineServiceAdoptResultV1Schema } from '../../local/services/adoptionV1.js';
 import { MachineRebootResultV1Schema } from '../specs/machine/reboot.js';
 import { MachineVitalsHostFactsV1Schema } from '../../machines/vitals/machineVitalsSampleV1.js';
 import { MachineSudoPasswordPromptV1Schema, MachineElevationFailureV1Schema } from '../../machines/adminAccessV1.js';
@@ -396,7 +397,11 @@ export const ActionOperationSnapshotV1Schema = lazyZodSchema(() => z.strictObjec
     // or treating a dispatch receipt as terminal process evidence.
     const rebootRefusal = snapshot.actionId === 'machines.reboot' && snapshot.state === 'failed'
       ? MachineRebootResultV1Schema.safeParse(snapshot.result) : null;
-    if (!rebootRefusal?.success || rebootRefusal.data.kind === 'accepted') {
+    const adoptionContinuation = snapshot.actionId === 'machines.services.adopt' && snapshot.state === 'running'
+      && snapshot.observation?.kind === 'outcome_uncertain'
+      ? MachineServiceAdoptResultV1Schema.safeParse(snapshot.result) : null;
+    if ((!rebootRefusal?.success || rebootRefusal.data.kind === 'accepted')
+      && (!adoptionContinuation?.success || adoptionContinuation.data.kind !== 'partial')) {
       context.addIssue({ code: 'custom', path: ['result'], message: 'Only succeeded operations or typed reboot refusals may carry a result.' });
     }
   }

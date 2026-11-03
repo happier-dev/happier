@@ -108,6 +108,8 @@ export const DeploymentNativeComposeOriginV1Schema = z.strictObject({
     projectName: z.string().check(z.minLength(1)),
     dockerEndpoint: z.string().check(z.minLength(1)),
     workingDirectory: z.string().check(z.minLength(1)),
+    capture: z.optional(z.strictObject({ installationId: id,
+    })),
 });
 export type DeploymentNativeComposeOriginV1 = z.infer<typeof DeploymentNativeComposeOriginV1Schema>;
 export const DeploymentOwnServerTargetLinkContentV1Schema = z.strictObject({

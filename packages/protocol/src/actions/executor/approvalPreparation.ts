@@ -252,6 +252,7 @@ export async function prepareApprovalRequest(params: Readonly<{
   widgetSurfaceRead?: ReturnType<typeof WidgetSurfaceReadV1Schema.parse>;
   deploymentReview?: JsonValue;
   hostReviewedChildren?: HostReviewedChildrenPlanV1;
+  hostReviewedContent?: JsonValue;
   executeCanonicalAction?: RuntimeActionExecuteArgs['executeCanonicalAction'];
 }>): Promise<Readonly<{ actionArgs: unknown; preview: unknown }> | ActionExecuteFailure | null> {
   const spec = getActionSpec(params.actionId);
@@ -412,6 +413,7 @@ export async function prepareApprovalRequest(params: Readonly<{
   }
   const defaultPreview = {
     actionId: params.actionId,
+    ...(params.hostReviewedContent === undefined ? {} : { hostReviewedContent: params.hostReviewedContent }),
     ...(params.hostReviewedChildren ? { hostReviewedChildren: params.hostReviewedChildren } : {}),
     actionArgs: observedInput,
     summary: buildApprovalPreviewSummary(spec, summaryInput, widgetPresentation ? { widgetPresentation } : undefined),

@@ -3259,6 +3259,8 @@ export type ActionMachineRuntimeDemandV1 = Readonly<{
 }>;
 
 export type HostReviewedChildrenPreparationV1 = HostReviewedChildrenPlanV1 & Readonly<{
+  /** Admitted domain content disclosed with the parent review, never an effect operand. */
+  approvalPreview?: import('../../json/strictJsonValue.js').JsonValue;
   executeAdmittedAction?: (request: ActionAdmittedExecutionV1) => Promise<ActionExecuteResult>;
 }>;
 

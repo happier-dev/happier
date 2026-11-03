@@ -7,7 +7,8 @@ import type { ManagedServiceNativeInstanceV1, ManagedServiceNativeLifecycleV1, M
 const adapter = { pluginId: 'happier.machine.services', localId: 'compose' } as const;
 const docker = { kind: 'systemTool', id: 'docker' } as const;
 type Selection = Readonly<{ engineId: string; project: string; service?: string }>;
-type Container = Readonly<{ id: string; project: string; service: string; state: string; health?: string }>;
+type Container = Readonly<{ id: string; project: string; service: string; state: string; health?: string;
+    workingDirectory?: string; configFiles?: string }>;
 const unknown: ManagedServiceNativeObservationV1 = { phase: 'unknown', readiness: 'not_reported', endpoint: null };
 
 function record(value: unknown): value is Record<string, unknown> {
@@ -80,6 +81,10 @@ async function containers(context: PluginInvocationContext, options?: PluginCanc
                 || item.State.Health !== undefined && (!record(item.State.Health) || typeof item.State.Health.Status !== 'string')) return null;
             rows.push({ id: item.Id, project: item.Config.Labels['com.docker.compose.project'],
                 service: item.Config.Labels['com.docker.compose.service'], state: item.State.Status,
+                ...(typeof item.Config.Labels['com.docker.compose.project.working_dir'] === 'string'
+                    ? { workingDirectory: item.Config.Labels['com.docker.compose.project.working_dir'] } : {}),
+                ...(typeof item.Config.Labels['com.docker.compose.project.config_files'] === 'string'
+                    ? { configFiles: item.Config.Labels['com.docker.compose.project.config_files'] } : {}),
                 ...(record(item.State.Health) && typeof item.State.Health.Status === 'string' ? { health: item.State.Health.Status } : {}) });
         }
         return new Set(rows.map(row => row.id)).size === ids.length ? rows : null;
@@ -142,6 +147,22 @@ async function logs(instance: ManagedServiceNativeInstanceV1, request: ManagedSe
 
 const lifecycle: ManagedServiceNativeLifecycleV1 = {
     logs,
+    async composeSource(instance, options, context) {
+        if (!context) return { kind: 'unavailable', code: 'native_adapter_invocation_unavailable' };
+        const selected = selection(instance);
+        if (!selected || selected.service) return { kind: 'unsupported', code: 'compose_project_required' };
+        try {
+            const rows = await current(instance, context, options);
+            const first = rows?.[0];
+            if (!first?.workingDirectory || !first.configFiles || first.workingDirectory.includes('\0')
+                || first.configFiles.includes('\0') || rows!.some(row => row.workingDirectory !== first.workingDirectory
+                    || row.configFiles !== first.configFiles)) return { kind: 'unavailable', code: 'compose_source_unavailable' };
+            const configFiles = first.configFiles.split(',');
+            if (configFiles.some(file => !file.trim())) return { kind: 'unavailable', code: 'compose_source_unavailable' };
+            return { kind: 'ready', source: { projectName: selected.project, engineId: selected.engineId,
+                workingDirectory: first.workingDirectory, configFiles, containerIds: rows!.map(row => row.id).sort() } };
+        } catch (error) { return failure(error, options); }
+    },
     async discover(_machine, options, context) {
         if (!context) return { kind: 'unavailable', code: 'native_adapter_invocation_unavailable' };
         try {

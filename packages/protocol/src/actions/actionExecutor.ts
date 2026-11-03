@@ -2890,7 +2890,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       ...(existingAdmission ? { existing: existingAdmission } : {}), approvalReplay: options?.approvalReplay === true,
       isSameHome: (left, right) => isSameHome(left, right, ctx) });
     if ('ok' in childrenPreparation) return childrenPreparation;
-    const { plan: hostReviewedChildren, policies: childPolicies, executeAdmittedAction, admittedReviewedChild } = childrenPreparation;
+    const { plan: hostReviewedChildren, policies: childPolicies, approvalPreview: childrenApprovalPreview, executeAdmittedAction, admittedReviewedChild } = childrenPreparation;
     const reviewAdmitted = existingAdmission?.reviewAdmitted === true || nativeReview !== null
       // The private replay owner already admitted and recorded this decision.
       // Consumers use that fact; they do not validate the witness a second time.
@@ -3162,6 +3162,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           input: admittedInput,
           actionArgs: initialApprovalActionArgs,
           context: ctx,
+          ...(childrenApprovalPreview === undefined ? {} : { hostReviewedContent: childrenApprovalPreview }),
           ...(deploymentReview === undefined ? {} : { deploymentReview }),
           ...(hostReviewedChildren ? { hostReviewedChildren } : {}),
           executeCanonicalAction: (id, input) => executeInvocation(id, input, ctx),

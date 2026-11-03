@@ -136,6 +136,8 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
     async function prepare(request: OwnServerDeploymentRuntimeRequest, snapshot: Snapshot,
         captureOutput?: (runtime: OwnServerDeploymentRuntimeAcquisition) => Promise<StageOutput>) {
         const { environment, content, link, signal } = snapshot;
+        const nativeOrigin = environment.targetLinks.find(row => row.targetLink.id === link.id)?.content?.nativeOrigin;
+        if (nativeOrigin?.capture && !link.members.some(member => member.installationId === nativeOrigin.capture!.installationId)) refuse('target_mismatch');
         const sourceIntent = content.sourceIntent;
         let rollbackReceipt: OwnServerDeploymentReceipt | undefined;
         if (request.materialization.kind === 'restoration') {
@@ -206,6 +208,8 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                 });
                 const project = createNativeComposeLifecycle({ kind: 'environmentProject', exec: runtime.exec, envPort, source,
                     files: [compose.path], profiles: compose.profiles, services: compose.services, sourceKind: sourceIntent.kind,
+                    ...(nativeOrigin && (!nativeOrigin.capture || nativeOrigin.capture.installationId === runtime.source.installationId)
+                        ? { physicalProjectName: nativeOrigin.projectName, expectedEngineId: nativeOrigin.dockerEndpoint } : {}),
                     // Review a new deployment's current policy. Execution and
                     // restoration consume only their exact captured receipt;
                     // an old absent policy never borrows today's template.
@@ -253,7 +257,7 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
 
     function basis(request: Omit<OwnServerDeploymentRequest, 'receipt'>, snapshot: Snapshot, native: Readonly<{
         basis: Readonly<{ manifestFingerprint: string; configInputDigests: readonly Readonly<{ path: string; digest: string }>[];
-            physicalProjectName: string; toolVersion: string }>;
+            physicalProjectName: string; toolVersion: string; nativeGeneration?: OwnServerDeploymentInputBasisV1['nativeGeneration'] }>;
         services: readonly string[];
         platform: string;
         servicePlatforms: readonly Readonly<{ service: string; platform: string }>[];
@@ -310,6 +314,7 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
     const projection = (machineId: string, installationId: string, value: OwnServerDeploymentInputBasisV1, platform: string): OwnServerDeploymentRuntimeProjectionV1 => ({
         machineId, installationId, manifestFingerprint: value.manifestFingerprint, configInputDigests: value.configInputDigests,
         physicalProjectName: value.physicalProjectName, toolVersion: value.toolVersion, services: value.services, profiles: value.profiles,
+        ...(value.nativeGeneration === undefined ? {} : { nativeGeneration: value.nativeGeneration }),
         platform, ...(value.servicePlatforms ? { servicePlatforms: value.servicePlatforms } : {}),
     });
     async function reviewMember(input: OwnServerDeploymentMemberReviewRequest) {
@@ -463,10 +468,12 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                     && value.installationId === input.installationId);
                 if (!restored) {
                     const { runtimeProjections: _projections, ...approvedRoot } = parentApproval;
-                    const expectedRoot = expected ? { ...approvedRoot, manifestFingerprint: expected.manifestFingerprint,
+                    const { nativeGeneration: _rootGeneration, ...memberIndependent } = approvedRoot;
+                    const expectedRoot = expected ? { ...memberIndependent, manifestFingerprint: expected.manifestFingerprint,
                         configInputDigests: expected.configInputDigests, physicalProjectName: expected.physicalProjectName,
                         toolVersion: expected.toolVersion, services: expected.services, profiles: expected.profiles,
-                        servicePlatforms: expected.servicePlatforms } : approvedRoot;
+                        servicePlatforms: expected.servicePlatforms,
+                        ...(expected.nativeGeneration === undefined ? {} : { nativeGeneration: expected.nativeGeneration }) } : approvedRoot;
                     if (expected && normalizeNativeComposePlatform(rendered.platform) !== normalizeNativeComposePlatform(expected.platform)) refuse('deployment_conflict');
                     const { servicePlatforms: approvedPlatforms, ...approvedBasis } = expectedRoot;
                     const { servicePlatforms: actualPlatforms, ...actualBasis } = local;
@@ -558,6 +565,7 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                 await prepared.assertCurrent();
                 return await machineNativeEffectAdmission.run({ operation: { operationId: receipt.deployment.actionOperationId,
                     kind: request.actionId, signal: snapshot.signal }, keys: activationRender.keys, settleNative: prepared.project.settleNative }, async context => {
+                    if (!restored) await prepared.project.assertReviewedGeneration(rendered, snapshot.signal);
                     const restoreBackupId = !restored && request.actionId === 'deployments.rollback'
                         && 'restoreBackupId' in request.input ? request.input.restoreBackupId : undefined;
                     if (restoreBackupId !== undefined) {

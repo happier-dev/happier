@@ -59,6 +59,11 @@ const runtimeProjection = {
     manifestFingerprint: text,
     configInputDigests: z.array(z.strictObject({ path: text, digest: DeploymentDigestV1Schema })),
     physicalProjectName: text, toolVersion: text,
+    /** Imported projects review the current native generation, never rendered values. */
+    nativeGeneration: z.optional(z.array(z.strictObject({
+        id: z.string().check(z.regex(/^[a-f0-9]{64}$/u)),
+        restartCount: z.number().check(z.int(), z.minimum(0)),
+    }))),
     services: z.array(text).check(z.minLength(1)), profiles: z.array(text),
     servicePlatforms: z.optional(z.array(z.strictObject({ service: text, platform: text }))),
 };

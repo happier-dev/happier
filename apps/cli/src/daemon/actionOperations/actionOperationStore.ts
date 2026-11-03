@@ -273,10 +273,17 @@ export function createActionOperationStore(options?: Readonly<{
         : { ...current, revision: current.revision + 1, cancellation });
     },
 
-    updateObservation(operationId: string, observation: NonNullable<ActionOperationSnapshotV1['observation']> | null): ActionOperationSnapshotV1 | null {
+    updateObservation(operationId: string, observation: NonNullable<ActionOperationSnapshotV1['observation']> | null,
+      result?: unknown): ActionOperationSnapshotV1 | null {
+      // Omission retains evidence; explicit undefined clears it on admitted resume.
+      const replaceResult = arguments.length > 2;
       return mutate(operationId, (current) => {
-        const { observation: _observation, ...retained } = current;
-        return { ...retained, revision: current.revision + 1, ...(observation ? { observation } : {}) };
+        if (isDeepStrictEqual(current.observation, observation ?? undefined)
+          && (!replaceResult || isDeepStrictEqual(current.result, result))) return current;
+        const { observation: _observation, result: previousResult, ...retained } = current;
+        const nextResult = replaceResult ? result : previousResult;
+        return { ...retained, revision: current.revision + 1, ...(observation ? { observation } : {}),
+          ...(nextResult === undefined ? {} : { result: nextResult }) };
       });
     },
 

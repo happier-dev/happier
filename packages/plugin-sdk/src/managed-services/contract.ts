@@ -343,6 +343,12 @@ export type ManagedServiceNativeLogWatchV1 = Readonly<{
 }>;
 
 export interface ManagedServiceNativeLifecycleV1 {
+    /** Explicit host adoption only. Original native source coordinates, never reconstructed YAML or values. */
+    composeSource?(instance: ManagedServiceNativeInstanceV1, options?: PluginCancellationOptions,
+        context?: PluginInvocationContext): Promise<Readonly<{ kind: 'ready'; source: Readonly<{
+            projectName: string; engineId: string; workingDirectory: string;
+            configFiles: readonly string[]; containerIds: readonly string[];
+        }> }> | PluginProjectNativeFailureV1>;
     /** Passive, demand-owned discovery on this exact Machine; no Project root is implied. */
     discover?(machine: Readonly<{ serverId: string; machineId: string }>, options?: PluginCancellationOptions,
         context?: PluginInvocationContext): Promise<Readonly<{

@@ -1030,6 +1030,10 @@ export class ApiMachineClient {
         return this.actionOperationRuntime.observeExecution(request);
     }
 
+    readRestorePreparation(request: Parameters<HostActionOperationRuntime['readRestorePreparation']>[0]) {
+        return this.actionOperationRuntime.readRestorePreparation(request);
+    }
+
     runActionOperation(request: Parameters<HostActionOperationRuntime['runActionOperation']>[0]) {
         return runHostActionOperation(observed => this.observeActionExecution(observed), request);
     }

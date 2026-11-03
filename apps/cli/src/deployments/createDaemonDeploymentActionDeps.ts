@@ -1,3 +1,6 @@
+import { DeploymentTargetLinksListResultV1Schema } from '@happier-dev/protocol';
+import { findExistingNativeComposeTargetLinkV1 } from '@happier-dev/deployment-protocol';
+import { prepareServiceAdoptionForHost } from './serviceAdoptionForHost';
 import { readDeploymentSystemToolFailure } from './deploymentSystemToolFailure';
 import { admitPreviewEnvironmentForHost } from './previewAdmissionForHost';
 import axios from '@/api/client/credentialAxios';
@@ -116,6 +119,8 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
         Promise<import('@happier-dev/protocol/actions').ActionExecuteResult>;
     /** Existing installed operation owner; absence leaves ordinary cold preparation. */
     preparePendingDeploymentObservation?: HostActionOperationRuntime['preparePendingDeploymentObservation'];
+    readOperation?(operationId: string, context: ActionExecutorContext): Promise<import('@happier-dev/protocol/actions').ActionOperationSnapshotV1 | null>;
+    runActionOperation?: ActionExecutorDeps['runActionOperation'];
 }>) {
     const artifacts = host.accountArtifacts ?? createCredentialedAccountArtifactStore(host.credentials);
     const definitionRole = (context: ActionExecutorContext) => resolveDeploymentDefinitionRoleForHost(context, host);
@@ -515,10 +520,19 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
     });
     const readCreationDefaultInputs = (request: DeploymentCreationDefaultRequestForHost) => atHome(() =>
         readDeploymentCreationDefaultInputsForHost(request, creationDefaultsHost(request.context)));
-    const prepareEnvironmentCreate = async ({ input, context, creationReview }: Readonly<{
+    type CreatePreparation = Awaited<ReturnType<NonNullable<ActionExecutorDeps['prepareDeploymentEnvironmentCreate']>>>;
+    type NativeCreatePreparation = Readonly<{ input: import('@happier-dev/protocol').DeploymentEnvironmentCreateInputV1;
+        preview: import('@happier-dev/protocol/json/strictJsonValue').JsonValue }> | ActionExecuteFailure | Readonly<{ existingNative: Readonly<{
+        environmentId: string; revision: number; targetLinkId: string;
+    }> }>;
+    type CreatePreparationRequest = Readonly<{
         input: DeploymentEnvironmentCreateIntentInputV1; context: ActionExecutorContext;
         creationReview?: import('@happier-dev/protocol').DeploymentEnvironmentCreationReviewV1;
-    }>) => {
+        nativeOrigin?: import('@happier-dev/deployment-protocol').DeploymentNativeComposeOriginV1;
+    }>;
+    function prepareEnvironmentCreate(request: CreatePreparationRequest & { nativeOrigin: import('@happier-dev/deployment-protocol').DeploymentNativeComposeOriginV1 }): Promise<NativeCreatePreparation>;
+    function prepareEnvironmentCreate(request: CreatePreparationRequest & { nativeOrigin?: undefined }): Promise<CreatePreparation>;
+    async function prepareEnvironmentCreate({ input, context, creationReview, nativeOrigin }: CreatePreparationRequest): Promise<CreatePreparation | NativeCreatePreparation> {
         try {
             await requireDefinitionManage(context, 'deployment_access_denied');
             if (input.serverId !== host.serverId) return failure('server_scope_mismatch');
@@ -537,16 +551,31 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                     ...(authored.retainPreviousDeployments === undefined ? {} : { retainPreviousDeployments: authored.retainPreviousDeployments }) },
                 target: { kind: 'ownServer', machines: authored.firstTargetLink?.machines.map(machine => machine.machineId) ?? [] },
             }, defaultsHost));
+            if (nativeOrigin) {
+                const existing = await findExistingNativeComposeTargetLinkV1({ machineId: host.machineId, origin: nativeOrigin }, {
+                    async list(cursor) {
+                        const path = '/v1/deployments/targets/list';
+                        const body = { serverId: host.serverId, scope: defaults.projectOwner, ...(cursor ? { cursor } : {}) };
+                        const response = await axios.request({ method: 'POST', url: new URL(path, host.serverHttpBaseUrl).href,
+                            data: body, signal: context.signal, validateStatus: () => true,
+                            headers: await artifactAuthorization(context)({ method: 'POST', path, body }) });
+                        return DeploymentTargetLinksListResultV1Schema.parse(response.data);
+                    },
+                    artifact: targetLink => open(targetLink.contentArtifactId, context),
+                });
+                if (existing) return { existingNative: { environmentId: existing.environment.id,
+                    revision: existing.environment.revision, targetLinkId: existing.targetLink.id } };
+            }
             if (defaults.values.controllerMachineId === undefined) return failure('client_required');
             const materializeCreate = createPrepareEnvironmentCreateForHost(createHost);
             const prepared = await materializeCreate({ input: { ...authored, ...defaults.values },
-                projectOwner: defaults.projectOwner, context, copy });
+                projectOwner: defaults.projectOwner, context, copy, nativeOrigin });
             if ('errorCode' in prepared) return prepared;
             return { input: prepared, preview: normalizeStrictJsonValue({ creationDefaults: {
                 values: defaults.values, sources: defaults.sources }, ...(defaults.reviewBasis ? { creationDefaultsBasis: defaults.reviewBasis } : {}),
                 ...(copy.review ? { copy: copy.review } : {}) }) };
         } catch (error) { return failure(context.signal?.aborted ? 'cancelled' : errorCode(error), error); }
-    };
+    }
     const storageDeps = createCliDeploymentActionDeps({ serverHttpBaseUrl: host.serverHttpBaseUrl,
         admitAccount: async (serverId, context) => {
             if (serverId !== host.serverId) return failure('server_scope_mismatch');
@@ -739,6 +768,13 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
         deploymentChild,
         prepareDeploymentTeardown: dataTeardown.prepare,
         async prepareHostReviewedChildren(request: Parameters<NonNullable<ActionExecutorDeps['prepareHostReviewedChildren']>>[0]) {
+            if (request.actionId === 'machines.services.adopt') return prepareServiceAdoptionForHost(request, {
+                ...host, prepareCreate: prepareEnvironmentCreate,
+                readInstallation: context => readBuildInstallation(host.machineId, context),
+                readEnvironment: request => readDeploymentEnvironmentForHost(request, {
+                    readMetadata: readEnvironmentMetadata, open, assertCurrent,
+                }),
+            });
             if (request.actionId === 'deployments.publish') {
                 const publish = DeploymentActionInputSchemasV1['deployments.publish'].safeParse(request.input);
                 return publish.success ? { children: [{ action: 'deployments.deploy' as const, role: 'publish.deploy',

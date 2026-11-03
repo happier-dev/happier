@@ -321,6 +321,8 @@ export type NativeComposeEnvironmentProject = Readonly<{
     exportImages(input: Readonly<{ images: readonly DeploymentImageV1[]; signal?: AbortSignal; context?: MachineNativeEffectContext }>): Promise<readonly NativeComposeImageArchive[]>;
     render(options?: Readonly<{ signal?: AbortSignal }> & (Readonly<{ purpose?: undefined }>
         | Readonly<{ purpose: 'serviceCommand'; service: string }>)): Promise<NativeComposeProjectRender>;
+    /** Compare an imported project's reviewed generation once under native admission. */
+    assertReviewedGeneration(render: NativeComposeProjectRender, signal?: AbortSignal): Promise<void>;
     /** Explicit P41 image-acquisition stage under its existing complete admission.
      * Candidate command admission itself never pulls/builds/tags/starts services. */
     prepareRuntimeImages(input: Readonly<{ render: NativeComposeProjectRender; context: MachineNativeEffectContext;
@@ -361,6 +363,7 @@ export type NativeComposeProjectRender = Readonly<{
         configInputDigests: readonly Readonly<{ path: string; digest: string }>[];
         toolVersion: string;
         physicalProjectName: string;
+        nativeGeneration?: OwnServerDeploymentInputBasisV1['nativeGeneration'];
     }>;
 }>;
 
@@ -383,6 +386,8 @@ export type NativeComposeEnvironmentProjectInput = Readonly<{
     services: readonly string[];
     health?: OwnServerDeploymentInputBasisV1['health'];
     physicalProjectName?: string;
+    /** Protected imported origin; native admission must address that same engine. */
+    expectedEngineId?: string;
     images: readonly DeploymentImageV1[];
     /** Current host-admitted binding, never caller-supplied Docker credentials. */
     imageAcquisition?: NativeComposeImageAcquisition;
@@ -548,6 +553,8 @@ function createEnvironmentProject(input: NativeComposeEnvironmentProjectInput,
         isUnchangedManifestSource: path => isDeploymentSourceUnchangedManifestInput(input.source, path),
     });
     const generation = createNativeComposeGenerationProof({ projectName, run: (args, signal) => run(args, signal), pin });
+    const nativeGeneration = async (signal?: AbortSignal) => (await generation.snapshot(signal)).rows
+        .map(row => ({ id: row.Id, restartCount: row.RestartCount })).sort((a, b) => a.id.localeCompare(b.id));
     const inspectGeneration = (current: NativeComposeProjectRender, identity: ReturnType<typeof createNativeComposeImageIdentity>, signal?: AbortSignal,
         observation?: Readonly<{ snapshot: Awaited<ReturnType<typeof generation.snapshot>>; purpose?: 'retire' }>) =>
         generation.inspect({ services: current.services, healthServices: current.healthServices,
@@ -634,6 +641,7 @@ function createEnvironmentProject(input: NativeComposeEnvironmentProjectInput,
             prefix: engineLaunch.args.slice(0, -3), cwd: engineLaunch.cwd!, env: { ...engineLaunch.env, COMPOSE_DISABLE_ENV_FILE: '1' }, signal }); }
         finally { await engineLaunch.release(); }
         const engineId = engine.id;
+        if (input.expectedEngineId !== undefined && engineId !== input.expectedEngineId) return nativeRefusal('native_origin_changed');
         const purpose = options?.purpose;
         const { model: normalized, configInputDigests, toolVersion } = await normalize(signal);
         if (!record(normalized.services)) return nativeRefusal('native_compose_configuration_invalid');
@@ -757,7 +765,8 @@ function createEnvironmentProject(input: NativeComposeEnvironmentProjectInput,
                 ...(storage ? { storage: { warnings: storage.warnings.map(warning => ({ ...warning,
                     service: actualLaunch.secretRedactionLease!.redact(warning.service),
                     target: actualLaunch.secretRedactionLease!.redact(warning.target) })) } } : {}),
-                basis: { manifestFingerprint: input.source.manifestFingerprint, configInputDigests, toolVersion, physicalProjectName: projectName } };
+                basis: { manifestFingerprint: input.source.manifestFingerprint, configInputDigests, toolVersion, physicalProjectName: projectName,
+                    ...(input.expectedEngineId === undefined ? {} : { nativeGeneration: await nativeGeneration(signal) }) } };
             if (options?.purpose === 'serviceCommand') assertCandidateServiceSupported(model, result, options.service);
             renderedCaptures.set(result, { model, unresolvedModel: structuredClone(normalized), composeArgs, identity, localImages,
                 ...(options?.purpose === 'serviceCommand' ? { commandService: options.service } : {}) });
@@ -901,6 +910,12 @@ function createEnvironmentProject(input: NativeComposeEnvironmentProjectInput,
             return admittedImageEffect(request.context, authority => imagePreparation.exportImages({ ...request, authority }));
         },
         render,
+        async assertReviewedGeneration(current, signal) {
+            if (current.basis.nativeGeneration === undefined) return;
+            if (JSON.stringify(await nativeGeneration(signal)) !== JSON.stringify(current.basis.nativeGeneration)) {
+                throw new PluginError({ code: 'deployment_conflict', message: 'The reviewed native generation has changed' });
+            }
+        },
         async prepareRuntimeImages(request) {
             if (input.phase === 'build') return nativeRefusal('deployment_runtime_phase_required');
             const prepared = await prepareRuntimeRender(request);

@@ -35,6 +35,32 @@ import { createCurrentSessionProjectionRecordFixture } from '@/testkit/backends/
 import { computeDaemonSpawnRequestKey, createSpawnRequestCoalescer } from '@/daemon/spawn/spawnRequestCoalescer';
 
 describe('finite host operation custody', () => {
+  it('continues a partial Compose adoption under the same request key across transport retries', async () => {
+    let sequence = 0;
+    const runtime = createHostActionOperationRuntime({ machineId: 'target', resolveAccountId: async () => 'owner',
+      generateOperationId: () => `adopt-operation-${++sequence}` });
+    const input = { mode: 'apply', serverId: 'home', machineId: 'target', serviceId: 'watch', expectedGeneration: 'generation',
+      requestKey: 'adopt-once', profiles: [], reviewedDigest: `sha256:${'a'.repeat(64)}`, bindingsConfirmed: true, bindings: [],
+      destination: { name: 'Imported', projectSourceId: 'source', protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers' } };
+    const preparedCreate = { serverId: 'home', projectSourceId: 'source', requestKey: 'adopt-once', protection: 'nonProduction',
+      purpose: 'standard', deployerMode: 'managers', controllerMachineId: 'target', contentArtifactId: 'stored-definition',
+      contentHeaderVersion: 1, contentBodyVersion: 1 };
+    const operationIds: string[] = [];
+    const invoke = (actionRequestId: string) => runtime.runActionOperation({ actionId: 'machines.services.adopt', input,
+      context: { actionRequestId }, execute: async context => {
+        operationIds.push(context.operationAcceptance!.operationId);
+        return operationIds.length === 1 ? { ok: true, result: { kind: 'partial', environmentId: 'retained-environment',
+          revision: 1, errorCode: 'transport_error', preparedCreate } }
+          : { ok: true, result: { kind: 'adopted', environmentId: 'retained-environment', revision: 2, targetLinkId: 'retained-link' } };
+      } });
+    expect(await invoke('transport-one')).toMatchObject({ ok: true, result: { kind: 'partial' } });
+    expect(await invoke('transport-two')).toMatchObject({ ok: true, result: { kind: 'adopted', environmentId: 'retained-environment' } });
+    expect(await invoke('transport-three')).toMatchObject({ ok: true, result: { kind: 'adopted' } });
+    expect(operationIds).toEqual(['adopt-operation-1', 'adopt-operation-1']);
+    expect(await runtime.runActionOperation({ actionId: 'machines.services.adopt', input: { ...input, profiles: ['changed'] },
+      context: { actionRequestId: 'changed-transport' }, execute: async () => { throw new Error('must not execute'); } }))
+      .toMatchObject({ ok: false, errorCode: 'action_request_input_conflict' });
+  });
   it.each((['acknowledged-content', 'unknown-secret'] as const).flatMap(phase =>
     (['existing', 'new'] as const).map(project => ({ phase, project }))))(
     'retains a template partial result ($phase, $project Project) and rejoins its creation intent without repeating generated-secret effects', async ({ phase, project }) => {

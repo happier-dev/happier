@@ -494,7 +494,7 @@ resolveServerFeaturesSnapshot?: () =>
       }
       const fallbackProjectAction = params.resolveProjectAction?.();
       let deploymentHomeId = observedServerIdentityId ?? executionContext?.serverIdentityId;
-      const isDeploymentAction = isDeploymentActionIdV1(actionId);
+      const isDeploymentAction = isDeploymentActionIdV1(actionId) || actionId === 'machines.services.adopt';
       if (isDeploymentAction && !deploymentHomeId) {
         const origin = await params.resolveCurrentMachineExecutionOriginContext?.(executionContext?.signal);
         if (origin?.machineId === params.machineId) deploymentHomeId = origin.serverIdentityId;
@@ -502,16 +502,33 @@ resolveServerFeaturesSnapshot?: () =>
       if (isDeploymentAction && !deploymentHomeId) {
         return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
       }
+      const withDeploymentIngress = (context: ActionExecutorContext) => {
+        const ingress = resolveRequesterIngress(context);
+        return { ...context,
+          ...(ingress?.machineAdmission ? { machineAdmission: ingress.machineAdmission,
+            verifyMachineAdmissionCurrent: ingress.verifyMachineAdmissionCurrent } : {}),
+          ...(ingress?.requesterSessionBootstrap ? { requesterSessionBootstrap: ingress.requesterSessionBootstrap } : {}),
+        };
+      };
       const deploymentDeps = (isDeploymentAction || actionId === 'approval.request.decide') && deploymentHomeId ? createDaemonDeploymentActionDeps({resolveRequesterIdentity: async context => apiMachineForSessions
           ? await apiMachineForSessions.resolveDeploymentSourceRequesterIdentity(context)
           : { kind: 'unknown', reason: 'requester_authority_unavailable' },
 
         credentials, serverId: deploymentHomeId,
+        acquirePluginRuntimeRegistryLease: acquireDaemonPluginRuntimeRegistryLease,
+        ...(apiMachineForSessions ? { runActionOperation: request => apiMachineForSessions.runActionOperation({
+          ...request, context: withDeploymentIngress(request.context),
+        }) } : {}),
+        ...(apiMachineForSessions ? { readOperation: (operationId: string, context: ActionExecutorContext) => apiMachineForSessions.readRestorePreparation({
+          operationId, context: withDeploymentIngress(context),
+        }) } : {}),
+
         ...(requesterAccountContext ? { savedSecretOperationContext: requesterAccountContext.savedSecretOperationContext }
           : requesterRuntime ? { savedSecretOperationContext: requesterRuntime.bootstrap.savedSecretOperationContext } : {}),
         serverHttpBaseUrl: requesterAccountContext?.serverHttpBaseUrl ?? requesterRuntime?.bootstrap.serverHttpBaseUrl ?? params.serverBaseUrl,
         machineId: params.machineId,
         readMachineVitals: () => params.readDoctorResourceVitals?.().sample ?? null,
+        ...(apiMachineForSessions ? { ensureServiceObservations: () => apiMachineForSessions.ensureEnvironmentServices() } : {}),
         runtime: createOwnServerDeploymentRuntimeForHost({resolveRequesterIdentity: async context => apiMachineForSessions
             ? await apiMachineForSessions.resolveDeploymentSourceRequesterIdentity(context)
             : { kind: 'unknown', reason: 'requester_authority_unavailable' },
