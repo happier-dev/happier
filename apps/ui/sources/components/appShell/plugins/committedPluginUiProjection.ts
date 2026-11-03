@@ -1,4 +1,5 @@
 import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
+import type { PluginUiTranslationRuntime } from '@/sync/domains/plugins/ui/i18n';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import type { PluginUiExecutionOriginCandidateFacts } from '@/sync/domains/plugins/ui/projectionUnion';
 
@@ -10,6 +11,7 @@ export type AppShellPluginUiProjectionRead = Readonly<{ scope: ServerAccountScop
 type CommittedProjectionBinding = Readonly<{
     read(input?: AppShellPluginUiProjectionRead): PluginUiProjectionModel | null;
     readCandidates?: (pluginId: string, input?: AppShellPluginUiProjectionRead) => PluginUiExecutionOriginCandidateFacts | null;
+    translationRuntime?: PluginUiTranslationRuntime;
     disposeSource(): void;
 }>;
 let committed: CommittedProjectionBinding | null = null;
@@ -33,16 +35,24 @@ export function readCurrentAppShellPluginUiProjection(input?: AppShellPluginUiPr
     return committed?.read(input) ?? null;
 }
 
+/** Imperative consumers borrow the current Account's copy owner; each runtime still checks its exact source. */
+export function readCurrentAppShellPluginUiTranslationRuntime(projection: PluginUiProjectionModel | null | undefined,
+    input?: AppShellPluginUiProjectionRead): PluginUiTranslationRuntime | null {
+    return projection && committed?.read(input) ? committed.translationRuntime ?? null : null;
+}
+
 /** Publishes the committed reader; the returned cleanup clears it only if it is still the current one. */
 export function publishCommittedAppShellPluginUiProjection(
     read: (input?: AppShellPluginUiProjectionRead) => PluginUiProjectionModel | null,
     readCandidates?: (pluginId: string, input?: AppShellPluginUiProjectionRead) => PluginUiExecutionOriginCandidateFacts | null,
     subscribe?: (listener: () => void) => () => void,
+    translationRuntime?: PluginUiTranslationRuntime,
 ): () => void {
     let unsubscribe: (() => void) | undefined;
     const binding: CommittedProjectionBinding = {
         read,
         readCandidates,
+        translationRuntime,
         disposeSource() { unsubscribe?.(); unsubscribe = undefined; },
     };
     committed?.disposeSource();

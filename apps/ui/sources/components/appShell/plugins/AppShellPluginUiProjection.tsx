@@ -92,9 +92,13 @@ import { useVoiceProviderRuntimeDemand } from '@/voice/session/useVoiceProviderR
 
 import { PluginAppPageLaunchInputScope } from './pluginAppPageNavigation';
 import {
-    createPluginLocalizedTextResolver,
+    createPluginUiTranslationRuntime,
+    PluginUiTranslationRuntimeProvider,
+    usePluginLocalizedTextResolver,
     type PluginLocalizedTextResolver,
 } from '@/sync/domains/plugins/ui/i18n';
+import { createPluginUiTranslationResourceByteReader } from '@/sync/domains/plugins/availability/translationResourceBytes';
+import { getActivePluginAccountPackageAssetSource } from '@/sync/api/plugins/availability/activePluginAccountPackageAssetRead';
 import { usePreferredLanguage } from '@/text/usePreferredLanguage';
 
 export type AppShellPluginUiProjectionValue = Readonly<{
@@ -302,6 +306,26 @@ export function AppShellPluginUiProjectionValueProvider(props: Readonly<{
         retired: Object.freeze({ projection: null, skillSourceIdentity: EMPTY_PLUGIN_SKILL_SOURCE_IDENTITY,
             accountLifetime: currentDeclarations.accountLifetime, ready: false }),
     }), [currentDeclarations]);
+    const translationProjection = currentDeclarations.projection ?? EMPTY_PLUGIN_UI_PROJECTION;
+    const translationProjectionRef = React.useRef(translationProjection);
+    translationProjectionRef.current = translationProjection;
+    const translationAssetSource = getActivePluginAccountPackageAssetSource();
+    // Construction is inert. Presentation reconnections retain this Account's
+    // copy owner; source and locale changes are admitted by the runtime itself.
+    const translationRuntime = React.useMemo(() => createPluginUiTranslationRuntime({
+        projection: translationProjectionRef.current,
+        readResourceBytes: async () => null,
+        createResourceReader: (readCurrentProjection) => lifetime
+            ? createPluginUiTranslationResourceByteReader({ accountLifetime: lifetime, readCurrentProjection,
+                packageAssets: { reader: readPluginAccountAvailability(lifetime.scope),
+                    source: translationAssetSource } })
+            : async () => null,
+    }), [lifetime, translationAssetSource]);
+    React.useEffect(() => {
+        const retirement = lifetime?.onRetire(() => translationRuntime.dispose());
+        return () => { retirement?.dispose(); translationRuntime.dispose(); };
+    }, [lifetime, translationRuntime]);
+    React.useLayoutEffect(() => translationRuntime.setProjection(translationProjection), [translationProjection, translationRuntime]);
     React.useLayoutEffect(() => {
         if (!props.publication) {
             const ready = standaloneDeclarationReady !== false && isCurrentAccountLifetime(lifetime);
@@ -338,8 +362,8 @@ export function AppShellPluginUiProjectionValueProvider(props: Readonly<{
         // Withdrawing it before replacement would notify readers twice.
         const publication = props.publication;
         committedProjectionCleanup.current = publishCommittedAppShellPluginUiProjection(read, readCandidates,
-            publication ? listener => publication.subscribe(listener, 'committed') : undefined);
-    }, [lifetime, props.publication, standaloneProjection, standalonePhase, standaloneDeclarationReady, standaloneCandidates, standaloneSkills]);
+            publication ? listener => publication.subscribe(listener, 'committed') : undefined, translationRuntime);
+    }, [lifetime, props.publication, standaloneProjection, standalonePhase, standaloneDeclarationReady, standaloneCandidates, standaloneSkills, translationRuntime]);
     React.useLayoutEffect(() => () => {
         committedProjectionCleanup.current?.();
         committedProjectionCleanup.current = null;
@@ -355,11 +379,13 @@ export function AppShellPluginUiProjectionValueProvider(props: Readonly<{
                   * authority of its own; binding to the contribution owner retires
                   * the input when any of those facts changes.
                   */}
+                <PluginUiTranslationRuntimeProvider runtime={translationRuntime}>
                 <PluginAppPageLaunchInputScope
                     pluginUiProjection={props.value.pluginUiProjection}
                 >
                     {props.children}
                 </PluginAppPageLaunchInputScope>
+                </PluginUiTranslationRuntimeProvider>
             </AppShellPluginUiProjectionContext.Provider>
         </AppShellPluginUiDeclarationProjectionContext.Provider>
     );
@@ -876,8 +902,5 @@ export function useProjectedConnectedServicesRegistry(): ConnectedServiceRegistr
 export function useProjectedPluginLocalizedTextResolver(): PluginLocalizedTextResolver {
     const projection = useAppShellPluginUiDeclarationProjection();
     const locale = usePreferredLanguage();
-    return React.useMemo(
-        () => createPluginLocalizedTextResolver({ projection, locale }),
-        [locale, projection],
-    );
+    return usePluginLocalizedTextResolver({ projection, locale });
 }

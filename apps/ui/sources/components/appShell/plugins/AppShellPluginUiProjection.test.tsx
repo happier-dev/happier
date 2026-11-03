@@ -25,6 +25,8 @@ import {
 import { createDeferred, createMachineFixture, flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
 import * as projectionCurrentness from '@/sync/domains/plugins/ui/usePluginUiProjectionCurrentness';
 import * as executionOriginSelection from '@/sync/domains/machines/administration/usePluginExecutionOriginSelection';
+import * as translationRuntime from '@/sync/domains/plugins/ui/i18n';
+import * as translationBytes from '@/sync/domains/plugins/availability/translationResourceBytes';
 import {
     selectCurrentAppShellPluginUiCurrentness,
     isAppShellPluginClientExecutableAvailable,
@@ -124,6 +126,49 @@ describe('app-shell projection bootstrap targets', () => {
 });
 
 describe('AppShell declaration subscriptions', () => {
+    it('retains one translation runtime across same-Account layout reconnections and unrelated renders', async () => {
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        if (!lifetime) throw new Error('Account fixture must establish a lifetime');
+        const create = vi.spyOn(translationRuntime, 'createPluginUiTranslationRuntime');
+        onTestFinished(() => create.mockRestore());
+        const createReader = vi.spyOn(translationBytes, 'createPluginUiTranslationResourceByteReader');
+        onTestFinished(() => createReader.mockRestore());
+        const value: AppShellPluginUiProjectionValue = {
+            pluginUiProjection: EMPTY_PLUGIN_UI_PROJECTION, pluginBrowserProjection: null,
+            phase: 'current', interactionEnabled: true, machineId: null, serverId: null,
+            platform: 'web', accountLifetime: lifetime, connectedAccountProjectionRevision: 1,
+            reloadConnectedAccountProjection: () => {}, clientExecutableActivation: { status: 'ready' },
+            reloadClientExecutables: () => {},
+        };
+        let suspended = false;
+        let pending = createDeferred<void>();
+        function RetainedDestination() {
+            if (suspended) throw pending.promise;
+            return null;
+        }
+        const element = (revision: number) => <React.Suspense fallback={null}>
+            <AppShellPluginUiProjectionValueProvider value={{ ...value, connectedAccountProjectionRevision: revision }}>
+                <RetainedDestination />
+            </AppShellPluginUiProjectionValueProvider>
+        </React.Suspense>;
+        const screen = await renderScreen(element(1));
+        onTestFinished(() => screen.unmount());
+        expect(create).toHaveBeenCalledTimes(1);
+        const readersAfterMount = createReader.mock.calls.length;
+        expect(readersAfterMount).toBeGreaterThan(0);
+        for (let revision = 2; revision <= 21; revision++) {
+            suspended = true;
+            pending = createDeferred<void>();
+            await screen.update(element(revision));
+            suspended = false;
+            await act(async () => pending.resolve());
+            await screen.update(element(revision));
+        }
+        // Layout reconnection is presentation, not a new translation source.
+        expect(create).toHaveBeenCalledTimes(1);
+        expect(createReader).toHaveBeenCalledTimes(readersAfterMount);
+    });
+
     it('does not relabel a retained declaration with the newly active Account lifetime', async () => {
         const accountA = captureActiveServerAccountScopeLifetime();
         if (!accountA) throw new Error('Account fixture must establish a lifetime');
