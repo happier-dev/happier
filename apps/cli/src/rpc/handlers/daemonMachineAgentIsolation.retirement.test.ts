@@ -1,4 +1,7 @@
 import { createHash } from 'node:crypto';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { expect, it } from 'vitest';
 import { MachineAgentIsolationPreviewResultV1Schema, MachineAgentIsolationSetResultV1Schema } from '@happier-dev/protocol';
 import type { MachineSetupBackend } from '@happier-dev/cli-common/machineSetup';
@@ -7,14 +10,17 @@ import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { createHostActionOperationRuntime } from '@/daemon/actionOperations';
 import { createAgentIsolationEffectsBoundary } from '@/daemon/agentIsolation/agentIsolationEffects.testkit';
 import { registerDaemonMachineAgentIsolationRpcHandlers } from './daemonMachineAgentIsolation';
+import { writeAgentIsolationMemberBinding } from '@/daemon/agentIsolation/memberBindings';
+import { deriveAgentIsolationMemberIdentity } from '@/daemon/agentIsolation/provisioning';
 
 // Native state is the OS boundary; preview, Manage admission, field mutation,
 // operation ownership, elevation framing and CHECK/APPLY remain production code.
 function fixture(foreignRule = false, adminMode: 'preauthorized' | 'none' = 'preauthorized',
-  failure?: 'sudo' | 'identity' | 'identity-error', initiallyEnabled = false) {
+  failure?: 'sudo' | 'identity' | 'identity-error', initiallyEnabled = false, activeServerDir?: string, memberRuleId?: string) {
   const target = { serverId: 'home', machineId: 'machine', installationId: 'installation', custodianAccountId: 'owner' };
   const residue = new Set(['agent-runas', 'agent-account', 'agent-primary-group', 'agent-home', 'workspace-group',
     'workspace-root', 'tools-root', 'happier-shared-git', 'happier-agent-shared-git']);
+  if (memberRuleId) residue.add(memberRuleId);
   const backend: MachineSetupBackend = {
     async observe(step) {
       const present = residue.has(step.id);
@@ -56,7 +62,9 @@ function fixture(foreignRule = false, adminMode: 'preauthorized' | 'none' = 'pre
   const rpc = new RpcHandlerManager({ scopePrefix: target.machineId, localMachineId: target.machineId,
     encryptionMode: 'plain', logger() {}, authorizeRequest: async () => ({ ok: true }) });
   registerDaemonMachineAgentIsolationRpcHandlers(rpc, { target: () => target,
-    read: () => ({ enabled: false, status: { kind: 'disabled' } }), effects: { ...native.effects, backend: undefined, elevation },
+    read: () => ({ enabled: false, status: { kind: 'disabled' } }), effects: { ...native.effects, backend: undefined, elevation,
+      readMemberBindingScope: () => activeServerDir ? { activeServerDir, homeServerIdentityId: 'home', machineId: target.machineId,
+        installationId: target.installationId } : null },
     readCanonicalHomeServerIdentityId: () => 'home', runActionOperation: operations.runActionOperation,
     captureMetadataPort: () => ({ read: async () => ({ status: 'ready', metadataVersion, metadata }),
       compareAndSwap: async input => {
@@ -116,6 +124,24 @@ it('leaves a changed or foreign sudoers rule untouched and returns its typed adm
     retained: expect.arrayContaining([expect.objectContaining({ stepId: 'agent-runas', reasonCode: 'foreign_effect_conflict' })]) } });
   expect(f.residue.has('agent-runas')).toBe(true);
   expect(f.mutations).toEqual([]);
+});
+
+it.each(['preauthorized', 'none'] as const)('includes retained member rules in off review without making elevation a prerequisite (%s)', async adminMode => {
+  const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-member-retirement-'));
+  try {
+    const member = deriveAgentIsolationMemberIdentity({ homeServerIdentityId: 'home',
+      requester: { serverId: 'home', accountId: 'revoked-member', machineId: 'machine', installationId: 'installation' } });
+    await writeAgentIsolationMemberBinding(activeServerDir, { ...member, agentUid: 2401, agentGid: 2401 });
+    const ruleId = `member-runas-${member.digest}`;
+    const f = fixture(false, adminMode, undefined, true, activeServerDir, ruleId);
+    const review = await f.preview();
+    expect(review).toMatchObject({ kind: 'ready', plan: { retirement: expect.arrayContaining([
+      expect.objectContaining({ stepId: ruleId, target: `/etc/sudoers.d/91-happier-${member.username}`,
+        action: adminMode === 'none' ? 'retain' : 'remove' }),
+    ]) } });
+    expect(await f.apply(review)).toMatchObject({ kind: 'accepted', status: { kind: 'disabled' } });
+    expect(f.residue.has(ruleId)).toBe(adminMode === 'none');
+  } finally { await rm(activeServerDir, { recursive: true, force: true }); }
 });
 
 

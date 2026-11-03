@@ -5961,14 +5961,16 @@ isolation refusal, which newer clients present without a private-RPC retry.
 
 ## Agent isolation bootstrap retirement (0.3 development)
 
-An Off review also inventories the shared bootstrap when desired policy is
-already disabled. Its optional `plan.retirement` lists native presence, exact
+An Off review inventories the shared bootstrap and member RunAs rules derived
+from the existing private bindings, even when desired policy is already disabled. Its optional `plan.retirement` lists native presence, exact
 managed RunAs removal, and typed remedies for retained resources. The legacy
 bootstrap recorded neither exclusive user/group ownership nor prior permissions
 or Git values. Those identities, shared tools and authored home/workspace data
 are retained with explicit administrator guidance. A changed or foreign sudoers
-file is retained too; only a matching content digest, root owner/group and mode
-can enter the existing elevated APPLY. Accepted/unchanged results report removed
+file is retained too; removal requires the producer's exact content digest,
+root:root ownership, mode 0440 and no symlinks through the native file owner.
+Member revoke withdraws that exact rule after the natural lifecycle boundary
+even if account or binding state has drifted; retained identities and data remain. Accepted/unchanged results report removed
 step ids and retained remedies. Off inventory uses the same read-only elevated
 CHECK as enabling. If the daemon identity or elevated CHECK is unavailable, Off
 still returns a ready review, retains every inventory item with

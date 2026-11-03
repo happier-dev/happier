@@ -199,7 +199,7 @@ export async function observeAgentIsolationNativeReadiness(input: Readonly<{
       selectedEnvironmentKeys: ['READINESS_HEADERS', 'READINESS_CHALLENGE', 'READINESS_ALLOWED_GROUPS', 'READINESS_EXPECTED_USER'],
       selectedMaterials: [{ relativePath: 'files/headers', contentBase64: Buffer.from(`Authorization: Bearer ${context.bearerToken}\n`).toString('base64') },
         { relativePath: 'files/challenge', contentBase64: challenge.toString('base64') }], sessionMcpContext: context });
-    const result = await run(launch.command, launch.args, { env: launch.env, inputBytes: launch.stdinPreamble,
+    const result = await run(launch.command, launch.args, { encoding: null, env: launch.env, inputBytes: launch.stdinPreamble,
       signal: input.signal, terminateOnAbort: terminateProcessTree });
     if (!Buffer.from(result.stdout).equals(challenge)) return unavailable(phase);
     if (!authenticated || !anonymousDenied) return unavailable('mcp_socket_access_unavailable');

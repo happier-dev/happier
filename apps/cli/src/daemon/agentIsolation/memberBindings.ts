@@ -122,28 +122,37 @@ export async function readAgentIsolationMemberBindingForAccount(scope: AgentIsol
   }
 }
 
-/** Reconnect enumerates existing local projections, never an Account/Team roster. */
-export async function readProvisionedRequesterAccounts(scope: AgentIsolationMemberBindingScope,
-  backend: Pick<MachineSetupBackend, 'observe'> = createMachineSetupNativeBackend(),
-): Promise<Readonly<{ accountIds: readonly string[]; coverage: 'complete' | 'unknown' }>> {
-  const accountIds = new Set<string>();
+/** Cold inventory of existing private projections, never an Account/Team roster. */
+export async function readAgentIsolationMemberBindings(scope: AgentIsolationMemberBindingScope
+): Promise<Readonly<{ bindings: readonly AgentIsolationMemberBinding[]; coverage: 'complete' | 'unknown' }>> {
+  const bindings: AgentIsolationMemberBinding[] = [];
   let coverage: 'complete' | 'unknown' = 'complete';
   let root: string, names: string[];
   try { root = await privateRoot(scope.activeServerDir, false); names = await readdir(root); }
-  catch (error) { return { accountIds: [], coverage: (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'complete' : 'unknown' }; }
+  catch (error) { return { bindings, coverage: (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'complete' : 'unknown' }; }
   for (const name of names) {
     if (!/^[a-f0-9]{64}\.json$/u.test(name)) { coverage = 'unknown'; continue; }
     try {
       const value = await readBinding(root, name);
       if (value.homeServerIdentityId !== scope.homeServerIdentityId || value.machineId !== scope.machineId
         || value.installationId !== scope.installationId) { coverage = 'unknown'; continue; }
-      // The exact private binding supplies a reconciliation subject, never OS
-      // authority. A missing/drifted account still needs Home access recovery;
-      // native provenance remains mandatory at adoption and retirement.
-      accountIds.add(value.accountId);
+      bindings.push(value);
+    } catch { coverage = 'unknown'; }
+  }
+  return { bindings, coverage };
+}
+
+/** Reconnect qualifies inventory for launch; retirement only withdraws exact files. */
+export async function readProvisionedRequesterAccounts(scope: AgentIsolationMemberBindingScope,
+  backend: Pick<MachineSetupBackend, 'observe'> = createMachineSetupNativeBackend(),
+): Promise<Readonly<{ accountIds: readonly string[]; coverage: 'complete' | 'unknown' }>> {
+  const inventory = await readAgentIsolationMemberBindings(scope);
+  let coverage = inventory.coverage;
+  for (const value of inventory.bindings) {
+    try {
       const observed = await observeAgentIsolationMemberNativeIdentity(projectAgentIsolationMemberBinding(value), { expectedUid: value.uid }, backend);
       requireMatch(value, observed);
     } catch { coverage = 'unknown'; }
   }
-  return { accountIds: [...accountIds].sort(), coverage };
+  return { accountIds: [...new Set(inventory.bindings.map(value => value.accountId))].sort(), coverage };
 }

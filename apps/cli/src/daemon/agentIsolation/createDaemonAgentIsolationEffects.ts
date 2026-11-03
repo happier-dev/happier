@@ -13,6 +13,7 @@ export function createDaemonAgentIsolationEffects(input: Readonly<{
   trackedSessions: ReadonlyMap<number, unknown>;
   protectedRoots: readonly string[];
   privateRoots: readonly string[];
+  readMemberBindingScope?: AgentIsolationEffectDependencies['readMemberBindingScope'];
 }>): AgentIsolationEffectDependencies {
   const layout = resolveFirstPartyInstallLayout({ componentId: 'happier-cli', channel: resolveManagedCliReleaseChannelSync().ringId });
   const installedCli = join(layout.currentPath, getFirstPartyComponentCatalogEntry('happier-cli').binaryRelativePath);
@@ -21,6 +22,7 @@ export function createDaemonAgentIsolationEffects(input: Readonly<{
     // finishes retirement. A requested stop, pause or unknown identity is live.
     readSessionsToReplace: () => input.trackedSessions.size,
     protectedRoots: input.protectedRoots,
+    readMemberBindingScope: input.readMemberBindingScope,
     readDaemonObservation: () => input.adminAccess.observer.read(),
     elevation: { get installationId() { return input.adminAccess.target()?.installationId ?? ''; }, installedCli,
       readPolicy: async () => {

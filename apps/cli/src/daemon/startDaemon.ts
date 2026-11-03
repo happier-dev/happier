@@ -1698,6 +1698,12 @@ const readIsolationRoots = () => {
       trackedSessions: pidToTrackedSession,
       protectedRoots: [configuration.happyHomeDir, '/opt/happier', '/var/lib/happier-agent'],
       privateRoots: [configuration.happyHomeDir],
+      readMemberBindingScope: () => {
+        const target = machineAdminAccessRoutes.target();
+        const homeServerIdentityId = resolveBoundHomeServerIdentityId();
+        return target && homeServerIdentityId ? { activeServerDir: configuration.activeServerDir,
+          homeServerIdentityId, machineId: target.machineId, installationId: target.installationId } : null;
+      },
     });
     machineRpcRouteAttachments.attachMachineAgentIsolationRoutes(isolationEffects);
 const agentIsolation: import('./agentIsolation/agentIsolationLaunchPolicy').HostAgentIsolationLaunchContext = {

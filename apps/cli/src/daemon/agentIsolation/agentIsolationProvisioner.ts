@@ -5,10 +5,10 @@ import type { MachineSetupEffectPlanV1 } from '@happier-dev/protocol/machines/se
 import { MachineSetupObservationReasonV1Schema } from '@happier-dev/protocol/machines/setup/machineSetupObservationReasonV1';
 import type { MachineMetadataFieldPortV1 } from '@happier-dev/protocol/machines/machineMetadataFieldV1';
 import { checkElevatedMachineSetupPlanResult, runElevatedEffect, runElevatedMachineSetupIntent, type MachineElevationDependencies } from '@/machines/adminAccess/runElevatedEffect';
-import { buildAgentIsolationMemberAccountStep, buildAgentIsolationMemberRetirementSteps,
-  deriveAgentIsolationMemberIdentity, type AgentIsolationMemberRequester, type AgentIsolationDaemonObservation } from './provisioning';
+import { buildAgentIsolationMemberRetirementSteps,
+  type AgentIsolationMemberRequester, type AgentIsolationDaemonObservation } from './provisioning';
 import { readAgentIsolationNativeIdentity, type AgentIsolationMemberNativeIdentity } from './agentIsolationNativeIdentity';
-import { readAgentIsolationMemberBinding, readAgentIsolationMemberBindingForAccount, writeAgentIsolationMemberBinding,
+import { readAgentIsolationMemberBindingForAccount, writeAgentIsolationMemberBinding,
   type AgentIsolationMemberBindingScope } from './memberBindings';
 import { projectAgentIsolationBootstrapRetirement } from './bootstrapRetirement';
 import { resolveAgentIsolationEffectIntentResult } from './effectIntent';
@@ -25,6 +25,7 @@ export type AgentIsolationEffectDependencies = Readonly<{
   installedCli: string;
   readRoots(): readonly Readonly<{ rootId: string; path: string }>[] | null;
   readSessionsToReplace(): number;
+  readMemberBindingScope?(): AgentIsolationMemberBindingScope | null;
   protectedRoots?: readonly string[];
   /** The native setup adapter is the OS boundary, shared with root APPLY. */
   backend?: MachineSetupBackend;
@@ -235,39 +236,18 @@ export async function retireAgentIsolationMemberIdentity(input: Readonly<{
       const requesterIdentity: AgentIsolationMemberRequester = { kind: 'isolated', separationRequired: true,
         homeServerIdentityId: input.scope.homeServerIdentityId, requester: { serverId: input.scope.homeServerIdentityId,
           accountId: input.accountId, machineId: input.scope.machineId, installationId: input.scope.installationId } };
-      const identity = deriveAgentIsolationMemberIdentity(requesterIdentity);
-      const binding = await readAgentIsolationMemberBindingForAccount(input.scope, input.accountId);
-      const backend = effects.backend ?? createMachineSetupNativeBackend({ signal: input.signal });
-      const account = buildAgentIsolationMemberAccountStep(identity);
-      const { locked: _locked, ...publicAccount } = account;
-      const presence = await backend.observe(publicAccount);
-      const accountAbsent = presence.facts.present === false;
-      let observed: AgentIsolationMemberNativeIdentity | undefined;
-      if (!accountAbsent) {
-        try {
-          observed = await readAgentIsolationNativeIdentity({ requesterIdentity, ...(binding ? { expectedUid: binding.uid } : {}), signal: input.signal }, backend);
-          if (binding) await readAgentIsolationMemberBinding(input.scope.activeServerDir, observed);
-        } catch { /* Withdrawal can still remove only its exact owned rule. */ }
-      }
       {
         const daemon = await effects.elevation.observe();
         if (daemon.daemonIdentity !== 'nonRoot' || !daemon.daemonUsername) throw new Error('daemon_identity_unavailable');
-        // Root CHECK observes the reserved account's password lock in the same
-        // attended invocation as exact RunAs withdrawal. A present account step
-        // is accepted only when already satisfied; retirement cannot recreate
-        // a missing account or repair a foreign/changed identity.
-        const steps = [...(observed ? [account] : []),
-          ...buildAgentIsolationMemberRetirementSteps({ daemonUsername: daemon.daemonUsername, binaryPath: effects.installedCli, requesterIdentity })];
+        // Withdrawal grants no identity authority. The native file owner proves
+        // the exact content/root/mode/no-symlink contract; account or binding
+        // drift must not prevent removing that verified launch permission.
+        const steps = buildAgentIsolationMemberRetirementSteps({ daemonUsername: daemon.daemonUsername, binaryPath: effects.installedCli, requesterIdentity });
         const basis: MachineSetupEffectPlanV1['basis'] = { kind: 'agentIsolation', machineId: input.scope.machineId,
           enabled: true, expectedPolicy: { enabled: true }, review: { roots: [], ancestorAcls: [], sessionsToReplace: 0 } };
         const result = await runElevatedMachineSetupIntent({ machineId: input.scope.machineId, operationId: input.operationId,
-          basis, steps, signal: input.signal, acceptPlan: async plan => {
-            if (!current()) return false;
-            if (!observed) return true;
-            const locked = plan.nativeFacts.find(fact => fact.stepId === account.id);
-            return locked?.status === 'satisfied' && locked.facts.uid === observed.agentUid;
-          } }, { ...effects.elevation, verifyCurrent });
-        nativeSettled = result.outcome === 'applied' && (accountAbsent && !binding || !!observed);
+          basis, steps, signal: input.signal }, { ...effects.elevation, verifyCurrent });
+        nativeSettled = result.outcome === 'applied';
       }
     }
   } catch { /* Exact resource cleanup remains independent of native setup success. */ }
