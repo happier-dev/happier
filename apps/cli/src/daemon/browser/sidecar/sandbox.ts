@@ -102,9 +102,6 @@ export async function executeManagedChromiumSandboxInstall(args: RuntimeActionEx
     if (!args.context.authority) return { ok: false, errorCode: 'authority_required', error: 'authority_required' };
     const parsed = getActionSpec('browser.sandbox.install').inputSchema.safeParse(args.input);
     if (!parsed.success) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
-    if (args.context.authority !== 'present_user' && !args.context.bypassApprovals) {
-        return { ok: false, errorCode: 'approval_required', error: 'approval_required' };
-    }
     let machineId: string | undefined;
     try { machineId = (await readSettings()).machineId; }
     catch { return { ok: false, errorCode: 'browser_machine_unavailable', error: 'browser_machine_unavailable' }; }
