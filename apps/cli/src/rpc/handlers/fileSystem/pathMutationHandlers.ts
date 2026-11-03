@@ -1,4 +1,3 @@
-import { writeTransferPayloadSourceToFile } from '@/machines/transfer/transferPayloadFileSink';
 import * as z from 'zod/mini';
 import { lazyZodSchema } from '@happier-dev/protocol/lazyZodSchema';
 import { realpathSync } from 'node:fs';
@@ -11,9 +10,10 @@ import type { ZodMiniType as ZodType } from 'zod/mini';
 import { HARD_OPENABLE_CONTENT_MAX_BYTES_V1 } from '@happier-dev/protocol/plugins/openableContent';
 import type { WorkspaceStatFileRequestV1 } from '@happier-dev/protocol';
 
-import type { RpcHandlerRegistrar } from '@/api/rpc/types';
+import type { RpcHandlerContext, RpcHandlerRegistrar } from '@/api/rpc/types';
 import { logger } from '@/ui/logger';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { RPC_ERROR_CODES, RPC_ERROR_MESSAGES } from '@happier-dev/protocol/rpcErrors';
 import {
   FilesystemCreateDirectoryInputSchema,
   FilesystemRenameInputSchema,
@@ -34,6 +34,8 @@ import { validatePath } from '../pathSecurity';
 import { filesystemPathComparisonKey, type FilesystemAccessPolicy } from './accessPolicy/filesystemAccessPolicy';
 import { authorizeFilesystemPath, authorizeFilesystemPathWithinRoot } from './accessPolicy/filesystemPathAuthorization';
 import { registerActionSpecRpcHandlers } from '../registerActionSpecRpcHandlers';
+import { assertFilesystemEffectCurrent } from './accessPolicy/filesystemEffectAdmission';
+import { writeTransferPayloadSourceToFile } from '@/machines/transfer/transferPayloadFileSink';
 import type { RpcActionExecutor } from '../_actionDispatchAdapter';
 
 type StatFileRequest = WorkspaceStatFileRequestV1;
@@ -49,7 +51,7 @@ type StatFileResponse =
       /** SHA-256 of the current bytes when the file is within the inline read ceiling. */
       contentHash?: string;
     }>
-  | Readonly<{ success: false; error: string }>;
+  | Readonly<{ success: false; error: string; errorCode?: string }>;
 
 export type FilesystemMutationDeps = Readonly<{
   workingDirectory: string;
@@ -71,16 +73,27 @@ const unavailableMutationExecutor: RpcActionExecutor = {
   },
 };
 
+const forbiddenRawMutationExecutor: RpcActionExecutor = {
+  async execute() {
+    return { ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN, error: RPC_ERROR_MESSAGES.FORBIDDEN };
+  },
+};
+
 /** Rooted mutations share one admission route; only predecessor aliases retain incumbent effects. */
 export function resolveFilesystemMutationActionExecutor(
   ingress: FilesystemMutationActionIngress,
-  request: Readonly<{ actionId: FilesystemActionId; isAlias: boolean; input: unknown }>,
+  request: Readonly<{ actionId: FilesystemActionId; isAlias: boolean; input: unknown;
+    ingress?: Pick<RpcHandlerContext, 'callerAuthority' | 'sessionActionOrigin' | 'localActionContext'> }>,
   incumbentExecutor: RpcActionExecutor,
 ): RpcActionExecutor<FilesystemActionId> {
   const data = request.input && typeof request.input === 'object' && !Array.isArray(request.input)
     ? request.input as Record<string, unknown> : null;
   if (request.isAlias && request.actionId !== 'daemon.filesystem.copy' && data
-    && data.kind !== 'targeted_action_rpc' && !Object.hasOwn(data, 'rootPath')) return incumbentExecutor;
+    && data.kind !== 'targeted_action_rpc' && !Object.hasOwn(data, 'rootPath')) {
+    if (request.ingress?.callerAuthority === 'account_automation' || request.ingress?.sessionActionOrigin
+      || request.ingress?.localActionContext?.authority === 'account_automation') return forbiddenRawMutationExecutor;
+    return incumbentExecutor;
+  }
   return (ingress.resolveMutationActionExecutor ? ingress.resolveMutationActionExecutor() : ingress.actionExecutor)
     ?? unavailableMutationExecutor;
 }
@@ -173,9 +186,8 @@ function authorizeMutationPath(path: string, rootPath: string | undefined, mode:
       additionalAllowedDirs: allowances,
     });
   }
-  if (!rootPath) return { valid: false as const, error: 'The filesystem root must be absolute' };
   return authorizeFilesystemPathWithinRoot({
-    targetPath: path, rootPath, defaultDirectory: deps.workingDirectory,
+    targetPath: path, rootPath: rootPath ?? '', defaultDirectory: deps.workingDirectory,
     accessPolicy: deps.accessPolicy, additionalAllowedDirs: allowances,
   });
 }
@@ -205,8 +217,9 @@ export async function executeFilesystemMutationAction(
     params.signal?.throwIfAborted();
     if ('path' in input) {
       const path = authorizeMutationPath(input.path, rootPath, 'write', params);
-      if (!path.valid) return failure(path.error, 'access_denied');
+      if (!path.valid) return failure(path.error, path.errorCode);
       if (actionId === 'daemon.filesystem.createDirectory') {
+        await params.assertCurrentAuthority?.();
         await mkdir(path.resolvedPath, { recursive: true });
         return { success: true };
       }
@@ -216,14 +229,15 @@ export async function executeFilesystemMutationAction(
       if (stats.isDirectory() && (!('recursive' in input) || !input.recursive)) {
         return failure('Refusing to delete a directory without recursive=true', 'recursive_required');
       }
+      await params.assertCurrentAuthority?.();
       await rm(path.resolvedPath, { recursive: true, force: true });
       return { success: true };
     }
 
     const from = authorizeMutationPath(input.from, rootPath, actionId === 'daemon.filesystem.copy' ? 'read' : 'write', params);
     const to = authorizeMutationPath(input.to, rootPath, 'write', params);
-    if (!from.valid) return failure(from.error, 'access_denied');
-    if (!to.valid) return failure(to.error, 'access_denied');
+    if (!from.valid) return failure(from.error, from.errorCode);
+    if (!to.valid) return failure(to.error, to.errorCode);
     if (isRootPath(from.resolvedPath, rootPath, params) || isRootPath(to.resolvedPath, rootPath, params)) {
       return failure('Cannot mutate the working directory root', 'root_refused');
     }
@@ -252,9 +266,8 @@ export async function executeFilesystemMutationAction(
         params.signal?.throwIfAborted();
         const currentSource = authorizeMutationPath(from.resolvedPath, rootPath, 'read', params);
         const currentDestination = authorizeMutationPath(to.resolvedPath, rootPath, 'write', params);
-        if (!currentSource.valid || !currentDestination.valid) {
-          throw new Error(!currentSource.valid ? currentSource.error : !currentDestination.valid ? currentDestination.error : 'Access denied');
-        }
+        const denied = !currentSource.valid ? currentSource : !currentDestination.valid ? currentDestination : null;
+        if (denied) throw Object.assign(new Error(denied.error), { code: denied.errorCode });
       };
       const custody = await mkdtemp(join(tmpdir(), 'filesystem-copy-'));
       const operationId = params.operationId ?? basename(custody);
@@ -271,10 +284,10 @@ export async function executeFilesystemMutationAction(
           assertEntryAllowed: entry => {
             const sourcePath = join(from.resolvedPath, ...entry.relativePath.split('/').slice(1));
             const admitted = authorizeMutationPath(sourcePath, rootPath, 'read', params);
-            if (!admitted.valid) throw new Error(admitted.error);
+            if (!admitted.valid) throw Object.assign(new Error(admitted.error), { code: admitted.errorCode });
             if (entry.kind === 'symlink') {
               const target = authorizeMutationPath(resolvePath(dirname(sourcePath), entry.target), rootPath, 'read', params);
-              if (!target.valid) throw new Error(target.error);
+              if (!target.valid) throw Object.assign(new Error(target.error), { code: target.errorCode });
             }
           },
         });
@@ -285,6 +298,7 @@ export async function executeFilesystemMutationAction(
             const payload = transferId === operationId ? exported.payloadSource
               : await exported.onDemandScope.resolvePayloadSourceOnOpen({ transferId, requestBody: null });
             if (payload.kind === 'buffer') await writeFile(destinationPath, payload.payload);
+            else if (payload.kind === 'file') await copyFile(payload.filePath, destinationPath);
             else await writeTransferPayloadSourceToFile({ source: payload, destinationPath });
           },
         });
@@ -299,13 +313,19 @@ export async function executeFilesystemMutationAction(
         if (!retainCustody) await rm(custody, { recursive: true, force: true });
       }
     }
-    if (input.overwrite && await pathExists(to.resolvedPath)) await rm(to.resolvedPath, { recursive: true, force: true });
+    if (input.overwrite && await pathExists(to.resolvedPath)) {
+      await params.assertCurrentAuthority?.();
+      await rm(to.resolvedPath, { recursive: true, force: true });
+    }
+    await params.assertCurrentAuthority?.();
     await mkdir(dirname(to.resolvedPath), { recursive: true });
+    await params.assertCurrentAuthority?.();
     await rename(from.resolvedPath, to.resolvedPath);
     return { success: true };
   } catch (error) {
     if (params.signal?.aborted) return failure('Filesystem mutation cancelled before commit', 'cancelled');
-    if (error instanceof Error && 'code' in error && error.code === 'filesystem_action_owner_unavailable') {
+    if (error instanceof Error && 'code' in error && (error.code === 'filesystem_action_owner_unavailable'
+      || error.code === 'filesystem_identity_custody_unavailable' || error.code === 'access_denied')) {
       return failure(error.message, error.code);
     }
     return failure(error instanceof Error ? error.message : 'Filesystem mutation failed', 'filesystem_error');
@@ -318,12 +338,13 @@ export function registerFilesystemMutationActionHandlers(
   actionIds: readonly FilesystemMutationActionId[],
 ): void {
   const incumbentExecutor: RpcActionExecutor = {
-    async execute(actionId, input) {
+    async execute(actionId, input, context) {
       const mutationId = actionIds.find((id) => id === actionId);
       if (!mutationId) {
         return { ok: false, errorCode: 'unsupported_action', error: `Unsupported action: ${actionId}` };
       }
-      return { ok: true, result: await executeFilesystemMutationAction({ ...deps, actionId: mutationId, input, incumbentPolicyScope: true }) };
+      return { ok: true, result: await executeFilesystemMutationAction({ ...deps, actionId: mutationId, input,
+        signal: context?.signal, assertCurrentAuthority: () => assertFilesystemEffectCurrent(context), incumbentPolicyScope: true }) };
     },
   };
   registerActionSpecRpcHandlers<FilesystemMutationActionId>({
@@ -356,12 +377,14 @@ export function registerFilesystemMutationActionHandlers(
 }
 
 /** Read one exact, bounded candidate buffer for an opt-in content revision. */
-async function readFileWithinContentHashLimit(path: string): Promise<Buffer> {
+async function readFileWithinContentHashLimit(path: string, assertCurrentAuthority: () => Promise<void>): Promise<Buffer> {
+  await assertCurrentAuthority();
   const handle = await open(path, 'r');
   try {
     const bytes = Buffer.alloc(HARD_OPENABLE_CONTENT_MAX_BYTES_V1 + 1);
     let offset = 0;
     while (offset < bytes.byteLength) {
+      await assertCurrentAuthority();
       const { bytesRead } = await handle.read(bytes, offset, bytes.byteLength - offset, offset);
       if (bytesRead <= 0) break;
       offset += bytesRead;
@@ -376,22 +399,23 @@ export function registerPathMutationHandlers(
   rpcHandlerManager: RpcHandlerRegistrar,
   deps: FilesystemMutationDeps & FilesystemMutationActionIngress,
 ): void {
-  rpcHandlerManager.registerHandler<StatFileRequest, StatFileResponse>(RPC_METHODS.STAT_FILE, async (data) => {
+  rpcHandlerManager.registerHandler<StatFileRequest, StatFileResponse>(RPC_METHODS.STAT_FILE, async (data, context) => {
     const path = typeof data?.path === 'string' ? data.path : '';
     logger.debug('Stat file request:', path);
 
     const validation = validatePath(path, deps.workingDirectory, deps.getAdditionalAllowedReadDirs(), deps.accessPolicy);
-    if (!validation.valid || !validation.resolvedPath) {
-      return { success: false, error: validation.error ?? 'Access denied' };
+    if (!validation.valid) {
+      return { success: false, error: validation.error, errorCode: validation.errorCode };
     }
 
     try {
+      await assertFilesystemEffectCurrent(context);
       const stats = await stat(validation.resolvedPath);
       const kind = stats.isDirectory() ? 'directory' : stats.isFile() ? 'file' : 'other';
       let contentHash: string | undefined;
       let sizeBytes = stats.size;
       if (data?.includeContentHash === true && kind === 'file' && stats.size <= HARD_OPENABLE_CONTENT_MAX_BYTES_V1) {
-        const bytes = await readFileWithinContentHashLimit(validation.resolvedPath);
+        const bytes = await readFileWithinContentHashLimit(validation.resolvedPath, () => assertFilesystemEffectCurrent(context));
         // Name the exact buffer hashed, rather than pairing a pre-read stat
         // size with post-read bytes if a concurrent write changed the length.
         // A growth race that crosses the existing inline boundary is not
@@ -401,6 +425,7 @@ export function registerPathMutationHandlers(
           contentHash = createHash('sha256').update(bytes).digest('hex');
         }
       }
+      await assertFilesystemEffectCurrent(context);
       return {
         success: true,
         exists: true,

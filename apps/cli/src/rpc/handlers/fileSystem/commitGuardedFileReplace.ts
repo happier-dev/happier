@@ -7,7 +7,7 @@ import type { FilesystemWriteGuardErrorCode } from '@happier-dev/protocol/action
 import { moveFileWithCrossDeviceFallback, type MoveFileOperations } from '@/utils/fs/moveFileWithCrossDeviceFallback';
 import { renameWithWindowsRetries, writeFileAtomically } from '@/utils/fs/writeJsonAtomic';
 
-type GuardedFileReplaceFailure = Readonly<{ success: false; error: string; errorCode: FilesystemWriteGuardErrorCode | 'file_replace_failed' }>;
+type GuardedFileReplaceFailure = Readonly<{ success: false; error: string; errorCode: FilesystemWriteGuardErrorCode | 'file_replace_failed' | 'filesystem_identity_custody_unavailable' }>;
 export type GuardedFileReplaceResult =
   | Readonly<{ success: true; hash: string }>
   | GuardedFileReplaceFailure;
@@ -104,7 +104,9 @@ export async function commitGuardedFileReplace(input: GuardedFileReplaceOptions 
     });
     return { success: true, hash };
   } catch (error) {
-    return { success: false, errorCode: error instanceof FileWriteGuardError ? error.code : 'file_replace_failed',
+    return { success: false, errorCode: error instanceof FileWriteGuardError ? error.code
+      : error instanceof Error && 'code' in error && error.code === 'filesystem_identity_custody_unavailable'
+        ? error.code : 'file_replace_failed',
       error: error instanceof Error ? error.message : 'Failed to replace file' };
   }
 }

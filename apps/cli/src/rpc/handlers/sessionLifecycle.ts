@@ -418,35 +418,38 @@ export function registerSessionSpawnNewRpcHandlers(params: Readonly<{
                 }
             }),
         },
-        resolveActionExecutor: async request => !request.ingress?.requesterSessionBootstrap && params.actionExecutor
-            ? params.actionExecutor
-            : await resolveProductionSessionSpawnNewActionExecutor({
-            ...(request.ingress ? { requesterContext: request.ingress } : {}),
-            ...(request.ingress?.requesterSessionBootstrap && params.requesterBootstrapBoundary ? {
-                sessionSpawnDirectTargetTransport: createMachineSessionDirectTargetTransport({
-                    machineId: request.ingress.requesterSessionBootstrap.attribution.machineId,
-                    spawnLifecycleHandler: async (input, context) => {
-                        const requester = request.ingress!.requesterSessionBootstrap!;
-                        if (!input || typeof input !== 'object'
+        resolveActionExecutor: async request => {
+            const requester = request.ingress?.requesterSessionBootstrap;
+            if (!requester && params.actionExecutor) return params.actionExecutor;
+            const directTransport = requester && params.requesterBootstrapBoundary
+                ? createMachineSessionDirectTargetTransport({
+                    machineId: requester.attribution.machineId,
+                    spawnLifecycleHandler: params.requesterBootstrapBoundary.spawnLifecycleHandler,
+                    ...(params.requesterBootstrapBoundary.resolveSpawnSessionByNonce
+                        ? { resolveSpawnSessionByNonce: params.requesterBootstrapBoundary.resolveSpawnSessionByNonce } : {}),
+                })
+                : requester ? undefined : params.sessionSpawnDirectTargetTransport;
+            return await resolveProductionSessionSpawnNewActionExecutor({
+                ...(request.ingress ? { requesterContext: request.ingress } : {}),
+                ...(directTransport ? { sessionSpawnDirectTargetTransport: {
+                    ...directTransport,
+                    spawnedSession: { ...directTransport.spawnedSession, spawn: async (input, context) => {
+                        if (requester && (!input || typeof input !== 'object'
                             || (requester.preparedSessionId !== undefined
                                 && Reflect.get(input, 'existingSessionId') !== requester.preparedSessionId)
                             || typeof Reflect.get(input, 'sessionCreationTag') !== 'string'
-                            || !await requester.isCurrent()) {
+                            || !await requester.isCurrent())) {
                             return { type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE,
                                 errorMessage: 'Requester Session creation identity unavailable' };
                         }
-                        return await params.requesterBootstrapBoundary!.spawnLifecycleHandler(input,
-                            { ...request.ingress, ...context, requesterSessionBootstrap: requester });
-                    },
-                    ...(params.requesterBootstrapBoundary.resolveSpawnSessionByNonce
-                        ? { resolveSpawnSessionByNonce: params.requesterBootstrapBoundary.resolveSpawnSessionByNonce } : {}),
-                }),
-            } : {}),
-            ...(params.sessionSpawnDirectTargetTransport
-                && !request.ingress?.requesterSessionBootstrap
-                ? { sessionSpawnDirectTargetTransport: params.sessionSpawnDirectTargetTransport }
-                : {}),
-        }),
+                        return await directTransport.spawnedSession.spawn(input, {
+                            ...request.ingress, ...context,
+                            ...(requester ? { requesterSessionBootstrap: requester } : {}),
+                        });
+                    } },
+                } } : {}),
+            });
+        },
         scopes: SESSION_SPAWN_NEW_RPC_SCOPES,
         ...(params.observeExecution ? { observeExecution: params.observeExecution } : {}),
     });

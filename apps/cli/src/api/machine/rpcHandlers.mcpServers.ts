@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { DaemonMcpServersDetectRequestSchema, DaemonMcpServersTestRequestSchema } from '@happier-dev/protocol/mcp/servers/daemonRpcV1';
 import { DaemonMcpServersPreviewRequestSchema } from '@happier-dev/protocol/mcp/servers/previewV1';
@@ -19,7 +20,7 @@ import { createInvocationSavedSecretOperationContextV1, type SavedSecretOperatio
 import { refreshSavedSecretCatalogForOperation } from "@/settings/secrets/hydrateSavedSecretCatalog";
 import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { getActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshotLifetimeToken, type ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
-import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { resolveServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { McpServerProbeError, probeMcpStdioServerTools } from '@/mcp/servers/probeMcpStdioServerTools';
 import { createCliMcpServerStoreForOperation } from '@/settings/mcp/mcpServerStore';
 import { redactMcpServerProbeError } from '@/mcp/servers/redactMcpServerProbeError';
@@ -38,9 +39,15 @@ import { tryDecryptSessionOwnerMetadataView, readSessionOwnerLocality } from '@/
 import { readSessionCapabilitySelectionFromMetadataV1 } from '@happier-dev/protocol/reach/sessionCapabilityMetadataV1';
 import { resolveBackendTargetFromSessionMetadata } from '@/session/backendTargets/resolveBackendTargetFromSessionMetadata';
 import type { RpcHandlerManager } from '../rpc/RpcHandlerManager';
-import type { RpcHandlerContext } from '../rpc/types';
+import type { RpcHandler, RpcHandlerContext } from '../rpc/types';
 import type { IssueMcpTestRequestAuth, McpTestRequestAuthAttachment } from '@/daemon/connectedServices/requestAuth/createDaemonMcpRequestAuthForTest';
 import { canonicalMcpOAuthResourceUrlV1 } from '@happier-dev/protocol/mcp/oauth/mcpOAuthResourceV1';
+import { isHostRequesterUnrestrictedOwner, selectHostRequesterExecutionIdentity, type HostRequesterExecutionIdentity,
+  type HostAgentIsolationLaunchContext, type HostAgentIsolationLaunchSnapshot } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
+import { assertMcpStdioExecutionSupported, refuseMcpExecutionSource } from '@/mcp/runtime/mcpExecutionSource';
+import { prepareRequesterMcpTestOperation, type RequesterMcpTestOperation } from '@/mcp/servers/prepareRequesterMcpTestOperation';
+import { logger } from '@/ui/logger';
+import type { AgentLaunchSelectedMaterial } from '@/daemon/agentIsolation/agentLaunchFrame';
 
 function redactErrorText(raw: unknown): string {
   return redactMcpServerProbeError(raw);
@@ -94,18 +101,76 @@ export function registerMachineMcpServersRpcHandlers(params: Readonly<{
     detectProviderMcpServers?: typeof detectProviderMcpServers;
     probeMcpStdioServerTools?: typeof probeMcpStdioServerTools;
     issueRequestAuth?: IssueMcpTestRequestAuth;
+    nativeOperationRuntime?: Pick<import('@/api/apiMachine').ApiMachineClient, 'prepareNativeOperation'>;
+    agentIsolation?: Pick<HostAgentIsolationLaunchContext, 'read'>;
+    requestAuth?: Parameters<typeof prepareRequesterMcpTestOperation>[0]['requestAuth'];
+    /** Installed host composition only; never an RPC-supplied material override. */
+    prepareRequesterTest?: (input: Readonly<{
+      requesterIdentity: Exclude<HostRequesterExecutionIdentity, { kind: 'unknown' }> & { homeServerIdentityId: string };
+      ingress: RpcHandlerContext;
+      isolationSnapshot: HostAgentIsolationLaunchSnapshot | undefined;
+      prepareNativeOperation?: import('@/api/apiMachine').ApiMachineClient['prepareNativeOperation'];
+    }>) => Promise<RequesterMcpTestOperation>;
+    hostHomeServerIdentityId?: string;
+    resolveHostHomeServerIdentityId?: (signal?: AbortSignal) => Promise<string | null>;
+    serverHttpBaseUrl?: string;
   }>;
 }>): void {
   const { rpcHandlerManager } = params;
+  const registerHandler = <Request, Response>(method: string, handler: RpcHandler<Request, Response>) => {
+    rpcHandlerManager.registerHandler<Request, Response>(method, (raw, context) => params.deps?.serverHttpBaseUrl
+      ? runWithServerHttpBaseUrl(params.deps.serverHttpBaseUrl, () => handler(raw, context))
+      : handler(raw, context));
+  };
   const depsEnv = params.deps?.env ?? process.env;
   const readCredentialsImpl = params.deps?.readCredentials ?? readStoredCredentials;
   const bootstrapAccountSettingsContextImpl = params.deps?.bootstrapAccountSettingsContext ?? bootstrapAccountSettingsContext;
   const detectProviderMcpServersImpl = params.deps?.detectProviderMcpServers ?? detectProviderMcpServers;
   const probeMcpStdioServerToolsImpl = params.deps?.probeMcpStdioServerTools ?? probeMcpStdioServerTools;
+  const nativeOperationRuntime = params.deps?.nativeOperationRuntime;
+  const prepareRequesterTest = params.deps?.prepareRequesterTest ?? (nativeOperationRuntime
+    ? (input: Parameters<NonNullable<NonNullable<typeof params.deps>['prepareRequesterTest']>>[0]) =>
+      prepareRequesterMcpTestOperation({ ...input,
+        prepareNativeOperation: request => nativeOperationRuntime.prepareNativeOperation(request),
+        ...(params.deps?.requestAuth ? { requestAuth: params.deps.requestAuth } : {}),
+      }) : undefined);
+  // Original Machine admission owns authority. Once admitted, finite Test
+  // checks only its local cancellation and retained material lifetime.
+  const assertMachineMcpCurrent = async (context?: RpcHandlerContext): Promise<void> => {
+    context?.signal.throwIfAborted();
+  };
+  const captureMcpSource = async (context?: RpcHandlerContext) => {
+    const hostHomeServerIdentityId = await (async () => {
+      try {
+        return params.deps?.resolveHostHomeServerIdentityId
+          ? await params.deps.resolveHostHomeServerIdentityId(context?.signal)
+          : params.deps?.hostHomeServerIdentityId;
+      } catch {
+        context?.signal.throwIfAborted();
+        return refuseMcpExecutionSource('requester_authority_unavailable');
+      }
+    })();
+    if (!hostHomeServerIdentityId) return refuseMcpExecutionSource('requester_authority_unavailable');
+    const bootstrap = context?.requesterSessionBootstrap;
+    const origin = context?.sessionActionOrigin ?? context?.callerInputAuthorization?.binding.sessionActionOrigin;
+    if (bootstrap && origin && bootstrap.getBoundSessionId() !== origin.caller.sessionId)
+      return refuseMcpExecutionSource('session_requester_unavailable');
+    const identity = selectHostRequesterExecutionIdentity({ rpcContext: context, hostHomeServerIdentityId,
+      ...(bootstrap ? { sessionRequester: bootstrap.attribution,
+        sessionRequesterHomeServerIdentityId: bootstrap.homeServerIdentityId,
+        sessionCustodianAccountId: context?.machineAdmission?.custodianAccountId } : {}) });
+    await assertMachineMcpCurrent(context);
+    // Effects reuse the exact original receiving admission, not a new identity
+    // selection or a snapshot retained across preparation awaits.
+    return { identity, hostHomeServerIdentityId, assertCurrent: () => assertMachineMcpCurrent(context) };
+  };
+  const requireCustodianMcpSource = async (context?: RpcHandlerContext) => {
+    const source = await captureMcpSource(context);
+    await assertMcpStdioExecutionSupported({ kind: 'requester', identity: source.identity });
+    return source.assertCurrent;
+  };
 
-  rpcHandlerManager.registerHandler(
-    RPC_METHODS.DAEMON_MCP_SERVERS_TEST,
-    async (raw: unknown, context?: RpcHandlerContext): Promise<DaemonMcpServersTestResponse> => {
+  const testServer = async (raw: unknown, context?: RpcHandlerContext): Promise<DaemonMcpServersTestResponse> => {
       context?.signal.throwIfAborted();
       const parsed = DaemonMcpServersTestRequestSchema.safeParse(raw);
       if (!parsed.success) {
@@ -113,11 +178,26 @@ export function registerMachineMcpServersRpcHandlers(params: Readonly<{
       }
 
       const startedAt = nowMs(params.deps?.nowMs);
+      const source = await captureMcpSource(context);
+      let requesterOperation: RequesterMcpTestOperation | undefined;
+      if (isHostRequesterUnrestrictedOwner(source.identity)) {
+        await assertMcpStdioExecutionSupported({ kind: 'requester', identity: source.identity });
+      } else {
+        const isolationSnapshot = params.deps?.agentIsolation?.read();
+        if (!context || source.identity.kind === 'unknown' || !prepareRequesterTest)
+          return refuseMcpExecutionSource('requester_authority_unavailable');
+        requesterOperation = await prepareRequesterTest({ ingress: context,
+          isolationSnapshot,
+          requesterIdentity: { ...source.identity, homeServerIdentityId: source.hostHomeServerIdentityId } });
+      }
+      const assertCurrent = async () => { await source.assertCurrent(); await requesterOperation?.assertCurrent(); };
+      let primaryFailure = false;
       let pluginLease: PluginRuntimeRegistryLease | undefined;
       const pluginAttachments: Readonly<{ dispose(): void | Promise<void> }>[] = [];
       try {
 
-        const credentials = await readCredentialsImpl().catch(() => null);
+        const credentials = requesterOperation?.credentials ?? await readCredentialsImpl().catch(() => null);
+        await assertCurrent();
         if (!credentials) {
           const durationMs = Math.max(0, nowMs(params.deps?.nowMs) - startedAt);
           return { ok: false, errorCode: 'missing_credentials', error: 'missing_credentials', durationMs };
@@ -125,11 +205,15 @@ export function registerMachineMcpServersRpcHandlers(params: Readonly<{
 
         let accountSettingsContext: AccountSettingsContext;
         let resolution: ReturnType<typeof resolveServerForTestRequest>;
-        let operationContext: SavedSecretOperationContextV1 | null = null;
+        let operationContext: SavedSecretOperationContextV1 | null = requesterOperation?.operationContext ?? null;
         try {
-          // A complete caller-owned draft does not depend on stored MCP facts.
-          // Stored ids must capture the current admitted Account catalog.
-          if (parsed.data.t === 'draft') {
+          // Draft OAuth still demands the admitted Account catalog before
+          // capturing secret material, so issuance cannot retire its snapshot.
+          if (requesterOperation) {
+            const requiresCatalog = parsed.data.t === 'byId'
+              || (parsed.data.server.transport !== 'stdio' && parsed.data.server.remote?.auth?.kind === 'oauth');
+            accountSettingsContext = await requesterOperation.readSettings(requiresCatalog);
+          } else if (parsed.data.t === 'draft') {
             accountSettingsContext = await bootstrapAccountSettingsContextImpl({ credentials, mode: 'blocking', refresh: 'force' });
           } else {
             const captured = await loadFreshMcpAccountSettingsContext(credentials, { bootstrapAccountSettingsContext: bootstrapAccountSettingsContextImpl });
@@ -137,14 +221,22 @@ export function registerMachineMcpServersRpcHandlers(params: Readonly<{
             operationContext = captured.operationContext;
             if (!await operationContext.isCurrent()) throw new McpServerCatalogUnavailableError('scope-retired');
           }
+          await assertCurrent();
           const accountMcpSettings = parsed.data.t === 'byId' ? readMcpServersSettingsFromAccountSettings(accountSettingsContext) : undefined;
           let mcpPluginItems: readonly McpPluginItemV1[] | undefined;
           if (parsed.data.t === 'byId' && isMcpPluginItemIdV1(parsed.data.serverId)) {
-            pluginLease = await acquireAuthoritativePluginRuntimeRegistryLease();
+            if (requesterOperation && !requesterOperation.acquirePluginRegistry) return refuseMcpExecutionSource('requester_authority_unavailable');
+            pluginLease = requesterOperation
+              ? await requesterOperation.acquirePluginRegistry!()
+              : await acquireAuthoritativePluginRuntimeRegistryLease();
+            await assertCurrent();
             mcpPluginItems = await pluginLease.registry.projectMcpServerItems?.(accountMcpSettings!) ?? [];
           }
+          await assertCurrent();
           resolution = resolveServerForTestRequest({ request: parsed.data, accountMcpSettings, mcpPluginItems });
         } catch (error) {
+          if (error instanceof PluginError && error.code === 'agent_isolation_unavailable') throw error;
+          await assertCurrent();
           return { ok: false, errorCode: 'materialization_failed', error: redactErrorText(error),
             durationMs: Math.max(0, nowMs(params.deps?.nowMs) - startedAt) };
         }
@@ -175,20 +267,25 @@ export function registerMachineMcpServersRpcHandlers(params: Readonly<{
               materialSnapshot = admitted;
             }
           } catch (error) {
+            if (error instanceof PluginError && error.code === 'agent_isolation_unavailable') throw error;
+            await assertCurrent();
             const durationMs = Math.max(0, nowMs(params.deps?.nowMs) - startedAt);
             return { ok: false, errorCode: 'materialization_failed', error: redactErrorText(error), durationMs };
           }
         }
+        await assertCurrent();
         const savedSecretMaterializer = createSavedSecretMaterializerFromSnapshotV1(materialSnapshot, {
           isCurrent: () => operationContext !== null && operationContext.readSnapshot() === materialSnapshot,
         });
 
         let requestAuth: McpTestRequestAuthAttachment | undefined;
         let mcpConfig: { serverName: string; config: McpServerConfig; cleanup: () => Promise<void>;
+          selectedMaterials?: readonly AgentLaunchSelectedMaterial[];
           sanitizeDiagnosticText: (value: string) => string;
           createDiagnosticStreamingSanitizer: Awaited<ReturnType<typeof materializeMcpServerConfigRecord>>['createDiagnosticStreamingSanitizer'];
         };
         try {
+          await assertCurrent();
           if (pluginLease?.registry.materializePluginMcpServers) {
             const testSessionId = `mcp-test:${context?.transportRequestId ?? randomUUID()}`;
             const attached = await pluginLease.registry.materializePluginMcpServers({
@@ -201,6 +298,7 @@ export function registerMachineMcpServersRpcHandlers(params: Readonly<{
               })),
             });
             const item = resolution.resolved.serversByName[resolution.serverName];
+            await assertCurrent();
             const server = attached.find(server => server.id === item?.serverId);
             if (!server || !item) throw new Error('materialize_missing_config');
             if (server.transport.kind === 'http' || server.transport.kind === 'sse') {
@@ -209,19 +307,25 @@ export function registerMachineMcpServersRpcHandlers(params: Readonly<{
               } } };
             }
           }
+          await assertCurrent();
           const selected = resolution.resolved.serversByName[resolution.serverName]?.config;
           const remote = selected?.remote;
+          const issueRequestAuth = requesterOperation?.issueRequestAuth ?? params.deps?.issueRequestAuth;
           if (selected && selected.transport !== 'stdio' && remote?.auth?.kind === 'oauth'
-            && params.deps?.issueRequestAuth) {
-            requestAuth = await params.deps.issueRequestAuth({ serverId: selected.id,
+            && issueRequestAuth) {
+            requestAuth = await issueRequestAuth({ serverId: selected.id,
               resource: canonicalMcpOAuthResourceUrlV1(remote.url), materializationId: randomUUID() }, operationContext, context);
           }
+          await assertCurrent();
           const materialized = await materializeMcpServerConfigRecord({
             resolved: resolution.resolved,
             savedSecretMaterializer,
-            processEnv: depsEnv,
+            processEnv: requesterOperation?.nativeProbe?.environment ?? depsEnv,
             tmpDir: null,
             strictMode: true,
+            signal: context?.signal,
+            assertCurrent,
+            ...(requesterOperation?.nativeProbe ? { agentLaunchTarget: requesterOperation.nativeProbe.target } : {}),
             ...(requestAuth && selected ? { requestAuthByServerId: { [selected.id]: requestAuth } } : {}),
           });
           const config = materialized.mcpServers[resolution.serverName];
@@ -229,29 +333,43 @@ export function registerMachineMcpServersRpcHandlers(params: Readonly<{
             materialized.cleanup();
             throw new Error('materialize_missing_config');
           }
-          if (operationContext && !await operationContext.isCurrent()) {
-            materialized.cleanup();
-            throw new McpServerCatalogUnavailableError('scope-retired');
-          }
+          try {
+            if (operationContext && !await operationContext.isCurrent()) throw new McpServerCatalogUnavailableError('scope-retired');
+            await assertCurrent();
+          } catch (error) { materialized.cleanup(); throw error; }
           mcpConfig = { serverName: resolution.serverName, config, cleanup: async () => {
             try { materialized.cleanup(); } finally { await requestAuth?.cleanup(); }
           },
+            selectedMaterials: materialized.selectedMaterials,
             sanitizeDiagnosticText: materialized.sanitizeDiagnosticText,
             createDiagnosticStreamingSanitizer: materialized.createDiagnosticStreamingSanitizer };
         } catch (error) {
           await requestAuth?.cleanup();
+          if (error instanceof PluginError && (requesterOperation?.nativeProbe || error.code === 'agent_isolation_unavailable')) throw error;
+          await assertCurrent();
           const durationMs = Math.max(0, nowMs(params.deps?.nowMs) - startedAt);
           return { ok: false, errorCode: 'materialization_failed', error: redactErrorText(error), durationMs };
         }
 
         let probeCompleted = false;
+        let probeFailed = false;
         try {
-          const probe = await probeMcpStdioServerToolsImpl({ config: mcpConfig.config, baseEnv: depsEnv,
-            signal: context?.signal,
+          await assertCurrent();
+          const nativeProbe = requesterOperation?.nativeProbe;
+          if (!nativeProbe) await assertMcpStdioExecutionSupported({ kind: 'requester', identity: source.identity },
+            requesterOperation?.placement === 'daemon' ? false : undefined);
+          const probe = nativeProbe ? await nativeProbe.probe({ config: mcpConfig.config,
+            selectedMaterials: mcpConfig.selectedMaterials ?? [], directory: parsed.data.directory,
             sanitizeDiagnosticText: mcpConfig.sanitizeDiagnosticText,
-            createDiagnosticStreamingSanitizer: mcpConfig.createDiagnosticStreamingSanitizer });
+            createDiagnosticStreamingSanitizer: mcpConfig.createDiagnosticStreamingSanitizer })
+            : await probeMcpStdioServerToolsImpl({ config: mcpConfig.config, baseEnv: depsEnv,
+              signal: context?.signal,
+              assertCurrent,
+              sanitizeDiagnosticText: mcpConfig.sanitizeDiagnosticText,
+              createDiagnosticStreamingSanitizer: mcpConfig.createDiagnosticStreamingSanitizer });
           probeCompleted = true;
           if (operationContext && !await operationContext.isCurrent()) throw new McpServerCatalogUnavailableError('scope-retired');
+          await assertCurrent();
           const { stderrTail, tools: definitions, ...metadata } = probe;
           const tools = definitions.map(({ inputSchema, ...tool }) => ({ ...tool,
             tokens: estimateTokensV1(tool.name + (tool.description ?? '') + JSON.stringify(inputSchema)) }));
@@ -264,14 +382,17 @@ export function registerMachineMcpServersRpcHandlers(params: Readonly<{
               return { ok: false, errorCode: 'materialization_failed', error: 'mcp_catalog_unavailable',
                 durationMs: Math.max(0, nowMs(params.deps?.nowMs) - startedAt) };
             }
-            const updated = await createCliMcpServerStoreForOperation({ operationContext }).mutate({
+            const updated = await createCliMcpServerStoreForOperation({ operationContext, signal: context?.signal,
+              assertEffectCurrent: assertCurrent }).mutate({
               kind: 'tools-snapshot', serverId, snapshot: toolsSnapshot,
             }, capturedCatalog.revision, capturedCatalog);
+            await assertCurrent();
             if (updated.status !== 'updated') return { ok: false, errorCode: 'materialization_failed',
               error: updated.status === 'conflict' ? 'mcp_tools_snapshot_conflict' : 'mcp_tools_snapshot_unavailable',
               ...(stderrTail ? { stderrTail } : {}), durationMs: Math.max(0, nowMs(params.deps?.nowMs) - startedAt) };
             if (!await operationContext.isCurrent()) throw new McpServerCatalogUnavailableError('scope-retired');
           }
+          await assertCurrent();
           const toolNames = tools.map((tool) => tool.name);
           const durationMs = Math.max(0, nowMs(params.deps?.nowMs) - startedAt);
           return {
@@ -282,6 +403,9 @@ export function registerMachineMcpServersRpcHandlers(params: Readonly<{
             durationMs,
           };
         } catch (error) {
+          probeFailed = true;
+          if (error instanceof PluginError && (requesterOperation?.nativeProbe || error.code === 'agent_isolation_unavailable')) throw error;
+          await assertCurrent();
           const durationMs = Math.max(0, nowMs(params.deps?.nowMs) - startedAt);
           const message = redactErrorText(mcpConfig.sanitizeDiagnosticText(error instanceof Error ? error.message : String(error)));
           const cause = error instanceof McpServerProbeError ? error.spawnFailure ?? error.cause : error;
@@ -296,29 +420,64 @@ export function registerMachineMcpServersRpcHandlers(params: Readonly<{
           return { ok: false, errorCode: code, error: message, durationMs,
             ...(runtimeMissing ? { runtimeMissing } : {}), ...(stderrTail ? { stderrTail } : {}) };
         } finally {
-          await mcpConfig.cleanup();
+          if (!requesterOperation) await mcpConfig.cleanup();
+          else {
+            try { await mcpConfig.cleanup(); }
+            catch {
+              try { logger.warnLocalFile('[MCP] Requester Test cleanup failed', { code: 'requester_material_cleanup_failed', phase: 'requester_mcp_cleanup' }); }
+              catch { /* Keep diagnostics content-free and preserve the primary failure. */ }
+              if (!probeFailed) throw new PluginError({ code: 'requester_material_cleanup_failed', message: 'Requester MCP Test cleanup failed',
+                retryable: false, details: { phase: 'requester_mcp_cleanup' } });
+            }
+          }
         }
+      } catch (error) {
+        primaryFailure = true;
+        throw error;
       } finally {
-        try { await Promise.all(pluginAttachments.map(attachment => attachment.dispose())); }
-        finally { await pluginLease?.release(); }
+        if (!requesterOperation) {
+          try { await Promise.all(pluginAttachments.map(attachment => attachment.dispose())); }
+          finally { await pluginLease?.release(); }
+        } else {
+          let cleanupFailed = false;
+          for (const cleanup of [async () => { await Promise.all(pluginAttachments.map(attachment => attachment.dispose())); },
+            async () => { await pluginLease?.release(); }, requesterOperation.dispose]) {
+            try { await cleanup(); } catch { cleanupFailed = true; }
+          }
+          if (cleanupFailed) {
+            try { logger.warnLocalFile('[MCP] Requester Test cleanup failed', { code: 'requester_material_cleanup_failed', phase: 'requester_mcp_cleanup' }); }
+            catch { /* Preserve the primary typed refusal. */ }
+            if (!primaryFailure) throw new PluginError({ code: 'requester_material_cleanup_failed', message: 'Requester MCP Test cleanup failed',
+              retryable: false, details: { phase: 'requester_mcp_cleanup' } });
+          }
+        }
       }
-    },
-  );
+  };
+  registerHandler(RPC_METHODS.DAEMON_MCP_SERVERS_TEST, async (raw: unknown, context?: RpcHandlerContext) => {
+    context?.signal.throwIfAborted();
+    const parsed = DaemonMcpServersTestRequestSchema.safeParse(raw);
+    if (!parsed.success) return { ok: false as const, errorCode: 'invalid_request' as const, error: 'invalid_request', durationMs: 0 };
+    return testServer(parsed.data, context);
+  });
 
-  rpcHandlerManager.registerHandler(
+  registerHandler(
     RPC_METHODS.DAEMON_MCP_SERVERS_DETECT,
-    async (raw: unknown): Promise<DaemonMcpServersDetectResponse> => {
+    async (raw: unknown, context?: RpcHandlerContext): Promise<DaemonMcpServersDetectResponse> => {
       const parsed = DaemonMcpServersDetectRequestSchema.safeParse(raw);
       if (!parsed.success) {
         return { ok: false, errorCode: 'invalid_request', error: 'invalid_request' };
       }
 
+      const assertCurrent = await requireCustodianMcpSource(context);
       try {
         const detected = await detectProviderMcpServersImpl({
           directory: parsed.data.directory ?? null,
           providers: parsed.data.providers,
           env: depsEnv,
+          signal: context?.signal,
+          assertCurrent,
         });
+        await assertCurrent();
 
         const warnings: DaemonMcpServersDetectWarningV1[] = [...detected.warnings];
         return {
@@ -327,12 +486,13 @@ export function registerMachineMcpServersRpcHandlers(params: Readonly<{
           ...(warnings.length > 0 ? { warnings } : {}),
         };
       } catch (error) {
+        await assertCurrent();
         return { ok: false, errorCode: 'internal_error', error: redactErrorText(error) };
       }
     },
   );
 
-  rpcHandlerManager.registerHandler(
+  registerHandler(
     RPC_METHODS.DAEMON_MCP_SERVERS_PREVIEW,
     async (raw: unknown, context?: RpcHandlerContext): Promise<DaemonMcpServersPreviewResponse> => {
       context?.signal?.throwIfAborted();
@@ -341,7 +501,9 @@ export function registerMachineMcpServersRpcHandlers(params: Readonly<{
         return { ok: false, errorCode: 'invalid_request', error: 'invalid_request' };
       }
 
+      const assertCurrent = await requireCustodianMcpSource(context);
       const credentials = await readCredentialsImpl().catch(() => null);
+      await assertCurrent();
       if (!credentials) {
         return { ok: false, errorCode: 'internal_error', error: 'missing_credentials' };
       }
@@ -356,6 +518,7 @@ export function registerMachineMcpServersRpcHandlers(params: Readonly<{
             loadFreshMcpAccountSettingsContext(credentials, { bootstrapAccountSettingsContext: bootstrapAccountSettingsContextImpl }),
             parsed.data.sessionId ? resolveSessionTransportContext({ reason: 'session-control', credentials, idOrPrefix: parsed.data.sessionId, signal: context?.signal }) : null,
           ]);
+          await assertCurrent();
           const accountMcpSettings = readMcpServersSettingsFromAccountSettings(accountSettingsContext);
           const operationContext = accountSettingsContext.operationContext;
           let metadata: Record<string, unknown> = {};
@@ -385,14 +548,15 @@ export function registerMachineMcpServersRpcHandlers(params: Readonly<{
             inventoryRead,
             (async () => {
               const lease = await acquireAuthoritativePluginRuntimeRegistryLease();
-              try { return await lease.registry.projectMcpServerItems?.(accountMcpSettings) ?? []; }
+              try { await assertCurrent(); return await lease.registry.projectMcpServerItems?.(accountMcpSettings) ?? []; }
               finally { await lease.release(); }
             })(),
             readAvailablePluginSkillItemsV1(() => readAccountPluginSkills({ credentials, settings: operationContext.readSnapshot()?.settings,
               serverHttpBaseUrl: operationContext.serverHttpBaseUrl, signal: context?.signal, availableOnly: true,
               isCurrent: () => operationContext.isCurrent() }), context?.signal),
-            detectProviderMcpServersImpl({ directory, providers: [agentId], env: depsEnv }),
+            detectProviderMcpServersImpl({ directory, providers: [agentId], env: depsEnv, signal: context?.signal, assertCurrent }),
           ]);
+          await assertCurrent();
           const rules = readPromptLibraryCatalogRecordV1({ ...ruleCatalog, key: 'skill-rules' });
           if (rules.status !== 'ready' || rules.record.key !== 'skill-rules') throw new Error('skill_rules_unavailable');
           if (!await operationContext.isCurrent()) throw new McpServerCatalogUnavailableError('scope-retired');
@@ -408,20 +572,22 @@ export function registerMachineMcpServersRpcHandlers(params: Readonly<{
             sessionMetadata: metadata, sessionRunning,
             signal: context?.signal,
             skillLibrary: { inventory, artifacts, rules: rules.record.value.rules, pluginSkills }, mcpPluginItems,
-            assertCurrent: async () => { context?.signal?.throwIfAborted();
+            assertCurrent: async () => { await assertCurrent();
               if (!await operationContext.isCurrent()) throw new McpServerCatalogUnavailableError('scope-retired');
               context?.signal?.throwIfAborted(); },
             detectedServers: detected.servers,
             detectedWarnings: detected.warnings,
           });
           if (!await operationContext.isCurrent()) throw new McpServerCatalogUnavailableError('scope-retired');
-          context?.signal?.throwIfAborted();
+          await assertCurrent();
           return preview;
         })();
         const [preview] = await Promise.all([previewRead, inventoryRead]);
+        await assertCurrent();
         return preview;
       } catch (error) {
         context?.signal?.throwIfAborted();
+        await assertCurrent();
         return { ok: false, errorCode: 'internal_error', error: redactErrorText(error) };
       }
     },

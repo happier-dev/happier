@@ -6,6 +6,10 @@ import { getGhDepStatus } from '../deps/gh';
 import { getRuntimeInstallableAdapter } from '@/packagedRuntime/installables/registry';
 
 export const ghDepCapability: Capability = {
+  effects: { detect: ['private_read', 'process'], invoke: {
+    install: ['machine_install', 'private_read', 'file_write', 'process'],
+    upgrade: ['machine_install', 'private_read', 'file_write', 'process'],
+  } },
   descriptor: {
     id: GH_DEP_ID,
     kind: 'dep',

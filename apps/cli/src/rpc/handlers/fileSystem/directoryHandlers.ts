@@ -12,6 +12,7 @@ import type { FilesystemAccessPolicy } from './accessPolicy/filesystemAccessPoli
 import { registerRootedFilesystemRpcHandlers } from './registerRootedFilesystemRpcHandlers';
 import type { RpcActionExecutor } from '../_actionDispatchAdapter';
 import { registerFilesystemMutationActionHandlers, type FilesystemMutationActionIngress } from './pathMutationHandlers';
+import { assertFilesystemEffectCurrent } from './accessPolicy/filesystemEffectAdmission';
 
 type ListDirectoryRequest = Readonly<{ rootPath?: string; path: string; includeGitIgnore?: boolean }>;
 
@@ -25,7 +26,7 @@ type DirectoryEntry = Readonly<{
 
 type ListDirectoryResponse =
   | Readonly<{ success: true; entries: DirectoryEntry[]; truncated?: boolean; gitIgnoreAvailable?: boolean }>
-  | Readonly<{ success: false; error: string }>;
+  | Readonly<{ success: false; error: string; errorCode?: string }>;
 
 type GetDirectoryTreeRequest = Readonly<{ rootPath?: string; path: string; maxDepth: number }>;
 
@@ -40,13 +41,14 @@ type TreeNode = {
 
 type GetDirectoryTreeResponse =
   | Readonly<{ success: true; tree: TreeNode; truncated?: boolean }>
-  | Readonly<{ success: false; error: string }>;
+  | Readonly<{ success: false; error: string; errorCode?: string }>;
 
 type DirectoryHandlerDeps = Readonly<{
   workingDirectory: string;
   accessPolicy: FilesystemAccessPolicy;
   getAdditionalAllowedReadDirs: () => ReadonlyArray<string>;
   getAdditionalAllowedWriteDirs: () => ReadonlyArray<string>;
+  assertCurrentAuthority?: () => Promise<void>;
   limits: Readonly<{
     listMaxEntries: number;
     treeMaxDepth: number;
@@ -64,7 +66,7 @@ function normalizeNonNegativeInt(value: number, fallback: number): number {
 
 async function listDirectoryForRpc(
   data: ListDirectoryRequest | undefined,
-  deps: Pick<DirectoryHandlerDeps, 'workingDirectory' | 'accessPolicy' | 'getAdditionalAllowedReadDirs' | 'limits'>,
+  deps: Pick<DirectoryHandlerDeps, 'workingDirectory' | 'accessPolicy' | 'getAdditionalAllowedReadDirs' | 'limits' | 'assertCurrentAuthority'>,
 ): Promise<ListDirectoryResponse> {
   const path = typeof data?.path === 'string' ? data.path : '';
   logger.debug('List directory request:', path);
@@ -73,11 +75,12 @@ async function listDirectoryForRpc(
     : authorizeFilesystemPathWithinRoot({ targetPath: path, rootPath: data.rootPath,
       defaultDirectory: deps.workingDirectory, accessPolicy: deps.accessPolicy,
       additionalAllowedDirs: deps.getAdditionalAllowedReadDirs() });
-  if (!validation.valid || !validation.resolvedPath) {
-    return { success: false, error: validation.error ?? 'Access denied' };
+  if (!validation.valid) {
+    return { success: false, error: validation.error, errorCode: validation.errorCode };
   }
 
   try {
+    await deps.assertCurrentAuthority?.();
     const listed = await listDirectoryEntries({
       directoryPath: validation.resolvedPath,
       includeFiles: true,
@@ -85,6 +88,7 @@ async function listDirectoryForRpc(
       statConcurrency: 16,
       includeGitIgnore: data?.includeGitIgnore === true,
     });
+    await deps.assertCurrentAuthority?.();
     const directoryEntries: DirectoryEntry[] = listed.entries.map((entry) => ({
       name: entry.name,
       type: entry.type,
@@ -107,7 +111,7 @@ async function listDirectoryForRpc(
 
 async function getDirectoryTreeForRpc(
   data: GetDirectoryTreeRequest | undefined,
-  deps: Pick<DirectoryHandlerDeps, 'workingDirectory' | 'accessPolicy' | 'getAdditionalAllowedReadDirs' | 'limits'>,
+  deps: Pick<DirectoryHandlerDeps, 'workingDirectory' | 'accessPolicy' | 'getAdditionalAllowedReadDirs' | 'limits' | 'assertCurrentAuthority'>,
 ): Promise<GetDirectoryTreeResponse> {
   const path = typeof data?.path === 'string' ? data.path : '';
   const requestedMaxDepth = typeof data?.maxDepth === 'number' ? data.maxDepth : Number(data?.maxDepth ?? 0);
@@ -117,8 +121,8 @@ async function getDirectoryTreeForRpc(
     : authorizeFilesystemPathWithinRoot({ targetPath: path, rootPath: data.rootPath,
       defaultDirectory: deps.workingDirectory, accessPolicy: deps.accessPolicy,
       additionalAllowedDirs: deps.getAdditionalAllowedReadDirs() });
-  if (!validation.valid || !validation.resolvedPath) {
-    return { success: false, error: validation.error ?? 'Access denied' };
+  if (!validation.valid) {
+    return { success: false, error: validation.error, errorCode: validation.errorCode };
   }
 
   if (!Number.isFinite(requestedMaxDepth) || requestedMaxDepth < 0) {
@@ -140,6 +144,7 @@ async function getDirectoryTreeForRpc(
     }
     visitedNodes += 1;
     try {
+      await deps.assertCurrentAuthority?.();
       const stats = await stat(nodePath);
       const node: TreeNode = {
         name,
@@ -150,6 +155,7 @@ async function getDirectoryTreeForRpc(
       };
 
       if (stats.isDirectory() && currentDepth < maxDepth) {
+        await deps.assertCurrentAuthority?.();
         const entries = (await readdir(nodePath, { withFileTypes: true })).sort((a, b) => {
           if (a.isDirectory() && !b.isDirectory()) return -1;
           if (!a.isDirectory() && b.isDirectory()) return 1;
@@ -189,6 +195,7 @@ async function getDirectoryTreeForRpc(
     const baseName = resolvedPath === '/' ? '/' : basename(resolvedPath);
     const tree = await buildTree(resolvedPath, baseName, 0);
     if (!tree) return { success: false, error: 'Failed to access the specified path' };
+    await deps.assertCurrentAuthority?.();
     return { success: true, tree, ...(truncated ? { truncated: true } : {}) };
   } catch (error) {
     logger.debug('Failed to get directory tree:', error);
@@ -198,17 +205,20 @@ async function getDirectoryTreeForRpc(
 
 export function createDirectoryRpcActionExecutor(deps: DirectoryHandlerDeps): RpcActionExecutor {
   return {
-    async execute(actionId: ActionId, input: unknown) {
+    async execute(actionId: ActionId, input: unknown, context) {
+      const currentDeps = { ...deps, assertCurrentAuthority: async () => {
+        await deps.assertCurrentAuthority?.(); await assertFilesystemEffectCurrent(context);
+      } };
       if (actionId === 'daemon.filesystem.listDirectory') {
         return {
           ok: true,
-          result: await listDirectoryForRpc(input as ListDirectoryRequest | undefined, deps),
+          result: await listDirectoryForRpc(input as ListDirectoryRequest | undefined, currentDeps),
         };
       }
       if (actionId === 'daemon.filesystem.getDirectoryTree') {
         return {
           ok: true,
-          result: await getDirectoryTreeForRpc(input as GetDirectoryTreeRequest | undefined, deps),
+          result: await getDirectoryTreeForRpc(input as GetDirectoryTreeRequest | undefined, currentDeps),
         };
       }
       return { ok: false, errorCode: 'unsupported_action', error: `Unsupported action: ${actionId}` };

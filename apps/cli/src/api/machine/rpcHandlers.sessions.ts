@@ -12,6 +12,7 @@ import {
   createMachineSessionSpawnRpcHandler,
 } from '@/session/actions/sessionLifecycleActions';
 import { registerSessionCreationTargetPreparationRpc } from '@/session/creation/registerSessionCreationTargetPreparationRpc';
+import { createFilesystemEffectRpcRegistrar } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
 import { readStoredCredentials } from '@/persistence';
 import { configuration } from '@/configuration';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -37,6 +38,10 @@ export function registerMachineSessionRpcHandlers(params: Readonly<{
   });
   registerSessionCreationTargetPreparationRpc({
     rpcHandlerManager: params.rpcHandlerManager,
+    ...(params.deps?.filesystemEffectAdmission ? {
+      directoryPreflightRpcHandlerManager: createFilesystemEffectRpcRegistrar(
+        params.rpcHandlerManager, params.deps.filesystemEffectAdmission),
+    } : {}),
   });
   registerPrivateSpawnSessionRpcHandlers({
     rpcHandlerManager: params.rpcHandlerManager,

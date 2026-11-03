@@ -6,6 +6,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { DaemonFilesystemListDirectoryResponseSchema, DaemonFilesystemListRootsResponseSchema } from '@happier-dev/protocol/machines/fileBrowser';
+import { createFilesystemEffectAdmission } from '../fileSystem/accessPolicy/filesystemEffectAdmission';
 
 import { registerMachineFileBrowserHandlers } from './registerMachineFileBrowserHandlers';
 
@@ -40,6 +42,19 @@ afterEach(() => {
 });
 
 describe('registerMachineFileBrowserHandlers', () => {
+  it('preserves filesystem admission cause in both file browser result readers', async () => {
+    const { handlers, registrar } = createRegistrar();
+    registerMachineFileBrowserHandlers({ rpcHandlerManager: registrar, workingDirectory: '/workspace',
+      effectAdmission: createFilesystemEffectAdmission() });
+    for (const [method, schema] of [
+      [RPC_METHODS.DAEMON_FILESYSTEM_LIST_ROOTS, DaemonFilesystemListRootsResponseSchema],
+      [RPC_METHODS.DAEMON_FILESYSTEM_LIST_DIRECTORY, DaemonFilesystemListDirectoryResponseSchema],
+    ] as const) {
+      expect(schema.parse(await handlers.get(method)!({ path: '/workspace' }))).toMatchObject({
+        ok: false, errorCode: 'filesystem_identity_custody_unavailable', details: { reason: 'requester_identity_unavailable' },
+      });
+    }
+  });
   it('carries the OS reason code when a browsed directory no longer exists', async () => {
     const root = createTempDirectory();
     const { handlers, registrar } = createRegistrar();

@@ -12,8 +12,10 @@ import {
 } from '../targets/resolveComposerMediaStageDownloadSource';
 import { resolveWorkspaceFileDownloadSource } from '../targets/resolveWorkspaceFileDownloadSource';
 import { registerDownloadTransferLifecycleHandlers } from './registerDownloadTransferLifecycleHandlers';
+import { createNativeFilesystemTransferRpcRegistrar, type PrepareNativeFilesystemTransfer } from './nativeTransferRpcRegistrar';
 import type { FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 import type { ExactAllowedReadFile } from '@/rpc/handlers/fileSystem/accessPolicy/exactAllowedReadFile';
+import { createFilesystemEffectRpcRegistrar, type FilesystemEffectAdmission } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
 
 type SessionFileDownloadInitRequest = Readonly<{
   t: 'session_file_download_v1';
@@ -32,6 +34,8 @@ export function registerTransferDownloadRpcHandlers(
   deps: Readonly<{
     workingDirectory: string;
     accessPolicy?: FilesystemAccessPolicy;
+    effectAdmission?: FilesystemEffectAdmission;
+    prepareNativeTransfer?: PrepareNativeFilesystemTransfer;
     store: TransferSessionStore;
     getAdditionalAllowedReadDirs?: () => ReadonlyArray<string>;
     getAdditionalAllowedReadFiles?: () => ReadonlyArray<ExactAllowedReadFile>;
@@ -41,7 +45,10 @@ export function registerTransferDownloadRpcHandlers(
   }>,
 ): void {
   registerDownloadTransferLifecycleHandlers<TransferDownloadInitResponse>({
-    rpcHandlerManager,
+    rpcHandlerManager: deps.prepareNativeTransfer ? createNativeFilesystemTransferRpcRegistrar(rpcHandlerManager, {
+      direction: 'download', store: deps.store, prepareNativeTransfer: deps.prepareNativeTransfer,
+      fallbackAdmission: deps.effectAdmission?.rpc,
+    }) : deps.effectAdmission ? createFilesystemEffectRpcRegistrar(rpcHandlerManager, deps.effectAdmission) : rpcHandlerManager,
     store: deps.store,
     methods: {
       init: RPC_METHODS.DAEMON_TRANSFER_DOWNLOAD_INIT,

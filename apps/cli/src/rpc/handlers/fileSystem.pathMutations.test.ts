@@ -6,8 +6,10 @@ import { basename, join } from 'node:path';
 import { statSync } from 'node:fs';
 
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 
-import { registerFileSystemHandlers } from './fileSystem';
+import { createFilesystemOwnerRpcContext, registerOwnerFilesystemRpcHandlers as registerFileSystemHandlers } from './fileSystem.testkit';
+import { registerWriteFileHandler } from './fileSystem/writeFileHandler';
 import { writeFileForRpc } from './fileSystem/writeFileForRpc';
 import { executeFilesystemMutationAction, type FilesystemMutationDeps } from './fileSystem/pathMutationHandlers';
 import { FILESYSTEM_MUTATION_ACTION_IDS, FilesystemWriteFileInputSchema } from '@happier-dev/protocol/actions/filesystemActionFamily';
@@ -75,6 +77,41 @@ function mutationDeps(workingDirectory: string): FilesystemMutationDeps {
 }
 
 describe('qualified checkout filesystem admission', () => {
+  it('denies Account automation raw file writes while preserving present-person writes', async () => {
+    const workspace = mkdtempSync(join(tmpdir(), 'happier-files-raw-authority-'));
+    const path = join(workspace, 'authority-sentinel');
+    const mgr = new RpcHandlerManager({ scopePrefix: 'machine', localMachineId: 'machine', encryptionMode: 'plain', logger: () => {},
+      // Home authentication/current Machine admission is the network boundary;
+      // receiving RPC, Action adapters and filesystem effects remain real.
+      authorizeRequest: async () => ({ ok: true }),
+    });
+    registerWriteFileHandler(mgr, { workingDirectory: workspace, accessPolicy: { kind: 'osUser' },
+      getAdditionalAllowedWriteDirs: () => [], mutationMachineId: 'machine' });
+    const write = (callerAuthority: 'present_user' | 'account_automation', content: string) => mgr.handleRequest({
+      method: `machine:${RPC_METHODS.WRITE_FILE}`, params: { path, content: Buffer.from(content).toString('base64') },
+      callerAuthority,
+      machineAdmission: { actorAccountId: 'actor', custodianAccountId: 'actor', machineId: 'machine',
+        installationId: 'installation', role: 'manage', encryptionMode: 'plain' },
+    });
+    try {
+      await expect(write('present_user', 'person-admitted')).resolves.toMatchObject({ success: true });
+      expect(readFileSync(path, 'utf8')).toBe('person-admitted');
+      const response = await write('account_automation', 'automated-raw-overwrite');
+      expect({ response, contents: readFileSync(path, 'utf8') }).toMatchObject({
+        response: { errorCode: RPC_ERROR_CODES.FORBIDDEN }, contents: 'person-admitted',
+      });
+      await expect(mgr.invokeLocal(RPC_METHODS.WRITE_FILE, {
+        path, content: Buffer.from('local-automated-raw-overwrite').toString('base64'),
+      }, { localActionContext: { authority: 'account_automation' }, rpcContext: {
+        ...createFilesystemOwnerRpcContext(), callerAuthority: 'account_automation',
+        machineAdmission: { actorAccountId: 'actor', custodianAccountId: 'actor', machineId: 'machine',
+          installationId: 'installation', role: 'manage', encryptionMode: 'plain' },
+      } }))
+        .resolves.toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
+      expect(readFileSync(path, 'utf8')).toBe('person-admitted');
+    } finally { rmSync(workspace, { recursive: true, force: true }); }
+  });
+
   it.each(['clone', '.dev/worktree/branch', 'copy-export'])('reads and mutates the admitted %s root rather than the daemon default', async (checkout) => {
     const workspace = mkdtempSync(join(tmpdir(), 'happier-qualified-checkout-'));
     const rootPath = join(workspace, checkout);
@@ -119,8 +156,8 @@ describe('qualified checkout filesystem admission', () => {
       await expect(mgr.invokeLocal('daemon.filesystem.createDirectory', { rootPath, path: '../escaped' })).resolves.toMatchObject({ success: false });
       await expect(mgr.invokeLocal('daemon.filesystem.rename', { rootPath, from: 'README', to: '../escaped', overwrite: false })).resolves.toMatchObject({ success: false });
       await expect(mgr.invokeLocal('daemon.filesystem.delete', { rootPath, path: join(workspace, 'outside'), recursive: false })).resolves.toMatchObject({ success: false });
-      await expect(mgr.invokeLocal('daemon.filesystem.readFile', { rootPath, path: 'outside-link' })).resolves.toMatchObject({ success: false });
-      await expect(mgr.invokeLocal('daemon.filesystem.writeFile', { rootPath, path: 'outside-link', content: bytes.toString('base64') })).resolves.toMatchObject({ success: false });
+      await expect(mgr.invokeLocal('daemon.filesystem.readFile', { rootPath, path: 'outside-link' })).resolves.toMatchObject({ success: false, errorCode: 'access_denied' });
+      await expect(mgr.invokeLocal('daemon.filesystem.writeFile', { rootPath, path: 'outside-link', content: bytes.toString('base64') })).resolves.toMatchObject({ success: false, errorCode: 'access_denied' });
       await expect(mgr.invokeLocal('daemon.filesystem.copy', { rootPath, from: 'README', to: 'copied', recursive: false, overwrite: false })).resolves.toEqual({ success: true });
       expect(readFileSync(join(rootPath, 'copied'))).toEqual(bytes);
       await expect(mgr.invokeLocal('daemon.filesystem.copy', { rootPath, from: 'README', to: '../escaped', recursive: false, overwrite: false })).resolves.toMatchObject({ success: false });
@@ -561,7 +598,7 @@ describe('filesystem path mutations', () => {
         const original = await importOriginal<typeof import('fs/promises')>();
         return { ...original, stat: statMock };
       });
-      const { registerFileSystemHandlers: registerHandlersWithPreciseStat } = await import('./fileSystem');
+      const { registerOwnerFilesystemRpcHandlers: registerHandlersWithPreciseStat } = await import('./fileSystem.testkit');
       const mgr = createRpcHandlerManager();
       registerHandlersWithPreciseStat(mgr as unknown as RpcHandlerManager, workspace);
 
@@ -660,7 +697,7 @@ describe('filesystem path mutations', () => {
         const original = await importOriginal<typeof import('fs/promises')>();
         return { ...original, open: openMock };
       });
-      const { registerFileSystemHandlers: registerHandlersWithBoundedRead } = await import('./fileSystem');
+      const { registerOwnerFilesystemRpcHandlers: registerHandlersWithBoundedRead } = await import('./fileSystem.testkit');
       const mgr = createRpcHandlerManager();
       registerHandlersWithBoundedRead(mgr as unknown as RpcHandlerManager, workspace);
 

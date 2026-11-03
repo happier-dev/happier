@@ -34,6 +34,7 @@ function resolveExecutionRunBackendAvailability(params: Readonly<{
 }
 
 export const executionRunsCapability: Capability = {
+  effects: { detect: ['private_read'] },
   descriptor: { id: 'tool.executionRuns', kind: 'tool', title: 'Execution runs' },
   detect: async ({ context, request }) => {
     const gate = resolveCliFeatureDecision({ featureId: 'execution.runs', env: process.env });

@@ -49,6 +49,7 @@ export function createCliMcpServerStore(input: Readonly<{ credentials: StoredCre
 
 export function createCliMcpServerStoreForOperation(input: Readonly<{
   operationContext: SavedSecretOperationContextV1; serverId?: string; signal?: AbortSignal; hasPendingCleanup?: () => boolean;
+  assertEffectCurrent?: () => Promise<void>;
 }>) {
   const context = input.operationContext;
   const scopeKey = context.readSnapshot()?.scopeKey;
@@ -61,7 +62,10 @@ export function createCliMcpServerStoreForOperation(input: Readonly<{
   return createCapturedStore({ credentials: context.credentials, serverId: input.serverId ?? configuration.activeServerId,
     base: context.serverHttpBaseUrl,
     signal: input.signal, hasPendingCleanup: input.hasPendingCleanup, operationContext: context, assertCurrent, readSnapshot: context.readSnapshot,
-    verifyCurrent: async () => { if (!await context.isCurrent()) throw Object.assign(new Error('Captured MCP Account retired'), { code: 'scope-retired' }); },
+    verifyCurrent: async () => {
+      if (!await context.isCurrent()) throw Object.assign(new Error('Captured MCP Account retired'), { code: 'scope-retired' });
+      await input.assertEffectCurrent?.();
+    },
     publishCatalog: async catalog => { if (!await context.commitMcpCatalog(catalog)) throw Object.assign(new Error('Captured MCP Account retired'), { code: 'scope-retired' }); },
     prepareMutationPublication: async () => async () => { await createCliMcpServerStoreForOperation(input).readCatalogForOperation(); },
     publishSource: async snapshot => { await context.replaceAccountSettings(snapshot); } });

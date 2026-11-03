@@ -1,4 +1,6 @@
 import type { TransferRelayV2SendEnvelope } from '@happier-dev/protocol';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { z } from 'zod/mini';
 
 import {
     abortDownloadTransferSession,
@@ -9,6 +11,36 @@ import {
 import { type TransferSessionStore } from '@happier-dev/transfers/node';
 
 import { createFileTransferPayloadSource, resolveTransferPayloadManifestHash } from './transferPayloadSource';
+import { readFilesystemTransferErrorCode } from './preparedFilesystemTransferScope';
+import type { NativeTransferDownloadDescription } from '@happier-dev/transfers/node';
+
+const nativeChunkSchema = z.union([z.strictObject({ success: z.literal(true), contentBase64: z.string(), isLast: z.boolean() }),
+    z.strictObject({ success: z.literal(true), payloadBase64: z.string(), encryptedDataKeyEnvelopeBase64: z.string(), isLast: z.boolean() }),
+    z.object({ success: z.literal(false), error: z.string() })]);
+
+async function readNativeChunk(owner: TransferRelayV2DownloadSessionOwner, downloadId: string) {
+    const retained = owner.store.beginNativeSessionOperation('download', downloadId);
+    if (!retained) return null;
+    try {
+        if (!retained.owner.describeDownload) throw new Error('Native download metadata is unavailable');
+        const session = await retained.owner.describeDownload(downloadId, false);
+        const chunk = nativeChunkSchema.parse(await retained.owner.invoke(RPC_METHODS.DAEMON_TRANSFER_DOWNLOAD_CHUNK,
+            { downloadId, index: session.nextIndex }));
+        owner.store.refreshDownloadExpiry(downloadId);
+        return { chunkIndex: session.nextIndex, chunk };
+    } finally { retained.release(); }
+}
+
+async function closeOwnedDownload(owner: TransferRelayV2DownloadSessionOwner, downloadId: string, abort: boolean): Promise<void> {
+    const retained = owner.store.beginNativeSessionOperation('download', downloadId);
+    if (retained) {
+        try { await owner.store.closeDownloadSession(downloadId); }
+        finally { retained.release(); }
+        return;
+    }
+    if (abort) await abortDownloadTransferSession({ lifecycle: owner.lifecycle, downloadId });
+    else await finalizeDownloadTransferSession({ lifecycle: owner.lifecycle, downloadId });
+}
 
 type TransferRelayV2DownloadChannel = Readonly<{
     onEnvelope: (listener: (payload: TransferRelayV2SendEnvelope) => void) => () => void;
@@ -63,10 +95,7 @@ export function registerTransferRelayV2DownloadSessionResponder(params: Readonly
     }>): Promise<void> => {
         activeTransfers.delete(input.transferId);
         if (input.closeSession === true && input.owner) {
-            await abortDownloadTransferSession({
-                lifecycle: input.owner.lifecycle,
-                downloadId: input.transferId,
-            });
+            await closeOwnedDownload(input.owner, input.transferId, true);
         }
         params.transferRelayChannel.sendEnvelope(buildMachineToUserEnvelope({
             machineId: params.machineId,
@@ -85,8 +114,9 @@ export function registerTransferRelayV2DownloadSessionResponder(params: Readonly
         manifestHash: string;
         owner: TransferRelayV2DownloadSessionOwner;
     }>): Promise<void> => {
+        const nativeChunk = await readNativeChunk(input.owner, input.transferId);
         const session = input.owner.store.getDownloadSession(input.transferId);
-        if (!session) {
+        if (!session && !nativeChunk) {
             await sendAbort({
                 transferId: input.transferId,
                 scopeUserId: input.scopeUserId,
@@ -95,12 +125,11 @@ export function registerTransferRelayV2DownloadSessionResponder(params: Readonly
             return;
         }
 
-        const chunkIndex = session.nextIndex;
-        const chunk = await readDownloadTransferChunk({
-            lifecycle: input.owner.lifecycle,
-            downloadId: input.transferId,
-            index: chunkIndex,
-        });
+        const next = nativeChunk ?? (session ? { chunkIndex: session.nextIndex,
+            chunk: await readDownloadTransferChunk({ lifecycle: input.owner.lifecycle,
+                downloadId: input.transferId, index: session.nextIndex }) } : null);
+        if (!next) return;
+        const { chunkIndex, chunk } = next;
         if (chunk.success !== true || !('payloadBase64' in chunk) || !chunk.encryptedDataKeyEnvelopeBase64) {
             await sendAbort({
                 transferId: input.transferId,
@@ -153,7 +182,20 @@ export function registerTransferRelayV2DownloadSessionResponder(params: Readonly
                     return;
                 }
                 const session = owner.store.getDownloadSession(envelope.transferId);
-                if (!session) {
+                const retained = owner.store.beginNativeSessionOperation('download', envelope.transferId);
+                let nativeSession: NativeTransferDownloadDescription | undefined;
+                if (retained) {
+                    try {
+                        await retained.owner.verifyInvocation(payload);
+                        if (!retained.owner.describeDownload) throw new Error('Native download metadata is unavailable');
+                        nativeSession = await retained.owner.describeDownload(envelope.transferId, true);
+                    } catch (error) {
+                        await sendAbort({ transferId: envelope.transferId, scopeUserId: payload.scopeUserId,
+                            reason: readFilesystemTransferErrorCode(error, 'transfer_not_found') });
+                        return;
+                    } finally { retained.release(); }
+                }
+                if (!session && !nativeSession) {
                     await sendAbort({
                         transferId: envelope.transferId,
                         scopeUserId: payload.scopeUserId,
@@ -162,8 +204,8 @@ export function registerTransferRelayV2DownloadSessionResponder(params: Readonly
                     return;
                 }
                 if (
-                    typeof session.recipientPublicKeyBase64 === 'string'
-                    && session.recipientPublicKeyBase64 !== envelope.recipientPublicKeyBase64
+                    typeof (nativeSession?.recipientPublicKeyBase64 ?? session?.recipientPublicKeyBase64) === 'string'
+                    && (nativeSession?.recipientPublicKeyBase64 ?? session?.recipientPublicKeyBase64) !== envelope.recipientPublicKeyBase64
                 ) {
                     await sendAbort({
                         transferId: envelope.transferId,
@@ -177,10 +219,15 @@ export function registerTransferRelayV2DownloadSessionResponder(params: Readonly
 
                 let manifestHash: string;
                 try {
-                    manifestHash = await resolveTransferPayloadManifestHash(createFileTransferPayloadSource({
-                        filePath: session.filePath,
-                        sizeBytes: session.sizeBytes,
-                    }));
+                    if (nativeSession) {
+                        if (!nativeSession.manifestHash) throw new Error('Native download hash is unavailable');
+                        manifestHash = nativeSession.manifestHash;
+                    } else {
+                        if (!session) throw new Error('Download is unavailable');
+                        manifestHash = await resolveTransferPayloadManifestHash(createFileTransferPayloadSource({
+                            filePath: session.filePath, sizeBytes: session.sizeBytes,
+                        }));
+                    }
                 } catch {
                     // The admitted owner is already known, but no active transfer
                     // exists yet for the ordinary streaming failure handler.
@@ -215,10 +262,7 @@ export function registerTransferRelayV2DownloadSessionResponder(params: Readonly
 
             if (envelope.kind === 'abort') {
                 activeTransfers.delete(envelope.transferId);
-                await abortDownloadTransferSession({
-                    lifecycle: active.owner.lifecycle,
-                    downloadId: envelope.transferId,
-                });
+                await closeOwnedDownload(active.owner, envelope.transferId, true);
                 return;
             }
 
@@ -231,10 +275,7 @@ export function registerTransferRelayV2DownloadSessionResponder(params: Readonly
                 && envelope.nextSequence === active.awaitingAckSequence + 1
             ) {
                 activeTransfers.delete(envelope.transferId);
-                await finalizeDownloadTransferSession({
-                    lifecycle: active.owner.lifecycle,
-                    downloadId: envelope.transferId,
-                });
+                await closeOwnedDownload(active.owner, envelope.transferId, false);
                 params.transferRelayChannel.sendEnvelope(buildMachineToUserEnvelope({
                     machineId: params.machineId,
                     scopeUserId: active.scopeUserId,

@@ -14,6 +14,7 @@ import { createOneBitGrayscalePng } from '@/testkit/media/pngFixtures';
 import { createDirectPeerTransferApp } from './directPeerTransport';
 import { createDaemonAdmissionDrain } from '@/daemon/lifecycle/admissionDrain';
 import { DirectTransferImportOpenRequestSchema } from './directTransferImportOpenRequest';
+import { createFilesystemEffectAdmission } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
 
 let failNextUploadPromotionWithExdev = false;
 let failNextUploadSourceCleanup = false;
@@ -63,6 +64,62 @@ async function expectPathMissing(path: string): Promise<void> {
 }
 
 describe('direct transfer import session manager', () => {
+  it('refuses retired filesystem custody before opening a staged import', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-import-custody-open-'));
+    const manager = createDirectTransferImportSessionManager();
+    const scope = { rootPath: root, requesterAccountId: 'requester', assertCurrentAuthority: async () => {
+      throw Object.assign(new Error('Filesystem identity custody is unavailable'), { errorCode: 'filesystem_identity_custody_unavailable' });
+    } };
+    try {
+      await expect(manager.openTrustedImportSession({ t: 'session_file_upload_v1', workingDirectory: root,
+        path: 'private.dat', sizeBytes: 4, overwrite: false }, scope)).resolves.toMatchObject({
+        success: false, errorCode: 'filesystem_identity_custody_unavailable',
+      });
+      expect(manager.countActiveImportSessions()).toBe(0);
+      expect(await readdir(root)).toEqual([]);
+    } finally { await manager.close(); await rm(root, { recursive: true, force: true }); }
+  });
+
+  it.each(['present_user', 'account_automation'] as const)('rechecks retained %s owner custody without accepting refused bytes', async callerAuthority => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-import-custody-phase-'));
+    const manager = createDirectTransferImportSessionManager();
+    let current = true;
+    const admission = createFilesystemEffectAdmission({ resolveHomeServerIdentityId: async () => 'home' });
+    const context = { signal: new AbortController().signal, callerAuthority,
+      machineAdmission: { actorAccountId: 'owner', custodianAccountId: 'owner', machineId: 'machine',
+        installationId: 'installation', role: 'use' as const, encryptionMode: 'plain' as const }, verifyMachineAdmissionCurrent: async () => current };
+    const scope = { rootPath: root, requesterAccountId: 'requester', assertCurrentAuthority: async () => {
+      const failure = await admission.rpc(context);
+      if (failure) throw Object.assign(new Error(failure.error), { errorCode: failure.errorCode });
+    } };
+    try {
+      const prepared = await manager.openTrustedImportSession({ t: 'session_file_upload_v1', workingDirectory: root,
+        path: 'accepted.dat', sizeBytes: 4, overwrite: false }, scope);
+      if (!prepared.success) throw new Error(prepared.error);
+      const uploadId = prepared.response.uploadId;
+      const envelope = (text: string) => createEncryptedTransferChunkEnvelope({ transferId: uploadId, sequence: 0,
+        payload: Buffer.from(text), recipientPublicKeyBase64: prepared.response.recipientPublicKeyBase64 });
+      const rejected = envelope('deny');
+      current = false;
+      await expect(manager.writeImportTransferChunk({ uploadId, index: 0,
+        payloadBase64: rejected.payloadBase64, encryptedDataKeyEnvelopeBase64: rejected.encryptedDataKeyEnvelopeBase64 }))
+        .resolves.toMatchObject({ success: false, errorCode: 'filesystem_identity_custody_unavailable' });
+      current = true;
+      const accepted = envelope('good');
+      await expect(manager.writeImportTransferChunk({ uploadId, index: 0,
+        payloadBase64: accepted.payloadBase64, encryptedDataKeyEnvelopeBase64: accepted.encryptedDataKeyEnvelopeBase64 }))
+        .resolves.toEqual({ success: true });
+      current = false;
+      await expect(manager.finalizeImportTransferSession({ uploadId })).resolves.toMatchObject({
+        success: false, errorCode: 'filesystem_identity_custody_unavailable',
+      });
+      await expectPathMissing(join(root, 'accepted.dat'));
+      current = true;
+      await expect(manager.finalizeImportTransferSession({ uploadId })).resolves.toMatchObject({ success: true });
+      expect(await readFile(join(root, 'accepted.dat'), 'utf8')).toBe('good');
+    } finally { await manager.close(); await rm(root, { recursive: true, force: true }); }
+  });
+
   it.each(['match', 'mismatch', 'absent'] as const)('carries the %s expectation through strict open, encryption and finalize', async variant => {
     const root = await mkdtemp(join(tmpdir(), 'happier-guarded-import-'));
     const manager = createDirectTransferImportSessionManager();

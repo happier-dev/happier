@@ -7,6 +7,7 @@ import { ProjectCommandActionOutputV1Schema } from '@happier-dev/protocol/action
 import { normalizeWorkspaceRootPathV1, projectWorkspaceRefV1, resolveWorkspaceRefV1, workspaceAddressFromRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import type { WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import type { StoredCredentials } from '@/persistence';
+import type { ApiMachineClient } from '@/api/apiMachine';
 import { hostname } from 'node:os';
 import { logger } from '@/ui/logger';
 import { readOwnSessionMachineWorkspace } from '@/session/machineControlLocality';
@@ -80,6 +81,7 @@ export type MachineTerminalRpcHandlerDeps = Readonly<{
   /** Captured Home of the installed Machine RPC owner, not a request field. */
   serverId?: string;
   /** Canonical Home held by the installed Machine owner, never a request field. */
+  /** Canonical Home held by the installed Machine owner, never a request field. */
   resolveHostHomeServerIdentityId?: (signal?: AbortSignal) => Promise<string | null>;
   env?: NodeJS.ProcessEnv;
   platform?: NodeJS.Platform;
@@ -102,6 +104,9 @@ export type MachineTerminalRpcHandlerDeps = Readonly<{
   requiredSessionId?: string;
   readSpawnFailureLimits?: import('@/processes/spawnFailure/classifySpawnFailure').SpawnFailureLimitsReader;
   ownerRemainder?: import('@/daemon/processes/endOwnerRemainder').OwnerRemainderPort;
+  agentIsolation?: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').HostAgentIsolationLaunchContext;
+  /** Same Machine native-operation owner used by Session, raw execution and MCP. */
+  nativeOperationRuntime?: Pick<ApiMachineClient, 'prepareNativeOperation'>;
 }>;
 
 export type MachineTerminalAccountReadRuntime = Readonly<{

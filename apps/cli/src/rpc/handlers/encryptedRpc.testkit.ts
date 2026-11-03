@@ -10,6 +10,8 @@ interface CreateEncryptedRpcTestClientOptions {
   manager?: RpcHandlerManager;
   /** Models the Home's authenticated ingress stamp, not encrypted caller input. */
   callerAuthority?: RpcRequest['callerAuthority'];
+  /** Authenticated Home transport facts, never part of the encrypted input. */
+  machineAdmission?: RpcRequest['machineAdmission'];
   registerHandlers: (manager: RpcHandlerManager) => void;
   encryptionKey?: Uint8Array;
   encryptionVariant?: EncryptionVariant;
@@ -58,6 +60,7 @@ export function createEncryptedRpcTestClient(
       params: encryptedParams,
       requestId: `${options.scopePrefix}:test-request:${sequence}`,
       ...(options.callerAuthority ? { callerAuthority: options.callerAuthority } : {}),
+      ...(options.machineAdmission ? { machineAdmission: options.machineAdmission } : {}),
     };
     const encryptedResponse = await manager.handleRequest(rpcRequest);
     return await socketRpcCodec.decodeResult(content, { ok: true, result: encryptedResponse }, callId) as TResponse;

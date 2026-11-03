@@ -8,13 +8,14 @@ import {
   FilesystemPreparedImportSchema, FilesystemPreparedExportSchema,
   type FilesystemUploadOutput, type FilesystemDownloadOutput, type FilesystemTransferCancelOutput, type FilesystemCopyOutput,
 } from '@happier-dev/protocol/actions/filesystemActionFamily';
-import { authorizeFilesystemPathWithinRoot } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemPathAuthorization';
+import { authorizeFilesystemPathWithinRoot, resolveFilesystemTargetPath } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemPathAuthorization';
 import { filesystemPathComparisonKey, isFilesystemPathAbsolute, type FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 import type { DirectTransferServerLifecycle } from './directTransferServerLifecycle';
 import { prepareWorkspaceFileExport, prepareWorkspaceEntryExport } from './prepareWorkspaceFileExport';
 import { createPreparedFilesystemEntryCopyDestination } from './preparedFilesystemEntryCopyDestination';
-import type { PreparedFilesystemTransferScope } from './preparedFilesystemTransferScope';
+import { readFilesystemTransferErrorCode, type PreparedFilesystemReadFile, type PreparedFilesystemTransferScope } from './preparedFilesystemTransferScope';
 import type { DaemonAdmissionDrain } from '@/daemon/lifecycle/admissionDrain';
+import type { createFilesystemEffectTransferAdapter } from '@/rpc/handlers/fileSystem/filesystemEffectChannel';
 import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
 
 type TransferActionId = 'daemon.filesystem.upload' | 'daemon.filesystem.download' | 'daemon.filesystem.transfer.cancel' | 'daemon.filesystem.copy';
@@ -36,14 +37,18 @@ export function createPreparedFilesystemTransferActionExecutor(params: Readonly<
     const additionalAllowedDirs = kind === 'read' ? params.getAdditionalAllowedReadDirs?.() : params.getAdditionalAllowedWriteDirs?.();
     const admitted = authorizeFilesystemPathWithinRoot({ targetPath: path, rootPath,
       defaultDirectory: params.workingDirectory, accessPolicy: params.accessPolicy, additionalAllowedDirs });
-    if (!admitted.valid) throw new Error(admitted.error);
+    if (!admitted.valid) throw Object.assign(new Error(admitted.error), { code: admitted.errorCode });
     return { rootPath: admitted.rootPath, path: admitted.resolvedPath };
   };
   return async (args: Readonly<{ actionId: TransferActionId; input: unknown; context: ActionExecutorContext;
+    /** Host-private finite custody, independently of the retained root principal. */
+    requesterAccountId?: string;
+    admittedReadFile?: PreparedFilesystemReadFile;
+    nativeFilesystem?: ReturnType<typeof createFilesystemEffectTransferAdapter>;
     assertCurrentAuthority?: () => Promise<void> }>): Promise<TransferActionOutput> => {
     const failure = (error: string, errorCode: string): TransferActionOutput => args.actionId === 'daemon.filesystem.transfer.cancel'
       ? { success: false, error, errorCode } : transferFailure({ error, errorCode });
-    const requesterAccountId = args.context.externalActionCredential?.accountId ?? args.context.runtimeAccountId;
+    const requesterAccountId = args.requesterAccountId ?? args.context.externalActionCredential?.accountId ?? args.context.runtimeAccountId;
     if (!requesterAccountId) return failure('Filesystem requester admission is unavailable', 'FILESYSTEM_REQUESTER_REQUIRED');
     let onAbort: (() => void) | undefined;
     try {
@@ -79,6 +84,7 @@ export function createPreparedFilesystemTransferActionExecutor(params: Readonly<
           return failure('The admitted filesystem root cannot be replaced', 'FILESYSTEM_ROOT_PROTECTED');
         }
         const scope = { rootPath: target.rootPath, requesterAccountId, sourceId: input.source.sourceId,
+          ...(args.nativeFilesystem ? { nativeImport: args.nativeFilesystem.importSession } : {}),
           assertCurrentAuthority: async () => {
             args.context.signal?.throwIfAborted();
             await args.assertCurrentAuthority?.();
@@ -89,12 +95,16 @@ export function createPreparedFilesystemTransferActionExecutor(params: Readonly<
           const entryTree = copy.source.entryTree;
           if (entryTree.expectation.kind === 'missing') return failure('Filesystem copy source is missing', 'source_missing');
           if (entryTree.expectation.kind === 'directory' && !copy.recursive) return failure('Directory copies require recursive=true', 'recursive_required');
-          const custody = createHappierTempDir({ purpose: 'filesystem-copy-destination' });
+          const nativeEntry = await args.nativeFilesystem?.prepareEntryDestination({ operationId: entryTree.operationId,
+            rootPath: target.rootPath, path: target.path, overwrite: copy.overwrite, recursive: copy.recursive,
+            expectation: entryTree.expectation });
+          const custody = nativeEntry?.stageId ?? createHappierTempDir({ purpose: 'filesystem-copy-destination' });
+          const importScope = nativeEntry ? { ...scope, nativeImport: nativeEntry.importSession } : scope;
           const imports: Array<{ transferId: string; prepared: Awaited<ReturnType<DirectTransferServerLifecycle['prepareImportSession']>>;
             settlement: ReturnType<DirectTransferServerLifecycle['waitForImportTransferSettlement']> }> = [];
           let retainCustody = false;
           const cancelAll = async () => {
-            await Promise.all(imports.map(record => params.lifecycle.abortImportSession({ uploadId: record.prepared.uploadId }, scope)));
+            await Promise.all(imports.map(record => params.lifecycle.abortImportSession({ uploadId: record.prepared.uploadId }, importScope)));
           };
           try {
             const descriptors = [{ transferId: entryTree.operationId, sizeBytes: copy.source.sizeBytes, manifestHash: `sha256:${copy.source.sha256}` }, ...entryTree.blobs];
@@ -102,9 +112,9 @@ export function createPreparedFilesystemTransferActionExecutor(params: Readonly<
             for (const descriptor of descriptors) {
               const prepared = await params.lifecycle.prepareImportSession({ t: 'session_file_upload_v1', workingDirectory: custody,
                 path: join(custody, `payload-${imports.length}`), sizeBytes: descriptor.sizeBytes,
-                sha256: descriptor.manifestHash.slice('sha256:'.length), overwrite: false }, scope, custody);
+                sha256: descriptor.manifestHash.slice('sha256:'.length), overwrite: false }, importScope, custody);
               imports.push({ transferId: descriptor.transferId, prepared,
-                settlement: params.lifecycle.waitForImportTransferSettlement(prepared.uploadId, scope) });
+                settlement: params.lifecycle.waitForImportTransferSettlement(prepared.uploadId, importScope) });
             }
             onAbort = () => { void cancelAll().catch(() => undefined); };
             args.context.signal?.addEventListener('abort', onAbort, { once: true });
@@ -122,8 +132,9 @@ export function createPreparedFilesystemTransferActionExecutor(params: Readonly<
               return { error: error instanceof Error ? error.message : 'Copy import failed', errorCode: code };
             });
             if (results) { retainCustody = results.errorCode === 'indeterminate'; await cancelAll(); return transferFailure(results); }
-            await mkdir(join(custody, 'recovery'));
-            const outcome = await createPreparedFilesystemEntryCopyDestination(params)({ operationId: entryTree.operationId,
+            if (!nativeEntry) await mkdir(join(custody, 'recovery'));
+            const outcome = nativeEntry ? await nativeEntry.apply(imports.map(record => ({ transferId: record.transferId,
+              uploadId: record.prepared.uploadId }))) : await createPreparedFilesystemEntryCopyDestination(params)({ operationId: entryTree.operationId,
               rootPath: target.rootPath, path: target.path, requesterAccountId, overwrite: copy.overwrite, recursive: copy.recursive,
               expectation: entryTree.expectation, stagingDirectory: join(custody, 'stage'), recoveryDirectory: join(custody, 'recovery'),
               requestPayload: async request => {
@@ -136,7 +147,8 @@ export function createPreparedFilesystemTransferActionExecutor(params: Readonly<
             if (outcome.status === 'restored') return failure('Filesystem copy failed and the destination was restored', 'filesystem_copy_restored');
             return { success: true, status: 'completed', sourceId: copy.source.sourceId, path: target.path, expectation: entryTree.expectation };
           } finally {
-            if (!retainCustody) { await cancelAll().catch(() => undefined); await removeHappierTempDirAsync(custody); }
+            if (nativeEntry) { await cancelAll().catch(() => undefined); await nativeEntry.dispose(retainCustody); }
+            else if (!retainCustody) { await cancelAll().catch(() => undefined); await removeHappierTempDirAsync(custody); }
           }
         }
         const prepared = await params.lifecycle.prepareImportSession({ t: 'session_file_upload_v1', workingDirectory: target.rootPath,
@@ -156,14 +168,46 @@ export function createPreparedFilesystemTransferActionExecutor(params: Readonly<
           path: result.finalized.path, sizeBytes: result.finalized.sizeBytes, sha256: result.sha256 };
       }
       const input = FilesystemDownloadInputSchema.parse(args.input);
-      const target = admittedPath(input.rootPath, input.path, 'read');
-      const scope: PreparedFilesystemTransferScope = { rootPath: target.rootPath, requesterAccountId, destinationId: input.destination.destinationId };
+      const grantedReadFile = args.admittedReadFile;
+      if (grantedReadFile && args.nativeFilesystem) {
+        // An acquired descriptor commits exact already-open bytes. The native
+        // child cannot adopt that descriptor through a path-only JSON request.
+        // Keep this case unavailable until the existing material frame carries
+        // those acquired bytes; ordinary native flat/tree paths remain usable.
+        await grantedReadFile.handle.close();
+        return failure('Native custody for the acquired file is unavailable', 'filesystem_transfer_custody_required');
+      }
+      if (grantedReadFile && input.format !== 'entry_tree') return failure(
+        'The acquired source requires its admitted entry transfer', 'filesystem_transfer_custody_required');
+      const target = grantedReadFile ? (() => {
+        const root = admittedPath(input.rootPath, input.rootPath, 'read').rootPath;
+        const requested = resolveFilesystemTargetPath({ targetPath: input.path, defaultDirectory: root });
+        if (!requested.valid || filesystemPathComparisonKey(root) !== filesystemPathComparisonKey(grantedReadFile.rootPath)
+          || filesystemPathComparisonKey(requested.resolvedPath) !== filesystemPathComparisonKey(grantedReadFile.path)) {
+          throw Object.assign(new Error('The acquired source does not match the requested transfer'), {
+            errorCode: 'filesystem_transfer_custody_required',
+          });
+        }
+        return { rootPath: root, path: grantedReadFile.path };
+      })() : admittedPath(input.rootPath, input.path, 'read');
+      const scope = { rootPath: target.rootPath, requesterAccountId, destinationId: input.destination.destinationId,
+        assertCurrentAuthority: async () => {
+          args.context.signal?.throwIfAborted();
+          await args.assertCurrentAuthority?.();
+          args.context.signal?.throwIfAborted();
+          admittedPath(input.rootPath, grantedReadFile ? input.rootPath : input.path, 'read');
+        } } satisfies PreparedFilesystemTransferScope;
+      await scope.assertCurrentAuthority?.();
+      const nativeExport = args.nativeFilesystem?.openEntryExport;
       const exported = input.format ? await prepareWorkspaceEntryExport({ lifecycle: params.lifecycle, accessPolicy: params.accessPolicy,
         additionalAllowedReadDirs: params.getAdditionalAllowedReadDirs?.(),
         rootPath: target.rootPath, path: target.path, operationId: acceptance.operationId, filesystemScope: scope,
-        assertCurrentAuthority: async () => { args.context.signal?.throwIfAborted(); admittedPath(input.rootPath, input.path, 'read'); } }) : null;
+        assertCurrentAuthority: scope.assertCurrentAuthority, admittedReadFile: args.admittedReadFile,
+        ...(nativeExport ? { nativeExport: () => nativeExport({ rootPath: target.rootPath,
+          path: target.path, operationId: acceptance.operationId }) } : {}) }) : null;
       const prepared = exported?.prepared ?? await prepareWorkspaceFileExport({ lifecycle: params.lifecycle, accessPolicy: params.accessPolicy,
-        request: { workingDirectory: target.rootPath, path: target.path, asZip: input.asZip, confinedToWorkingDirectory: true }, filesystemScope: scope });
+        request: { workingDirectory: target.rootPath, path: target.path, asZip: input.asZip, confinedToWorkingDirectory: true }, filesystemScope: scope,
+        ...(args.nativeFilesystem ? { nativeDownload: args.nativeFilesystem.openDownload } : {}) });
       const settlement = params.lifecycle.waitForFilesystemExportSettlement(prepared.transferId, scope);
       onAbort = () => params.lifecycle.clearPublishedTransfer(prepared.transferId, scope);
       args.context.signal?.addEventListener('abort', onAbort, { once: true });
@@ -176,8 +220,7 @@ export function createPreparedFilesystemTransferActionExecutor(params: Readonly<
       return { success: true, status: 'completed', transferId: prepared.transferId, destinationId: input.destination.destinationId,
         name: prepared.name, sizeBytes: result.sizeBytes, sha256: result.manifestHash.slice('sha256:'.length) };
     } catch (error) {
-      const errorCode = error && typeof error === 'object' && 'errorCode' in error && typeof error.errorCode === 'string' ? error.errorCode
-        : error && typeof error === 'object' && 'code' in error && typeof error.code === 'string' ? error.code : 'filesystem_transfer_failed';
+      const errorCode = readFilesystemTransferErrorCode(error, 'filesystem_transfer_failed');
       return failure(error instanceof Error ? error.message : 'Filesystem transfer failed', errorCode);
     } finally {
       if (onAbort) args.context.signal?.removeEventListener('abort', onAbort);

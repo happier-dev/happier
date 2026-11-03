@@ -104,6 +104,10 @@ export function createSystemTasksCapability(
   canUpdateCliRemotely: () => boolean = () => readCliUpdateFactsForThisCli().canUpdateRemotely,
 ): Capability {
   return {
+    effects: { detect: ['private_read'], invoke: {
+      start: ['private_read', 'file_write', 'process'], poll: ['private_read'], wait: ['private_read'],
+      respond: ['private_read', 'file_write', 'process'],
+    } },
     descriptor: {
       id: 'tool.systemTasks',
       kind: 'tool',

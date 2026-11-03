@@ -1,3 +1,7 @@
+import { admitDeploymentArchiveFilesystemForHost } from '@/deployments/targets/ownServer/archiveFilesystemAdmission';
+import { isHostRequesterUnrestrictedOwner, resolveHostRequesterAgentPlacementForHost } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
+import type { NativeTransferSessionOwner } from '@happier-dev/transfers/node';
+import { createFilesystemEffectRpcOwner, createFilesystemEffectTransferAdapter } from '@/rpc/handlers/fileSystem/filesystemEffectChannel';
 import { createMachineDaemonStatePublication } from './machine/machineDaemonStatePublication';
 import { registerDaemonMachineReachabilityRpcHandlers, executeDaemonMachineReachabilityAction,
     prepareDaemonMachineReachabilityReviewedChildren, type DaemonMachineReachabilityRoutes } from '@/machines/reachability/createDaemonMachineReachabilityRoutes';
@@ -370,7 +374,7 @@ import { registerDaemonDeploymentChildRpcHandler } from '@/deployments/daemonDep
 import { prepareNativeFilesystemEffect } from '@/rpc/handlers/fileSystem/prepareNativeFilesystemEffect';
 import type { FilesystemEffectRequester } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
 import { resolveServerRoutedTransferMaxBytes } from '@/transfers/policy/serverRoutedTransferPolicy';
-import { createFilesystemEffectAdmission } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
+import { assertFilesystemEffectCurrent, createFilesystemEffectAdmission, createFilesystemEffectRpcRegistrar } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
 
 
 export type AccountSettingsVersionHintSource = 'changes' | 'cursor-gone' | 'page-limit';
@@ -1642,6 +1646,9 @@ export class ApiMachineClient {
                 },
             } : null;
         registerSessionHandlers(this.rpcHandlerManager, this.machineRpcWorkingDirectory, {
+            nativeOperationRuntime: { prepareNativeOperation: input => this.prepareNativeOperation(input) },
+            resolveHostHomeServerIdentityId: async signal => (await resolveCurrentMachineExecutionOriginContext(signal))?.serverIdentityId ?? null,
+            filesystemEffectAdmission: this.filesystemEffectAdmission,
             workspaceFileReplaceMachineId: this.machine.id,
             resolveWorkspaceFileReplaceActionExecutor: resolveWorkspaceMutationActionExecutor,
             executionBudgetRegistry: this.executionBudgetRegistry,
@@ -1767,6 +1774,8 @@ export class ApiMachineClient {
             machineId: this.machine.id,
         });
         const fileSystemHandlers = registerFileSystemHandlers(this.rpcHandlerManager, this.machineRpcWorkingDirectory, {
+            effectAdmission: this.filesystemEffectAdmission,
+            prepareNativeTransfer: context => this.prepareNativeFilesystemTransfer(context),
             resolveSessionWorkingDirectory: this.lifecycleDependencies.resolveHostedSessionWorkingDirectory,
             accessPolicy: this.filesystemAccessPolicy,
             getAdditionalAllowedReadDirs: () => this.additionalAllowedReadDirs,
@@ -1814,6 +1823,7 @@ export class ApiMachineClient {
         };
         registerMachineFileBrowserHandlers({
             rpcHandlerManager: this.rpcHandlerManager,
+            effectAdmission: this.filesystemEffectAdmission,
             workingDirectory: this.machineRpcWorkingDirectory,
             accessPolicy: this.filesystemAccessPolicy,
         });
@@ -1978,6 +1988,12 @@ export class ApiMachineClient {
                 accountReadRuntime: (ingress) => this.resolveOwnSessionRuntime(ingress),
                 readSpawnFailureLimits: this.lifecycleDependencies.readSpawnFailureLimits,
                 ownerRemainder: this.lifecycleDependencies.ownerRemainder,
+                agentIsolation: this.lifecycleDependencies.agentIsolation,
+                nativeOperationRuntime: { prepareNativeOperation: input => this.prepareNativeOperation(input) },
+                resolveHostHomeServerIdentityId: async signal => (await resolveExternalActionOrigin(signal))?.serverIdentityId ?? null,
+                mcpServers: { ...deps?.mcpServers, readCredentials: readExecutionRunAccountCredentials,
+                    nativeOperationRuntime: { prepareNativeOperation: input => this.prepareNativeOperation(input) },
+                    get serverHttpBaseUrl() { return readMachineRuntimeServerHttpBaseUrl(); } },
                 readMachineEffectiveCores: this.lifecycleDependencies.readMachineEffectiveCores,
                 executionBudgetRegistry: this.executionBudgetRegistry,
                 ...(this.lifecycleDependencies.managedActivity && workSummaryInstallation && executionRunRuntimeAccountId ? {
@@ -2271,11 +2287,10 @@ export class ApiMachineClient {
         }
     }
 
+    /** File effects keep the already admitted Action's local cancellation signal. */
     private openNativeFilesystemChannel(input: Readonly<{ requester: FilesystemEffectRequester;
         identity: Extract<HostRequesterExecutionIdentity, { kind: 'isolated' }>; operationKey: string;
         signal: AbortSignal; ingress?: RpcHandlerContext }>) {
-        if (!input.operationKey) throw Object.assign(new Error('Filesystem operation custody is unavailable'),
-            { code: 'filesystem_identity_custody_unavailable' });
         const account = readRequesterAccountActionContext(input.ingress?.callerInputAuthorization
             ?? input.ingress?.localActionContext?.externalActionExecutionAuthorization);
         const releaseAccount = account?.retain();
@@ -2290,6 +2305,52 @@ export class ApiMachineClient {
                 additionalAllowedReadFiles: [...this.transientSessionMediaReadAllowance.readAllowedReadFiles()],
                 sessionRpcTransferMaxBytes: resolveServerRoutedTransferMaxBytes() },
             releaseRequester: async () => { await input.requester.dispose(); await releaseAccount?.(); } });
+    }
+
+    private async prepareNativeFilesystemTransfer(context?: RpcHandlerContext): Promise<NativeTransferSessionOwner | null> {
+        const requester = await this.filesystemEffectAdmission.resolveRpcRequester?.(context);
+        if (!requester || requester.identity.kind === 'unknown' || !context) {
+            await requester?.dispose();
+            throw Object.assign(new Error('Filesystem requester is unavailable'), { code: 'filesystem_identity_custody_unavailable' });
+        }
+        const identity = requester.identity;
+        if (isHostRequesterUnrestrictedOwner(identity) || identity.kind === 'isolated'
+            && resolveHostRequesterAgentPlacementForHost({ identity,
+                snapshot: this.lifecycleDependencies.agentIsolation?.read() }) === 'daemon') {
+            await requester.dispose(); return null;
+        }
+        if (identity.kind !== 'isolated') { await requester.dispose(); return null; }
+        const controller = new AbortController();
+        const cancelInitialization = () => { controller.abort(context.signal.reason); };
+        context.signal.addEventListener('abort', cancelInitialization, { once: true });
+        if (context.signal.aborted) cancelInitialization();
+        try {
+            const channel = await this.openNativeFilesystemChannel({ requester, identity, signal: controller.signal, ingress: context,
+                operationKey: context.localActionContext?.operationAcceptance?.operationId
+                    ?? context.localActionContext?.actionRequestId ?? context.transportRequestId ?? '' });
+            return createFilesystemEffectRpcOwner({ request: request => channel.request(request), dispose: async () => {
+                context.signal.removeEventListener('abort', cancelInitialization); await channel.dispose();
+            } }, async incoming => {
+                // Both inputs are host-owned transport contexts, never transfer DTOs.
+                const admission: unknown = incoming && typeof incoming === 'object' ? Reflect.get(incoming, 'machineAdmission') : undefined;
+                const scopeUserId: unknown = incoming && typeof incoming === 'object' ? Reflect.get(incoming, 'scopeUserId') : undefined;
+                const sameRpc = admission && typeof admission === 'object'
+                    && Reflect.get(admission, 'actorAccountId') === identity.requester.accountId
+                    && Reflect.get(admission, 'machineId') === identity.requester.machineId
+                    && Reflect.get(admission, 'installationId') === identity.requester.installationId;
+                if (!sameRpc && scopeUserId !== identity.requester.accountId) throw Object.assign(
+                    new Error('Transfer belongs to another requester'), { code: 'FILESYSTEM_TRANSFER_SCOPE_MISMATCH' });
+            }, () => { context.signal.throwIfAborted(); context.signal.removeEventListener('abort', cancelInitialization); });
+        } catch (error) {
+            context.signal.removeEventListener('abort', cancelInitialization);
+            await requester.dispose();
+            throw error;
+        }
+    }
+
+    /** File effects keep the already admitted Action's local cancellation signal. */
+    private captureFilesystemActionCurrentness(context: RpcActionExecutorContext): () => Promise<void> {
+        return () => assertFilesystemEffectCurrent(context);
     }
 
     /** Preview reads locally after admission rather than re-entering its registered RPC. */
@@ -2397,6 +2458,48 @@ export class ApiMachineClient {
             getAdditionalAllowedReadDirs: () => this.additionalAllowedReadDirs,
             getAdditionalAllowedWriteDirs: () => this.additionalAllowedWriteDirs }) : null;
         return async (request) => {
+            const requester = await this.filesystemEffectAdmission.resolveActionRequester?.(request.context);
+            if (requester && requester.identity.kind === 'isolated' && !isHostRequesterUnrestrictedOwner(requester.identity)
+                && resolveHostRequesterAgentPlacementForHost({ identity: requester.identity,
+                    snapshot: this.lifecycleDependencies.agentIsolation?.read() }) !== 'daemon') {
+                let channel: Awaited<ReturnType<typeof prepareNativeFilesystemEffect>> | undefined;
+                try {
+                    const target = request.context.externalActionTarget;
+                    const owner = this.externalActionIngressOwner;
+                    const heldHome = this.lifecycleDependencies.resolveCurrentServerIdentityId?.();
+                    if (target?.kind !== 'machine' || target.machineId !== this.machine.id
+                        || !owner || this.projectionSchedulingClosed || owner.currentServerId !== serverId
+                        || request.context.serverIdentityId && request.context.serverIdentityId !== heldHome
+                        || !request.context.serverIdentityId && request.context.serverId !== serverId)
+                        return { ok: false, errorCode: 'target_unavailable', error: 'Filesystem target is unavailable' };
+                    if (request.actionId === 'daemon.filesystem.copy' && request.input && typeof request.input === 'object'
+                        && 'kind' in request.input && request.input.kind === 'target_copy')
+                        return { ok: false, errorCode: 'filesystem_transfer_custody_required', error: 'Target copy requires a mounted caller byte driver' };
+                    const isTransfer = request.actionId === 'daemon.filesystem.upload' || request.actionId === 'daemon.filesystem.download'
+                        || request.actionId === 'daemon.filesystem.transfer.cancel' || request.actionId === 'daemon.filesystem.copy'
+                        && request.input && typeof request.input === 'object' && 'kind' in request.input && request.input.kind === 'prepared_transfer';
+                    if (isTransfer && !transfer) return { ok: false, errorCode: 'machine_carrier_unavailable', error: 'Prepared filesystem transfer owner is unavailable' };
+                    if (request.actionId !== 'daemon.filesystem.transfer.cancel') channel = await this.openNativeFilesystemChannel({
+                        requester, identity: requester.identity,
+                        operationKey: request.context.operationAcceptance?.operationId ?? request.context.actionRequestId ?? '',
+                        signal: request.context.signal ?? new AbortController().signal,
+                        ingress: { ...request.context, signal: request.context.signal ?? new AbortController().signal,
+                            callerAuthority: request.context.authority, callerInputAuthorization: request.context.externalActionExecutionAuthorization },
+                    });
+                    if (request.actionId === 'daemon.filesystem.upload' || request.actionId === 'daemon.filesystem.download'
+                        || request.actionId === 'daemon.filesystem.transfer.cancel' || request.actionId === 'daemon.filesystem.copy' && isTransfer) {
+                        if (!transfer) return { ok: false, errorCode: 'machine_carrier_unavailable', error: 'Prepared filesystem transfer owner is unavailable' };
+                        const result = await transfer({ ...request, actionId: request.actionId,
+                            ...(channel ? { nativeFilesystem: createFilesystemEffectTransferAdapter(channel) } : {}),
+                            assertCurrentAuthority: async () => { request.context.signal?.throwIfAborted(); } });
+                        return result.success ? result : projectPreparedFilesystemActionResult(result);
+                    }
+                    if (!channel) throw new Error('Native filesystem channel is unavailable');
+                    return await channel.request({ kind: 'action', actionId: request.actionId, input: request.input });
+                } finally { await channel?.dispose(); await requester.dispose(); }
+            }
+            await requester?.dispose();
+            const custodyFailure = await this.filesystemEffectAdmission.action(request.context, requester?.identity);
             const admittedOwner = this.externalActionIngressOwner;
             if (!admittedOwner || this.projectionSchedulingClosed) {
                 return { ok: false, errorCode: 'filesystem_action_owner_unavailable', error: 'The current filesystem Action owner is unavailable' };
@@ -2406,20 +2509,20 @@ export class ApiMachineClient {
                 || !await this.isNativeWorkspaceHomeCurrent(serverId, request.context)) {
                 return { ok: false, errorCode: 'target_unavailable', error: 'Filesystem target is unavailable' };
             }
+            // A present physical owner already holds ordinary host IO rights on
+            // every supported platform. Only a protected requester needs the
+            // separately retained exact archive descriptor/typed destination.
+            const deploymentArchive = custodyFailure ? await admitDeploymentArchiveFilesystemForHost({ actionId: request.actionId,
+                value: request.input, context: request.context, machineId: this.machine.id,
+                serverId, happierHomeDir: configuration.happyHomeDir }) : null;
+            try {
+            if (custodyFailure && !deploymentArchive) return { ok: false, ...custodyFailure };
             // The immutable invocation's Home was checked above. Each physical
             // phase retains its owner/target checks without a Home read per file.
+            const assertAdmittedActionCurrent = this.captureFilesystemActionCurrentness(request.context);
             const assertCurrentAuthority = async () => {
-                request.context.signal?.throwIfAborted();
-                const projection = request.context.externalActionExecutionAuthorization?.requesterAccountProjection;
-                if (projection && !await projection.isCurrent()) throw new Error('Filesystem requester admission is no longer current');
-                request.context.signal?.throwIfAborted();
-                if (this.externalActionIngressOwner !== admittedOwner || this.projectionSchedulingClosed) {
-                    throw Object.assign(new Error('The admitted filesystem Action owner is no longer current'), { code: 'filesystem_action_owner_unavailable' });
-                }
-                const currentTarget = request.context.externalActionTarget;
-                if (currentTarget?.kind !== 'machine' || currentTarget.machineId !== this.machine.id) {
-                    throw new Error('Filesystem target is no longer current');
-                }
+                await assertAdmittedActionCurrent();
+                await deploymentArchive?.assertCurrent();
             };
             if (request.actionId === 'daemon.filesystem.copy' && request.input && typeof request.input === 'object'
                 && 'kind' in request.input && request.input.kind === 'target_copy') {
@@ -2430,7 +2533,9 @@ export class ApiMachineClient {
                 || (request.actionId === 'daemon.filesystem.copy' && request.input && typeof request.input === 'object'
                     && 'kind' in request.input && request.input.kind === 'prepared_transfer')) {
                 if (!transfer) return { ok: false, errorCode: 'machine_carrier_unavailable', error: 'Prepared filesystem transfer owner is unavailable' };
-                const result = await transfer({ ...request, actionId: request.actionId, assertCurrentAuthority });
+                const result = await transfer({ ...request, actionId: request.actionId, assertCurrentAuthority,
+                    ...(deploymentArchive ? { requesterAccountId: deploymentArchive.requesterAccountId } : {}),
+                    ...(deploymentArchive?.readFile ? { admittedReadFile: deploymentArchive.readFile } : {}) });
                 return result.success ? result : projectPreparedFilesystemActionResult(result);
             }
             // Reuse the incumbent effects without re-entering full Action admission.
@@ -2440,7 +2545,8 @@ export class ApiMachineClient {
                     ? directory : null;
             if (inline) {
                 await assertCurrentAuthority();
-                const result = await inline.execute(request.actionId, request.input, request.context);
+                const result = await inline.execute(request.actionId, request.input, { ...request.context,
+                    verifyMachineAdmissionCurrent: async () => { await assertCurrentAuthority(); return true; } });
                 return result.ok ? result.result : result;
             }
             const actionId = FILESYSTEM_MUTATION_ACTION_IDS.find(id => id === request.actionId);
@@ -2455,6 +2561,11 @@ export class ApiMachineClient {
                 return projectPreparedFilesystemActionResult(result);
             }
             return result;
+            } finally {
+                // The source exporter normally closes its retained descriptor;
+                // cover rejection/cancellation before that owner is reached too.
+                await deploymentArchive?.readFile?.handle.close().catch(() => undefined);
+            }
         };
     }
 

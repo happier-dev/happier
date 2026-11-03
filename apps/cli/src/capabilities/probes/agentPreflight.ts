@@ -63,6 +63,7 @@ export type CliProbeDependencies = Readonly<{
 }>;
 
 export type CliProbeRequestContext = Readonly<{
+    machineAdmission?: import('@/settings/secrets/savedSecretOperationContext').SavedSecretOperationContextV1['machineAdmission'];
     signal?: AbortSignal;
     deadlineSignal?: AbortSignal;
     deadlineAtMs?: number;

@@ -9,6 +9,7 @@ import { sanitizeAttachmentFileName } from '@happier-dev/protocol/transfers/atta
 
 import { TransferSessionStore } from '@happier-dev/transfers/node';
 import type { FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
+import { createFilesystemEffectRpcRegistrar, type FilesystemEffectAdmission } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
 import {
   resolveTransferUploadInitTarget,
   type TransferUploadInitRequest,
@@ -16,11 +17,13 @@ import {
 } from '../targets/resolveTransferUploadInitTarget';
 import type { ComposerMediaStageUploadTargetDeps } from '../targets/resolveComposerMediaStageUploadTarget';
 import { registerUploadTransferLifecycleHandlers } from './registerUploadTransferLifecycleHandlers';
+import { createNativeFilesystemTransferRpcRegistrar, type PrepareNativeFilesystemTransfer } from './nativeTransferRpcRegistrar';
+import type { WorkspaceFinalizeFileOperationsFactory } from '../targets/resolveWorkspaceFileUploadTarget';
 import { sniffSessionMediaMimeTypeFromFile } from '@/session/media/mime';
 
 type TransferUploadInitResponse =
   | Readonly<{ success: true; uploadId: string; chunkSizeBytes: number; recipientPublicKeyBase64: string; expiresAt?: number }>
-  | Readonly<{ success: false; error: string }>;
+  | Readonly<{ success: false; error: string; errorCode?: string }>;
 
 type TransferUploadFinalizeResponse =
   | Readonly<{ success: true; path: string; sizeBytes: number; sha256: string; result?: unknown; attachmentHandle?: SessionAttachmentHandleV1 }>
@@ -31,6 +34,9 @@ export function registerTransferUploadRpcHandlers(
   deps: Readonly<{
     workingDirectory: string;
     accessPolicy?: FilesystemAccessPolicy;
+    effectAdmission?: FilesystemEffectAdmission;
+    prepareNativeTransfer?: PrepareNativeFilesystemTransfer;
+    finalizeFileOperations?: WorkspaceFinalizeFileOperationsFactory;
     store: TransferSessionStore;
     getAdditionalAllowedWriteDirs?: () => ReadonlyArray<string>;
     sessionRpcTransferMaxBytes?: number | null;
@@ -43,7 +49,10 @@ export function registerTransferUploadRpcHandlers(
   const tempUploadRoot = join(tmpdir(), 'happier', 'uploads', randomUUID());
 
   return registerUploadTransferLifecycleHandlers<TransferUploadInitResponse, TransferUploadFinalizeResponse, unknown>({
-    rpcHandlerManager,
+    rpcHandlerManager: deps.prepareNativeTransfer ? createNativeFilesystemTransferRpcRegistrar(rpcHandlerManager, {
+      direction: 'upload', store: deps.store, prepareNativeTransfer: deps.prepareNativeTransfer,
+      fallbackAdmission: deps.effectAdmission?.rpc,
+    }) : deps.effectAdmission ? createFilesystemEffectRpcRegistrar(rpcHandlerManager, deps.effectAdmission) : rpcHandlerManager,
     store: deps.store,
     methods: {
       init: RPC_METHODS.DAEMON_TRANSFER_UPLOAD_INIT,
@@ -96,6 +105,7 @@ export function registerTransferUploadRpcHandlers(
         tempUploadRoot,
         additionalAllowedWriteDirs: deps.getAdditionalAllowedWriteDirs?.(),
         sessionRpcTransferMaxBytes: deps.sessionRpcTransferMaxBytes ?? null,
+        ...(deps.finalizeFileOperations ? { finalizeFileOperations: deps.finalizeFileOperations } : {}),
         ...(deps.attachmentUpload ? { attachmentUpload: deps.attachmentUpload } : {}),
         ...(deps.composerMediaStage ? { composerMediaStage: deps.composerMediaStage } : {}),
       });

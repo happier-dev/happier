@@ -18,6 +18,8 @@ import {
   type FilesystemAccessPolicy,
 } from './accessPolicy/filesystemAccessPolicy';
 import type { RpcActionExecutor } from '../_actionDispatchAdapter';
+import { createFilesystemEffectAdmission, createFilesystemEffectRpcRegistrar, type FilesystemEffectAdmission } from './accessPolicy/filesystemEffectAdmission';
+import type { PrepareNativeFilesystemTransfer } from '@/transfers/rpc/nativeTransferRpcRegistrar';
 
 function normalizeAllowedDirectories(getDirectories?: () => ReadonlyArray<string>): string[] {
   const value = getDirectories?.() ?? [];
@@ -35,6 +37,8 @@ export function registerFileSystemHandlers(
   workingDirectory: string,
   opts?: Readonly<{
     accessPolicy?: FilesystemAccessPolicy;
+    effectAdmission?: FilesystemEffectAdmission;
+    prepareNativeTransfer?: PrepareNativeFilesystemTransfer;
     getAdditionalAllowedReadDirs?: () => ReadonlyArray<string>;
     getAdditionalAllowedReadFiles?: () => ReadonlyArray<ExactAllowedReadFile>;
     getAdditionalAllowedWriteDirs?: () => ReadonlyArray<string>;
@@ -58,6 +62,8 @@ export function registerFileSystemHandlers(
   const getAdditionalAllowedReadFiles = opts?.getAdditionalAllowedReadFiles;
   const getAdditionalAllowedWriteDirs = opts?.getAdditionalAllowedWriteDirs;
   const accessPolicy = opts?.accessPolicy ?? OS_USER_FILESYSTEM_ACCESS_POLICY;
+  const effectAdmission = opts?.effectAdmission ?? createFilesystemEffectAdmission();
+  const filesystemRpcHandlerManager = createFilesystemEffectRpcRegistrar(rpcHandlerManager, effectAdmission);
   const pathAllowanceRegistry = createTransferPathAllowanceRegistry();
   const resolveReadDirs = (): string[] => mergeAllowedDirectories(
     normalizeAllowedDirectories(getAdditionalAllowedReadDirs),
@@ -68,14 +74,14 @@ export function registerFileSystemHandlers(
     [...pathAllowanceRegistry.getAdditionalAllowedWriteDirs()],
   );
 
-  registerReadFileHandler(rpcHandlerManager, {
+  registerReadFileHandler(filesystemRpcHandlerManager, {
     workingDirectory,
     accessPolicy,
     getAdditionalAllowedReadDirs: resolveReadDirs,
     ...(getAdditionalAllowedReadFiles ? { getAdditionalAllowedReadFiles } : {}),
     actionExecutor: opts?.actionExecutor,
   });
-  registerWriteFileHandler(rpcHandlerManager, {
+  registerWriteFileHandler(filesystemRpcHandlerManager, {
     workingDirectory,
     accessPolicy,
     getAdditionalAllowedWriteDirs: resolveWriteDirs,
@@ -83,7 +89,7 @@ export function registerFileSystemHandlers(
     resolveMutationActionExecutor: opts?.resolveMutationActionExecutor,
     mutationMachineId: opts?.mutationMachineId,
   });
-  registerDirectoryHandlers(rpcHandlerManager, {
+  registerDirectoryHandlers(filesystemRpcHandlerManager, {
     workingDirectory,
     accessPolicy,
     getAdditionalAllowedReadDirs: resolveReadDirs,
@@ -97,7 +103,7 @@ export function registerFileSystemHandlers(
       treeMaxNodes: opts?.directoryLimits?.treeMaxNodes ?? configuration.filesDirectoryTreeMaxNodes,
     },
   });
-  registerPathMutationHandlers(rpcHandlerManager, {
+  registerPathMutationHandlers(filesystemRpcHandlerManager, {
     workingDirectory,
     accessPolicy,
     getAdditionalAllowedReadDirs: resolveReadDirs,
@@ -106,11 +112,14 @@ export function registerFileSystemHandlers(
     resolveMutationActionExecutor: opts?.resolveMutationActionExecutor,
     mutationMachineId: opts?.mutationMachineId,
   });
-  const transferSessionStore = new TransferSessionStore({ ttlMs: configuration.filesTransferSessionTtlMs });
+  const transferSessionStore = new TransferSessionStore({ ttlMs: configuration.filesTransferSessionTtlMs,
+    ...(opts?.prepareNativeTransfer ? { expiryTrigger: 'self' as const } : {}) });
 
-  const localUploadRpc = registerTransferUploadRpcHandlers(rpcHandlerManager, {
+  const transferRpcHandlerManager = opts?.prepareNativeTransfer ? rpcHandlerManager : filesystemRpcHandlerManager;
+  const localUploadRpc = registerTransferUploadRpcHandlers(transferRpcHandlerManager, {
     workingDirectory,
     accessPolicy,
+    ...(opts?.prepareNativeTransfer ? { prepareNativeTransfer: opts.prepareNativeTransfer, effectAdmission } : {}),
     getAdditionalAllowedWriteDirs: resolveWriteDirs,
     store: transferSessionStore,
     sessionRpcTransferMaxBytes: resolveServerRoutedTransferMaxBytes(),
@@ -120,9 +129,10 @@ export function registerFileSystemHandlers(
     },
     ...(opts?.composerMediaStage ? { composerMediaStage: opts.composerMediaStage } : {}),
   });
-  registerTransferDownloadRpcHandlers(rpcHandlerManager, {
+  registerTransferDownloadRpcHandlers(transferRpcHandlerManager, {
     workingDirectory,
     accessPolicy,
+    ...(opts?.prepareNativeTransfer ? { prepareNativeTransfer: opts.prepareNativeTransfer, effectAdmission } : {}),
     getAdditionalAllowedReadDirs: resolveReadDirs,
     ...(getAdditionalAllowedReadFiles ? { getAdditionalAllowedReadFiles } : {}),
     store: transferSessionStore,
@@ -130,7 +140,7 @@ export function registerFileSystemHandlers(
     ...(opts?.composerMediaStage ? { composerMediaStage: { store: opts.composerMediaStage.store } } : {}),
   });
   if (opts?.composerMediaStage) {
-    registerComposerMediaStageLifecycleRpcHandlers(rpcHandlerManager, {
+    registerComposerMediaStageLifecycleRpcHandlers(filesystemRpcHandlerManager, {
       store: opts.composerMediaStage.store,
     });
   }

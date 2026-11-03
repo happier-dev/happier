@@ -8,13 +8,14 @@ import { prepareSessionCreationTarget } from './prepareSessionCreationTarget';
 
 type PrepareSessionCreationTarget = typeof prepareSessionCreationTarget;
 
-export function registerSessionCreationTargetPreparationRpc(input: Readonly<{
+type TargetPreparationRpcInput = Readonly<{
   rpcHandlerManager: RpcHandlerRegistrar;
   prepare?: PrepareSessionCreationTarget;
-}>): void {
+}>;
+
+function createPreparationHandler(input: TargetPreparationRpcInput, readOnly: boolean) {
   const prepare = input.prepare ?? prepareSessionCreationTarget;
-  const prepareRequest = async (rawRequest: unknown, context: RpcHandlerContext | undefined,
-    readOnly: boolean): Promise<SessionCreationTargetPreparationResultV1> => {
+  return async (rawRequest: unknown, context: RpcHandlerContext | undefined): Promise<SessionCreationTargetPreparationResultV1> => {
     if (!context) {
       throw new Error('Session creation target preparation requires an RPC cancellation context');
     }
@@ -26,8 +27,19 @@ export function registerSessionCreationTargetPreparationRpc(input: Readonly<{
     }
     return await prepare({ request, signal: context.signal });
   };
-  input.rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_SESSION_CREATION_PREPARE,
-    (request, context) => prepareRequest(request, context, false));
+}
+
+/** The native filesystem worker registers only the already-admitted read. */
+export function registerSessionCreationDirectoryPreflightRpc(input: TargetPreparationRpcInput): void {
   input.rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT,
-    (request, context) => prepareRequest(request, context, true));
+    createPreparationHandler(input, true));
+}
+
+export function registerSessionCreationTargetPreparationRpc(input: TargetPreparationRpcInput & Readonly<{
+  directoryPreflightRpcHandlerManager?: RpcHandlerRegistrar;
+}>): void {
+  input.rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_SESSION_CREATION_PREPARE,
+    createPreparationHandler(input, false));
+  registerSessionCreationDirectoryPreflightRpc({ ...input,
+    rpcHandlerManager: input.directoryPreflightRpcHandlerManager ?? input.rpcHandlerManager });
 }

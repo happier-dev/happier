@@ -15,6 +15,25 @@ import { createDaemonAdmissionDrain } from '@/daemon/lifecycle/admissionDrain';
 import { startDirectPeerTransferServer } from './directPeerTransport';
 
 describe('prepared filesystem Actions', () => {
+  it('withdraws download authority before disclosing a descriptor', async () => {
+    const rootPath = await mkdtemp(join(tmpdir(), 'happier-download-withdrawal-'));
+    const lifecycle = createDirectTransferServerLifecycle({ bindPort: 0, listenerClasses: ['loopback_http'] });
+    try {
+      await writeFile(join(rootPath, 'archive.tar'), 'private archive bytes');
+      const execute = createPreparedFilesystemTransferActionExecutor({ lifecycle, workingDirectory: rootPath,
+        accessPolicy: { kind: 'restrictedRoots', roots: [rootPath] } });
+      let descriptors = 0;
+      const controller = new AbortController();
+      const result = await execute({ actionId: 'daemon.filesystem.download',
+        input: { rootPath, path: 'archive.tar', asZip: false, format: 'entry_tree', destination: { destinationId: 'receiver' } },
+        context: { runtimeAccountId: 'holder', signal: controller.signal, operationAcceptance: { operationId: 'export', actionId: 'daemon.filesystem.download',
+          accept: () => { descriptors += 1; controller.abort(); } } },
+        assertCurrentAuthority: async () => { throw Object.assign(new Error('withdrawn'), { code: 'action_forbidden' }); } });
+      expect(result).toMatchObject({ success: false, errorCode: 'action_forbidden' });
+      expect(descriptors).toBe(0);
+      expect(lifecycle.getState().publishedTransferCount).toBe(0);
+    } finally { await lifecycle.stop(); await rm(rootPath, { recursive: true, force: true }); }
+  });
   it('refuses a download without host operation custody before publishing bytes', async () => {
     const rootPath = await mkdtemp(join(tmpdir(), 'happier-unowned-download-'));
     const lifecycle = createDirectTransferServerLifecycle({ bindPort: 0, listenerClasses: ['loopback_http'] });

@@ -5,15 +5,17 @@ import { registerRootedFilesystemRpcHandlers } from './registerRootedFilesystemR
 import type { RpcActionExecutor } from '../_actionDispatchAdapter';
 import { writeFileForRpc, type WriteFileRequest, type WriteFileHandlerDeps } from './writeFileForRpc';
 import type { FilesystemMutationActionIngress } from './pathMutationHandlers';
+import { assertFilesystemEffectCurrent } from './accessPolicy/filesystemEffectAdmission';
 export { writeFileForRpc, type WriteFileRequest, type WriteFileResponse, type WriteFileHandlerDeps } from './writeFileForRpc';
 
 export function createWriteFileRpcActionExecutor(deps: WriteFileHandlerDeps): RpcActionExecutor {
   return {
-    async execute(actionId: ActionId, input: unknown) {
+    async execute(actionId: ActionId, input: unknown, context) {
       if (actionId !== 'daemon.filesystem.writeFile') {
         return { ok: false, errorCode: 'unsupported_action', error: `Unsupported action: ${actionId}` };
       }
-      const result = await writeFileForRpc(input as WriteFileRequest | undefined, deps);
+      const result = await writeFileForRpc(input as WriteFileRequest | undefined, { ...deps,
+        assertCurrentAuthority: async () => { await deps.assertCurrentAuthority?.(); await assertFilesystemEffectCurrent(context); } });
       return {
         ok: true,
         result,

@@ -68,9 +68,26 @@ export type TransferSessionStoreDeps = Readonly<{
   expiryTrigger?: 'owner' | 'self';
 }>;
 
+/** Private process custody supplied by the owning host after admission. The
+ * store retains it like a local descriptor; it never chooses an identity. */
+export type NativeTransferDownloadDescription = Readonly<{
+  nextIndex: number; sizeBytes: number; recipientPublicKeyBase64?: string; manifestHash?: string;
+}>;
+export type NativeTransferSessionOwner = Readonly<{
+  invoke: (method: string, input: unknown) => Promise<unknown>;
+  verifyInvocation: (context: unknown) => Promise<void>;
+  /** Atomically detach the initializer's short request lifetime after admission. */
+  promote: () => void;
+  readExpiry?: () => number | undefined;
+  /** Native descriptor metadata for the incumbent relay data plane. */
+  describeDownload?: (downloadId: string, includeManifest: boolean) => Promise<NativeTransferDownloadDescription>;
+  dispose: () => Promise<void>;
+}>;
+type NativeTransferSession = { nativeOwner: NativeTransferSessionOwner; expiresAt: number; activeOperationCount: number };
+
 export class TransferSessionStore {
-  private readonly uploads = new Map<string, UploadSession>();
-  private readonly downloads = new Map<string, DownloadSession>();
+  private readonly uploads = new Map<string, UploadSession | NativeTransferSession>();
+  private readonly downloads = new Map<string, DownloadSession | NativeTransferSession>();
   private readonly attachments = new Map<string, IssuedAttachment>();
   private readonly baseTempRoot: string;
   private readonly tempRoot: string;
@@ -180,6 +197,7 @@ export class TransferSessionStore {
       if (session.expiresAt > now || session.activeOperationCount > 0) continue;
       this.uploads.delete(uploadId);
       closures.push(this.trackClosure(async () => {
+        if ('nativeOwner' in session) { await session.nativeOwner.dispose(); return; }
         await session.file.close().catch(() => undefined);
         await rm(session.tempPath, { force: true }).catch(() => undefined);
       }));
@@ -189,6 +207,7 @@ export class TransferSessionStore {
       if (session.expiresAt > now || session.activeOperationCount > 0) continue;
       this.downloads.delete(downloadId);
       closures.push(this.trackClosure(async () => {
+        if ('nativeOwner' in session) { await session.nativeOwner.dispose(); return; }
         await session.file.close().catch(() => undefined);
         if (session.deleteFileOnClose) {
           await rm(session.filePath, { force: true }).catch(() => undefined);
@@ -302,7 +321,31 @@ export class TransferSessionStore {
   }
 
   getUploadSession(uploadId: string): UploadSession | null {
-    return this.uploads.get(uploadId) ?? null;
+    const session = this.uploads.get(uploadId);
+    return session && !('nativeOwner' in session) ? session : null;
+  }
+
+  /** A transferred native descriptor lives in the existing directional record. */
+  retainNativeSession(direction: 'upload' | 'download', sessionId: string, owner: NativeTransferSessionOwner): void {
+    this.assertOpen();
+    const sessions = direction === 'upload' ? this.uploads : this.downloads;
+    if (!sessionId || sessions.has(sessionId)) throw new Error('Transfer session already exists');
+    owner.promote();
+    sessions.set(sessionId, { nativeOwner: owner, expiresAt: owner.readExpiry?.() ?? Date.now() + this.ttlMs, activeOperationCount: 0 });
+    this.scheduleExpirySweep();
+  }
+
+  beginNativeSessionOperation(direction: 'upload' | 'download', sessionId: string):
+    Readonly<{ owner: NativeTransferSessionOwner; release(): void }> | null {
+    const session = (direction === 'upload' ? this.uploads : this.downloads).get(sessionId);
+    if (!session || !('nativeOwner' in session)) return null;
+    const operation = this.beginSessionOperation(session);
+    return operation ? { owner: session.nativeOwner, release: operation.release } : null;
+  }
+
+  hasNativeSession(direction: 'upload' | 'download', sessionId: string): boolean {
+    const session = (direction === 'upload' ? this.uploads : this.downloads).get(sessionId);
+    return Boolean(session && 'nativeOwner' in session);
   }
 
   issueAttachment(input: Readonly<{ uploadId: string; sessionId: string; filePath: string; name: string;
@@ -338,7 +381,7 @@ export class TransferSessionStore {
   beginUploadSessionOperation(
     uploadId: string,
   ): Readonly<{ session: UploadSession; release(): void }> | null {
-    return this.beginSessionOperation(this.uploads.get(uploadId));
+    return this.beginSessionOperation(this.getUploadSession(uploadId) ?? undefined);
   }
 
   countUploadSessions(): number {
@@ -348,7 +391,7 @@ export class TransferSessionStore {
   refreshUploadExpiry(uploadId: string): void {
     const session = this.uploads.get(uploadId);
     if (session) {
-      session.expiresAt = Date.now() + this.ttlMs;
+      session.expiresAt = 'nativeOwner' in session ? session.nativeOwner.readExpiry?.() ?? session.expiresAt : Date.now() + this.ttlMs;
     }
   }
 
@@ -359,6 +402,7 @@ export class TransferSessionStore {
     const session = this.uploads.get(uploadId);
     if (!session) return null;
     this.uploads.delete(uploadId);
+    if ('nativeOwner' in session) { await session.nativeOwner.dispose(); return null; }
     await session.file.close().catch(() => undefined);
     if (opts?.deleteTempFile === true) {
       await rm(session.tempPath, { force: true }).catch(() => undefined);
@@ -421,13 +465,14 @@ export class TransferSessionStore {
   }
 
   getDownloadSession(downloadId: string): DownloadSession | null {
-    return this.downloads.get(downloadId) ?? null;
+    const session = this.downloads.get(downloadId);
+    return session && !('nativeOwner' in session) ? session : null;
   }
 
   beginDownloadSessionOperation(
     downloadId: string,
   ): Readonly<{ session: DownloadSession; release(): void }> | null {
-    return this.beginSessionOperation(this.downloads.get(downloadId));
+    return this.beginSessionOperation(this.getDownloadSession(downloadId) ?? undefined);
   }
 
   listDownloadSessionIds(): readonly string[] {
@@ -437,7 +482,7 @@ export class TransferSessionStore {
   refreshDownloadExpiry(downloadId: string): void {
     const session = this.downloads.get(downloadId);
     if (session) {
-      session.expiresAt = Date.now() + this.ttlMs;
+      session.expiresAt = 'nativeOwner' in session ? session.nativeOwner.readExpiry?.() ?? session.expiresAt : Date.now() + this.ttlMs;
     }
   }
 
@@ -445,6 +490,7 @@ export class TransferSessionStore {
     const session = this.downloads.get(downloadId);
     if (!session) return;
     this.downloads.delete(downloadId);
+    if ('nativeOwner' in session) { await session.nativeOwner.dispose(); return; }
     await session.file.close().catch(() => undefined);
     if (session.deleteFileOnClose) {
       await rm(session.filePath, { force: true }).catch(() => undefined);
@@ -469,10 +515,12 @@ export class TransferSessionStore {
       await this.settleClosures();
       await Promise.all([
         ...uploads.map(async (session) => {
+          if ('nativeOwner' in session) { await session.nativeOwner.dispose(); return; }
           await session.file.close().catch(() => undefined);
           await rm(session.tempPath, { force: true }).catch(() => undefined);
         }),
         ...downloads.map(async (session) => {
+          if ('nativeOwner' in session) { await session.nativeOwner.dispose(); return; }
           await session.file.close().catch(() => undefined);
           if (session.deleteFileOnClose) {
             await rm(session.filePath, { force: true }).catch(() => undefined);
@@ -485,18 +533,3 @@ export class TransferSessionStore {
     return await this.disposePromise;
   }
 }
-
-export type NativeTransferSessionOwner = Readonly<{
-  invoke: (method: string, input: unknown) => Promise<unknown>;
-  verifyInvocation: (context: unknown) => Promise<void>;
-  /** Atomically detach the initializer's short request lifetime after admission. */
-  promote: () => void;
-  readExpiry?: () => number | undefined;
-  /** Native descriptor metadata for the incumbent relay data plane. */
-  describeDownload?: (downloadId: string, includeManifest: boolean) => Promise<NativeTransferDownloadDescription>;
-  dispose: () => Promise<void>;
-}>;
-
-export type NativeTransferDownloadDescription = Readonly<{
-  nextIndex: number; sizeBytes: number; recipientPublicKeyBase64?: string; manifestHash?: string;
-}>;

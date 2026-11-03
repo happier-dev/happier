@@ -1,7 +1,5 @@
 import { invokeCliPreflightMethod, resolveCliProbeInvokeParams, type CliProbeDependencies, type CliProbeRequestContext } from '@/capabilities/probes/agentPreflight';
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
-import { readStoredCredentials } from '@/persistence';
-import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import type { AgentCatalogEntry } from '@/agent/catalog/types';
 import type { InstalledPluginCapabilityEntryV1 } from '@happier-dev/protocol/capabilities';
 import { createCapabilityChecklists } from '@/capabilities/checklists';
@@ -19,7 +17,8 @@ import {
     createInstallablesRegistryFromResolvedContributions,
 } from '@/capabilities/registry/installables';
 import { createCapabilitiesService } from '@/capabilities/service';
-import type { Capability } from '@/capabilities/service';
+import type { Capability, CapabilityEffects, CapabilityEffectExecution } from '@/capabilities/service';
+import { CapabilityError } from '@/capabilities/errors';
 import type {
     CapabilitiesDescribeResponse,
     CapabilitiesDetectRequest,
@@ -53,6 +52,9 @@ import { readCurrentDaemonPluginCatalog } from '@/plugins/daemon/currentCatalog'
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { scaffoldLocalPlugin } from '@/plugins/scaffold/scaffold';
 import { resolveInvokerName } from '@/cli/runtime/resolveInvokerName';
+import { ManagedInstallationServerOriginV1Schema } from '@happier-dev/protocol/machines/managed/managedInstallationV1';
+import { RPC_ERROR_CODES, RpcError } from '@happier-dev/protocol/rpcErrors';
+import { createFilesystemEffectAdmission, type FilesystemEffectAdmission } from './fileSystem/accessPolicy/filesystemEffectAdmission';
 
 /** Installed inventory served to the Plugins UI; omit daemon-only catalog detail. */
 function projectInstalledPluginCapabilityEntry(entry: PluginCatalogEntry): InstalledPluginCapabilityEntryV1 {
@@ -136,7 +138,7 @@ async function invokeCliProbeOrInstallMethod(
     const { timeoutMs } = resolveCliProbeInvokeParams(params);
     const deadline = new AbortController();
     const signal = requestContext.signal ? AbortSignal.any([requestContext.signal, deadline.signal]) : deadline.signal;
-    requestContext = { signal, deadlineSignal: signal, deadlineAtMs: Date.now() + timeoutMs, cleanupScope: createPreflightCatalogCleanupScope() };
+    requestContext = { ...requestContext, signal, deadlineSignal: signal, deadlineAtMs: Date.now() + timeoutMs, cleanupScope: createPreflightCatalogCleanupScope() };
     const deadlineTimer = setTimeout(() => deadline.abort(new Error('Agent preflight timed out')), timeoutMs);
     try {
       return await withAgentPreflightCatalog({
@@ -351,17 +353,27 @@ async function createGenericCliCapability(
                     : {}),
             },
         },
+        effects: {
+            detect: ['private_read', 'process'],
+            invoke: {
+                install: ['private_read', 'file_write', 'process'],
+                probeModels: ['private_read', 'process'], probeModes: ['private_read', 'process'],
+                probeConfigOptions: ['private_read', 'process'], probeCatalogs: ['private_read', 'process'],
+                ...(supportsPassiveRealtimeSetup ? { probePassiveRealtimeSetup: ['private_read', 'process'] as const } : {}),
+            },
+        },
         detect: async ({ request, context }) => {
             const entry = context.cliSnapshot?.clis?.[agentId];
             return buildCliCapabilityData({ request, entry });
         },
-        invoke: async ({ method, params, signal }) => {
+        invoke: async ({ method, params, signal, machineSystemTaskResponse }) => {
             const sharedResult = await invokeCliProbeOrInstallMethod(
                 agentId,
                 method,
                 params,
                 dependencies,
-                signal ? { signal } : {},
+                { ...(signal ? { signal } : {}),
+                  ...(machineSystemTaskResponse ? { machineAdmission: machineSystemTaskResponse.admission } : {}) },
             );
             if (sharedResult) return sharedResult;
             return { ok: false, error: { message: `Unsupported method: ${method}`, code: 'unsupported-method' } };
@@ -373,6 +385,9 @@ function createPluginMarketplaceCapability(
     readPluginCatalog: () => Promise<readonly PluginCatalogEntry[]>,
 ): Capability {
     return {
+        effects: { detect: ['private_read'], invoke: {
+            create: ['file_write'], edit: ['private_read'], changeStatus: ['private_read'],
+        } },
         descriptor: {
             id: 'tool.plugins',
             kind: 'tool',
@@ -409,6 +424,7 @@ function createPluginMarketplaceCapability(
 }
 
 export async function createCliCapabilitiesService(dependencies: Readonly<{
+    accountContext?: CliProbeDependencies['accountContext'];
     observeCliSnapshot?: (input: Readonly<{
         snapshot: NonNullable<Awaited<ReturnType<typeof buildDetectContext>>['cliSnapshot']>;
         observedAgentIds: readonly string[];
@@ -455,6 +471,7 @@ export async function createCliCapabilitiesService(dependencies: Readonly<{
     const hasSessionAgentTransition = dependencies.hasSessionAgentTransition;
     const daemonCapabilities: Capability[] = hasSessionAgentTransition ? [{
         descriptor: { id: 'tool.sessionAgentTransition', kind: 'tool', title: 'Agent transitions' },
+        effects: { detect: [] },
         detect: async () => ({ supportsInputPermissionIntent: hasSessionAgentTransition() }),
     }] : [];
     const explicitCapabilities: Capability[] = [
@@ -510,8 +527,11 @@ export async function createCliCapabilitiesService(dependencies: Readonly<{
 
 export function registerCapabilitiesHandlers(
     rpcHandlerManager: RpcHandlerRegistrar,
-    dependencies: Parameters<typeof createCliCapabilitiesService>[0] = {},
+    dependencies: Parameters<typeof createCliCapabilitiesService>[0] & Readonly<{
+        filesystemEffectAdmission?: FilesystemEffectAdmission;
+    }> = {},
 ): void {
+    const admission = dependencies.filesystemEffectAdmission ?? createFilesystemEffectAdmission();
     let servicePromise: Promise<ReturnType<typeof createCapabilitiesService>> | null = null;
     let servicePluginReloadGeneration: number | null = null;
 
@@ -545,22 +565,65 @@ export function registerCapabilitiesHandlers(
     });
 
     rpcHandlerManager.registerHandler<CapabilitiesDetectRequest, CapabilitiesDetectResponse>(RPC_METHODS.CAPABILITIES_DETECT, async (data, ingress) => {
-        let accountId: string | undefined;
-        if (ingress?.machineAdmission) {
-            if (ingress.verifyMachineAdmissionCurrent && !ingress.signal.aborted && await ingress.verifyMachineAdmissionCurrent()) {
-                accountId = ingress.machineAdmission.actorAccountId;
-            }
-        } else {
-            const credentials = await readStoredCredentials();
-            accountId = credentials ? readAccountIdFromToken(credentials.token) ?? undefined : undefined;
+        const service = await getService();
+        try {
+            return await service.detect(data, { accountId: ingress?.machineAdmission?.actorAccountId,
+                executeEffects: effectExecution(RPC_METHODS.CAPABILITIES_DETECT, data, ingress) });
+        } catch (error) {
+            if (error instanceof CapabilityError && error.code !== undefined) throw new RpcError(error.message, error.code);
+            throw error;
         }
-        return await (await getService()).detect(data, { accountId });
     });
 
     rpcHandlerManager.registerHandler<CapabilitiesInvokeRequest, CapabilitiesInvokeResponse>(RPC_METHODS.CAPABILITIES_INVOKE, async (data, context) => {
-        return await (await getService()).invoke(
+        const service = await getService();
+        const managed = ManagedInstallationServerOriginV1Schema.safeParse(context?.authorization);
+        return await service.invoke(
             data,
-            context?.signal ? { signal: context.signal } : {},
+            { ...(context?.signal ? { signal: context.signal } : {}),
+                executeEffects: effectExecution(RPC_METHODS.CAPABILITIES_INVOKE, data, context),
+                ...(context?.machineAdmission && context.verifyMachineAdmissionCurrent ? {
+                    machineSystemTaskResponse: { admission: context.machineAdmission,
+                        callerAuthority: context.callerAuthority,
+                        verifyCurrent: context.verifyMachineAdmissionCurrent, signal: context.signal },
+                } : {}),
+                ...(managed.success ? { managedInstallationAuthorization: managed.data } : {}) },
         );
     });
+
+    function effectExecution(method: string, data: unknown,
+        context?: import('@/api/rpc/types').RpcHandlerContext): CapabilityEffectExecution {
+        return async <T>(effects: CapabilityEffects, execute: () => Promise<T>): Promise<T> => {
+            if (effects.includes('machine_install')) {
+                if (context?.machineAdmission?.role !== 'manage') {
+                    throw new CapabilityError('Machine software installation requires Manage', RPC_ERROR_CODES.FORBIDDEN);
+                }
+                // Native Machine administration consumes the Home's admitted
+                // role; it does not borrow a requester's private filesystem or
+                // re-evaluate access after finite work has started.
+                context.signal.throwIfAborted();
+                return await execute();
+            }
+            // The service selected the entire effective request before any
+            // private discovery. Its native owner runs that same request as the
+            // requester, rather than lending this daemon's private environment.
+            if (admission.executeRpc) {
+                const result = await admission.executeRpc(method, data, context, execute, failure => {
+                    throw new CapabilityError(failure.error, failure.errorCode);
+                });
+                // This private pipe returns the same installed capability
+                // service's response; no external caller supplies this value.
+                return result as T;
+            }
+            if (effects.includes('private_read') || effects.includes('file_write')) {
+                const failure = await admission.rpc(context);
+                if (failure) throw new CapabilityError(failure.error, failure.errorCode);
+            } else if (effects.includes('process')) {
+                // No current capability has a process-only transport. Never
+                // turn a future classification into unrestricted daemon spawn.
+                throw new CapabilityError('Requester-bound capability execution is unavailable', 'agent_isolation_unavailable');
+            }
+            return await execute();
+        };
+    }
 }

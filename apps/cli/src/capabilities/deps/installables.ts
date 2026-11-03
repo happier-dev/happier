@@ -38,6 +38,10 @@ export function createInstallableCapability(
   adapter: RuntimeInstallableAdapter,
 ): Capability {
   return {
+    effects: { detect: ['private_read', 'process'], invoke: {
+      install: ['machine_install', 'private_read', 'file_write', 'process'],
+      upgrade: ['machine_install', 'private_read', 'file_write', 'process'],
+    } },
     descriptor: {
       id: descriptor.capabilityId,
       kind: 'dep',

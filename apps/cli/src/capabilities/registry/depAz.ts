@@ -4,6 +4,7 @@ import type { Capability } from '../service';
 import { getAzDepStatus } from '../deps/az';
 
 export const azDepCapability: Capability = {
+  effects: { detect: ['private_read', 'process'] },
   descriptor: {
     id: AZ_DEP_ID,
     kind: 'dep',

@@ -1,3 +1,4 @@
+import { createFilesystemEffectAdmission, type FilesystemEffectAdmission } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
 import { randomUUID } from 'node:crypto';
 import type { PreparedFilesystemTransferScope } from '@/machines/transfer/preparedFilesystemTransferScope';
 import { FILESYSTEM_TRANSFER_ACTION_IDS, type FilesystemTransferActionId } from '@happier-dev/protocol/actions/filesystemActionFamily';
@@ -298,9 +299,13 @@ export type MachineRpcHandlers = {
 };
 
 export type MachineRpcHandlerDeps = Readonly<{
+  filesystemEffectAdmission?: FilesystemEffectAdmission;
   mcpServers?: Parameters<typeof registerMachineMcpServersRpcHandlers>[0]['deps'];
   readSpawnFailureLimits?: MachineTerminalRpcHandlerDeps['readSpawnFailureLimits'];
   ownerRemainder?: MachineTerminalRpcHandlerDeps['ownerRemainder'];
+  agentIsolation?: MachineTerminalRpcHandlerDeps['agentIsolation'];
+  nativeOperationRuntime?: MachineTerminalRpcHandlerDeps['nativeOperationRuntime'];
+  resolveHostHomeServerIdentityId?: MachineTerminalRpcHandlerDeps['resolveHostHomeServerIdentityId'];
   readMachineEffectiveCores?: () => number | undefined;
   requesterSessionRuntime?: NonNullable<Parameters<typeof import('@/rpc/handlers/sessionLifecycle').registerSessionLifecycleRpcHandlers>[0]['requesterSessionRuntime']>;
   requesterBootstrapBoundary?: NonNullable<Parameters<typeof registerMachineSessionHandoffRpcHandlers>[0]['requesterBootstrapBoundary']>;
@@ -507,6 +512,8 @@ function registerMachineRpcHandlersOnce(params: Readonly<{
   deps?: MachineRpcHandlerDeps;
 }>): MachineRpcLifecycleRegistration {
   const { rpcHandlerManager, handlers } = params;
+  const filesystemEffectAdmission = params.deps?.filesystemEffectAdmission
+    ?? createFilesystemEffectAdmission({ resolveHostIdentity: async () => null });
   if (handlers.preparedMachineTransfer) registerMachinePreparedTransferRpcHandlers({ rpcHandlerManager, ...handlers.preparedMachineTransfer });
   transferRelayV2DownloadResponderCleanupByManager.get(rpcHandlerManager)?.();
   transferRelayV2DownloadResponderCleanupByManager.delete(rpcHandlerManager);
@@ -550,7 +557,7 @@ function registerMachineRpcHandlersOnce(params: Readonly<{
   const sessionRpcRegistration = registerMachineSessionRpcHandlers({
     rpcHandlerManager,
     handlers,
-    deps: params.deps,
+    deps: { ...params.deps, filesystemEffectAdmission },
   });
   const externalAction = params.deps?.externalAction;
   if (externalAction) {
@@ -606,6 +613,7 @@ function registerMachineRpcHandlersOnce(params: Readonly<{
   // the incumbent execution-run bridge/action family with its nullable scope;
   // no Admin target picker, Session projection, or parallel daemon registry.
   registerCapabilitiesHandlers(rpcHandlerManager, {
+    filesystemEffectAdmission,
     ...(params.deps?.observeCapabilitiesCliSnapshot
       ? { observeCliSnapshot: params.deps.observeCapabilitiesCliSnapshot }
       : {}),
@@ -814,7 +822,11 @@ function registerMachineRpcHandlersOnce(params: Readonly<{
     })();
     return finiteRetirement;
   };
-  registerMachineMcpServersRpcHandlers({ rpcHandlerManager, deps: params.deps?.mcpServers });
+  registerMachineMcpServersRpcHandlers({ rpcHandlerManager, deps: { ...params.deps?.mcpServers,
+    ...(params.deps?.agentIsolation ? { agentIsolation: params.deps.agentIsolation } : {}),
+    resolveHostHomeServerIdentityId: params.deps?.resolveHostHomeServerIdentityId
+      ?? params.deps?.mcpServers?.resolveHostHomeServerIdentityId,
+  } });
   if (params.deps?.providerRpc) {
     registerMachineProviderRpcHandlers({
       rpcHandlerManager,
@@ -868,7 +880,7 @@ function registerMachineRpcHandlersOnce(params: Readonly<{
       transferRelayChannel: handlers.transferRelayV2Channel,
       resolveSessionOwner: (transferId) => {
         for (const owner of transferRelayV2DownloadOwners) {
-          if (owner.store.getDownloadSession(transferId)) {
+          if (owner.store.getDownloadSession(transferId) || owner.store.hasNativeSession('download', transferId)) {
             return owner;
           }
         }

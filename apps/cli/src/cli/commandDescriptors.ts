@@ -51,6 +51,7 @@ const handleNotifyCliCommand = lazyCommandHandler(async () => (await import('./c
 const handlePluginsCliCommand = lazyCommandHandler(async () => (await import('./commands/plugins')).handlePluginsCliCommand);
 const handleProfilesCliCommand = lazyCommandHandler(async () => (await import('./commands/profiles')).handleProfilesCliCommand);
 const handleAgentsCliCommand = lazyCommandHandler(async () => (await import('./commands/agents')).handleAgentsCliCommand);
+const handleAgentLaunchCliCommand = lazyCommandHandler(async () => (await import('./commands/agentLaunch')).handleAgentLaunchCliCommand);
 const handleProvidersCliCommand = lazyCommandHandler(async () => (await import('./commands/providers')).handleProvidersCliCommand);
 const handleRelayCliCommand = lazyCommandHandler(async () => (await import('./commands/relay')).handleRelayCliCommand);
 const handleResumeCliCommand = lazyCommandHandler(async () => (await import('./commands/resume')).handleResumeCliCommand);
@@ -345,6 +346,7 @@ const firstClassSessionCommandRegistryEntries: Readonly<Record<string, StaticCom
 );
 
 export const staticCommandDescriptors: Readonly<Record<string, StaticCommandDescriptor>> = {
+  'agent-launch': { handler: handleAgentLaunchCliCommand, surface: { allowTmux: false } },
   browser: { handler: handleBrowserCliCommand, helpSubcommand: true, help: handleBrowserHelp, surface: { rootHelpLabel: 'happier browser', rootHelpDescription: 'Browser Actions and managed Chromium sandbox setup', allowTmux: false } },
   setup: { handler: handleSetupCliCommand, helpSubcommand: true, help: handleSetupHelp, surface: { rootHelpLabel: 'happier setup', rootHelpDescription: 'Connect this computer to an existing Home', allowTmux: false } },
   auth: { handler: handleAuthCliCommand, helpSubcommand: true, help: handleAuthHelp, surface: { rootHelpLabel: 'happier auth', rootHelpDescription: 'Manage authentication', allowTmux: false } },

@@ -190,6 +190,7 @@ async function discoverWithTimeout(
   entry: PluginMcpDiscoverySourceEntry,
   input: PluginMcpDiscoveryRequest,
   timeoutMs: number,
+  signal?: AbortSignal,
 ): Promise<
   | Readonly<{ type: 'resolved'; value: PluginMcpEndpointDiscoveryResult }>
   | Readonly<{ type: 'rejected'; error: unknown }>
@@ -198,7 +199,7 @@ async function discoverWithTimeout(
   let timeout: ReturnType<typeof setTimeout> | null = null;
   const controller = new AbortController();
   try {
-    const discovery = entry.discover(input, controller.signal)
+    const discovery = entry.discover(input, signal ? AbortSignal.any([controller.signal, signal]) : controller.signal)
       .then((value) => ({ type: 'resolved' as const, value }))
       .catch((error: unknown) => ({ type: 'rejected' as const, error }));
     const timeoutResult = new Promise<Readonly<{ type: 'timeout' }>>((resolve) => {
@@ -309,10 +310,14 @@ export async function detectProviderMcpServers(params: Readonly<{
   providers: unknown;
   env?: ProcessEnvInput;
   runtimeRegistry?: ResolvedExecutablePluginRuntimeRegistry;
+  signal?: AbortSignal;
+  assertCurrent?: () => Promise<void>;
 }>): Promise<DetectProviderMcpServersResult> {
   const providersFilter = normalizeProvidersFilter(params.providers);
   const providers = providersFilter.providers;
   const directory = readDirectory(params.directory);
+  params.signal?.throwIfAborted();
+  await params.assertCurrent?.();
   const detectionInput = toDetectionInput(directory);
   const discoveryTimeoutMs = resolveDiscoveryTimeoutMs(params.env);
   const servers: DetectedMcpServerV1[] = [];
@@ -322,10 +327,13 @@ export async function detectProviderMcpServers(params: Readonly<{
 
   try {
     for (const entry of discoverySources.entries) {
+      params.signal?.throwIfAborted();
+      await params.assertCurrent?.();
+      params.signal?.throwIfAborted();
       const provider = entry.provider;
 
       try {
-        const outcome = await discoverWithTimeout(entry, detectionInput, discoveryTimeoutMs);
+        const outcome = await discoverWithTimeout(entry, detectionInput, discoveryTimeoutMs, params.signal);
         if (outcome.type === 'timeout') {
           warnings.push(Object.freeze({
             provider,
@@ -371,11 +379,14 @@ export async function detectProviderMcpServers(params: Readonly<{
           detail: 'Plugin MCP discovery failed',
         }));
       }
+      await params.assertCurrent?.();
     }
   } finally {
     await discoverySources.release();
   }
 
+  await params.assertCurrent?.();
+  params.signal?.throwIfAborted();
   return Object.freeze({
     servers: Object.freeze(servers),
     warnings: Object.freeze(warnings),

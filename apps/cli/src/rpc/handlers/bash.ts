@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { logger } from '@/ui/logger';
 import { execFileWithDeadline, type ExecFileWithDeadlineOptions } from '@happier-dev/cli-common/process';
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
@@ -8,6 +9,10 @@ import { mergeProcessEnv } from '@/utils/processEnv/buildScopedProcessEnv';
 import type { ExecutionBudgetRegistry } from '@/daemon/executionBudget/ExecutionBudgetRegistry';
 import type { RequesterWorkAttributionV1 } from '@/daemon/lifecycle/requesterWorkAttribution';
 import type { DaemonAdmissionDrain } from '@/daemon/lifecycle/admissionDrain';
+import { isHostRequesterUnrestrictedOwner, selectHostRequesterExecutionIdentity, type HostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
+import type { ApiMachineClient } from '@/api/apiMachine';
+import type { AgentLaunchOperationMaterialization } from '@/daemon/agentIsolation/agentLaunchMaterials';
+import { authorizeResolvedProjectExecLaunchForHost, type HostAuthorizedPluginExecLaunch } from '@/plugins/runtime/invocation/services/exec';
 
 interface BashRequest {
     command?: string;
@@ -24,6 +29,7 @@ interface BashRequest {
 
 interface BashResponse {
     success: boolean;
+    errorCode?: string;
     stdout?: string;
     stderr?: string;
     exitCode?: number;
@@ -109,11 +115,29 @@ async function executeArgvRequest(
 export function registerBashHandler(
     rpcHandlerManager: RpcHandlerRegistrar,
     workingDirectory: string,
-    opts?: Readonly<{ accessPolicy?: FilesystemAccessPolicy; executionBudgetRegistry?: ExecutionBudgetRegistry; admissionDrain?: DaemonAdmissionDrain }>,
+    opts?: Readonly<{ accessPolicy?: FilesystemAccessPolicy; executionBudgetRegistry?: ExecutionBudgetRegistry; admissionDrain?: DaemonAdmissionDrain;
+        nativeOperationRuntime?: Pick<ApiMachineClient, 'prepareNativeOperation'>;
+        resolveHostHomeServerIdentityId?: (signal?: AbortSignal) => Promise<string | null> }>,
 ): void {
     const accessPolicy = opts?.accessPolicy ?? { kind: 'osUser' };
     // Shell command handler - executes commands in the default shell
     rpcHandlerManager.registerHandler<BashRequest, BashResponse>(RPC_METHODS.BASH, async (data, context) => {
+        const unavailable = { success: false, errorCode: 'agent_isolation_unavailable', error: 'Requester execution protection is unavailable' };
+        const cancelled = { success: false, stdout: '', stderr: '', exitCode: -1, error: 'Command cancelled' };
+        let nativeRequester: Extract<HostRequesterExecutionIdentity, { kind: 'isolated' }> | undefined;
+        if (context?.signal.aborted) return cancelled;
+        try {
+            const hostHomeServerIdentityId = opts?.resolveHostHomeServerIdentityId
+                ? await opts.resolveHostHomeServerIdentityId(context?.signal) : undefined;
+            if (context?.signal.aborted) return cancelled;
+            if (opts?.resolveHostHomeServerIdentityId && !hostHomeServerIdentityId) return unavailable;
+            const identity = selectHostRequesterExecutionIdentity({ rpcContext: context, hostHomeServerIdentityId });
+            if (!isHostRequesterUnrestrictedOwner(identity)) {
+                if (identity.kind !== 'isolated' || !opts?.nativeOperationRuntime || !context) return unavailable;
+                nativeRequester = identity;
+            }
+            if (context?.signal.aborted) return cancelled;
+        } catch { return context?.signal.aborted ? cancelled : unavailable; }
         logger.debug('Shell command request:', data.command);
         const attribution = context?.localActionContext?.requesterWorkAttributionV1;
 
@@ -131,12 +155,14 @@ export function registerBashHandler(
                     accessPolicy,
                 });
                 if (!validation.valid) {
-                    return { success: false, error: validation.error };
+                    return { success: false, error: validation.error, errorCode: validation.errorCode };
                 }
                 cwd = validation.resolvedPath;
             }
         }
 
+        let nativeOperation: Awaited<ReturnType<ApiMachineClient['prepareNativeOperation']>> | undefined;
+        let nativeLaunch: HostAuthorizedPluginExecLaunch | undefined;
         try {
             // Legacy callers retain their default budget; Action callers explicitly select
             // zero and supply the containing operation's cancellation signal.
@@ -153,9 +179,48 @@ export function registerBashHandler(
                 ...(data.outputTailMaxBytes === undefined ? {} : { outputTailMaxBytes: data.outputTailMaxBytes }),
             };
 
-            if (Array.isArray(data.argv) && data.argv.length > 0 && data.argv.every((value) => typeof value === 'string')) {
-                logger.debug('Shell argv request executing...', { cwd: options.cwd, timeout: options.timeout, argc: data.argv.length });
-                return await executeArgvRequest(data.argv, options, opts?.executionBudgetRegistry, attribution, opts?.admissionDrain);
+            const argv = Array.isArray(data.argv) && data.argv.length > 0 && data.argv.every((value) => typeof value === 'string')
+                ? data.argv : undefined;
+            if (nativeRequester && context && opts?.nativeOperationRuntime && (argv || typeof data.command === 'string' && data.command.length > 0)) {
+                const requesterIdentity = nativeRequester;
+                const material: AgentLaunchOperationMaterialization = Object.freeze({
+                    materializationKey: context.transportRequestId ?? context.localActionContext?.actionRequestId
+                        ?? context.callerInputAuthorization?.binding.requestId ?? randomUUID(),
+                    environment: Object.freeze({ ...data.env }), selectedMaterials: Object.freeze([]),
+                });
+                try {
+                    nativeOperation = await opts.nativeOperationRuntime.prepareNativeOperation({ requesterIdentity,
+                        ingress: context, signal: context.signal, readMaterial: () => material,
+                        resolveRequesterIdentity: async signal => {
+                            signal?.throwIfAborted(); context.signal.throwIfAborted(); return requesterIdentity;
+                        } });
+                    // Node's POSIX shell mode uses /bin/sh. Literal argv is expanded
+                    // only by exec "$@", so PATH and relative commands resolve as
+                    // the selected member instead of the daemon.
+                    nativeLaunch = await authorizeResolvedProjectExecLaunchForHost({
+                        launch: { command: '/bin/sh', args: argv ? ['-c', 'exec "$@"', 'happier-raw-exec', ...argv]
+                            : ['-c', data.command!],
+                            cwd: data.cwd && (data.cwd !== '/' || data.cwdMode === 'explicit') ? cwd : nativeOperation.workingDirectory,
+                            env: Object.fromEntries(Object.entries(options.env ?? process.env)
+                                .filter((entry): entry is [string, string] => typeof entry[1] === 'string')) },
+                        agentIsolation: nativeOperation.agentIsolation, requesterIdentity, agentLaunchKind: 'exec', signal: context.signal,
+                        assertCurrent: () => context.signal.throwIfAborted(),
+                    });
+                } catch (error) {
+                    if (context.signal.aborted) return cancelled;
+                    return { success: false,
+                        errorCode: error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : unavailable.errorCode,
+                        error: unavailable.error };
+                }
+                return await executeArgvRequest([nativeLaunch.command, ...nativeLaunch.args], {
+                    ...options, cwd: nativeLaunch.launcherCwd ?? nativeLaunch.cwd, env: { ...nativeLaunch.env },
+                    inputBytes: nativeLaunch.stdinPreamble,
+                }, opts.executionBudgetRegistry, attribution, opts.admissionDrain);
+            }
+
+            if (argv) {
+                logger.debug('Shell argv request executing...', { cwd: options.cwd, timeout: options.timeout, argc: argv.length });
+                return await executeArgvRequest(argv, options, opts?.executionBudgetRegistry, attribution, opts?.admissionDrain);
             }
 
             if (typeof data.command !== 'string' || data.command.length === 0) {
@@ -253,6 +318,12 @@ export function registerBashHandler(
                 stderrLen: result.stderr.length
             });
             return result;
+        } finally {
+            // The capture owner has observed physical close before releasing
+            // native input custody, including nonzero exit and cancellation.
+            nativeLaunch?.stdinPreamble?.fill(0);
+            try { await nativeLaunch?.release(); }
+            finally { await nativeOperation?.dispose(); }
         }
     });
 }

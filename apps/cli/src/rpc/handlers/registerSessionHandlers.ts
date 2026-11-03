@@ -37,6 +37,8 @@ import type { RpcActionExecutor } from './_actionDispatchAdapter';
 import { SESSION_TRANSCRIPT_RPC_SCOPES } from './actionSpecRpcRegistration';
 import { registerActionSpecRpcHandlers } from './registerActionSpecRpcHandlers';
 import type { FilesystemAccessPolicy } from './fileSystem/accessPolicy/filesystemAccessPolicy';
+import { createFilesystemEffectAdmission, createFilesystemEffectRpcRegistrar, type FilesystemEffectAdmission } from './fileSystem/accessPolicy/filesystemEffectAdmission';
+import { resolveServerProfileHomeIdentityId } from '@/server/serverProfiles';
 import type { LocalServicePreviewRoutes } from '@/daemon/local/services/preview/routes';
 import type { SimulatorPreviewRoutes } from '@/daemon/devices/simulator/previewRoutes.types';
 import type { BrowserDaemonControlRoutes } from '@/daemon/browser/control/routes';
@@ -151,8 +153,11 @@ export function registerSessionHandlers(
         revalidateExplicitUserRequest?: Parameters<typeof registerSessionUserMessageSendHandler>[1]['revalidateExplicitUserRequest'];
         waitForSessionRuntimeControls?: (signal?: AbortSignal) => Promise<boolean>;
         accessPolicy?: FilesystemAccessPolicy;
+        filesystemEffectAdmission?: FilesystemEffectAdmission;
         executionBudgetRegistry?: ExecutionBudgetRegistry;
         admissionDrain?: DaemonAdmissionDrain;
+        nativeOperationRuntime?: NonNullable<Parameters<typeof registerBashHandler>[2]>['nativeOperationRuntime'];
+        resolveHostHomeServerIdentityId?: (signal?: AbortSignal) => Promise<string | null>;
         transcriptActionExecutor?: RpcActionExecutor | null;
         workspaceFileReplaceActionExecutor?: RpcActionExecutor;
         resolveWorkspaceFileReplaceActionExecutor?: () => RpcActionExecutor | null;
@@ -183,6 +188,10 @@ export function registerSessionHandlers(
     resolveSessionAttachment: (handle: import('@happier-dev/protocol').SessionAttachmentHandleV1) => ReturnType<TransferSessionStore['getIssuedAttachment']>;
 }> {
     const accessPolicy = opts?.accessPolicy ?? { kind: 'osUser' };
+    const filesystemServerProfileId = configuration.activeServerId;
+    const filesystemEffectAdmission = opts?.filesystemEffectAdmission ?? createFilesystemEffectAdmission({
+        resolveHomeServerIdentityId: () => resolveServerProfileHomeIdentityId(filesystemServerProfileId),
+    });
     const authorizedSessionRpcHandlerManager = createAuthorizedSessionRpcRegistrar(
         rpcHandlerManager,
         opts?.sessionId ?? null,
@@ -194,7 +203,8 @@ export function registerSessionHandlers(
         const sessionId = opts.sessionId;
         const pathAllowanceRegistry = createTransferPathAllowanceRegistry();
         const sessionRpcTransferMaxBytes = resolveServerRoutedTransferMaxBytes();
-        registerTransferUploadRpcHandlers(authorizedSessionRpcHandlerManager, {
+        const attachmentRpcHandlerManager = createFilesystemEffectRpcRegistrar(authorizedSessionRpcHandlerManager, filesystemEffectAdmission);
+        registerTransferUploadRpcHandlers(attachmentRpcHandlerManager, {
             workingDirectory,
             accessPolicy,
             store: sessionAttachmentStore,
@@ -205,7 +215,7 @@ export function registerSessionHandlers(
                 resolveSessionWorkingDirectory: async (requestedSessionId) => requestedSessionId === sessionId ? workingDirectory : null,
             },
         });
-        registerTransferDownloadRpcHandlers(authorizedSessionRpcHandlerManager, {
+        registerTransferDownloadRpcHandlers(attachmentRpcHandlerManager, {
             workingDirectory,
             accessPolicy,
             store: sessionAttachmentStore,
@@ -215,9 +225,12 @@ export function registerSessionHandlers(
         });
     }
 
-    registerBashHandler(rpcHandlerManager, workingDirectory, { accessPolicy, executionBudgetRegistry: opts?.executionBudgetRegistry, admissionDrain: opts?.admissionDrain });
+    registerBashHandler(rpcHandlerManager, workingDirectory, { accessPolicy, executionBudgetRegistry: opts?.executionBudgetRegistry, admissionDrain: opts?.admissionDrain,
+        nativeOperationRuntime: opts?.nativeOperationRuntime,
+        resolveHostHomeServerIdentityId: opts?.resolveHostHomeServerIdentityId });
     // Checklist-based machine capability registry (replaces legacy detect-cli / detect-capabilities / dep-status).
     registerCapabilitiesHandlers(rpcHandlerManager, {
+        filesystemEffectAdmission,
         ...(opts?.getAgentCatalogObservation
             ? { getAgentCatalogObservation: opts.getAgentCatalogObservation }
             : {}),
@@ -254,14 +267,17 @@ export function registerSessionHandlers(
         simulatorPreview: opts?.simulatorPreview ?? null,
     });
     registerPreviewEnvHandler(rpcHandlerManager);
-    registerWorkspaceFileListHandler(rpcHandlerManager, workingDirectory, { accessPolicy });
-    registerWorkspaceFileSearchHandler(rpcHandlerManager, workingDirectory, { accessPolicy });
-    registerWorkspaceFileReplaceHandlers(rpcHandlerManager, workingDirectory, { accessPolicy,
+    registerWorkspaceFileListHandler(createFilesystemEffectRpcRegistrar(rpcHandlerManager, filesystemEffectAdmission,
+        failure => ({ ok: false, errorCode: failure.errorCode, details: failure.details })), workingDirectory, { accessPolicy });
+    registerWorkspaceFileSearchHandler(createFilesystemEffectRpcRegistrar(rpcHandlerManager, filesystemEffectAdmission,
+        failure => ({ ok: false, code: failure.errorCode, message: failure.error, details: failure.details })), workingDirectory, { accessPolicy });
+    registerWorkspaceFileReplaceHandlers(createFilesystemEffectRpcRegistrar(rpcHandlerManager, filesystemEffectAdmission,
+        failure => ({ ok: false, code: failure.errorCode, details: failure.details })), workingDirectory, { accessPolicy,
         actionExecutor: opts?.workspaceFileReplaceActionExecutor,
         resolveActionExecutor: opts?.resolveWorkspaceFileReplaceActionExecutor,
         machineId: opts?.workspaceFileReplaceMachineId,
     });
-    registerDifftasticHandler(rpcHandlerManager, workingDirectory, { accessPolicy });
+    registerDifftasticHandler(createFilesystemEffectRpcRegistrar(rpcHandlerManager, filesystemEffectAdmission), workingDirectory, { accessPolicy });
     registerSessionUserMessageSendHandler(authorizedSessionRpcHandlerManager, {
         workingDirectory,
         sessionId: opts?.sessionId ?? null,

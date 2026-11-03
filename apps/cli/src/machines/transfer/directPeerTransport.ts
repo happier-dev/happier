@@ -1248,7 +1248,7 @@ export async function startDirectPeerTransferServer(params: Readonly<{
   }>;
   openTrustedImportSession: (input: DirectTransferImportOpenRequest, filesystemScope?: PreparedFilesystemTransferScope, privateStagingDirectory?: string) => Promise<
     | Readonly<{ success: true; response: DirectTransferImportOpenResponse }>
-    | Readonly<{ success: false; error: string }>
+    | Readonly<{ success: false; error: string; errorCode?: string }>
   >;
   abortImportTransferSession: (
     input: Readonly<{ uploadId: string }>,

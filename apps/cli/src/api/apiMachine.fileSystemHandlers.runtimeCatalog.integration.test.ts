@@ -51,9 +51,9 @@ describe('ApiMachineClient filesystem handlers', () => {
       const rpc = (client as unknown as Readonly<{
         rpcHandlerManager: Pick<RpcHandlerManager, 'invokeLocal'>;
       }>).rpcHandlerManager;
-      await expect(rpc.invokeLocal('daemon.filesystem.createDirectory', input)).resolves.toMatchObject({
-        ok: false, errorCode: 'filesystem_action_owner_unavailable',
-      });
+      const missingIdentity = { success: false, errorCode: 'filesystem_identity_custody_unavailable',
+        details: { reason: 'requester_identity_unavailable' } };
+      await expect(rpc.invokeLocal('daemon.filesystem.createDirectory', input)).resolves.toMatchObject(missingIdentity);
       const approvals: unknown[] = [];
       const executor = createActionExecutor({
         ...createCliActionDeps({ token, sessionId: '', mode: 'plain', ctx: null }),
@@ -68,12 +68,8 @@ describe('ApiMachineClient filesystem handlers', () => {
       client.setRPCHandlers(handlers, { externalActionIngressOwner: {
         currentServerId: 'home', executor, resolveTarget: async () => ({ kind: 'machine', machineId: 'machine-test' }),
       } });
-      await expect(rpc.invokeLocal('daemon.filesystem.createDirectory', input)).resolves.toMatchObject({
-        ok: false, errorCode: 'filesystem_requester_unavailable',
-      });
-      await expect(rpc.invokeLocal(RPC_METHODS.CREATE_DIRECTORY, input)).resolves.toMatchObject({
-        ok: false, errorCode: 'filesystem_requester_unavailable',
-      });
+      await expect(rpc.invokeLocal('daemon.filesystem.createDirectory', input)).resolves.toMatchObject(missingIdentity);
+      await expect(rpc.invokeLocal(RPC_METHODS.CREATE_DIRECTORY, input)).resolves.toMatchObject(missingIdentity);
       expect(approvals).toEqual([]);
       await expectPathMissing(join(workspace, 'pending'));
       // The admitted owner-local path already has the verified Account fact;
@@ -91,11 +87,10 @@ describe('ApiMachineClient filesystem handlers', () => {
       })]);
       await expectPathMissing(join(workspace, 'pending'));
       client.setRPCHandlers(handlers);
-      await expect(rpc.invokeLocal('daemon.filesystem.createDirectory', input)).resolves.toMatchObject({
-        ok: false, errorCode: 'filesystem_action_owner_unavailable',
-      });
-      await expect(rpc.invokeLocal(RPC_METHODS.CREATE_DIRECTORY, { path: join(workspace, 'legacy') })).resolves.toEqual({ success: true });
-      await expect(access(join(workspace, 'legacy'))).resolves.toBeUndefined();
+      await expect(rpc.invokeLocal('daemon.filesystem.createDirectory', input)).resolves.toMatchObject(missingIdentity);
+      await expect(rpc.invokeLocal(RPC_METHODS.CREATE_DIRECTORY, { path: join(workspace, 'legacy') }))
+        .resolves.toMatchObject(missingIdentity);
+      await expectPathMissing(join(workspace, 'legacy'));
       await expectPathMissing(join(workspace, 'pending'));
     } finally {
       await client?.shutdown();

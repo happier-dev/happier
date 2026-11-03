@@ -1,3 +1,4 @@
+import type { NativeFilesystemPayloadSource } from '@/rpc/handlers/fileSystem/filesystemEffectChannel';
 import type { PreparedFilesystemReadFile } from './preparedFilesystemTransferScope';
 import type { WorkspaceSyncEntryExpectationV1 } from '@happier-dev/protocol';
 import { filesystemPathComparisonKey } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
@@ -26,16 +27,26 @@ export async function prepareWorkspaceFileExport(params: Readonly<{
   accessPolicy?: FilesystemAccessPolicy;
   request: Readonly<{ workingDirectory: string; path: string; asZip: boolean; confinedToWorkingDirectory?: boolean }>;
   filesystemScope?: PreparedFilesystemTransferScope;
+  nativeDownload?: (input: Readonly<{ path: string; asZip: boolean }>) => Promise<NativeFilesystemPayloadSource>;
 }>) {
-  const resolved = await resolveWorkspaceFileDownloadSource({ ...params.request,
-    accessPolicy: params.accessPolicy, sessionRpcTransferMaxBytes: null });
-  if (!resolved.success) throw new Error(resolved.error);
-  const source = resolved.source;
-  const payloadSource = createFileTransferPayloadSource({ filePath: source.filePath,
-    sizeBytes: source.sizeBytes, name: source.name,
-    ...(source.deleteFileOnClose ? { dispose: () => rm(source.filePath, { force: true }) } : {}) });
+  await params.filesystemScope?.assertCurrentAuthority?.();
+  const nativeDownload = params.nativeDownload;
+  const source = nativeDownload ? await (async () => {
+    const payloadSource = await nativeDownload(params.request);
+    return { payloadSource, name: payloadSource.name, sizeBytes: payloadSource.sizeBytes };
+  })() : await (async () => {
+    const resolved = await resolveWorkspaceFileDownloadSource({ ...params.request,
+      accessPolicy: params.accessPolicy, sessionRpcTransferMaxBytes: null });
+    if (!resolved.success) throw new Error(resolved.error);
+    const file = resolved.source;
+    return { name: file.name, sizeBytes: file.sizeBytes, payloadSource: createFileTransferPayloadSource({ filePath: file.filePath,
+      sizeBytes: file.sizeBytes, name: file.name,
+      ...(file.deleteFileOnClose ? { dispose: () => rm(file.filePath, { force: true }) } : {}) }) };
+  })();
+  const payloadSource = source.payloadSource;
   try {
     const manifestHash = await resolveTransferPayloadManifestHash(payloadSource);
+    await params.filesystemScope?.assertCurrentAuthority?.();
     const published = await params.lifecycle.publishTransferWhenReady({
       transferId: `workspace-file-download:${randomUUID()}`, payloadSource: { ...payloadSource, manifestHash },
       ...(params.filesystemScope ? { filesystemScope: params.filesystemScope } : {}),
@@ -49,50 +60,19 @@ export async function prepareWorkspaceFileExport(params: Readonly<{
 }
 
 /** Publish the existing captured entry manifest and its authorized on-demand blobs. */
-export async function prepareWorkspaceEntryExport(params: Readonly<{
+export async function prepareWorkspaceEntryExport(params: Parameters<typeof createWorkspaceEntryExportSource>[0] & Readonly<{
   lifecycle: Pick<DirectTransferServerLifecycle, 'publishTransferWhenReady'>;
-  rootPath: string; path: string; operationId: string;
-  accessPolicy: FilesystemAccessPolicy;
-  additionalAllowedReadDirs?: readonly string[];
   filesystemScope: PreparedFilesystemTransferScope;
-  assertCurrentAuthority: () => Promise<void>;
+  nativeExport?: () => ReturnType<typeof createWorkspaceEntryExportSource>;
 }>) {
-  const relativePath = relative(params.rootPath, params.path);
-  if (!relativePath) throw new Error('The filesystem root cannot be exported as a copy entry');
-  await params.assertCurrentAuthority();
-  const expectation = await observeWorkspaceSyncEntryAtRoot({ rootPath: params.rootPath, relativePath,
-    assertCurrentAuthority: params.assertCurrentAuthority });
-  if (expectation.kind === 'missing') throw new Error('Filesystem copy source is missing');
-  const captureDirectory = createHappierTempDir({ purpose: 'filesystem-copy-source' });
+  const exported = await (params.nativeExport?.() ?? createWorkspaceEntryExportSource(params));
   try {
-    const captured = await captureWorkspaceSyncEntryAtRoot({ rootPath: params.rootPath, relativePath,
-      expected: expectation, captureDirectory, operationId: params.operationId, assertCurrentAuthority: params.assertCurrentAuthority });
-    const exported = await createWorkspaceSyncEntryExport({ operationId: params.operationId,
-      expectation, materialPath: captured.materialPath,
-      assertEntryAllowed: entry => {
-        if (entry.kind !== 'symlink') return;
-        const originalPath = resolve(params.path, ...entry.relativePath.split('/').slice(1));
-        // Link targets are filesystem bytes, not shell/home expressions.
-        const destination = resolve(dirname(originalPath), entry.target);
-        const confined = authorizeFilesystemPath({ targetPath: destination, defaultDirectory: params.rootPath,
-          accessPolicy: { kind: 'restrictedRoots', roots: [params.rootPath] } });
-        const admitted = authorizeFilesystemPath({ targetPath: destination, defaultDirectory: params.rootPath, accessPolicy: params.accessPolicy,
-          additionalAllowedDirs: params.additionalAllowedReadDirs });
-        if (!confined.valid || !admitted.valid) throw new Error('Filesystem copy source link escapes its admitted root');
-      } });
-    const payloadSource = { ...exported.payloadSource, dispose: () => removeHappierTempDirAsync(captureDirectory) };
-    const manifestHash = await resolveTransferPayloadManifestHash(payloadSource);
-    const sizeBytes = await resolveTransferPayloadSizeBytes(payloadSource);
-    await params.assertCurrentAuthority();
     const published = await params.lifecycle.publishTransferWhenReady({ transferId: params.operationId,
-      payloadSource, onDemandScope: exported.onDemandScope, filesystemScope: params.filesystemScope });
+      payloadSource: exported.payloadSource, onDemandScope: exported.onDemandScope, filesystemScope: params.filesystemScope });
     return { prepared: { transferId: published.transferId, endpointCandidates: published.endpointCandidates,
-      expiresAt: published.expiresAt, name: basename(params.path), sizeBytes, manifestHash },
-      entryTree: { operationId: params.operationId, expectation, blobs: [...exported.blobs] } };
-  } catch (error) {
-    await removeHappierTempDirAsync(captureDirectory);
-    throw error;
-  }
+      expiresAt: published.expiresAt, name: exported.name, sizeBytes: exported.sizeBytes, manifestHash: exported.manifestHash },
+      entryTree: exported.entryTree };
+  } catch (error) { await exported.payloadSource.dispose?.(); throw error; }
 }
 
 export async function createWorkspaceEntryExportSource(params: Readonly<{

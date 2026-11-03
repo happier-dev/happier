@@ -4,19 +4,30 @@ import { join } from 'node:path';
 
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { describe, expect, it, vi } from 'vitest';
-import type { RpcHandlerContext } from '@/api/rpc/types';
+import type { RpcHandler, RpcHandlerContext } from '@/api/rpc/types';
 
-import { registerBashHandler } from './bash';
+import { registerBashHandler as registerProductionBashHandler } from './bash';
 import { ExecutionBudgetRegistry } from '@/daemon/executionBudget/ExecutionBudgetRegistry';
 import { createDaemonAdmissionDrain } from '@/daemon/lifecycle/admissionDrain';
+import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
+import { authorizeMachineRpcRequest } from '@/api/machine/machineRpcAuthorization';
+
+// The Home identity/current admission are the transport boundary; the handler,
+// selector, OS subprocess and process custody stay real.
+const ownerContext = (): RpcHandlerContext => ({ signal: new AbortController().signal, callerAuthority: 'present_user',
+    machineAdmission: { actorAccountId: 'owner', custodianAccountId: 'owner', machineId: 'machine',
+        installationId: 'installation', role: 'manage', encryptionMode: 'plain' }, verifyMachineAdmissionCurrent: async () => true });
+const registerBashHandler: typeof registerProductionBashHandler = (registrar, cwd, opts) =>
+    registerProductionBashHandler(registrar, cwd, { resolveHostHomeServerIdentityId: async () => 'home', ...opts });
 
 function createRegistrar() {
     const handlers = new Map<string, (payload: unknown, context?: RpcHandlerContext) => Promise<unknown>>();
     return {
         handlers,
         registrar: {
-            registerHandler(method: string, handler: (payload: unknown, context?: RpcHandlerContext) => Promise<unknown>) {
-                handlers.set(method, handler);
+            registerHandler<TRequest, TResponse>(method: string, handler: RpcHandler<TRequest, TResponse>) {
+                handlers.set(method, async (payload, context) => handler(payload as TRequest, { ...ownerContext(), ...context }));
             },
         },
     };
@@ -48,16 +59,93 @@ async function settleWithin<T>(
 }
 
 describe('registerBashHandler', () => {
+    it('admits ordinary owner automation while refusing Agent and unsupported member raw execution', async () => {
+        // Only the current Home proof is substituted; ingress, identity selection,
+        // production registration and the subprocess all remain real.
+        const rpc = new RpcHandlerManager({ scopePrefix: 'machine', localMachineId: 'machine', encryptionMode: 'plain', logger: () => {},
+            authorizeRequest: request => authorizeMachineRpcRequest(request, { machineId: 'machine',
+                resolveCustodianAccountId: async () => 'owner', resolveInstallationId: () => 'installation',
+                resolveHomeServerIdentityId: async () => 'home', verifyMachineAdmission: async () => true }) });
+        registerProductionBashHandler(rpc, process.cwd(), { resolveHostHomeServerIdentityId: async () => 'home' });
+        const directory = await mkdtemp(join(tmpdir(), 'happier-bash-owner-'));
+        const command = (marker: string) => ({ argv: [process.execPath, '-e',
+            "require('node:fs').writeFileSync(process.argv[1], 'executed'); process.stdout.write('ordinary-owner-command')", marker], timeout: 0 });
+        const request = { method: `machine:${RPC_METHODS.BASH}`, params: command(join(directory, 'owner')),
+            machineAdmission: ownerContext().machineAdmission, callerAuthority: 'account_automation' as const };
+        try {
+            expect(await rpc.handleRequest(request)).toMatchObject({ success: true, stdout: 'ordinary-owner-command' });
+            expect(await readFile(join(directory, 'owner'), 'utf8')).toBe('executed');
+            expect(await rpc.handleRequest({ ...request, params: command(join(directory, 'agent')), sessionActionOrigin: {
+                v: 1, caller: { kind: 'session', sessionId: 'agent-session', starterDepth: 0, turnDepth: 0 },
+                callerPermissionMode: 'default', sourceTurnId: 'agent-turn', requestId: 'agent-request' } }))
+                .toMatchObject({ errorCode: 'RPC_FORBIDDEN' });
+            expect(await rpc.handleRequest({ ...request, params: command(join(directory, 'member')),
+                machineAdmission: { ...ownerContext().machineAdmission!, actorAccountId: 'member', role: 'use' } }))
+                .toMatchObject({ errorCode: 'agent_isolation_unavailable' });
+            await expect(readFile(join(directory, 'agent'))).rejects.toMatchObject({ code: 'ENOENT' });
+            await expect(readFile(join(directory, 'member'))).rejects.toMatchObject({ code: 'ENOENT' });
+        } finally { await rm(directory, { recursive: true, force: true }); }
+    });
+
+    it('preserves cancellation while owner Home admission is pending', async () => {
+        const { handlers, registrar } = createRegistrar();
+        const controller = new AbortController();
+        registerBashHandler(registrar, process.cwd(), { resolveHostHomeServerIdentityId: async () => {
+            controller.abort(); return 'home';
+        } });
+        await expect(handlers.get(RPC_METHODS.BASH)!({ argv: [process.execPath, '-e', "process.stdout.write('effect')"], timeout: 0 },
+            { ...ownerContext(), signal: controller.signal }))
+            .resolves.toMatchObject({ success: false, error: 'Command cancelled' });
+    });
+    it('does not let a retained Action binding replace the installed Home identity', async () => {
+        const { handlers, registrar } = createRegistrar();
+        registerBashHandler(registrar, process.cwd());
+        const callerInputAuthorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'fixture-host-stamp', binding: {
+            serverIdentityId: 'different-home', accountId: 'owner', custodianAccountId: 'owner',
+            authentication: { kind: 'account', tokenEpoch: 1 }, accountEncryptionMode: 'plain',
+            machineId: 'machine', installationId: 'installation', actionId: 'machines.agentIsolation.preview', requestId: 'fixture',
+            requestEnvelopeDigest: 'a'.repeat(43), target: { kind: 'machine', machineId: 'machine' },
+        } });
+        await expect(handlers.get(RPC_METHODS.BASH)!({ argv: [process.execPath, '-e', "process.stdout.write('effect')"], timeout: 0 },
+            { ...ownerContext(), callerInputAuthorization }))
+            .resolves.toMatchObject({ success: false, errorCode: 'agent_isolation_unavailable' });
+    });
+    it.each(['use', 'manage'] as const)('keeps Use protected and admits Manage raw execution without native capture (%s)', async role => {
+        const { handlers, registrar } = createRegistrar();
+        registerBashHandler(registrar, process.cwd());
+        const context: RpcHandlerContext = { signal: new AbortController().signal, callerAuthority: 'present_user',
+            machineAdmission: { actorAccountId: 'member', custodianAccountId: 'owner', machineId: 'machine',
+                installationId: 'installation', role, encryptionMode: 'plain' },
+            verifyMachineAdmissionCurrent: async () => true };
+        for (const request of [{ argv: [process.execPath, '-e', "process.stdout.write('effect')"], timeout: 0 },
+            { command: `"${process.execPath}" -e "process.stdout.write('effect')"`, cwd: '/', timeout: 0 }]) {
+            await expect(handlers.get(RPC_METHODS.BASH)!(request, context))
+                .resolves.toMatchObject(role === 'manage' ? { success: true, stdout: 'effect', exitCode: 0 }
+                    : { success: false, errorCode: 'agent_isolation_unavailable' });
+        }
+    });
+    it('denies Agent-origin raw commands even through an admitted Action while preserving person commands', async () => {
+        const { handlers, registrar } = createRegistrar();
+        registerBashHandler(registrar as never, process.cwd());
+        const request = { argv: [process.execPath, '-e', "process.stdout.write('raw-custodian-effect')"], timeout: 0 };
+        const signal = new AbortController().signal;
+        const automation: RpcHandlerContext = { signal, callerAuthority: 'account_automation',
+            localActionContext: { authority: 'account_automation' },
+            sessionActionOrigin: { v: 1, caller: { kind: 'session', sessionId: 'agent-session', starterDepth: 0, turnDepth: 0 },
+                callerPermissionMode: 'default', sourceTurnId: 'agent-turn', requestId: 'agent-request' } };
+        await expect(handlers.get(RPC_METHODS.BASH)!(request, automation))
+            .resolves.toMatchObject({ success: false, errorCode: 'agent_isolation_unavailable' });
+        await expect(handlers.get(RPC_METHODS.BASH)!(request, { signal, callerAuthority: 'present_user' }))
+            .resolves.toMatchObject({ success: true, stdout: 'raw-custodian-effect' });
+    });
+
     it.each(['argv', 'shell'] as const)('refuses fresh %s work before native execution while the canonical daemon drain is closed', async mode => {
         const { handlers, registrar } = createRegistrar();
         const admissionDrain = createDaemonAdmissionDrain();
         const executionBudgetRegistry = new ExecutionBudgetRegistry({ maxConcurrentExecutionRuns: null, maxConcurrentOneShotTasks: null });
         registerBashHandler(registrar as never, process.cwd(), { executionBudgetRegistry, admissionDrain });
         const directory = await mkdtemp(join(tmpdir(), 'happier-bash-admission-'));
-        const context: RpcHandlerContext = { signal: new AbortController().signal,
-            localActionContext: { requesterWorkAttributionV1: {
-                serverId: 'home', accountId: 'requester', machineId: 'machine', installationId: 'installation',
-            } } };
+        const context = ownerContext();
         const invoke = (marker: string) => {
             const script = "require('node:fs').writeFileSync(process.argv[1], 'executed')";
             return handlers.get(RPC_METHODS.BASH)!({ ...(mode === 'argv'
@@ -153,7 +241,6 @@ describe('registerBashHandler', () => {
         const directory = await mkdtemp(join(tmpdir(), 'happier-bash-cancel-'));
         const marker = join(directory, 'started');
         const controller = new AbortController();
-        const attribution = { serverId: 'home', accountId: 'requester', machineId: 'machine', installationId: 'installation' };
         try {
             const script = "process.stdout.write('partial'); require('node:fs').writeFileSync(process.argv[1], 'ready'); setTimeout(() => {}, 2000)";
             const pending = handlers.get(RPC_METHODS.BASH)!({
@@ -161,10 +248,10 @@ describe('registerBashHandler', () => {
                     ? { argv: [process.execPath, '-e', script, marker] }
                     : { command: `"${process.execPath}" -e "${script}" "${marker}"` }),
                 timeout: 0,
-            }, { signal: controller.signal, localActionContext: { requesterWorkAttributionV1: attribution } });
+            }, { ...ownerContext(), signal: controller.signal });
             await vi.waitFor(async () => expect(await readFile(marker, 'utf8')).toBe('ready'));
             expect(executionBudgetRegistry.getLiveWorkProducer().read()).toMatchObject({ coverage: 'complete', items: [{
-                category: 'finite', attribution, state: 'active',
+                category: 'finite', attribution: { kind: 'unknown' }, state: 'active',
             }] });
             controller.abort();
             await expect(pending).resolves.toMatchObject({ success: false, stdout: 'partial', error: 'Command cancelled' });

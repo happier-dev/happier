@@ -1,4 +1,6 @@
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
+import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
+import type { Readable, Stream } from 'node:stream';
 import type { McpToolAnnotationsV1 } from '@happier-dev/protocol/mcp/servers/settingsV1';
 
 import type { McpServerConfig } from '@/agent';
@@ -45,8 +47,12 @@ export async function probeMcpStdioServerTools(params: Readonly<{
   connectTimeoutMs?: number;
   listToolsTimeoutMs?: number;
   signal?: AbortSignal;
+  assertCurrent?: () => Promise<void>;
   sanitizeDiagnosticText?: (value: string) => string;
   createDiagnosticStreamingSanitizer?: () => ProviderStreamingSanitizer;
+  /** Private installed native producer; never read from an MCP/RPC config.
+   * That producer retains the process/materials through strong settlement. */
+  prepareTransport?: () => Promise<Readonly<{ transport: Transport; stderr?: Readable }>>;
 }>): Promise<McpServerProbeResult> {
   params.signal?.throwIfAborted();
   const [{ Client }, { StdioClientTransport }, { McpError }, { getDisplayName }] = await Promise.all([
@@ -60,28 +66,29 @@ export async function probeMcpStdioServerTools(params: Readonly<{
   const env = params.config.env ? { ...resolveEnvRecord(baseEnv), ...params.config.env } : resolveEnvRecord(baseEnv);
 
   let protocolVersion: string | undefined;
-  const transport = Object.assign(new StdioClientTransport({
-    command: params.config.command,
-    args: params.config.args ?? [],
-    env,
-    stderr: 'pipe',
-  }), { setProtocolVersion: (version: string) => { protocolVersion = version; } });
+  let transport: Transport | undefined;
+  let stderr: Stream | undefined;
+  let prepared: Awaited<ReturnType<NonNullable<typeof params.prepareTransport>>> | undefined;
   let capturedStderr = '';
   const streamingSanitizer = params.createDiagnosticStreamingSanitizer?.();
   const onStderr = (chunk: string | Uint8Array) => {
     capturedStderr = appendBoundedStderrTail(capturedStderr, streamingSanitizer ? streamingSanitizer.push(chunk) : chunk);
   };
-  transport.stderr?.on('data', onStderr);
   const stderrTail = () => sanitizeChildStderrTail(capturedStderr, params.sanitizeDiagnosticText ?? (value => value)) ?? undefined;
 
   const client = new Client({ name: 'happier-mcp-test', version: '1.0.0' }, { capabilities: {} });
   let closing: Promise<void> | undefined;
-  const close = () => closing ??= client.close().catch(() => {});
+  const close = () => closing ??= (async () => {
+    if (!prepared) return await client.close().catch(() => {});
+    // A cancellation between native preparation and Client.connect still owns
+    // the selected process. Its existing supervisor, not SDK spawn, closes it.
+    try { await client.close(); } finally { await prepared.transport.close(); }
+  })();
   const finishStderr = () => {
-    transport.stderr?.off('data', onStderr);
+    stderr?.off('data', onStderr);
     if (streamingSanitizer) capturedStderr = appendBoundedStderrTail(capturedStderr, streamingSanitizer.flush());
   };
-  const onAbort = () => { void close(); };
+  const onAbort = () => { if (transport) void close().catch(() => {}); };
   params.signal?.addEventListener('abort', onAbort, { once: true });
 
   let phase: 'connect' | 'list_tools' = 'connect';
@@ -91,6 +98,16 @@ export async function probeMcpStdioServerTools(params: Readonly<{
     // Keep the caller's cancellation and the SDK request lifetime authoritative.
     // A Test-only default cutoff can expire while the shared remote bridge is
     // still within its startup and per-request credential lookup lifetimes.
+    await params.assertCurrent?.();
+    params.signal?.throwIfAborted();
+    prepared = await params.prepareTransport?.();
+    transport = Object.assign(params.prepareTransport ? prepared!.transport : new StdioClientTransport({
+      command: params.config.command, args: params.config.args ?? [], env, stderr: 'pipe',
+    }), { setProtocolVersion: (version: string) => { protocolVersion = version; } });
+    stderr = prepared?.stderr ?? (transport instanceof StdioClientTransport ? transport.stderr ?? undefined : undefined);
+    stderr?.on('data', onStderr);
+    await params.assertCurrent?.();
+    params.signal?.throwIfAborted();
     await withMcpTimeout(client.connect(transport, { signal: params.signal }), {
       timeoutMs: params.connectTimeoutMs ?? 0,
       label: 'mcp_connect_timeout',
@@ -99,6 +116,8 @@ export async function probeMcpStdioServerTools(params: Readonly<{
     const tools: McpServerProbeTool[] = [];
     let cursor: string | undefined;
     do {
+      params.signal?.throwIfAborted();
+      await params.assertCurrent?.();
       params.signal?.throwIfAborted();
       const page = await withMcpTimeout(client.listTools(
         cursor === undefined ? undefined : { cursor },
@@ -125,18 +144,21 @@ export async function probeMcpStdioServerTools(params: Readonly<{
     await close();
     finishStderr();
     params.signal?.throwIfAborted();
+    await params.assertCurrent?.();
     const diagnostic = stderrTail();
     return { tools, ...(protocolVersion === undefined ? {} : { protocolVersion }),
       ...(server === undefined ? {} : { serverInfo: { name: server.name, version: server.version } }),
       ...(instructions === undefined ? {} : { instructions }), ...(diagnostic ? { stderrTail: diagnostic } : {}) };
   } catch (error) {
-    await close();
+    // A failed native Stop is owned by the same finite invocation outside this
+    // protocol adapter. It must not replace the original admission/probe error.
+    await close().catch(() => {});
     finishStderr();
     const failure = error instanceof McpError ? StdioMcpServerStartupFailureSchema.safeParse(error.data) : null;
     throw new McpServerProbeError(error, phase, stderrTail(), failure?.success ? failure.data : undefined);
   } finally {
     params.signal?.removeEventListener('abort', onAbort);
-    await close();
-    transport.stderr?.off('data', onStderr);
+    await close().catch(() => {});
+    stderr?.off('data', onStderr);
   }
 }

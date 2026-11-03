@@ -350,7 +350,8 @@ export function createDirectTransferServerLifecycle(params: Readonly<{
   };
 
   registry = createRegistry({
-    advertisedPort: params.bindPort,
+    // The same registry survives lazy listener restarts; port zero is only a bind request.
+    get advertisedPort() { return server?.port ?? params.bindPort; },
     now,
     beforeDisposePayloadSource: async transferToken => { await server?.releasePublishedTransferHandles?.(transferToken); },
     onPublishedTransfersChanged: () => {
@@ -376,7 +377,7 @@ export function createDirectTransferServerLifecycle(params: Readonly<{
         ...(params.attachmentUpload ? { attachmentUpload: params.attachmentUpload } : {}),
         readPublishedTransfer: (input) => registry?.readPublishedTransfer(input) ?? null,
         completeFilesystemExport: (input) => registry.completeFilesystemExport(input),
-        ...(typeof params.bindPort === 'number' && params.bindPort > 0
+        ...(typeof params.bindPort === 'number' && params.bindPort >= 0
           ? { bindPort: params.bindPort }
           : {}),
         bindHost,
@@ -516,7 +517,7 @@ export function createDirectTransferServerLifecycle(params: Readonly<{
       }
       const prepared = await started.openTrustedImportSession(input, filesystemScope, privateStagingDirectory);
       if (!prepared.success) {
-        throw new Error(prepared.error);
+        throw Object.assign(new Error(prepared.error), { errorCode: prepared.errorCode });
       }
       void emitState('running');
       scheduleLifecycleTimer();

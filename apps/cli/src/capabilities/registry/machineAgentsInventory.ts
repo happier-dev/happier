@@ -10,6 +10,7 @@ export function createAcpAgentInventoryCapability(input: Readonly<{
   env?: NodeJS.ProcessEnv; platform?: string; arch?: string; accountId?: string;
 }> = {}): Capability {
   return { descriptor: { id: 'tool.acpAgentInventory', kind: 'tool', title: 'ACP agent installs' },
+    effects: { detect: ['private_read'] },
     async detect({ request, context }) {
       const parsed = MachineAcpInventoryRequestSchema.safeParse(request.params);
       if (!parsed.success) throw new CapabilityError('Invalid ACP inventory request', 'invalid-request');

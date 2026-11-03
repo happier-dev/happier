@@ -1,4 +1,8 @@
 import type { ProcessEnvInput } from '@/utils/processEnv/buildScopedProcessEnv';
+import { randomUUID } from 'node:crypto';
+import { parseConnectedAccountRequestAuthCapabilityDocument } from '@happier-dev/agents/request-auth';
+import { PluginError } from '@happier-dev/plugin-sdk/errors';
+import { readProtectedLocalStateFile } from '@/utils/fs/protectedLocalState';
 
 /**
  * MCP server materialization (CLI/runtime)
@@ -23,6 +27,8 @@ import { join, resolve as resolvePath } from 'node:path';
 import { realpathSync } from 'node:fs';
 
 import type { McpServerConfig } from '@/agent';
+import type { AgentLaunchSelectedMaterial } from '@/daemon/agentIsolation/agentLaunchFrame';
+import type { AgentLaunchMaterializationTarget } from '@/daemon/agentIsolation/agentLaunchMaterials';
 import { resolveNodeBackedMcpServerCommand } from '@/mcp/runtime/resolveNodeBackedMcpServerCommand';
 import { removeWrittenMcpRuntimeConfigFile, writeSecureMcpRuntimeConfigFile } from '@/mcp/runtime/writeSecureMcpRuntimeConfigFile';
 import { listValueRefSecretIdsV1 } from '@happier-dev/protocol/valueRefs/valueRefV1';
@@ -70,6 +76,7 @@ export type MaterializeMcpServerConfigRecordResult = Readonly<{
   cleanup: () => void;
   sanitizeDiagnosticText: (value: string) => string;
   createDiagnosticStreamingSanitizer: () => ProviderStreamingSanitizer;
+  selectedMaterials?: readonly AgentLaunchSelectedMaterial[];
 }>;
 
 type Deps = Readonly<{
@@ -107,6 +114,33 @@ function resolveNeutralLaunchCwd(processEnv: ProcessEnvInput): string {
   }
 }
 
+type PrivateConfigMaterialization = Readonly<{
+  target: AgentLaunchMaterializationTarget;
+  selectedMaterials: AgentLaunchSelectedMaterial[];
+}>;
+
+async function materializePrivateRuntimeConfig(params: Readonly<{
+  prefix: string;
+  payload: unknown;
+  tmpDir: string | null;
+  writtenPaths: string[];
+  assertCurrent?: () => Promise<void>;
+  agentLaunchMaterials?: PrivateConfigMaterialization;
+}>): Promise<string> {
+  if (params.agentLaunchMaterials) {
+    await params.assertCurrent?.();
+    const relativePath = `files/${params.prefix}.${randomUUID()}.json`;
+    params.agentLaunchMaterials.selectedMaterials.push(Object.freeze({
+      relativePath,
+      contentBase64: Buffer.from(JSON.stringify(params.payload), 'utf8').toString('base64'),
+    }));
+    return join(params.agentLaunchMaterials.target.runtimeHome, relativePath);
+  }
+  const configPath = await writeSecureMcpRuntimeConfigFile(params);
+  params.writtenPaths.push(configPath);
+  return configPath;
+}
+
 async function materializePrivateStdioLaunch(params: Readonly<{
   command: string;
   args: string[];
@@ -115,15 +149,19 @@ async function materializePrivateStdioLaunch(params: Readonly<{
   tmpDir: string | null;
   deps: Deps;
   writtenPaths: string[];
+  assertCurrent?: () => Promise<void>;
+  agentLaunchMaterials?: PrivateConfigMaterialization;
 }>): Promise<McpServerConfig> {
   const launcherCommand = await (params.deps.resolveStdioLauncherCommand?.() ?? resolveDefaultStdioLauncherCommand());
-  const configPath = await writeSecureMcpRuntimeConfigFile({
+  const configPath = await materializePrivateRuntimeConfig({
     prefix: 'happier-mcp-stdio-launcher',
     tmpDir: params.tmpDir,
+    writtenPaths: params.writtenPaths,
+    agentLaunchMaterials: params.agentLaunchMaterials,
+    assertCurrent: params.assertCurrent,
     payload: { command: params.command, args: params.args, env: params.env,
       ...(params.cwd === undefined ? {} : { cwd: params.cwd }) },
   });
-  params.writtenPaths.push(configPath);
   return {
     command: launcherCommand.command,
     args: launcherCommand.args,
@@ -139,6 +177,8 @@ async function materializeStdioServer(params: Readonly<{
   tmpDir: string | null;
   deps: Deps;
   writtenPaths: string[];
+  assertCurrent?: () => Promise<void>;
+  agentLaunchMaterials?: PrivateConfigMaterialization;
 }>): Promise<
   | null
   | Readonly<{ ok: true; config: McpServerConfig }>
@@ -170,14 +210,15 @@ async function materializeStdioServer(params: Readonly<{
     args = normalizedInvocation.args;
     launchEnv = buildScopedProcessEnv({ baseEnv: params.resolvedEnv, explicitEnv: normalizedInvocation.env });
     cwd ??= normalizedInvocation.cwdPolicy === 'workspace' ? params.directory : resolveNeutralLaunchCwd(params.processEnv);
-  } else if (Object.keys(params.resolvedEnv).length === 0 && cwd === undefined) {
+  } else if (Object.keys(params.resolvedEnv).length === 0 && cwd === undefined && !params.agentLaunchMaterials) {
     return { ok: true, config: { command, args } };
   }
 
   return {
     ok: true,
     config: await materializePrivateStdioLaunch({ command, args, env: launchEnv, cwd,
-      tmpDir: params.tmpDir, deps: params.deps, writtenPaths: params.writtenPaths }),
+      tmpDir: params.tmpDir, deps: params.deps, writtenPaths: params.writtenPaths, assertCurrent: params.assertCurrent,
+      agentLaunchMaterials: params.agentLaunchMaterials }),
   };
 }
 
@@ -190,15 +231,20 @@ async function materializeRemoteServer(params: Readonly<{
   tmpDir: string | null;
   deps: Deps;
   writtenPaths: string[];
+  assertCurrent?: () => Promise<void>;
   requestAuth?: McpRequestAuthCapability;
+  agentLaunchMaterials?: PrivateConfigMaterialization;
 }>): Promise<McpServerConfig | null> {
   if (params.server.transport === 'stdio' || !params.server.remote) return null;
 
   const bridgeCommand = await (params.deps.resolveRemoteBridgeCommand?.() ?? resolveDefaultRemoteBridgeCommand());
 
-  const configPath = await writeSecureMcpRuntimeConfigFile({
+  const configPath = await materializePrivateRuntimeConfig({
     prefix: 'happier-mcp-remote-bridge',
     tmpDir: params.tmpDir,
+    writtenPaths: params.writtenPaths,
+    agentLaunchMaterials: params.agentLaunchMaterials,
+    assertCurrent: params.assertCurrent,
     payload: {
       transport: params.server.transport,
       url: params.resolvedUrl,
@@ -207,7 +253,6 @@ async function materializeRemoteServer(params: Readonly<{
       ...(params.requestAuth ? { auth: params.requestAuth } : {}),
     },
   });
-  params.writtenPaths.push(configPath);
 
   const env = {
     ...(bridgeCommand.env ?? {}),
@@ -222,6 +267,8 @@ async function materializeRemoteServer(params: Readonly<{
       tmpDir: params.tmpDir,
       deps: params.deps,
       writtenPaths: params.writtenPaths,
+      assertCurrent: params.assertCurrent,
+      agentLaunchMaterials: params.agentLaunchMaterials,
     });
   }
   return {
@@ -238,17 +285,28 @@ export async function materializeMcpServerConfigRecord(params: Readonly<{
   processEnv?: ProcessEnvInput;
   tmpDir: string | null;
   strictMode?: boolean;
+  signal?: AbortSignal;
+  assertCurrent?: () => Promise<void>;
   deps?: Deps;
   requestAuthByServerId?: Readonly<Record<string, McpRequestAuthCapability>>;
   requestAuthFailuresByServerId?: Readonly<Record<string, McpRequestAuthFailureCode>>;
+  agentLaunchTarget?: AgentLaunchMaterializationTarget;
 }>): Promise<MaterializeMcpServerConfigRecordResult> {
   const strictMode = params.strictMode ?? params.resolved.strictMode;
   const processEnv = params.processEnv ?? process.env;
   const deps: Deps = params.deps ?? {};
+  const assertCurrent = async () => {
+    params.signal?.throwIfAborted();
+    await params.assertCurrent?.();
+    params.signal?.throwIfAborted();
+  };
 
   const mcpServers: Record<string, McpServerConfig> = {};
   const warnings: MaterializeMcpServerConfigRecordWarning[] = [];
   const writtenPaths: string[] = [];
+  const agentLaunchMaterials: PrivateConfigMaterialization | undefined = params.agentLaunchTarget
+    ? { target: params.agentLaunchTarget, selectedMaterials: [] }
+    : undefined;
   const diagnosticRedaction = createProviderRedactionLease({ values: [] });
   const cleanup = () => {
     diagnosticRedaction.close();
@@ -266,6 +324,7 @@ export async function materializeMcpServerConfigRecord(params: Readonly<{
   try {
     for (const [serverName, item] of Object.entries(params.resolved.serversByName)) {
       if (item.enabled !== true) continue;
+      await assertCurrent();
       const server = item.config;
 
       const resolvedEnv: Record<string, string> = {};
@@ -319,6 +378,8 @@ export async function materializeMcpServerConfigRecord(params: Readonly<{
           tmpDir: params.tmpDir,
           deps,
           writtenPaths,
+          assertCurrent,
+          agentLaunchMaterials,
         });
         if (!cfg || cfg.ok !== true) {
           const warning: MaterializeMcpServerConfigRecordWarning = {
@@ -326,7 +387,9 @@ export async function materializeMcpServerConfigRecord(params: Readonly<{
             code: 'invalid_server',
             detail: cfg?.detail ?? 'missing stdio config',
           };
-          if (strictMode) throw new Error(`Failed to materialize MCP server ${serverName}: ${warning.detail}`);
+          if (strictMode) {
+            throw new Error(`Failed to materialize MCP server ${serverName}: ${warning.detail}`);
+          }
           warnings.push(warning);
           continue;
         }
@@ -412,7 +475,7 @@ export async function materializeMcpServerConfigRecord(params: Readonly<{
         continue;
       }
 
-      const requestAuth = server.remote.auth?.kind === 'oauth' ? params.requestAuthByServerId?.[server.id] : undefined;
+      let requestAuth = server.remote.auth?.kind === 'oauth' ? params.requestAuthByServerId?.[server.id] : undefined;
       let resourceMatches = false;
       if (requestAuth) {
         try {
@@ -426,6 +489,23 @@ export async function materializeMcpServerConfigRecord(params: Readonly<{
         warnings.push(warning);
         continue;
       }
+      if (requestAuth && agentLaunchMaterials) {
+        await assertCurrent();
+        let document: ReturnType<typeof parseConnectedAccountRequestAuthCapabilityDocument> = null;
+        try {
+          document = parseConnectedAccountRequestAuthCapabilityDocument(JSON.parse(
+            await readProtectedLocalStateFile(requestAuth.capabilityFile)));
+        } catch { /* A private path or malformed document is never diagnostic text. */ }
+        await assertCurrent();
+        if (!document) throw new PluginError({ code: 'agent_isolation_unavailable',
+          message: 'Selected MCP request authentication is unavailable', retryable: false,
+          details: { phase: 'native_execution_preparation' } });
+        const capabilityFile = await materializePrivateRuntimeConfig({
+          prefix: 'happier-mcp-request-auth', payload: document, tmpDir: params.tmpDir,
+          writtenPaths, assertCurrent, agentLaunchMaterials,
+        });
+        requestAuth = { ...requestAuth, capabilityFile };
+      }
       const remoteCfg = await materializeRemoteServer({
         server,
         resolvedUrl,
@@ -436,6 +516,8 @@ export async function materializeMcpServerConfigRecord(params: Readonly<{
         deps,
         writtenPaths,
         requestAuth,
+        assertCurrent,
+        agentLaunchMaterials,
       });
 
       if (!remoteCfg) {
@@ -452,7 +534,9 @@ export async function materializeMcpServerConfigRecord(params: Readonly<{
       mcpServers[serverName] = remoteCfg;
     }
 
+    await assertCurrent();
     return { mcpServers, warnings, cleanup, sanitizeDiagnosticText: diagnosticRedaction.redact,
+      ...(agentLaunchMaterials ? { selectedMaterials: Object.freeze([...agentLaunchMaterials.selectedMaterials]) } : {}),
       createDiagnosticStreamingSanitizer: diagnosticRedaction.createStreamingSanitizer };
   } catch (error) {
     cleanup();

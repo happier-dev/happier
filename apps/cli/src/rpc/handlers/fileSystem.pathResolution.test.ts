@@ -21,7 +21,7 @@ import { stat } from 'fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { registerFileSystemHandlers } from './fileSystem';
+import { createFilesystemOwnerRpcContext, registerOwnerFilesystemRpcHandlers as registerFileSystemHandlers } from './fileSystem.testkit';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { resolve } from 'path';
 import { createCliActionExecutorHarness } from '@/session/actions/createCliActionExecutorHarness';
@@ -65,12 +65,48 @@ function createRpcHandlerManager(): { handlers: Map<string, Handler>; registerHa
 }
 
 describe('registerFileSystemHandlers', () => {
+  it('keeps admitted owner reads useful while refusing a member without native custody', async () => {
+    const work = await realFs.mkdtemp(join(tmpdir(), 'happier-fs-owner-custody-'));
+    const path = join(work, 'private-fixture');
+    vi.mocked(readFile).mockImplementation(realFs.readFile);
+    vi.mocked(stat).mockImplementation(realFs.stat);
+    const mgr = createRpcHandlerManager();
+    const registration = registerFileSystemHandlers(mgr, work);
+    try {
+      await realFs.writeFile(path, 'synthetic-owner-only-bytes', { mode: 0o600 });
+      const read = mgr.handlers.get(RPC_METHODS.READ_FILE);
+      if (!read) throw new Error('expected read handler');
+      const owner = createFilesystemOwnerRpcContext();
+      if (!owner.machineAdmission) throw new Error('expected owner Machine receipt');
+      const positive = await read({ path });
+      expect(positive.success === true && positive.content === Buffer.from('synthetic-owner-only-bytes').toString('base64')).toBe(true);
+      const refused = await read({ path }, { ...owner, machineAdmission: {
+        ...owner.machineAdmission, actorAccountId: 'member', role: 'use' as const,
+      } });
+      expect({ success: refused.success, errorCode: refused.errorCode }).toEqual({
+        success: false, errorCode: 'filesystem_identity_custody_unavailable',
+      });
+      expect(refused).not.toHaveProperty('content');
+      const admitted = await read({ path }, { ...owner, verifyMachineAdmissionCurrent: async () => false });
+      expect(admitted).toMatchObject({ success: true, content: Buffer.from('synthetic-owner-only-bytes').toString('base64') });
+      expect(await realFs.readFile(path, 'utf8') === 'synthetic-owner-only-bytes').toBe(true);
+    } finally {
+      vi.mocked(readFile).mockReset();
+      vi.mocked(stat).mockReset();
+      await registration.dispose();
+      await realFs.rm(work, { recursive: true, force: true });
+    }
+  });
+
   it('admits predecessor rootless filesystem requests through the real canonical Action parser', async () => {
     const mgr = createRpcHandlerManager();
     // No filesystem effect is mounted: reaching its typed unsupported result proves
     // that real Action admission accepted the legacy carrier without mocking parsing.
     const { executor } = createCliActionExecutorHarness({
       token: 'admitted-daemon', sessionId: '', mode: 'plain', ctx: null,
+      machineActionDirectTargetTransport: { machineId: 'machine', invoke: async () => {
+        throw new Error('Local filesystem admission must not invoke Machine RPC');
+      } },
       actionsSettingsProvider: createActionSettingsProvider({ accountSettings: accountSettingsParse({
         actionsSettingsV1: { v: 1, actions: {}, approvalWaivedSurfaces: { 'daemon.filesystem.writeFile': ['rpc'] } },
       }) }),
@@ -132,6 +168,7 @@ describe('registerFileSystemHandlers', () => {
     const readResult = await read({ path: '../outside.txt' });
     expect(readResult).toMatchObject({
       success: false,
+      errorCode: 'access_denied',
     });
     expect(String((readResult as { error?: string }).error ?? '')).toContain('outside the allowed directories');
 
@@ -142,6 +179,7 @@ describe('registerFileSystemHandlers', () => {
     });
     expect(writeResult).toMatchObject({
       success: false,
+      errorCode: 'access_denied',
     });
     expect(String((writeResult as { error?: string }).error ?? '')).toContain('outside the allowed directories');
     expect(readFile).not.toHaveBeenCalled();
