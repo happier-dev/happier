@@ -1973,6 +1973,9 @@ describe('BrowserShell', () => {
             },
             redaction: {
               level: 'metadataOnly',
+              queryRedacted: true,
+              headersRedacted: true,
+              truncated: false,
             },
           },
         ],

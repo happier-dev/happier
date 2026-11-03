@@ -3,10 +3,10 @@ import type { BrowserDiagnosticEventV1, BrowserDiagnosticFamilyV1, BrowserDiagno
 
 import {
     createSidecarPrivateReference,
-    redactSidecarDiagnosticsHeaders,
     redactSidecarDiagnosticsUrl,
     type SidecarDiagnosticsHeaders,
 } from './redaction';
+import { mapSidecarNetworkEvent } from './networkEvents';
 
 type SidecarDiagnosticBaseInput = Readonly<{
     browserSessionId: string;
@@ -25,15 +25,43 @@ type SidecarNetworkRequestEvent = Readonly<{
     url: string;
     headers?: SidecarDiagnosticsHeaders;
     resourceType?: string;
+    hasPostData?: boolean;
+    timestamp?: number;
+    initiator?: SidecarDiagnosticSource & Readonly<{ type?: string; stackFrames?: readonly SidecarDiagnosticSource[] }>;
+    redirectResponse?: SidecarNetworkResponse;
+    redirectHasExtraInfo?: boolean;
 }>;
 
-type SidecarNetworkResponseEvent = Readonly<{
-    kind: 'network.responseReceived';
-    requestId: string;
+export type SidecarNetworkResponse = Readonly<{
     url: string;
     status: number;
     mimeType?: string;
     headers?: SidecarDiagnosticsHeaders;
+    timestamp?: number;
+    timing?: Readonly<Record<string, number>>;
+    transportProtocol?: string;
+    fromDiskCache?: boolean;
+    fromServiceWorker?: boolean;
+    securityState?: string;
+    securityDetails?: Readonly<Record<string, string | number>>;
+    hasExtraInfo?: boolean;
+    encodedDataLength?: number;
+}>;
+type SidecarNetworkResponseEvent = SidecarNetworkResponse & Readonly<{ kind: 'network.responseReceived'; requestId: string }>;
+
+type SidecarNetworkExtraInfoEvent = Readonly<{
+    kind: 'network.requestExtraInfo' | 'network.responseExtraInfo';
+    requestId: string;
+    headers?: SidecarDiagnosticsHeaders;
+    statusCode?: number;
+}>;
+
+type SidecarNetworkFinishedEvent = Readonly<{
+    kind: 'network.loadingFinished'; requestId: string; timestamp?: number; encodedDataLength?: number;
+}>;
+
+export type SidecarDiagnosticSource = Readonly<{
+    url?: string; functionName?: string; lineNumber?: number; columnNumber?: number;
 }>;
 
 type SidecarNetworkFailureEvent = Readonly<{
@@ -41,6 +69,9 @@ type SidecarNetworkFailureEvent = Readonly<{
     requestId: string;
     url?: string;
     errorText?: string;
+    timestamp?: number;
+    canceled?: boolean;
+    blockedReason?: string;
 }>;
 
 type SidecarWebSocketSummaryEvent = Readonly<{
@@ -59,12 +90,17 @@ type SidecarConsoleEvent = Readonly<{
     level: 'debug' | 'error' | 'info' | 'log' | 'warning';
     text?: string;
     argCount?: number;
+    args?: readonly (string | number | boolean | null)[];
+    stackFrames?: readonly SidecarDiagnosticSource[];
+    source?: SidecarDiagnosticSource;
 }>;
 
 type SidecarPageErrorEvent = Readonly<{
     kind: 'runtime.exceptionThrown';
     message: string;
     stack?: string;
+    stackFrames?: readonly SidecarDiagnosticSource[];
+    source?: SidecarDiagnosticSource;
 }>;
 
 type SidecarPageInfoEvent = Readonly<{
@@ -79,11 +115,15 @@ export type SidecarCdpDiagnosticEventInput = SidecarDiagnosticBaseInput & Readon
         | SidecarNetworkRequestEvent
         | SidecarNetworkResponseEvent
         | SidecarNetworkFailureEvent
+        | SidecarNetworkFinishedEvent
+        | SidecarNetworkExtraInfoEvent
         | SidecarWebSocketSummaryEvent
         | SidecarConsoleEvent
         | SidecarPageErrorEvent
-        | SidecarPageInfoEvent;
+        | SidecarPageInfoEvent
+        | Readonly<{ kind: 'diagnostics.available'; family: BrowserDiagnosticFamilyV1 }>;
 }>;
+export type SidecarNetworkEvent = Extract<SidecarCdpDiagnosticEventInput['event'], { requestId: string }>;
 
 function eventId(input: SidecarDiagnosticBaseInput): string {
     return `sidecar_diag_${input.viewId}_${input.navigationGeneration}_${input.eventOrdinal}`;
@@ -124,46 +164,23 @@ function baseEvent(input: SidecarDiagnosticBaseInput): Pick<
     };
 }
 
-export function mapSidecarCdpDiagnosticEvent(input: SidecarCdpDiagnosticEventInput): BrowserDiagnosticEventV1 {
+export function mapSidecarCdpDiagnosticEvent(input: SidecarCdpDiagnosticEventInput, previousNetworkEvent?: BrowserDiagnosticEventV1): BrowserDiagnosticEventV1 {
     const common = baseEvent(input);
 
     switch (input.event.kind) {
         case 'network.requestWillBeSent':
-            return BrowserDiagnosticEventV1Schema.parse({
-                ...common,
-                family: 'network',
-                kind: 'network.requestStarted',
-                data: {
-                    requestId: createSidecarPrivateReference('request', input.event.requestId),
-                    method: input.event.method,
-                    resourceType: input.event.resourceType,
-                    url: redactSidecarDiagnosticsUrl(input.event.url),
-                    headers: redactSidecarDiagnosticsHeaders(input.event.headers),
-                },
-            });
         case 'network.responseReceived':
-            return BrowserDiagnosticEventV1Schema.parse({
-                ...common,
-                family: 'network',
-                kind: 'network.response',
-                data: {
-                    requestId: createSidecarPrivateReference('request', input.event.requestId),
-                    status: input.event.status,
-                    mimeType: input.event.mimeType,
-                    url: redactSidecarDiagnosticsUrl(input.event.url),
-                    headers: redactSidecarDiagnosticsHeaders(input.event.headers),
-                },
-            });
         case 'network.loadingFailed':
+        case 'network.loadingFinished':
+        case 'network.requestExtraInfo':
+        case 'network.responseExtraInfo':
+            return mapSidecarNetworkEvent(input.event, common, previousNetworkEvent);
+        case 'diagnostics.available':
             return BrowserDiagnosticEventV1Schema.parse({
                 ...common,
-                family: 'network',
-                kind: 'network.failed',
-                data: {
-                    requestId: createSidecarPrivateReference('request', input.event.requestId),
-                    ...(input.event.url ? { url: redactSidecarDiagnosticsUrl(input.event.url) } : {}),
-                    ...(input.event.errorText ? { errorText: truncateText(input.event.errorText, 512) } : {}),
-                },
+                family: input.event.family,
+                kind: 'diagnostics.available',
+                data: {},
             });
         case 'network.webSocketSummary':
             return BrowserDiagnosticEventV1Schema.parse({
@@ -191,6 +208,10 @@ export function mapSidecarCdpDiagnosticEvent(input: SidecarCdpDiagnosticEventInp
                 data: {
                     level: input.event.level,
                     textAvailable: Boolean(input.event.text),
+                    ...(input.event.text === undefined ? {} : { text: input.event.text }),
+                    ...(input.event.args ? { args: input.event.args } : {}),
+                    ...(input.event.stackFrames ? { stackFrames: input.event.stackFrames } : {}),
+                    ...(input.event.source ? { source: input.event.source } : {}),
                     ...(input.event.argCount !== undefined ? { argCount: input.event.argCount } : {}),
                 },
             });
@@ -206,6 +227,10 @@ export function mapSidecarCdpDiagnosticEvent(input: SidecarCdpDiagnosticEventInp
                 data: {
                     messageAvailable: Boolean(input.event.message),
                     stackAvailable: Boolean(input.event.stack),
+                    message: input.event.message,
+                    ...(input.event.stack ? { stack: input.event.stack } : {}),
+                    ...(input.event.stackFrames ? { stackFrames: input.event.stackFrames } : {}),
+                    ...(input.event.source ? { source: input.event.source } : {}),
                 },
             });
         case 'page.info':
@@ -215,7 +240,7 @@ export function mapSidecarCdpDiagnosticEvent(input: SidecarCdpDiagnosticEventInp
                 kind: 'pageInfo.snapshot',
                 data: {
                     ...(input.event.url ? { url: redactSidecarDiagnosticsUrl(input.event.url) } : {}),
-                    ...(input.event.title ? { title: truncateText(input.event.title, 512) } : {}),
+                    ...(input.event.title === undefined ? {} : { title: input.event.title }),
                     ...(input.event.faviconUrl ? { faviconUrl: redactSidecarDiagnosticsUrl(input.event.faviconUrl) } : {}),
                 },
             });

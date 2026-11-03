@@ -1,15 +1,17 @@
 import { browserViewKey } from '@happier-dev/protocol/browser/view/key';
 import type { BrowserAdapterCapabilitiesV1, BrowserDiagnosticFamilyV1, BrowserDiagnosticUnavailableReasonV1 } from '@happier-dev/protocol';
 
-import type { BrowserDiagnosticsDaemonStore } from '../../diagnostics/store';
+import type { BrowserDiagnosticsDaemonStore, BrowserDiagnosticsPrivateNetworkRequest } from '../../diagnostics/store';
 import type { SidecarCdpDiagnosticEventInput } from './mapEvents';
 import { createSidecarDiagnosticsPublisher } from './publish';
+import { SIDECAR_CDP_DIAGNOSTIC_FAMILIES } from './cdpEventSource';
 
 type SidecarDiagnosticsSourceCdpEvent = Readonly<{
     capturedAtMs?: number;
     rawCdpSessionId?: string;
     debuggerUrl?: string;
     event: SidecarCdpDiagnosticEventInput['event'];
+    privateRequest?: BrowserDiagnosticsPrivateNetworkRequest;
 }>;
 
 type SidecarDiagnosticsSourceUnavailableEvent = Readonly<{
@@ -45,8 +47,6 @@ type SidecarDiagnosticsAttachInput = Readonly<{
     viewId: string;
     navigationGeneration: number;
     adapterCapabilities: BrowserAdapterCapabilitiesV1;
-    featureEnabled: boolean;
-    policyAllowed: boolean;
     source: SidecarDiagnosticsEventSource;
     families: readonly BrowserDiagnosticFamilyV1[];
 }>;
@@ -85,13 +85,6 @@ type OrdinalTarget = Readonly<{
     viewId: string;
 }>;
 
-const DEFAULT_SIDECAR_CDP_DIAGNOSTIC_FAMILIES: readonly BrowserDiagnosticFamilyV1[] = [
-    'network',
-    'console',
-    'pageError',
-    'pageInfo',
-];
-
 function bindingKey(input: Readonly<{ browserSessionId: string; viewId: string; sourceId: string }>): string {
     return browserViewKey(input, input.sourceId);
 }
@@ -99,7 +92,7 @@ function bindingKey(input: Readonly<{ browserSessionId: string; viewId: string; 
 function uniqueFamilies(families: readonly BrowserDiagnosticFamilyV1[]): readonly BrowserDiagnosticFamilyV1[] {
     const seen = new Set<BrowserDiagnosticFamilyV1>();
     const out: BrowserDiagnosticFamilyV1[] = [];
-    for (const family of families.length > 0 ? families : DEFAULT_SIDECAR_CDP_DIAGNOSTIC_FAMILIES) {
+    for (const family of families.length > 0 ? families : SIDECAR_CDP_DIAGNOSTIC_FAMILIES) {
         if (seen.has(family)) continue;
         seen.add(family);
         out.push(family);
@@ -112,6 +105,9 @@ function familyForCdpEvent(event: SidecarCdpDiagnosticEventInput['event']): Brow
         case 'network.requestWillBeSent':
         case 'network.responseReceived':
         case 'network.loadingFailed':
+        case 'network.loadingFinished':
+        case 'network.requestExtraInfo':
+        case 'network.responseExtraInfo':
         case 'network.webSocketSummary':
             return 'network';
         case 'runtime.consoleEntry':
@@ -120,6 +116,8 @@ function familyForCdpEvent(event: SidecarCdpDiagnosticEventInput['event']): Brow
             return 'pageError';
         case 'page.info':
             return 'pageInfo';
+        case 'diagnostics.available':
+            return event.family;
     }
 }
 
@@ -132,8 +130,6 @@ function adapterSupportsCdpFamily(
 }
 
 function resolveAttachBlockedReason(input: SidecarDiagnosticsAttachInput): BrowserDiagnosticUnavailableReasonV1 | null {
-    if (!input.featureEnabled) return 'feature_disabled';
-    if (!input.policyAllowed) return 'policy_denied';
     const families = uniqueFamilies(input.families);
     return families.every((family) => adapterSupportsCdpFamily(input.adapterCapabilities, family))
         ? null
@@ -181,7 +177,7 @@ export function createInMemorySidecarDiagnosticsEventSource(input: Readonly<{
 
 export function createBrowserSidecarDiagnosticsEventSourceBridge(input: Readonly<{
     ownerAccountId: string;
-    store: Pick<BrowserDiagnosticsDaemonStore, 'publishEvent' | 'clearView' | 'clearSession'>;
+    store: Pick<BrowserDiagnosticsDaemonStore, 'publishEvent' | 'clearView' | 'clearSession' | 'getNetworkRequest'>;
     nowMs: () => number;
 }>): Readonly<{
     attachView(attachInput: SidecarDiagnosticsAttachInput): SidecarDiagnosticsEventSourceAttachResult;
@@ -195,9 +191,9 @@ export function createBrowserSidecarDiagnosticsEventSourceBridge(input: Readonly
     // session-scoped cleanup matches on the recorded view ref rather than on the key's shape.
     const viewRefsByOrdinalKey = new Map<string, { browserSessionId: string; viewId: string }>();
     const publisher = createSidecarDiagnosticsPublisher({
-        ownerAccountId: input.ownerAccountId,
-        publish: (event) => {
-            input.store.publishEvent(event);
+        getNetworkRequest: input.store.getNetworkRequest,
+        publish: (event, privateRequest) => {
+            input.store.publishEvent(event, privateRequest);
         },
     });
 
@@ -215,14 +211,13 @@ export function createBrowserSidecarDiagnosticsEventSourceBridge(input: Readonly
     function publishUnavailable(
         attachInput: Pick<
             SidecarDiagnosticsAttachInput,
-            'requesterAccountId' | 'browserSessionId' | 'viewId' | 'navigationGeneration' | 'featureEnabled' | 'policyAllowed'
+            'browserSessionId' | 'viewId' | 'navigationGeneration'
         >,
         family: BrowserDiagnosticFamilyV1,
         reason: BrowserDiagnosticUnavailableReasonV1,
         capturedAtMs = input.nowMs(),
     ): void {
         publisher.publishUnavailable({
-            requesterAccountId: attachInput.requesterAccountId,
             browserSessionId: attachInput.browserSessionId,
             viewId: attachInput.viewId,
             navigationGeneration: attachInput.navigationGeneration,
@@ -230,9 +225,6 @@ export function createBrowserSidecarDiagnosticsEventSourceBridge(input: Readonly
             eventOrdinal: nextOrdinal(attachInput),
             family,
             reason,
-            featureEnabled: attachInput.featureEnabled,
-            policyAllowed: attachInput.policyAllowed,
-            runtimeAvailable: true,
         });
     }
 
@@ -278,25 +270,17 @@ export function createBrowserSidecarDiagnosticsEventSourceBridge(input: Readonly
             try {
                 const subscription = attachInput.source.start({
                     onCdpEvent: (event) => {
-                        const family = familyForCdpEvent(event.event);
-                        if (!adapterSupportsCdpFamily(attachInput.adapterCapabilities, family)) {
-                            publishUnavailable(attachInput, family, 'unsupported_fidelity', event.capturedAtMs);
-                            return;
-                        }
-
+                        if (!families.includes(familyForCdpEvent(event.event))) return;
                         publisher.publishCdpEvent({
-                            requesterAccountId: attachInput.requesterAccountId,
                             browserSessionId: attachInput.browserSessionId,
                             viewId: attachInput.viewId,
                             navigationGeneration: attachInput.navigationGeneration,
                             capturedAtMs: event.capturedAtMs ?? input.nowMs(),
                             eventOrdinal: nextOrdinal(attachInput),
-                            featureEnabled: attachInput.featureEnabled,
-                            policyAllowed: attachInput.policyAllowed,
-                            runtimeAvailable: true,
                             rawCdpSessionId: event.rawCdpSessionId,
                             debuggerUrl: event.debuggerUrl,
                             event: event.event,
+                            privateRequest: event.privateRequest,
                         });
                     },
                     onUnavailable: (event) => {

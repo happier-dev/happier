@@ -9,29 +9,19 @@ import type {
     BrowserSidecarViewLifecycleSubscriber,
 } from '../controlAdapter';
 import { createBrowserSidecarDiagnosticsEventSourceBridge } from './eventSource';
-import { createSidecarCdpDiagnosticsEventSource } from './cdpEventSource';
+import { createSidecarCdpDiagnosticsEventSource, SIDECAR_CDP_DIAGNOSTIC_FAMILIES } from './cdpEventSource';
 import type { SurfaceInputControl } from '../../../surfaces/inputControl';
+import { readSidecarRequestDetail, type BrowserDiagnosticsRequestDetailInput } from './requestDetails';
+import type { BrowserDiagnosticsRequestDetailV1 } from '@happier-dev/protocol/browser/diagnostics/v1';
 
 /**
  * The diagnostics families a CDP sidecar feeds live. The product Chromium sidecar reports `cdp`
  * fidelity for each, which is what the bridge requires before it will start a source.
  */
-const SIDECAR_CDP_DIAGNOSTIC_FAMILIES: readonly BrowserDiagnosticFamilyV1[] = [
-    'network',
-    'console',
-    'pageError',
-    'pageInfo',
-];
-
 const SIDECAR_CDP_DIAGNOSTICS_CAPABILITIES: BrowserAdapterCapabilitiesV1 = BrowserAdapterCapabilitiesV1Schema.parse({
     adapterKind: 'chromiumSidecar',
     supportedTargetKinds: ['externalUrl'],
-    diagnosticsFidelityByFamily: {
-        network: 'cdp',
-        console: 'cdp',
-        pageError: 'cdp',
-        pageInfo: 'cdp',
-    },
+    diagnosticsFidelityByFamily: Object.fromEntries(SIDECAR_CDP_DIAGNOSTIC_FAMILIES.map(family => [family, 'cdp'])),
 });
 
 // openView establishes a view at the initial navigation generation (the automation service and the
@@ -52,7 +42,7 @@ type SidecarCdpDiagnosticsContextCapture = Readonly<{
 
 export type SidecarCdpDiagnosticsRuntimeInput = Readonly<{
     ownerAccountId: string;
-    store: Pick<BrowserDiagnosticsDaemonStore, 'publishEvent' | 'clearView' | 'clearSession'>;
+    store: Pick<BrowserDiagnosticsDaemonStore, 'publishEvent' | 'clearView' | 'clearSession' | 'getNetworkRequest' | 'getPrivateNetworkRequest'>;
     contextCapture: SidecarCdpDiagnosticsContextCapture;
     /** Live `browser.diagnostics` gate; re-read at attach and per event for fail-closed publication. */
     isEnabled: () => boolean;
@@ -62,6 +52,7 @@ export type SidecarCdpDiagnosticsRuntimeInput = Readonly<{
 }>;
 
 export type SidecarCdpDiagnosticsRuntime = Readonly<{
+    readRequestDetail(input: BrowserDiagnosticsRequestDetailInput): Promise<BrowserDiagnosticsRequestDetailV1>;
     dispose(): void;
 }>;
 
@@ -108,8 +99,6 @@ export function createSidecarCdpDiagnosticsRuntime(
             viewId: view.viewId,
             navigationGeneration: INITIAL_NAVIGATION_GENERATION,
             adapterCapabilities: SIDECAR_CDP_DIAGNOSTICS_CAPABILITIES,
-            featureEnabled: input.isEnabled(),
-            policyAllowed: true,
             source,
             families: SIDECAR_CDP_DIAGNOSTIC_FAMILIES,
         });
@@ -124,6 +113,10 @@ export function createSidecarCdpDiagnosticsRuntime(
     });
 
     return {
+        readRequestDetail: request => readSidecarRequestDetail(request, {
+            store: input.store, resolvePageHandle: input.contextCapture.resolvePageHandle,
+            dispatchPageCommand: input.contextCapture.transport.dispatchPageCommand,
+        }),
         dispose() {
             unsubscribeLifecycle();
             bridge.dispose();

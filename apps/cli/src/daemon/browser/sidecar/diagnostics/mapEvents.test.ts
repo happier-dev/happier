@@ -1,6 +1,29 @@
 import { describe, expect, it } from 'vitest';
 
 describe('daemon browser sidecar diagnostics mapping', () => {
+    it('carries actual safe-header clipping on the canonical event', async () => {
+        const { mapSidecarCdpDiagnosticEvent } = await import('./mapEvents');
+        const event = mapSidecarCdpDiagnosticEvent({ browserSessionId: 'b', viewId: 'v', navigationGeneration: 0,
+            capturedAtMs: 1, eventOrdinal: 1, event: { kind: 'network.requestWillBeSent', requestId: 'r',
+                method: 'GET', url: 'https://example.test/', headers: { Accept: 'x'.repeat(300) } } });
+        expect(event.redaction.truncated).toBe(true);
+        expect(event.data.requestHeaders).toEqual({ accept: `${'x'.repeat(253)}...` });
+    });
+    it('preserves owner console/error values and reports actual clipping', async () => {
+        const { mapSidecarCdpDiagnosticEvent } = await import('./mapEvents');
+        const base = { browserSessionId: 'browser', viewId: 'view', navigationGeneration: 1, capturedAtMs: 1, eventOrdinal: 1 };
+        const consoleEvent = mapSidecarCdpDiagnosticEvent({ ...base, event: {
+            kind: 'runtime.consoleEntry', level: 'log', text: 'ready 0 false null', argCount: 4,
+        } });
+        expect(consoleEvent.data).toMatchObject({ text: 'ready 0 false null', argCount: 4 });
+        const error = mapSidecarCdpDiagnosticEvent({ ...base, event: {
+            kind: 'runtime.exceptionThrown', message: 'TypeError: broken', stack: 'at run (app.js:4:2)',
+        } });
+        expect(error.data).toMatchObject({ message: 'TypeError: broken', stack: 'at run (app.js:4:2)' });
+        const title = mapSidecarCdpDiagnosticEvent({ ...base, event: { kind: 'page.info', title: 'x'.repeat(600) } });
+        expect(title.data.title).toBe('x'.repeat(600));
+        expect(title.redaction.truncated).toBe(false);
+    });
     it('maps CDP network requests through cdp fidelity while redacting unsafe URL and header material', async () => {
         const mod = await import('./mapEvents');
 
@@ -33,7 +56,7 @@ describe('daemon browser sidecar diagnostics mapping', () => {
 
         expect(event).toMatchObject({
             v: 1,
-            eventId: 'sidecar_diag_view_1_4_7',
+            eventId: expect.stringMatching(/^sidecar_network_view_1_4_sidecar_request_/),
             browserSessionId: 'browser_session_1',
             viewId: 'view_1',
             navigationGeneration: 4,
@@ -150,7 +173,7 @@ describe('daemon browser sidecar diagnostics mapping', () => {
         expect(JSON.stringify(result)).not.toContain('injectedScriptId');
     });
 
-    it('maps console entries without publishing raw console argument text', async () => {
+    it('retains console text for destination-aware owner egress', async () => {
         const mod = await import('./mapEvents');
 
         expect(mod).not.toBeNull();
@@ -181,11 +204,10 @@ describe('daemon browser sidecar diagnostics mapping', () => {
                 level: 'valuesRedacted',
             },
         });
-        expect(JSON.stringify(event)).not.toContain('secret');
-        expect(JSON.stringify(event)).not.toContain('token');
+        expect(event.data.text).toBe('token=secret should stay daemon-private');
     });
 
-    it('maps page errors without publishing raw message or stack text', async () => {
+    it('retains page errors for destination-aware owner egress', async () => {
         const mod = await import('./mapEvents');
 
         expect(mod).not.toBeNull();
@@ -215,8 +237,8 @@ describe('daemon browser sidecar diagnostics mapping', () => {
                 level: 'valuesRedacted',
             },
         });
-        expect(JSON.stringify(event)).not.toContain('secret');
-        expect(JSON.stringify(event)).not.toContain('password');
+        expect(event.data.message).toBe('password=secret');
+        expect(event.data.stack).toContain('at app.js:1');
     });
 
     it('emits explicit unavailable diagnostics for detached or policy-denied sidecar targets', async () => {

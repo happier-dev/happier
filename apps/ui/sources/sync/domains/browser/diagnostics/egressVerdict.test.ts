@@ -1,7 +1,7 @@
 import {
     classifyBrowserDiagnosticField,
     classifyBrowserDiagnosticFieldForDestination,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/browser/diagnostics/egress/classifier';
 import { describe, expect, it } from 'vitest';
 
 /**

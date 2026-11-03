@@ -45,14 +45,19 @@ describe('daemon browser sidecar diagnostics event sources', () => {
             nowMs: () => 9_000,
         });
 
+        const capabilities = cdpSidecarCapabilities();
+        const fidelity = capabilities.diagnosticsFidelityByFamily;
+        let fidelityReads = 0;
+        Object.defineProperty(capabilities, 'diagnosticsFidelityByFamily', {
+            get() { fidelityReads += 1; return fidelity; },
+        });
+
         expect(bridge.attachView({
             requesterAccountId: 'account_owner',
             browserSessionId: 'browser_session_1',
             viewId: 'view_1',
             navigationGeneration: 3,
-            adapterCapabilities: cdpSidecarCapabilities(),
-            featureEnabled: true,
-            policyAllowed: true,
+            adapterCapabilities: capabilities,
             source,
             families: ['network', 'console'],
         })).toEqual({
@@ -61,6 +66,11 @@ describe('daemon browser sidecar diagnostics event sources', () => {
         });
         expect(source.startCount()).toBe(1);
         expect(source.activeSubscriberCount()).toBe(1);
+        expect(fidelityReads).toBe(2);
+        expect(bridge.attachView({ requesterAccountId: 'account_other', browserSessionId: 'browser_session_1',
+            viewId: 'view_1', navigationGeneration: 3, adapterCapabilities: capabilities,
+            source, families: ['network', 'console'] })).toEqual({ status: 'denied', reason: 'not_owner', sourceStarted: false });
+        expect(source.startCount()).toBe(1);
 
         source.emitCdpEvent({
             capturedAtMs: 1_000,
@@ -86,6 +96,7 @@ describe('daemon browser sidecar diagnostics event sources', () => {
         });
 
         const snapshot = await routes.getSnapshot();
+        expect(fidelityReads).toBe(2);
         expect(snapshot.events).toHaveLength(2);
         expect(snapshot.events.map((event) => [event.kind, event.fidelity, event.trusted])).toEqual([
             ['network.requestStarted', 'cdp', true],
@@ -104,7 +115,10 @@ describe('daemon browser sidecar diagnostics event sources', () => {
         });
         expect(JSON.stringify(snapshot)).not.toContain('raw_cdp_request_secret');
         expect(JSON.stringify(snapshot)).not.toContain('Bearer secret');
-        expect(JSON.stringify(snapshot)).not.toContain('token=secret');
+        // B2: retain the person's console text; agent output crosses the destination classifier.
+        const { redactBrowserDiagnosticsSnapshotForViewer } = await import('../../diagnostics/snapshotEgress');
+        expect(snapshot.events.find(event => event.family === 'console')?.data.text).toBe('token=secret should not leave the daemon');
+        expect(JSON.stringify(redactBrowserDiagnosticsSnapshotForViewer(snapshot, 'agent'))).not.toContain('token=secret');
     });
 
     it('keeps source publication bounded by the daemon store', async () => {
@@ -133,8 +147,6 @@ describe('daemon browser sidecar diagnostics event sources', () => {
             viewId: 'view_1',
             navigationGeneration: 1,
             adapterCapabilities: cdpSidecarCapabilities(),
-            featureEnabled: true,
-            policyAllowed: true,
             source,
             families: ['network'],
         });
@@ -151,9 +163,8 @@ describe('daemon browser sidecar diagnostics event sources', () => {
             });
         }
 
-        expect(store.getSnapshot().events.map((event) => event.eventId)).toEqual([
-            'sidecar_diag_view_1_1_2',
-            'sidecar_diag_view_1_1_3',
+        expect(store.getSnapshot().events.map(event => event.data.url)).toEqual([
+            expect.objectContaining({ path: '/2.js' }), expect.objectContaining({ path: '/3.js' }),
         ]);
     });
 
@@ -183,8 +194,6 @@ describe('daemon browser sidecar diagnostics event sources', () => {
             viewId,
             navigationGeneration: 1,
             adapterCapabilities: cdpSidecarCapabilities(),
-            featureEnabled: true,
-            policyAllowed: true,
             source,
             families: ['pageInfo'],
         });
@@ -239,8 +248,6 @@ describe('daemon browser sidecar diagnostics event sources', () => {
                     network: 'injectedPage',
                 },
             }),
-            featureEnabled: true,
-            policyAllowed: true,
             source,
             families: ['network'],
         })).toEqual({

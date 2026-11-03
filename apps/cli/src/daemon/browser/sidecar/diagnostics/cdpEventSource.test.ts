@@ -106,6 +106,32 @@ describe('translateSidecarCdpNotification', () => {
 });
 
 describe('createSidecarCdpDiagnosticsEventSource', () => {
+    it('pushes actual domain readiness and failure even when the console has no messages, and supplies the title', async () => {
+        const transport = fakeEventTransport();
+        transport.dispatchPageCommand.mockImplementation(async input => {
+            if (input.method === 'Network.enable') throw new Error('unsupported domain');
+            if (input.method === 'Runtime.evaluate') return { result: { value: 'Example title' } };
+            return {};
+        });
+        const { events, subscriber } = captureSubscriber();
+        const unavailable = vi.spyOn(subscriber, 'onUnavailable');
+        const subscription = createSidecarCdpDiagnosticsEventSource({ sourceId: 'quiet', pageHandle, transport }).start(subscriber);
+        await vi.waitFor(() => expect(events).toContainEqual(expect.objectContaining({ event: { kind: 'page.info', title: 'Example title' } })));
+        expect(events).toContainEqual(expect.objectContaining({ event: { kind: 'diagnostics.available', family: 'console' } }));
+        expect(unavailable).toHaveBeenCalledWith(expect.objectContaining({ family: 'network', reason: 'collector_unavailable' }));
+        subscription.stop();
+    });
+    it('preserves primitive console arguments and exception source frames', () => {
+        expect(translateSidecarCdpNotification({ method: 'Runtime.consoleAPICalled', params: { type: 'log',
+            args: [{ type: 'string', value: '' }, { type: 'number', value: 0 }, { type: 'boolean', value: false },
+                { type: 'object', subtype: 'null', value: null }, { type: 'undefined' }] } }))
+            .toMatchObject({ text: ' 0 false null undefined', args: ['', 0, false, null, 'undefined'] });
+        expect(translateSidecarCdpNotification({ method: 'Runtime.exceptionThrown', params: { exceptionDetails: {
+            text: 'Uncaught', exception: { description: 'TypeError: broken' }, url: 'https://example.test/app.js', lineNumber: 3, columnNumber: 1,
+            stackTrace: { callFrames: [{ functionName: 'run', url: 'https://example.test/app.js', lineNumber: 3, columnNumber: 1, scriptId: '42' }] },
+        } } })).toMatchObject({ message: 'TypeError: broken', source: { url: 'https://example.test/app.js', lineNumber: 3, columnNumber: 1 },
+            stackFrames: [{ functionName: 'run', url: 'https://example.test/app.js', lineNumber: 3, columnNumber: 1 }] });
+    });
     const pageHandle = { targetId: 'target_1', sessionId: 'cdp_session_1' } as const;
 
     it('enables CDP diagnostics domains on the bound page session when started', async () => {

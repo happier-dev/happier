@@ -29,6 +29,33 @@ function createEvent(overrides: Partial<BrowserDiagnosticEventV1> = {}): Browser
 }
 
 describe('daemon browser diagnostics store', () => {
+    it('marks history omitted by the existing snapshot projection bound', async () => {
+        const { createBrowserDiagnosticsDaemonStore } = await import('./store');
+        const store = createBrowserDiagnosticsDaemonStore({ machineId: 'machine', maxEventsPerView: 4, maxSnapshotEvents: 2 });
+        for (let n = 1; n <= 3; n++) store.publishEvent(createEvent({ eventId: `event_${n}`, capturedAtMs: n }));
+        expect(store.getViewSnapshot({ browserSessionId: 'browser_session_1', viewId: 'view_1' }).diagnostics)
+            .toContainEqual(expect.objectContaining({ code: 'snapshot_events_omitted', count: 1 }));
+    });
+    it('retains current quiet-family availability when content history overflows', async () => {
+        const { createBrowserDiagnosticsDaemonStore } = await import('./store');
+        const store = createBrowserDiagnosticsDaemonStore({ machineId: 'machine', maxEventsPerView: 2 });
+        store.publishEvent(createEvent({ eventId: 'console_ready', family: 'console', kind: 'diagnostics.available', data: {}, capturedAtMs: 0 }));
+        for (let n = 1; n <= 3; n++) store.publishEvent(createEvent({ eventId: `event_${n}`, capturedAtMs: n }));
+        const snapshot = store.getViewSnapshot({ browserSessionId: 'browser_session_1', viewId: 'view_1' });
+        expect(snapshot.events).toContainEqual(expect.objectContaining({ family: 'console', kind: 'diagnostics.available' }));
+        expect(snapshot.diagnostics).toContainEqual(expect.objectContaining({ code: 'events_evicted', count: 1 }));
+    });
+    it('reports view-owned history eviction without counting upserts or other views', async () => {
+        const { createBrowserDiagnosticsDaemonStore } = await import('./store');
+        const store = createBrowserDiagnosticsDaemonStore({ machineId: 'machine', maxEventsPerView: 2 });
+        for (let n = 1; n <= 3; n++) store.publishEvent(createEvent({ eventId: `event_${n}`, capturedAtMs: n }));
+        store.publishEvent(createEvent({ eventId: 'event_3', capturedAtMs: 4 }));
+        expect(store.getViewSnapshot({ browserSessionId: 'browser_session_1', viewId: 'view_1' }).diagnostics)
+            .toContainEqual(expect.objectContaining({ code: 'events_evicted', count: 1, navigationGeneration: 1 }));
+        expect(store.getViewSnapshot({ browserSessionId: 'browser_session_1', viewId: 'other' }).diagnostics).toEqual([]);
+        store.publishEvent(createEvent({ eventId: 'new_document', navigationGeneration: 2 }));
+        expect(store.getViewSnapshot({ browserSessionId: 'browser_session_1', viewId: 'view_1' }).diagnostics).toEqual([]);
+    });
     it('keeps bounded diagnostics snapshots by view without leaking rejected unsafe events', async () => {
         const mod = await import('./store');
 
@@ -78,12 +105,12 @@ describe('daemon browser diagnostics store', () => {
         }));
         expect(snapshot.events.map((event) => event.eventId)).toEqual(['evt_2', 'evt_3']);
         expect(JSON.stringify(snapshot)).not.toContain('Bearer secret');
-        expect(snapshot.diagnostics).toEqual([
+        expect(snapshot.diagnostics).toEqual(expect.arrayContaining([
             expect.objectContaining({
                 code: 'invalid_event',
                 status: 'rejected',
             }),
-        ]);
+        ]));
     });
 
     it('drops stale generation events after a newer navigation for the same view is published', async () => {

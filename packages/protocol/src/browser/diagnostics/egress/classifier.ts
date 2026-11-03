@@ -15,6 +15,14 @@ import type { BrowserDiagnosticEventKindV1, BrowserDiagnosticEventV1, BrowserDia
  */
 export type BrowserDiagnosticFieldDisposition = 'keep' | 'drop' | 'always-strip';
 
+/** `localOwner` is the legacy name for the admitted person's display destination, including
+ * trusted Machine guests. Content-bearing details never use an agent or generic remote sink.
+ * Authority is supplied by the verified transport context, never a request payload field.
+ */
+export function resolveBrowserDiagnosticsPersonDestination(authority: unknown): BrowserDiagnosticEgressDestination {
+  return authority === 'present_user' ? 'localOwner' : 'agentContext';
+}
+
 /**
  * Maximum length (in UTF-16 code units) of the length-capped console `text`/`args` rendering the
  * injected collector may surface to the local owner. The producer and Protocol ingress schema

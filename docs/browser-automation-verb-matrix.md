@@ -70,11 +70,24 @@ Machine target; it does not interpret the lack of a local diagnostics producer a
 unavailability. The runtime CLI admits the same diagnostics family through the canonical Action
 surface policy.
 
-In development source, the Diagnostics drawer acquires daemon snapshots only while open and
-presented. Closing it releases the read subscription; local and daemon collectors keep their
-existing lifetimes. Opening or reopening acquires the daemon's existing ring (by default,
+In development source, the Diagnostics drawer acquires one view-scoped daemon snapshot while open,
+presented and actively viewed, then watches the daemon owner's actual changes through a cancellable
+Machine RPC subscription. Unchanged idle views perform no history reads. Closing or hiding it
+releases the subscription; local and daemon collectors keep their existing lifetimes. Opening,
+reopening or reconnecting acquires the selected view's daemon ring (by default,
 1,000 events per view and 5,000 per Machine snapshot), with no promise of history beyond that
 ring. Agent snapshot Actions read the daemon store directly and do not require an open drawer.
+
+The current development Diagnostics data contract adds correlated request metadata, console and
+page-error text for a transport-verified person, page titles, collector availability reasons, and
+ring/snapshot loss counts. Agent snapshots continue through the destination classifier. Opening a
+selected request detail performs a separate, person-only read over the same Machine RPC; this
+includes trusted Machine guests. Only that read acquires request/response bodies from CDP and
+returns cookie values from the selected ring record's private ExtraInfo. Those values never enter
+the pushed event history, agent Actions, transcripts or logs. Binary bodies retain their base64
+encoding; missing, unfinished or evicted content has a typed unavailable result. Closing or hiding
+the detail releases the UI's local values. This B5/B6 development path is ready for security review;
+it is not a released availability promise.
 
 Exact-Machine control and automation also use that transport when the managed view has no mounted
 client presentation. Mounting a daemon-owned view does not transfer execution to the client; its

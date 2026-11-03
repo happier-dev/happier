@@ -106,6 +106,7 @@ export const BrowserDiagnosticEventKindV1Schema = lazyZodSchema(() => z.enum([
   'screenshot.metadata',
   'proxyTunnel.snapshot',
   'diagnostics.unavailable',
+  'diagnostics.available',
   'eval.requested',
   'eval.completed',
   'eval.failed',
@@ -415,6 +416,11 @@ export const BrowserDiagnosticEventV1Schema = lazyZodSchema(() => z.strictObject
   })));
 export type BrowserDiagnosticEventV1 = z.infer<typeof BrowserDiagnosticEventV1Schema>;
 
+/** Current collector state is separate from the retained diagnostic content history. */
+export function isBrowserDiagnosticLifecycleEvent(event: Pick<BrowserDiagnosticEventV1, 'kind'>): boolean {
+  return event.kind === 'diagnostics.available' || event.kind === 'diagnostics.unavailable' || event.kind === 'collector.degraded';
+}
+
 export const BrowserDiagnosticEventBatchV1Schema = lazyZodSchema(() => z.strictObject({
     v: z.literal(1),
     kind: z.literal('browser.diagnostics.events'),
@@ -482,9 +488,53 @@ export const BrowserDiagnosticsSnapshotV1Schema = lazyZodSchema(() => z.strictOb
   }));
 export type BrowserDiagnosticsSnapshotV1 = z.infer<typeof BrowserDiagnosticsSnapshotV1Schema>;
 
+/** Person-selected details use a separate envelope; they are never diagnostic events or Actions. */
+export const BrowserDiagnosticsBodyV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
+  z.strictObject({ status: z.literal('available'), text: z.string(), encoding: z.enum(['utf8', 'base64']) }),
+  z.strictObject({ status: z.literal('unavailable'), reason: z.enum(['not_captured', 'not_finished', 'body_unavailable']) }),
+]));
+export const BrowserDiagnosticsCookieV1Schema = lazyZodSchema(() => z.strictObject({
+  name: z.optional(z.string()), value: z.optional(z.string()), domain: z.optional(z.string()),
+  path: z.optional(z.string()), secure: z.optional(z.boolean()), httpOnly: z.optional(z.boolean()),
+  sameSite: z.optional(z.string()), expires: z.optional(z.number()), cookieLine: z.optional(z.string()),
+  blockedReasons: z.array(z.string()), exemptionReason: z.optional(z.string()),
+}));
+export type BrowserDiagnosticsCookieV1 = z.infer<typeof BrowserDiagnosticsCookieV1Schema>;
+export const BrowserDiagnosticsCookieExtraInfoV1Schema = lazyZodSchema(() => z.strictObject({
+  cookies: z.array(BrowserDiagnosticsCookieV1Schema), cookieHeader: z.optional(z.string()),
+  setCookieHeaders: z.optional(z.array(z.string())),
+}));
+export type BrowserDiagnosticsCookieExtraInfoV1 = z.infer<typeof BrowserDiagnosticsCookieExtraInfoV1Schema>;
+export const BrowserDiagnosticsRequestDetailV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
+  z.strictObject({ status: z.literal('available'), requestId: IdSchema,
+    requestBody: BrowserDiagnosticsBodyV1Schema, responseBody: BrowserDiagnosticsBodyV1Schema,
+    // Independent CDP ExtraInfo stream order, matching the correlated request's hop flags.
+    requestExtraInfo: z.array(BrowserDiagnosticsCookieExtraInfoV1Schema),
+    responseExtraInfo: z.array(BrowserDiagnosticsCookieExtraInfoV1Schema),
+  }),
+  z.strictObject({ status: z.literal('unavailable'), reason: z.enum([
+    'permission_denied', 'request_evicted', 'page_unavailable', 'unsupported_engine',
+  ]) }),
+]));
+export type BrowserDiagnosticsRequestDetailV1 = z.infer<typeof BrowserDiagnosticsRequestDetailV1Schema>;
+
 export const DaemonBrowserDiagnosticsSnapshotRequestV1Schema = lazyZodSchema(() => z.strictObject({
     machineId: IdSchema,
-  }));
+    view: z.optional(z.strictObject({
+      browserSessionId: IdSchema,
+      viewId: IdSchema,
+      navigationGeneration: NonNegativeIntSchema,
+    })),
+    sinceRevision: z.optional(NonNegativeIntSchema),
+    requestId: z.optional(IdSchema),
+  }).check(z.superRefine((request, context) => {
+    if (request.sinceRevision !== undefined && !request.view) context.addIssue({
+      code: 'custom', path: ['view'], message: 'A diagnostics watch requires a view.',
+    });
+    if (request.requestId !== undefined && (!request.view || request.sinceRevision !== undefined)) context.addIssue({
+      code: 'custom', path: ['requestId'], message: 'Selected-request details require a view and cannot watch revisions.',
+    });
+  })));
 export type DaemonBrowserDiagnosticsSnapshotRequestV1 = z.infer<
   typeof DaemonBrowserDiagnosticsSnapshotRequestV1Schema
 >;
@@ -492,6 +542,8 @@ export type DaemonBrowserDiagnosticsSnapshotRequestV1 = z.infer<
 export const DaemonBrowserDiagnosticsSnapshotResponseV1Schema = lazyZodSchema(() => z.strictObject({
     protocolVersion: z.literal(1),
     snapshot: BrowserDiagnosticsSnapshotV1Schema,
+    revision: z.optional(NonNegativeIntSchema),
+    requestDetail: z.optional(BrowserDiagnosticsRequestDetailV1Schema),
   }));
 export type DaemonBrowserDiagnosticsSnapshotResponseV1 = z.infer<
   typeof DaemonBrowserDiagnosticsSnapshotResponseV1Schema

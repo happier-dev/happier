@@ -61,6 +61,55 @@ function summaryContextSource(summaries: BrowserContextDiagnosticsSummarySource)
 }
 
 describe('createSidecarCdpDiagnosticsRuntime', () => {
+    it('correlates independent ExtraInfo streams across redirects without retaining a provisional wrong-hop header', () => {
+        const store = createBrowserDiagnosticsDaemonStore({ machineId: 'machine' });
+        const surface = fakeContextCapture();
+        const runtime = createSidecarCdpDiagnosticsRuntime({ ownerAccountId: OWNER, store, contextCapture: surface.contextCapture, isEnabled: () => true });
+        surface.bindView();
+        const emit = (method: string, params: Record<string, unknown>) => surface.emitCdp({ method, params, sessionId: HANDLE.sessionId });
+        emit('Network.requestWillBeSent', { requestId: 'r', timestamp: 1, request: { method: 'GET', url: 'https://example.test/a' } });
+        emit('Network.requestWillBeSentExtraInfo', { requestId: 'r', headers: { 'X-Request-Id': 'final-hop' } });
+        emit('Network.requestWillBeSent', { requestId: 'r', timestamp: 2, redirectHasExtraInfo: false,
+            redirectResponse: { url: 'https://example.test/a', status: 302 }, request: { method: 'GET', url: 'https://example.test/b' },
+            initiator: { type: 'script', stack: { callFrames: [{ functionName: 'load', url: 'https://example.test/app.js?token=secret', lineNumber: 4, columnNumber: 2 }] } } });
+        emit('Network.responseReceivedExtraInfo', { requestId: 'r', statusCode: 200, headers: { 'Content-Type': 'text/plain' } });
+        emit('Network.responseReceived', { requestId: 'r', timestamp: 2.1, hasExtraInfo: true,
+            response: { url: 'https://example.test/b', status: 200, securityDetails: { protocol: 'TLS 1.3', cipher: 'AES_128_GCM', issuer: 'Example CA' } } });
+        emit('Network.loadingFinished', { requestId: 'r', timestamp: 2.5, encodedDataLength: 20 });
+        const event = store.getSnapshot().events.find(event => event.kind === 'network.finished')!;
+        expect(event.data).toMatchObject({ requestHeaders: { 'x-request-id': 'final-hop' }, durationMs: 500,
+            securityDetails: { protocol: 'TLS 1.3', cipher: 'AES_128_GCM', issuer: 'Example CA' },
+            initiator: { type: 'script', stackFrames: [{ functionName: 'load', url: { path: '/app.js', queryKeys: [] }, lineNumber: 4, columnNumber: 2 }] } });
+        expect(event.data.redirects).toEqual([expect.objectContaining({ status: 302, durationMs: 1000, requestHeaders: {} })]);
+        expect(JSON.stringify(event)).not.toContain('secret');
+        runtime.dispose();
+    });
+    it('correlates ExtraInfo before a request, response and completion into one request with timing and bytes', () => {
+        const store = createBrowserDiagnosticsDaemonStore({ machineId: 'machine' });
+        const surface = fakeContextCapture();
+        const runtime = createSidecarCdpDiagnosticsRuntime({ ownerAccountId: OWNER, store,
+            contextCapture: surface.contextCapture, isEnabled: () => true });
+        surface.bindView();
+        const emit = (method: string, params: Record<string, unknown>) => surface.emitCdp({ method, params, sessionId: HANDLE.sessionId });
+        emit('Network.responseReceivedExtraInfo', { requestId: 'r1', statusCode: 304, headers: { 'Content-Type': 'text/plain', 'Set-Cookie': 'secret' } });
+        emit('Network.requestWillBeSentExtraInfo', { requestId: 'r1', headers: { Accept: 'text/plain', Cookie: 'secret' } });
+        emit('Network.requestWillBeSent', { requestId: 'r1', timestamp: 10, request: { method: 'GET', url: 'https://example.test/a?search=x' } });
+        emit('Network.responseReceived', { requestId: 'r1', timestamp: 10.1, hasExtraInfo: true,
+            response: { status: 200, url: 'https://example.test/a', mimeType: 'text/plain', protocol: 'h2', fromDiskCache: true,
+                timing: { requestTime: 10, receiveHeadersEnd: 100 } } });
+        emit('Network.loadingFinished', { requestId: 'r1', timestamp: 10.25, encodedDataLength: 512 });
+        const events = store.getSnapshot().events.filter(event => event.family === 'network' && event.kind !== 'diagnostics.available');
+        expect(events).toHaveLength(1);
+        expect(events[0]).toMatchObject({ kind: 'network.finished', data: { method: 'GET', status: 200, statusCode: 304,
+            durationMs: 250, responseBytes: 512, requestHeaders: { accept: 'text/plain' },
+            responseHeaders: { 'content-type': 'text/plain' }, transportProtocol: 'h2', fromDiskCache: true } });
+        expect(JSON.stringify(events)).not.toContain('secret');
+        emit('Network.requestWillBeSent', { requestId: 'r2', timestamp: 11, request: { method: 'POST', url: 'https://example.test/b' } });
+        emit('Network.loadingFailed', { requestId: 'r2', timestamp: 11.5, errorText: 'net::ERR_CONNECTION_RESET' });
+        expect(store.getSnapshot().events.find(event => event.kind === 'network.failed')?.data)
+            .toMatchObject({ method: 'POST', durationMs: 500, errorText: 'net::ERR_CONNECTION_RESET' });
+        runtime.dispose();
+    });
     it('does not retain console or network observations during the confidential source hold', async () => {
         const store = createBrowserDiagnosticsDaemonStore({ machineId: 'machine_1', now: () => 9_000 });
         const surface = fakeContextCapture();
@@ -112,11 +161,11 @@ describe('createSidecarCdpDiagnosticsRuntime', () => {
         });
 
         const snapshot = store.getSnapshot();
-        expect(snapshot.events.map((event) => [event.kind, event.fidelity, event.trusted])).toEqual([
+        expect(snapshot.events.map((event) => [event.kind, event.fidelity, event.trusted])).toEqual(expect.arrayContaining([
             ['network.requestStarted', 'cdp', true],
             ['console.entry', 'cdp', true],
-        ]);
-        expect(snapshot.events[0]?.data).toMatchObject({
+        ]));
+        expect(snapshot.events.find(event => event.family === 'network')?.data).toMatchObject({
             method: 'GET',
             url: { origin: 'https://example.test', path: '/api', queryKeys: ['ok'] },
             headers: { accept: 'application/json' },
@@ -124,7 +173,7 @@ describe('createSidecarCdpDiagnosticsRuntime', () => {
         const serialized = JSON.stringify(snapshot);
         expect(serialized).not.toContain('raw_cdp_request_secret');
         expect(serialized).not.toContain('Bearer secret');
-        expect(serialized).not.toContain('token=secret');
+        expect(snapshot.events.find(event => event.family === 'console')?.data.text).toBe('token=secret should not leave the daemon');
 
         // The store is now non-empty: the context captureSummary path returns a redacted network summary.
         const networkSummary = await summaryContextSource(createBrowserContextDiagnosticsSummarySource({ store })).captureSummary({

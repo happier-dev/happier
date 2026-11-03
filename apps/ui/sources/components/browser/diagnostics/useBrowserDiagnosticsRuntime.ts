@@ -10,7 +10,7 @@ import type {
     BrowserDiagnosticsGetPropertiesResultV1,
     BrowserDiagnosticsReleaseObjectGroupRequestV1,
     BrowserDiagnosticsReleaseObjectGroupResultV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/browser/diagnostics/v1';
 import type { BrowserControlViewState } from '@/sync/domains/browser/control';
 import { resolveBrowserInjectedDiagnosticsTransport, type BrowserDiagnosticsAvailability } from '@/sync/domains/browser/adapters/capabilities';
 import type {
@@ -21,6 +21,7 @@ import type {
 import {
     advanceBrowserDiagnosticsGeneration,
     applyBrowserDiagnosticEvents,
+    applyBrowserDiagnosticsSnapshotState,
     createBrowserDiagnosticsUiStore,
     resolveBrowserDiagnosticsSnapshotMachineId,
     type BrowserDiagnosticsSnapshotClient,
@@ -121,8 +122,8 @@ export type UseBrowserDiagnosticsRuntimeInput = Readonly<{
     automationEnabled?: boolean;
     parentOrigin?: string | null;
     collectorVersion?: string;
+    daemonSnapshotMachineId?: string | null;
     daemonSnapshotServerId?: string | null;
-    daemonSnapshotRefreshIntervalMs?: number | null;
     daemonSnapshotClient?: BrowserDiagnosticsSnapshotClient;
     /**
      * DEV-2: the LOCAL owner's `browser.diagnostics` value-capture policy. The injected engine bridge
@@ -229,19 +230,20 @@ export function useBrowserDiagnosticsRuntime(
         if (input.enabled !== true) return;
         eventSource.setState((current) => applyBrowserDiagnosticEvents(current, {
             events,
-            consoleValueCapture: valueCapture,
-            valueCapture,
         }), true);
-    }, [eventSource, input.enabled, valueCapture]);
+    }, [eventSource, input.enabled]);
+    const onSnapshotState = React.useCallback<NonNullable<UseBrowserDiagnosticsDaemonSnapshotInput['onSnapshotState']>>((state) => {
+        if (input.enabled !== true) return;
+        eventSource.setState(current => applyBrowserDiagnosticsSnapshotState(current, state), true);
+    }, [eventSource, input.enabled]);
 
     const daemonSnapshot = React.useMemo<UseBrowserDiagnosticsDaemonSnapshotInput | undefined>(() => (
-        input.enabled === true && resolveBrowserDiagnosticsSnapshotMachineId(input.view)
-            ? { view: input.view, enabled: true, serverId: input.daemonSnapshotServerId,
-                refreshIntervalMs: input.daemonSnapshotRefreshIntervalMs,
-                snapshotClient: input.daemonSnapshotClient, onEvents }
+        input.enabled === true && resolveBrowserDiagnosticsSnapshotMachineId(input.view, input.daemonSnapshotMachineId)
+            ? { view: input.view, enabled: true, machineId: input.daemonSnapshotMachineId, serverId: input.daemonSnapshotServerId,
+                snapshotClient: input.daemonSnapshotClient, onEvents, onSnapshotState }
             : undefined
-    ), [input.enabled, input.view, input.daemonSnapshotServerId, input.daemonSnapshotRefreshIntervalMs,
-        input.daemonSnapshotClient, onEvents]);
+    ), [input.enabled, input.view, input.daemonSnapshotMachineId, input.daemonSnapshotServerId,
+        input.daemonSnapshotClient, onEvents, onSnapshotState]);
 
     React.useEffect(() => {
         setInteractionEnabled(current => current === false ? false : null);

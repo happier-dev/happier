@@ -3,7 +3,9 @@ import type {
     BrowserSidecarCdpEventSubscriber,
     BrowserSidecarCdpPageHandle,
 } from '../controlAdapter';
-import type { SidecarCdpDiagnosticEventInput } from './mapEvents';
+import type { SidecarCdpDiagnosticEventInput, SidecarDiagnosticSource, SidecarNetworkResponse } from './mapEvents';
+import type { BrowserDiagnosticFamilyV1 } from '@happier-dev/protocol/browser/diagnostics/v1';
+import { capturePrivateNetworkRequest } from './requestDetails';
 import type {
     SidecarDiagnosticsEventSource,
     SidecarDiagnosticsEventSourceSubscriber,
@@ -38,7 +40,10 @@ export type SidecarCdpDiagnosticsEventSourceInput = Readonly<{
 }>;
 
 // The CDP domains required for the network/console/pageError/pageInfo diagnostics families.
-const DIAGNOSTICS_CDP_DOMAINS: readonly string[] = ['Network.enable', 'Runtime.enable', 'Page.enable'];
+const DIAGNOSTICS_CDP_DOMAINS: Readonly<Record<string, readonly BrowserDiagnosticFamilyV1[]>> = {
+    'Network.enable': ['network'], 'Runtime.enable': ['console', 'pageError'], 'Page.enable': ['pageInfo'],
+};
+export const SIDECAR_CDP_DIAGNOSTIC_FAMILIES = Object.values(DIAGNOSTICS_CDP_DOMAINS).flat();
 
 function record(value: unknown): Record<string, unknown> | null {
     return value && typeof value === 'object' && !Array.isArray(value)
@@ -81,21 +86,70 @@ function mapConsoleLevel(type: unknown): 'debug' | 'error' | 'info' | 'log' | 'w
     }
 }
 
-function consoleArgPreview(args: readonly unknown[]): string | undefined {
-    const parts: string[] = [];
+function consoleArgs(args: readonly unknown[]): (string | number | boolean | null)[] {
+    const parts: (string | number | boolean | null)[] = [];
     for (const arg of args) {
         const r = record(arg);
         if (!r) continue;
-        const value = stringField(r.value) ?? stringField(r.description);
-        if (value) parts.push(value);
+        if (r.value === null || typeof r.value === 'string' || typeof r.value === 'boolean'
+            || typeof r.value === 'number' && Number.isFinite(r.value)) parts.push(r.value);
+        else if (typeof r.unserializableValue === 'string') parts.push(r.unserializableValue);
+        else if (typeof r.description === 'string') parts.push(r.description);
+        else if (r.type === 'undefined') parts.push('undefined');
     }
-    return parts.length > 0 ? parts.join(' ') : undefined;
+    return parts;
+}
+
+function sourceLocation(value: unknown): SidecarDiagnosticSource | undefined {
+    const source = record(value);
+    if (!source) return undefined;
+    return {
+        ...(stringField(source.url) ? { url: source.url as string } : {}),
+        ...(typeof source.functionName === 'string' ? { functionName: source.functionName } : {}),
+        ...(numberField(source.lineNumber) === undefined ? {} : { lineNumber: source.lineNumber as number }),
+        ...(numberField(source.columnNumber) === undefined ? {} : { columnNumber: source.columnNumber as number }),
+    };
+}
+
+function stackFrames(value: unknown): SidecarDiagnosticSource[] {
+    const frames: SidecarDiagnosticSource[] = [];
+    let stack = record(value);
+    while (stack) {
+        if (Array.isArray(stack.callFrames)) {
+            for (const frame of stack.callFrames) {
+                const source = sourceLocation(frame);
+                if (source) frames.push(source);
+            }
+        }
+        stack = record(stack.parent);
+    }
+    return frames;
+}
+
+function networkResponse(value: unknown): SidecarNetworkResponse | undefined {
+    const response = record(value);
+    const url = stringField(response?.url);
+    const status = numberField(response?.status);
+    if (!response || !url || status === undefined) return undefined;
+    const timing = Object.fromEntries(Object.entries(record(response.timing) ?? {})
+        .filter((entry): entry is [string, number] => typeof entry[1] === 'number' && Number.isFinite(entry[1])));
+    const securityDetails = Object.fromEntries(Object.entries(record(response.securityDetails) ?? {})
+        .filter((entry): entry is [string, string | number] => typeof entry[1] === 'string'
+            || typeof entry[1] === 'number' && Number.isFinite(entry[1])));
+    return { url, status, headers: headersField(response.headers),
+        mimeType: stringField(response.mimeType), transportProtocol: stringField(response.protocol),
+        securityState: stringField(response.securityState), timing,
+        ...(Object.keys(securityDetails).length ? { securityDetails } : {}),
+        ...(typeof response.fromDiskCache === 'boolean' ? { fromDiskCache: response.fromDiskCache } : {}),
+        ...(typeof response.fromServiceWorker === 'boolean' ? { fromServiceWorker: response.fromServiceWorker } : {}),
+        ...(numberField(response.encodedDataLength) === undefined ? {} : { encodedDataLength: response.encodedDataLength as number }),
+    };
 }
 
 /**
  * Reshape a raw CDP notification into the intermediate diagnostics event. Raw url/headers/requestId/
  * console text are passed through verbatim; the diagnostics mapper redacts them (origin/path/keys,
- * safe-header allowlist, hashed references, text-availability-only). Returns null for events outside
+ * safe-header allowlist, hashed references, destination-classified owner values). Returns null for events outside
  * the supported families (and for non-main-frame navigations).
  */
 export function translateSidecarCdpNotification(
@@ -117,23 +171,25 @@ export function translateSidecarCdpNotification(
                 url,
                 ...(headers ? { headers } : {}),
                 ...(resourceType ? { resourceType } : {}),
+                ...(typeof request?.hasPostData === 'boolean' ? { hasPostData: request.hasPostData } : {}),
+                ...(numberField(params.timestamp) === undefined ? {} : { timestamp: params.timestamp as number }),
+                ...(params.initiator ? { initiator: { ...sourceLocation(params.initiator),
+                    ...(stringField(record(params.initiator)?.type) ? { type: stringField(record(params.initiator)?.type) } : {}),
+                    stackFrames: stackFrames(record(params.initiator)?.stack) } } : {}),
+                ...(params.redirectResponse ? { redirectResponse: networkResponse(params.redirectResponse) } : {}),
+                ...(typeof params.redirectHasExtraInfo === 'boolean' ? { redirectHasExtraInfo: params.redirectHasExtraInfo } : {}),
             };
         }
         case 'Network.responseReceived': {
-            const response = record(params.response);
-            const url = stringField(response?.url);
+            const response = networkResponse(params.response);
             const requestId = stringField(params.requestId);
-            const status = numberField(response?.status);
-            if (!url || !requestId || status === undefined) return null;
-            const headers = headersField(response?.headers);
-            const mimeType = stringField(response?.mimeType);
+            if (!response || !requestId) return null;
             return {
                 kind: 'network.responseReceived',
                 requestId,
-                url,
-                status,
-                ...(mimeType ? { mimeType } : {}),
-                ...(headers ? { headers } : {}),
+                ...response,
+                timestamp: numberField(params.timestamp),
+                ...(typeof params.hasExtraInfo === 'boolean' ? { hasExtraInfo: params.hasExtraInfo } : {}),
             };
         }
         case 'Network.loadingFailed': {
@@ -144,27 +200,50 @@ export function translateSidecarCdpNotification(
                 kind: 'network.loadingFailed',
                 requestId,
                 ...(errorText ? { errorText } : {}),
+                ...(numberField(params.timestamp) === undefined ? {} : { timestamp: params.timestamp as number }),
+                ...(typeof params.canceled === 'boolean' ? { canceled: params.canceled } : {}),
+                ...(stringField(params.blockedReason) ? { blockedReason: params.blockedReason as string } : {}),
             };
+        }
+        case 'Network.loadingFinished': {
+            const requestId = stringField(params.requestId);
+            return requestId ? { kind: 'network.loadingFinished', requestId, timestamp: numberField(params.timestamp),
+                encodedDataLength: numberField(params.encodedDataLength) } : null;
+        }
+        case 'Network.requestWillBeSentExtraInfo':
+        case 'Network.responseReceivedExtraInfo': {
+            const requestId = stringField(params.requestId);
+            return requestId ? { kind: notification.method === 'Network.requestWillBeSentExtraInfo'
+                ? 'network.requestExtraInfo' : 'network.responseExtraInfo', requestId,
+                headers: headersField(params.headers), statusCode: numberField(params.statusCode) } : null;
         }
         case 'Runtime.consoleAPICalled': {
             const args = Array.isArray(params.args) ? params.args : [];
-            const text = consoleArgPreview(args);
+            const values = consoleArgs(args);
+            const text = values.map(value => value === null ? 'null' : String(value)).join(' ');
+            const frames = stackFrames(params.stackTrace);
             return {
                 kind: 'runtime.consoleEntry',
                 level: mapConsoleLevel(params.type),
-                ...(text ? { text } : {}),
+                text,
+                args: values,
+                ...(frames.length ? { stackFrames: frames, source: frames[0] } : {}),
                 argCount: args.length,
             };
         }
         case 'Runtime.exceptionThrown': {
             const details = record(params.exceptionDetails);
             const exception = record(details?.exception);
-            const message = stringField(details?.text) ?? stringField(exception?.description) ?? 'Uncaught exception';
-            const stack = record(details?.stackTrace) ? 'available' : undefined;
+            const message = stringField(exception?.description) ?? stringField(details?.text) ?? 'Uncaught exception';
+            const frames = stackFrames(details?.stackTrace);
+            const source = sourceLocation(details);
+            const stack = frames.map(frame => `${frame.functionName ?? ''} (${frame.url ?? ''}:${frame.lineNumber ?? 0}:${frame.columnNumber ?? 0})`).join('\n');
             return {
                 kind: 'runtime.exceptionThrown',
                 message,
                 ...(stack ? { stack } : {}),
+                ...(frames.length ? { stackFrames: frames } : {}),
+                ...(source ? { source } : {}),
             };
         }
         case 'Page.frameNavigated': {
@@ -195,18 +274,6 @@ export function createSidecarCdpDiagnosticsEventSource(
         };
     }
 
-    async function enableDiagnosticsDomains(): Promise<void> {
-        for (const method of DIAGNOSTICS_CDP_DOMAINS) {
-            try {
-                await input.transport.dispatchPageCommand({ ...pageTarget(), method });
-            } catch (error) {
-                // Best-effort: a sidecar that rejects a domain enable simply yields fewer events. The
-                // transport stays usable; never throw out of start() and never write to stdout/stderr.
-                input.onError?.(error);
-            }
-        }
-    }
-
     function isForBoundSession(notification: BrowserSidecarCdpEventNotification): boolean {
         if (!handle.sessionId) return true;
         return notification.sessionId === handle.sessionId;
@@ -215,18 +282,45 @@ export function createSidecarCdpDiagnosticsEventSource(
     return {
         sourceId: input.sourceId,
         start(subscriber: SidecarDiagnosticsEventSourceSubscriber): SidecarDiagnosticsEventSourceSubscription {
-            void enableDiagnosticsDomains();
+            let stopped = false;
+            const active = () => !stopped && (!input.isEnabled || input.isEnabled());
+            const publishTitle = async () => {
+                if (!active()) return;
+                try {
+                    const result = record(await input.transport.dispatchPageCommand({ ...pageTarget(),
+                        method: 'Runtime.evaluate', params: { expression: 'document.title', returnByValue: true } }));
+                    const title = record(result?.result)?.value;
+                    if (active() && typeof title === 'string') subscriber.onCdpEvent({ capturedAtMs: now(), event: { kind: 'page.info', title } });
+                } catch (error) {
+                    if (active()) input.onError?.(error);
+                }
+            };
 
             const unsubscribe = input.transport.subscribeCdpEvents((notification) => {
                 if (!isForBoundSession(notification)) return;
                 // Per-event fail-closed: honour a live gate flip without tearing down the binding.
-                if (input.isEnabled && !input.isEnabled()) return;
+                if (!active()) return;
+                if (notification.method === 'Page.domContentEventFired') { void publishTitle(); return; }
                 const event = translateSidecarCdpNotification(notification);
                 if (!event) return;
-                subscriber.onCdpEvent({ capturedAtMs: now(), event });
+                subscriber.onCdpEvent({ capturedAtMs: now(), event, privateRequest: capturePrivateNetworkRequest(notification) });
             });
 
-            let stopped = false;
+            void (async () => {
+                for (const [method, families] of Object.entries(DIAGNOSTICS_CDP_DOMAINS)) {
+                    if (stopped) return;
+                    try {
+                        await input.transport.dispatchPageCommand({ ...pageTarget(), method });
+                        if (active()) for (const family of families) subscriber.onCdpEvent({ capturedAtMs: now(), event: { kind: 'diagnostics.available', family } });
+                    } catch (error) {
+                        if (active()) {
+                            input.onError?.(error);
+                            for (const family of families) subscriber.onUnavailable({ capturedAtMs: now(), family, reason: 'collector_unavailable' });
+                        }
+                    }
+                }
+                await publishTitle();
+            })();
             return {
                 stop() {
                     if (stopped) return;

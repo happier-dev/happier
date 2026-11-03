@@ -1,4 +1,4 @@
-import type { BrowserDiagnosticEventV1, BrowserDiagnosticsSnapshotV1 } from '@happier-dev/protocol';
+import type { BrowserDiagnosticEventV1, BrowserDiagnosticsSnapshotV1 } from '@happier-dev/protocol/browser/diagnostics/v1';
 import { act } from 'react-test-renderer';
 import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -15,14 +15,15 @@ import { useBrowserDiagnosticsDaemonSnapshot } from '@/sync/domains/browser/diag
 import type { BrowserDiagnosticsSnapshotClientInput, BrowserDiagnosticsSnapshotClientResult } from '@/sync/domains/browser/diagnostics/machineRpc';
 
 import { useBrowserDiagnosticsRuntime as useRuntime, type UseBrowserDiagnosticsRuntimeInput } from './useBrowserDiagnosticsRuntime';
-import { createActionExecutor } from '@happier-dev/protocol';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { countTransportRequests, createActionExecutorBoundaryFixture } from '@/dev/testkit';
 import { createDefaultRuntimeActionExecutor } from '@/sync/ops/actions/defaultRuntimeActionExecutor';
 import { clearBrowserRuntimeControlRegistryForTests, registerBrowserRuntimeControlAdapter } from '@/sync/domains/browser/actions/runtimeControlRegistry';
 import { createBrowserControlState } from '@/sync/domains/browser/control/reducer';
 import { handleUiBrowserAutomationDispatchRequest } from '@/sync/domains/browser/automation/reverseDispatchHandler';
 import { loadBrowserDaemonRuntimeForTests } from '@/dev/testkit/harness/browserDaemonRuntime';
-import { BrowserDiagnosticsEvalResultV1Schema, BrowserDiagnosticsElementPickerResultV1Schema, BrowserDiagnosticsGetPropertiesResultV1Schema, FeaturesResponseSchema } from '@happier-dev/protocol';
+import { BrowserDiagnosticsEvalResultV1Schema, BrowserDiagnosticsElementPickerResultV1Schema, BrowserDiagnosticsGetPropertiesResultV1Schema} from '@happier-dev/protocol/browser/diagnostics/v1';
+import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 import { uiBrowserAutomationDispatchMethod } from '@happier-dev/protocol/browser/automation/reverseDispatchV1';
 
 // These hook cases have a presented snapshot consumer. BrowserShell.test.tsx exercises the
@@ -50,6 +51,9 @@ function useBrowserDiagnosticsRuntime(input: UseBrowserDiagnosticsRuntimeInput) 
 // The RPC adapter is the network boundary; deterministic snapshot/store/collector logic stays real.
 vi.mock('@/sync/domains/browser/diagnostics/machineRpc', () => ({
     fetchBrowserDiagnosticsSnapshotViaMachineRpc: vi.fn(async () => ({ ok: false, reason: 'unavailable' })),
+}));
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/subscribeMachineRpcRecovery', () => ({
+    subscribeMachineRpcRecovery: () => () => {},
 }));
 
 afterEach(() => {
@@ -488,7 +492,6 @@ describe('useBrowserDiagnosticsRuntime', () => {
                     view,
                     parentOrigin: 'https://app.happier.test',
                     daemonSnapshotClient: snapshotClient,
-                    daemonSnapshotRefreshIntervalMs: null,
                 }),
             {
                 initialProps: {
@@ -620,7 +623,6 @@ describe('useBrowserDiagnosticsRuntime', () => {
                     enabled: true,
                     parentOrigin: 'https://app.happier.test',
                     daemonSnapshotClient: snapshotClient,
-                    daemonSnapshotRefreshIntervalMs: null,
                 }),
             {
                 initialProps: {
@@ -753,7 +755,6 @@ describe('useBrowserDiagnosticsRuntime', () => {
                     enabled: true,
                     parentOrigin: 'https://app.happier.test',
                     daemonSnapshotClient: snapshotClient,
-                    daemonSnapshotRefreshIntervalMs: null,
                 }),
             {
                 initialProps: {
@@ -790,7 +791,6 @@ describe('useBrowserDiagnosticsRuntime', () => {
                     enabled: true,
                     parentOrigin: 'https://app.happier.test',
                     daemonSnapshotClient: snapshotClient,
-                    daemonSnapshotRefreshIntervalMs: null,
                 }),
             {
                 initialProps: {
@@ -852,7 +852,7 @@ describe('useBrowserDiagnosticsRuntime', () => {
         const view = createLocalPreviewView();
         const hook = await renderHook(({ current }: { current: BrowserControlViewState }) => useBrowserDiagnosticsRuntime({
             view: current, enabled: true, parentOrigin: 'https://app.happier.test',
-            daemonSnapshotClient: transport.request, daemonSnapshotRefreshIntervalMs: null,
+            daemonSnapshotClient: transport.request,
         }), { initialProps: { current: view } });
 
         for (let arrival = 0; arrival < 20; arrival += 1) {
@@ -889,7 +889,6 @@ describe('useBrowserDiagnosticsRuntime', () => {
                     enabled: true,
                     parentOrigin: 'https://app.happier.test',
                     daemonSnapshotClient: snapshotClient,
-                    daemonSnapshotRefreshIntervalMs: 5_000,
                 }),
             {
                 initialProps: {

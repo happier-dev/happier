@@ -2,9 +2,10 @@ import type {
     BrowserDiagnosticEventKindV1,
     BrowserDiagnosticEventV1,
     BrowserDiagnosticFamilyV1,
-    BrowserDiagnosticFidelityV1,
+    BrowserDiagnosticFidelityV1} from '@happier-dev/protocol/browser/diagnostics/v1';
+import type {
     PeerMediationObservabilityLifecycleStateV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/machines/peer/mediation/observability/v1';
 
 export type BrowserPreviewProxyDiagnosticsStatus = 'available' | 'stale' | 'unavailable';
 export type BrowserDiagnosticsStatus = BrowserPreviewProxyDiagnosticsStatus;
@@ -65,8 +66,59 @@ export type BrowserDiagnosticEventProjection = Readonly<{
     fidelity: BrowserDiagnosticFidelityV1;
     trusted: boolean;
     capturedAtMs: number;
+    redaction?: BrowserDiagnosticEventV1['redaction'];
     summary?: string;
     detail?: BrowserDiagnosticEventDetail;
+    /** The admitted destination projection, including structured source/stack/network details. */
+    data?: Readonly<Record<string, unknown>>;
+}>;
+
+export type BrowserDiagnosticRequestProjection = Readonly<{
+    key: string;
+    requestId: string | null;
+    kind: 'http' | 'socket' | 'beacon';
+    events: readonly BrowserDiagnosticEventProjection[];
+    start?: BrowserDiagnosticEventProjection;
+    response?: BrowserDiagnosticEventProjection;
+    finished?: BrowserDiagnosticEventProjection;
+    failure?: BrowserDiagnosticEventProjection;
+    method: string | null;
+    url: string | null;
+    status: number | null;
+    /** Transport failure; HTTP error responses retain their status for display. */
+    failed: boolean;
+    /** The store's failed-only classification: transport failure or HTTP status >= 400. */
+    isFailure: boolean;
+    errorText: string | null;
+    durationMs: number | null;
+    sizeBytes: number | null;
+    type: string | null;
+    state: string | null;
+}>;
+
+export type BrowserDiagnosticStorageRow = Readonly<{
+    key: string;
+    storageType: string;
+    name: string;
+    value: string | null;
+    valueTruncated: boolean;
+    keyCount: number;
+    keysTruncated: boolean;
+}>;
+
+export type BrowserDiagnosticResourceRow = Readonly<{
+    key: string;
+    entry: BrowserDiagnosticResourceEntry;
+}>;
+
+export type BrowserDiagnosticsSnapshotState = Readonly<{
+    browserSessionId: string;
+    viewId: string;
+    navigationGeneration: number;
+    connection: 'connecting' | 'connected' | 'disconnected';
+    reasonCode?: string;
+    evictedEventCount?: number;
+    omittedEventCount?: number;
 }>;
 
 export type BrowserDiagnosticsViewState = Readonly<{
@@ -75,6 +127,7 @@ export type BrowserDiagnosticsViewState = Readonly<{
     navigationGeneration: number;
     events: readonly BrowserDiagnosticEventV1[];
     updatedAtMs: number;
+    snapshotState?: BrowserDiagnosticsSnapshotState;
 }>;
 
 export type BrowserDiagnosticsUiStore = Readonly<{
@@ -92,7 +145,10 @@ export type BrowserViewDiagnosticsProjection = Readonly<{
     eventCount: number;
     families: readonly BrowserDiagnosticFamilyProjection[];
     events: readonly BrowserDiagnosticEventProjection[];
+    connection?: BrowserDiagnosticsSnapshotState['connection'];
     reasonCode?: string;
+    evictedEventCount?: number;
+    omittedEventCount?: number;
 }>;
 
 export type BrowserPreviewProxyFlowProjection = Readonly<{

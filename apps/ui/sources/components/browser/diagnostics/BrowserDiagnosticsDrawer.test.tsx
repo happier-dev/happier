@@ -149,7 +149,7 @@ describe('BrowserDiagnosticsDrawer', () => {
             const state = applyBrowserDiagnosticEvents(createBrowserDiagnosticsUiStore(), { events: [{
                 v: 1, eventId, ...view, navigationGeneration: 2, capturedAtMs: 2000,
                 family: 'console', kind: 'console.entry', fidelity: 'cdp', trusted: true,
-                data: { level: 'log', text: eventId }, redaction: { level: 'metadataOnly' },
+                data: { level: 'log', text: eventId }, redaction: { level: 'metadataOnly', queryRedacted: true, headersRedacted: true, truncated: false },
             }] });
             const accepted = state.viewsByKey[key]!;
             return { viewsByKey: { ...state.viewsByKey, [key]: { ...accepted, events: accepted.events.map(event => new Proxy(event, {

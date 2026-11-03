@@ -195,8 +195,8 @@ setBrowserRecordingRoutesProvider?: (
   let unregisterBrowserSidecarControlAdapter: (() => void) | null = null;
   let disposeBrowserSidecarControlAdapter: (() => void | Promise<void>) | null =
     null;
-  let disposeBrowserSidecarDiagnosticsRuntime: (() => void) | null = null;
   let browserProfilePasskeys: ReturnType<typeof createBrowserProfilePasskeyAuthenticator> | null = null;
+  let browserSidecarDiagnosticsRuntime: ReturnType<typeof createSidecarCdpDiagnosticsRuntime> | null = null;
   let browserControlRoutes: BrowserDaemonControlRoutes | null = null;
   let browserContextRoutes: BrowserContextRoutes | null = null;
   let browserAutomationRoutes: BrowserAutomationRoutes | null = null;
@@ -283,6 +283,8 @@ setBrowserRecordingRoutesProvider?: (
       if (browserDiagnosticsEnabled && !browserDiagnosticsRoutes) {
         browserDiagnosticsRoutes = createBrowserDiagnosticsRoutes({
           store: browserDiagnosticsStore,
+          readRequestDetail: async request => browserSidecarDiagnosticsRuntime?.readRequestDetail(request)
+            ?? { status: 'unavailable', reason: 'unsupported_engine' },
         });
       }
       if (
@@ -527,7 +529,7 @@ setBrowserRecordingRoutesProvider?: (
           }
           if (
             browserDiagnosticsEnabled &&
-            !disposeBrowserSidecarDiagnosticsRuntime &&
+            !browserSidecarDiagnosticsRuntime &&
             browserSidecarContextCapture?.subscribeCdpEvents &&
             browserSidecarContextCapture.subscribeViewLifecycle
           ) {
@@ -535,7 +537,7 @@ setBrowserRecordingRoutesProvider?: (
               browserSidecarContextCapture.subscribeCdpEvents;
             const subscribeViewLifecycle =
               browserSidecarContextCapture.subscribeViewLifecycle;
-            const diagnosticsRuntime = createSidecarCdpDiagnosticsRuntime({
+            browserSidecarDiagnosticsRuntime = createSidecarCdpDiagnosticsRuntime({
               ownerAccountId: params.machineId,
               store: browserDiagnosticsStore,
               resolveInputControl: resolveBrowserInputControl,
@@ -555,8 +557,6 @@ setBrowserRecordingRoutesProvider?: (
                 );
               },
             });
-            disposeBrowserSidecarDiagnosticsRuntime = () =>
-              diagnosticsRuntime.dispose();
           }
           if (
             browserDiagnosticsEnabled &&
@@ -848,7 +848,8 @@ setBrowserRecordingRoutesProvider?: (
     disposeBrowserAutomationService?.();
     disposeBrowserAutomationService = null;
     browserAutomationServiceForCapture = null;
-    disposeBrowserSidecarDiagnosticsRuntime?.();
+    browserSidecarDiagnosticsRuntime?.dispose();
+    browserSidecarDiagnosticsRuntime = null;
     unregisterBrowserSidecarControlAdapter?.();
     await browserCdpScreencastProducer?.dispose().catch((error: unknown) => {
       logger.debug(

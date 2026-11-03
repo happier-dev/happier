@@ -1,4 +1,4 @@
-import type { BrowserDiagnosticFamilyV1 } from '@happier-dev/protocol';
+import type { BrowserDiagnosticFamilyV1 } from '@happier-dev/protocol/browser/diagnostics/v1';
 
 export const BROWSER_DIAGNOSTIC_FAMILIES: readonly BrowserDiagnosticFamilyV1[] = [
     'console',

@@ -1,7 +1,8 @@
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
 import { DaemonBrowserDiagnosticsSnapshotRequestV1Schema, DaemonBrowserDiagnosticsSnapshotResponseV1Schema } from '@happier-dev/protocol/browser/diagnostics/v1';
-import type { DaemonBrowserDiagnosticsSnapshotRequestV1, DaemonBrowserDiagnosticsSnapshotResponseV1 } from '@happier-dev/protocol';
+import type { DaemonBrowserDiagnosticsSnapshotResponseV1 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { resolveBrowserDiagnosticsPersonDestination } from '@happier-dev/protocol/browser/diagnostics/egress/classifier';
 
 import type { BrowserDiagnosticsRoutes } from '@/daemon/browser/diagnostics/routes';
 import {
@@ -11,17 +12,6 @@ import {
 
 export type DaemonBrowserDiagnosticsSnapshotHandlerOptions = Readonly<{
     browserDiagnostics?: BrowserDiagnosticsRoutes | null;
-    /**
-     * Resolves the requesting party's identity for the viewer-identity-gated egress fidelity (X1).
-     * The cross-device snapshot RPC is, by transport, a cross-device egress; it therefore defaults
-     * fail-closed to `'agent'` (metadata-only). A verified local-owner control plane may supply a
-     * resolver that returns `'owner'` to surface full owner fidelity — owner-full fidelity is never
-     * emitted for any party that is not the resolved, verified owning viewer, so it cannot leak
-     * cross-device.
-     */
-    resolveViewerParty?: (
-        request: DaemonBrowserDiagnosticsSnapshotRequestV1,
-    ) => BrowserDiagnosticsViewerParty;
 }>;
 
 export function registerDaemonBrowserDiagnosticsSnapshotHandler(
@@ -30,12 +20,32 @@ export function registerDaemonBrowserDiagnosticsSnapshotHandler(
 ): void {
     rpc.registerHandler(
         RPC_METHODS.DAEMON_BROWSER_DIAGNOSTICS_SNAPSHOT,
-        async (raw: unknown): Promise<DaemonBrowserDiagnosticsSnapshotResponseV1> => {
+        async (raw: unknown, context): Promise<DaemonBrowserDiagnosticsSnapshotResponseV1> => {
             const request = DaemonBrowserDiagnosticsSnapshotRequestV1Schema.parse(raw);
             if (!options.browserDiagnostics) {
                 throw new Error('Browser diagnostics runtime is unavailable');
             }
-            const party: BrowserDiagnosticsViewerParty = options.resolveViewerParty?.(request) ?? 'agent';
+            const destination = resolveBrowserDiagnosticsPersonDestination(context?.callerAuthority);
+            const party: BrowserDiagnosticsViewerParty = destination === 'localOwner'
+                ? 'owner' : 'agent';
+            if (request.requestId && request.view) {
+                // Home admitted Machine access and stamped this caller authority. A caller cannot
+                // opt into person-only data in its decrypted request. No Action exposes this branch.
+                const requestDetail = destination !== 'localOwner'
+                    ? { status: 'unavailable' as const, reason: 'permission_denied' as const }
+                    : await options.browserDiagnostics.readRequestDetail?.({ ...request.view, requestId: request.requestId })
+                        ?? { status: 'unavailable' as const, reason: 'unsupported_engine' as const };
+                return DaemonBrowserDiagnosticsSnapshotResponseV1Schema.parse({ protocolVersion: 1, requestDetail,
+                    snapshot: { v: 1, machineId: request.machineId, generatedAt: Date.now(), refreshState: 'idle', events: [], diagnostics: [] } });
+            }
+            if (request.view) {
+                const result = await options.browserDiagnostics.readViewSnapshot({ ...request.view,
+                    ...(request.sinceRevision === undefined ? {} : { sinceRevision: request.sinceRevision }),
+                    ...(context ? { signal: context.signal } : {}),
+                });
+                return DaemonBrowserDiagnosticsSnapshotResponseV1Schema.parse({ protocolVersion: 1,
+                    revision: result.revision, snapshot: redactBrowserDiagnosticsSnapshotForViewer(result.snapshot, party) });
+            }
             const snapshot = redactBrowserDiagnosticsSnapshotForViewer(
                 await options.browserDiagnostics.getSnapshot(),
                 party,

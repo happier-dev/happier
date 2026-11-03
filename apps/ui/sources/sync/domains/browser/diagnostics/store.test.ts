@@ -1,6 +1,133 @@
 import { describe, expect, it } from 'vitest';
-import { browserViewKey } from '@happier-dev/protocol';
-import { applyBrowserDiagnosticEvents, createBrowserDiagnosticsUiStore } from './store';
+import { BrowserDiagnosticEventV1Schema, type BrowserDiagnosticEventV1 } from '@happier-dev/protocol/browser/diagnostics/v1';
+import { browserViewKey } from '@happier-dev/protocol/browser/view/key';
+import { applyBrowserDiagnosticEvents, applyBrowserDiagnosticsSnapshotState, createBrowserDiagnosticsUiStore, selectBrowserDiagnosticsForView,
+    selectBrowserDiagnosticEvents, selectBrowserDiagnosticRequest, selectBrowserDiagnosticRequests,
+    selectBrowserDiagnosticStorageRows, selectBrowserDiagnosticResourceRows, serializeBrowserDiagnosticEvents } from './store';
+
+it('filters and exports the admitted projection and resolves the selected request after an upsert', () => {
+    const request = BrowserDiagnosticEventV1Schema.parse({ ...nativePageInfoEvent(), eventId: 'request', family: 'network', kind: 'network.finished',
+        data: { requestId: 'safe-request', method: 'GET', status: 503, resourceType: 'Fetch', url: { origin: 'https://example.test', path: '/api', queryKeys: [] } },
+        redaction: { level: 'metadataOnly', truncated: true } });
+    const log = injectedConsoleEvent({ data: { level: 'warning', text: 'Unable to load' } });
+    const projection = selectBrowserDiagnosticsForView(applyBrowserDiagnosticEvents(createBrowserDiagnosticsUiStore(), { events: [request, log] }), request);
+    expect(selectBrowserDiagnosticEvents(projection, { family: 'network', search: '/API', statuses: [503], resourceTypes: ['Fetch'] })).toEqual([projection.events.find(event => event.eventId === 'request')]);
+    expect(selectBrowserDiagnosticEvents(projection, { family: 'console', levels: ['error'] })).toEqual([]);
+    expect(selectBrowserDiagnosticEvents(projection, { family: 'console', levels: ['warning'], search: 'unable' })).toHaveLength(1);
+    const selected = selectBrowserDiagnosticRequest(projection, 'safe-request');
+    expect(selected?.status).toBe(503);
+    expect(JSON.parse(serializeBrowserDiagnosticEvents(selected?.events ?? []))).toMatchObject([{ data: request.data, redaction: { truncated: true } }]);
+    expect(selectBrowserDiagnosticRequest(projection, 'missing')).toBeUndefined();
+});
+
+function rowProjection(events: readonly BrowserDiagnosticEventV1[]) {
+    return selectBrowserDiagnosticsForView(applyBrowserDiagnosticEvents(createBrowserDiagnosticsUiStore(), { events }), nativePageInfoEvent());
+}
+
+it('pairs pushed request lifecycles and filters whole requests without losing their earlier metadata', () => {
+    const event = (eventId: string, kind: BrowserDiagnosticEventV1['kind'], capturedAtMs: number, data: Record<string, unknown>) =>
+        BrowserDiagnosticEventV1Schema.parse({ ...nativePageInfoEvent(), eventId, family: 'network', kind, capturedAtMs, data });
+    const start = event('start', 'network.requestStarted', 2000, { requestId: 'r', method: 'POST', resourceType: 'Fetch',
+        url: { origin: 'https://example.test', path: '/Upload', queryKeys: ['mode'] } });
+    const response = event('response', 'network.response', 2100, { requestId: 'r', status: 503 });
+    const finished = event('finished', 'network.finished', 2200, { requestId: 'r', durationMs: 200, responseBytes: 0 });
+    const failure = event('failure', 'network.failed', 2300, { requestId: 'failed', errorText: 'net::ERR_ABORTED', durationMs: 0 });
+    const ok = event('ok', 'network.finished', 2400, { requestId: 'ok', status: 200, url: '/ok' });
+    const projection = rowProjection([finished, ok, start, failure, response]);
+    const requests = selectBrowserDiagnosticRequests(projection);
+    expect(requests).toHaveLength(3);
+    expect(selectBrowserDiagnosticRequest(projection, 'r')).toMatchObject({ requestId: 'r', method: 'POST',
+        url: 'https://example.test/Upload?mode', status: 503, failed: false, isFailure: true,
+        durationMs: 200, sizeBytes: 0, type: 'Fetch', start: { eventId: 'start' },
+        response: { eventId: 'response' }, finished: { eventId: 'finished' }, events: expect.any(Array) });
+    expect(selectBrowserDiagnosticRequests(projection, { search: '  /UPLOAD ', failedOnly: true }).map(row => row.requestId)).toEqual(['r']);
+    expect(selectBrowserDiagnosticRequests(projection, { failedOnly: true }).map(row => row.requestId)).toEqual(['r', 'failed']);
+    expect(selectBrowserDiagnosticRequests(projection, { search: 'err_aborted' })[0]).toMatchObject({
+        failed: true, isFailure: true, errorText: 'net::ERR_ABORTED', durationMs: 0, failure: { eventId: 'failure' } });
+});
+
+it('pairs socket events separately and reads a completed daemon upsert as one request', () => {
+    const base = nativePageInfoEvent();
+    const events = [
+        { ...base, eventId: 'request', family: 'network', kind: 'network.requestStarted', data: { requestId: 'r', url: '/old' } },
+        { ...base, eventId: 'request', family: 'network', kind: 'network.finished', capturedAtMs: 2400,
+            data: { requestId: 'r', url: '/new', statusCode: 200, durationMs: 25, responseBytes: 123 } },
+        { ...base, eventId: 'socket', family: 'network', kind: 'network.websocketOpened', data: { socketId: 's', url: '/socket', state: 'open' } },
+    ].map(event => BrowserDiagnosticEventV1Schema.parse(event));
+    expect(selectBrowserDiagnosticRequest(rowProjection(events), 'r')).toMatchObject({
+        url: '/new', durationMs: 25, sizeBytes: 123, events: [expect.objectContaining({ eventId: 'request' })] });
+    expect(selectBrowserDiagnosticRequests(rowProjection(events)).find(row => row.kind === 'socket')).toMatchObject({ url: '/socket', state: 'open' });
+});
+
+it('searches the latest storage inventories by key and admitted value and respects empty replacements', () => {
+    const inventory = (eventId: string, capturedAtMs: number, storageType: string, keys: string[], entries: unknown[] = []) =>
+        BrowserDiagnosticEventV1Schema.parse({ ...nativePageInfoEvent(), eventId, capturedAtMs, family: 'storage', kind: 'storage.keyInventory',
+            data: { storageType, keys, entries, keyCount: keys.length, keysTruncated: false } });
+    const events = [inventory('old', 2100, 'localStorage', ['stale']),
+        inventory('new', 2200, 'localStorage', ['theme'], [{ key: 'theme', value: 'Dark', valueTruncated: true }]),
+        inventory('session', 2300, 'sessionStorage', ['draft'])];
+    expect(selectBrowserDiagnosticStorageRows(rowProjection(events), { search: ' DARK ' })).toEqual([
+        expect.objectContaining({ storageType: 'localStorage', name: 'theme', value: 'Dark', valueTruncated: true, keyCount: 1, keysTruncated: false })]);
+    expect(selectBrowserDiagnosticStorageRows(rowProjection(events), { search: 'DRAFT' }).map(row => row.name)).toEqual(['draft']);
+    expect(selectBrowserDiagnosticStorageRows(rowProjection([...events, inventory('clear', 2400, 'localStorage', [])])).map(row => row.name)).toEqual(['draft']);
+});
+
+it('searches resources by URL and type using the latest snapshot, including an empty snapshot', () => {
+    const snapshot = (eventId: string, capturedAtMs: number, entries: unknown[]) =>
+        BrowserDiagnosticEventV1Schema.parse({ ...nativePageInfoEvent(), eventId, capturedAtMs, family: 'resources', kind: 'resources.snapshot', data: { entries } });
+    const events = [snapshot('old', 2100, [{ name: '/stale.js' }]),
+        snapshot('new', 2200, [{ name: 'https://example.test/App.js', initiatorType: 'script', durationMs: 0 }])];
+    expect(selectBrowserDiagnosticResourceRows(rowProjection(events), { search: ' /APP.JS ' })[0]?.entry).toMatchObject({ durationMs: 0 });
+    expect(selectBrowserDiagnosticResourceRows(rowProjection(events), { search: 'SCRIPT' })).toHaveLength(1);
+    expect(selectBrowserDiagnosticResourceRows(rowProjection([...events, snapshot('clear', 2300, [])]))).toEqual([]);
+});
+
+it('projects admitted structured URLs, safe header bags, failure details and clipping', () => {
+    const event = BrowserDiagnosticEventV1Schema.parse({ ...nativePageInfoEvent(), family: 'network', kind: 'network.response',
+        fidelity: 'cdp', data: { requestId: 'request', method: 'GET', status: 200,
+            url: { origin: 'https://example.test', path: '/api', queryKeys: ['search'] },
+            headers: { 'content-type': 'application/json' }, errorText: 'net::ERR_FAILED' },
+        redaction: { level: 'metadataOnly', truncated: true } });
+    const projection = selectBrowserDiagnosticsForView(applyBrowserDiagnosticEvents(createBrowserDiagnosticsUiStore(), { events: [event] }), event);
+    expect(projection.events[0]?.summary).toContain('https://example.test/api');
+    expect(projection.events[0]?.detail?.fields).toEqual(expect.arrayContaining([
+        { key: 'responseHeaders', value: 'content-type: application/json' }, { key: 'errorText', value: 'net::ERR_FAILED' },
+    ]));
+    expect(projection.events[0]).toMatchObject({ redaction: { truncated: true } });
+});
+
+it('distinguishes supported quiet, degraded, retained disconnected and pushed recovery without stale history winning', () => {
+    const ready = BrowserDiagnosticEventV1Schema.parse({ ...nativePageInfoEvent(), family: 'console',
+        kind: 'diagnostics.available', fidelity: 'cdp', capturedAtMs: 2000, data: {} });
+    let state = applyBrowserDiagnosticEvents(createBrowserDiagnosticsUiStore(), { events: [ready] });
+    const read = () => selectBrowserDiagnosticsForView(state, ready);
+    expect(read()).toMatchObject({ eventCount: 0, events: [], families: expect.arrayContaining([
+        expect.objectContaining({ family: 'console', status: 'available' }),
+    ]) });
+    state = applyBrowserDiagnosticEvents(state, { events: [{ ...ready, eventId: 'degraded', kind: 'collector.degraded', capturedAtMs: 2100 }] });
+    expect(read().families.find(family => family.family === 'console')?.status).toBe('stale');
+    state = applyBrowserDiagnosticEvents(state, { events: [{ ...ready, eventId: 'recovered', capturedAtMs: 2200 }] });
+    expect(read().families.find(family => family.family === 'console')?.status).toBe('available');
+    state = applyBrowserDiagnosticEvents(state, { events: [{ ...ready, eventId: 'message', kind: 'console.entry', capturedAtMs: 2300, data: { text: 'hello' } }] });
+    const disconnected = { browserSessionId: ready.browserSessionId, viewId: ready.viewId, navigationGeneration: ready.navigationGeneration,
+        connection: 'disconnected' as const, reasonCode: 'request_failed', evictedEventCount: 5 };
+    state = applyBrowserDiagnosticsSnapshotState(state, disconnected);
+    expect(read()).toMatchObject({ status: 'stale', connection: 'disconnected', eventCount: 1, evictedEventCount: 5 });
+    expect(applyBrowserDiagnosticsSnapshotState(state, disconnected)).toBe(state);
+    const retained = state.viewsByKey[TEST_BROWSER_VIEW_KEY]?.events;
+    state = applyBrowserDiagnosticsSnapshotState(state, { ...disconnected, connection: 'connected', reasonCode: undefined });
+    expect(read().status).toBe('available');
+    expect(state.viewsByKey[TEST_BROWSER_VIEW_KEY]?.events).toBe(retained);
+});
+
+it('keeps an independent injected collector healthy when the daemon connection fails', () => {
+    const event = injectedConsoleEvent({ data: { level: 'log', text: 'local message' } });
+    let state = applyBrowserDiagnosticEvents(createBrowserDiagnosticsUiStore(), { events: [event] });
+    state = applyBrowserDiagnosticsSnapshotState(state, { ...event, connection: 'disconnected', reasonCode: 'request_failed' });
+    expect(selectBrowserDiagnosticsForView(state, event)).toMatchObject({ status: 'available', families: expect.arrayContaining([
+        expect.objectContaining({ family: 'console', status: 'available' }),
+    ]) });
+});
 
 const TEST_BROWSER_VIEW_KEY = browserViewKey({
     browserSessionId: 'browser_session_1',
@@ -12,8 +139,6 @@ type StoreModule = Readonly<{
         state: unknown,
             input: Readonly<{
                 events: readonly Record<string, unknown>[];
-                consoleValueCapture?: boolean;
-                valueCapture?: boolean;
             }>,
     ) => unknown;
     createBrowserDiagnosticsUiStore?: () => unknown;
@@ -31,8 +156,8 @@ async function loadStoreModule(): Promise<StoreModule | null> {
     return import(path).catch(() => null) as Promise<StoreModule | null>;
 }
 
-function injectedConsoleEvent(overrides: Record<string, unknown> = {}): Record<string, unknown> {
-    return {
+function injectedConsoleEvent(overrides: Record<string, unknown> = {}): BrowserDiagnosticEventV1 {
+    return BrowserDiagnosticEventV1Schema.parse({
         v: 1,
         eventId: 'evt_console_1',
         browserSessionId: 'browser_session_1',
@@ -57,11 +182,11 @@ function injectedConsoleEvent(overrides: Record<string, unknown> = {}): Record<s
             level: 'valuesRedacted',
         },
         ...overrides,
-    };
+    });
 }
 
-function nativePageInfoEvent(overrides: Record<string, unknown> = {}): Record<string, unknown> {
-    return {
+function nativePageInfoEvent(overrides: Record<string, unknown> = {}): BrowserDiagnosticEventV1 {
+    return BrowserDiagnosticEventV1Schema.parse({
         v: 1,
         eventId: 'evt_page_1',
         browserSessionId: 'browser_session_1',
@@ -80,10 +205,31 @@ function nativePageInfoEvent(overrides: Record<string, unknown> = {}): Record<st
             level: 'metadataOnly',
         },
         ...overrides,
-    };
+    });
 }
 
 describe('browser diagnostics UI store', () => {
+    it('retains every admitted event and detail beyond the former client caps', async () => {
+        const { selectBrowserDiagnosticsForView } = await import('./store');
+        const events = Array.from({ length: 1001 }, (_, index) => injectedConsoleEvent({
+            eventId: `event_${index}`, capturedAtMs: index,
+        }));
+        const keys = Array.from({ length: 201 }, (_, index) => `key_${index}`);
+        events.push(injectedConsoleEvent({ eventId: 'storage', family: 'storage', kind: 'storage.keyInventory',
+            data: { storageType: 'localStorage', keyCount: keys.length, keys, keysTruncated: false } }));
+        const state = applyBrowserDiagnosticEvents(createBrowserDiagnosticsUiStore(), { events });
+        const projection = selectBrowserDiagnosticsForView(state, { browserSessionId: 'browser_session_1', viewId: 'view_1' });
+        expect(projection.eventCount).toBe(1002);
+        expect(projection.events.find(event => event.eventId === 'storage')?.detail?.keys).toEqual(keys);
+    });
+
+    it('preserves the owner values already admitted by the diagnostics boundary', () => {
+        const event = injectedConsoleEvent({ data: { level: 'log', textAvailable: true, text: 'https://example.test/?token=owner-value' },
+            redaction: { level: 'none' } });
+        const state = applyBrowserDiagnosticEvents(createBrowserDiagnosticsUiStore(), { events: [event] });
+        expect(state.viewsByKey[TEST_BROWSER_VIEW_KEY]?.events[0]?.data.text).toBe('https://example.test/?token=owner-value');
+    });
+
     it('compares accepted data without serializing unknown values or depending on object key order', () => {
         const state = applyBrowserDiagnosticEvents(createBrowserDiagnosticsUiStore(), {
             events: [nativePageInfoEvent({ data: { url: 'https://example.test/', loading: false, custom: 1n } })],
@@ -179,7 +325,7 @@ describe('browser diagnostics UI store', () => {
         });
     });
 
-    it('preserves additive injected family local-owner values when value capture is enabled', async () => {
+    it('projects admitted injected family local-owner values', async () => {
         const mod = await loadStoreModule();
 
         expect(mod?.createBrowserDiagnosticsUiStore).toBeTypeOf('function');
@@ -236,11 +382,10 @@ describe('browser diagnostics UI store', () => {
                         data: { nodeCount: 100, elementCount: 80, maxDepth: 12, readyState: 'complete' },
                     },
                 ],
-                valueCapture: true,
             },
         );
 
-        // The store keeps full re-sanitized events in state; the projection summarizes them.
+        // The store keeps admitted events in state; the projection summarizes them.
         const storedEvents = Object.values(
             (state as { viewsByKey: Record<string, { events: readonly { eventId: string; data: Record<string, unknown> }[] }> }).viewsByKey,
         ).flatMap((view) => [...view.events]);
@@ -347,7 +492,9 @@ describe('browser diagnostics UI store', () => {
         });
     });
 
-    it('does not project redacted text availability from untrusted diagnostics events as summaries', async () => {
+
+
+    it('projects the admitted owner console text', async () => {
         const mod = await loadStoreModule();
 
         expect(mod?.createBrowserDiagnosticsUiStore).toBeTypeOf('function');
@@ -358,49 +505,6 @@ describe('browser diagnostics UI store', () => {
         const state = mod.applyBrowserDiagnosticEvents(
             mod.createBrowserDiagnosticsUiStore(),
             {
-                events: [
-                    injectedConsoleEvent({
-                        data: {
-                            level: 'error',
-                            argCount: 1,
-                            textAvailable: true,
-                        },
-                        redaction: {
-                            level: 'valuesRedacted',
-                        },
-                    }),
-                ],
-            },
-        );
-
-        const projection = mod.selectBrowserDiagnosticsForView(state, {
-            browserSessionId: 'browser_session_1',
-            viewId: 'view_1',
-        });
-
-        expect(JSON.stringify(projection)).not.toContain('secret');
-        expect(JSON.stringify(projection)).not.toContain('token=');
-        expect(projection).toMatchObject({
-            events: [
-                expect.not.objectContaining({
-                    summary: expect.any(String),
-                }),
-            ],
-        });
-    });
-
-    it('surfaces length-capped console text to the local owner when value capture is enabled', async () => {
-        const mod = await loadStoreModule();
-
-        expect(mod?.createBrowserDiagnosticsUiStore).toBeTypeOf('function');
-        expect(mod?.applyBrowserDiagnosticEvents).toBeTypeOf('function');
-        expect(mod?.selectBrowserDiagnosticsForView).toBeTypeOf('function');
-        if (!mod?.createBrowserDiagnosticsUiStore || !mod.applyBrowserDiagnosticEvents || !mod.selectBrowserDiagnosticsForView) return;
-
-        const state = mod.applyBrowserDiagnosticEvents(
-            mod.createBrowserDiagnosticsUiStore(),
-            {
-                consoleValueCapture: true,
                 events: [
                     injectedConsoleEvent({
                         data: {
@@ -424,7 +528,7 @@ describe('browser diagnostics UI store', () => {
         expect(consoleEvent?.detail?.fields?.some((field) => field.key === 'text' && field.value === 'owner-visible-console-line')).toBe(true);
     });
 
-    it('surfaces network headers/bodies and storage values to the local owner when value capture is enabled', async () => {
+    it('projects admitted network headers, bodies and storage values', async () => {
         const mod = await loadStoreModule();
 
         expect(mod?.createBrowserDiagnosticsUiStore).toBeTypeOf('function');
@@ -446,7 +550,6 @@ describe('browser diagnostics UI store', () => {
         const state = mod.applyBrowserDiagnosticEvents(
             mod.createBrowserDiagnosticsUiStore(),
             {
-                valueCapture: true,
                 events: [
                     {
                         ...base,
@@ -497,365 +600,19 @@ describe('browser diagnostics UI store', () => {
         expect(storage?.detail?.storageEntries).toEqual([{ key: 'theme', value: 'dark', valueTruncated: false }]);
     });
 
-    it('drops console text in the store when value capture is NOT enabled (fail-closed default)', async () => {
-        const mod = await loadStoreModule();
-        if (!mod?.createBrowserDiagnosticsUiStore || !mod.applyBrowserDiagnosticEvents || !mod.selectBrowserDiagnosticsForView) return;
 
-        const state = mod.applyBrowserDiagnosticEvents(
-            mod.createBrowserDiagnosticsUiStore(),
-            {
-                events: [
-                    injectedConsoleEvent({
-                        data: {
-                            level: 'log',
-                            argCount: 1,
-                            textAvailable: true,
-                            text: 'secret-store-line',
-                        },
-                        redaction: { level: 'none' },
-                    }),
-                ],
-            },
-        );
 
-        const projection = mod.selectBrowserDiagnosticsForView(state, {
-            browserSessionId: 'browser_session_1',
-            viewId: 'view_1',
-        });
 
-        expect(JSON.stringify(projection)).not.toContain('secret-store-line');
-    });
 
-    it('strips query values from untrusted diagnostics URL summaries', async () => {
-        const mod = await loadStoreModule();
 
-        expect(mod?.createBrowserDiagnosticsUiStore).toBeTypeOf('function');
-        expect(mod?.applyBrowserDiagnosticEvents).toBeTypeOf('function');
-        expect(mod?.selectBrowserDiagnosticsForView).toBeTypeOf('function');
-        if (!mod?.createBrowserDiagnosticsUiStore || !mod.applyBrowserDiagnosticEvents || !mod.selectBrowserDiagnosticsForView) return;
 
-        const state = mod.applyBrowserDiagnosticEvents(
-            mod.createBrowserDiagnosticsUiStore(),
-            {
-                events: [
-                    nativePageInfoEvent({
-                        fidelity: 'injectedPage',
-                        trusted: false,
-                        collector: {
-                            collectorId: 'collector_1',
-                            nonce: 'nonce_1',
-                            version: '1.0.0',
-                        },
-                        data: {
-                            url: 'https://preview.example.test/app?token=secret#panel',
-                        },
-                    }),
-                ],
-            },
-        );
 
-        const projection = mod.selectBrowserDiagnosticsForView(state, {
-            browserSessionId: 'browser_session_1',
-            viewId: 'view_1',
-        });
 
-        expect(projection).toMatchObject({
-            events: [
-                expect.objectContaining({
-                    summary: 'https://preview.example.test/app',
-                }),
-            ],
-        });
-        expect(JSON.stringify(projection)).not.toContain('secret');
-        expect(JSON.stringify(projection)).not.toContain('token=');
-    });
 
-    it('redacts path-bearing non-http diagnostic URLs before storing or projecting them', async () => {
-        const mod = await loadStoreModule();
 
-        expect(mod?.createBrowserDiagnosticsUiStore).toBeTypeOf('function');
-        expect(mod?.applyBrowserDiagnosticEvents).toBeTypeOf('function');
-        expect(mod?.selectBrowserDiagnosticsForView).toBeTypeOf('function');
-        if (!mod?.createBrowserDiagnosticsUiStore || !mod.applyBrowserDiagnosticEvents || !mod.selectBrowserDiagnosticsForView) return;
 
-        const state = mod.applyBrowserDiagnosticEvents(
-            mod.createBrowserDiagnosticsUiStore(),
-            {
-                events: [
-                    nativePageInfoEvent({
-                        fidelity: 'previewProxy',
-                        trusted: false,
-                        data: {
-                            url: 'data:text/plain,secret-page?token=secret#fragment',
-                            path: 'blob:https://preview.example.test/secret-path?token=secret',
-                        },
-                    }),
-                ],
-            },
-        );
 
-        const projection = mod.selectBrowserDiagnosticsForView(state, {
-            browserSessionId: 'browser_session_1',
-            viewId: 'view_1',
-        });
 
-        expect(JSON.stringify(state)).not.toContain('secret');
-        expect(JSON.stringify(state)).not.toContain('token=');
-        expect(JSON.stringify(projection)).not.toContain('secret');
-        expect(JSON.stringify(projection)).not.toContain('token=');
-        expect(state).toMatchObject({
-            viewsByKey: {
-                [TEST_BROWSER_VIEW_KEY]: {
-                    events: [
-                        expect.objectContaining({
-                            data: expect.objectContaining({
-                                url: 'data:',
-                                path: 'blob:',
-                            }),
-                        }),
-                    ],
-                },
-            },
-        });
-        expect(projection).toMatchObject({
-            events: [
-                expect.objectContaining({
-                    summary: 'data:',
-                }),
-            ],
-        });
-    });
-
-    it('does not retain raw untrusted text or URL query values in store state', async () => {
-        const mod = await loadStoreModule();
-
-        expect(mod?.createBrowserDiagnosticsUiStore).toBeTypeOf('function');
-        expect(mod?.applyBrowserDiagnosticEvents).toBeTypeOf('function');
-        if (!mod?.createBrowserDiagnosticsUiStore || !mod.applyBrowserDiagnosticEvents) return;
-
-        const state = mod.applyBrowserDiagnosticEvents(
-            mod.createBrowserDiagnosticsUiStore(),
-            {
-                events: [
-                    nativePageInfoEvent({
-                        eventId: 'evt_untrusted_page',
-                        fidelity: 'previewProxy',
-                        trusted: false,
-                        data: {
-                            url: 'https://preview.example.test/app?token=secret#panel',
-                            path: '/api/items?previewToken=secret',
-                            textPreview: 'token=secret',
-                            errorCode: 'Failed https://preview.example.test/app?token=secret',
-                        },
-                    }),
-                ],
-            },
-        );
-
-        expect(JSON.stringify(state)).not.toContain('secret');
-        expect(JSON.stringify(state)).not.toContain('token=');
-        expect(JSON.stringify(state)).not.toContain('previewToken');
-        expect(JSON.stringify(state)).not.toContain('textPreview');
-        expect(JSON.stringify(state)).not.toContain('errorCode');
-        expect(state).toMatchObject({
-            viewsByKey: {
-                [TEST_BROWSER_VIEW_KEY]: {
-                    events: [
-                        expect.objectContaining({
-                            data: expect.objectContaining({
-                                url: 'https://preview.example.test/app',
-                                path: '/api/items',
-                            }),
-                        }),
-                    ],
-                },
-            },
-        });
-    });
-
-    it('retains redacted untrusted resource snapshot entries as metadata only', async () => {
-        const mod = await loadStoreModule();
-
-        expect(mod?.createBrowserDiagnosticsUiStore).toBeTypeOf('function');
-        expect(mod?.applyBrowserDiagnosticEvents).toBeTypeOf('function');
-        if (!mod?.createBrowserDiagnosticsUiStore || !mod.applyBrowserDiagnosticEvents) return;
-
-        const state = mod.applyBrowserDiagnosticEvents(
-            mod.createBrowserDiagnosticsUiStore(),
-            {
-                events: [
-                    nativePageInfoEvent({
-                        eventId: 'evt_resources_1',
-                        family: 'resources',
-                        kind: 'resources.snapshot',
-                        fidelity: 'injectedPage',
-                        trusted: false,
-                        collector: {
-                            collectorId: 'collector_1',
-                            nonce: 'nonce_1',
-                            version: '1.0.0',
-                        },
-                        data: {
-                            entries: [
-                                {
-                                    name: 'https://cdn.example.test/app.js?token=secret#bundle',
-                                    initiatorType: 'script',
-                                    durationMs: 42,
-                                },
-                                {
-                                    name: '/styles/main.css?cacheBust=secret',
-                                    initiatorType: 'css',
-                                    durationMs: 7,
-                                },
-                                {
-                                    name: 'data:text/plain,secret-resource?token=secret#fragment',
-                                    initiatorType: 'fetch',
-                                    durationMs: 3,
-                                },
-                            ],
-                        },
-                        redaction: {
-                            level: 'metadataOnly',
-                        },
-                    }),
-                ],
-            },
-        );
-
-        expect(JSON.stringify(state)).not.toContain('secret');
-        expect(JSON.stringify(state)).not.toContain('token=');
-        expect(JSON.stringify(state)).not.toContain('cacheBust');
-        expect(state).toMatchObject({
-            viewsByKey: {
-                [TEST_BROWSER_VIEW_KEY]: {
-                    events: [
-                        expect.objectContaining({
-                            data: {
-                                entries: [
-                                    {
-                                        name: 'https://cdn.example.test/app.js',
-                                        initiatorType: 'script',
-                                        durationMs: 42,
-                                    },
-                                    {
-                                        name: '/styles/main.css',
-                                        initiatorType: 'css',
-                                        durationMs: 7,
-                                    },
-                                    {
-                                        name: 'data:',
-                                        initiatorType: 'fetch',
-                                        durationMs: 3,
-                                    },
-                                ],
-                            },
-                        }),
-                    ],
-                },
-            },
-        });
-    });
-
-    it('retains capped untrusted eval audit metadata without raw result values', async () => {
-        const mod = await loadStoreModule();
-
-        expect(mod?.createBrowserDiagnosticsUiStore).toBeTypeOf('function');
-        expect(mod?.applyBrowserDiagnosticEvents).toBeTypeOf('function');
-        if (!mod?.createBrowserDiagnosticsUiStore || !mod.applyBrowserDiagnosticEvents) return;
-
-        const state = mod.applyBrowserDiagnosticEvents(
-            mod.createBrowserDiagnosticsUiStore(),
-            {
-                events: [
-                    injectedConsoleEvent({
-                        eventId: 'evt_eval_requested_1',
-                        kind: 'eval.requested',
-                        data: {
-                            evalRequestId: 'eval_1',
-                            tier: 'injectedPage',
-                            expressionPreview: `${'x'.repeat(4096)}secret-tail`,
-                            expressionTruncated: true,
-                            timeoutMs: 2_000,
-                            objectGroupId: 'group_1',
-                        },
-                        redaction: {
-                            level: 'valuesRedacted',
-                        },
-                    }),
-                ],
-            },
-        );
-
-        expect(JSON.stringify(state)).not.toContain('secret-tail');
-        expect(state).toMatchObject({
-            viewsByKey: {
-                [TEST_BROWSER_VIEW_KEY]: {
-                    events: [
-                        expect.objectContaining({
-                            data: {
-                                evalRequestId: 'eval_1',
-                                tier: 'injectedPage',
-                                expressionPreview: 'x'.repeat(4096),
-                                expressionTruncated: true,
-                                timeoutMs: 2_000,
-                                objectGroupId: 'group_1',
-                            },
-                        }),
-                    ],
-                },
-            },
-        });
-    });
-
-    it('does not project redacted untrusted network failures as summaries', async () => {
-        const mod = await loadStoreModule();
-
-        expect(mod?.createBrowserDiagnosticsUiStore).toBeTypeOf('function');
-        expect(mod?.applyBrowserDiagnosticEvents).toBeTypeOf('function');
-        expect(mod?.selectBrowserDiagnosticsForView).toBeTypeOf('function');
-        if (!mod?.createBrowserDiagnosticsUiStore || !mod.applyBrowserDiagnosticEvents || !mod.selectBrowserDiagnosticsForView) return;
-
-        const state = mod.applyBrowserDiagnosticEvents(
-            mod.createBrowserDiagnosticsUiStore(),
-            {
-                events: [
-                    nativePageInfoEvent({
-                        family: 'network',
-                        kind: 'network.failed',
-                        fidelity: 'injectedPage',
-                        trusted: false,
-                        collector: {
-                            collectorId: 'collector_1',
-                            nonce: 'nonce_1',
-                            version: '1.0.0',
-                        },
-                        data: {
-                            requestAvailable: true,
-                            errorAvailable: true,
-                        },
-                        redaction: {
-                            level: 'valuesRedacted',
-                        },
-                    }),
-                ],
-            },
-        );
-
-        const projection = mod.selectBrowserDiagnosticsForView(state, {
-            browserSessionId: 'browser_session_1',
-            viewId: 'view_1',
-        });
-
-        expect(JSON.stringify(projection)).not.toContain('secret');
-        expect(JSON.stringify(projection)).not.toContain('token=');
-        expect(projection).toMatchObject({
-            events: [
-                expect.not.objectContaining({
-                    summary: expect.any(String),
-                }),
-            ],
-        });
-    });
 
     function injectedStreamingEvent(
         kind: string,
@@ -880,7 +637,7 @@ describe('browser diagnostics UI store', () => {
         };
     }
 
-    it('preserves injected streaming, performance, and capability metadata while dropping payloads', async () => {
+    it('projects admitted streaming, performance and capability metadata', async () => {
         const mod = await loadStoreModule();
 
         expect(mod?.createBrowserDiagnosticsUiStore).toBeTypeOf('function');
@@ -892,7 +649,7 @@ describe('browser diagnostics UI store', () => {
                 events: [
                     injectedStreamingEvent('network.websocketOpened', {
                         socketId: 'ws_1',
-                        url: 'wss://realtime.example.test/chat?token=secret',
+                        url: 'wss://realtime.example.test/chat',
                         hasProtocol: true,
                         protocolCount: 1,
                     }),

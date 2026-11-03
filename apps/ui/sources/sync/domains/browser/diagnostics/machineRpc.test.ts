@@ -1,4 +1,4 @@
-import type { BrowserDiagnosticsSnapshotV1 } from '@happier-dev/protocol';
+import type { BrowserDiagnosticsSnapshotV1 } from '@happier-dev/protocol/browser/diagnostics/v1';
 import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -48,6 +48,19 @@ describe('browser diagnostics daemon snapshot machine RPC client', () => {
         callGuardedMachineRpcWithPolicyMock.mockReset();
     });
 
+    it('keeps selected-request values in their separate result and rejects a mismatched request', async () => {
+        const { fetchBrowserDiagnosticsRequestDetailViaMachineRpc } = await import('./machineRpc');
+        const detail = { status: 'available', requestId: 'selected',
+            requestBody: { status: 'unavailable', reason: 'not_captured' },
+            responseBody: { status: 'available', text: 'fixture-private-body', encoding: 'utf8' },
+            requestExtraInfo: [], responseExtraInfo: [] };
+        callGuardedMachineRpcWithPolicyMock.mockResolvedValue({ protocolVersion: 1, snapshot: createSnapshot(), requestDetail: detail });
+        const input = { machineId: 'machine_1', view: { browserSessionId: 'browser', viewId: 'view', navigationGeneration: 0 }, requestId: 'selected' };
+        expect(await fetchBrowserDiagnosticsRequestDetailViaMachineRpc(input)).toEqual({ ok: true, detail });
+        expect(await fetchBrowserDiagnosticsRequestDetailViaMachineRpc({ ...input, requestId: 'other' }))
+            .toEqual({ ok: false, reason: 'invalid_response' });
+    });
+
     it('returns a typed daemon diagnostics snapshot through guarded machine RPC', async () => {
         const snapshot = createSnapshot();
         callGuardedMachineRpcWithPolicyMock.mockResolvedValueOnce({
@@ -69,6 +82,18 @@ describe('browser diagnostics daemon snapshot machine RPC client', () => {
             serverId: 'server_1',
             method: RPC_METHODS.DAEMON_BROWSER_DIAGNOSTICS_SNAPSHOT,
             payload: { machineId: 'machine_1' },
+        }));
+    });
+
+    it('keeps a scoped watch on the transport lifetime and returns the owner revision', async () => {
+        const snapshot = createSnapshot();
+        callGuardedMachineRpcWithPolicyMock.mockResolvedValueOnce({ protocolVersion: 1, snapshot, revision: 8 });
+        const { fetchBrowserDiagnosticsSnapshotViaMachineRpc } = await import('./machineRpc');
+        const view = { browserSessionId: 'browser_session_1', viewId: 'view_1', navigationGeneration: 2 };
+        await expect(fetchBrowserDiagnosticsSnapshotViaMachineRpc({ machineId: 'machine_1', view, sinceRevision: 7 }))
+            .resolves.toEqual({ ok: true, snapshot, revision: 8 });
+        expect(callGuardedMachineRpcWithPolicyMock).toHaveBeenCalledWith(expect.objectContaining({
+            payload: { machineId: 'machine_1', view, sinceRevision: 7 }, operationTimeoutMs: null,
         }));
     });
 

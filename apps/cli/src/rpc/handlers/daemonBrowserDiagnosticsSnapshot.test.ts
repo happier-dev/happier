@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import type { BrowserDiagnosticsSnapshotV1 } from '@happier-dev/protocol';
-import type { RpcHandlerRegistrar } from '@/api/rpc/types';
+import type { RpcHandler, RpcHandlerRegistrar } from '@/api/rpc/types';
 
 function snapshotWithOwnerConsoleText(): BrowserDiagnosticsSnapshotV1 {
     return {
@@ -31,19 +31,46 @@ function snapshotWithOwnerConsoleText(): BrowserDiagnosticsSnapshotV1 {
     };
 }
 
-function createRegistrar(): { handlers: Map<string, (payload: unknown) => Promise<unknown>>; registrar: RpcHandlerRegistrar } {
-    const handlers = new Map<string, (payload: unknown) => Promise<unknown>>();
+function createRegistrar(): { handlers: Map<string, RpcHandler<unknown, unknown>>; registrar: RpcHandlerRegistrar } {
+    const handlers = new Map<string, RpcHandler<unknown, unknown>>();
     return {
         handlers,
         registrar: {
             registerHandler(method, handler) {
-                handlers.set(method, handler as (payload: unknown) => Promise<unknown>);
+                // Erase the registrar's generic at this RPC boundary; the real handler parses input.
+                handlers.set(method, handler as RpcHandler<unknown, unknown>);
             },
         },
     };
 }
 
 describe('daemon browser diagnostics snapshot rpc handler', () => {
+    it('reads only the requested view and keeps viewer redaction on the pushed path', async () => {
+        const { createBrowserDiagnosticsDaemonStore } = await import('@/daemon/browser/diagnostics/store');
+        const { createBrowserDiagnosticsRoutes } = await import('@/daemon/browser/diagnostics/routes');
+        const { registerDaemonBrowserDiagnosticsSnapshotHandler } = await import('./daemonBrowserDiagnosticsSnapshot');
+        const store = createBrowserDiagnosticsDaemonStore({ machineId: 'machine_1' });
+        const event = snapshotWithOwnerConsoleText().events[0];
+        store.publishEvent({ ...event, browserSessionId: 'other' });
+        let wholeMachineReads = 0;
+        const routes = createBrowserDiagnosticsRoutes({ store: { ...store, getSnapshot() {
+            wholeMachineReads++; return store.getSnapshot();
+        } } });
+        const { handlers, registrar } = createRegistrar();
+        registerDaemonBrowserDiagnosticsSnapshotHandler(registrar, { browserDiagnostics: routes });
+        const read = handlers.get(RPC_METHODS.DAEMON_BROWSER_DIAGNOSTICS_SNAPSHOT)!;
+        const request = { machineId: 'machine_1', view: { browserSessionId: event.browserSessionId,
+            viewId: event.viewId, navigationGeneration: event.navigationGeneration } };
+        const initial = await read(request) as { revision: number; snapshot: BrowserDiagnosticsSnapshotV1 };
+        expect(initial.snapshot.events).toEqual([]);
+        const pushed = read({ ...request, sinceRevision: initial.revision });
+        store.publishEvent(event);
+        const response = await pushed as { snapshot: BrowserDiagnosticsSnapshotV1 };
+        expect(response.snapshot.events).toEqual([expect.objectContaining({ eventId: event.eventId,
+            redaction: expect.objectContaining({ level: 'metadataOnly' }) })]);
+        expect(response.snapshot.events[0].data.text).toBeUndefined();
+        expect(wholeMachineReads).toBe(0);
+    });
     it('serves daemon-owned browser diagnostics snapshots over machine rpc', async () => {
         const module = await import('./daemonBrowserDiagnosticsSnapshot').catch(() => null);
 
@@ -62,6 +89,7 @@ describe('daemon browser diagnostics snapshot rpc handler', () => {
         module.registerDaemonBrowserDiagnosticsSnapshotHandler(registrar, {
             browserDiagnostics: {
                 getSnapshot: async () => snapshot,
+                readViewSnapshot: async () => ({ snapshot, revision: 0 }),
             },
         });
 
@@ -82,7 +110,7 @@ describe('daemon browser diagnostics snapshot rpc handler', () => {
         const snapshot = snapshotWithOwnerConsoleText();
         const { handlers, registrar } = createRegistrar();
         module.registerDaemonBrowserDiagnosticsSnapshotHandler(registrar, {
-            browserDiagnostics: { getSnapshot: async () => snapshot },
+            browserDiagnostics: { getSnapshot: async () => snapshot, readViewSnapshot: async () => ({ snapshot, revision: 0 }) },
         });
 
         const raw = await handlers.get(RPC_METHODS.DAEMON_BROWSER_DIAGNOSTICS_SNAPSHOT)?.({ machineId: 'machine_1' });
@@ -93,7 +121,7 @@ describe('daemon browser diagnostics snapshot rpc handler', () => {
         expect(event.data?.level).toBe('log');
     });
 
-    it('serves full owner fidelity when the resolver verifies the owning viewer (none)', async () => {
+    it('serves person fidelity when the transport verifies present-user authority', async () => {
         const module = await import('./daemonBrowserDiagnosticsSnapshot').catch(() => null);
 
         expect(module?.registerDaemonBrowserDiagnosticsSnapshotHandler).toBeTypeOf('function');
@@ -102,11 +130,11 @@ describe('daemon browser diagnostics snapshot rpc handler', () => {
         const snapshot = snapshotWithOwnerConsoleText();
         const { handlers, registrar } = createRegistrar();
         module.registerDaemonBrowserDiagnosticsSnapshotHandler(registrar, {
-            browserDiagnostics: { getSnapshot: async () => snapshot },
-            resolveViewerParty: () => 'owner',
+            browserDiagnostics: { getSnapshot: async () => snapshot, readViewSnapshot: async () => ({ snapshot, revision: 0 }) },
         });
 
-        const raw = await handlers.get(RPC_METHODS.DAEMON_BROWSER_DIAGNOSTICS_SNAPSHOT)?.({ machineId: 'machine_1' });
+        const raw = await handlers.get(RPC_METHODS.DAEMON_BROWSER_DIAGNOSTICS_SNAPSHOT)?.({ machineId: 'machine_1' },
+            { callerAuthority: 'present_user', signal: new AbortController().signal });
         const response = raw as { snapshot: BrowserDiagnosticsSnapshotV1 };
         const event = response.snapshot.events[0];
         expect(event.redaction.level).toBe('none');
