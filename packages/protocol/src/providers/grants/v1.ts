@@ -1,3 +1,4 @@
+import { computeCanonicalDomainSeparatedDigest } from '../../crypto/canonicalDigest.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod/mini';
 
@@ -57,3 +58,13 @@ export const ProviderBindingAuthorizationTicketV1Schema = lazyZodSchema(() => z.
   }
 })));
 export type ProviderBindingAuthorizationTicketV1 = z.infer<typeof ProviderBindingAuthorizationTicketV1Schema>;
+
+/** Opaque currentness comparison; the full authorization ticket stays private. */
+export function projectProviderBindingAuthorizationTicketReferenceV1(ticket: ProviderBindingAuthorizationTicketV1): string {
+  const current = ProviderBindingAuthorizationTicketV1Schema.parse(ticket);
+  return computeCanonicalDomainSeparatedDigest('happier.provider-binding-authorization-ticket.v1', [
+    current.connectionId, String(current.connectionRevision), current.machineId,
+    current.connectionSecurityFingerprint, current.bindingSecurityFingerprint, current.grantFingerprint,
+    JSON.stringify([current.selectedSecretBindingId, current.selectedSecretRecordFingerprint]),
+  ]);
+}

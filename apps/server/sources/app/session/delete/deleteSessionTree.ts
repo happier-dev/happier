@@ -1,3 +1,5 @@
+import { getDbProviderFromEnv } from '@/storage/prisma';
+import { publishNativeCredentialPolicyChangesInTx } from '@/app/teams/credentials/nativePolicyChanges';
 import type { Tx } from '@/storage/inTx';
 import type { Prisma } from '@prisma/client';
 import { notifySessionTranscriptMutationAfterCommit } from '../sessionTranscriptMutationObserver';
@@ -45,7 +47,15 @@ export async function deleteSessionTree(
         params.sessionId,
         ...followEdges.map(edge => edge.destinationSessionId),
         ...managerEdges.filter(hasSessionFollowSessionSource).flatMap(edge => [edge.sourceSessionId, edge.destinationSessionId]),
-    ], grantedAccountIds);
+    ], grantedAccountIds, { includeLifecyclePublications: true });
+    // PostgreSQL's ordinary Session lock is NO KEY UPDATE, compatible with a
+    // new binding's FK KEY SHARE. Upgrade this exact parent before the native
+    // policy publication so an already-accepted row cannot hide until cascade.
+    // MySQL admission already holds FOR UPDATE; SQLite serializes writers.
+    if (getDbProviderFromEnv(process.env, 'postgres') === 'postgres') {
+        await tx.$queryRawUnsafe('SELECT "id" FROM "Session" WHERE "id" = $1 FOR UPDATE', params.sessionId);
+    }
+    await publishNativeCredentialPolicyChangesInTx(tx, { sessionIds: [params.sessionId] });
     const sessionWhere = params.sessionDeleteWhere
         ? {
             AND: [

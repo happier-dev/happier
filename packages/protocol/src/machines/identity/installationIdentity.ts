@@ -84,6 +84,9 @@ deploymentDomainTransition: z.optional(z.strictObject({
     replacementReason: z.optional(MachineReplacementReasonSchema),
     contentPublicKeyFingerprint: z.optional(ContentPublicKeyFingerprintSchema),
     accountId: z.optional(z.string().check(z.trim(), z.minLength(1))),
+    nativeCredentialBindingRead: z.optional(z.strictObject({
+        requestBodyDigest: z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u)),
+    })),
     sessionCreation: z.optional(z.strictObject({
         sourceExecutionDigest: z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u)),
         requestBodyDigest: z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u)),
@@ -154,11 +157,17 @@ deploymentDomainTransition: z.optional(z.strictObject({
     })),
     managedPolicyCensus: z.optional(z.strictObject({ homeId: z.string().check(z.minLength(1)) })),
 }).check(z.superRefine((value, ctx) => {
-    if (value.deploymentDomainTransition && (!value.accountId || value.deploymentSecretLaunch
+    if (value.deploymentDomainTransition && (!value.accountId || value.nativeCredentialBindingRead || value.deploymentSecretLaunch
         || value.deploymentTransition || value.sessionCreation || value.externalActionOrigin || value.rpcAdmission
         || value.managedPolicy || value.managedPolicyCensus || value.replacesMachineId || value.replacementReason
         || value.contentPublicKeyFingerprint)) {
         ctx.addIssue({ code: 'custom', message: 'Domain transition proof binds only its exact installed operation and material' });
+    }
+    if (value.nativeCredentialBindingRead && (!value.accountId || value.deploymentSecretLaunch
+        || value.deploymentTransition || value.sessionCreation || value.externalActionOrigin || value.rpcAdmission
+        || value.managedPolicy || value.managedPolicyCensus
+        || value.replacesMachineId || value.replacementReason || value.contentPublicKeyFingerprint)) {
+        ctx.addIssue({ code: 'custom', message: 'Native credential binding read must bind only its exact installed requester and body' });
     }
     if (value.deploymentSecretLaunch && (!value.accountId || value.deploymentTransition || value.sessionCreation
         || value.externalActionOrigin || value.rpcAdmission || value.managedPolicy || value.managedPolicyCensus
@@ -216,6 +225,9 @@ export function buildMachineInstallationProofPayloadBytes(
             ? { contentPublicKeyFingerprint: normalized.contentPublicKeyFingerprint }
             : null),
         ...(normalized.accountId ? { accountId: normalized.accountId } : null),
+        ...(normalized.nativeCredentialBindingRead ? { nativeCredentialBindingRead: {
+            requestBodyDigest: normalized.nativeCredentialBindingRead.requestBodyDigest,
+        } } : {}),
         ...(normalized.deploymentSecretLaunch ? { deploymentSecretLaunch: {
             requestBodyDigest: normalized.deploymentSecretLaunch.requestBodyDigest,
         } } : {}),

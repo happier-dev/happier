@@ -1,3 +1,5 @@
+import { TeamCredentialNativeBindingReadRequestV1Schema, TeamCredentialNativeBindingReadResponseV1Schema } from '@happier-dev/protocol/teams/credentials/directMaterialV1';
+import { readManagedNativeCredentialBindingForGuestInTx } from '@/app/machines/managed/credentialDeliveryAdmission';
 import { TeamCredentialErrorCodeV1Schema, teamCredentialErrorHttpStatusV1, TeamCredentialResourceAudienceInputV1Schema, TeamCredentialResourceCreateInputV1Schema, TeamCredentialResourceDeleteInputV1Schema, TeamCredentialResourceErrorV1Schema, TeamCredentialResourcePageV1Schema, TeamCredentialResourceEntitledPageV1Schema, TeamCredentialResourceGetInputV1Schema, TeamCredentialResourceReadInputV1Schema, TeamCredentialResourceListInputV1Schema, TeamCredentialResourceSummaryV1Schema, TeamCredentialResourceMutationResultV1Schema, TeamCredentialResourceUpdateInputV1Schema, TeamCredentialResourceActivityReadInputV1Schema, TeamCredentialResourceActivityPageV1Schema, TeamCredentialRequestPolicySupportInputV1Schema, TeamCredentialRequestPolicySupportOutputV1Schema, type TeamCredentialErrorCodeV1 } from '@happier-dev/protocol/teams/credentials/resourceV1';
 import { TeamCredentialTestActionInputV1Schema, TeamCredentialTestActionOutputV1Schema, TeamCredentialPreparationOutputV1Schema } from '@happier-dev/protocol/teams/credentials/actionsV1';
 import { TEAM_CREDENTIAL_RESOURCE_DISCOVERY_PATH_V1, TeamCredentialResourceDiscoverInputV1Schema, TeamCredentialResourceDiscoveryPageV1Schema } from '@happier-dev/protocol/teams/credentials/resourceV1';
@@ -619,11 +621,22 @@ export function registerTeamCredentialResourceRoutes(
         attachValidation: true,
         schema: {
             params: TeamCredentialDirectMaterialRouteParamsV1Schema,
-            body: TeamCredentialDirectMaterialOpenRequestV1Schema,
-            response: { 200: TeamCredentialDirectMaterialMineResponseV1Schema, ...errors },
+            body: z.union([TeamCredentialDirectMaterialOpenRequestV1Schema, TeamCredentialNativeBindingReadRequestV1Schema]),
+            response: { 200: z.union([TeamCredentialDirectMaterialMineResponseV1Schema, TeamCredentialNativeBindingReadResponseV1Schema]), ...errors },
         },
     }, async (request, reply) => {
         const params = TeamCredentialDirectMaterialRouteParamsV1Schema.safeParse(request.params);
+        const native = TeamCredentialNativeBindingReadRequestV1Schema.safeParse(request.body);
+        if (native.success) {
+            if (request.validationError || !params.success || native.data.resourceId !== params.data.resourceId
+                || native.data.teamId !== params.data.teamId) return fail(reply, 'invalid_resource_input');
+            const homeId = await getOrCreateServerIdentityId(env);
+            const result = await inTx(tx => readManagedNativeCredentialBindingForGuestInTx(tx, {
+                actorAccountId: request.userId, homeId, request: native.data,
+                authentication: readSessionAccessAuthenticationFromRequest(request),
+            }), { isolationLevel: 'Serializable' });
+            return reply.send(TeamCredentialNativeBindingReadResponseV1Schema.parse(result));
+        }
         const body = TeamCredentialDirectMaterialOpenRequestV1Schema.safeParse(request.body);
         if (request.validationError || !params.success || !body.success
             || body.data.resourceId !== params.data.resourceId) return fail(reply, "invalid_resource_input");

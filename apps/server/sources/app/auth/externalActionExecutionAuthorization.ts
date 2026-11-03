@@ -1,3 +1,8 @@
+import type { MachineOperationRequesterContext } from '@/app/machines/machineOperationSupport';
+import { readExternalActionNativeCredentialSpawnChildInTx } from './externalActionNativeCredentialChild';
+import { readManagedCredentialDeliveryAuthorityInTx, readManagedCredentialDeliverySubmittedAuthorityInTx } from '@/app/machines/managed/credentialDeliveryAdmission';
+import { ManagedControllerCredentialDeliveryReportV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { resolveManagedNativeCredentialActionMachineAdmissionInTx, type ExternalActionManagedAdmissionContext } from './externalActionManagedNativeAdmission';
 import * as z from 'zod/mini';
 import { isProjectWorkspaceSyncPreparationActionV1 } from '@happier-dev/protocol/actions/projectActionFamily';
 import { DaemonLocalServiceLauncherStartRequestV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
@@ -166,8 +171,10 @@ export function isOriginalTerminalExecutionAction(actionId: string,
 }
 
 /** Native effects use C41 policy; Account effects retain their domain route's authority. */
-export function resolveExternalActionExecutionMachineAdmissionInTx(reader: Tx,
-    input: Readonly<{ actorAccountId: string; machineId: string; actionId: string }>): ReturnType<typeof resolveMachineAdmissionInTx> {
+export async function resolveExternalActionExecutionMachineAdmissionInTx(reader: Tx,
+    input: ExternalActionManagedAdmissionContext & Partial<MachineOperationRequesterContext> & Readonly<{ actorAccountId: string; machineId: string; actionId: string }>): ReturnType<typeof resolveMachineAdmissionInTx> {
+    // Exact native binding admission is mandatory even for a controller manager.
+    if (input.actionId === 'machines.managed.credentials.install') return resolveManagedNativeCredentialActionMachineAdmissionInTx(reader, { ...input, actionId: input.actionId });
     const action = SignedRootActionIdSchema.safeParse(input.actionId);
     const spec = action.success ? getActionSpec(action.data) : null;
     const accountPlaced = spec?.executionPlacement === 'account'
@@ -177,6 +184,10 @@ export function resolveExternalActionExecutionMachineAdmissionInTx(reader: Tx,
     // Session/resource permission (including managed wake's separate Manage).
     // Input-dependent Machine variants retain their native admission policy.
     return resolveMachineAdmissionInTx(reader, { actorAccountId: input.actorAccountId, machineId: input.machineId,
+        callerAuthority: input.callerAuthority ?? input.authentication?.authenticationAuthority
+            ?? (input.executionBinding ? readExternalActionBindingAuthority(input.executionBinding) : undefined),
+        sessionActionOrigin: input.sessionActionOrigin ?? input.executionBinding?.sessionActionOrigin,
+        executionBinding: input.executionBinding,
         ...(input.actionId === 'approval.request.decide'
             ? { rpcMethod: RPC_METHODS.APPROVAL_REQUEST_REPLAY_APPROVED }
             : accountPlaced ? {} : { actionId: input.actionId }) });
@@ -274,9 +285,39 @@ export async function readCurrentExternalActionHandoffBindingInTx(reader: Tx, in
 type IssuedAcquireNativeFactPurpose = Readonly<{ kind: 'issued-managed-acquire-native-fact'; report: ManagedControllerReportV1 }>;
 type IssuedHandoffContinuationPurpose = Readonly<{ kind: 'issued-handoff-continuation' }>;
 type IssuedIntentNativeFactPurpose = Readonly<{ kind: 'issued-managed-intent-native-fact'; report: ManagedControllerIntentReportV1 }>;
+type IssuedNativeCredentialFactPurpose = Readonly<{ kind: 'issued-managed-native-credential-fact'; report: ReturnType<typeof ManagedControllerCredentialDeliveryReportV1Schema.parse> }>;
 type RetainedDiscussionPublicationPurpose = Readonly<{ kind: 'retained-discussion-publication'; source: SessionInputSourceSessionV1 }>;
-type ExternalActionVerificationPurpose = IssuedAcquireNativeFactPurpose | IssuedHandoffContinuationPurpose | IssuedIntentNativeFactPurpose
+type ExternalActionVerificationPurpose = IssuedAcquireNativeFactPurpose | IssuedHandoffContinuationPurpose | IssuedIntentNativeFactPurpose | IssuedNativeCredentialFactPurpose
     | RetainedDiscussionPublicationPurpose;
+
+/** Consumption may end after submission; only that installed operation may report its disposition. */
+async function isIssuedNativeCredentialFactReportInTx(reader: Tx, binding: ExternalActionExecutionAuthorizationBindingV1,
+    report: IssuedNativeCredentialFactPurpose['report']): Promise<boolean> {
+    const accepted = binding.managedAdmission;
+    const delivery = report.credentialDelivery;
+    if (binding.actionId !== 'machines.managed.credentials.install' || accepted?.actionId !== binding.actionId
+        || !('result' in delivery) || !sameManagedInput(accepted.input, delivery.request)
+        || binding.serverIdentityId !== report.homeId || accepted.input.homeId !== report.homeId
+        || accepted.input.managedId !== report.managedId
+        || binding.machineId !== report.controller.machineId || binding.installationId !== report.controller.installationId) return false;
+    try {
+        const row = await requireCurrentManagedMachineInTx(reader, report,
+            { requestAuthority: 'intent', allowInactiveCurrentIntent: true });
+        if (row.custodianAccountId !== binding.custodianAccountId) return false;
+        const current = await readManagedCredentialDeliverySubmittedAuthorityInTx(reader, {
+            actorAccountId: binding.accountId, machineId: binding.machineId, request: accepted.input,
+            authentication: { env: process.env, authority: readExternalActionBindingAuthority(binding),
+                authenticationEvidence: 'authentication' in binding ? binding.authentication.evidence : undefined },
+            continuingRequestId: binding.requestId,
+            sessionActionOrigin: binding.sessionActionOrigin, sessionActionSource: binding.sessionActionSource,
+        });
+        return current !== null && (delivery.result.kind !== 'confirmed'
+            || sameManagedInput(delivery.result.binding, current.binding.safeFacet));
+    } catch (error) {
+        if (!(error instanceof ManagedMachineError)) throw error;
+        return false;
+    }
+}
 
 /** Root verification only: final publication still opens the approved Artifact at its trusted host. */
 async function isRetainedDiscussionPublicationSourceCurrentInTx(reader: Tx,
@@ -429,10 +470,13 @@ async function readCurrentExternalActionPrincipal(
         if (account?.encryptionMode !== binding.accountEncryptionMode) return null;
     }
     if (binding.sessionActionOrigin) {
+        const nativeReleaseSourceCurrent = await readNativeCredentialReleaseSourceCurrentInTx(reader, binding);
         if (!('authentication' in binding) || !binding.sessionActionSource
             || binding.sessionActionOrigin.requestId !== binding.requestId
-            || (purpose?.kind !== 'issued-managed-acquire-native-fact' && !await hasCurrentSessionActionRpcSourceBindingInTx(reader, { accountId: binding.accountId,
-                ...binding.sessionActionSource, sourceSessionId: binding.sessionActionOrigin.caller.sessionId }))) return null;
+            || (purpose?.kind !== 'issued-managed-acquire-native-fact' && purpose?.kind !== 'issued-managed-native-credential-fact'
+                && !(nativeReleaseSourceCurrent ?? await hasCurrentSessionActionRpcSourceBindingInTx(reader, { accountId: binding.accountId,
+                    ...binding.sessionActionSource, sourceSessionId: binding.sessionActionOrigin.caller.sessionId })))) return null;
+
         const action = ActionIdSchema.safeParse(binding.actionId);
         if (action.success && getActionSpec(action.data).originalExecution?.nativePurpose === 'session_board_write' && (binding.target.kind !== 'session'
             || binding.target.sessionId !== binding.sessionActionOrigin.caller.sessionId
@@ -443,6 +487,7 @@ async function readCurrentExternalActionPrincipal(
     if (binding.workflowActionOrigin && (!('authentication' in binding)
         || !isExternalActionWorkflowActionIdV1(binding.actionId)
         || purpose?.kind !== 'issued-managed-intent-native-fact'
+            && purpose?.kind !== 'issued-managed-native-credential-fact'
             && !await hasCurrentExternalActionWorkflowOriginInTx(reader, binding))) return null;
     if (binding.managedContinuation) {
         const continuation = binding.managedContinuation;
@@ -488,8 +533,7 @@ async function readCurrentExternalActionPrincipal(
             && !(binding.handoffContinuation && isOriginalAccountHandoffAction(binding.actionId))) return null;
         if (!await hasCurrentOriginalSessionActionTargetInTx(reader, binding)) return null;
         if (!await auth.isSignedCredentialCurrent(reader, binding.accountId, binding.authentication.tokenEpoch)) return null;
-        const authority = narrowCredentialAuthority('present_user', binding.sessionActionOrigin || binding.workflowActionOrigin
-            || binding.authentication.kind === 'terminal' ? 'account_automation' : undefined);
+        const authority = readExternalActionBindingAuthority(binding);
         const base = { accountId: binding.accountId, authentication: binding.authentication,
             ...(binding.authentication.evidence ? { authenticationEvidence: binding.authentication.evidence } : {}) };
         if (binding.workflowActionOrigin) return { ...base, authority: 'account_automation', workflowActionOrigin: binding.workflowActionOrigin };
@@ -561,6 +605,7 @@ export type VerifiedExternalActionExecutionRequest = Readonly<{
     effectiveAuthority: VerifiedExternalActionPrincipal['authority'];
     /** Home-derived private phase, never a caller-authored guest grant. */
     managedGuestActivity?: Readonly<{ machineId: string; installationId: string; encryptionMode: 'plain' | 'e2ee' }>;
+    nativeCredentialSpawnChildAdmission?: Readonly<{ machineId: string; installationId: string; custodianAccountId: string }>;
 }>;
 
 type ExternalActionExecutionRequestProof = Readonly<{
@@ -580,8 +625,27 @@ type ExternalActionExecutionRequestProof = Readonly<{
     resolveCurrentSessionMachine?: (input: Readonly<{ accountId: string; sessionId: string }>) => Promise<string | null>;
 }>;
 
+/** An owning installed lifetime may remove its exact rule after its ingress ends. */
+async function readNativeCredentialReleaseSourceCurrentInTx(reader: Tx,
+    binding: ExternalActionExecutionAuthorizationBindingV1): Promise<boolean | null> {
+    const native = binding.managedAdmission;
+    if (binding.sessionActionOrigin && binding.actionId === 'machines.managed.credentials.install'
+        && native?.actionId === binding.actionId && native.input.operation === 'release') {
+        if (!binding.sessionActionSource) return false;
+        return await readManagedCredentialDeliveryAuthorityInTx(reader, { actorAccountId: binding.accountId,
+            machineId: binding.machineId, request: native.input,
+            authentication: { env: process.env, authority: 'account_automation',
+                authenticationEvidence: 'authentication' in binding ? binding.authentication.evidence : undefined },
+            continuingRequestId: binding.requestId,
+            sessionActionOrigin: binding.sessionActionOrigin, sessionActionSource: binding.sessionActionSource }) !== null;
+    }
+    return null;
+}
+
 export async function hasCurrentExternalActionSessionSource(binding: ExternalActionExecutionAuthorizationBindingV1,
     resolveCurrentSessionMachine: ExternalActionExecutionRequestProof['resolveCurrentSessionMachine']): Promise<boolean> {
+    const nativeReleaseSourceCurrent = await readNativeCredentialReleaseSourceCurrentInTx(db, binding);
+    if (nativeReleaseSourceCurrent !== null) return nativeReleaseSourceCurrent;
     if (binding.handoffContinuation) return Boolean(binding.handoffAdmission
         && await readCurrentExternalActionHandoffBindingInTx(db, { accountId: binding.accountId, handoffAdmission: binding.handoffAdmission })
         && (!binding.sessionActionOrigin || binding.sessionActionSource
@@ -595,8 +659,10 @@ export async function hasCurrentExternalActionSessionSource(binding: ExternalAct
 
 async function hasCurrentExecutionMachineAdmission(
     binding: ExternalActionExecutionAuthorizationBindingV1,
+    callerAuthority: ActionRequiredAuthority,
     admittedMachine?: Readonly<{ accountId: string; kind: string; installationId: string | null;
         revokedAt: Date | null; replacedByMachineId: string | null }>,
+    purpose?: ExternalActionVerificationPurpose,
 ): Promise<boolean> {
     const machine = admittedMachine ?? await db.machine.findFirst({
         where: { id: binding.machineId, accountId: binding.custodianAccountId, installationId: binding.installationId },
@@ -607,6 +673,7 @@ async function hasCurrentExecutionMachineAdmission(
     // This signed leaf already owns admission. The principal check reads its
     // active Run; the installation check above authenticates this later call.
     if (binding.workflowActionOrigin?.sessionLeaf) return true;
+    if (purpose?.kind === 'issued-managed-native-credential-fact') return true;
     // Only the authenticated handoff tuple proves requester attribution for
     // these otherwise custodian-only methods. Unsigned method admission stays closed.
     if (binding.handoffAdmission) {
@@ -619,7 +686,8 @@ async function hasCurrentExecutionMachineAdmission(
     // Restricted Runner admission is Session/credential-owned, not a persistent Machine grant.
     if (machine.kind === 'ephemeral_session_runner') return binding.accountId === machine.accountId;
     const current = await resolveExternalActionExecutionMachineAdmissionInTx(db, { actorAccountId: binding.accountId,
-        machineId: binding.machineId, actionId: binding.actionId });
+        callerAuthority, sessionActionOrigin: binding.sessionActionOrigin,
+        machineId: binding.machineId, actionId: binding.actionId, executionBinding: binding });
     // A sealed Manage role is consumed downstream (unrestricted terminal,
     // definition admission); a later downgrade is seen at this next admission.
     return current.kind === 'admitted'
@@ -832,13 +900,18 @@ async function verifyCommon(
         && binding.handoffAdmission && !binding.handoffContinuation && !binding.handoffPreflight && handoffChild.success
         && handoffChild.data.handoffContinuation?.authorization.token === proof.authorizationToken
         && readHandoffContinuationIssuanceAction(proof.path) !== null;
+    const nativeReport = proof.method.toUpperCase() === 'POST' && proof.path.split('?')[0] === '/v1/machines/managed/controller/report'
+        ? ManagedControllerCredentialDeliveryReportV1Schema.safeParse(proof.body) : null;
     const purpose: ExternalActionVerificationPurpose | undefined = report?.success
         && await isIssuedAcquireNativeFactReportInTx(db, binding, report.data)
         ? { kind: 'issued-managed-acquire-native-fact', report: report.data }
         : intentReport?.success && await isIssuedIntentNativeFactReportInTx(db, binding, intentReport.data)
             ? { kind: 'issued-managed-intent-native-fact', report: intentReport.data }
             : isHandoffChildIssue ? { kind: 'issued-handoff-continuation' }
-                : retainedDiscussionSource ? { kind: 'retained-discussion-publication', source: retainedDiscussionSource } : undefined;
+                : nativeReport?.success && effectActionId.data === binding.actionId
+                && await isIssuedNativeCredentialFactReportInTx(db, binding, nativeReport.data)
+                ? { kind: 'issued-managed-native-credential-fact', report: nativeReport.data }
+            : retainedDiscussionSource ? { kind: 'retained-discussion-publication', source: retainedDiscussionSource } : undefined;
     if (!purpose && !await hasCurrentExternalActionSessionSource(binding, proof.resolveCurrentSessionMachine)) return refuseExternalActionExecutionRequest('source_before_principal');
 
     const machine = await db.machine.findFirst({
@@ -886,7 +959,6 @@ async function verifyCommon(
     ) {
         return refuseExternalActionExecutionRequest('machine_identity');
     }
-    if (!await hasCurrentExecutionMachineAdmission(binding, machine)) return refuseExternalActionExecutionRequest('machine_admission_before_principal');
     if (!signatureCurrent) return refuseExternalActionExecutionRequest('machine_signature');
 
     // Login eligibility may await a provider; publisher currentness is checked
@@ -894,10 +966,9 @@ async function verifyCommon(
     const currentPrincipal = await verifyCurrentExternalActionPrincipalForPurpose(binding, purpose);
     const principal = currentPrincipal && projectVerifiedExternalActionBoundPrincipal(binding, currentPrincipal);
     if (!principal) return refuseExternalActionExecutionRequest('principal');
-    if (!await hasCurrentExecutionMachineAdmission(binding)) return refuseExternalActionExecutionRequest('machine_admission_after_principal');
+    if (!await hasCurrentExecutionMachineAdmission(binding, principal.authority, machine, purpose)) return refuseExternalActionExecutionRequest('machine_admission_after_principal');
     if (!purpose && !await hasCurrentExternalActionSessionSource(binding, proof.resolveCurrentSessionMachine)) return refuseExternalActionExecutionRequest('source_after_principal');
     if (!await readCurrentExternalActionPrincipal(binding, db, purpose)) return refuseExternalActionExecutionRequest('final_credential');
-    if (!await hasCurrentExecutionMachineAdmission(binding)) return refuseExternalActionExecutionRequest('final_machine_admission');
     if (!await hasCurrentOriginalSessionActionTargetInTx(db, binding, target)) return refuseExternalActionExecutionRequest('final_original_target');
     if (readCustody) {
         const current = await readCustody();
@@ -1889,6 +1960,7 @@ function matchesExternalActionAuthorizationBinding(binding: ExternalActionExecut
         || binding.accountEncryptionMode !== supplied.accountEncryptionMode
         || !sameManagedInput(binding.managedContinuation, supplied.managedContinuation)
         || !sameManagedInput(binding.managedAdmission, supplied.managedAdmission)
+        || !sameManagedInput(binding.nativeCredentialSpawnChild, supplied.nativeCredentialSpawnChild)
         || !sameManagedInput(binding.managedAccountExecutor, supplied.managedAccountExecutor)
         || !sameManagedInput(binding.handoffAdmission, supplied.handoffAdmission)
         || !sameManagedInput(binding.handoffContinuation, supplied.handoffContinuation)
@@ -1942,7 +2014,7 @@ async function readCurrentWorkspaceSyncSourceAuthorization(binding: ExternalActi
     const current = await verifyCurrentExternalActionPrincipal(binding);
     const principal = current && projectVerifiedExternalActionBoundPrincipal(binding, current);
     if (!principal || narrowCredentialAuthority(principal.authority, context.callerAuthority) !== context.callerAuthority
-        || !await hasCurrentExecutionMachineAdmission(binding)
+        || !await hasCurrentExecutionMachineAdmission(binding, context.callerAuthority)
         || !resolveCredentialActionAdmissionV1({ spec: getActionSpec(action.data), authority: context.callerAuthority,
             grant: 'grant' in binding ? binding.grant : null }).ok) return null;
     if (binding.sessionActionOrigin && ((context.callerPermissionMode != null
@@ -2145,6 +2217,10 @@ export async function readCurrentWorkspaceSyncSeedAuthorization(
 export async function verifyExternalActionMachineRpcExecution(
     execution: ExternalActionMachineRpcExecutionV1,
     request: Readonly<{ method: string; requestId?: string; params?: unknown; event?: ExternalActionMachineRpcEventV1;
+        /** Verification-only projection of an already source-signed child, never accepted from generic socket fields. */
+        paramsPresent?: boolean; paramsDigest?: string;
+        /** Host-only issuer purpose: a spawn proof never directly dispatches a credential effect. */
+        nativeCredentialSpawnChildIssuance?: true;
         workspaceSyncSourceRouting?: WorkspaceSyncSourceRoutingV1;
         workspaceSyncSourceWriterTargetRouting?: WorkspaceSyncSourceWriterTargetRoutingV1;
         workspaceSyncTargetRouting?: WorkspaceSyncTargetRoutingV1;
@@ -2161,6 +2237,30 @@ export async function verifyExternalActionMachineRpcExecution(
         || !isExternalActionResolvedTargetAllowedV1({ authorizedTarget: binding.target,
             resolvedTarget: execution.target, selectedMachineId: binding.machineId })) return null;
 
+    if (execution.managedAdmission !== undefined) {
+        if (request.nativeCredentialSpawnChildIssuance !== true || binding.actionId !== 'session.spawn_new'
+            || request.event !== undefined && request.event !== SOCKET_RPC_EVENTS.CALL
+            || request.paramsPresent !== undefined || request.paramsDigest !== undefined
+            || execution.deploymentChildRouting || execution.deploymentChildExecution
+            || request.workspaceSyncSourceRouting || request.workspaceSyncTargetRouting
+            || request.workspaceSyncSourceWriterTargetRouting || request.workspaceSyncSeedRouting
+            || request.workspaceSyncSourceExecution) return null;
+        const current = await verifyCurrentExternalActionPrincipal(binding);
+        const principal = current && projectVerifiedExternalActionBoundPrincipal(binding, current);
+        if (!principal || !await hasCurrentExecutionMachineAdmission(binding, principal.authority)
+            || !resolveCredentialActionAdmissionV1({ spec: getActionSpec(binding.actionId), authority: principal.authority,
+                grant: 'grant' in binding ? binding.grant : null }).ok) return null;
+        const native = await readExternalActionNativeCredentialSpawnChildInTx(db, {
+            binding, execution, request: { ...request, requestId: request.requestId },
+            authentication: { env: process.env, authority: principal.authority,
+                authenticationEvidence: principal.authenticationEvidence },
+        });
+        if (!native) return null;
+        return { binding, effectActionId: execution.effectActionId, target: execution.target, principal,
+            effectiveAuthority: principal.authority, nativeCredentialSpawnChildAdmission: {
+                machineId: native.machineId, installationId: native.installationId, custodianAccountId: native.custodianAccountId,
+            } };
+    }
     if ((binding.actionId === 'projects.service.relocate' || binding.actionId === 'discussion.second_opinion.start') && request.originalActionEnvelope) {
         const envelope = ExternalActionRequestEnvelopeSchema.safeParse(request.originalActionEnvelope);
         const separator = request.method.indexOf(':');
@@ -2201,7 +2301,7 @@ export async function verifyExternalActionMachineRpcExecution(
         const principal = current && projectVerifiedExternalActionBoundPrincipal(binding, current);
         if (!machine?.installationPublicKey || machine.installationId !== binding.installationId
             || classifyMachineAvailabilityState(machine) !== 'available' || destination.kind !== 'admitted'
-            || !principal || !await hasCurrentExecutionMachineAdmission(binding)
+            || !principal || !await hasCurrentExecutionMachineAdmission(binding, principal.authority)
             || !resolveCredentialActionAdmissionV1({ spec: getActionSpec(binding.actionId), authority: principal.authority,
                 grant: 'grant' in binding ? binding.grant : null }).ok
             || !verifyExternalActionMachineRpcRequestV1({ authorizationToken: execution.authorization.token,
@@ -2213,7 +2313,7 @@ export async function verifyExternalActionMachineRpcExecution(
         // the SOURCE signature attests derivation, never permission on the destination.
         const finalDestination = await resolveMachineAdmission({ actorAccountId: binding.accountId, machineId, requiredRole: 'use' });
         if (finalDestination.kind !== 'admitted' || finalDestination.installationId !== destination.installationId
-            || !await hasCurrentExecutionMachineAdmission(binding) || !await readCurrentExternalActionPrincipal(binding, db)) return null;
+            || !await readCurrentExternalActionPrincipal(binding, db)) return null;
         return { binding, effectActionId: effect, target: execution.target, principal, effectiveAuthority: principal.authority };
     }
 
@@ -2338,7 +2438,6 @@ export async function verifyExternalActionMachineRpcExecution(
         || machine.installationId !== execution.installationId
         || binding.installationId !== execution.installationId
         || !signingPublicKey
-        || !await hasCurrentExecutionMachineAdmission(binding, machine)
         || !verifyExternalActionMachineRpcRequestV1({
             authorizationToken: execution.authorization.token,
             requesterAccountContext: execution.authorization.requesterAccountContext,
@@ -2359,7 +2458,7 @@ export async function verifyExternalActionMachineRpcExecution(
     const credentialAction = isTransitionRoot ? parseExternalActionEffectAction(binding, binding.actionId) : binding.handoffContinuation
         ? PublicActionIdSchema.safeParse(readExternalActionCredentialActionId(binding)) : effect;
     if (!credentialAction.success || !await readCurrentExternalActionPrincipal(binding, db)
-        || !await hasCurrentExecutionMachineAdmission(binding)
+        || !await hasCurrentExecutionMachineAdmission(binding, principal.authority, machine)
         || !resolveCredentialActionAdmissionV1({ spec: getActionSpec(credentialAction.data),
             authority: principal.authority, grant: 'grant' in binding ? binding.grant : null }).ok) return null;
     // Run the full derived guest scope last, after all other asynchronous
@@ -2393,4 +2492,12 @@ export async function verifyExternalActionExecutionAuthorizationCurrentness(
         // execution floors remain enforced by the domain and RPC owners.
         surface: readExternalActionSessionProposalSurface(verified.binding) }).ok) return refuseExternalActionExecutionRequest('credential_action_admission');
     return verified;
+}
+
+function readExternalActionBindingAuthority(binding: ExternalActionExecutionAuthorizationBindingV1,
+    accountAuthority: ActionRequiredAuthority = 'present_user'): ActionRequiredAuthority {
+    return narrowCredentialAuthority(accountAuthority, !('authentication' in binding)
+        || binding.sessionActionOrigin || binding.workflowActionOrigin
+        || binding.nativeCredentialSpawnChild || binding.authentication.kind === 'terminal'
+        ? 'account_automation' : undefined);
 }

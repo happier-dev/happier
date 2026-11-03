@@ -24,7 +24,7 @@ import { BillingCapabilitiesV1Schema, RetentionCapabilitiesV1Schema, ProviderPri
 import { AcquireResultV1Schema, ManagedNativeOperationReferenceV1Schema, ManagedResourceV1Schema, ManagedRecoveryHintV1Schema, ManagedBootstrapCarrierV1Schema, ProviderObservationV1Schema, SharedSavedSecretRefV1Schema, type AcquireResultV1 } from '../../machines/managed/providerFactsV1.js';
 import { createProtocolComposableSchema, ProtocolValidationError, defineProtocolObject, defineProtocolString, defineProtocolNumber, defineProtocolArray, defineProtocolLiteral, defineProtocolUnion, defineProtocolJsonValue, normalizePluginJsonSchema, pluginJsonValuesEqual, type ProtocolComposableSchema, type ProtocolJsonValue } from '../actions/protocolComposableSchema.js';
 
-export const MACHINE_PROVISIONER_EFFECT_ROLES_V1 = ['acquire', 'bootstrap', 'exec', 'putFile', 'power', 'destroy', 'rebuild'] as const;
+export const MACHINE_PROVISIONER_EFFECT_ROLES_V1 = ['acquire', 'bootstrap', 'exec', 'putFile', 'power', 'destroy', 'rebuild', 'nativeCredentialApply'] as const;
 export type MachineProvisionerEffectRoleV1 = typeof MACHINE_PROVISIONER_EFFECT_ROLES_V1[number];
 export type MachineProvisionerRoleV1 = 'check' | 'options' | 'inspect' | 'reconcile' | 'cleanup' | MachineProvisionerEffectRoleV1;
 export const MACHINE_PROVISIONER_BOOTSTRAP_CREDENTIAL_ROLES_V1 = ['acquire', 'bootstrap', 'exec', 'putFile', 'inspect', 'reconcile', 'destroy'] as const;
@@ -109,6 +109,10 @@ export const MachineProvisionerContributionV1Schema = lazyZodSchema(() => z.stri
   resourceIdPath: z.optional(InputPathSchema),
   bootstrapTransport: z.optional(z.strictObject({ kind: z.literal('native'), exec: local(), putFile: local() })),
   bootstrapCredential: z.optional(z.strictObject({ kind: z.enum(['ssh', 'native-token']) })),
+  nativeCredentialDelivery: z.optional(z.strictObject({
+    apply: local(), transports: z.tuple([z.literal('https_headers')]),
+    preservesEndpoint: z.literal(true), perBindingMatching: z.literal(true),
+  })),
   // Waive only a positively qualified native launch variant. Omission keeps
   // the Action's declared purpose required; this never grants HostAccess.
   credentialPurposeRequirements: z.optional(z.array(z.strictObject({ purpose: local(), optionalWhen: InputPredicateSchema }))),
@@ -157,6 +161,7 @@ export function readMachineProvisionerActionRolesV1(descriptor: MachineProvision
       { role: 'exec' as const, action: descriptor.bootstrapTransport.exec },
       { role: 'putFile' as const, action: descriptor.bootstrapTransport.putFile },
     ] : []),
+    ...(descriptor.nativeCredentialDelivery ? [{ role: 'nativeCredentialApply' as const, action: descriptor.nativeCredentialDelivery.apply }] : []),
     ...(descriptor.reconciliation ? [{ role: 'reconcile' as const, action: descriptor.reconciliation.action }] : []),
     ...(descriptor.reconciliation?.cleanup ? [{ role: 'cleanup' as const, action: descriptor.reconciliation.cleanup }] : []),
   ]);
@@ -175,7 +180,8 @@ export function validateMachineProvisionerContributionsV1(value: Readonly<{ mach
     });
     for (const binding of readMachineProvisionerActionRolesV1(descriptor)) {
       const action = value.actions.find(candidate => candidate.id === binding.action);
-      const path = ['machineProvisioners', index, ...(binding.role === 'reconcile' || binding.role === 'cleanup' ? ['reconciliation', binding.role === 'cleanup' ? 'cleanup' : 'action']
+      const path = ['machineProvisioners', index, ...(binding.role === 'nativeCredentialApply' ? ['nativeCredentialDelivery', 'apply']
+        : binding.role === 'reconcile' || binding.role === 'cleanup' ? ['reconciliation', binding.role === 'cleanup' ? 'cleanup' : 'action']
         : [descriptor.actions[binding.role as keyof typeof descriptor.actions] ? 'actions' : 'bootstrapTransport', binding.role])];
       if (!action || action.execution.target !== 'daemon') {
         context.addIssue({ code: 'custom', path, message: 'Machine provisioner roles require a declared same-plugin daemon Action.' });
@@ -229,6 +235,9 @@ export function validateMachineProvisionerContributionsV1(value: Readonly<{ mach
 const text = () => mini.string().check(mini.trim(), mini.minLength(1));
 const machineProvisionerCheckResult = lazyDefinition(() => mini.strictObject({
   available: mini.boolean(), code: mini.optional(text()),
+  nativeCredentialDelivery: mini.optional(mini.strictObject({
+    status: mini.enum(['supported', 'unsupported', 'unknown']), code: mini.optional(text()),
+  })),
   status: mini.optional(PluginLocalizedStringV2Schema),
   prerequisites: mini.optional(mini.array(ManagedPrerequisiteV1Schema)),
   localResources: mini.optional(ManagedLocalResourceFactsV1Schema),
@@ -460,11 +469,57 @@ export const MachineProvisionerDestroyResultV1Schema = defineProtocolUnion([
   }))),
 ]);
 export const MachineProvisionerPutFileResultV1Schema = MachineProvisionerPowerResultV1Schema;
+/** Complete desired policy descriptors. Secret headers stay invocation-private. */
+export const MachineProvisionerNativeCredentialBindingV1Schema = lazyZodSchema(() => z.strictObject({
+  bindingKey: z.string().check(z.minLength(1)), destination: z.string().check(z.minLength(1)),
+  requests: z.array(z.strictObject({ path: z.string().check(z.minLength(1)),
+    methods: z.array(z.string().check(z.minLength(1))).check(z.minLength(1)),
+  })).check(z.minLength(1)),
+  placeholder: z.strictObject({ header: z.string().check(z.minLength(1)), value: z.string().check(z.minLength(1)) }),
+  attributionHeaders: z.optional(z.array(z.strictObject({
+    name: z.string().check(z.minLength(1)), value: z.string(),
+  }))),
+}));
+export type MachineProvisionerNativeCredentialBindingV1 = z.infer<typeof MachineProvisionerNativeCredentialBindingV1Schema>;
+export const MachineProvisionerNativeCredentialApplyInputV1Schema = lazyZodSchema(() => z.strictObject({
+  resource: ManagedResourceV1Schema,
+  baseline: z.strictObject({ kind: z.literal('allow-all') }),
+  bindings: z.array(MachineProvisionerNativeCredentialBindingV1Schema),
+  /** Current and retiring admitted bindings prove ownership of redacted rules. */
+  ownedBindings: z.optional(z.array(MachineProvisionerNativeCredentialBindingV1Schema)),
+}));
+export type MachineProvisionerNativeCredentialApplyInputV1<TResource = ProtocolJsonValue> =
+  Omit<z.infer<typeof MachineProvisionerNativeCredentialApplyInputV1Schema>, 'resource'> & {
+    resource: Omit<z.infer<typeof ManagedResourceV1Schema>, 'value'> & { value: TResource };
+  };
+export const MachineProvisionerNativeCredentialApplyInputProtocolV1Schema = projectRoleSchema(MachineProvisionerNativeCredentialApplyInputV1Schema);
+export const MachineProvisionerNativeCredentialApplyResultV1Schema = MachineProvisionerPowerResultV1Schema;
 export const MachineProvisionerRebuildResultV1Schema = projectRoleSchema(lazyDefinition(() => mini.discriminatedUnion('kind', [
   mini.strictObject({ kind: mini.literal('bound'), resource: ManagedResourceV1Schema }),
   mini.strictObject({ kind: mini.literal('unknown'), recovery: ManagedRecoveryHintV1Schema }),
   mini.strictObject({ kind: mini.literal('refused'), code: text() }),
 ])));
+function nativeCredentialApplyInputProjection(resource: PluginJsonSchemaV2): PluginJsonSchemaV2 {
+  // The structural JSON definition belongs only to the generic resource.value.
+  // Replacing that value also removes its now-unreferenced open definition.
+  const { definitions: _genericDefinitions, $defs: _genericDefs, ...canonical } =
+    MachineProvisionerNativeCredentialApplyInputProtocolV1Schema.jsonSchema;
+  const envelope = canonical.properties!.resource!;
+  return { ...canonical, properties: { ...canonical.properties,
+    resource: { ...envelope, properties: { ...envelope.properties, value: nestedProjection(resource) } },
+  } };
+}
+function defineNativeCredentialApplyInput<RI, RO>(resource: ProtocolComposableSchema<RI, RO>) {
+  return createProtocolComposableSchema<MachineProvisionerNativeCredentialApplyInputV1<RI>, MachineProvisionerNativeCredentialApplyInputV1<RO>>(
+    () => nativeCredentialApplyInputProjection(resource.jsonSchema), value => {
+      const canonical = MachineProvisionerNativeCredentialApplyInputProtocolV1Schema.safeParse(value);
+      if (!canonical.success) return canonical;
+      const native = resource.safeParse(canonical.data.resource.value);
+      return native.success ? { success: true, data: { ...canonical.data,
+        resource: { ...canonical.data.resource, value: native.data },
+      } } : { success: false, error: native.error };
+    });
+}
 function acquireResultProjection(resource: PluginJsonSchemaV2, nativeOperation?: PluginJsonSchemaV2): PluginJsonSchemaV2 {
   const canonical = MachineProvisionerAcquireResultV1Schema.jsonSchema;
   return { ...canonical, oneOf: canonical.oneOf?.filter(variant => nativeOperation !== undefined || variant.properties?.kind?.const !== 'pending').map(variant => {
@@ -486,6 +541,7 @@ function machineProvisionerRoleResultProjection(descriptor: MachineProvisionerCo
     case 'inspect': return MachineProvisionerObservationV1Schema.jsonSchema;
     case 'cleanup': return MachineProvisionerCleanupObservationV1Schema.jsonSchema;
     case 'exec': return MachineProvisionerNativeExecResultV1Schema.jsonSchema;
+    case 'nativeCredentialApply': return MachineProvisionerNativeCredentialApplyResultV1Schema.jsonSchema;
     case 'putFile': return MachineProvisionerPutFileResultV1Schema.jsonSchema;
     case 'power': return MachineProvisionerPowerResultV1Schema.jsonSchema;
     case 'destroy': return descriptor.reconciliation
@@ -514,6 +570,7 @@ function genericReconciliationRoleSchemas() {
 function machineProvisionerRoleInputProjection(descriptor: MachineProvisionerContributionV1, role: MachineProvisionerRoleV1): PluginJsonSchemaV2 | undefined {
   // Options deliberately owns its provider-declared query, not a universal wrapper.
   if (role === 'options') return undefined;
+  if (role === 'nativeCredentialApply') return nativeCredentialApplyInputProjection(descriptor.resourceSchema);
   if (role === 'cleanup') {
     if (!descriptor.reconciliation) return undefined;
     const { cleanupInput } = genericReconciliationRoleSchemas();
@@ -680,6 +737,7 @@ export function defineMachineProvisionerSchemas<TLaunchInput, TLaunch, TResource
   const closed = { policy: 'closed' } as const;
   return Object.freeze({
     checkInput: MachineProvisionerCheckInputV1Schema,
+    nativeCredentialApplyInput: defineNativeCredentialApplyInput(schemas.resource),
     acquireInput: defineProtocolObject({ launch: schemas.launch, managedId: defineProtocolString({ minLength: 1 }).optional(), bootstrapPublicKey: defineProtocolString({ minLength: 1 }).optional(),
       ...(schemas.continueAcquire ? { resource: schemas.resource.optional() } : {}) }, closed),
     acquireResult: defineAcquireResult(schemas.resource),

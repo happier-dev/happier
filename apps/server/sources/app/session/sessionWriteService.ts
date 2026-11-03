@@ -5590,10 +5590,11 @@ export async function updateSessionMetadataEnvelopeTuple(
                 // metadata retains its prepared content-audience discovery.
                 prepare: consent
                     ? async () => tx => acquireSessionAccessTransitionCursorLocksInTx(tx, [params.sessionId], [],
-                        sessionAccessGrantMutationCursorLockOptions({ actorAccountId: params.actorUserId, sessionId: params.sessionId,
+                        { ...sessionAccessGrantMutationCursorLockOptions({ actorAccountId: params.actorUserId, sessionId: params.sessionId,
                             subjects: [{ kind: "team", teamId: consent.teamId }],
-                        }))
-                    : () => prepareSessionAccountCursorLocks([params.sessionId], [params.actorUserId]),
+                        }), includeLifecyclePublications: true })
+                    : () => prepareSessionAccountCursorLocks([params.sessionId], [params.actorUserId],
+                        { includeLifecyclePublications: params.mode === 'owner_team_credential_binding' }),
             });
     } catch (error) {
         if (error instanceof SessionTeamCredentialBindingMutationError) {

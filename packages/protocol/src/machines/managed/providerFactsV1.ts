@@ -125,7 +125,7 @@ export const ManagedBootstrapSshCarrierV1Schema = lazyDefinition(() => z.strictO
 export const ManagedBootstrapCarrierV1Schema = lazyDefinition(() => z.discriminatedUnion('kind', [ManagedBootstrapNativeCarrierV1Schema, ManagedBootstrapSshCarrierV1Schema]));
 export type ManagedBootstrapCarrierV1 = z.infer<typeof ManagedBootstrapCarrierV1Schema>;
 export const ManagedRefusalCodeV1Schema = lazyDefinition(() => z.enum([
-  'invalid_request', 'permission_denied', 'admission_unavailable', 'acquisition_disabled',
+  'invalid_request', 'permission_denied', 'managed_power_required', 'admission_unavailable', 'acquisition_disabled',
   'controller_unavailable', 'controller_retired', 'credential_unavailable', 'provider_unavailable',
   'request_conflict', 'intent_changed', 'managed_not_found', 'enrollment_retired', 'resource_mismatch',
   'preset_not_found', 'preset_archived', 'preset_limit_reached',

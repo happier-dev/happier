@@ -1,3 +1,4 @@
+import { resolveManagedMachineRoleInTx } from './managedRows';
 import { ManagedControllerCurrentnessV1Schema, ManagedControllerReportV1Schema, ManagedControllerSubmitInputV1Schema, type ManagedControllerSubmitInputV1, ManagedEnrollmentCorrelationV1Schema, ManagedBootstrapCredentialCreateV1Schema, type ManagedControllerCurrentnessV1, type ManagedControllerReportV1, type ManagedEnrollmentCorrelationV1, type ManagedBootstrapCredentialCreateV1, ManagedControlAdmissionInputV1Schema, ManagedControllerIntentReportV1Schema, type ManagedControlAdmissionInputV1, type ManagedControllerIntentReportV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { ProviderObservationV1Schema } from '@happier-dev/protocol/machines/managed/providerFactsV1';
@@ -29,6 +30,7 @@ import {
     projectManagedMachineInTx,
     requireManagedControllerInTx,
     readManagedMachineInTx,
+    readManagedController,
     type StoredManagedMachine,
     readManagedAdmissionState, readManagedCurrentRequestId,
     readManagedJsonEqualityOperand,
@@ -176,9 +178,17 @@ export async function admitManagedControl(params: Readonly<{
         const input = request.input;
         const row = await readManagedMachineInTx(tx, { homeId: input.homeId,
             managedId: 'managedMachineId' in input ? input.managedMachineId : input.managedId });
+        const controller = readManagedController(row);
         if (row.custodianAccountId !== params.custodianAccountId
-            || await resolveEffectiveMachineRoleInTx(tx, { actorAccountId: params.actorAccountId, machineId: row.controllerMachineId }) !== "manage") throw new ManagedMachineError("permission_denied");
-        const controller = { machineId: row.controllerMachineId, installationId: row.controllerInstallationId };
+            || await resolveManagedMachineRoleInTx(tx, row, params.actorAccountId) !== "manage") {
+            throw new ManagedMachineError(request.action === 'machines.managed.power.set' && !controller
+                ? 'managed_power_required' : 'permission_denied');
+        }
+        // U1 has no saved-policy power/Move/retirement reconciliation. Retain
+        // the sole installed/uncertain binding proof until exact release.
+        if (await tx.sessionTeamCredentialBinding.findFirst({ where: { nativeManagedId: row.id }, select: { sessionId: true } })) {
+            throw new ManagedMachineError('credential_unavailable');
+        }
         await requireManagedControllerInTx(tx, { homeId: row.homeId, custodianAccountId: row.custodianAccountId, controller });
         const admitted = readManagedAdmissionState(row.admittedInput);
         const currentAdmission = { kind: 'control' as const, request };
@@ -235,7 +245,7 @@ export async function admitManagedControl(params: Readonly<{
             }
         }
         const changed = await tx.managedMachine.updateMany({ where: { id: row.id, intentRevision: expected,
-            controllerMachineId: controller.machineId, controllerInstallationId: controller.installationId, admittedInput: { equals: readManagedJsonEqualityOperand(row.admittedInput) } }, data });
+            controllerMachineId: row.controllerMachineId, controllerInstallationId: row.controllerInstallationId, admittedInput: { equals: readManagedJsonEqualityOperand(row.admittedInput) } }, data });
         if (changed.count !== 1) throw new ManagedMachineError("intent_changed");
         const current = await tx.managedMachine.findUniqueOrThrow({ where: { id: row.id } });
         await invalidateManagedMachineInTx(tx, row);
@@ -249,6 +259,11 @@ export async function submitManagedIntent(input: ManagedControllerCurrentnessV1)
     const canonical = ManagedControllerCurrentnessV1Schema.parse(input);
     return await inManagedMachinePublicationTx(canonical, async tx => {
         const row = await requireCurrentManagedMachineInTx(tx, canonical, { allowInactiveCurrentIntent: true });
+        // Covers automatic policy and already-admitted operations too: none
+        // may resume or replace a resource with unprepared retained rules.
+        if (await tx.sessionTeamCredentialBinding.findFirst({ where: { nativeManagedId: row.id }, select: { sessionId: true } })) {
+            throw new ManagedMachineError('credential_unavailable');
+        }
         const pendingCleanup = row.archivedAt === null && row.desired === 'delete' && row.desiredWhen === 'now'
             && await hasPendingManagedCleanupTargetInTx(tx, row);
         if (!(row.allocation === "bound" && row.resource) && !pendingCleanup) throw new ManagedMachineError("resource_mismatch");

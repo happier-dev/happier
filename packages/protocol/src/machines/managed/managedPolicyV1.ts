@@ -4,17 +4,17 @@ import { computeCanonicalDomainSeparatedDigest } from '../../crypto/canonicalDig
 import { createCanonicalJsonSigningInput } from '../../crypto/canonicalJson.js';
 import { decodeBase64, encodeBase64 } from '../../crypto/base64.js';
 import { MachineInstallationProofV1Schema, MachineInstallationProofPayloadV1Schema, signMachineInstallationProof, type MachineInstallationProofPayloadV1 } from '../identity/installationIdentity.js';
-import { ManagedControllerCurrentnessV1Schema, ManagedCommittedIdleEvidenceV1Schema, ManagedControllerContextOutputV1Schema } from './actionsV1.js';
+import { ManagedControllerCurrentnessV1Schema, ManagedCommittedIdleEvidenceV1Schema, ManagedControllerContextOutputV1Schema, ManagedNativeCredentialBindingV1Schema } from './actionsV1.js';
 import { ManagedWakeTargetV1Schema } from './managedIntentV1.js';
 import { ManagedResourceV1Schema, ManagedNativeOperationReferenceV1Schema, type ManagedResourceV1, type ManagedNativeOperationReferenceV1 } from './providerFactsV1.js';
 import { ManagedControllerV1Schema, ManagedMachineV1Schema, type ManagedControllerV1 } from './managedMachineV1.js';
 import { ExternalActionExecutionAuthorizationV1Schema, type ExternalActionExecutionAuthorizationV1 } from '../../actions/externalActionApi.js';
 
 export const MANAGED_POLICY_PROOF_HEADER = 'x-happier-managed-policy-proof';
-/** Advisory controller wake only; the signed census and native driver retain policy authority. */
+/** Advisory Account policy invalidation; the signed census and native driver retain authority. */
 export const ManagedMachinePolicyChangeHintV1Schema = lazyZodSchema(() => z.strictObject({
   managedMachinePolicy: z.literal(true),
-  machineId: z.string().check(z.minLength(1)),
+  machineId: z.optional(z.string().check(z.minLength(1))),
 }));
 export type ManagedMachinePolicyChangeHintV1 = z.infer<typeof ManagedMachinePolicyChangeHintV1Schema>;
 /** Reserved Home-to-installed-controller preparation; it never carries Project input. */
@@ -31,11 +31,18 @@ export const ManagedPolicyPurposeV1Schema = lazyZodSchema(() => z.discriminatedU
   z.strictObject({ kind: z.literal('creation-cleanup') }),
 ]));
 export type ManagedPolicyPurposeV1 = z.infer<typeof ManagedPolicyPurposeV1Schema>;
-export const ManagedPolicyAdmissionInputV1Schema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(ManagedControllerCurrentnessV1Schema, { purpose: ManagedPolicyPurposeV1Schema })));
+export const ManagedPolicyAdmissionInputV1Schema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(ManagedControllerCurrentnessV1Schema, { controller: ManagedControllerV1Schema, purpose: ManagedPolicyPurposeV1Schema })));
 export type ManagedPolicyAdmissionInputV1 = z.infer<typeof ManagedPolicyAdmissionInputV1Schema>;
-export const ManagedPolicyCensusInputV1Schema = lazyZodSchema(() => z.strictObject({ homeId: z.string().check(z.minLength(1)), controller: ManagedControllerV1Schema, proof: MachineInstallationProofV1Schema }));
+export const ManagedPolicyCensusInputV1Schema = lazyZodSchema(() => z.strictObject({
+  homeId: z.string().check(z.minLength(1)), controller: ManagedControllerV1Schema, proof: MachineInstallationProofV1Schema,
+  managedId: z.optional(z.string().check(z.minLength(1))), includeNativeCredentialBindings: z.optional(z.literal(true)),
+}));
 export const ManagedPolicyCensusOutputV1Schema = lazyZodSchema(() => z.strictObject({
   machines: z.array(ManagedMachineV1Schema), targets: z.array(ManagedWakeTargetV1Schema),
+  /** Private current-set read requested only by a consuming native controller. */
+  nativeCredentialPolicies: z.optional(z.array(z.strictObject({ managedId: z.string().check(z.minLength(1)),
+    bindings: z.array(ManagedNativeCredentialBindingV1Schema), desiredBindingKeys: z.array(z.string().check(z.minLength(1))),
+  }))),
   /** Home's current policy admission owns these pending effects; intent equality is not provenance. */
   retentionContinuations: z.optional(z.array(z.strictObject({
     managedId: z.string().check(z.minLength(1)), requestId: z.string().check(z.minLength(1)),
@@ -61,13 +68,12 @@ export function managedPolicyPurposeDigestV1(purpose: ManagedPolicyPurposeV1, ac
   return managedPolicyDigestV1('purpose', actionOrigin ? { purpose, actionOrigin } : purpose);
 }
 export function createManagedPolicyProofV1(input: Readonly<{
-  correlation: z.infer<typeof ManagedControllerCurrentnessV1Schema>; purpose: ManagedPolicyPurposeV1;
+  correlation: Omit<ManagedPolicyAdmissionInputV1, 'purpose'>; purpose: ManagedPolicyPurposeV1;
   custodianAccountId: string; path: string; body: unknown; privateKey: string | Uint8Array;
   actionOrigin?: ExternalActionExecutionAuthorizationV1;
 }> & (Readonly<{ resource: ManagedResourceV1; nativeOperation?: never }>
   | Readonly<{ resource?: never; nativeOperation: ManagedNativeOperationReferenceV1 }>)): ManagedPolicyProofV1 {
-  const correlation = ManagedControllerCurrentnessV1Schema.parse(input.correlation);
-  const purpose = ManagedPolicyPurposeV1Schema.parse(input.purpose);
+  const { purpose, ...correlation } = ManagedPolicyAdmissionInputV1Schema.parse({ ...input.correlation, purpose: input.purpose });
   const actionOrigin = input.actionOrigin === undefined ? undefined : ExternalActionExecutionAuthorizationV1Schema.parse(input.actionOrigin);
   const nativeTarget = input.resource === undefined ? ManagedNativeOperationReferenceV1Schema.parse(input.nativeOperation)
     : ManagedResourceV1Schema.parse(input.resource);

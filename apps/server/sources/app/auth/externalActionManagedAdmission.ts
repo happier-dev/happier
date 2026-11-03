@@ -1,3 +1,4 @@
+export { isExternalActionManagedResourceAction, readExternalActionManagedRecoveryAdmission, type ExternalActionManagedAdmissionContext } from './externalActionManagedNativeAdmission';
 import type { ExternalActionExecutionAuthorizationBindingV1, ExternalActionRequestEnvelope } from '@happier-dev/protocol/actions/externalActionApi';
 import { ExternalActionManagedControlAdmissionV1Schema, projectExternalActionManagedAdmissionV1, type ExternalActionManagedControlAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { ManagedMachineError, readManagedMachineInTx, sameManagedInput } from '@/app/machines/managed/managedRows';

@@ -1,3 +1,4 @@
+import { publishNativeCredentialPolicyChangesInTx } from '@/app/teams/credentials/nativePolicyChanges';
 import { recordHomeAdministrationEventInTx } from "@/app/home/audit/homeAdministrationEvents";
 import { PluginIdSchema } from '@happier-dev/protocol/plugins/plugin-id';
 import { type ManagedResourceDependencyV1, type ManagedResourceDispositionV1 } from '@happier-dev/protocol/machines/managed/managedDependencyV1';
@@ -41,7 +42,7 @@ import { applyUserKvMutationsInTx, type KVMutation } from "@/app/kv/kvMutate";
 import { deletePublicFile, deletePrivateFile } from "@/storage/blob/files";
 import { hasPendingAccountPrivateFileUploadInTx, isAccountPrivateFileUpload } from "@/storage/privateFiles/accountPrivateFileCustody";
 import { afterTx, inTx, TransactionReplayRequiredError, type Tx } from "@/storage/inTx";
-import { getActivePrismaRuntime } from "@/storage/prisma";
+import { getActivePrismaRuntime, getDbProviderFromEnv } from "@/storage/prisma";
 
 import { retirePluginCollectionCandidatePreparationStagesTx } from "./collections/candidatePreparationLifecycle";
 import { advancePluginCollectionRevision } from "./collections/mutation";
@@ -658,6 +659,21 @@ async function readAccountErasureScopeInTx(tx: Tx, accountId: string) {
     };
 }
 
+/** Lock the existing parents so in-flight FK insertions become visible before
+ * capturing the controller wake that follows Account cascade. */
+async function publishAccountNativeCredentialPolicyChangesInTx(tx: Tx, accountId: string): Promise<void> {
+    const provider = getDbProviderFromEnv(process.env, 'postgres');
+    if (provider !== 'sqlite') {
+        await tx.$queryRawUnsafe(provider === 'mysql'
+            ? 'SELECT `id` FROM `Session` WHERE `accountId` = ? ORDER BY `id` FOR UPDATE'
+            : 'SELECT "id" FROM "Session" WHERE "accountId" = $1 ORDER BY "id" FOR UPDATE', accountId);
+        await tx.$queryRawUnsafe(provider === 'mysql'
+            ? 'SELECT `id` FROM `TeamCredentialResource` WHERE `custodianAccountId` = ? ORDER BY `id` FOR UPDATE'
+            : 'SELECT "id" FROM "TeamCredentialResource" WHERE "custodianAccountId" = $1 ORDER BY "id" FOR UPDATE', accountId);
+    }
+    await publishNativeCredentialPolicyChangesInTx(tx, { accountId });
+}
+
 /**
  * Sole physical Account-deletion composition. Existing domain owners remove
  * restrictive custody in the same fenced transaction as the Account row,
@@ -894,6 +910,7 @@ export async function deleteAccountForErasure(input: Readonly<{
         if (!acceptsManagedResourceDispositions(resources, input.managedResourceDispositions)) {
             return { status: "failed", code: "account_erasure_managed_resources_review_required", resources };
         }
+        await publishAccountNativeCredentialPolicyChangesInTx(tx, input.accountId);
         const currentLocators = await captureAccountErasureBlobLocatorsInTx(tx, input.accountId);
         if (!sameAccountErasureBlobLocators(capturedLocators, currentLocators)) {
             return { status: "failed", code: "account_erasure_locator_mismatch" };

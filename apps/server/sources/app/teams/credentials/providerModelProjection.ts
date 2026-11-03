@@ -138,7 +138,7 @@ export function projectTeamCredentialProviderModels(input: Readonly<{
     application: ProviderBrokerApplicationBindingV1;
     allowedModelIds: readonly string[] | null;
     source: TeamCredentialSourceBindingV1;
-    deliveryMode: 'brokered' | 'direct';
+    deliveryMode: 'brokered' | 'direct' | 'vendor-native';
     directMaterialReferences?: readonly Readonly<{ sourceMemberKey: string; sourceVersion: string }>[];
 }>): TeamCredentialProviderModelProjection {
     const admitted = admitTeamCredentialSourceModelRowsV1(input.response);
@@ -177,12 +177,16 @@ export function projectTeamCredentialProviderModels(input: Readonly<{
                 ...(row.sourceFacts ? { sourceFacts: row.sourceFacts } : {}),
                 compatibility: { ...row.compatibility, confirmed: false },
                 sourceRevision,
+                ...(input.deliveryMode === 'vendor-native' && row.nativeSource
+                    ? { nativeSource: { providerTicket: row.nativeSource.providerTicket } } : {}),
                 direct: input.deliveryMode === 'direct'
                     && input.directMaterialReferences?.length === 1
                     && row.directMaterialization
                     ? input.directMaterialReferences[0]
                     : null,
-                availability: input.deliveryMode === 'direct'
+                availability: input.deliveryMode === 'vendor-native' && !row.nativeSource
+                    ? 'source_owner_required'
+                    : input.deliveryMode === 'direct'
                     && !(input.directMaterialReferences?.length === 1 && row.directMaterialization)
                     ? "source_owner_required"
                     : "available",

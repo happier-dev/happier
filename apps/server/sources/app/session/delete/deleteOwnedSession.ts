@@ -1,3 +1,4 @@
+import { readNativeCredentialPolicyPublicationAccountIdsInTx } from '@/app/teams/credentials/nativePolicyChanges';
 import { afterTx, inTx, type Tx } from '@/storage/inTx';
 import type { Prisma } from '@prisma/client';
 import { log } from '@/utils/logging/log';
@@ -123,6 +124,7 @@ export async function deleteSessionWithRecipientsInTx(
         ...followEdges.map(edge => edge.destinationSessionId), ...managerEdges.filter(hasSessionFollowSessionSource).flatMap(edge => [edge.sourceSessionId, edge.destinationSessionId]),
     ] });
     await acquireAccountChangePublicationLocksInTx(tx, [...recipientAccountIds, ...[...relationRecipients.values()].flat(),
+        ...await readNativeCredentialPolicyPublicationAccountIdsInTx(tx, { sessionIds: [params.sessionId] }),
         ...(runnerActivation ? [runnerActivation.creatorAccountId] : [])]);
 
     const sessionDeleteWhere = {

@@ -12,6 +12,23 @@ import { SessionActiveModelSelectionV1Schema } from './v1.js';
 import { SessionOwnerMetadataV1Schema, createSessionOwnerMetadataV1, projectSessionOwnerCompatibilityViewV1, projectSessionSharedMetadataV1 } from '../../sessions/metadata/sessionMetadataSchemasV1.js';
 
 describe('SessionModelSelectionV2', () => {
+  it('retains native references only on the native Team route and carries accepted source comparisons', () => {
+    const nativeDelivery = { managedId: 'managed', controllerInstallationId: 'controller', guestInstallationId: 'guest',
+      bindingKey: 'binding', placeholderRef: 'reference', sourceRevision: 'source:1', providerTicket: 'a'.repeat(43) };
+    const input = { v: 2, updatedAt: 1, ref: { source: 'team_resource', resourceId: 'resource', teamId: 'team',
+      expectedResourceRevision: 0, deliveryMode: 'vendor-native', agentTargetKey: 'backend:codex', modelId: 'model', nativeDelivery } };
+    const selection = SessionModelSelectionV2Schema.parse(input);
+    expect(sessionModelSelectionV2TeamBindingIntent(selection, {
+      application: { agentTargetKey: 'backend:codex', implementationIdentity: { pluginId: 'example.gateway', localId: 'gateway' },
+        endpointTemplateId: 'responses', protocol: 'openai-responses' }, executionMachineId: 'guest-machine',
+      nativeSource: { sourceRevision: 'source:1', providerTicket: nativeDelivery.providerTicket },
+    })).toMatchObject({ nativeDelivery, providerModelSelection: { agentTargetKey: 'backend:codex', modelId: 'model',
+      executionMachineId: 'guest-machine', nativeSource: { sourceRevision: 'source:1', providerTicket: nativeDelivery.providerTicket } } });
+    expect(SessionModelSelectionV2Schema.safeParse({ ...input, ref: { ...input.ref, deliveryMode: 'brokered' } }).success).toBe(false);
+    expect(SessionModelSelectionV2Schema.safeParse({ ...input, ref: { ...input.ref,
+      nativeDelivery: { ...nativeDelivery, placeholder: 'private-value' } } }).success).toBe(false);
+  });
+
   it('keeps accepted Team source proof closed, runner-bound and distinct from V1 native proof', () => {
     const teamCredentialModel = { kind: 'team_credential_provider_model' as const, teamId: 'team', resourceId: 'resource',
       expectedResourceRevision: 0, deliveryMode: 'brokered' as const, agentTargetKey: 'backend:codex', modelId: 'shared-model' };
@@ -64,6 +81,7 @@ describe('SessionModelSelectionV2', () => {
       expectedResourceRevision: 7,
       deliveryMode: 'direct',
       teamId: 'team-1',
+      providerModelSelection: { agentTargetKey: 'backend:claude', modelId: 'claude-sonnet' },
     });
   });
 

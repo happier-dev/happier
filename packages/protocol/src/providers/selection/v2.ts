@@ -4,6 +4,7 @@ import { z } from 'zod/mini';
 import { ProviderAgentTargetKeySchema, ProviderConnectionIdSchema, ProviderModelIdSchema } from '../ids.js';
 import { SessionActiveModelSelectionV1Schema, SessionModelSelectionV1Schema, type SessionActiveModelSelectionV1, type SessionModelSelectionV1 } from './v1.js';
 import { TeamCredentialProviderModelSelectionV1Schema, TeamCredentialRouteV1Schema, type TeamCredentialProviderModelSelectionV1, type TeamCredentialRouteV1 } from '../../teams/credentials/resourceV1.js';
+import { SessionTeamCredentialNativeDeliveryV1Schema, type SessionTeamCredentialNativeDeliveryV1, type SessionTeamCredentialProviderModelSelectionV1 } from '../../teams/credentials/sessionBindingIntentV1.js';
 
 /** The existing active-model carrier's second epoch retains the runtime-opened Team source. */
 export const SessionActiveModelSelectionV2Schema = lazyZodSchema(() => z.strictObject({
@@ -56,9 +57,14 @@ export const TeamResourceSessionModelRefV2Schema = lazyZodSchema(() => z.strictO
   teamId: z.string().check(z.minLength(1)),
   expectedResourceRevision: z.number().check(z.int(), z.nonnegative()),
   deliveryMode: TeamCredentialRouteV1Schema,
+  nativeDelivery: z.optional(SessionTeamCredentialNativeDeliveryV1Schema),
   agentTargetKey: ProviderAgentTargetKeySchema,
   modelId: ProviderModelIdSchema,
-}));
+}).check(z.superRefine((selection, context) => {
+  if (selection.nativeDelivery && selection.deliveryMode !== 'vendor-native') {
+    context.addIssue({ code: 'custom', path: ['nativeDelivery'], message: 'Native references require native delivery' });
+  }
+})));
 
 export const SessionModelRefV2Schema = lazyZodSchema(() => z.discriminatedUnion('source', [
   NativeSessionModelRefV2Schema,
@@ -112,12 +118,15 @@ export function projectSessionModelSelectionV2ToV1(
 /** Sidecar consumed by the canonical Session create/configuration transaction. */
 export function sessionModelSelectionV2TeamBindingIntent(
   value: SessionModelSelectionV2,
+  context?: Pick<SessionTeamCredentialProviderModelSelectionV1, 'application' | 'executionMachineId' | 'nativeSource'>,
 ): Readonly<{
   v: 1;
   slot: Readonly<{ kind: 'provider_model' }>;
   resourceId: string;
   expectedResourceRevision: number;
   deliveryMode: TeamCredentialRouteV1;
+  providerModelSelection: SessionTeamCredentialProviderModelSelectionV1;
+  nativeDelivery?: SessionTeamCredentialNativeDeliveryV1;
   teamId?: string;
 }> | Readonly<{
   v: 1;
@@ -136,5 +145,7 @@ export function sessionModelSelectionV2TeamBindingIntent(
     expectedResourceRevision: teamSelection.ref.expectedResourceRevision,
     deliveryMode: teamSelection.ref.deliveryMode,
     teamId: teamSelection.ref.teamId,
+    providerModelSelection: { agentTargetKey: teamSelection.ref.agentTargetKey, modelId: teamSelection.ref.modelId, ...context },
+    ...(teamSelection.ref.nativeDelivery ? { nativeDelivery: teamSelection.ref.nativeDelivery } : {}),
   };
 }

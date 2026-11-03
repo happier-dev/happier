@@ -1,3 +1,6 @@
+import { z } from 'zod/mini';
+import { ManagedCredentialInstallInputV1Schema } from '../machines/managed/credentialDeliveryV1.js';
+import { sameStrictJsonValue } from '../json/strictJsonValue.js';
 import { WorkspaceSyncSourceExecutionV1Schema, type WorkspaceSyncSourceExecutionV1 } from '../rpc/socket.js';
 import { DeploymentChildExecutionProofV1Schema, type DeploymentChildExecutionProofV1 } from '../deployments/deploymentChildExecutionProofV1.js';
 import { decodeBase64, encodeBase64 } from '../crypto/base64.js';
@@ -125,8 +128,23 @@ type MachineRpcRequest = Readonly<{
   workspaceSyncSourceRouting?: WorkspaceSyncSourceRoutingV1;
   workspaceSyncSourceWriterTargetRouting?: WorkspaceSyncSourceWriterTargetRoutingV1;
   workspaceSyncSeedRouting?: WorkspaceSyncSeedRoutingV1;
+  managedAdmission?: Readonly<{ actionId: 'machines.managed.credentials.install'; input: z.infer<typeof ManagedCredentialInstallInputV1Schema> }>;
   reviewedChild?: ReviewedActionChildHttpProofV1;
 }>;
+
+/** One finite spawn descendant; the Home and installed host still prove its exact accepted binding. */
+export function readSessionSpawnNativeCredentialChildV1(input: Readonly<{
+  rootActionId: string; effectActionId: string; method: string; managedAdmission?: unknown; params?: unknown;
+}>) {
+  if (input.rootActionId !== 'session.spawn_new' || input.effectActionId !== 'machines.managed.credentials.install'
+    || input.method !== 'machines.managed.credentials.install') return null;
+  const admission = z.strictObject({ actionId: z.literal('machines.managed.credentials.install'),
+    input: ManagedCredentialInstallInputV1Schema }).safeParse(input.managedAdmission);
+  if (!admission.success || admission.data.input.operation === 'release' || admission.data.input.executionRunId) return null;
+  if (input.params !== undefined && typeof input.params !== 'string'
+    && !sameStrictJsonValue(input.params, admission.data.input)) return null;
+  return admission.data.input;
+}
 
 function machineRpcRequestBytes(request: MachineRpcRequest): Uint8Array {
   const event = request.event ?? SOCKET_RPC_EVENTS.CALL;
@@ -167,6 +185,10 @@ function machineRpcRequestBytes(request: MachineRpcRequest): Uint8Array {
     ] : []),
     ...(request.reviewedChild === undefined ? [] : ['reviewed-action-child-rpc-v1',
       encodeReviewedActionChildHttpProofV1(request.reviewedChild)]),
+    ...(request.managedAdmission !== undefined ? ['managed-native-credential-child-v1',
+      createCanonicalJsonSigningInput(z.strictObject({ actionId: z.literal('machines.managed.credentials.install'),
+        input: ManagedCredentialInstallInputV1Schema }).parse(request.managedAdmission))] : []),
+
   ]);
 }
 

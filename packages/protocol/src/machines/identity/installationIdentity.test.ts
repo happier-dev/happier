@@ -20,6 +20,27 @@ import {
 } from './installationIdentity.js';
 
 describe('machine installation identity protocol', () => {
+    it('binds a native credential binding read to one installed requester and refuses combined proof purposes', () => {
+        const keys = tweetnacl.sign.keyPair();
+        const parsed = MachineInstallationProofPayloadV1Schema.safeParse({ version: 1,
+            machineId: 'enrolled-guest', installationId: 'guest-installation', accountId: 'requester',
+            nativeCredentialBindingRead: { requestBodyDigest: 'a'.repeat(43) } });
+        expect(parsed.success).toBe(true);
+        if (!parsed.success) throw new Error('Native binding read proof is unavailable');
+        const payload = parsed.data;
+        const proof = signMachineInstallationProof({ payload, privateKey: keys.secretKey });
+        expect(verifyMachineInstallationProof({ payload, proof, publicKey: keys.publicKey })).toBe(true);
+        expect(verifyMachineInstallationProof({ payload: { ...payload, installationId: 'replacement' },
+            proof, publicKey: keys.publicKey })).toBe(false);
+        expect(verifyMachineInstallationProof({ payload: { ...payload,
+            nativeCredentialBindingRead: { requestBodyDigest: 'b'.repeat(43) } },
+            proof, publicKey: keys.publicKey })).toBe(false);
+        expect(MachineInstallationProofPayloadV1Schema.safeParse({ ...payload, accountId: undefined }).success).toBe(false);
+        expect(MachineInstallationProofPayloadV1Schema.safeParse({ ...payload,
+            deploymentSecretLaunch: { requestBodyDigest: 'b'.repeat(43) } }).success).toBe(false);
+        expect(MachineInstallationProofPayloadV1Schema.safeParse({ ...payload,
+            managedPolicyCensus: { homeId: 'home' } }).success).toBe(false);
+    });
     it('binds the selected native receiver to one exact Session creation body and retained source child', () => {
         const keys = tweetnacl.sign.keyPair();
         const payload = { version: 1 as const, machineId: 'selected-model', installationId: 'model-installation', accountId: 'custodian',

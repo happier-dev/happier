@@ -1,3 +1,4 @@
+import { acquireSessionAccountCursorLocksInTx } from '@/app/session/changeTracking/acquireSessionAccountCursorLocksInTx';
 import { encodeSessionOwnerMetadataEnvelopeV1, SESSION_METADATA_LAYOUT_VERSION_V1, type SessionMetadataInactiveModelIntentOwnerPatchV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 
 import type { SessionTeamCredentialBindingIntentListV1 } from '@happier-dev/protocol/teams/credentials/sessionBindingIntentV1';
@@ -211,6 +212,10 @@ export async function commitSessionAgentCurrentViewInTx(
         return { ok: false, error: "invalid-params" };
     }
 
+    // Cutover clears the previous Agent's native authority along with its view.
+    await acquireSessionAccountCursorLocksInTx(tx, [params.sessionId], [params.actorUserId],
+        { includeLifecyclePublications: true });
+
     // Owner access is proven here as well as inside each layout owner, because
     // the exact-retry short-circuit below returns before reaching them.
     const access = await loadSessionOwnerMutationContextInTx(tx, {
@@ -387,12 +392,12 @@ async function writeTargetTeamCredentialBindingsInTx(
     tx: Tx,
     params: CommitSessionAgentCurrentViewParams,
 ): Promise<void> {
-    if (!params.teamCredentialBindings) return;
     const written = await writeSessionTeamCredentialBindingsInTx(tx, {
         sessionId: params.sessionId,
         accountId: params.actorUserId,
-        intents: params.teamCredentialBindings.intents,
-        authentication: params.teamCredentialBindings.authentication,
+        intents: params.teamCredentialBindings?.intents ?? [],
+        authentication: params.teamCredentialBindings?.authentication,
+        replaceExisting: true,
     });
     if (!written.ok) throw new SessionTeamCredentialBindingError(written.reason);
 }

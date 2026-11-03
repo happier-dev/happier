@@ -796,8 +796,13 @@ model SessionTeamCredentialBinding {
     session  Session                @relation(fields: [sessionId], references: [id], onDelete: Cascade)
     resource TeamCredentialResource @relation(fields: [resourceId], references: [id], onDelete: Cascade)
 
+    // Private native selection/source evidence on the same accepted binding lifetime.
+    nativeManagedId String?
+    nativeDeliveryJson String?
+
     @@id([sessionId, slotKind, slotKey])
     @@index([resourceId, sessionId])
+    @@index([nativeManagedId], map: "STCB_native_managed_idx")
 }
 
 model SavedSecretResource {

@@ -699,6 +699,11 @@ export const DaemonProviderModelProjectionRequestV1Schema = lazyZodSchema(() => 
   connectedAccountTarget: z.optional(QualifiedConnectedAccountPurposeBindingTargetV1Schema),
   /** Team source facts do not require the recipient Agent on this Machine. */
   sourceCatalog: z.optional(z.literal(true)),
+  /** Private source-custodian metadata only; never an install operand or grant. */
+  nativeSource: z.optional(z.strictObject({
+    resourceId: z.string().check(z.trim(), z.minLength(1), z.maxLength(256)),
+    expectedResourceRevision: z.number().check(z.int(), z.nonnegative()),
+  })),
   /** Recipient presentation batch. These rows never authorize installation. */
   teamCredentialResources: z.optional(z.array(TeamCredentialResourceCatalogEntryV1Schema)),
   mode: z.optional(z.enum(['picker', 'management'])),
@@ -712,8 +717,12 @@ export const DaemonProviderModelProjectionRequestV1Schema = lazyZodSchema(() => 
   forceRefresh: z.optional(z.literal(true)),
   currentSelection: z.optional(ProviderBoundModelRefSchema),
 }).check(z.superRefine((value, ctx) => {
+  if (value.nativeSource && (!value.sourceCatalog || !value.providerConnection || value.connectedAccountTarget
+    || value.includeDirectMaterialization)) {
+    ctx.addIssue({ code: 'custom', path: ['nativeSource'], message: 'Native metadata requires one private Provider source catalog' });
+  }
   if (value.teamCredentialResources && (value.providerConnection
-    || value.connectedAccountTarget || value.sourceCatalog)) {
+    || value.connectedAccountTarget || value.sourceCatalog || value.nativeSource)) {
     ctx.addIssue({ code: 'custom', path: ['teamCredentialResources'], message: 'Recipient delivery projection cannot select a private source' });
   }
   if (value.currentSelection && value.currentSelection.agentTargetKey !== value.agentTargetKey) {
@@ -822,12 +831,27 @@ export type DaemonProviderTeamCredentialRequestPolicySupportResponseV1 = z.infer
   typeof DaemonProviderTeamCredentialRequestPolicySupportResponseV1Schema
 >;
 
+export const DaemonProviderNativeSourceV1Schema = lazyZodSchema(() => z.strictObject({
+  authorizationTicket: ProviderBindingAuthorizationTicketV1Schema,
+  providerTicket: z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/)),
+  endpoint: z.strictObject({
+    endpointTemplateId: z.string().check(z.trim(), z.minLength(1), z.maxLength(128)),
+    normalizedUrl: ProviderHttpsUrlSchema,
+    protocol: ProviderWireProtocolSchema,
+    publicHeaders: ProviderPublicHeadersV1Schema,
+  }),
+  credentialTransport: ProviderCredentialTransportV1Schema,
+}));
+export type DaemonProviderNativeSourceV1 = z.infer<typeof DaemonProviderNativeSourceV1Schema>;
+
 export const DaemonProviderModelProjectionRowV1Schema = lazyZodSchema(() => z.strictObject({
   ref: ProviderBoundModelRefSchema,
   descriptor: ProviderModelDescriptorV1Schema,
   /** Admitted source slots for grouping, independent of the selected downstream protocol. */
   gatewaySlots: z.optional(z.array(QualifiedConnectedAccountPurposeBindingV1Schema)),
   application: z.optional(ProviderBrokerApplicationBindingV1Schema),
+  /** Private controller/Home projection; public catalogs retain only the opaque reference. */
+  nativeSource: z.optional(DaemonProviderNativeSourceV1Schema),
   sourceFacts: z.optional(ProviderModelBindingSourceV1Schema),
   confirmationSource: z.optional(ProviderModelConfirmationSourceV1Schema),
   requestPolicySupport: z.optional(DaemonProviderTeamCredentialRequestPolicySupportV1Schema),
@@ -1283,15 +1307,3 @@ export const DaemonProviderProfileMigrationConflictConfirmResponseV1Schema = laz
 export type DaemonProviderProfileMigrationConflictConfirmResponseV1 = z.infer<
   typeof DaemonProviderProfileMigrationConflictConfirmResponseV1Schema
 >;
-
-export const DaemonProviderNativeSourceV1Schema = lazyZodSchema(() => z.strictObject({
-  authorizationTicket: ProviderBindingAuthorizationTicketV1Schema,
-  providerTicket: z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/)),
-  endpoint: z.strictObject({
-    endpointTemplateId: z.string().check(z.trim(), z.minLength(1), z.maxLength(128)),
-    normalizedUrl: ProviderHttpsUrlSchema,
-    protocol: ProviderWireProtocolSchema,
-    publicHeaders: ProviderPublicHeadersV1Schema,
-  }),
-  credentialTransport: ProviderCredentialTransportV1Schema,
-}));

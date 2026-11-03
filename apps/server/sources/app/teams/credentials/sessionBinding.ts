@@ -1,13 +1,26 @@
 import { SessionTeamCredentialBindingIntentsV1Schema, encodeSessionTeamCredentialSlotKeyV1, type SessionTeamCredentialBindingIntentListV1, type SessionTeamCredentialSlotV1 } from '@happier-dev/protocol/teams/credentials/sessionBindingIntentV1';
+import { randomBytes, randomUUID, createHash } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
+import { readManagedNativeCredentialTargetInTx } from '@/app/machines/managed/credentialDeliveryAdmission';
+import { StoredSessionTeamCredentialNativeSelectionV1Schema, readSessionTeamCredentialNativeSelectionInTx, readSessionTeamCredentialNativeDeliveryRow,
+    readSessionTeamCredentialNativeDeliveryInTx, readSessionTeamCredentialNativeSelectionsForManagedMachineInTx,
+    type StoredSessionTeamCredentialNativeSelectionV1,
+    type SessionTeamCredentialNativeSelectionBinding, type SessionTeamCredentialNativeDeliveryBinding } from './nativeDeliveryRead';
+import type { ManagedCredentialInstallInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { admitTeamCredentialSourceModelRowsV1 } from '@happier-dev/protocol/rpc/providers';
+import { projectProviderBindingAuthorizationTicketReferenceV1 } from '@happier-dev/protocol/providers/grants/v1';
+import { TeamCredentialRequestPolicyV1Schema } from '@happier-dev/protocol/teams/credentials/resourceV1';
+import { projectTeamCredentialProviderModels } from './providerModelProjection';
 import { type SessionTeamCredentialBindingRejectionV1 } from '@happier-dev/protocol/teams/credentials/sessionBindingV1';
 import { type TeamCredentialRouteV1 } from '@happier-dev/protocol/teams/credentials/resourceV1';
 import { type TeamCredentialSourceBindingV1 } from '@happier-dev/protocol/teams/credentials/sourceBindingV1';
 import { readTeamCredentialSourceBinding } from './sourceBindingRead';
 import type { RequiredSessionTeamCredentialV1, SessionTeamCredentialBindingConsequenceV1 } from '@happier-dev/protocol/sessions/access/sessionAccessOperationsV1';
 import type { Tx } from "@/storage/inTx";
+import { getDbProviderFromEnv } from "@/storage/prisma";
 import { portableQueryChunks } from "@/storage/portableQueryChunks";
 import { isServerFeatureEnabledForHome } from "@/app/features/catalog/serverFeatureGate";
-import { assertSessionTeamReadableGrantInTx } from "@/app/session/access/sessionAccess";
+import { assertSessionTeamReadableGrantInTx, SESSION_ACCESS_SESSION_BATCH_SIZE } from "@/app/session/access/sessionAccess";
 import { putSessionAccessGrantInTx, sessionAccessGrantMutationCursorLockOptions } from "@/app/session/access/sessionAccessGrantService";
 import { acquireSessionAccessTransitionCursorLocksInTx } from "@/app/session/access/sessionAccessTransitionEffects";
 import {
@@ -24,6 +37,8 @@ import {
 } from "./brokerPlacementResolver";
 import { resolveTeamCredentialEntitlementInTx, type TeamCredentialEntitlementDecision } from "./resourceAccess";
 import { resolveTeamCredentialResourceSourceInTx, type TeamCredentialResourceSourceResolution } from "./resourceSourceResolver";
+import type { ExternalActionExecutionAuthorizationBindingV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { publishNativeCredentialPolicyChangesInTx } from './nativePolicyChanges';
 
 export type SessionTeamCredentialBindingRejection =
     SessionTeamCredentialBindingRejectionV1;
@@ -47,7 +62,12 @@ export async function writeSessionTeamCredentialBindingsInTx(
         sessionId: string;
         accountId: string;
         intents: unknown;
-        authentication: SessionAccessAuthentication;
+        authentication: SessionAccessAuthentication | undefined;
+        /** Verified ordinary Session birth context, never copied from Session input. */
+        creationAuthorization?: ExternalActionExecutionAuthorizationBindingV1;
+        teamVisibilityGrantConsent?: Readonly<{ teamId: string }>;
+        /** Agent cutover owns the complete target witness set, including an empty set. */
+        replaceExisting?: boolean;
     }>,
 ): Promise<SessionTeamCredentialBindingWriteResult> {
     const parsed = SessionTeamCredentialBindingIntentsV1Schema.safeParse(input.intents);
@@ -57,6 +77,9 @@ export async function writeSessionTeamCredentialBindingsInTx(
         accountId: input.accountId,
         intents: parsed.data,
         authentication: input.authentication,
+        creationAuthorization: input.creationAuthorization,
+        teamVisibilityGrantConsent: input.teamVisibilityGrantConsent,
+        replaceExisting: input.replaceExisting,
     });
 }
 
@@ -66,10 +89,15 @@ export async function writeParsedSessionTeamCredentialBindingsInTx(
         sessionId: string;
         accountId: string;
         intents: SessionTeamCredentialBindingIntentListV1;
-        authentication: SessionAccessAuthentication;
+        authentication: SessionAccessAuthentication | undefined;
+        creationAuthorization?: ExternalActionExecutionAuthorizationBindingV1;
+        teamVisibilityGrantConsent?: Readonly<{ teamId: string }>;
+        replaceExisting?: boolean;
     }>,
 ): Promise<SessionTeamCredentialBindingWriteResult> {
-    if (!await isServerFeatureEnabledForHome("teams.credentialResources", { tx })) {
+    // Retiring all authority during cutover remains valid with the feature off.
+    if (!(input.replaceExisting && input.intents.length === 0)
+        && !await isServerFeatureEnabledForHome("teams.credentialResources", { tx })) {
         return { ok: false, reason: "feature_disabled" };
     }
     const owner = await tx.session.findUnique({
@@ -78,21 +106,86 @@ export async function writeParsedSessionTeamCredentialBindingsInTx(
     });
     if (!owner) return { ok: false, reason: "session_missing" };
     if (owner.accountId !== input.accountId) return { ok: false, reason: "session_owner_mismatch" };
+    const existingNative = await readSessionTeamCredentialNativeSelectionInTx(tx, { sessionId: input.sessionId });
+    const replacement = input.intents.find(intent => intent.slot.kind === 'provider_model');
+    const reuseNative = existingNative.ok && replacement !== undefined && replacement.resourceId !== null
+        && replacement.deliveryMode === 'vendor-native' && replacement.resourceId === existingNative.binding.resourceId
+        && replacement.expectedResourceRevision === existingNative.binding.resourceRevision
+        && isDeepStrictEqual(replacement.providerModelSelection, existingNative.binding.providerModelSelection)
+        && (!replacement.nativeDelivery || isDeepStrictEqual(replacement.nativeDelivery, existingNative.binding.safeFacet));
+    const nativeSelections = new Map<string, StoredSessionTeamCredentialNativeSelectionV1>();
     // Validate the complete batch before mutating any row. Callers may use a
     // successful transaction for other Session state, so a rejected binding
     // batch must never leave a partially-applied witness behind.
-    for (const intent of input.intents) {
+    if (input.teamVisibilityGrantConsent && input.intents[0]?.resourceId == null) {
+        return { ok: false, reason: "invalid_input" };
+    }
+    for (const [index, intent] of input.intents.entries()) {
         if (intent.resourceId === null) continue;
-        const resolved = await validateExistingSessionTeamCredentialResourceInTx(tx, {
+        if (!input.authentication) return { ok: false, reason: "authentication_required" };
+        const bindingInput = {
             sessionId: input.sessionId,
             accountId: input.accountId,
             resourceId: intent.resourceId,
             expectedResourceRevision: intent.expectedResourceRevision,
             deliveryMode: intent.deliveryMode,
             authentication: input.authentication,
-        });
+        };
+        const consent = index === 0 ? input.teamVisibilityGrantConsent : undefined;
+        if (consent && intent.teamId !== undefined && intent.teamId !== consent.teamId) {
+            return { ok: false, reason: "invalid_input" };
+        }
+        const resolved = consent
+            ? await resolveRequiredTeamVisibilityInTx(tx, { ...bindingInput,
+                consentTeamId: consent.teamId, requiredTeamCredential: intent })
+            : await validateExistingSessionTeamCredentialResourceInTx(tx, bindingInput);
         const admitted = validateResolvedSessionTeamCredentialBindingIntent(resolved, intent);
         if (!admitted.ok) return admitted;
+        if (intent.deliveryMode === 'vendor-native') {
+            if (!resolved.ok || intent.slot.kind !== 'provider_model') return { ok: false, reason: 'invalid_input' };
+            const selection = StoredSessionTeamCredentialNativeSelectionV1Schema.shape.providerSelection.safeParse(intent.providerModelSelection);
+            if (!selection.success || (!reuseNative && intent.nativeDelivery)) return { ok: false, reason: 'invalid_input' };
+            const target = await readManagedNativeCredentialTargetInTx(tx, { accountId: input.accountId,
+                executionMachineId: selection.data.executionMachineId, resourceCustodianAccountId: resolved.custodianAccountId });
+            if (!target || (reuseNative && existingNative.ok && (target.machine.id !== existingNative.binding.managedId
+                || target.machine.controllerInstallationId !== existingNative.binding.safeFacet.controllerInstallationId
+                || target.guest.installationId !== existingNative.binding.safeFacet.guestInstallationId))) {
+                return { ok: false, reason: 'invalid_input' };
+            }
+            if (!reuseNative) {
+                const birth = input.creationAuthorization;
+                if (birth && (birth.actionId !== 'session.spawn_new' || birth.accountId !== input.accountId
+                    || birth.serverIdentityId !== target.machine.homeId || birth.machineId !== target.guest.machineId
+                    || birth.installationId !== target.guest.installationId || birth.target.kind !== 'machine'
+                    || birth.target.machineId !== target.guest.machineId)) return { ok: false, reason: 'invalid_input' };
+                const placeholder = `happier_native_${randomBytes(32).toString('base64url')}`;
+                nativeSelections.set(intent.resourceId, { providerSelection: selection.data, placeholder,
+                    ...(birth ? { creationAuthorization: { serverIdentityId: birth.serverIdentityId,
+                        requestId: birth.requestId, requestEnvelopeDigest: birth.requestEnvelopeDigest,
+                        machineId: birth.machineId, installationId: birth.installationId } } : {}),
+                    safeFacet: { managedId: target.machine.id, controllerInstallationId: target.controller.installationId,
+                        guestInstallationId: target.guest.installationId, bindingKey: randomUUID(),
+                        placeholderRef: createHash('sha256').update(placeholder).digest('base64url'),
+                        ...selection.data.nativeSource } });
+            }
+        }
+    }
+    if (input.teamVisibilityGrantConsent) {
+        if (!input.authentication) return { ok: false, reason: "authentication_required" };
+        const grant = await putSessionAccessGrantInTx(tx, {
+            actorAccountId: input.accountId, sessionId: input.sessionId,
+            subject: { kind: "team", teamId: input.teamVisibilityGrantConsent.teamId },
+            grant: { accessLevel: "edit", canApprovePermissions: false },
+            authentication: input.authentication,
+        });
+        if (!grant.ok) return { ok: false, reason: "access_removed" };
+    }
+    if (!reuseNative && (input.replaceExisting || replacement)) {
+        await publishNativeCredentialPolicyChangesInTx(tx, { sessionIds: [input.sessionId] });
+    }
+    if (input.replaceExisting) {
+        await tx.sessionTeamCredentialBinding.deleteMany({ where: { sessionId: input.sessionId,
+            ...(reuseNative ? { slotKind: { not: 'provider_model:vendor-native' } } : {}) } });
     }
     for (const intent of input.intents) {
         const slotKey = Buffer.from(key(intent.slot));
@@ -101,6 +194,8 @@ export async function writeParsedSessionTeamCredentialBindingsInTx(
                 where: { sessionId: input.sessionId, slotKey },
             });
         } else {
+            if (intent.deliveryMode === 'vendor-native' && reuseNative) continue;
+            const native = intent.deliveryMode === 'vendor-native' ? nativeSelections.get(intent.resourceId) : undefined;
             await tx.sessionTeamCredentialBinding.upsert({
                 where: { sessionId_slotKind_slotKey: { sessionId: input.sessionId, slotKind: persistedSlotKind(intent.slot, intent.deliveryMode), slotKey } },
                 create: {
@@ -109,17 +204,21 @@ export async function writeParsedSessionTeamCredentialBindingsInTx(
                     slotKey,
                     resourceId: intent.resourceId,
                     resourceRevision: intent.expectedResourceRevision,
+                    nativeManagedId: native?.safeFacet.managedId ?? null,
+                    nativeDeliveryJson: native ? JSON.stringify(native) : null,
                 },
                 update: {
                     resourceId: intent.resourceId,
                     resourceRevision: intent.expectedResourceRevision,
+                    nativeManagedId: native?.safeFacet.managedId ?? null,
+                    nativeDeliveryJson: native ? JSON.stringify(native) : null,
                 },
             });
             await tx.sessionTeamCredentialBinding.deleteMany({
                 where: {
                     sessionId: input.sessionId,
                     slotKey,
-                    slotKind: persistedSlotKind(intent.slot, intent.deliveryMode === "brokered" ? "direct" : "brokered"),
+                    slotKind: { not: persistedSlotKind(intent.slot, intent.deliveryMode) },
                 },
             });
         }
@@ -140,6 +239,277 @@ export async function readSessionTeamCredentialBindingInTx(
     return row ? { ...row, deliveryMode: input.deliveryMode } : null;
 }
 
+/** Only authenticated source-custodian RPC evidence can turn pending into prepared. */
+export async function stampSessionTeamCredentialNativeDeliveryInTx(tx: Tx, input: Readonly<{
+    sessionId: string; accountId: string; response: unknown; authentication: SessionAccessAuthentication;
+}>): Promise<import('./nativeDeliveryRead').SessionTeamCredentialNativeDeliveryRead> {
+    const read = await readSessionTeamCredentialNativeSelectionInTx(tx, input);
+    if (!read.ok) return read;
+    const accepted = read.binding;
+    if (accepted.accountId !== input.accountId) return { ok: false, code: 'resource_changed' };
+    const current = await validateExistingSessionTeamCredentialResourceInTx(tx, { sessionId: input.sessionId,
+        accountId: input.accountId, resourceId: accepted.resourceId, expectedResourceRevision: accepted.resourceRevision,
+        deliveryMode: 'vendor-native', authentication: input.authentication });
+    if (!current.ok || current.sourceBinding.kind !== 'provider_connection') return { ok: false, code: 'resource_changed' };
+    const target = await readManagedNativeCredentialTargetInTx(tx, { accountId: input.accountId,
+        executionMachineId: accepted.providerModelSelection.executionMachineId,
+        resourceCustodianAccountId: current.custodianAccountId });
+    if (!target || target.machine.id !== accepted.managedId
+        || target.machine.controllerInstallationId !== accepted.safeFacet.controllerInstallationId
+        || target.guest.installationId !== accepted.safeFacet.guestInstallationId) return { ok: false, code: 'resource_changed' };
+    const sourceBinding = current.sourceBinding;
+    const admitted = admitTeamCredentialSourceModelRowsV1(input.response);
+    if (admitted.status !== 'success') return { ok: false, code: 'resource_changed' };
+    const selected = admitted.rows.filter(({ group, row }) => group.connectionId === sourceBinding.connectionId
+        && group.sourceAuthority?.connectionSecurityFingerprint === sourceBinding.connectionSecurityFingerprint
+        && row.ref.modelId === accepted.providerModelSelection.modelId
+        && isDeepStrictEqual(row.application, accepted.providerModelSelection.application));
+    if (selected.length !== 1) return { ok: false, code: 'resource_changed' };
+    const observed = selected[0]!;
+    const source = observed.row.nativeSource;
+    if (!source) return { ok: false, code: 'resource_unavailable' };
+    const ticket = source.authorizationTicket;
+    if (observed.sourceRevision !== accepted.safeFacet.sourceRevision
+        || source.providerTicket !== accepted.safeFacet.providerTicket
+        || source.providerTicket !== projectProviderBindingAuthorizationTicketReferenceV1(ticket)
+        || ticket.machineId !== target.machine.controllerMachineId
+        || ticket.connectionId !== sourceBinding.connectionId
+        || ticket.connectionRevision !== observed.group.connectionRevision
+        || ticket.connectionSecurityFingerprint !== sourceBinding.connectionSecurityFingerprint) return { ok: false, code: 'resource_changed' };
+    const resource = await tx.teamCredentialResource.findUnique({ where: { id: accepted.resourceId },
+        select: { teamId: true, requestPolicyJson: true } });
+    if (!resource) return { ok: false, code: 'resource_changed' };
+    let allowedModelIds: readonly string[] | null = null;
+    if (resource.requestPolicyJson !== null) {
+        let decoded: unknown;
+        try { decoded = JSON.parse(resource.requestPolicyJson); } catch { return { ok: false, code: 'resource_changed' }; }
+        const policy = TeamCredentialRequestPolicyV1Schema.safeParse(decoded);
+        if (!policy.success) return { ok: false, code: 'resource_changed' };
+        allowedModelIds = policy.data.allowedModelIds;
+    }
+    const projection = projectTeamCredentialProviderModels({ response: input.response, resourceId: accepted.resourceId,
+        resourceRevision: accepted.resourceRevision, teamId: resource.teamId, agentTargetKey: accepted.providerModelSelection.agentTargetKey,
+        application: accepted.providerModelSelection.application, allowedModelIds, source: sourceBinding, deliveryMode: 'vendor-native' });
+    const model = projection.models.find(row => row.selection.modelId === accepted.providerModelSelection.modelId
+        && row.sourceRevision === accepted.safeFacet.sourceRevision && row.nativeSource?.providerTicket === accepted.safeFacet.providerTicket);
+    if (!model || model.availability !== 'available'
+        || (read.stored.source && !isDeepStrictEqual(read.stored.source, source))) return { ok: false, code: 'resource_changed' };
+    const stored = StoredSessionTeamCredentialNativeSelectionV1Schema.safeParse({ ...read.stored, source, model });
+    if (!stored.success) return { ok: false, code: 'resource_changed' };
+    const changed = await tx.sessionTeamCredentialBinding.updateMany({ where: { sessionId: input.sessionId,
+        slotKind: 'provider_model:vendor-native', resourceId: accepted.resourceId, resourceRevision: accepted.resourceRevision,
+        nativeManagedId: accepted.managedId, nativeDeliveryJson: read.storedJson }, data: { nativeDeliveryJson: JSON.stringify(stored.data) } });
+    if (changed.count !== 1) return { ok: false, code: 'resource_changed' };
+    return readSessionTeamCredentialNativeDeliveryInTx(tx, input);
+}
+
+type NativeDeliveryMutationInput = Readonly<{
+    sessionId: string; accountId: string; bindingKey: string; expectedResourceRevision: number;
+    expectedSourceRevision: string; expectedProviderTicket: string; operation: 'install' | 'release';
+    requestId: string; authentication: SessionAccessAuthentication;
+}>;
+type NativeDeliveryMutationRefusal = Readonly<{ ok: false; code: 'resource_unavailable' | 'resource_changed' | 'action_outcome_unknown' }>;
+
+async function readNativeDeliveryMutationInTx(tx: Tx, input: NativeDeliveryMutationInput) {
+    if (!input.requestId) return { ok: false, code: 'resource_changed' } as const;
+    const initial = await readSessionTeamCredentialNativeSelectionInTx(tx, input);
+    if (!initial.ok) return initial;
+    if (initial.binding.accountId !== input.accountId) return { ok: false, code: 'resource_changed' } as const;
+    // Whole-policy native apply uncertainty belongs to this exact managed
+    // vendor resource, not to a Team credential shared across other Machines.
+    const provider = getDbProviderFromEnv(process.env, 'postgres');
+    if (provider !== 'sqlite') await tx.$queryRawUnsafe(provider === 'mysql'
+        ? 'SELECT `id` FROM `ManagedMachine` WHERE `id` = ? FOR UPDATE'
+        : 'SELECT "id" FROM "ManagedMachine" WHERE "id" = $1 FOR UPDATE', initial.binding.managedId);
+    const read = await readSessionTeamCredentialNativeSelectionInTx(tx, input);
+    if (!read.ok) return read;
+    const accepted = read.binding;
+    if (accepted.accountId !== input.accountId || accepted.safeFacet.bindingKey !== input.bindingKey
+        || accepted.resourceRevision !== input.expectedResourceRevision
+        || accepted.safeFacet.sourceRevision !== input.expectedSourceRevision
+        || accepted.safeFacet.providerTicket !== input.expectedProviderTicket) return { ok: false, code: 'resource_changed' } as const;
+    const target = await readManagedNativeCredentialTargetInTx(tx, { accountId: input.accountId,
+        executionMachineId: accepted.providerModelSelection.executionMachineId,
+        resourceCustodianAccountId: accepted.custodianAccountId });
+    if (!target || target.machine.id !== accepted.managedId
+        || target.machine.controllerInstallationId !== accepted.safeFacet.controllerInstallationId
+        || target.guest.installationId !== accepted.safeFacet.guestInstallationId) return { ok: false, code: 'resource_changed' } as const;
+    return read;
+}
+
+/** Durable pre-I/O claim using the verified ordinary Action request identity. */
+export async function submitSessionTeamCredentialNativeDeliveryInTx(tx: Tx, input: NativeDeliveryMutationInput): Promise<
+    Readonly<{ ok: true; submitted: boolean }> | NativeDeliveryMutationRefusal
+> {
+    const read = await readNativeDeliveryMutationInTx(tx, input);
+    if (!read.ok) return read;
+    const accepted = read.binding;
+    if (!accepted.delivery) return { ok: false, code: 'resource_unavailable' };
+    if (accepted.submission?.requestId === input.requestId && accepted.submission.operation === input.operation) {
+        return { ok: true, submitted: false };
+    }
+    if (input.operation === 'install') {
+        const current = await validateExistingSessionTeamCredentialResourceInTx(tx, { sessionId: input.sessionId,
+            accountId: input.accountId, resourceId: accepted.resourceId, expectedResourceRevision: accepted.resourceRevision,
+            deliveryMode: 'vendor-native', authentication: input.authentication });
+        if (!current.ok) return { ok: false, code: 'resource_changed' };
+    } else if (accepted.installation === 'prepared') return { ok: false, code: 'resource_changed' };
+    const result = await tx.sessionTeamCredentialBinding.updateMany({ where: { sessionId: input.sessionId,
+        slotKind: 'provider_model:vendor-native', resourceId: accepted.resourceId, resourceRevision: accepted.resourceRevision,
+        nativeManagedId: accepted.managedId, nativeDeliveryJson: read.storedJson }, data: { nativeDeliveryJson: JSON.stringify({
+            ...read.stored, submission: { requestId: input.requestId, operation: input.operation },
+        }) } });
+    return result.count === 1 ? { ok: true, submitted: true } : { ok: false, code: 'resource_changed' };
+}
+
+/** Only the exact submitted ordinary Action may settle its awaited outcome. */
+export async function completeSessionTeamCredentialNativeDeliveryInTx(tx: Tx, input: NativeDeliveryMutationInput & Readonly<{
+    outcome: 'confirmed' | 'unknown' | 'refused';
+    appliedPolicy?: Readonly<{ ownedBindingKeys: readonly string[]; desiredBindingKeys: readonly string[] }>;
+}>): Promise<Readonly<{ ok: true }> | NativeDeliveryMutationRefusal> {
+    const read = await readNativeDeliveryMutationInTx(tx, input);
+    if (!read.ok) return read;
+    const accepted = read.binding;
+    if (accepted.submission?.requestId !== input.requestId || accepted.submission.operation !== input.operation) {
+        return { ok: false, code: 'resource_changed' };
+    }
+    const where = { sessionId: input.sessionId, slotKind: 'provider_model:vendor-native', resourceId: accepted.resourceId,
+        resourceRevision: accepted.resourceRevision, nativeManagedId: accepted.managedId, nativeDeliveryJson: read.storedJson };
+    const { submission: _submission, ...settled } = read.stored;
+    const retainUnknown = async (): Promise<NativeDeliveryMutationRefusal> => {
+        const result = await tx.sessionTeamCredentialBinding.updateMany({ where, data: { nativeDeliveryJson: JSON.stringify({
+            ...settled, installation: 'unknown',
+        }) } });
+        return { ok: false, code: result.count === 1 ? 'action_outcome_unknown' : 'resource_changed' };
+    };
+    let appliedPeers: Extract<Awaited<ReturnType<typeof readSessionTeamCredentialNativeSelectionsForManagedMachineInTx>>, { ok: true }>['selections'] = [];
+    let desired = new Set<string>();
+    if (input.outcome === 'confirmed') {
+        const census = await readSessionTeamCredentialNativeSelectionsForManagedMachineInTx(tx, { managedId: accepted.managedId });
+        if (!census.ok) return census;
+        // The signed controller reports the complete policy it actually
+        // applied. That outcome settles earlier unknowns and abandoned claims.
+        const policy = input.appliedPolicy;
+        if (!policy) return retainUnknown();
+        const owned = new Set(policy.ownedBindingKeys);
+        desired = new Set(policy.desiredBindingKeys);
+        const currentOwned = census.bindings.filter(row => row.installation !== 'prepared'
+            || row.submission || row.safeFacet.bindingKey === accepted.safeFacet.bindingKey);
+        if (owned.size !== policy.ownedBindingKeys.length || desired.size !== policy.desiredBindingKeys.length
+            || currentOwned.length !== owned.size || !owned.has(accepted.safeFacet.bindingKey)
+            || desired.has(accepted.safeFacet.bindingKey) !== (input.operation === 'install')
+            || [...desired].some(key => !owned.has(key))
+            || currentOwned.some(row => !owned.has(row.safeFacet.bindingKey) || row.accountId !== accepted.accountId
+                || row.custodianAccountId !== accepted.custodianAccountId
+                || desired.has(row.safeFacet.bindingKey)
+                    && (row.providerModelSelection.executionMachineId !== accepted.providerModelSelection.executionMachineId
+                        || row.safeFacet.controllerInstallationId !== accepted.safeFacet.controllerInstallationId
+                        || row.safeFacet.guestInstallationId !== accepted.safeFacet.guestInstallationId))) return retainUnknown();
+        appliedPeers = census.selections.filter(row => row.binding.safeFacet.bindingKey !== accepted.safeFacet.bindingKey
+            && owned.has(row.binding.safeFacet.bindingKey));
+    }
+    if (input.operation === 'install' && input.outcome === 'confirmed') {
+        if (!accepted.delivery) return { ok: false, code: 'resource_unavailable' };
+    }
+    for (const peer of appliedPeers) {
+        const { installation: _installation, submission: _submission, ...prepared } = peer.stored;
+        const changed = await tx.sessionTeamCredentialBinding.updateMany({ where: {
+            sessionId: peer.binding.sessionId, slotKind: 'provider_model:vendor-native',
+            resourceId: peer.binding.resourceId, resourceRevision: peer.binding.resourceRevision,
+            nativeManagedId: peer.binding.managedId, nativeDeliveryJson: peer.storedJson,
+        }, data: { nativeDeliveryJson: JSON.stringify(desired.has(peer.binding.safeFacet.bindingKey)
+            ? { ...prepared, installation: 'confirmed' } : prepared) } });
+        if (changed.count !== 1) return retainUnknown();
+    }
+    const result = input.operation === 'release' && input.outcome === 'confirmed'
+        ? await tx.sessionTeamCredentialBinding.deleteMany({ where })
+        : await tx.sessionTeamCredentialBinding.updateMany({ where, data: { nativeDeliveryJson: JSON.stringify(input.outcome === 'refused'
+            ? settled : { ...settled, installation: input.outcome === 'confirmed' ? 'confirmed' : 'unknown' }) } });
+    return result.count === 1 ? { ok: true } : { ok: false, code: 'resource_changed' };
+}
+
+type NativeCensusRequest = Pick<ManagedCredentialInstallInputV1, 'managedId'> & (
+    Pick<ManagedCredentialInstallInputV1, 'sessionId' | 'bindingKey' | 'operation'>
+    | Readonly<{ sessionId?: never; bindingKey?: never; operation?: never }>);
+type QualifiedNativeSelectionCensus = Readonly<{ ok: true;
+    desiredBindings: readonly SessionTeamCredentialNativeSelectionBinding[];
+    ownedBindings: readonly SessionTeamCredentialNativeSelectionBinding[];
+}> | Readonly<{ ok: false; code: 'resource_changed' }>;
+
+/** Home alone chooses the activated cohort and re-admits every desired use.
+ * A pending sibling is not installed by another Session's whole-policy apply. */
+export async function validateSessionTeamCredentialNativeCensusInTx(tx: Tx, input: Readonly<{
+    accountId: string; request: NativeCensusRequest;
+    censusBindings: readonly SessionTeamCredentialNativeSelectionBinding[];
+    authentication: SessionAccessAuthentication;
+}>): Promise<QualifiedNativeSelectionCensus> {
+    const rows = input.censusBindings;
+    const rowFree = input.request.sessionId === undefined;
+    if (rows.some(row => (rowFree ? row.custodianAccountId : row.accountId) !== input.accountId
+        || row.managedId !== input.request.managedId)) {
+        return { ok: false, code: 'resource_changed' };
+    }
+    const target = rowFree ? undefined : rows.find(row => row.sessionId === input.request.sessionId && row.safeFacet.bindingKey === input.request.bindingKey);
+    if (!rowFree && (!target || input.request.operation === 'release' && target.installation === 'prepared')) {
+        return { ok: false, code: 'resource_changed' };
+    }
+    const ownedBindings = rows.filter(row => row.installation !== 'prepared' || row.submission
+        || row === target && input.request.operation !== 'release');
+    if (!ownedBindings.length) return { ok: true, desiredBindings: [], ownedBindings };
+    // A retained Session is ownership evidence, not the current enrolment.
+    const enrolled = rowFree ? await tx.managedMachine.findUnique({ where: { id: input.request.managedId },
+        select: { enrolledMachineId: true } }) : undefined;
+    const anchor = target ?? rows.find(row => row.providerModelSelection.executionMachineId === enrolled?.enrolledMachineId);
+    if (!anchor) return { ok: true, desiredBindings: [], ownedBindings };
+    const currentTarget = await readManagedNativeCredentialTargetInTx(tx, { accountId: anchor.accountId,
+        executionMachineId: anchor.providerModelSelection.executionMachineId, resourceCustodianAccountId: anchor.custodianAccountId });
+    if (!currentTarget || currentTarget.machine.id !== anchor.managedId
+        || !rowFree && (currentTarget.machine.controllerInstallationId !== anchor.safeFacet.controllerInstallationId
+            || currentTarget.guest.installationId !== anchor.safeFacet.guestInstallationId)) {
+        return rowFree ? { ok: true, desiredBindings: [], ownedBindings } : { ok: false, code: 'resource_changed' };
+    }
+    const desiredBindings: SessionTeamCredentialNativeSelectionBinding[] = [];
+    for (const row of ownedBindings) {
+        if (row.providerModelSelection.executionMachineId !== currentTarget.guest.machineId
+            || row.safeFacet.controllerInstallationId !== currentTarget.machine.controllerInstallationId
+            || row.safeFacet.guestInstallationId !== currentTarget.guest.installationId
+            || row.custodianAccountId !== currentTarget.machine.custodianAccountId) continue;
+        if (input.request.operation === 'release' && row === target) continue;
+        const current = await validateExistingSessionTeamCredentialResourceInTx(tx, { sessionId: row.sessionId,
+            accountId: row.accountId, resourceId: row.resourceId, expectedResourceRevision: row.resourceRevision,
+            deliveryMode: 'vendor-native', authentication: input.authentication });
+        if (current.ok) desiredBindings.push(row);
+        else if (row === target) return { ok: false, code: 'resource_changed' };
+        // Withdrawn use does not authorize materialization, but its descriptor
+        // remains owned until an acknowledged release settles that exact row.
+    }
+    return { ok: true, desiredBindings, ownedBindings };
+}
+
+/** The existing private controller projection receives only Home-qualified
+ * materializable rules, never every source-ready pending sibling. */
+export async function readQualifiedSessionTeamCredentialNativeDeliveriesForManagedMachineInTx(tx: Tx, input: Readonly<{
+    accountId: string; request: NativeCensusRequest; authentication: SessionAccessAuthentication;
+}>): Promise<Readonly<{ ok: true; bindings: readonly SessionTeamCredentialNativeDeliveryBinding[];
+    desiredBindings: readonly SessionTeamCredentialNativeDeliveryBinding[];
+    ownedBindings: readonly SessionTeamCredentialNativeDeliveryBinding[];
+}> | Readonly<{ ok: false; code: 'resource_unavailable' | 'resource_changed' }>> {
+    const census = await readSessionTeamCredentialNativeSelectionsForManagedMachineInTx(tx, { managedId: input.request.managedId });
+    if (!census.ok) return census;
+    const qualified = await validateSessionTeamCredentialNativeCensusInTx(tx, { ...input, censusBindings: census.bindings });
+    if (!qualified.ok) return qualified;
+    const bindings: SessionTeamCredentialNativeDeliveryBinding[] = [];
+    const desiredBindings: SessionTeamCredentialNativeDeliveryBinding[] = [];
+    const desired = new Set(qualified.desiredBindings);
+    for (const row of qualified.ownedBindings) {
+        if (!row.delivery) return { ok: false, code: 'resource_unavailable' };
+        const binding = { ...row, delivery: row.delivery };
+        bindings.push(binding);
+        if (desired.has(row)) desiredBindings.push(binding);
+    }
+    return { ok: true, bindings, ownedBindings: bindings, desiredBindings };
+}
+
 /** Read the accepted resource/route with its current revision for a new attach.
  * The stored selection revision is not a continuing policy fence; broker use
  * still rechecks current authority without rewriting that original witness. */
@@ -147,17 +517,47 @@ export async function readAcceptedSessionTeamCredentialProviderModelBindingInTx(
     tx: Tx,
     sessionId: string,
 ): Promise<SessionTeamCredentialBindingIntentListV1[number] | null> {
-    const rows = await tx.sessionTeamCredentialBinding.findMany({
-        where: { sessionId, slotKey: Buffer.from(key({ kind: 'provider_model' })) },
-        select: { slotKind: true, resourceId: true, resource: { select: { teamId: true, revision: true } } },
-    });
-    if (rows.length === 0) return null;
-    if (rows.length !== 1) throw new Error('Conflicting accepted Session Provider-model bindings');
-    const row = rows[0]!;
-    const deliveryMode = (['direct', 'brokered'] as const).find(mode => row.slotKind === persistedSlotKind({ kind: 'provider_model' }, mode));
-    if (!deliveryMode) throw new Error('Invalid accepted Session Provider-model binding');
-    return { v: 1, slot: { kind: 'provider_model' }, resourceId: row.resourceId,
-        expectedResourceRevision: row.resource.revision, deliveryMode, teamId: row.resource.teamId };
+    const result = (await readAcceptedSessionTeamCredentialProviderModelBindingsInTx(tx, [sessionId])).get(sessionId)!;
+    if (result.status === 'rejected') throw result.reason;
+    return result.value;
+}
+
+/** Current accepted bindings for a detail corpus; corrupt storage stays local to its Session. */
+export async function readAcceptedSessionTeamCredentialProviderModelBindingsInTx(tx: Tx, sessionIds: readonly string[]):
+    Promise<ReadonlyMap<string, PromiseSettledResult<SessionTeamCredentialBindingIntentListV1[number] | null>>> {
+    const result = new Map<string, PromiseSettledResult<SessionTeamCredentialBindingIntentListV1[number] | null>>();
+    const ids = [...new Set(sessionIds)];
+    for (let offset = 0; offset < ids.length; offset += SESSION_ACCESS_SESSION_BATCH_SIZE) {
+        const batch = ids.slice(offset, offset + SESSION_ACCESS_SESSION_BATCH_SIZE);
+        const rows = await tx.sessionTeamCredentialBinding.findMany({
+            where: { sessionId: { in: batch }, slotKey: Buffer.from(key({ kind: 'provider_model' })) },
+            select: { sessionId: true, slotKind: true, slotKey: true, resourceId: true, resourceRevision: true,
+                nativeManagedId: true, nativeDeliveryJson: true, session: { select: { accountId: true } },
+                resource: { select: { teamId: true, revision: true, custodianAccountId: true } } },
+        });
+        const bySession = new Map<string, typeof rows>();
+        for (const row of rows) {
+            const group = bySession.get(row.sessionId) ?? [];
+            group.push(row);
+            bySession.set(row.sessionId, group);
+        }
+        for (const id of batch) {
+            try {
+                const bindings = bySession.get(id) ?? [];
+                if (bindings.length > 1) throw new Error('Conflicting accepted Session Provider-model bindings');
+                const row = bindings[0];
+                if (!row) { result.set(id, { status: 'fulfilled', value: null }); continue; }
+                const deliveryMode = (['direct', 'brokered', 'vendor-native'] as const).find(mode => row.slotKind === persistedSlotKind({ kind: 'provider_model' }, mode));
+                if (!deliveryMode) throw new Error('Invalid accepted Session Provider-model binding');
+                const native = deliveryMode === 'vendor-native' ? readSessionTeamCredentialNativeDeliveryRow(row) : null;
+                if (native && !native.ok) throw new Error('Invalid accepted native Session Provider-model binding');
+                result.set(id, { status: 'fulfilled', value: { v: 1, slot: { kind: 'provider_model' }, resourceId: row.resourceId,
+                    expectedResourceRevision: native ? row.resourceRevision : row.resource.revision, deliveryMode, teamId: row.resource.teamId,
+                    ...(native?.ok ? { providerModelSelection: native.binding.providerModelSelection, nativeDelivery: native.binding.safeFacet } : {}) } });
+            } catch (reason) { result.set(id, { status: 'rejected', reason }); }
+        }
+    }
+    return result;
 }
 
 export async function isSessionTeamCredentialBindingIntentCurrentInTx(
@@ -274,6 +674,20 @@ export async function validateRequiredTeamVisibilityInTx(
         authentication: SessionAccessAuthentication;
     }>,
 ): Promise<SessionTeamCredentialBindingWriteResult> {
+    const admitted = await resolveRequiredTeamVisibilityInTx(tx, input);
+    return admitted.ok ? { ok: true } : admitted;
+}
+
+async function resolveRequiredTeamVisibilityInTx(
+    tx: Tx,
+    input: Readonly<{
+        sessionId: string;
+        accountId: string;
+        consentTeamId: string;
+        requiredTeamCredential: RequiredSessionTeamCredentialV1;
+        authentication: SessionAccessAuthentication;
+    }>,
+): Promise<SessionTeamCredentialResourceValidationResult> {
     const session = await tx.session.findUnique({
         where: { id: input.sessionId },
         select: { accountId: true, primaryTeamId: true },
@@ -289,7 +703,7 @@ export async function validateRequiredTeamVisibilityInTx(
     if (resource.teamId !== input.consentTeamId || resource.sessionUsePolicy !== "team_visibility_required") {
         return { ok: false, reason: "invalid_input" };
     }
-    const admitted = await validateSessionTeamCredentialResourceForContextInTx(tx, {
+    return validateSessionTeamCredentialResourceForContextInTx(tx, {
         accountId: input.accountId,
         ...input.requiredTeamCredential,
         authentication: input.authentication,
@@ -298,7 +712,6 @@ export async function validateRequiredTeamVisibilityInTx(
             isVisibleToTeam: async (teamId) => teamId === input.consentTeamId,
         },
     });
-    return admitted.ok ? { ok: true } : admitted;
 }
 
 type SessionTeamCredentialResourceValidationResult =
@@ -439,7 +852,11 @@ async function validateSessionTeamCredentialResourceForContextInTx(
                     : broker.error === "resource_changed" ? "broker_unavailable" : broker.error,
             };
         }
-    } else if (!entitlement.mayReceiveDirect) {
+    } else if (input.deliveryMode === 'vendor-native') {
+        if (!entitlement.allowedRoutes.includes('vendor-native') || parsedSourceBinding.data.kind !== 'provider_connection') {
+            return { ok: false, reason: 'access_removed' };
+        }
+    } else if (input.deliveryMode !== "direct" || !entitlement.mayReceiveDirect) {
         return { ok: false, reason: "access_removed" };
     }
     return {

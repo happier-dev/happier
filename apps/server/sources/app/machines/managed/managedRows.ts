@@ -8,7 +8,7 @@ import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValu
 import { createManagedMachineV1Schema, ManagedMachineV1Schema, RetainedManagedLaunchSnapshotV1Schema, type ManagedMachineV1, type ValidatedLaunchSnapshotV1, type RetainedManagedLaunchSnapshotV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { ManagedAdmissionComputeInputV1Schema, ManagedControllerCurrentnessV1Schema, ManagedControlAdmissionInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ManagedPolicyAdmissionInputV1Schema, type ManagedMachinePolicyChangeHintV1 } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
-import { SupportedNativeIntentSchema, ManagedResourceV1Schema } from '@happier-dev/protocol/machines/managed/providerFactsV1';
+import { SupportedNativeIntentSchema, ManagedResourceV1Schema, type ManagedRefusalCodeV1Schema } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import { deriveManagedDevcontainerChildProjectionV1, type DevcontainerChildProjectionV1, managedDevcontainerChildProjectionsEqualV1 } from '@happier-dev/protocol/machines/managed/devcontainerV1';
 import { resolvePluginActionConnectedAccountUseRequestsV2, type PluginActionConnectedAccountUseRequestV2 } from "@happier-dev/protocol/plugins/manifest/v2";
 import { SubmittedNativeEffectV1Schema } from "@happier-dev/protocol/machines/managed/managedMachineV1";
@@ -55,7 +55,7 @@ export function projectManagedControllerAccess(controller: Readonly<{
         installationPublicKey: encodeBase64(new Uint8Array(controller.installationPublicKey), 'base64url').replace(/=+$/u, '') });
     return parsed.success ? parsed.data : null;
 }
-export type ManagedDeclaration = Pick<MachineProvisionerContributionV1, "resourceKind" | "actions" | "schemaVersion" | "launchSchema" | "resourceSchema" | "billing" | "retention" | "reconciliation" | "credentialPurposeRequirements"> & Readonly<{
+export type ManagedDeclaration = Pick<MachineProvisionerContributionV1, "resourceKind" | "actions" | "schemaVersion" | "launchSchema" | "resourceSchema" | "billing" | "retention" | "reconciliation" | "credentialPurposeRequirements" | "nativeCredentialDelivery"> & Readonly<{
     acquireCredentialRequests: readonly PluginActionConnectedAccountUseRequestV2[];
 }>;
 export function createManagedMachineDeclaredSchema(launch: PluginJsonSchemaV2, native: PluginJsonSchemaV2, nativeOperation?: PluginJsonSchemaV2) {
@@ -66,7 +66,7 @@ export function readManagedLaunchSnapshot(value: unknown): RetainedManagedLaunch
     return createStoredReadSchema(RetainedManagedLaunchSnapshotV1Schema).parse(value);
 }
 export class ManagedMachineError extends Error {
-    constructor(readonly code: "invalid_request" | "permission_denied" | "admission_unavailable" | "acquisition_disabled" | "controller_unavailable" | "controller_retired" | "credential_unavailable" | "provider_unavailable" | "request_conflict" | "intent_changed" | "managed_not_found" | "enrollment_retired" | "resource_mismatch" | "preset_not_found" | "preset_archived" | "preset_limit_reached") {
+    constructor(readonly code: z.infer<typeof ManagedRefusalCodeV1Schema>) {
         super(code);
     }
 }
@@ -398,10 +398,20 @@ export function sameManagedInput(left: unknown, right: unknown): boolean {
     return left === undefined || right === undefined ? left === right : pluginJsonValuesEqual(left, right);
 }
 
+/** The same audience is prepared by enclosing lifecycle mutations before locks. */
+export async function readManagedMachinePolicyPublicationAudienceInTx(tx: Tx, row: StoredManagedMachine,
+    admittedInput = row.admittedInput) {
+    const controllerAccountIds = row.controllerMachineId ? await resolveCurrentMachineRecipientAccountIdsInTx(tx, row.controllerMachineId) : [row.custodianAccountId];
+    const creatorAccountId = readManagedAdmissionState(admittedInput).enrollmentAccountId;
+    return { controllerAccountIds,
+        resourceAccountIds: [...new Set([...controllerAccountIds, ...(creatorAccountId ? [creatorAccountId] : [])])] };
+}
+
 export async function invalidateManagedMachineInTx(tx: Tx, row: StoredManagedMachine): Promise<void> {
-    const { controllerAccountIds, controllerReplaced, children } = await fenceManagedMachinePublicationInTx(tx, async () => {
-        const controllerAccountIds = await resolveCurrentMachineRecipientAccountIdsInTx(tx, row.controllerMachineId);
+    const { controllerAccountIds, resourceAccountIds, controllerReplaced, children } = await fenceManagedMachinePublicationInTx(tx, async () => {
         const fresh = await tx.managedMachine.findUnique({ where: { id: row.id } });
+        const { controllerAccountIds, resourceAccountIds } = await readManagedMachinePolicyPublicationAudienceInTx(tx, row,
+            fresh ? fresh.admittedInput : row.admittedInput);
         const previous = readStoredManagedDevcontainerChild(row);
         const machineIds = new Set([row.enrolledMachineId, fresh?.enrolledMachineId].filter((id): id is string => typeof id === 'string'));
         const children: Array<{ machineId: string; child: Awaited<ReturnType<typeof readMachineDevcontainerChildInTx>>; accountIds: string[] }> = [];
@@ -411,14 +421,14 @@ export async function invalidateManagedMachineInTx(tx: Tx, row: StoredManagedMac
             if (managedDevcontainerChildProjectionsEqualV1(before ?? undefined, child ?? undefined)) continue;
             children.push({ machineId, child, accountIds: await resolveCurrentMachineRecipientAccountIdsInTx(tx, machineId) });
         }
-        return { accountIds: [...controllerAccountIds, ...children.flatMap(child => child.accountIds)], controllerAccountIds,
+        return { accountIds: [...resourceAccountIds, ...children.flatMap(child => child.accountIds)], controllerAccountIds, resourceAccountIds,
             controllerReplaced: fresh !== null && fresh.controllerMachineId !== row.controllerMachineId, children };
     });
-    await markAccountsChanged(tx, { accountIds: controllerAccountIds, kind: "account", entityId: row.id,
-        hint: { managedMachinePolicy: true, machineId: row.controllerMachineId } satisfies ManagedMachinePolicyChangeHintV1 });
+    await markAccountsChanged(tx, { accountIds: resourceAccountIds, kind: "account", entityId: row.id,
+        hint: { managedMachinePolicy: true, ...(row.controllerMachineId ? { machineId: row.controllerMachineId } : {}) } satisfies ManagedMachinePolicyChangeHintV1 });
     // Old/new controller publications coalesce at the same Account-row key.
     // Retain the former controller's retirement wake under its own Machine key.
-    if (controllerReplaced) await markAccountsChanged(tx, {
+    if (controllerReplaced && row.controllerMachineId) await markAccountsChanged(tx, {
         accountIds: controllerAccountIds, kind: 'machine', entityId: row.controllerMachineId,
     });
     for (const { machineId, child, accountIds: childAccountIds } of children) {

@@ -1,6 +1,6 @@
 import { MachineInstallationPublicKeySchema } from '../identity/installationKeySchemas.js';
 import { MachineSetupExclusionsV1Schema } from '../setup/machineSetupSourcesV1.js';
-import { ManagedCredentialInstallInputV1Schema, ManagedCredentialDeliveryResultV1Schema } from './credentialDeliveryV1.js';
+import { ManagedCredentialInstallInputV1Schema, ManagedCredentialDeliveryResultV1Schema, ManagedNativeCredentialBindingV1Schema } from './credentialDeliveryV1.js';
 import { ManagedMachineEnrollmentIdentityV1Schema } from './enrollmentIdentityV1.js';
 import { sameStrictJsonValue } from '../../json/strictJsonValue.js';
 
@@ -150,6 +150,17 @@ export const ManagedControllerReportV1Schema = lazyZodSchema(() => z.strictObjec
 }).check(z.superRefine((value, context) => {
   if (value.bootstrapInstalled && value.result.kind !== 'bound') context.addIssue({ code: 'custom', path: ['bootstrapInstalled'], message: 'Installation completes on a bound resource.' });
 })));
+export const ManagedControllerCredentialDeliveryReportV1Schema = lazyZodSchema(() => z.strictObject({ ...current(), controller: ManagedControllerV1Schema,
+  credentialDelivery: z.union([
+    z.strictObject({ request: ManagedCredentialInstallInputV1Schema, phase: z.literal('submitted') }),
+    z.strictObject({ request: ManagedCredentialInstallInputV1Schema, result: ManagedCredentialDeliveryResultV1Schema,
+      appliedPolicy: mini.optional(z.strictObject({ ownedBindingKeys: z.array(id()), desiredBindingKeys: z.array(id()) })),
+    }),
+  ]),
+}));
+export const ManagedControllerCredentialDeliveryReportOutputV1Schema = lazyZodSchema(() => z.strictObject({
+  machine: ManagedMachineV1Schema, credentialDeliveryResult: ManagedCredentialDeliveryResultV1Schema,
+}));
 export const ManagedEnrollmentCorrelationV1Schema = lazyZodSchema(() => z.strictObject({ ...current(), resource: ManagedResourceV1Schema }));
 /** Controller admission never receives ordinary composer text or startup instructions. */
 export const ManagedAdmissionComputeInputV1Schema = lazyZodSchema(() => z.union([
@@ -159,6 +170,8 @@ export const ManagedAdmissionComputeInputV1Schema = lazyZodSchema(() => z.union(
 export const ManagedAdmissionInputV1Schema = lazyZodSchema(() => z.strictObject({ input: ManagedAdmissionComputeInputV1Schema, requestId: id(), continuationPresent: mini.boolean() }));
 export const ManagedAdmissionOutputV1Schema = lazyZodSchema(() => z.strictObject({ machine: ManagedMachineV1Schema, replayed: mini.boolean() }));
 export const ManagedControllerContextInputV1Schema = lazyZodSchema(() => z.strictObject({ ...target(), expectedIntentRevision: revision(), controller: z.optional(ManagedControllerV1Schema),
+  requestId: z.optional(id()),
+  includeNativeCredentialBindings: z.optional(z.literal(true)),
   includeEnrollmentInstallation: z.optional(z.literal(true)),
 }));
 /** The admitted creation's exact enrolled installation, never guest Account content. */
@@ -166,6 +179,8 @@ export const ManagedEnrollmentInstallationV1Schema = lazyZodSchema(() => z.stric
   machineId: id(), installationId: id(), installationPublicKey: MachineInstallationPublicKeySchema,
 }));
 export const ManagedControllerContextOutputV1Schema = lazyZodSchema(() => z.strictObject({ machine: ManagedMachineV1Schema, requestId: id(),
+  nativeCredentialBindings: z.optional(z.array(ManagedNativeCredentialBindingV1Schema)),
+  nativeCredentialDesiredBindingKeys: z.optional(z.array(id())),
   enrollmentInstallation: z.optional(ManagedEnrollmentInstallationV1Schema),
 }));
 export const ManagedControllerMachineOutputV1Schema = lazyZodSchema(() => z.strictObject({ machine: ManagedMachineV1Schema }));
@@ -372,7 +387,7 @@ export type MachineSetupCombinedPlanResultV1 = z.infer<typeof MachineSetupCombin
 
 export type MachineSetupPlanReviewV1 = z.infer<typeof MachineSetupPlanReviewV1Schema>;
 
-export { ManagedCredentialInstallInputV1Schema } from './credentialDeliveryV1.js';
+export * from './credentialDeliveryV1.js';
 
 export type MachineSetupCombinedPlanInputV1 = z.infer<typeof MachineSetupCombinedPlanInputV1Schema>;
 

@@ -1,3 +1,6 @@
+import tweetnacl from 'tweetnacl';
+import { computeTeamCredentialNativeBindingReadDigestV1 } from '@happier-dev/protocol/teams/credentials/directMaterialV1';
+import { signMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { RouteOptions } from "fastify";
 import { ClusterAdapter, MessageType, type ClusterMessage } from "socket.io-adapter";
@@ -98,6 +101,25 @@ describe("Team credential resource routes (SQLite integration)", () => {
             payload,
         });
     }
+
+    it('refuses an installed native private read with no accepted binding without falling back to direct material', async () => {
+        const actor = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const keys = tweetnacl.sign.keyPair();
+        const machine = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: actor.id,
+            metadata: '{}', installationId: crypto.randomUUID(), installationPublicKey: new Uint8Array(keys.publicKey), active: true } });
+        const body = { purpose: 'vendor_native_binding' as const, homeId: 'home', teamId: 'team', resourceId: 'resource',
+            sessionId: 'session', managedId: 'managed', bindingKey: 'not-accepted', expectedResourceRevision: 1,
+            expectedSourceRevision: 'source', expectedProviderTicket: 'ticket', machineId: machine.id,
+            installationId: machine.installationId! };
+        const proof = signMachineInstallationProof({ payload: { version: 1, machineId: body.machineId,
+            installationId: body.installationId, accountId: actor.id,
+            nativeCredentialBindingRead: { requestBodyDigest: computeTeamCredentialNativeBindingReadDigestV1(body) } },
+            privateKey: keys.secretKey });
+        const response = await post('/v2/teams/team/credential-resources/resource/direct-material', actor.id, { ...body, proof });
+        expect(response.statusCode).toBe(200);
+        expect(response.json()).toEqual({ status: 'unavailable', reason: 'binding_unavailable' });
+        expect(response.body).not.toContain('placeholder');
+    });
 
     async function get(url: string, actorAccountId: string, authenticationEvidence?: unknown) {
         return await app.inject({

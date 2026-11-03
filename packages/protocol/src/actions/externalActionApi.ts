@@ -1,3 +1,4 @@
+import { ActionOperationListActionInputV1Schema, ActionOperationGetActionInputV1Schema } from './specs/actionOperations.js';
 import { projectDeploymentNativeAdmissionV1 } from '../deployments/deploymentCandidatePublicationV1.js';
 import type { ArtifactBodyV1 } from '../artifacts/artifactBinaryV1.js';
 import type { ArtifactRevisionV1 } from '../artifacts/artifactRevisionV1.js';
@@ -31,7 +32,8 @@ import { z } from 'zod/mini';
 import { ApiTokenGrantV1Schema, ApiTokenSessionSpawnAdmissionV1Schema } from '../auth/apiTokenGrant.js';
 import { AuthTokenAuthenticationEvidenceSnapshotV1Schema } from '../auth/authToken.js';
 import { ActionRequiredAuthoritySchema } from './metadata.js';
-import { ManagedAdmissionComputeInputV1Schema, ManagedAcquireInputV1Schema, ManagedPowerInputV1Schema, ManagedDeleteInputV1Schema } from '../machines/managed/actionsV1.js';
+import { ManagedAdmissionComputeInputV1Schema, ManagedAcquireInputV1Schema, ManagedPowerInputV1Schema, ManagedDeleteInputV1Schema, ManagedGetInputV1Schema, ManagedMutationInputV1Schema, ManagedCredentialInstallInputV1Schema } from '../machines/managed/actionsV1.js';
+
 import { ManagedControllerV1Schema } from '../machines/managed/managedMachineV1.js';
 import { AccountEncryptionModeSchema, type AccountEncryptionMode } from '../features/payload/capabilities/encryptionCapabilities.js';
 import { WorkflowProjectTargetV1Schema } from '../workflows/workflowWorkspaceV1.js';
@@ -695,19 +697,41 @@ export function isExternalActionResolvedTargetAllowedV1(input: Readonly<{
  * absent: each ingress verifies credentials and stamps authority, provenance,
  * cancellation, and placement after this parser succeeds.
  */
+export const ExternalActionManagedAcquireAdmissionV1Schema = lazyZodSchema(() => z.strictObject({
+  actionId: z.literal('machines.managed.acquire'),
+  input: ManagedAdmissionComputeInputV1Schema,
+  continuationPresent: z.boolean(),
+}));
+const ExternalActionManagedInspectAdmissionV1Schema = lazyZodSchema(() => z.strictObject({
+  actionId: z.literal('machines.managed.inspect'), input: ManagedGetInputV1Schema,
+}));
+const ExternalActionManagedRetryAdmissionV1Schema = lazyZodSchema(() => z.strictObject({
+  actionId: z.literal('machines.managed.bootstrap.retry'), input: ManagedMutationInputV1Schema,
+}));
+const ExternalActionManagedCredentialInstallAdmissionV1Schema = lazyZodSchema(() => z.strictObject({
+  actionId: z.literal('machines.managed.credentials.install'), input: ManagedCredentialInstallInputV1Schema,
+}));
+const ExternalActionManagedOperationListAdmissionV1Schema = lazyZodSchema(() => z.strictObject({
+  actionId: z.literal('action.operations.list'), input: ManagedGetInputV1Schema,
+}));
+const ExternalActionManagedOperationGetAdmissionV1Schema = lazyZodSchema(() => z.strictObject({
+  actionId: z.literal('action.operations.get'), input: z.strictObject({ ...ManagedGetInputV1Schema.shape,
+    operationId: ActionOperationGetActionInputV1Schema.shape.operationId }),
+}));
 export const ExternalActionManagedControlAdmissionV1Schema = lazyZodSchema(() => z.discriminatedUnion('actionId', [
   z.strictObject({ actionId: z.literal('machines.managed.power.set'), input: ManagedPowerInputV1Schema }),
   z.strictObject({ actionId: z.literal('machines.managed.delete'), input: ManagedDeleteInputV1Schema }),
 ]));
 export type ExternalActionManagedControlAdmissionV1 = z.infer<typeof ExternalActionManagedControlAdmissionV1Schema>;
-const ExternalActionManagedAcquireAdmissionV1Schema = lazyZodSchema(() => z.strictObject({
-  actionId: z.literal('machines.managed.acquire'),
-  input: ManagedAdmissionComputeInputV1Schema,
-  continuationPresent: z.boolean(),
-}));
-
+export const ExternalActionManagedRecoveryAdmissionV1Schema = lazyZodSchema(() => z.discriminatedUnion('actionId', [
+  ExternalActionManagedCredentialInstallAdmissionV1Schema,
+  ExternalActionManagedInspectAdmissionV1Schema, ExternalActionManagedRetryAdmissionV1Schema,
+  ExternalActionManagedOperationListAdmissionV1Schema, ExternalActionManagedOperationGetAdmissionV1Schema,
+]));
 export const ExternalActionManagedAdmissionV1Schema = lazyZodSchema(() => z.discriminatedUnion('actionId', [
-  ExternalActionManagedAcquireAdmissionV1Schema,
+  ExternalActionManagedCredentialInstallAdmissionV1Schema,
+  ExternalActionManagedAcquireAdmissionV1Schema, ExternalActionManagedInspectAdmissionV1Schema, ExternalActionManagedRetryAdmissionV1Schema,
+  ExternalActionManagedOperationListAdmissionV1Schema, ExternalActionManagedOperationGetAdmissionV1Schema,
   ...ExternalActionManagedControlAdmissionV1Schema.def.options,
 ]));
 export type ExternalActionManagedAdmissionV1 = z.infer<typeof ExternalActionManagedAdmissionV1Schema>;
@@ -717,9 +741,20 @@ export function projectExternalActionManagedAdmissionV1(actionId: string, input:
   if (actionId === 'machines.managed.power.set' || actionId === 'machines.managed.delete') {
     return ExternalActionManagedControlAdmissionV1Schema.parse({ actionId, input });
   }
+  if (actionId === 'machines.managed.credentials.install') return { actionId, input: ManagedCredentialInstallInputV1Schema.parse(input) };
   if (actionId === 'machines.managed.acquire') {
     const { agentStart, ...compute } = ManagedAcquireInputV1Schema.parse(input);
     return { actionId, input: ManagedAdmissionComputeInputV1Schema.parse(compute), continuationPresent: agentStart !== undefined };
+  }
+  if (actionId === 'machines.managed.inspect') return { actionId, input: ManagedGetInputV1Schema.parse(input) };
+  if (actionId === 'machines.managed.bootstrap.retry') return { actionId, input: ManagedMutationInputV1Schema.parse(input) };
+  if (actionId === 'action.operations.list') {
+    const request = ActionOperationListActionInputV1Schema.parse(input);
+    return request.managed ? { actionId, input: request.managed } : undefined;
+  }
+  if (actionId === 'action.operations.get') {
+    const request = ActionOperationGetActionInputV1Schema.parse(input);
+    return request.managed ? { actionId, input: { ...request.managed, operationId: request.operationId } } : undefined;
   }
   return undefined;
 }
@@ -1073,9 +1108,14 @@ const externalActionExecutionAuthorizationRoutingShapeV1 = () => ({
     idempotencyKey: z.optional(AutomationManualIdempotencyKeyV1Schema),
     target: ExternalActionTargetV1Schema,
     managedContinuation: z.optional(ExternalActionManagedContinuationV1Schema),
-    managedAdmission: z.optional(ExternalActionManagedControlAdmissionV1Schema),
+    managedAdmission: z.optional(z.union([ExternalActionManagedRecoveryAdmissionV1Schema, ExternalActionManagedControlAdmissionV1Schema])),
     /** Issuer-qualified private Account executor, scoped by the signed control admission. */
     managedAccountExecutor: z.optional(z.strictObject({ enrolledMachineId: ExternalActionTargetIdV1Schema })),
+    /** Home-derived exact parent identity; only its installed post-approval child can establish this fact. */
+    nativeCredentialSpawnChild: z.optional(z.strictObject({
+      requestId: ExternalActionRequestIdV1Schema,
+      requestEnvelopeDigest: z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u)),
+    })),
     handoffAdmission: z.optional(ExternalActionHandoffBindingV1Schema),
     handoffContinuation: z.optional(ExternalActionHandoffContinuationV1Schema),
     handoffPreflight: z.optional(z.strictObject({
@@ -1106,6 +1146,11 @@ export const ExternalActionExecutionAuthorizationBindingV1Schema = lazyZodSchema
         || native.installationId !== value.installationId || value.target.kind !== 'machine' || value.target.machineId !== native.machineId)
     : native !== undefined) {
     context.addIssue({ code: 'custom', path: ['deploymentNativeAdmission'], message: 'Domain execution binds its exact original public input.' });
+  }
+  if (value.nativeCredentialSpawnChild && (value.actionId !== 'machines.managed.credentials.install'
+    || value.managedAdmission?.actionId !== 'machines.managed.credentials.install' || value.managedAdmission.input.operation === 'release'
+    || value.managedAdmission.input.executionRunId || value.sessionActionOrigin || value.workflowActionOrigin)) {
+    context.addIssue({ code: 'custom', path: ['nativeCredentialSpawnChild'], message: 'Native spawn admission binds only its exact install effect' });
   }
   if (value.managedAdmission && (value.managedAdmission.actionId !== value.actionId
     || value.managedAdmission.input.homeId !== value.serverIdentityId
@@ -1295,6 +1340,7 @@ export type ExternalActionExecutionAuthorizationV1 = z.infer<typeof ExternalActi
 /** Optional authenticated auxiliary arm of the incumbent socket RPC request. */
 export const ExternalActionMachineRpcSourceExecutionV1Schema = lazyZodSchema(() => z.strictObject({
   deploymentChildRouting: z.optional(DeploymentChildRoutingV1Schema),
+  managedAdmission: z.optional(ExternalActionManagedCredentialInstallAdmissionV1Schema),
 
   reviewedChild: z.optional(ReviewedActionChildHttpProofV1Schema),
 
@@ -1310,6 +1356,15 @@ export const ExternalActionMachineRpcExecutionV1Schema = lazyZodSchema(() => z.s
   deploymentChildExecution: z.optional(DeploymentChildExecutionProofV1Schema),
 }));
 export type ExternalActionMachineRpcExecutionV1 = z.infer<typeof ExternalActionMachineRpcExecutionV1Schema>;
+
+/** The existing installed RPC child packet, spent only by the native install issuer. */
+export const ExternalActionNativeCredentialSpawnChildV1Schema = lazyZodSchema(() => z.strictObject({
+  externalActionExecution: ExternalActionMachineRpcExecutionV1Schema,
+  method: z.string().check(z.minLength(1)),
+  requestId: ExternalActionRequestIdV1Schema,
+  params: z.optional(StrictJsonValueSchema),
+  originalActionEnvelope: ExternalActionRequestEnvelopeSchema,
+}));
 
 export const EXTERNAL_ACTION_REVIEWED_CHILD_HEADER = 'x-happier-action-reviewed-child';
 export const EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER = 'x-happier-action-execution-authorization';
@@ -1328,6 +1383,7 @@ function externalActionExecutionAuthorizationRequestSchemaV1(actionId?: 'session
   return z.strictObject({
   v: z.literal(1), machineId: ExternalActionTargetIdV1Schema, envelope: ExternalActionRequestEnvelopeSchema,
   executionAuthorization: z.optional(ExternalActionExecutionAuthorizationV1Schema),
+  nativeCredentialSpawnChild: z.optional(ExternalActionNativeCredentialSpawnChildV1Schema),
   sessionActionOrigin: z.optional(SessionActionRpcOriginV1Schema),
   sessionActionSource: z.optional(ExternalActionSessionSourceV1Schema),
   workflowActionOrigin: z.optional(ExternalActionWorkflowOriginV1Schema),
@@ -1342,8 +1398,13 @@ function externalActionExecutionAuthorizationRequestSchemaV1(actionId?: 'session
   handoffPreflight: z.optional(z.strictObject({ authorization: ExternalActionExecutionAuthorizationV1Schema })),
 }).check(z.superRefine((value, context) => {
   if (value.executionAuthorization && (value.sessionActionOrigin || value.sessionActionSource || value.workflowActionOrigin
-    || value.installationProof || value.managedContinuation || value.handoffContinuation || value.handoffPreflight)) {
+    || value.installationProof || value.managedContinuation || value.handoffContinuation || value.handoffPreflight
+    || value.nativeCredentialSpawnChild)) {
     context.addIssue({ code: 'custom', path: ['executionAuthorization'], message: 'An admitted relay cannot author fresh origin or continuation claims' });
+  }
+  if (value.nativeCredentialSpawnChild && (value.sessionActionOrigin || value.sessionActionSource || value.workflowActionOrigin
+    || value.installationProof || value.managedContinuation || value.handoffContinuation || value.handoffPreflight)) {
+    context.addIssue({ code: 'custom', path: ['nativeCredentialSpawnChild'], message: 'Native child retains its one installed spawn origin' });
   }
   if ((value.sessionActionOrigin === undefined && value.workflowActionOrigin === undefined) !== (value.installationProof === undefined)) {
     context.addIssue({ code: 'custom', path: ['sessionActionOrigin'], message: 'Session origin requires its installed source proof' });

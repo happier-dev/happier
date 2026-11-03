@@ -28,6 +28,10 @@ import { TeamCredentialDirectMaterialIdentityV1Schema } from './directMaterialCe
 import { QualifiedConnectedAccountPurposeV1Schema } from '../../connect/connectedAccountPurposeIdentity.js';
 import { QualifiedConnectedAccountRefSchema } from '../../connect/qualifiedConnectedAccountPersistence.js';
 import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 } from '../../connect/pluginConnectedAccountAuthenticationV2.js';
+import { MachineInstallationProofV1Schema } from '../../machines/identity/installationIdentity.js';
+import { SessionTeamCredentialNativeDeliveryV1Schema } from './sessionBindingIntentV1.js';
+import { TeamCredentialProviderModelCatalogEntryV1Schema } from './resourceV1.js';
+import { DaemonProviderNativeSourceV1Schema } from '../../rpc/providers.js';
 export {
   TeamCredentialDirectMaterialReconcileInputV1Schema,
   TeamCredentialDirectMaterialReconcileOutputV1Schema,
@@ -46,6 +50,40 @@ export type {
 } from './directMaterialCensusV1.js';
 
 const BoundedIdentitySchema = TeamCredentialDirectMaterialIdentityV1Schema;
+
+/** Installed-guest-only arm of the existing private binding read transport.
+ * This carries a client placeholder, never the controller's source ticket. */
+export const TeamCredentialNativeBindingReadBodyV1Schema = lazyZodSchema(() => z.strictObject({
+  purpose: z.literal('vendor_native_binding'),
+  homeId: BoundedIdentitySchema, teamId: BoundedIdentitySchema, resourceId: BoundedIdentitySchema,
+  sessionId: BoundedIdentitySchema, managedId: BoundedIdentitySchema, bindingKey: BoundedIdentitySchema,
+  expectedResourceRevision: z.int().check(z.gte(0)),
+  expectedSourceRevision: BoundedIdentitySchema, expectedProviderTicket: BoundedIdentitySchema,
+  machineId: BoundedIdentitySchema, installationId: BoundedIdentitySchema,
+}));
+export const TeamCredentialNativeBindingReadRequestV1Schema = lazyZodSchema(() => z.strictObject({
+  ...TeamCredentialNativeBindingReadBodyV1Schema.shape, proof: MachineInstallationProofV1Schema,
+}));
+export type TeamCredentialNativeBindingReadRequestV1 = z.infer<typeof TeamCredentialNativeBindingReadRequestV1Schema>;
+export function computeTeamCredentialNativeBindingReadDigestV1(input: z.infer<typeof TeamCredentialNativeBindingReadBodyV1Schema>): string {
+  const body = TeamCredentialNativeBindingReadBodyV1Schema.parse(input);
+  return computeCanonicalDomainSeparatedDigest('happier.team-credential.native-binding-read.v1', [
+    body.homeId, body.teamId, body.resourceId, body.sessionId, body.managedId, body.bindingKey,
+    String(body.expectedResourceRevision), body.expectedSourceRevision, body.expectedProviderTicket,
+    body.machineId, body.installationId,
+  ]);
+}
+export const TeamCredentialNativeBindingReadResponseV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
+  z.strictObject({ status: z.literal('prepared'), binding: SessionTeamCredentialNativeDeliveryV1Schema }),
+  z.strictObject({ status: z.literal('ready'), binding: SessionTeamCredentialNativeDeliveryV1Schema,
+    model: TeamCredentialProviderModelCatalogEntryV1Schema,
+    endpoint: DaemonProviderNativeSourceV1Schema.shape.endpoint,
+    credentialTransport: DaemonProviderNativeSourceV1Schema.shape.credentialTransport,
+    placeholder: z.string().check(z.minLength(1)),
+  }),
+  z.strictObject({ status: z.literal('unavailable'), reason: z.enum(['binding_unavailable', 'installation_unknown']) }),
+]));
+export type TeamCredentialNativeBindingReadResponseV1 = z.infer<typeof TeamCredentialNativeBindingReadResponseV1Schema>;
 const SourceVersionSchema = lazyZodSchema(() => z.string().check(z.minLength(1), z.maxLength(256)));
 const MAX_DIRECT_MATERIAL_PLAINTEXT_BYTES = 4_000_000;
 const RecipientContentPublicKeySchema = lazyZodSchema(() => z.string().check(z.minLength(1), z.maxLength(512), z.refine((value) => {

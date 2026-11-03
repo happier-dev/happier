@@ -1,4 +1,6 @@
-import { readExternalActionManagedControlAdmission } from '@/app/auth/externalActionManagedAdmission';
+import { verifyExternalActionMachineRpcExecution } from '@/app/auth/externalActionExecutionAuthorization';
+import { prepareManagedCredentialDeliveryForAction, readManagedCredentialDeliveryAuthorityInTx } from '@/app/machines/managed/credentialDeliveryAdmission';
+import { readExternalActionManagedRecoveryAdmission, readExternalActionManagedControlAdmission } from '@/app/auth/externalActionManagedAdmission';
 import { Buffer } from "node:buffer";
 import { randomUUID } from "node:crypto";
 import { timeWebLatencyPhase, withWebLatencyTrace } from '@/utils/webLatencyTrace';
@@ -75,11 +77,26 @@ async function readInstalledSessionRequestPrincipal(
             proof: body.installationProof, payload: { version: 1, accountId: principal.accountId, ...source,
                 externalActionOrigin: { homeId: await getOrCreateServerIdentityId(), actionId,
                     requestId: body.envelope.requestId!,
-                    requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(body.envelope), origin } } })
-        || !await hasCurrentSessionActionRpcSourceBinding({ accountId: principal.accountId, ...source,
+                    requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(body.envelope), origin } } })) return null;
+    let sourceCurrent = await hasCurrentSessionActionRpcSourceBinding({ accountId: principal.accountId, ...source,
             sourceSessionId: origin.caller.sessionId,
             ...(body.envelope.target?.kind === 'session' ? { targetSessionId: body.envelope.target.sessionId } : {}),
-            resolveCurrentSessionMachine: app.resolveCurrentSessionMachine })) return null;
+            resolveCurrentSessionMachine: app.resolveCurrentSessionMachine });
+    if (!sourceCurrent && actionId === 'machines.managed.credentials.install') {
+        try {
+            const projection = readExternalActionManagedRecoveryAdmission(actionId, body.envelope);
+            sourceCurrent = projection?.actionId === actionId && projection.input.operation === 'release'
+                && await inTx(tx => readManagedCredentialDeliveryAuthorityInTx(tx, { actorAccountId: principal.accountId,
+                    machineId: body.machineId, request: projection.input,
+                    authentication: { env: process.env, authority: 'account_automation',
+                        authenticationEvidence: principal.authentication.evidence },
+                    sessionActionOrigin: origin, sessionActionSource: source })) !== null;
+        } catch (error) {
+            if (error instanceof ManagedMachineError) return null;
+            throw error;
+        }
+    }
+    if (!sourceCurrent) return null;
     const authority = narrowCredentialAuthority(principal.authority, 'account_automation');
     return authority === 'account_automation' ? { ...principal, authority, sessionActionOrigin: origin } : null;
 }
@@ -506,6 +523,35 @@ export function registerExternalActionRoutes(
             let continuation: Awaited<ReturnType<typeof readManagedGuestContinuation>> = null;
             let handoffContinuation: Awaited<ReturnType<typeof readHandoffContinuation>> = null;
             let handoffPreflight: Awaited<ReturnType<typeof readHandoffPreflight>> = null;
+            let nativeCredentialSpawnChild: ExternalActionExecutionAuthorizationBindingV1['nativeCredentialSpawnChild'];
+            if (actionId.success && body.success && body.data.nativeCredentialSpawnChild) {
+                const packet = body.data.nativeCredentialSpawnChild;
+                const proof = await verifyExternalActionMachineRpcExecution(packet.externalActionExecution, {
+                    method: packet.method, requestId: packet.requestId, params: packet.params,
+                    originalActionEnvelope: packet.originalActionEnvelope,
+                    nativeCredentialSpawnChildIssuance: true,
+                    resolveCurrentSessionMachine: app.resolveCurrentSessionMachine,
+                });
+                const scoped = proof?.nativeCredentialSpawnChildAdmission;
+                const original = packet.externalActionExecution.authorization.binding;
+                let projection: ReturnType<typeof readExternalActionManagedRecoveryAdmission>;
+                try { projection = readExternalActionManagedRecoveryAdmission(actionId.data, body.data.envelope); }
+                catch { return sendExternalActionHttpError(reply, 'invalid_envelope', body.data.envelope.requestId); }
+                if (!principal || actionId.data !== 'machines.managed.credentials.install' || !proof || !scoped
+                    || original.accountId !== principal.accountId || scoped.machineId !== body.data.machineId
+                    || packet.method !== `${body.data.machineId}:${actionId.data}`
+                    || packet.requestId !== body.data.envelope.requestId
+                    || projection?.actionId !== actionId.data
+                    || !sameManagedInput(projection, packet.externalActionExecution.managedAdmission)
+                    || !sameManagedInput(packet.params, body.data.envelope.v === 1
+                        ? body.data.envelope.input : body.data.envelope.payload.c)
+                    || ('authentication' in original
+                        ? !('authentication' in principal) || !sameManagedInput(original.authentication, principal.authentication)
+                        : !('credentialId' in principal) || original.credentialId !== principal.credentialId)) {
+                    return sendExternalActionHttpError(reply, 'credential_scope_denied', body.data.envelope.requestId);
+                }
+                nativeCredentialSpawnChild = { requestId: original.requestId, requestEnvelopeDigest: original.requestEnvelopeDigest };
+            }
             if (actionId.success && body.success && body.data.handoffPreflight) {
                 handoffPreflight = await readHandoffPreflight(request, actionId.data, body.data);
                 const verified = handoffPreflight?.principal;
@@ -568,7 +614,8 @@ export function registerExternalActionRoutes(
                     actionId: actionId.data, envelope: body.data.envelope, target });
             } catch { return sendExternalActionHttpError(reply, 'invalid_envelope', body.data.envelope.requestId); }
             let managedAdmission: ExternalActionExecutionAuthorizationBindingV1['managedAdmission'];
-            try { managedAdmission = readExternalActionManagedControlAdmission(actionId.data, body.data.envelope); }
+            try { managedAdmission = readExternalActionManagedControlAdmission(actionId.data, body.data.envelope)
+                    ?? readExternalActionManagedRecoveryAdmission(actionId.data, body.data.envelope); }
             catch { return sendExternalActionHttpError(reply, 'invalid_envelope', body.data.envelope.requestId); }
             let handoffAdmission: ExternalActionExecutionAuthorizationBindingV1['handoffAdmission'];
             if (body.data.envelope.handoffAdmission) {
@@ -586,18 +633,35 @@ export function registerExternalActionRoutes(
             } else if ('authentication' in principal && isOriginalAccountHandoffAction(actionId.data)) {
                 return sendExternalActionHttpError(reply, 'invalid_envelope', body.data.envelope.requestId);
             }
-            if (target.kind === "machine" && target.machineId !== body.data.machineId) {
+            if (target.kind === "machine" && target.machineId !== body.data.machineId && !body.data.workflowActionOrigin) {
                 return sendExternalActionHttpError(reply, "invalid_envelope");
             }
+            // Installed Workflow ingress above proved A's publisher provenance. The
+            // minted root belongs to B's installation, never to A's private key.
+            const receivingMachineId = body.data.workflowActionOrigin && target.kind === 'machine'
+                ? target.machineId : body.data.machineId;
+            if (actionId.data === 'machines.managed.credentials.install'
+                && (managedAdmission?.actionId !== 'machines.managed.credentials.install'
+                    || !await prepareManagedCredentialDeliveryForAction(app, {
+                        actorAccountId: principal.accountId, machineId: receivingMachineId, request: managedAdmission.input,
+                        authentication: { env: process.env, authority: principal.authority,
+                            authenticationEvidence: request.authTokenAuthenticationEvidence },
+                        ...(body.data.sessionActionSource ? { sessionActionSource: body.data.sessionActionSource } : {}),
+                        ...('sessionActionOrigin' in principal ? { sessionActionOrigin: principal.sessionActionOrigin } : {}),
+                    }))) return sendExternalActionHttpError(reply, 'target_unavailable', body.data.envelope.requestId);
             const admission = handoffAdmission
-                ? await resolveMachineAdmission({ actorAccountId: principal.accountId, machineId: body.data.machineId })
+                ? await resolveMachineAdmission({ actorAccountId: principal.accountId, machineId: receivingMachineId })
                 : await resolveExternalActionExecutionMachineAdmissionInTx(db, { actorAccountId: principal.accountId,
-                    machineId: body.data.machineId, actionId: actionId.data });
-            if (admission.kind !== 'admitted') {
+                    machineId: receivingMachineId, actionId: actionId.data, envelope: body.data.envelope,
+                    ...(body.data.sessionActionSource ? { sessionActionSource: body.data.sessionActionSource } : {}),
+                    ...('sessionActionOrigin' in principal ? { sessionActionOrigin: principal.sessionActionOrigin } : {}),
+                    authentication: { authenticationAuthority: principal.authority,
+                        authenticationEvidence: request.authTokenAuthenticationEvidence } });
+            if (!admission || admission.kind !== 'admitted') {
                 return sendExternalActionHttpError(reply, 'target_unavailable', body.data.envelope.requestId);
             }
             const machine = await db.machine.findFirst({
-                where: { id: body.data.machineId, accountId: admission.custodianAccountId,
+                where: { id: receivingMachineId, accountId: admission.custodianAccountId,
                     installationId: admission.installationId },
                 select: {
                     revokedAt: true,
@@ -619,7 +683,7 @@ export function registerExternalActionRoutes(
                 const mintInput = {
                     serverIdentityId: homeId,
                     ...provenance,
-                    machineId: body.data.machineId,
+                    machineId: receivingMachineId,
                     ...('role' in admission ? { admittedMachineRole: admission.role } : {}),
                     actionId: actionId.data,
                     requestId: body.data.envelope.requestId ?? randomUUID(),
@@ -628,6 +692,7 @@ export function registerExternalActionRoutes(
                     target,
                     ...(pendingResetStartAdmission ? { pendingResetStartAdmission } : {}),
                     ...(managedAdmission ? { managedAdmission } : {}),
+                    ...(nativeCredentialSpawnChild ? { nativeCredentialSpawnChild } : {}),
                     ...(handoffAdmission ? { handoffAdmission } : {}),
                     ...(handoffPreflight ? { handoffPreflight: handoffPreflight.binding.handoffPreflight,
                         sessionActionOrigin: handoffPreflight.binding.sessionActionOrigin,
@@ -788,6 +853,23 @@ export function registerExternalActionRoutes(
             if (wrapped.success && wrapped.data.sessionActionOrigin
                 && envelope.data.target?.kind === 'machine' && envelope.data.target.machineId !== wrapped.data.machineId) {
                 return sendExternalActionHttpError(reply, 'invalid_envelope', envelope.data.requestId);
+            }
+
+            if (!admittedRoot && actionId.data === 'machines.managed.credentials.install') {
+                let native: ReturnType<typeof readExternalActionManagedRecoveryAdmission>;
+                try { native = readExternalActionManagedRecoveryAdmission(actionId.data, envelope.data); }
+                catch (error) {
+                    if (!(error instanceof ManagedMachineError)) throw error;
+                    return sendExternalActionHttpError(reply, 'invalid_envelope', envelope.data.requestId);
+                }
+                if (native?.actionId !== actionId.data || envelope.data.target?.kind !== 'machine'
+                    || !await prepareManagedCredentialDeliveryForAction(app, {
+                        actorAccountId: principal.accountId, machineId: envelope.data.target.machineId, request: native.input,
+                        authentication: { env: process.env, authority: principal.authority,
+                            authenticationEvidence: request.authTokenAuthenticationEvidence },
+                        ...(wrapped.success && wrapped.data.sessionActionSource ? { sessionActionSource: wrapped.data.sessionActionSource } : {}),
+                        ...('sessionActionOrigin' in principal ? { sessionActionOrigin: principal.sessionActionOrigin } : {}),
+                    })) return sendExternalActionHttpError(reply, 'target_unavailable', envelope.data.requestId);
             }
 
             dispatchedRequests.add(request);

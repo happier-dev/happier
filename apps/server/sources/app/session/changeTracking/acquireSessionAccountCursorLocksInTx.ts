@@ -1,3 +1,4 @@
+import { readNativeCredentialPolicyPublicationAccountIdsInTx } from '@/app/teams/credentials/nativePolicyChanges';
 import { resolveCurrentSessionRecipientAccountIdsBySessionInTx } from '@/app/session/access/sessionRecipients';
 import {
   getTransactionContext,
@@ -108,12 +109,14 @@ export async function readSessionAccountCursorAudienceInTx(
   const brokerCustodians = options?.includeLifecyclePublications
     ? await readSessionProviderBrokerCustodianAccountIdsInTx(tx, ids)
     : [];
+  const nativeControllers = options?.includeLifecyclePublications
+    ? await readNativeCredentialPolicyPublicationAccountIdsInTx(tx, { sessionIds: ids }) : [];
   const accountIds = [
     ...new Set(
       [...recipients.values()]
         .flat()
         .concat([...additionalAccountIds], lifecycle.accountIds, [
-          ...additionalAudience, ...brokerCustodians,
+          ...additionalAudience, ...brokerCustodians, ...nativeControllers,
         ]),
     ),
   ].sort();

@@ -6,14 +6,16 @@ import { acquireTeamMutationAccountAdmissionInTx } from "../memberships/sessionA
  * The identity census is not authority: reread the resource after admission. */
 export async function admitTeamCredentialWithdrawalInTx(
     tx: Tx,
-    input: Readonly<{ actorAccountId: string; resourceId: string }>,
+    input: Readonly<{ actorAccountId: string; resourceId: string; additionalPublicationAccountIds?: readonly string[] }>,
 ): Promise<Awaited<ReturnType<Tx["teamCredentialResource"]["findUnique"]>>> {
     const identity = await tx.teamCredentialResource.findUnique({
         where: { id: input.resourceId }, select: { teamId: true, custodianAccountId: true },
     });
     if (!identity) return null;
     const recheck = await acquireTeamMutationAccountAdmissionInTx(tx, {
-        teamId: identity.teamId, accountIds: [input.actorAccountId, identity.custodianAccountId], intent: "exclusive",
+        teamId: identity.teamId,
+        accountIds: [input.actorAccountId, identity.custodianAccountId, ...input.additionalPublicationAccountIds ?? []],
+        intent: "exclusive",
     });
     await acquireTeamMutationLockInTx(tx, identity.teamId);
     await recheck();
