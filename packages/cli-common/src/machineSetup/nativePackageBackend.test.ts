@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { MachineRecipeV1Schema, resolveMachineRecipeStepInputsV1 } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
 import { applyMachineSetupEffectPlan, checkMachineSetupEffectPlan, type MachineRecipeStepV1 } from './index.js';
 import { createMachineSetupNativeBackend, type MachineSetupNativeCommand, type MachineSetupNativeCommandResult } from './nativeBackend.js';
+import { mutateApt } from './nativePackageBackend.js';
 
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map(path => rm(path, { recursive: true, force: true }))); });
@@ -38,6 +39,13 @@ describe('native package effects through the public recipe interpreter', () => {
             manager: 'apt', requiredFact: 'packageManagerLocks', remedy: 'check_with_administrator',
             packages: [{ name: 'docker.io', present: false }, { name: 'docker-compose-v2', present: false }],
         } }]);
+        const effects: string[] = [];
+        await expect(mutateApt(async executable => {
+            if (executable === 'lslocks') return ok('{"locks":[{"path":"/run..."}]}');
+            effects.push(executable);
+            return ok();
+        }, ['install', '--yes', '--', 'docker.io'])).rejects.toMatchObject({ reasonCode: 'needs_admin_to_check' });
+        expect(effects).toEqual([]);
     });
 
     it('refuses foreign or multiple apt architectures instead of treating an unqualified installed package as absent', async () => {

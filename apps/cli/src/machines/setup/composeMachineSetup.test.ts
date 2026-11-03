@@ -19,7 +19,7 @@ import { buildMachineSetupWorkflow, createCombinedMachineSetupActionDeps } from 
 
 // The opaque Home storage boundary is faked; Run admission, content opening,
 // invocation paging and setup composition all use their real owners.
-async function retainedSetup(state: 'failed' | 'cancelled' | 'succeeded', errorCode: string, details?: Record<string, string | number>) {
+async function retainedSetup(state: 'failed' | 'cancelled' | 'succeeded', errorCode: string, details?: Record<string, string | number>, readRefusalCode?: string) {
   const accountId = 'actor', machineId = 'guest', rootId = 'setup-root';
   const input = MachineSetupApplyInputV1Schema.parse({ homeId: 'home', machineId, targets: [{
     homeId: 'home', machineId, desiredRevision: 0, sources: [{ kind: 'direct', setup: {} }],
@@ -78,12 +78,21 @@ async function retainedSetup(state: 'failed' | 'cancelled' | 'succeeded', errorC
     readHostFacts: async () => ({ machines: [{ machineId, online: true }] }), orchestrationDirectory: '/setup',
     startCombined: reader.startCombined,
     waitForRun: () => reader.execute({ actionId: 'workflow.run.wait', input: { runId, conditions: ['terminal'] }, context }),
-    readInvocations: (_request, input) => reader.execute({ actionId: 'workflow.run.invocations.list', input, context }),
+    // This host port is the external Action transport boundary; a refused read
+    // supplies no retained child content for the composition owner to interpret.
+    readInvocations: (_request, input) => readRefusalCode
+      ? Promise.resolve(ActionExecuteFailureSchema.parse({ ok: false, errorCode: readRefusalCode, error: readRefusalCode }))
+      : reader.execute({ actionId: 'workflow.run.invocations.list', input, context }),
   });
   return { apply: () => deps.machineSetupApply!({ input, context }), runId, storage };
 }
 
 describe('Combined Machine setup child settlement', () => {
+  it('reports an unknown outcome when the failed-child content read is refused', async () => {
+    const fixture = await retainedSetup('failed', 'native_effect_failed', undefined, 'permission_denied');
+    expect(await fixture.apply()).toEqual({ ok: false, errorCode: 'outcome_unknown', error: 'outcome_unknown' });
+  });
+
   it.each<{ errorCode: string; details: Record<string, string | number> }>([
     { errorCode: 'required_fact_unavailable', details: { requiredFact: 'packageManagerLocks', remedy: 'check_with_administrator' } },
     { errorCode: 'native_effect_failed', details: { stepId: 'package-apt', exitCode: 100 } },

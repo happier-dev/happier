@@ -250,7 +250,7 @@ export function createCombinedMachineSetupActionDeps(host: Readonly<{
         const observed = await host.readInvocations(request, { runId, lifecycles: ['failed'], includeContent: true,
           ...(cursor ? { cursor } : {}) });
         const refused = ActionExecuteFailureSchema.safeParse(observed);
-        if (refused.success) return refused.data;
+        if (refused.success) return failure('outcome_unknown');
         const page = WorkflowActionOutputSchemasV1['workflow.run.invocations.list'].safeParse(observed);
         if (!page.success || !page.data.invocationDetails) return failure('outcome_unknown');
         for (const { progress } of page.data.invocationDetails) {

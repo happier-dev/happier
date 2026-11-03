@@ -40,7 +40,7 @@ export async function inspectAptLocks(run: NativeRun): Promise<'busy' | 'clear' 
 }
 async function requireAptUnlocked(run: NativeRun) {
     const lock = await inspectAptLocks(run);
-    if (lock !== 'clear') throw new MachineSetupEffectError(lock === 'busy' ? 'package_manager_busy' : 'required_fact_unavailable');
+    if (lock !== 'clear') throw new MachineSetupEffectError(lock === 'busy' ? 'package_manager_busy' : 'needs_admin_to_check');
 }
 export async function mutateApt(run: NativeRun, args: readonly string[]) {
     await requireAptUnlocked(run);
