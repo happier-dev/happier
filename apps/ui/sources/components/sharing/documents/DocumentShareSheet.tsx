@@ -10,6 +10,7 @@ import { createDocumentShareAdapter, type DocumentShareKind } from './documentSh
 import { useDocumentShareController } from './useDocumentShareController';
 import { useDocumentPublicLinkController } from './useDocumentPublicLinkController';
 import { DocumentPublicLinkSection } from './DocumentPublicLinkSection';
+import { ReviewedDocumentShareSheet, type ReviewedDocumentShareSelection } from './ReviewedDocumentShareSheet';
 
 export type DocumentShareSheetProps = Readonly<{
     artifactId: string;
@@ -23,6 +24,7 @@ export type DocumentShareSheetProps = Readonly<{
     presentation?: ShareSheetPresentation;
     onRequestClose?: () => void;
     testID?: string;
+    reviewedSelection?: ReviewedDocumentShareSelection;
 }>;
 
 const DEFAULT_TEST_ID = 'document-share-editor';
@@ -77,6 +79,8 @@ const UNSCOPED_MODEL: ShareSheetModel = {
 export function DocumentShareSheet(props: DocumentShareSheetProps): React.ReactElement {
     const activeScope = useActiveServerAccountScope();
     const scope = props.scope ?? activeScope;
+    if (scope && props.reviewedSelection) return <ReviewedDocumentShareSheet key={`${scope.serverId}:${scope.accountId}:${props.artifactId}`}
+        {...props} scope={scope} reviewedSelection={props.reviewedSelection} />;
     if (scope) return <ScopedDocumentShareSheet key={`${scope.serverId}:${scope.accountId}:${props.artifactId}`} {...props} scope={scope} />;
     const adapter = createDocumentShareAdapter({
         artifactId: props.artifactId,

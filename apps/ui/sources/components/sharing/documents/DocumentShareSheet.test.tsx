@@ -1411,4 +1411,23 @@ describe('DocumentShareSheet', () => {
         expect(screen.findByTestId('document-share-candidate-team:payments')).toBeNull();
         expect(screen.findByTestId('document-share-editor:list:document-share:option:issue')).not.toBeNull();
     });
+    it('stages a signed-in template link until the reviewed Share is submitted', async () => {
+        const submit = vi.fn(async () => {});
+        const screen = await renderScreen(<DocumentShareSheet artifactId="released-template" kind="bot_template.v1"
+            reviewedSelection={{ onSubmit: submit }} />);
+        await settle();
+        expect(host.requests).toEqual([]);
+        expect(host.publicRequests).toEqual([]);
+        await screen.pressByTestIdAsync('document-share-public-link');
+        const toggle = screen.find(node => node.props.testID === 'document-share-signed-in-link' && typeof node.props.onValueChange === 'function');
+        await act(async () => { toggle.props.onValueChange(true); });
+        expect(submit).not.toHaveBeenCalled();
+        expect(host.publicRequests).toEqual([]);
+        await screen.pressByTestIdAsync('document-share-submit');
+        expect(submit).toHaveBeenCalledWith({ recipients: [], signedInLink: true });
+        expect(host.requests).toEqual([]);
+        expect(host.publicRequests).toEqual([]);
+    });
+
+
 });
