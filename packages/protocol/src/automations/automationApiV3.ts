@@ -26,7 +26,7 @@ import {
 import {
   AutomationStoredDefinitionExecutionRecipeV1ReadSchema,
 } from './automationRunExecutionRecipeV1.js';
-import { AutomationStoredWorkflowDefinitionRecipeV2Schema, AutomationStoredWorkflowDefinitionRecipeV2ReadSchema } from './automationWorkflowRecipeV2.js';
+import { AutomationObservationOnlyDefinitionV1Schema, AutomationStoredWorkflowDefinitionRecipeV2Schema, AutomationStoredWorkflowDefinitionRecipeV2ReadSchema } from './automationWorkflowRecipeV2.js';
 import { ExecutionRunWaitResultSchema } from '../execution/runs/responseSchemas.js';
 import { AUTOMATION_TEMPLATE_CIPHERTEXT_MAX_CHARS } from './automationTemplateEnvelope.js';
 import {
@@ -155,17 +155,34 @@ export type AutomationTriggerCreateRequest = z.infer<
   typeof AutomationTriggerCreateRequestSchema
 >;
 
-export const AutomationDefinitionCreateRequestSchema = lazyZodSchema(() => z.strictObject({
+const AutomationDefinitionCreateRequestBaseSchema = lazyZodSchema(() => z.strictObject({
   automationId: asProtocolZod(AutomationIdV1Schema),
   name: z.string().check(z.trim(), z.minLength(1), z.maxLength(128)),
   description: z.optional(z.nullable(z.string().check(z.maxLength(2_000)))),
   enabled: z.boolean(),
   workflowDefinitionId: zMini.optional(zMini.nullable(WorkflowDefinitionRefV1StringSchema)),
   scopeSessionId: z.optional(z.nullable(IDENTIFIER_SCHEMA)),
-  executionRecipe: AutomationDefinitionExecutionRecipeSchema,
   assignments: z.optional(z.array(AutomationAssignmentInputSchema)),
   triggers: z.array(AutomationTriggerCreateRequestSchema),
-}).check(z.superRefine((value, context) => {
+}));
+export const AutomationExecutionDefinitionCreateRequestSchema = lazyZodSchema(() => z.extend(AutomationDefinitionCreateRequestBaseSchema, {
+    executionRecipe: AutomationDefinitionExecutionRecipeSchema,
+    observationOnly: z.optional(z.never()),
+}));
+export const AutomationDefinitionCreateRequestSchema = lazyZodSchema(() => z.union([
+  AutomationExecutionDefinitionCreateRequestSchema,
+  z.extend(AutomationDefinitionCreateRequestBaseSchema, {
+    observationOnly: AutomationObservationOnlyDefinitionV1Schema,
+    executionRecipe: z.optional(z.never()),
+    assignments: z.optional(z.array(AutomationAssignmentInputSchema).check(z.length(0))),
+    workflowDefinitionId: z.optional(z.null()),
+    scopeSessionId: z.optional(z.null()),
+  }).check(z.superRefine((value, context) => {
+    if (value.triggers.length === 0 || value.triggers.some(item => item.trigger.kind !== 'pluginEvent')) {
+      context.addIssue({ code: 'custom', path: ['triggers'], message: 'Observation-only definitions require plugin Event sources' });
+    }
+  })),
+]).check(z.superRefine((value, context) => {
   const seen = new Set<string>();
   value.triggers.forEach((item, index) => {
     if (seen.has(item.triggerId)) {
@@ -190,11 +207,12 @@ export const AutomationDefinitionPatchRequestSchema = lazyZodSchema(() => z.stri
   workflowDefinitionId: zMini.optional(zMini.nullable(WorkflowDefinitionRefV1StringSchema)),
   scopeSessionId: z.optional(z.nullable(IDENTIFIER_SCHEMA)),
   executionRecipe: zMini.optional(AutomationDefinitionExecutionRecipeSchema),
+  observationOnly: z.optional(AutomationObservationOnlyDefinitionV1Schema),
   /** CAS recovery of an already-stored predecessor template; never a current recipe writer. */
   templateCiphertext: z.optional(z.string().check(z.minLength(1), z.maxLength(AUTOMATION_TEMPLATE_CIPHERTEXT_MAX_CHARS))),
   assignments: z.optional(z.array(AutomationAssignmentInputSchema)),
 }).check(z.superRefine((value, context) => {
-  if (value.executionRecipe !== undefined && value.templateCiphertext !== undefined) {
+  if ([value.executionRecipe, value.observationOnly, value.templateCiphertext].filter(item => item !== undefined).length > 1) {
     context.addIssue({ code: "custom", message: 'Choose a current recipe or retained template recovery, not both' });
   }
 })));
@@ -251,6 +269,7 @@ export const AutomationDefinitionReconcileRequestSchema = lazyZodSchema(() => z.
   workflowDefinitionId: zMini.optional(zMini.nullable(WorkflowDefinitionRefV1StringSchema)),
   scopeSessionId: z.optional(z.nullable(IDENTIFIER_SCHEMA)),
   executionRecipe: zMini.optional(AutomationDefinitionExecutionRecipeSchema),
+  observationOnly: z.optional(AutomationObservationOnlyDefinitionV1Schema),
   assignments: z.array(AutomationAssignmentInputSchema),
   triggers: z.array(z.union([
     AutomationTriggerReconcileExistingItemSchema,
@@ -261,6 +280,9 @@ export const AutomationDefinitionReconcileRequestSchema = lazyZodSchema(() => z.
     expectedRevision: AutomationTriggerRevisionSchema,
   })),
 }).check(z.superRefine((value, context) => {
+  if (value.executionRecipe !== undefined && value.observationOnly !== undefined) {
+    context.addIssue({ code: 'custom', message: 'Choose one Automation definition arm' });
+  }
   const seen = new Set<string>();
   const visit = (triggerId: string, path: ReadonlyArray<string | number>) => {
     if (seen.has(triggerId)) {
@@ -344,16 +366,17 @@ const AutomationDefinitionBaseSchema = lazyZodSchema(() => z.strictObject({
   createdAt: TIMESTAMP_SCHEMA,
   updatedAt: TIMESTAMP_SCHEMA,
   assignments: z.array(AutomationAssignmentSchema),
+  observationOnly: z.optional(AutomationObservationOnlyDefinitionV1Schema),
 }));
 
 function requireExactlyOneDefinitionContent(
-  value: Readonly<{ templateCiphertext?: string; executionRecipe?: unknown }> ,
+  value: Readonly<{ templateCiphertext?: string; executionRecipe?: unknown; observationOnly?: unknown }> ,
   context: z.core.$RefinementCtx,
 ): void {
-  if ((value.templateCiphertext === undefined) === (value.executionRecipe === undefined)) {
+  if ([value.templateCiphertext, value.executionRecipe, value.observationOnly].filter(item => item !== undefined).length !== 1) {
     context.addIssue({
       code: "custom",
-      message: 'Definition detail requires exactly one current recipe or retained legacy template',
+      message: 'Definition detail requires exactly one observation-only arm, current recipe or retained legacy template',
     });
   }
 }

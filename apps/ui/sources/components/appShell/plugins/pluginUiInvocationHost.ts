@@ -185,6 +185,7 @@ export function createAppShellPluginUiInvocationHost(input: Readonly<{
         respondToSessionPermission: async () => unavailable(),
         selectActionInput: async () => unavailable(),
         openNewSession: async () => unavailable(),
+        openAutomationEvent: async () => unavailable(),
         openConnectedAccounts: async () => unavailable(),
         settleEphemeralInput: async () => unavailable(),
         executeAction: executeAction as PluginUiHostApi['executeAction'],

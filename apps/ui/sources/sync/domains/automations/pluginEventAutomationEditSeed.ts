@@ -173,6 +173,7 @@ export function readPluginEventAutomationEditSeed(
         sourceContractVersion: trigger.sourceContractVersion,
         sourceConfig: storedDefinition.sourceConfig,
         displayLabel: storedDefinition.displayLabel,
+        ...(detail.observationOnly ? { observationOnly: { kind: 'observationOnly' } } : {}),
     });
     if (!source.success) return null;
     return Object.freeze({
@@ -208,6 +209,7 @@ export function pluginEventAutomationEditSeedFromCurrentInput(
             sourceContractVersion: value.sourceContractVersion,
             sourceConfig: value.sourceConfig,
             displayLabel: value.displayLabel,
+            ...(seed.source.observationOnly ? { observationOnly: seed.source.observationOnly } : {}),
         }),
         observation: value.observationTransport.kind !== 'durablePush'
             ? Object.freeze({

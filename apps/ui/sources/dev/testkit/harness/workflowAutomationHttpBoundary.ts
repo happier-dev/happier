@@ -107,6 +107,7 @@ export function createWorkflowAutomationHttpBoundary(): {
                 creates.push(created);
                 const failure = respond?.(method, created);
                 if (failure) return failure;
+                if (!created.executionRecipe) throw new Error('Workflow Automation fixture requires an execution recipe');
                 const detail = AutomationDefinitionDetailSchema.parse({ id: created.automationId,
                     name: created.name, description: created.description ?? null, enabled: created.enabled,
                     workflowDefinitionId: created.workflowDefinitionId ?? null, scopeSessionId: created.scopeSessionId ?? null,

@@ -241,7 +241,9 @@ export function registerAutomationV3Routes(
                     name: body.name,
                     ...(body.description !== undefined ? { description: body.description } : {}),
                     enabled: body.enabled,
-                    executionRecipe: body.executionRecipe,
+                    ...(body.observationOnly !== undefined
+                        ? { observationOnly: body.observationOnly }
+                        : { executionRecipe: body.executionRecipe }),
                     ...(body.workflowDefinitionId !== undefined ? { workflowDefinitionId: body.workflowDefinitionId } : {}),
                     ...(body.scopeSessionId !== undefined ? { scopeSessionId: body.scopeSessionId } : {}),
                     triggers: body.triggers,
@@ -285,7 +287,9 @@ export function registerAutomationV3Routes(
             };
             const input: AutomationPatchInput = body.executionRecipe !== undefined
                 ? { ...commonInput, executionRecipe: body.executionRecipe }
-                : { ...commonInput, ...(body.templateCiphertext !== undefined ? { templateCiphertext: body.templateCiphertext } : {}) };
+                : body.observationOnly !== undefined
+                    ? { ...commonInput, observationOnly: body.observationOnly }
+                    : { ...commonInput, ...(body.templateCiphertext !== undefined ? { templateCiphertext: body.templateCiphertext } : {}) };
             const automation = await updateAutomation({
                 accountId: request.userId,
                 automationId: request.params.id,

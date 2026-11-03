@@ -11,7 +11,7 @@ import type { HealthCheckResultV1 } from '@happier-dev/deployment-protocol/v1';
 import { HEALTH_CHECK_KINDS_V1, HealthCheckDomainHttpConfigV1Schema, HealthCheckServiceHttpConfigV1Schema, HealthCheckTcpConfigV1Schema,
     type HealthCheckDefinitionV1,
     HealthCheckDnsConfigV1Schema, HealthCheckHeartbeatConfigV1Schema, SavedHealthCheckSelectorV1Schema } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
-import { isLoopbackHostname } from '@happier-dev/protocol/server/urls/loopbackHostname';
+import { isHealthCheckLoopbackRefusedV1 } from '@happier-dev/protocol/deployments/healthCheckSourceV1';
 import type { ResolveAutomationEventAdoptedDefinitionSetV1 } from '@/plugins/runtime/automations/automationEventActionExecutor';
 import type { PluginInvocationServicesSeed } from '@/plugins/runtime/invocation/services/types';
 import { readAdoptedHealthCheckBatch } from './readAdoptedHealthCheckBatch';
@@ -233,7 +233,8 @@ export function createSavedHealthChecksHost(input: Readonly<{
                         if (check.kind.localId === 'tcp') {
                             const config = HealthCheckTcpConfigV1Schema.safeParse(check.config);
                             if (!config.success) return unavailable('source_config_invalid');
-                            if (vantage === 'outside' && isLoopbackHostname(config.data.host)) return unavailable('health_check_subject_mismatch');
+                            if (isHealthCheckLoopbackRefusedV1({ subject, observerMachineId: observer.machineId,
+                                kindLocalId: check.kind.localId, config: config.data })) return unavailable('health_check_subject_mismatch');
                             return { kind: 'tcp' as const, checkId: check.checkId, value: { ...basis, ...config.data } };
                         }
                         if (check.kind.localId === 'dns') {
@@ -249,7 +250,8 @@ export function createSavedHealthChecksHost(input: Readonly<{
                         }
                         const config = HealthCheckServiceHttpConfigV1Schema.safeParse(check.config);
                         if (!config.success) return unavailable('source_config_invalid');
-                        if (vantage === 'outside' && isLoopbackHostname(new URL(config.data.endpoint).hostname)) {
+                        if (isHealthCheckLoopbackRefusedV1({ subject, observerMachineId: observer.machineId,
+                            kindLocalId: check.kind.localId, config: config.data })) {
                             return unavailable('health_check_subject_mismatch');
                         }
                         return { kind: 'httpOrCertificate' as const, checkId: check.checkId, kindId: check.kind.localId,

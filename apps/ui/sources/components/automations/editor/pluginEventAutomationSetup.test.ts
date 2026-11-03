@@ -103,6 +103,8 @@ DaemonContributionRegistryProjectionAutomationEligibleEventV1 {
                 type: 'object',
                 properties: {
                     repository: { type: 'string', minLength: 1 },
+                    deploymentReview: { type: 'object', properties: { monitoringMachineId: { type: 'string' } },
+                        required: ['monitoringMachineId'], additionalProperties: false },
                     credentialRef: {
                         type: 'object',
                         properties: {
@@ -445,7 +447,7 @@ describe('Plugin Event Automation setup orchestration', () => {
             .not.toBe(getPluginEventAutomationEligibleSetupPresentationKey(replacement));
     });
 
-    it('validates custom-surface input through the same setup Action form before canonical dispatch', async () => {
+    it.each([false, true])('validates custom-surface input through the same setup Action form without opening generic fields (seeded: %s)', async (seeded) => {
         const event = eligibleEventWithSetupSurface();
         const genericPresenter = vi.fn();
         const presentSetupSurface = vi.fn(async () => ({
@@ -468,6 +470,8 @@ describe('Plugin Event Automation setup orchestration', () => {
 
         await expect(configurePluginEventAutomationSetup({
             eligibleEvent: event,
+            ...(seeded ? { initialSetupSeed: { eventRef: event.event.identity,
+                connectedAccount: ACCOUNT, setupInput: { repository: 'initial/repository' } } } : {}),
             observationTransport: 'checkpointedPull',
             filter: null,
             maximumObservationAgeMs: null,
@@ -487,6 +491,8 @@ describe('Plugin Event Automation setup orchestration', () => {
         expect(presentSetupSurface).toHaveBeenCalledWith(expect.objectContaining({
             eligibleEvent: event,
             accountLifetime: ACCOUNT_LIFETIME,
+            launchInput: { observerMachineId: MACHINE_ID,
+                ...(seeded ? { initialInput: { repository: 'initial/repository', credentialRef: ACCOUNT } } : {}) },
         }));
         expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({
             input: {

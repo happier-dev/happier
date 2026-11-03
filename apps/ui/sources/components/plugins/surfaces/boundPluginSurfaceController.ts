@@ -1,3 +1,4 @@
+import { createPluginOpenAutomationEventHostApiHandler } from './pluginOpenAutomationEventHostApi';
 import * as React from 'react';
 import { useUiSurfaceOwnerLifetime } from '@/components/plugins/hostApi/useUiSurfaceOwnerLifetime';
 import { randomUUID } from '@/platform/randomUUID';
@@ -1390,6 +1391,9 @@ export function createBoundPluginSurfaceController(input: Readonly<{
             } } : {}),
             selectActionInput: createSelectActionInput() ?? undefined,
             createOpenNewSession: createOpenNewSessionBinding() ?? undefined,
+            ...(accountLifetime ? { openAutomationEvent: createPluginOpenAutomationEventHostApiHandler({
+                accountLifetime, lifetimeSignal: mountLifetime.signal, isCurrent,
+            }) } : {}),
         });
     };
     let machineApiBindings = createMachineApiBindings();

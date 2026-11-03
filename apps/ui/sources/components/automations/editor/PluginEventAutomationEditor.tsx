@@ -2,6 +2,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import type { AutomationTriggerDefinitionInput } from '@happier-dev/protocol';
+import type { PluginUiOpenAutomationEventRequestV1 } from '@happier-dev/protocol/plugins/ui';
 
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -28,7 +29,8 @@ type PluginEventDefinitionInput = Extract<
     Readonly<{ kind: 'pluginEvent'; sourceInstanceId: string }>
 >;
 
-type PluginEventEditorCompletion = (definition: PluginEventDefinitionInput) => void;
+export type PluginEventAutomationEditorIntent = Readonly<{ observationOnly: Readonly<{ kind: 'observationOnly' }> }>;
+type PluginEventEditorCompletion = (definition: PluginEventDefinitionInput, intent?: PluginEventAutomationEditorIntent) => void;
 
 type PluginEventEditorObservationPlacement = Readonly<{
     kind: 'checkpointedPull';
@@ -65,7 +67,7 @@ export function resolvePluginEventEditorProjectionMachineId(params: Readonly<{
 }
 
 export function resolvePluginEventAutomationEditorCompletion(
-    model: PluginEventAutomationComposerModel,
+    model: Pick<PluginEventAutomationComposerModel, 'createDraft' | 'eligibleEvents'>,
 ): PluginEventDefinitionInput | null {
     const transient = model.createDraft;
     if (!transient) return null;
@@ -79,12 +81,14 @@ export function resolvePluginEventAutomationEditorCompletion(
 }
 
 export async function completePluginEventAutomationEditor(
-    model: PluginEventAutomationComposerModel,
+    model: Pick<PluginEventAutomationComposerModel, 'createDraft' | 'eligibleEvents' | 'invalidateConfiguredSource'>,
     onComplete: PluginEventEditorCompletion,
 ): Promise<void> {
     const trigger = resolvePluginEventAutomationEditorCompletion(model);
     if (trigger) {
-        onComplete(trigger);
+        const observationOnly = model.createDraft?.draft.source.observationOnly;
+        if (observationOnly) onComplete(trigger, { observationOnly });
+        else onComplete(trigger);
         return;
     }
     model.invalidateConfiguredSource();
@@ -145,6 +149,8 @@ export function PluginEventAutomationEditor(props: Readonly<{
     seed: PluginEventAutomationEditSeed | null;
     /** Intent from retained activity; source setup still comes from the current catalog's real Action. */
     initialEventRef?: Readonly<{ pluginId: string; localId: string }> | null;
+    initialSetupSeed?: PluginUiOpenAutomationEventRequestV1;
+    observationOnly?: PluginEventAutomationEditorIntent['observationOnly'];
     authoringMachineId: string | null;
     serverId: string | null;
     onComplete: PluginEventEditorCompletion;
@@ -153,14 +159,15 @@ export function PluginEventAutomationEditor(props: Readonly<{
 }>) {
     const currentSeed = React.useMemo(() => {
         if (!props.value || !('sourceInstanceId' in props.value)) return props.seed;
-        return props.seed
+        const seed = props.seed
             ? pluginEventAutomationEditSeedFromCurrentInput(props.seed, props.value)
             : pluginEventAutomationEditSeedFromDraftInput({
                 automationId: props.automationId,
                 triggerId: props.clientId,
                 value: props.value,
             });
-    }, [props.automationId, props.clientId, props.seed, props.value]);
+        return props.observationOnly ? { ...seed, source: { ...seed.source, observationOnly: props.observationOnly } } : seed;
+    }, [props.automationId, props.clientId, props.observationOnly, props.seed, props.value]);
     const accountLifetime = captureActiveServerAccountScopeLifetime();
     const [endpointPlacement, setEndpointPlacement] = React.useState<Readonly<{
         seed: PluginEventAutomationEditSeed | null;
@@ -187,6 +194,7 @@ export function PluginEventAutomationEditor(props: Readonly<{
         projectionInputs: projection.inputs,
         initialEditSeed: currentSeed,
         initialEventRef: props.initialEventRef,
+        initialSetupSeed: props.initialSetupSeed,
     });
     React.useEffect(() => {
         // Reuse the composer's existing endpoint read; execution placement is never a fallback.

@@ -1,3 +1,5 @@
+import type { PluginUiOpenAutomationEventRequestV1 } from './publicContract.js';
+export type OpenAutomationEventRequest = PluginUiOpenAutomationEventRequestV1;
 import type { EntityDragItemV1 } from '../entityDragDrop.js';
 import { PluginUiLaunchInputV1Schema as canonicalPluginUiLaunchInputV1Schema } from '@happier-dev/protocol/plugins/ui/semanticCommands';
 import type { PluginUiJsonValueV1 } from './publicContract.js';
@@ -517,6 +519,8 @@ export interface PluginUiHostApi {
         request: OpenNewSessionRequest,
         options?: OpenNewSessionOptions,
     ): Promise<void>;
+    /** Open Event authoring with omitted account/Machine left unselected; never configure or enroll on open. */
+    openAutomationEvent(request: OpenAutomationEventRequest, options?: PluginCancellationOptions): Promise<void>;
     /** Settle this exact ephemeral mount once with strict input or cancellation. */
     settleEphemeralInput(
         settlement: PluginUiEphemeralInputSettlementV1,

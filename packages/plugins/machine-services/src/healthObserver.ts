@@ -9,9 +9,8 @@ import { requireAccountStorage } from '@happier-dev/plugin-sdk/storage';
 import { runCheckpointedPluginEventObserverV1, type BackgroundServiceContext,
     type PluginCheckpointedEventSourceAdapterV1 } from '@happier-dev/plugin-sdk/background-services';
 
-export const HEALTH_STATUS_EVENT = 'health-status';
-export const HEALTH_CHECK_FAILED_EVENT = 'health-check-failed';
-export const HEALTH_CHECK_RECOVERED_EVENT = 'health-check-recovered';
+import { HEALTH_STATUS_EVENT, HEALTH_CHECK_FAILED_EVENT, HEALTH_CHECK_RECOVERED_EVENT } from './healthSetup.js';
+export { HEALTH_STATUS_EVENT, HEALTH_CHECK_FAILED_EVENT, HEALTH_CHECK_RECOVERED_EVENT } from './healthSetup.js';
 const status = defineProtocolUnion([defineProtocolLiteral('up'), defineProtocolLiteral('down'), defineProtocolLiteral('degraded')]);
 const ordinal = defineProtocolNumber({ integer: true, minimum: 0 });
 export const healthTransition = HealthCheckTransitionV1ProtocolSchema;

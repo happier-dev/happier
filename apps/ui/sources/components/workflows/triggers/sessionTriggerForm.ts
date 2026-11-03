@@ -31,7 +31,8 @@ export type SessionTriggerWhenKind = (typeof SESSION_TRIGGER_WHEN_KINDS)[number]
 export type PluginEventTriggerInput = Extract<AutomationTriggerDefinitionInput, Readonly<{ kind: 'pluginEvent'; sourceInstanceId: string }>>;
 
 export type TriggerWhenValue =
-    | Readonly<{ kind: 'pluginEvent'; value: PluginEventTriggerInput | null; eventRef?: Readonly<{ pluginId: string; localId: string }> }>
+    | Readonly<{ kind: 'pluginEvent'; value: PluginEventTriggerInput | null; eventRef?: Readonly<{ pluginId: string; localId: string }>;
+        observationOnly?: Readonly<{ kind: 'observationOnly' }> }>
     | Readonly<{
         kind: 'turnEnds';
         sourceSessionId?: string;
@@ -73,7 +74,16 @@ export type TriggerThenValue =
     /** Steps this popover does not author (several steps, an Action step): kept exactly as they are. */
     | Readonly<{ kind: 'kept'; target: TriggerTargetV1; inputs: Readonly<Record<string, JsonValue>> }>;
 
-export type TriggerFormValue = Readonly<{ when: TriggerWhenValue; then: TriggerThenValue; enabled: boolean }>;
+export type ExecutableTriggerFormValue = Readonly<{
+    kind?: 'execution'; when: TriggerWhenValue; then: TriggerThenValue; enabled: boolean;
+}>;
+export type ObservationOnlyTriggerFormValue = Readonly<{
+    kind: 'observationOnly';
+    when: Extract<TriggerWhenValue, { kind: 'pluginEvent' }> & Readonly<{ observationOnly: Readonly<{ kind: 'observationOnly' }> }>;
+    enabled: boolean;
+    then?: never;
+}>;
+export type TriggerFormValue = ExecutableTriggerFormValue | ObservationOnlyTriggerFormValue;
 
 /** Trigger input presentation delegates ordinary fields to the shared authoring owner. */
 export function projectSessionTriggerWorkflowInputFields(
@@ -373,8 +383,12 @@ export function readScheduleWhen(schedule: Readonly<{
 }
 
 /** Reads a saved trigger back as the When it was written with. */
-export function readTriggerWhen(trigger: SetTrigger | SessionInitialTriggerDefinitionV1): TriggerWhenValue | null {
-    if (trigger.kind === 'pluginEvent') return { kind: 'pluginEvent', value: null, eventRef: trigger.eventRef };
+export function readTriggerWhen(
+    trigger: SetTrigger | SessionInitialTriggerDefinitionV1,
+    observationOnly?: Readonly<{ kind: 'observationOnly' }>,
+): TriggerWhenValue | null {
+    if (trigger.kind === 'pluginEvent') return { kind: 'pluginEvent', value: null, eventRef: trigger.eventRef,
+        ...(observationOnly ? { observationOnly } : {}) };
     if (trigger.kind === 'prComment' || trigger.kind === 'ciFailed') {
         return { kind: trigger.kind, pullRequest: trigger.pullRequest ?? null };
     }
@@ -388,4 +402,20 @@ export function readTriggerWhen(trigger: SetTrigger | SessionInitialTriggerDefin
             : { kind, ...source };
     }
     return null;
+}
+
+/** Reads either saved definition arm without inventing execution state for an Event enrollment. */
+export function readWorkflowTriggerSetForm(set: WorkflowTriggerSetV1, triggerId: string | null): TriggerFormValue | null {
+    if (set.health !== 'available') return null;
+    const trigger = set.triggers.find(candidate => candidate.id === triggerId);
+    const when = trigger ? readTriggerWhen(trigger, set.observationOnly)
+        : set.triggers.length === 0 && !set.observationOnly ? createDefaultWhen('schedule') : null;
+    if (!when) return null;
+    const enabled = set.legacy?.lockedReason === 'review_required' ? trigger?.enabled ?? true
+        : set.enabled && (trigger?.enabled ?? true);
+    if (set.observationOnly) return when.kind === 'pluginEvent'
+        ? { kind: 'observationOnly', when: { ...when, observationOnly: { kind: 'observationOnly' } }, enabled }
+        : null;
+    return set.target ? { kind: 'execution', when,
+        then: readTriggerThen(set.target, set.context?.executionTarget, set.context?.inputs), enabled } : null;
 }

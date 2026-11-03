@@ -50,6 +50,7 @@ export const PLUGIN_UI_HOST_METHODS_V1 = Object.freeze([
   'openExternalLink',
   'selectActionInput',
   'openNewSession',
+  'openAutomationEvent',
   'settleEphemeralInput',
   'activeComposer',
   'readComposer',

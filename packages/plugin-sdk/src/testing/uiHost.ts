@@ -1,3 +1,4 @@
+import { PluginUiOpenAutomationEventRequestV1Schema } from '@happier-dev/protocol/plugins/ui';
 /** @moduleRealm daemon */
 import { z } from 'zod/mini';
 
@@ -545,6 +546,7 @@ export type PluginUiTestkitHostHandlers = Readonly<{
     selectActionInput?: (
         input: PluginUiTestkitSelectActionInputInput,
     ) => SelectActionInputResult | Promise<SelectActionInputResult>;
+    openAutomationEvent?: (input: Readonly<{ request: import('../ui/hostApi.js').OpenAutomationEventRequest; signal: AbortSignal }>) => void | Promise<void>;
     openNewSession?: (
         input: PluginUiTestkitOpenNewSessionInput,
     ) => void | Promise<void>;
@@ -661,6 +663,7 @@ const hostMethodPolicies = {
     openExternalLink: 'openExternalLink',
     selectActionInput: 'selectActionInput',
     openNewSession: 'openNewSession',
+    openAutomationEvent: 'openAutomationEvent',
     settleEphemeralInput: 'settleEphemeralInput',
     activeComposer: 'activeComposer',
     readComposer: 'readComposer',
@@ -1296,6 +1299,13 @@ async function createPluginUiTestkitInternal<TSurface>(
                     retainSelectedInput(carrier.data, message.requestId);
                 }
                 return wireResult.data;
+            }
+            case 'openAutomationEvent': {
+                if (!handlers.openAutomationEvent) throw fixtureError('unsupported_method', 'openAutomationEvent is not installed.');
+                const payload = PluginUiOpenAutomationEventRequestV1Schema.safeParse(message.payload);
+                if (!payload.success) throw fixtureError('invalid_payload', 'Automation Event seed is invalid.');
+                await handlers.openAutomationEvent({ request: payload.data, signal });
+                return null;
             }
             case 'openNewSession': {
                 if (!handlers.openNewSession) {

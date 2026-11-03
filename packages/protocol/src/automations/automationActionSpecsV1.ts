@@ -1,6 +1,7 @@
 import * as zMini from 'zod/mini';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod/mini';
+import { AutomationObservationOnlyIntentV1Schema } from './automationEventSetupResultV1.js';
 import { asProtocolZod } from "../plugins/actions/internalProtocolZodAdapter.js";
 
 import { ACTION_ID_FAMILIES_V1 } from '../actions/actionIds.js';
@@ -77,7 +78,7 @@ export type AutomationEventSourceObservationTransportV1 = z.infer<
 >;
 
 export const AutomationEventSourceDefinitionV1Schema = lazyZodSchema(() => z.strictObject({
-  observationOnly: z.optional(z.strictObject({ kind: z.literal('observationOnly') })),
+  observationOnly: z.optional(AutomationObservationOnlyIntentV1Schema),
   automationId: asProtocolZod(AutomationIdV1Schema),
   triggerId: AutomationTriggerIdSchema,
   triggerRevision: AutomationTriggerRevisionSchema,

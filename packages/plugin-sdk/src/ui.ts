@@ -99,3 +99,5 @@ export type {
     PluginDeclarativeDocumentContentTypeV1,
     PluginDeclarativeDocumentV1,
 } from './ui/declarativeDocument.js';
+
+export type { OpenAutomationEventRequest } from './ui/hostApi.js';

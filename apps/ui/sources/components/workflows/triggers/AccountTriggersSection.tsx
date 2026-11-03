@@ -2,8 +2,10 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { HAPPIER_COLLECTION_LIST_METRICS } from '@happier-dev/plugin-ui/presentation';
-import type { TriggerTargetV1, WorkflowTriggerSetV1 } from '@happier-dev/protocol';
+import type { TriggerTargetV1} from '@happier-dev/protocol/workflows/triggers/triggerTargetV1';
+import type { WorkflowTriggerSetV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 import type { WorkflowProjectTargetV1 } from '@happier-dev/protocol/workflows';
+import type { PluginUiOpenAutomationEventRequestV1 } from '@happier-dev/protocol/plugins/ui';
 
 import { CollectionListGroupLabel } from '@/components/ui/lists/collection/CollectionList';
 import { Item } from '@/components/ui/lists/Item';
@@ -35,7 +37,7 @@ import { projectAccountTriggerRows, type AccountTriggerRow } from './accountTrig
 import { TriggerPopover } from './TriggerPopover';
 import { TriggerRow } from './TriggerRow';
 import { TriggerRunsOnRow } from './TriggerRunsOnRow';
-import { buildTriggerExecutionTarget, createDefaultWhen, readTriggerThen, readTriggerWhen, type TriggerFormValue } from './sessionTriggerForm';
+import { buildTriggerExecutionTarget, readWorkflowTriggerSetForm } from './sessionTriggerForm';
 import { useTriggerThenOptions } from './useTriggerThenOptions';
 import { useOpenTriggerAsWorkflow } from './useOpenTriggerAsWorkflow';
 import { useWorkflowTriggerSets } from './useWorkflowTriggerSets';
@@ -112,7 +114,7 @@ function AccountTriggersContent(props: Readonly<{ first?: boolean; accountLifeti
             try {
                 const reviewed = await reviewWorkflowTriggerSet(set.automationId, actionOptions);
                 if (!lifetime?.isCurrent()) return;
-                if (readAccountTriggerForm(reviewed, row.triggerId) === null) {
+                if (readWorkflowTriggerSetForm(reviewed, row.triggerId) === null) {
                     throw new Error(t('workflows.problem.legacyConversionUnsupported'));
                 }
                 setOpen({ set: reviewed, triggerId: row.triggerId, anchor });
@@ -123,7 +125,7 @@ function AccountTriggersContent(props: Readonly<{ first?: boolean; accountLifeti
             }
             return;
         }
-        if (readAccountTriggerForm(set, row.triggerId) === null) {
+        if (readWorkflowTriggerSetForm(set, row.triggerId) === null) {
             alertUnavailable(row, set, row.legacy?.title ?? t('workflows.problem.legacyConversionUnsupported'),
                 t('workflows.problem.legacyConversionUnsupported'));
             return;
@@ -212,14 +214,6 @@ function AccountTriggersContent(props: Readonly<{ first?: boolean; accountLifeti
     );
 }
 
-function readAccountTriggerForm(set: WorkflowTriggerSetV1, triggerId: AccountTriggerRow['triggerId']): TriggerFormValue | null {
-    const trigger = set.triggers.find((candidate) => candidate.id === triggerId);
-    const when = trigger ? readTriggerWhen(trigger) : set.triggers.length === 0 ? createDefaultWhen('schedule') : null;
-    if (set.health !== 'available' || !set.target || !when) return null;
-    return { when, then: readTriggerThen(set.target, set.context?.executionTarget, set.context?.inputs),
-        enabled: set.legacy?.lockedReason === 'review_required' ? trigger?.enabled ?? true : (set.enabled && (trigger?.enabled ?? true)) };
-}
-
 async function writeAccountTriggerEnabled(set: WorkflowTriggerSetV1, triggerId: AccountTriggerRow['triggerId'], enabled: boolean,
     accountLifetime?: ServerAccountScopeLifetime | null) {
     return updateWorkflowTrigger({ automationId: set.automationId, expectedRevision: set.revision,
@@ -277,7 +271,7 @@ function AccountTriggerPopover(props: Readonly<{
     const machines = props.accountLifetime === undefined ? activeMachines : addressedMachines ?? [];
     const [project, setProject] = React.useState<WorkflowProjectTargetV1 | null>(props.set.project ?? null);
     const runNow = useAutomationRunNowController(props.accountLifetime);
-    const form = readAccountTriggerForm(props.set, props.triggerId);
+    const form = readWorkflowTriggerSetForm(props.set, props.triggerId);
     if (form === null) return null;
     const { set } = props;
     const needsReview = set.legacy?.lockedReason === 'review_required';
@@ -288,7 +282,7 @@ function AccountTriggerPopover(props: Readonly<{
             testID="workflows-column-trigger-popover"
             anchorRef={props.anchorRef}
             onRequestClose={props.onRequestClose}
-            whenKinds={['schedule', 'pluginEvent']}
+            whenKinds={set.observationOnly ? ['pluginEvent'] : ['schedule', 'pluginEvent']}
             sessionId={null}
             serverId={props.accountLifetime?.scope.serverId}
             accountLifetime={props.accountLifetime}
@@ -314,6 +308,14 @@ function AccountTriggerPopover(props: Readonly<{
             onRunNow={!needsReview && triggerId === null ? async () => { await runNow.runNow(set.automationId, 'newSession'); } : undefined}
             onSaveAsWorkflow={needsReview ? undefined : props.onSaveAsWorkflow}
             onSubmit={async (value, write) => {
+                if (write.observationOnly && write.trigger !== null && triggerId !== null) {
+                    const { enabled: _enabled, ...definition } = write.trigger;
+                    await updateWorkflowTrigger({ automationId: set.automationId, triggerId, expectedRevision: set.revision,
+                        patch: { trigger: definition, enabled: value.enabled } },
+                        props.accountLifetime === undefined ? {} : { accountLifetime: props.accountLifetime });
+                    props.onWritten();
+                    return;
+                }
                 if (write.target === null || project === null) return;
                 const definition = write.trigger === null ? null : (({ enabled: _enabled, ...definition }) => definition)(write.trigger);
                 await updateWorkflowTrigger({
@@ -349,8 +351,10 @@ function AccountTriggerPopover(props: Readonly<{
 export function NewAccountTriggerPopover(props: Readonly<{
     anchorRef: React.RefObject<View | null>;
     onRequestClose: () => void;
+    eventSeed?: PluginUiOpenAutomationEventRequestV1;
+    accountLifetime?: ServerAccountScopeLifetime | null;
 }>): React.ReactElement {
-    const thenOptions = useTriggerThenOptions();
+    const thenOptions = useTriggerThenOptions(props.accountLifetime === undefined ? {} : { accountLifetime: props.accountLifetime });
     const [project, setProject] = React.useState<WorkflowProjectTargetV1 | null>(null);
     return (
         <TriggerPopover
@@ -360,6 +364,10 @@ export function NewAccountTriggerPopover(props: Readonly<{
             whenKinds={['schedule', 'pluginEvent']}
             sessionId={null}
             initial={null}
+            initialWhen={props.eventSeed ? { kind: 'pluginEvent', value: null, eventRef: props.eventSeed.eventRef } : undefined}
+            initialEventSeed={props.eventSeed}
+            accountLifetime={props.accountLifetime}
+            serverId={props.accountLifetime?.scope.serverId}
             workflowOptions={thenOptions.workflowOptions}
             machineId={project?.machineId ?? null}
             directory={project?.directory ?? null}
@@ -369,10 +377,17 @@ export function NewAccountTriggerPopover(props: Readonly<{
                     testID="workflows-column-new-trigger-runs-on"
                     target={project}
                     onChange={setProject}
+                    accountLifetime={props.accountLifetime}
                     description={t('workflows.triggers.editor.runsOnAccountDescription')}
                 />
             )}
             onSubmit={async (value, write) => {
+                if (write.observationOnly && write.trigger !== null) {
+                    await addWorkflowTrigger({ trigger: write.trigger, observationOnly: write.observationOnly },
+                        props.accountLifetime === undefined ? {} : { accountLifetime: props.accountLifetime });
+                    fireAndForget(sync.refreshAutomations());
+                    return;
+                }
                 if (write.target === null || write.trigger === null || project === null) return;
                 await addWorkflowTrigger({
                     target: write.target,
@@ -380,7 +395,7 @@ export function NewAccountTriggerPopover(props: Readonly<{
                     trigger: write.trigger,
                     executionTarget: buildTriggerExecutionTarget(value.then),
                     inputs: write.inputs,
-                });
+                }, props.accountLifetime === undefined ? {} : { accountLifetime: props.accountLifetime });
                 fireAndForget(sync.refreshAutomations());
             }}
         />

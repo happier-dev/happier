@@ -5,6 +5,7 @@ import { SessionInputForgeEvidenceV1Schema } from '../sessions/messages/sessionI
 import { DeploymentTimestampV1Schema } from './deploymentIdentifiersV1.js';
 
 /** Finite built-ins; installed qualified kinds use the contribution catalog. */
+export const HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1 = 'happier.machine.services';
 export const HEALTH_CHECK_KINDS_V1 = ['http', 'certificate', 'tcp', 'dns', 'heartbeat'] as const;
 export const HealthCheckKindV1Schema = lazyZodSchema(() => z.enum(HEALTH_CHECK_KINDS_V1));
 export type HealthCheckKindV1 = z.infer<typeof HealthCheckKindV1Schema>;

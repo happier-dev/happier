@@ -1,5 +1,5 @@
 import { parseAutomationRunExecutionRecipeV1, type AutomationRunExecutionRecipeV1 } from '@happier-dev/protocol/automations/automationRunExecutionRecipeV1';
-import { type AutomationStoredWorkflowDefinitionRecipeV2 } from '@happier-dev/protocol/automations/automationWorkflowRecipeV2';
+import { type AutomationObservationOnlyDefinitionV1, type AutomationStoredWorkflowDefinitionRecipeV2 } from '@happier-dev/protocol/automations/automationWorkflowRecipeV2';
 import { type AutomationReplyHandoffStateV1 } from '@happier-dev/protocol/automations/automationReplyHandoffStateV1';
 import { type AutomationExecutionDispatchStateV3, type AutomationTriggerCreateRequest } from '@happier-dev/protocol/automations/automationApiV3';
 import { AutomationRunStateV3Schema, AUTOMATION_RUN_TERMINAL_STATES_V3, isTerminalAutomationRunStateV3, type AutomationRunStateV3 } from '@happier-dev/protocol/automations/automationRunStateV3';
@@ -144,12 +144,20 @@ export type AutomationLegacyDefinitionInput = AutomationDefinitionInputCommon & 
     templateCiphertext: string;
     legacyTemplateEnvelopeAdmission?: AutomationLegacyTemplateEnvelopeAdmission;
     executionRecipe?: never;
+    observationOnly?: never;
 }>;
 
-/** One current definition writer: a strict Protocol recipe persisted in templateCiphertext. */
-export type AutomationCurrentDefinitionInput = AutomationDefinitionInputCommon & Readonly<{
-    automationId: string;
+/** Current definition content: executable Workflow or a non-executable observation marker. */
+type AutomationCurrentDefinitionContent = Readonly<{
     executionRecipe: AutomationStoredWorkflowDefinitionRecipeV2;
+    observationOnly?: never;
+}> | Readonly<{
+    observationOnly: AutomationObservationOnlyDefinitionV1;
+    executionRecipe?: never;
+}>;
+
+export type AutomationCurrentDefinitionInput = AutomationDefinitionInputCommon & AutomationCurrentDefinitionContent & Readonly<{
+    automationId: string;
     triggers: ReadonlyArray<AutomationTriggerCreateRequest>;
     targetType?: never;
     templateCiphertext?: never;
@@ -170,8 +178,7 @@ type AutomationPatchCommon = Readonly<{
     scopeSessionId?: string | null;
 }>;
 
-export type AutomationCurrentPatchInput = AutomationPatchCommon & Readonly<{
-    executionRecipe: AutomationStoredWorkflowDefinitionRecipeV2;
+export type AutomationCurrentPatchInput = AutomationPatchCommon & AutomationCurrentDefinitionContent & Readonly<{
     targetType?: never;
     templateCiphertext?: never;
     legacyTemplateEnvelopeAdmission?: never;
@@ -180,6 +187,7 @@ export type AutomationCurrentPatchInput = AutomationPatchCommon & Readonly<{
 export type AutomationLegacyPatchInput = AutomationPatchCommon & Readonly<{
     schedule?: AutomationLegacyScheduleInput;
     executionRecipe?: never;
+    observationOnly?: never;
     targetType?: AutomationLegacyTargetType;
     templateCiphertext?: string;
     legacyTemplateEnvelopeAdmission?: AutomationLegacyTemplateEnvelopeAdmission;
@@ -193,14 +201,14 @@ export type AutomationPatchInput =
 export function isAutomationCurrentUpsertInput(
     input: AutomationUpsertInput,
 ): input is AutomationCurrentUpsertInput {
-    return input.executionRecipe !== undefined;
+    return input.executionRecipe !== undefined || input.observationOnly !== undefined;
 }
 
 /** Keeps release-compatible patch semantics distinct from the current recipe writer. */
 export function isAutomationCurrentPatchInput(
     input: AutomationPatchInput,
 ): input is AutomationCurrentPatchInput {
-    return input.executionRecipe !== undefined;
+    return input.executionRecipe !== undefined || input.observationOnly !== undefined;
 }
 
 export function isAutomationLegacyTargetType(

@@ -92,6 +92,29 @@ const { WorkflowDefinitionV1Schema } = await import('@happier-dev/protocol');
 type ExistingTriggerSubmit = Extract<React.ComponentProps<typeof TriggerPopover>, { creatingSession?: false }>['onSubmit'];
 
 describe('Run a workflow trigger inputs', () => {
+    it.each(['account', 'session', 'workflow'] as const)('keeps observation-only source setup scoped to %s enrollment', async (host) => {
+        const { AutomationTriggerDefinitionInputSchema } = await import('@happier-dev/protocol/automations/automationTriggerDefinition');
+        const value = AutomationTriggerDefinitionInputSchema.parse({ kind: 'pluginEvent', enabled: true,
+            eventRef: { pluginId: 'acme.monitor', localId: 'issue-transition' }, sourceInstanceId: 'project:42',
+            sourceContractVersion: 1, sourceConfig: {}, displayLabel: 'Production issues', filter: null,
+            maximumObservationAgeMs: null, observationTransport: { kind: 'checkpointedPull', watcherMaterializationRef: {
+                machineId: 'observer-machine', pluginId: 'acme.monitor', materializationId: 'monitor-1',
+            } } });
+        if (value.kind !== 'pluginEvent' || !('sourceInstanceId' in value)) throw new Error('Expected configured source');
+        const submit = vi.fn<ExistingTriggerSubmit>(async () => {});
+        const screen = await renderScreen(<TriggerPopover testID="observe-source" anchorRef={React.createRef()}
+            onRequestClose={vi.fn()} whenKinds={['pluginEvent']} sessionId={host === 'session' ? 'session-1' : null}
+            showThen={host !== 'workflow'} hostComplete={false}
+            initialWhen={{ kind: 'pluginEvent', value, observationOnly: { kind: 'observationOnly' } }} initial={null}
+            workflowOptions={[]} onSubmit={submit} />);
+        expect(screen.findByTestId('observe-source-then') === null).toBe(host !== 'session');
+        expect(screen.findByTestId('observe-source-submit')?.props.disabled).toBe(host !== 'account');
+        if (host !== 'account') return;
+        await screen.pressByTestIdAsync('observe-source-submit');
+        expect(submit.mock.calls[0]?.[1]).toEqual({ trigger: value, target: null, inputs: {},
+            observationOnly: { kind: 'observationOnly' } });
+    });
+
     it('submits a new Account prompt with its selected Agent through the shared form', async () => {
         const { validateWorkflowDefinition } = await import('@happier-dev/protocol/workflows/workflowValidationV1');
         const { createDefaultWhen } = await import('./sessionTriggerForm');

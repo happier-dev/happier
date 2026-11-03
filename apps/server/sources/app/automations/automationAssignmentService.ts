@@ -214,7 +214,12 @@ async function assertMachineAssignmentsCanBeWritten(params: {
 export function assertAutomationAssignmentLiveness(params: Readonly<{
     enabled: boolean;
     assignments: ReadonlyArray<Readonly<{ machineId: string; enabled?: boolean }>>;
+    observationOnly?: boolean;
 }>): void {
+    if (params.observationOnly) {
+        if (params.assignments.length > 0) throw new AutomationValidationError("Observation-only Automations have no execution assignments");
+        return;
+    }
     if (!params.enabled) return;
     const normalized = normalizeAutomationAssignments(params.assignments) ?? [];
     const hasEnabledAssignment = normalized.some((assignment) => assignment.enabled ?? true);

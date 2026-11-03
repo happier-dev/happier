@@ -240,6 +240,9 @@ function createDemoSurfaceHost(initial: SurfaceContext): DemoSurfaceHost {
         openNewSession: async () => {
             throw new Error('dev surface cannot open New Session');
         },
+        openAutomationEvent: async () => {
+            throw new Error('dev surface cannot open Automation Event authoring');
+        },
         openConnectedAccounts: async () => {
             throw new Error('dev surface cannot open Connected Accounts');
         },

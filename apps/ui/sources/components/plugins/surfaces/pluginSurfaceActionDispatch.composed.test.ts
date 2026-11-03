@@ -5132,4 +5132,45 @@ describe('client Action Session-open continuation', () => {
         } finally { controller.dispose(); accountLifetime.retire(); }
     });
 
+    it('opens the canonical Automation Event editor through a registered client Action', async () => {
+        const { getAppliedActiveServerSnapshot, isAppliedActiveServerRuntimeAvailable, publishAppliedActiveServerSnapshot } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
+        const { readAutomationEventAuthoringSeed } = await import('@/sync/domains/workflows/automationEventAuthoringSeed');
+        const { consumeWorkflowEditorDraftSeed } = await import('@/sync/domains/workflows/workflowEditorDraftSeed');
+        const previousScope = getStorage().getState().profileScope;
+        const previousSnapshot = getAppliedActiveServerSnapshot();
+        const previousAvailable = isAppliedActiveServerRuntimeAvailable();
+        const accountLifetime = clientAccountLifetime();
+        getStorage().setState({ profileScope: accountLifetime.scope });
+        publishAppliedActiveServerSnapshot({ serverId: accountLifetime.scope.serverId,
+            serverUrl: 'https://client-action.example', generation: 0 });
+        const intent = { eventRef: { pluginId: CALLER_PLUGIN_ID, localId: 'service-health' },
+            monitoringMachineId: 'chosen-observer', setupInput: { subject: 'watched-service' } };
+        const activation = createClientActionActivation({ accountLifetime, handler: async (_input, context) => {
+            await context.ui.openAutomationEvent(intent);
+            return null;
+        } });
+        newSessionNavigation.mockClear();
+        let seedId: string | undefined;
+        try {
+            await activation.composition.reconcile([activation.activation]);
+            await expect(dispatchPluginSurfaceAction({
+                action: { pluginId: CALLER_PLUGIN_ID, localId: activation.action.id },
+                resolveContributedAction: resolveExactClientAction(activation.action), clientAction: {},
+            })).resolves.toEqual({ ok: true, result: null });
+            const route = newSessionNavigation.mock.calls[0]?.[0] as Readonly<{
+                pathname: string; params: { automationEventSeedId: string; serverId: string };
+            }>;
+            expect(route.pathname).toBe('/workflows');
+            expect(Object.keys(route.params).sort()).toEqual(['automationEventSeedId', 'serverId']);
+            seedId = route.params.automationEventSeedId;
+            expect(readAutomationEventAuthoringSeed(seedId, accountLifetime.scope)).toEqual(intent);
+        } finally {
+            if (seedId) consumeWorkflowEditorDraftSeed(seedId);
+            await activation.composition.unload(); accountLifetime.retire();
+            getStorage().setState({ profileScope: previousScope });
+            publishAppliedActiveServerSnapshot(previousSnapshot, previousAvailable);
+        }
+    });
+
+
 });

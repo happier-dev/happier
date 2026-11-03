@@ -1,6 +1,7 @@
 import * as zMini from 'zod/mini';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod/mini';
+import { AutomationObservationOnlyIntentV1Schema } from './automationEventSetupResultV1.js';
 import { createStoredReadSchema, defineStoredReadProjection } from '../json/storedReadSchema.js';
 
 import {
@@ -777,7 +778,7 @@ export function isSameAutomationEventDeclarationReleaseV1(
  * exact materialization; it is not a public Action result or SDK surface.
  */
 export const AutomationEventStoredDefinitionProjectionV1Schema = lazyZodSchema(() => z.strictObject({
-  observationOnly: z.optional(z.strictObject({ kind: z.literal('observationOnly') })),
+  observationOnly: z.optional(AutomationObservationOnlyIntentV1Schema),
   automationId: asProtocolZod(AutomationIdV1Schema),
   triggerId: AutomationTriggerIdSchema,
   triggerRevision: AutomationTriggerRevisionSchema,

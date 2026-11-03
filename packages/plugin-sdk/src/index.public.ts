@@ -18,6 +18,9 @@ export { DeploymentTargetFailureTransitionV1ProtocolSchema, DeploymentTargetRole
 export type { HealthChecksService, HealthCheckKindContributionV1, HealthCheckKindV1, HealthCheckStatusV1, HealthCheckSubjectV1, HealthCheckResultV1, HealthCheckSourceConfigV1, SavedHealthCheckSelectorV1 } from './healthCheckKinds.js';
 export { HEALTH_CHECK_KINDS_V1, HealthCheckSubjectV1ProtocolSchema, HealthCheckResultV1ProtocolSchema, HealthCheckSourceConfigV1ProtocolSchema, HealthCheckTransitionV1ProtocolSchema, SavedHealthCheckSelectorV1ProtocolSchema } from './healthCheckKinds.js';
 export { HealthCheckTcpConfigV1ProtocolSchema, HealthCheckDnsConfigV1ProtocolSchema, HealthCheckHeartbeatConfigV1ProtocolSchema } from './healthCheckKinds.js';
+export { HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1, HealthCheckSetupInputV1ProtocolSchema, HealthCheckSetupDraftV1ProtocolSchema,
+    HealthCheckHttpConfigV1ProtocolSchema, isHealthCheckLoopbackRefusedV1 } from './healthCheckKinds.js';
+export type { HealthCheckSetupInputV1, HealthCheckSetupDraftV1 } from './healthCheckKinds.js';
 export type { ActionConfirmationWhen } from './definePlugin.js';
 export { summarizeUsageRunLengthObservations, resolveUsageCalendarInstant } from './usage.js';
 export type { UsageRunLengthObservation, UsageRunLengthObservationSummary, UsageRunLengthSummary, PublicProfileSnapshotV1, PublicUsageFactsV1,

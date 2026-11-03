@@ -140,6 +140,7 @@ function createFixtureHostApi(context: SurfaceContext, state: FixtureState): Plu
         updateEntityDragDrop: unsupported,
         watchEntityDragDrop: unsupported,
         openNewSession: unsupported,
+        openAutomationEvent: unsupported,
         openConnectedAccounts: unsupported,
         settleEphemeralInput: unsupported,
         readResource: readResource as PluginUiHostApi['readResource'],

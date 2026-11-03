@@ -27,6 +27,7 @@ import {
   PluginActionConnectedAccountPurposeBindingV2Schema,
 } from '../plugins/actions/v2.js';
 import { PluginUiRendererChainBindingV1Schema } from '../plugins/contributions/ui/rendererChainBinding.js';
+import { AutomationObservationOnlyIntentV1Schema } from './automationEventSetupResultV1.js';
 
 export const AutomationQualifiedPluginContributionRefV1Schema =
   PluginContributionIdentityV1Schema;
@@ -62,6 +63,8 @@ export const PluginEventAutomationDeclarationV1Schema = lazyZodSchema(() => z.st
     webhookContributionRef: zMini.optional(asProtocolZod(AutomationQualifiedPluginContributionRefV1Schema)),
     sourceConfigSchema: PluginJsonSchemaV2Schema,
     setupActionRef: asProtocolZod(AutomationQualifiedPluginContributionRefV1Schema),
+    /** A new source can be saved without authoring an execution recipe. */
+    observationOnly: z.optional(AutomationObservationOnlyIntentV1Schema),
     /**
      * Optional same-plugin renderer chain for collecting strict setup Action
      * input. The host still owns Action validation, invocation and setup-result

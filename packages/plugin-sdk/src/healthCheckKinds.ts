@@ -7,6 +7,9 @@ import {
     HealthCheckSubjectV1ProtocolSchema as canonicalSubject,
     HealthCheckResultV1ProtocolSchema as canonicalResult,
     HealthCheckSourceConfigV1ProtocolSchema as canonicalSourceConfig,
+    HealthCheckSetupInputV1ProtocolSchema as canonicalSetupInput,
+    HealthCheckSetupDraftV1ProtocolSchema as canonicalSetupDraft,
+    HealthCheckHttpConfigV1ProtocolSchema as canonicalHttpConfig,
     HealthCheckTransitionV1ProtocolSchema as canonicalTransition,
     SavedHealthCheckSelectorV1ProtocolSchema as canonicalSelector,
     HealthCheckTcpConfigV1ProtocolSchema as canonicalTcpConfig,
@@ -17,6 +20,9 @@ import type {
     HealthCheckSubjectV1,
     HealthCheckResultV1,
     HealthCheckSourceConfigV1,
+    HealthCheckSetupInputV1,
+    HealthCheckSetupDraftV1,
+    HealthCheckHttpConfigV1,
     HealthCheckTransitionV1,
     SavedHealthCheckSelectorV1,
     HealthCheckTcpConfigV1,
@@ -34,6 +40,12 @@ export type HealthCheckKindContributionV1 = Readonly<{
 }>;
 
 export { HEALTH_CHECK_KINDS_V1 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
+export { HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
+export { isHealthCheckLoopbackRefusedV1 } from '@happier-dev/protocol/deployments/healthCheckSourceV1';
+export type { HealthCheckSetupInputV1, HealthCheckSetupDraftV1 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
+export const HealthCheckSetupInputV1ProtocolSchema: ProtocolComposableSchema<HealthCheckSetupInputV1> = canonicalSetupInput;
+export const HealthCheckSetupDraftV1ProtocolSchema: ProtocolComposableSchema<HealthCheckSetupDraftV1> = canonicalSetupDraft;
+export const HealthCheckHttpConfigV1ProtocolSchema: ProtocolComposableSchema<HealthCheckHttpConfigV1> = canonicalHttpConfig;
 export const HealthCheckTcpConfigV1ProtocolSchema: ProtocolComposableSchema<HealthCheckTcpConfigV1> = canonicalTcpConfig;
 export const HealthCheckDnsConfigV1ProtocolSchema: ProtocolComposableSchema<HealthCheckDnsConfigV1> = canonicalDnsConfig;
 export const HealthCheckHeartbeatConfigV1ProtocolSchema: ProtocolComposableSchema<HealthCheckHeartbeatConfigV1> = canonicalHeartbeatConfig;

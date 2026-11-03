@@ -407,6 +407,7 @@ function createUnavailableInvocationUi(): PluginUiHostApi {
     admitAction: async () => unavailable(),
     selectActionInput: async () => unavailable(),
     openNewSession: async () => unavailable(),
+    openAutomationEvent: async () => unavailable(),
     openConnectedAccounts: async () => unavailable(),
     settleEphemeralInput: async () => unavailable(),
     readResource: async () => unavailable(),

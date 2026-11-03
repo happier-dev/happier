@@ -186,6 +186,17 @@ describe('Automation event V1 contracts', () => {
     });
   });
 
+  it('admits declaration-owned observation-only authoring intent without execution inputs', () => {
+    const source = { sourceContractVersion: 1, supportedObservationTransports: ['checkpointedPull'],
+      sourceConfigSchema: { type: 'object', additionalProperties: false },
+      setupActionRef: { pluginId: 'com.acme.health', localId: 'setup' },
+      observationOnly: { kind: 'observationOnly' } };
+    expect(PluginEventAutomationDeclarationV1Schema.parse({ v: 1, eligible: true, source }))
+      .toMatchObject({ source: { observationOnly: { kind: 'observationOnly' } } });
+    expect(PluginEventAutomationDeclarationV1Schema.safeParse({ v: 1, eligible: true,
+      source: { ...source, observationOnly: { kind: 'execution' } } }).success).toBe(false);
+  });
+
   it('keeps Event eligibility declarative and admits a history-gap reset only for checkpointed pulls', () => {
     expect(PluginEventAutomationDeclarationV1Schema.parse({
       v: 1,

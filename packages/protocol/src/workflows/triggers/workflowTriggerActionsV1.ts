@@ -11,7 +11,7 @@ import { AutomationTriggerDetailSchema, AutomationScheduleTriggerProjectionSchem
   AutomationPluginEventTriggerProjectionSchema, AutomationSessionLifecycleTriggerProjectionSchema } from '../../automations/automationTriggerProjectionV1.js';
 import { AutomationRunLifecycleTriggerSchema } from '../../automations/automationRunLifecycle.js';
 import { asProtocolZod } from '../../plugins/actions/internalProtocolZodAdapter.js';
-import { AutomationStoredWorkflowDefinitionV2Schema } from '../../automations/automationWorkflowRecipeV2.js';
+import { AutomationObservationOnlyDefinitionV1Schema, AutomationStoredWorkflowDefinitionV2Schema } from '../../automations/automationWorkflowRecipeV2.js';
 import { WorkflowProjectTargetV1Schema } from '../workflowWorkspaceV1.js';
 import { WorkflowDefinitionRefV1StringSchema } from '../workflowDefinitionRefV1.js';
 import { TriggerTargetV1Schema } from './triggerTargetV1.js';
@@ -37,10 +37,11 @@ export const WorkflowTriggerListRequestV1Schema = lazyZodSchema(() => z.union([
   z.strictObject({ scope: z.enum(['account_inline', 'account_all']) }),
   z.strictObject({ automationId: asProtocolZod(AutomationIdV1Schema), review: z.literal(true) }),
 ]));
-export const WorkflowTriggerAddRequestV1Schema = lazyZodSchema(() => z.strictObject({
+const WorkflowTriggerExecutableAddRequestV1Schema = lazyZodSchema(() => z.strictObject({
   workflow: zMini.optional(WorkflowDefinitionRefV1StringSchema),
   target: zMini.optional(TriggerTargetV1Schema),
   project: WorkflowProjectTargetV1Schema,
+  observationOnly: z.optional(z.never()),
   ...zMini.partial(ContextFields).shape,
   trigger: AutomationTriggerDefinitionInputSchema,
 }).check(z.superRefine((value, ctx) => {
@@ -51,6 +52,15 @@ export const WorkflowTriggerAddRequestV1Schema = lazyZodSchema(() => z.strictObj
     ctx.addIssue({ code: 'custom', path: ['visibleTeamId'], message: 'Inline triggers are private' });
   }
 })));
+export const WorkflowTriggerAddRequestV1Schema = lazyZodSchema(() => z.union([
+  WorkflowTriggerExecutableAddRequestV1Schema,
+  z.strictObject({
+    observationOnly: z.omit(AutomationObservationOnlyDefinitionV1Schema, { templateVersion: true }),
+    name: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(128))),
+    trigger: AutomationTriggerDefinitionInputSchema,
+    workflow: z.optional(z.never()), target: z.optional(z.never()), project: z.optional(z.never()),
+  }).check(z.refine(value => value.trigger.kind === 'pluginEvent', 'Observation-only definitions require an Event source')),
+]));
 export const WorkflowTriggerUpdateRequestV1Schema = lazyZodSchema(() => z.strictObject({
   automationId: asProtocolZod(AutomationIdV1Schema),
   triggerId: zMini.optional(AutomationTriggerIdSchema),
@@ -91,6 +101,7 @@ export const WorkflowTriggerSetV1Schema = lazyZodSchema(() => z.strictObject({
   automationId: asProtocolZod(AutomationIdV1Schema), revision: Revision, enabled: z.boolean(),
   scopeSessionId: zMini.optional(zMini.nullable(asProtocolZod(SessionIdSchema))),
   health: z.enum(['available', 'source_unavailable']),
+  observationOnly: z.optional(AutomationObservationOnlyDefinitionV1Schema),
   legacy: z.optional(z.strictObject({ editable: z.literal(false), reason: z.literal('created_in_0_2'),
     lockedReason: z.optional(z.enum(['session_key_required', 'migration_required', 'decryption_failed', 'review_required'])),
     placements: z.optional(z.array(zMini.pick(WorkflowProjectTargetV1Schema, { machineId: true, directory: true }))),

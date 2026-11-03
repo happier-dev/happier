@@ -5,10 +5,13 @@ import { TriageEntryRefV1Schema } from '../tasks/entryRefV1.js';
 import { TriageSourceInstanceIdV1Schema } from '../tasks/entryRefV1.js';
 import { AccountNoticeRecoveryChoicesV1Schema } from './accountNoticeRecoveryV1.js';
 export { HealthCheckSubjectV1Schema, HealthCheckSubjectV1ProtocolSchema, type HealthCheckSubjectV1 } from '../deployments/healthCheckSubjectV1.js';
-export { HEALTH_CHECK_KINDS_V1, HealthCheckKindV1Schema, HealthCheckStatusV1Schema,
+export { HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1, HEALTH_CHECK_KINDS_V1, HealthCheckKindV1Schema, HealthCheckStatusV1Schema,
   HealthCheckResultV1Schema, HealthCheckResultV1ProtocolSchema,
   type HealthCheckKindV1, type HealthCheckStatusV1, type HealthCheckResultV1 } from '../deployments/healthCheckV1.js';
 export { HealthCheckDefinitionV1Schema, HealthCheckSourceConfigV1Schema, HealthCheckSourceConfigV1ProtocolSchema,
+  HealthCheckSetupInputV1Schema, HealthCheckSetupInputV1ProtocolSchema, type HealthCheckSetupInputV1,
+  HealthCheckSetupDraftV1Schema, HealthCheckSetupDraftV1ProtocolSchema, type HealthCheckSetupDraftV1,
+  HealthCheckHttpConfigV1Schema, HealthCheckHttpConfigV1ProtocolSchema, type HealthCheckHttpConfigV1,
   HealthCheckTransitionV1Schema, HealthCheckTransitionV1ProtocolSchema, type HealthCheckTransitionV1,
   HealthCheckConditionBindingV1Schema, HealthCheckDomainHttpConfigV1Schema, HealthCheckServiceHttpConfigV1Schema,
   HealthCheckTcpConfigV1Schema, HealthCheckTcpConfigV1ProtocolSchema,

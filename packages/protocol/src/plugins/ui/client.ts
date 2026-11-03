@@ -174,6 +174,8 @@ export {
   PluginUiInspectComposerContentResultV1Schema,
   PluginUiJsonObjectV1Schema,
   PluginUiOpenNewSessionRequestV1Schema,
+  PluginUiOpenAutomationEventRequestV1Schema,
+  type PluginUiOpenAutomationEventRequestV1,
   PluginUiOpenConnectedAccountsRequestV1Schema,
   PluginUiPreparedReviewWorkspaceResultV1Schema,
   PluginUiPickComposerMediaRequestV1Schema,

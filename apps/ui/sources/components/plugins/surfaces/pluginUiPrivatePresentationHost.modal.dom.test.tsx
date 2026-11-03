@@ -261,6 +261,7 @@ function createHostApi(
         executeAction,
         selectActionInput: async () => unexpectedHostApiCall('selectActionInput'),
         openNewSession: async () => unexpectedHostApiCall('openNewSession'),
+        openAutomationEvent: async () => unexpectedHostApiCall('openAutomationEvent'),
         openConnectedAccounts: async () => unexpectedHostApiCall('openConnectedAccounts'),
         readResource: async () => {
             throw new Error('not used by this menu');

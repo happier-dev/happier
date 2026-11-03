@@ -2,7 +2,7 @@ import { AutomationDefinitionDetailSchema, AutomationDefinitionListItemSchema, A
 import { parseAutomationRunResultStoredEnvelopeV1 } from '@happier-dev/protocol/automations/automationReplyHandoffStoredContent';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
 import { parseAutomationStoredDefinitionExecutionRecipeV1, validateAutomationStoredDefinitionExecutionRecipeOuterV1 } from '@happier-dev/protocol/automations/automationRunExecutionRecipeV1';
-import { parseAutomationStoredWorkflowDefinitionRecipeV2 } from '@happier-dev/protocol/automations/automationWorkflowRecipeV2';
+import { parseAutomationObservationOnlyDefinitionV1, parseAutomationStoredWorkflowDefinitionRecipeV2 } from '@happier-dev/protocol/automations/automationWorkflowRecipeV2';
 import { parseAutomationRunFailureDetailStoredEnvelopeV1, validateAutomationRunFailureDetailStoredEnvelopeOuterForModeV1 } from '@happier-dev/protocol/automations/automationRunFailureDetailStoredContent';
 import { validateAutomationReplyHandoffStoredEnvelopeOuterForModeV1 } from '@happier-dev/protocol/automations/event';
 import { type AutomationAccountCurrentnessWitnessV1 } from '@happier-dev/protocol/automations/automationAccountCurrentnessV1';
@@ -141,7 +141,11 @@ function definitionCommon(
     lifecycleStatuses: ReadonlyMap<string, AutomationSessionLifecycleTriggerStatus>,
     includeDefinitions: boolean,
 ) {
+    const observationOnly = parseAutomationObservationOnlyDefinitionV1(item.templateCiphertext);
+    if (observationOnly && (item.targetType !== null || observationOnly.templateVersion !== item.templateVersion
+        || item.assignments.length > 0)) throw new AutomationStoredContentReadError("contentInvalid");
     return {
+        ...(observationOnly ? { observationOnly } : {}),
         id: item.id, name: item.name, description: item.description, enabled: item.enabled,
         targetType: targetTypeV3(item.targetType), existingSessionId: readExistingSessionId(item),
         workflowDefinitionId: item.workflowDefinitionId, scopeSessionId: item.scopeSessionId,
@@ -197,6 +201,10 @@ export function toAutomationDefinitionDetailApiDto(
             raw: required(trigger.definitionEnvelope, "definitionEnvelope"),
             mode: accountCurrentness.mode, binding,
         });
+    }
+    const observationOnly = parseAutomationObservationOnlyDefinitionV1(item.templateCiphertext);
+    if (observationOnly) {
+        return AutomationDefinitionDetailSchema.parse(definitionCommon(item, statuses, lifecycleStatuses, true));
     }
     const parsed = parseAutomationStoredDefinitionExecutionRecipeV1(item.templateCiphertext);
     let content: Readonly<{ executionRecipe: unknown }> | Readonly<{ templateCiphertext: string }>;

@@ -6,6 +6,8 @@ import { PluginJsonValueV2Schema } from '../plugins/contributions/publicTypes.js
 import { AutomationEventSourceInstanceIdV1Schema } from '../automations/automationEventJsonBoundsV1.js';
 import { DeploymentIdentifierV1Schema as id } from './deploymentIdentifiersV1.js';
 import { HealthCheckSubjectV1Schema } from './healthCheckSubjectV1.js';
+import { isLoopbackHostname } from '../server/urls/loopbackHostname.js';
+import { HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1, HEALTH_CHECK_KINDS_V1, type HealthCheckKindV1 } from './healthCheckV1.js';
 
 const positive = lazyZodSchema(() => z.number().check(z.int(), z.minimum(1), z.maximum(Number.MAX_SAFE_INTEGER)));
 const keyword = lazyZodSchema(() => z.string().check(z.minLength(1)));
@@ -25,6 +27,11 @@ export const HealthCheckServiceHttpConfigV1Schema = lazyZodSchema(() => z.strict
     endpoint: httpEndpoint, expectStatus: httpStatus, keyword: z.optional(keyword),
 }));
 export type HealthCheckServiceHttpConfigV1 = z.infer<typeof HealthCheckServiceHttpConfigV1Schema>;
+export const HealthCheckHttpConfigV1Schema = lazyZodSchema(() => z.union([
+    HealthCheckDomainHttpConfigV1Schema, HealthCheckServiceHttpConfigV1Schema,
+]));
+export type HealthCheckHttpConfigV1 = z.infer<typeof HealthCheckHttpConfigV1Schema>;
+export const HealthCheckHttpConfigV1ProtocolSchema = lazyDefinition(() => projectZodProtocolSchema(HealthCheckHttpConfigV1Schema));
 
 export const HealthCheckTcpConfigV1Schema = lazyZodSchema(() => z.strictObject({
     host: keyword, port: z.number().check(z.int(), z.minimum(1), z.maximum(65535)),
@@ -49,11 +56,12 @@ export type HealthCheckHeartbeatConfigV1 = z.infer<typeof HealthCheckHeartbeatCo
 export const HealthCheckHeartbeatConfigV1ProtocolSchema = lazyDefinition(() => projectZodProtocolSchema(HealthCheckHeartbeatConfigV1Schema));
 
 /** One existing C1 condition, or the P40 aggregate input; never both for a check. */
+const healthCheckBinding = lazyZodSchema(() => z.strictObject({ kind: z.literal('healthCheck') }));
+const domainBinding = lazyZodSchema(() => z.strictObject({ kind: z.literal('domain'), domainId: id, targetLinkId: id,
+    condition: z.enum(['domain_probe_failed', 'certificate_renewal_failed']) }));
+const environmentHealthBinding = lazyZodSchema(() => z.strictObject({ kind: z.literal('environmentHealth'), domainId: id, targetLinkId: id }));
 export const HealthCheckConditionBindingV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
-    z.strictObject({ kind: z.literal('healthCheck') }),
-    z.strictObject({ kind: z.literal('domain'), domainId: id, targetLinkId: id,
-        condition: z.enum(['domain_probe_failed', 'certificate_renewal_failed']) }),
-    z.strictObject({ kind: z.literal('environmentHealth'), domainId: id, targetLinkId: id }),
+    healthCheckBinding, domainBinding, environmentHealthBinding,
 ]));
 export type HealthCheckConditionBindingV1 = z.infer<typeof HealthCheckConditionBindingV1Schema>;
 
@@ -65,14 +73,55 @@ export const HealthCheckDefinitionV1Schema = lazyZodSchema(() => z.strictObject(
 }));
 export type HealthCheckDefinitionV1 = z.infer<typeof HealthCheckDefinitionV1Schema>;
 
+function hasConsistentChecks(source: Readonly<{ subject: z.infer<typeof HealthCheckSubjectV1Schema>;
+    checks: readonly Pick<HealthCheckDefinitionV1, 'checkId' | 'binding'>[] }>): boolean {
+    return new Set(source.checks.map(check => check.checkId)).size === source.checks.length
+        && (source.subject.kind === 'environment' || source.checks.every(check => check.binding.kind === 'healthCheck'));
+}
+
 /** Assignment stays on the existing Automation materialization, outside sourceConfig. */
 export const HealthCheckSourceConfigV1Schema = lazyZodSchema(() => z.strictObject({
     v: z.literal(1), subject: HealthCheckSubjectV1Schema,
     checks: z.array(HealthCheckDefinitionV1Schema).check(z.minLength(1)),
-}).check(z.refine(source => new Set(source.checks.map(check => check.checkId)).size === source.checks.length
-    && (source.subject.kind === 'environment' || source.checks.every(check => check.binding.kind === 'healthCheck')))));
+}).check(z.refine(hasConsistentChecks)));
 export type HealthCheckSourceConfigV1 = z.infer<typeof HealthCheckSourceConfigV1Schema>;
 export const HealthCheckSourceConfigV1ProtocolSchema = lazyDefinition(() => projectZodProtocolSchema(HealthCheckSourceConfigV1Schema));
+
+function setupCheck<const Kind extends HealthCheckKindV1, Config extends z.ZodMiniType>(kind: Kind, config: Config) {
+    return z.strictObject({ ...HealthCheckDefinitionV1Schema.shape,
+        kind: z.strictObject({ pluginId: z.literal(HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1), localId: z.literal(kind) }),
+        binding: healthCheckBinding, config });
+}
+
+function setupHttpCheck<const Kind extends 'http' | 'certificate'>(kind: Kind) {
+    return z.union([
+        setupCheck(kind, HealthCheckServiceHttpConfigV1Schema),
+        z.strictObject({ ...setupCheck(kind, HealthCheckDomainHttpConfigV1Schema).shape,
+            binding: z.union([domainBinding, environmentHealthBinding]) }),
+    ]);
+}
+
+const setupChecksByKind = lazyDefinition(() => ({
+    http: setupHttpCheck('http'),
+    certificate: setupHttpCheck('certificate'),
+    tcp: setupCheck('tcp', HealthCheckTcpConfigV1Schema),
+    dns: setupCheck('dns', HealthCheckDnsConfigV1Schema),
+    heartbeat: setupCheck('heartbeat', z.partial(HealthCheckHeartbeatConfigV1Schema, { webhookEndpointId: true })),
+} satisfies Record<HealthCheckKindV1, z.ZodMiniType>));
+
+/** Built-in authoring validates kind-specific input before endpoint enrollment.
+ * Saved sourceConfig remains open to installed qualified check kinds. */
+export const HealthCheckSetupInputV1Schema = lazyZodSchema(() => z.strictObject({
+    ...HealthCheckSourceConfigV1Schema.shape,
+    checks: z.array(z.union(HEALTH_CHECK_KINDS_V1.map(kind => setupChecksByKind[kind]))).check(z.minLength(1)),
+}).check(z.refine(hasConsistentChecks)));
+export type HealthCheckSetupInputV1 = z.infer<typeof HealthCheckSetupInputV1Schema>;
+export const HealthCheckSetupInputV1ProtocolSchema = lazyDefinition(() => projectZodProtocolSchema(HealthCheckSetupInputV1Schema));
+
+/** A renderer launch may contain only its prebound watched subject. */
+export const HealthCheckSetupDraftV1Schema = lazyZodSchema(() => z.partial(z.strictObject(HealthCheckSetupInputV1Schema.shape)));
+export type HealthCheckSetupDraftV1 = z.infer<typeof HealthCheckSetupDraftV1Schema>;
+export const HealthCheckSetupDraftV1ProtocolSchema = lazyDefinition(() => projectZodProtocolSchema(HealthCheckSetupDraftV1Schema));
 
 /** Threshold decisions belong to the observer; consumers receive only its
  * committed transition, never endpoint configuration or probe evidence. */
@@ -89,3 +138,23 @@ export const SavedHealthCheckSelectorV1Schema = lazyZodSchema(() => z.strictObje
 }));
 export type SavedHealthCheckSelectorV1 = z.infer<typeof SavedHealthCheckSelectorV1Schema>;
 export const SavedHealthCheckSelectorV1ProtocolSchema = lazyDefinition(() => projectZodProtocolSchema(SavedHealthCheckSelectorV1Schema));
+
+/**
+ * Loopback means "the Machine running the check". A check run anywhere but the
+ * watched service's own Machine would reach itself, so the saved-check producer
+ * refuses it; setup forms read the same rule before saving. Only the host-bearing
+ * kinds (TCP host, HTTP/certificate endpoint) can be refused, and only once the
+ * config parses.
+ */
+export function isHealthCheckLoopbackRefusedV1(input: Readonly<{
+    subject: z.infer<typeof HealthCheckSubjectV1Schema>; observerMachineId: string; kindLocalId: string; config: unknown;
+}>): boolean {
+    if (input.subject.kind !== 'machineService' || input.observerMachineId === input.subject.machineId) return false;
+    if (input.kindLocalId === 'tcp') {
+        const config = HealthCheckTcpConfigV1Schema.safeParse(input.config);
+        return config.success && isLoopbackHostname(config.data.host);
+    }
+    if (input.kindLocalId !== 'http' && input.kindLocalId !== 'certificate') return false;
+    const config = HealthCheckServiceHttpConfigV1Schema.safeParse(input.config);
+    return config.success && isLoopbackHostname(new URL(config.data.endpoint).hostname);
+}

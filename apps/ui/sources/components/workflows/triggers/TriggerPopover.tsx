@@ -4,6 +4,7 @@ import { StyleSheet } from 'react-native-unistyles';
 import type { JsonValue, TriggerTargetV1, WorkflowDefinitionV1 } from '@happier-dev/protocol';
 import { resolveEffectiveActionInputFields } from '@happier-dev/protocol/actions/actionInputHintsRuntime';
 import type { AutomationRunPluginEventTriggerEvidenceV1 } from '@happier-dev/protocol/automations/automationRunExecutionRecipeV1';
+import type { PluginUiOpenAutomationEventRequestV1 } from '@happier-dev/protocol/plugins/ui';
 
 import { RoundButton, RoundButtonSizeScope } from '@/components/ui/buttons/RoundButton';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
@@ -47,6 +48,7 @@ import {
     createDefaultThen,
     createDefaultWhen,
     type SessionTriggerWhenKind,
+    type ExecutableTriggerFormValue,
     type TriggerFormValue,
     type TriggerRunsIn,
     type TriggerThenValue,
@@ -102,6 +104,7 @@ type TriggerPopoverBaseProps = Readonly<{
     onHistory?: () => void;
     /** A new trigger's starting When (the "When this turn finishes…" entry binds it to that turn). */
     initialWhen?: TriggerWhenValue;
+    initialEventSeed?: PluginUiOpenAutomationEventRequestV1;
     /**
      * The Machine whose options an Action's fields and "A session…" read: the session's own Machine,
      * or the trigger set's Runs on Machine.
@@ -174,13 +177,14 @@ type TriggerPopoverWrite<Trigger> = Readonly<{
     trigger: Trigger;
     target: ReturnType<typeof buildTriggerTarget>;
     inputs: Readonly<Record<string, JsonValue>>;
+    observationOnly?: Readonly<{ kind: 'observationOnly' }>;
 }>;
 
 export type TriggerPopoverProps = TriggerPopoverBaseProps & (
     | Readonly<{ creatingSession?: false;
-        onSubmit: (value: TriggerFormValue, write: TriggerPopoverWrite<ReturnType<typeof buildTriggerDefinition>>) => Promise<void> }>
+        onSubmit: (value: ExecutableTriggerFormValue, write: TriggerPopoverWrite<ReturnType<typeof buildTriggerDefinition>>) => Promise<void> }>
     | Readonly<{ creatingSession: true; sessionId: null;
-        onSubmit: (value: TriggerFormValue, write: TriggerPopoverWrite<ReturnType<typeof buildInitialTriggerDefinition>>) => Promise<void> }>
+        onSubmit: (value: ExecutableTriggerFormValue, write: TriggerPopoverWrite<ReturnType<typeof buildInitialTriggerDefinition>>) => Promise<void> }>
 );
 
 /** The popover is exactly as wide as its content, so no empty band sits beside the rows (lab T1). */
@@ -307,16 +311,19 @@ export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
     const isNew = props.initial === null;
     const [when, setWhen] = React.useState<TriggerWhenValue>(() => props.initial?.when ?? props.initialWhen
         ?? createDefaultWhen(props.whenKinds[0] ?? 'turnEnds', props.pullRequestLinks));
+    const triggerScope = props.creatingSession ? 'session' : props.scope ?? (props.sessionId !== null ? 'session' : 'account');
+    const observationOnly = triggerScope === 'account' && props.showThen !== false && when.kind === 'pluginEvent'
+        ? when.observationOnly : undefined;
     const [then, setThen] = React.useState<TriggerThenValue>(() => props.initial?.then ?? createDefaultThen('sendPrompt'));
     const enabled = props.initial?.enabled ?? true;
     const [pending, setPending] = React.useState(false);
     const [failure, setFailure] = React.useState<string | null>(null);
     const [rawInputText, setRawInputText] = React.useState<Readonly<Record<string, string>>>({});
     const [examplesOpen, setExamplesOpen] = React.useState(false);
-    const [eventEditing, setEventEditing] = React.useState(false);
-    const workflow = useTriggerWorkflowDefinition(then.kind === 'runWorkflow' ? then.ref : null,
+    const [eventEditing, setEventEditing] = React.useState(Boolean(props.initialEventSeed));
+    const workflow = useTriggerWorkflowDefinition(!observationOnly && then.kind === 'runWorkflow' ? then.ref : null,
         props.libraryWorkflowsAvailable !== false, props.accountLifetime);
-    const inlineDefinition = then.kind === 'kept' && then.target.kind === 'inline' ? then.target.definition : null;
+    const inlineDefinition = !observationOnly && then.kind === 'kept' && then.target.kind === 'inline' ? then.target.definition : null;
     const inputFields = React.useMemo(() => projectWorkflowRunInputFields({
         inputs: inlineDefinition?.inputs ?? workflow.definition?.inputs ?? [],
         values: then.kind === 'runWorkflow' || then.kind === 'kept' ? then.inputs : {},
@@ -337,16 +344,16 @@ export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
     const trigger = props.manual || props.creatingSession ? null : buildTriggerDefinition({ when, enabled, sessionId: props.sessionId });
     const initialTrigger = props.creatingSession ? buildInitialTriggerDefinition({ when, enabled }) : null;
     const displayedTrigger = props.creatingSession ? initialTrigger : trigger;
-    const triggerScope = props.creatingSession ? 'session' : props.scope ?? (props.sessionId !== null ? 'session' : 'account');
     const sessionScoped = triggerScope === 'session';
     const showThen = props.showThen ?? true;
-    const target = showThen ? buildTriggerTarget(then, triggerScope) : null;
+    const needsTarget = showThen && !observationOnly;
+    const target = needsTarget ? buildTriggerTarget(then, triggerScope) : null;
     const promptDestination = useSessionReferenceTarget(
-        then.kind === 'sendPrompt' && then.runsIn?.kind === 'session' ? then.runsIn.sessionId : '', originServerId,
+        needsTarget && then.kind === 'sendPrompt' && then.runsIn?.kind === 'session' ? then.runsIn.sessionId : '', originServerId,
     );
     const unavailableWhen = props.unavailableKinds?.[when.kind];
-    const complete = (props.manual || displayedTrigger !== null) && (!showThen || (target !== null && !promptDestination.deleted)) && unavailableWhen === undefined
-        && props.hostComplete !== false && (!showThen || then.kind !== 'runWorkflow'
+    const complete = (props.manual || displayedTrigger !== null) && (!needsTarget || (target !== null && !promptDestination.deleted)) && unavailableWhen === undefined
+        && (observationOnly || props.hostComplete !== false) && (!needsTarget || then.kind !== 'runWorkflow'
             || (workflow.status === 'ready' && !inputFields.some((field) => field.blocking)))
         && (inlineDefinition === null || !inputFields.some((field) => field.blocking));
     const title = isNew
@@ -368,13 +375,13 @@ export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
 
     const submit = () => {
         if (!complete) return;
-        const inputs = then.kind === 'runWorkflow' || inlineDefinition !== null ? buildWorkflowRunStartInputs(inputFields) ?? {}
+        const inputs = observationOnly ? {} : then.kind === 'runWorkflow' || inlineDefinition !== null ? buildWorkflowRunStartInputs(inputFields) ?? {}
             : then.kind === 'kept' ? then.inputs : {};
         const submittedThen = then.kind === 'runWorkflow' || then.kind === 'kept' ? { ...then, inputs } : then;
         const value = { when, then: submittedThen, enabled };
         run(() => props.creatingSession
             ? props.onSubmit(value, { trigger: initialTrigger, target, inputs })
-            : props.onSubmit(value, { trigger, target, inputs }));
+            : props.onSubmit(value, { trigger, target, inputs, ...(observationOnly ? { observationOnly } : {}) }));
     };
 
     const whenItems: DropdownMenuItem[] = props.whenKinds.map((kind) => {
@@ -412,7 +419,7 @@ export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
         >
             {({ maxHeight, placement, presentation }) => eventEditing && when.kind === 'pluginEvent' ? (
                 <TriggerPluginEventRows testID={props.testID} when={when} onChange={setWhen}
-                    machineId={props.machineId ?? null} serverId={props.serverId ?? null}
+                    machineId={props.machineId ?? null} serverId={props.serverId ?? null} initialEventSeed={props.initialEventSeed}
                     eventEdit={props.eventEdit} activityEvent={props.activityEvent}
                     editing onEditingChange={setEventEditing} editorMaxHeight={maxHeight} />
             ) : (
@@ -498,7 +505,7 @@ export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
                             {!props.manual && when.kind === 'schedule' ? <ScheduleRows testID={props.testID} when={when} onChange={setWhen} /> : null}
                             {!props.manual && when.kind === 'pluginEvent' ? <TriggerPluginEventRows
                                 testID={props.testID} when={when} onChange={setWhen} machineId={props.machineId ?? null}
-                                serverId={props.serverId ?? null} eventEdit={props.eventEdit} activityEvent={props.activityEvent}
+                                serverId={props.serverId ?? null} eventEdit={props.eventEdit} activityEvent={props.activityEvent} initialEventSeed={props.initialEventSeed}
                                 onEditingChange={setEventEditing} /> : null}
                             {(when.kind === 'prComment' || when.kind === 'ciFailed') && props.sessionId !== null ? (
                                 <SessionTriggerPullRequestPicker
@@ -509,7 +516,7 @@ export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
                                 />
                             ) : null}
                             {props.setRows ?? null}
-                            {showThen ? (
+                            {needsTarget ? (
                                 <>
                                     <FieldSelect
                                         testID={`${props.testID}-then`}

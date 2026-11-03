@@ -7,7 +7,7 @@ import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/ca
 import { deriveAutomationManualOccurrenceKeyV1 } from '@happier-dev/protocol/automations/automationOccurrenceV1';
 import { normalizeAutomationTemplateEnvelopeStoredRead } from '@happier-dev/protocol/automations/automationTemplateEnvelope';
 import { parseAutomationStoredDefinitionExecutionRecipeV1, serializeAutomationRunExecutionRecipeV1 } from '@happier-dev/protocol/automations/automationRunExecutionRecipeV1';
-import { parseAutomationStoredWorkflowDefinitionRecipeV2 } from '@happier-dev/protocol/automations/automationWorkflowRecipeV2';
+import { parseAutomationObservationOnlyDefinitionV1, parseAutomationStoredWorkflowDefinitionRecipeV2 } from '@happier-dev/protocol/automations/automationWorkflowRecipeV2';
 import { automationReplyHandoffIdForRunV1 } from '@happier-dev/protocol/automations/automationReplyHandoffIdentityV1';
 import { type AutomationConversationScopedTriggerRefV1 } from '@happier-dev/protocol/automations/result-delivery';
 
@@ -55,7 +55,8 @@ export type AutomationRunAdmissionIneligibleReason =
     | "capacity"
     | "idempotencyKeyInvalid"
     | "featureDisabled"
-    | "definitionInvalid";
+    | "definitionInvalid"
+    | "observationOnly";
 
 export type AutomationRunAdmissionResult =
     | Readonly<{ kind: "admitted"; run: AutomationRunItem }>
@@ -332,6 +333,9 @@ function prepareAutomationRunAdmission(params: Readonly<{
     const automation = params.automationsById.get(params.request.automationId);
     if (!automation) return { kind: "ineligible", reason: "automationNotFound" };
     if (!automation.enabled) return { kind: "ineligible", reason: "automationDisabled" };
+    if (parseAutomationObservationOnlyDefinitionV1(automation.templateCiphertext) !== null) {
+        return { kind: "ineligible", reason: "observationOnly" };
+    }
     const assignmentMayBeFrozen = (assignment: AutomationAdmissionDefinition["assignments"][number]): boolean => {
         const availability = classifyMachineAvailabilityState(assignment.machine);
         return availability === "available"

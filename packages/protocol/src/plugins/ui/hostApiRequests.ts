@@ -77,6 +77,15 @@ import { PluginUiIconTokenV1Schema } from '../contributions/ui/tokens.js';
 export { PluginUiNewSessionSeedOriginV1Schema, StoredPluginUiNewSessionSeedOriginV1Schema,
   type PluginUiNewSessionSeedOriginV1 } from './newSessionSeedOrigin.js';
 
+/** Authoring intent only. Source setup and trigger writes still require explicit submission. */
+export const PluginUiOpenAutomationEventRequestV1Schema = lazyZodSchema(() => z.strictObject({
+  eventRef: asProtocolZod(PluginContributionIdentityV1Schema),
+  monitoringMachineId: z.optional(z.string().check(z.trim(), z.minLength(1))),
+  connectedAccount: z.optional(asProtocolZod(QualifiedConnectedAccountRefSchema)),
+  setupInput: z.record(z.string(), PluginUiJsonValueV1Schema),
+}));
+export type PluginUiOpenAutomationEventRequestV1 = z.infer<typeof PluginUiOpenAutomationEventRequestV1Schema>;
+
 export {
   PLUGIN_UI_INSTANCE_KEY_MAX_UTF8_BYTES_V1,
   PLUGIN_UI_LAUNCH_INPUT_MAX_UTF8_BYTES_V1,

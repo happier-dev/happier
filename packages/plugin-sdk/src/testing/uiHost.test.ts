@@ -1004,6 +1004,27 @@ describe('createPluginUiTestkit', () => {
         await fixture.dispose();
     });
 
+    it('lets an external plugin open the existing Event editor only when the host installs it', async () => {
+        const seed = { eventRef: { pluginId: 'com.acme.source', localId: 'review' }, monitoringMachineId: 'machine',
+            connectedAccount: { service: { pluginId: 'com.acme.source', localId: 'account' }, accountId: 'work' },
+            setupInput: { repository: 'acme/widgets' } };
+        const opened = vi.fn();
+        const createFixture = (installed: boolean) => createPluginUiTestkit({
+            identity, authorPlugin: { id: 'com.acme.external', version: '1.0.0' },
+            surface: { kind: 'author-surface' }, surfaceContext: initialSurface,
+            adapter: createSemanticAdapter().adapter,
+            handlers: installed ? { openAutomationEvent: async ({ request }) => { opened(request); } } : {},
+        });
+        const unavailable = await createFixture(false);
+        await expect(unavailable.context.hostApi.openAutomationEvent(seed)).rejects.toMatchObject({ code: 'unsupported_method' });
+        expect(opened).not.toHaveBeenCalled();
+        await unavailable.dispose();
+        const available = await createFixture(true);
+        await expect(available.context.hostApi.openAutomationEvent(seed)).resolves.toBeUndefined();
+        expect(opened).toHaveBeenCalledExactlyOnceWith(seed);
+        await available.dispose();
+    });
+
     it('routes canonical Connected Accounts navigation through the supplied host boundary', async () => {
         const controller = new AbortController();
         const openConnectedAccounts = vi.fn(async ({ request, signal }) => {

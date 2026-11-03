@@ -606,3 +606,16 @@ and Domain probe subject, and never cover certificate failures. An unavailable,
 uncertain, foreign-Account or settled operation supplies no explanation. This
 presentation changes neither the health observation nor server-followed presence,
 and creates no second notice or persisted expectation.
+
+## Saved watched-service checks
+
+Saved watched-service checks use the existing Automation Event authoring and
+materialization path. The plugin's setup opener carries the exact watched
+subject; the monitoring Machine is selected independently. Configure returns a
+source proposal, while the explicit Save writes its observation-only definition
+through the existing Automation writer and publishes its enabled state to the
+materialization owner. Before
+Save, a saved-check read correctly reports `source_unavailable`: a successful
+setup proposal alone is not a saved or enabled source. The Event declaration
+supplies observation-only intent for both new and edited checks; no recipe,
+execution assignment or separate health-check store is required.

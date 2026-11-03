@@ -1,7 +1,8 @@
 import * as React from 'react';
 import { AutomationEventTestResultV1Schema } from '@happier-dev/protocol/automations/automationEventTestV1';
-import { type AutomationEventTestResultV1 } from '@happier-dev/protocol';
+import { type AutomationEventTestResultV1 } from '@happier-dev/protocol/automations/automationEventTestV1';
 import type { AutomationRunPluginEventTriggerEvidenceV1 } from '@happier-dev/protocol/automations/automationRunExecutionRecipeV1';
+import type { PluginUiOpenAutomationEventRequestV1 } from '@happier-dev/protocol/plugins/ui';
 
 import { PluginEventAutomationEditor } from '@/components/automations/editor/PluginEventAutomationEditor';
 import { Item } from '@/components/ui/lists/Item';
@@ -31,6 +32,7 @@ export function TriggerPluginEventRows(props: Readonly<{
     editing?: boolean;
     onEditingChange?: (editing: boolean) => void;
     editorMaxHeight?: number;
+    initialEventSeed?: PluginUiOpenAutomationEventRequestV1;
 }>) {
     const [inlineEditing, setInlineEditing] = React.useState(false);
     const editing = props.editing ?? inlineEditing;
@@ -77,9 +79,11 @@ export function TriggerPluginEventRows(props: Readonly<{
             detail={readStatus === 'unavailable' ? t('common.retry') : undefined} showChevron={false} /></FloatingOverlay> : <PluginEventAutomationEditor
                 automationId={automationId ?? 'trigger-draft'} clientId={triggerId ?? 'event-draft'}
                 value={props.when.value} seed={needsSeed ? seedRead.seed : null} initialEventRef={eventRef ?? null}
-                authoringMachineId={props.machineId} serverId={props.serverId}
+                authoringMachineId={props.initialEventSeed ? props.initialEventSeed.monitoringMachineId ?? null : props.machineId} serverId={props.serverId}
+                initialSetupSeed={props.initialEventSeed}
+                observationOnly={props.when.observationOnly}
                 maxHeight={props.editorMaxHeight}
-                onComplete={(value) => { props.onChange({ kind: 'pluginEvent', value }); setEditing(false); }}
+                onComplete={(value, intent) => { props.onChange({ kind: 'pluginEvent', value, ...intent }); setEditing(false); }}
                 onCancel={() => setEditing(false)} /> : <Item testID={`${props.testID}-configure-event`}
                 title={t(props.when.value || props.eventEdit ? 'workflows.triggers.popover.editEvent' : 'workflows.triggers.popover.configureEvent')}
                 subtitle={eventRef ? <Text style={Typography.mono()}>{`${eventRef.pluginId}/${eventRef.localId}`}</Text> : undefined}

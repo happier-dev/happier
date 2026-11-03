@@ -37,7 +37,7 @@ import { AutomationTriggerIdSchema } from '@happier-dev/protocol/automations/aut
 import { AutomationOccurrenceEvidenceEqualityTagV1Schema, AutomationOccurrenceEvidenceV1ReadSchema, AutomationOccurrenceEvidenceV1Schema, deriveAutomationOccurrenceKeyV1 } from '@happier-dev/protocol/automations/automationOccurrenceV1';
 import { parseAutomationStoredDefinitionExecutionRecipeV1, serializeAutomationStoredDefinitionExecutionRecipeV1, parseAutomationRunExecutionRecipeV1, type AutomationStoredDefinitionExecutionRecipeV1 } from '@happier-dev/protocol/automations/automationRunExecutionRecipeV1';
 import { AutomationTemplatePayloadV1Schema } from '@happier-dev/protocol/automations/automationTemplatePayloadV1';
-import { parseAutomationStoredWorkflowDefinitionRecipeV2, serializeAutomationStoredWorkflowDefinitionRecipeV2, type AutomationStoredWorkflowDefinitionRecipeV2 } from '@happier-dev/protocol/automations/automationWorkflowRecipeV2';
+import { AutomationObservationOnlyDefinitionV1Schema, parseAutomationObservationOnlyDefinitionV1, parseAutomationStoredWorkflowDefinitionRecipeV2, serializeAutomationStoredWorkflowDefinitionRecipeV2, type AutomationObservationOnlyDefinitionV1, type AutomationStoredWorkflowDefinitionRecipeV2 } from '@happier-dev/protocol/automations/automationWorkflowRecipeV2';
 import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
 import { sealAutomationTriggerDefinitionStoredEnvelopeV1, openAutomationTriggerDefinitionStoredEnvelopeV1 } from '@happier-dev/protocol/automations/automationTriggerDefinitionStoredContent';
 import { parseAutomationRunFailureDetailStoredEnvelopeV1 } from '@happier-dev/protocol/automations/automationRunFailureDetailStoredContent';
@@ -202,7 +202,8 @@ function toCurrentAutomationDefinitionTargetType(
 async function normalizeCurrentAutomationDefinitionWriteTx(params: Readonly<{
     tx: Tx;
     accountId: string;
-    executionRecipe: AutomationStoredWorkflowDefinitionRecipeV2;
+    executionRecipe?: AutomationStoredWorkflowDefinitionRecipeV2;
+    observationOnly?: AutomationObservationOnlyDefinitionV1;
     expectedTemplateVersion: number;
 }>): Promise<CurrentAutomationDefinitionWrite> {
     const fence = await acquireAccountEncryptionTransitionFenceInTx(params.tx, params.accountId, "content");
@@ -211,6 +212,17 @@ async function normalizeCurrentAutomationDefinitionWriteTx(params: Readonly<{
     }
     if (fence.status === "account_inconsistent") {
         throw new Error("Account encryption state is inconsistent");
+    }
+
+    if (params.observationOnly !== undefined) {
+        const marker = AutomationObservationOnlyDefinitionV1Schema.safeParse(params.observationOnly);
+        if (!marker.success || params.executionRecipe !== undefined
+            || marker.data.templateVersion !== params.expectedTemplateVersion) {
+            throw new AutomationValidationError("Observation-only definition must match the next template version");
+        }
+        return { targetType: null, templateCiphertext: createCanonicalJsonSigningInput(marker.data),
+            managedTarget: { managedTargetIndexed: true, managedTargetHomeId: null, managedTargetManagedId: null },
+            accountMode: fence.account.currentness.encryptionMode };
     }
 
     const accountCurrentness = await fetchAutomationAccountCurrentnessWitnessTx(
@@ -253,6 +265,8 @@ async function normalizeCurrentAutomationDefinitionWriteTx(params: Readonly<{
 /** Trigger-set currentness shares the Definition revision, even without a recipe edit. */
 function advanceAutomationDefinitionRevision(existing: Pick<AutomationListItem, "templateVersion" | "templateCiphertext">) {
     const templateVersion = existing.templateVersion + 1;
+    const observationOnly = parseAutomationObservationOnlyDefinitionV1(existing.templateCiphertext);
+    if (observationOnly) return { templateVersion, templateCiphertext: createCanonicalJsonSigningInput({ ...observationOnly, templateVersion }) };
     const workflow = parseAutomationStoredWorkflowDefinitionRecipeV2(existing.templateCiphertext);
     const execution = parseAutomationStoredDefinitionExecutionRecipeV1(existing.templateCiphertext);
     const serialized = workflow.kind === "available"
@@ -996,7 +1010,9 @@ function automationMatchesCurrentCreateInput(
     existing: AutomationListItem,
     requested: AutomationCurrentUpsertInput,
 ): boolean {
-    const serialized = serializeAutomationStoredWorkflowDefinitionRecipeV2(requested.executionRecipe);
+    const serialized = requested.observationOnly !== undefined
+        ? { kind: "available" as const, serialized: createCanonicalJsonSigningInput(requested.observationOnly) }
+        : serializeAutomationStoredWorkflowDefinitionRecipeV2(requested.executionRecipe);
     if (serialized.kind !== "available") return false;
     if (
         existing.id !== requested.automationId
@@ -1641,6 +1657,14 @@ function assertAutomationDefinitionStoredContentForAccountMode(params: Readonly<
         }
     }
 
+    const observationOnly = parseAutomationObservationOnlyDefinitionV1(params.row.templateCiphertext);
+    if (observationOnly) {
+        if (params.row.targetType !== null || observationOnly.templateVersion !== params.row.templateVersion
+            || params.row.assignments.length > 0) {
+            throw new AutomationValidationError("Stored observation-only definition has an execution context or stale revision");
+        }
+        return;
+    }
     const workflow = parseAutomationStoredWorkflowDefinitionRecipeV2(params.row.templateCiphertext);
     if (workflow.kind === "available") {
         if (params.row.targetType !== null || workflow.recipe.templateVersion !== params.row.templateVersion) {
@@ -3147,6 +3171,7 @@ function readRetainedMigrationTemplateAdmission(params: Readonly<{
 }
 
 type AutomationMigrationTemplateClassification =
+    | Readonly<{ kind: "observationOnly"; definition: AutomationObservationOnlyDefinitionV1 }>
     | Readonly<{
         kind: "strict";
         recipe: AutomationStoredDefinitionExecutionRecipeV1;
@@ -3201,6 +3226,13 @@ function classifyAutomationMigrationTemplate(params: Readonly<{
     expectedTemplateVersion: number;
     toMode: "plain" | "e2ee";
 }>): AutomationMigrationTemplateClassification {
+    const observationOnly = parseAutomationObservationOnlyDefinitionV1(params.templateCiphertext);
+    if (observationOnly) {
+        if (params.row.targetType !== null || observationOnly.templateVersion !== params.expectedTemplateVersion + 1) {
+            throw new AutomationValidationError("Observation-only migration must preserve its next Definition revision");
+        }
+        return { kind: "observationOnly", definition: observationOnly };
+    }
     const workflow = parseAutomationStoredWorkflowDefinitionRecipeV2(params.templateCiphertext);
     if (workflow.kind === "available") {
         const nextTemplateVersion = params.expectedTemplateVersion + 1;
@@ -3273,6 +3305,15 @@ function assertAutomationMigrationSourcePreserved(params: Readonly<{
     sourceMode: "plain" | "e2ee";
     target: AutomationMigrationTemplateClassification;
 }>): void {
+    const observationOnly = parseAutomationObservationOnlyDefinitionV1(params.row.templateCiphertext);
+    if (params.target.kind === "observationOnly" || observationOnly) {
+        if (params.target.kind !== "observationOnly" || !observationOnly
+            || observationOnly.templateVersion !== params.expectedTemplateVersion) {
+            throw new AutomationValidationError("Account migration must preserve the observation-only Definition arm");
+        }
+        assertAutomationDefinitionStoredContentForAccountMode({ row: params.row, mode: params.sourceMode });
+        return;
+    }
     if (params.target.kind === "workflow") {
         assertAutomationDefinitionStoredContentForAccountMode({ row: params.row, mode: params.sourceMode });
         const source = parseAutomationStoredWorkflowDefinitionRecipeV2(params.row.templateCiphertext);
@@ -4212,6 +4253,16 @@ function readAutomationExistingSessionTargetId(
         : null;
 }
 
+function assertAutomationTriggerKindsForDefinition(
+    templateCiphertext: string,
+    triggerKinds: readonly (AutomationTriggerKind | undefined)[],
+): void {
+    if (parseAutomationObservationOnlyDefinitionV1(templateCiphertext) !== null
+        && triggerKinds.some(kind => kind !== "pluginEvent")) {
+        throw new AutomationValidationError("Observation-only definitions support plugin Event sources only");
+    }
+}
+
 async function normalizeAutomationTriggerWriteTx(params: Readonly<{
     tx: Tx;
     accountId: string;
@@ -4225,6 +4276,7 @@ async function normalizeAutomationTriggerWriteTx(params: Readonly<{
     existing?: AutomationTriggerItem | null;
     newbornSession?: AutomationSessionBirthContext;
 }>): Promise<NormalizedAutomationTriggerWrite> {
+    assertAutomationTriggerKindsForDefinition(params.automation.templateCiphertext, [params.input.kind]);
     const common = {
         enabled: params.input.enabled,
         deletedAt: null,
@@ -4622,7 +4674,15 @@ async function assertWorkflowTriggerContextTx(tx: Tx, params: Readonly<{
     enabled: boolean;
     assignments: readonly AutomationAssignmentInput[];
     existingAssignments?: AutomationListItem['assignments'];
+    observationOnly?: boolean;
 }>): Promise<void> {
+    if (params.observationOnly) {
+        if (params.targetType !== null || params.workflowDefinitionId !== null || params.scopeSessionId !== null
+            || params.assignments.length > 0) {
+            throw new AutomationValidationError("Observation-only definitions have no execution context");
+        }
+        return;
+    }
     if (params.targetType !== null) {
         if (params.workflowDefinitionId !== null || params.scopeSessionId !== null) {
             throw new AutomationValidationError("Workflow trigger context requires a workflow recipe");
@@ -4708,6 +4768,7 @@ export async function createAutomationInTx(tx: Tx, params: Readonly<{
             tx,
             accountId: params.accountId,
             executionRecipe: params.input.executionRecipe,
+            observationOnly: params.input.observationOnly,
             expectedTemplateVersion: 1,
         });
     } else {
@@ -4738,6 +4799,7 @@ export async function createAutomationInTx(tx: Tx, params: Readonly<{
     assertAutomationAssignmentLiveness({
         enabled: params.input.enabled,
         assignments: params.input.assignments ?? [],
+        observationOnly: parseAutomationObservationOnlyDefinitionV1(definition.templateCiphertext) !== null,
     });
     await assertWorkflowTriggerContextTx(tx, {
         accountId: params.accountId, targetType: definition.targetType,
@@ -4745,6 +4807,7 @@ export async function createAutomationInTx(tx: Tx, params: Readonly<{
         scopeSessionId: params.input.scopeSessionId ?? null,
         enabled: params.input.enabled,
         assignments: params.input.assignments ?? [],
+        observationOnly: parseAutomationObservationOnlyDefinitionV1(definition.templateCiphertext) !== null,
     });
 
     await validateExistingSessionAutomationTargetTx({
@@ -5017,6 +5080,7 @@ export async function updateAutomation(params: {
                 tx,
                 accountId: params.accountId,
                 executionRecipe: params.input.executionRecipe,
+                observationOnly: params.input.observationOnly,
                 expectedTemplateVersion: existing.templateVersion + 1,
             })
             : null;
@@ -5030,6 +5094,7 @@ export async function updateAutomation(params: {
         const effectiveTemplateCiphertext = currentDefinition?.templateCiphertext
             ?? legacyInput?.templateCiphertext
             ?? existing.templateCiphertext;
+        assertAutomationTriggerKindsForDefinition(effectiveTemplateCiphertext, existing.triggers.map(trigger => trigger.kind));
         // A retained predecessor template is a read compatibility shape, not
         // a new writer input. Derive its admission only from the exact loaded
         // row when a target-only edit revalidates that same stored byte string.
@@ -5117,6 +5182,7 @@ export async function updateAutomation(params: {
             enabled: effectiveEnabled,
             existingAssignments: existing.assignments,
             assignments: params.input.assignments ?? existing.assignments,
+            observationOnly: parseAutomationObservationOnlyDefinitionV1(effectiveTemplateCiphertext) !== null,
         });
         // Assignment-liveness against the exact post-patch set: a replacement
         // set when one is supplied, otherwise the loaded persisted set. Throws
@@ -5126,6 +5192,7 @@ export async function updateAutomation(params: {
         assertAutomationAssignmentLiveness({
             enabled: effectiveEnabled,
             assignments: params.input.assignments ?? existing.assignments,
+            observationOnly: parseAutomationObservationOnlyDefinitionV1(effectiveTemplateCiphertext) !== null,
         });
         const targetTypeChanged =
             inputSuppliesTarget
@@ -5406,13 +5473,16 @@ export async function reconcileAutomationDefinition(params: Readonly<{
         assertAutomationAssignmentLiveness({
             enabled: params.input.enabled,
             assignments: params.input.assignments,
+            observationOnly: params.input.observationOnly !== undefined
+                || (params.input.executionRecipe === undefined && parseAutomationObservationOnlyDefinitionV1(existing.templateCiphertext) !== null),
         });
 
-        const currentDefinition = params.input.executionRecipe
+        const currentDefinition = params.input.executionRecipe || params.input.observationOnly
             ? await normalizeCurrentAutomationDefinitionWriteTx({
                 tx,
                 accountId: params.accountId,
                 executionRecipe: params.input.executionRecipe,
+                observationOnly: params.input.observationOnly,
                 expectedTemplateVersion: existing.templateVersion + 1,
             })
             : null;
@@ -5434,6 +5504,9 @@ export async function reconcileAutomationDefinition(params: Readonly<{
             scopeSessionId: params.input.scopeSessionId === undefined
                 ? existing.scopeSessionId : params.input.scopeSessionId,
         };
+        assertAutomationTriggerKindsForDefinition(effectiveAutomation.templateCiphertext,
+            params.input.triggers.map(item => item.trigger?.kind
+                ?? existing.triggers.find(trigger => trigger.id === item.triggerId)?.kind));
         if (params.input.triggers.some((item) => item.kind === "existing"
             && existing.triggers.some((trigger) => trigger.id === item.triggerId
                 && (trigger.kind === "prComment" || trigger.kind === "ciFailed")
@@ -5451,6 +5524,7 @@ export async function reconcileAutomationDefinition(params: Readonly<{
             enabled: params.input.enabled,
             existingAssignments: existing.assignments,
             assignments: params.input.assignments,
+            observationOnly: parseAutomationObservationOnlyDefinitionV1(effectiveAutomation.templateCiphertext) !== null,
         });
         await validateExistingSessionAutomationTargetTx({
             tx,

@@ -1,3 +1,4 @@
+import { PluginUiOpenAutomationEventRequestV1Schema } from '@happier-dev/protocol/plugins/ui/client';
 import { PluginUiWidgetAreaRequestV1Schema, PluginUiWidgetAreaResultV1Schema, PluginUiWatchEntityDragDropRequestV1Schema, PluginUiEntityDragDropStateV1Schema, PLUGIN_UI_HOST_API_COMPATIBLE_RANGE_V1, PLUGIN_UI_HOST_API_VERSION_V1, PLUGIN_UI_HOST_API_WIRE_VERSION_V1, PLUGIN_UI_HOST_METHODS_V1, PluginUiReadEntityDragItemRequestV1Schema, PluginUiReadEntityDragItemResultV1Schema, PluginUiUpdateEntityDragDropRequestV1Schema, PluginUiUpdateEntityDragDropResultV1Schema, PluginUiAcquireComposerInputLockRequestV1Schema, PluginUiActiveComposerResultV1Schema, PluginUiApplyComposerRequestV1Schema, PluginUiFocusComposerRequestV1Schema, PluginUiInspectComposerContentRequestV1Schema, PluginUiJsonObjectV1Schema, PluginUiOpenNewSessionRequestV1Schema, PluginUiOpenConnectedAccountsRequestV1Schema, PluginUiReadComposerRequestV1Schema, PluginUiPickComposerMediaRequestV1Schema, PluginUiPublishCurrentUiContextRequestV1Schema, PluginUiReleaseComposerContentRequestV1Schema, PluginUiReplacePageLocationRequestV1Schema, PluginUiReplacePageLocationResultV1Schema, PluginUiSetComposerDecorationsRequestV1Schema, PluginUiWatchComposerRequestV1Schema, PluginUiReadSessionRequestV1Schema, PluginUiReadStoredImageRequestV1Schema, PluginUiReadStoredImageResultV1Schema, PluginUiReadSessionResultV1Schema, PluginUiRespondToSessionPermissionRequestV1Schema, PluginUiRespondToSessionPermissionResultV1Schema, PluginUiWatchSessionRequestV1Schema, PluginLiveStreamReferenceV1Schema, PluginUiLiveStreamViewingV1Schema, PluginUiExecuteActionRequestV1Schema, PluginUiHostApiRenderContextSnapshotV1Schema, PluginUiSelectActionInputRequestV1Schema, PluginUiSelectActionInputResultV1Schema, PluginUiEphemeralInputSettlementV1Schema, PluginUiSelectedActionInputCarrierV1Schema, PluginUiHostApiWireEnvelopeV1Schema, pluginUiHostApiWireIdentitiesEqual, PluginUiResourceSubscriptionEventV1Schema } from '@happier-dev/protocol/plugins/ui/client';
 import { ComposerDecorationResultV1Schema, ComposerFocusResultV1Schema, ComposerReadResultV1Schema, ComposerSnapshotV1Schema, ComposerTransactionResultV1Schema } from '@happier-dev/protocol/plugins/ui/composer';
 import { ComposerContentHandleV1Schema, ComposerContentInspectWireResultV1Schema } from '@happier-dev/protocol/runtime/input/composerContentV1';
@@ -906,6 +907,11 @@ export async function createPluginUiHostApiClientFromTransport(
                 }
             }
             return result.data;
+        },
+        openAutomationEvent: async (openRequest, requestOptions) => {
+            const payload = PluginUiOpenAutomationEventRequestV1Schema.safeParse(openRequest);
+            if (!payload.success) throw new PluginUiHostApiClientError('invalid_payload', 'Automation Event seed is invalid.');
+            await request('openAutomationEvent', payload.data, requestOptions?.signal);
         },
         openNewSession: async (openRequest, requestOptions) => {
             const payload = PluginUiOpenNewSessionRequestV1Schema.safeParse(openRequest);

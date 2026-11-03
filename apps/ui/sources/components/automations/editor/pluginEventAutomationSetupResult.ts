@@ -30,7 +30,8 @@ export function validatePluginEventAutomationSetupResult(params: Readonly<{
             compilePluginJsonSchema(source.sourceConfigSchema),
             result.data.sourceConfig,
         )
-            ? { kind: 'available', result: result.data }
+            ? { kind: 'available', result: source.observationOnly
+                ? { ...result.data, observationOnly: source.observationOnly } : result.data }
             : { kind: 'invalid' };
     } catch {
         // The daemon admission/schema parser should make this unreachable,

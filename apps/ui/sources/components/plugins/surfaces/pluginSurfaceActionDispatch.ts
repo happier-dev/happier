@@ -1,3 +1,4 @@
+import { createPluginOpenAutomationEventHandler } from './pluginOpenAutomationEventHostApi';
 import { executePreparedPluginSurfaceAction, type PluginSurfaceSpokenActionRequest } from './pluginSurfaceActionPreparation';
 import { getActionSpec, isPluginActionCallerPolicySatisfied, PluginInvocableActionIdSchema } from '@happier-dev/protocol/actions/actionSpecs';
 import { PLUGIN_ACTION_CURRENT_INTENT_REJECTED_CODE, PLUGIN_ACTION_OUTCOME_UNKNOWN_CODE, createPluginActionInvocation, createPluginActionPresentUserGate, pluginActionRequiresPresentUserIntent, type PluginActionCurrentIntentRequest, type PluginActionCurrentIntentResult } from '@happier-dev/protocol/plugins/actions/invocation';
@@ -104,6 +105,7 @@ import {
 } from './pluginSurfaceResourceWatch';
 import {
     createPluginSurfaceHostApiError,
+    createPluginSurfaceHostApiPluginErrorData,
     createPluginSurfaceHostApi,
     type PluginSurfaceHostApiHandlers,
     type PluginSurfaceHostApiMethodHandler,
@@ -737,7 +739,7 @@ function createClientActionUi(
         version: () => ({
             apiVersion: PLUGIN_UI_HOST_API_VERSION_V1,
             wireVersion: PLUGIN_UI_HOST_API_WIRE_VERSION_V1,
-            methods: ['context', 'executeAction', ...(authority && accountLifetime ? ['selectActionInput' as const, 'openNewSession' as const] : []),
+            methods: ['context', 'executeAction', ...(authority && accountLifetime ? ['selectActionInput' as const, 'openNewSession' as const] : []), ...(accountLifetime ? ['openAutomationEvent' as const] : []),
                 ...(selection.binding.openSurface ? ['openSurface' as const] : [])],
         }),
         context,
@@ -791,6 +793,14 @@ function createClientActionUi(
         },
         executeAction,
         openSurface: clientActionOpenSurface(selection, signal),
+        openAutomationEvent: async (request, options) => {
+            assertCurrent();
+            if (!accountLifetime) throw new PluginError({ code: 'plugin_action_automation_event_unavailable' });
+            const open = createPluginOpenAutomationEventHandler({ accountLifetime, lifetimeSignal: signal, isCurrent });
+            const result = await open(request, options);
+            const failure = readPluginSurfaceHostApiErrorPayload(result);
+            if (failure) throw new PluginError(createPluginSurfaceHostApiPluginErrorData(failure.code, failure.diagnostics, failure.message, failure));
+        },
         openNewSession: async (request, options) => {
             assertCurrent();
             if (!authority || !accountLifetime) throw new PluginError({ code: 'plugin_action_new_session_unavailable' });
@@ -2085,6 +2095,7 @@ export type PluginSurfaceMachineHostApiBindings = Readonly<{
     admissionMethods?: readonly PluginUiHostMethodV1[];
     selectActionInput?: PluginSurfaceHostApiMethodHandler;
     createOpenNewSession?: (executeSelectedOperation: PluginSurfaceHostApiMethodHandler) => PluginSurfaceHostApiMethodHandler;
+    openAutomationEvent?: PluginSurfaceHostApiMethodHandler;
 }>;
 
 export function createPluginSurfaceActionHostApi(input: Readonly<{
@@ -2107,6 +2118,7 @@ export function createPluginSurfaceActionHostApi(input: Readonly<{
     createOpenNewSession?: (
         executeSelectedOperation: PluginSurfaceHostApiMethodHandler,
     ) => PluginSurfaceHostApiMethodHandler;
+    openAutomationEvent?: PluginSurfaceHostApiMethodHandler;
     /**
      * The daemon binding for the resource snapshot authority (§3.6). Present
      * only when the mount can address a machine and a projected generation, so
@@ -2211,6 +2223,7 @@ export function createPluginSurfaceActionHostApi(input: Readonly<{
         allowPluginResources: input.resourceInvalidation?.allowPluginResources,
         admissionMethods: input.admissionMethods, selectActionInput: input.selectActionInput,
         createOpenNewSession: input.createOpenNewSession,
+        openAutomationEvent: input.openAutomationEvent,
     };
     const resourceWatch = (machineBindings.resource || input.hostResourceStore || input.readMachineBindings) && input.resourceInvalidation
         ? createPluginSurfaceResourceWatchHandlers({
@@ -2307,6 +2320,7 @@ export function createPluginSurfaceActionHostApi(input: Readonly<{
             ? { watchResource: resourceWatch.watchResource } : {}),
         ...(machine.selectActionInput ? { selectActionInput: machine.selectActionInput } : {}),
         ...(machine.createOpenNewSession ? { openNewSession: machine.createOpenNewSession(executeAction) } : {}),
+        ...(machine.openAutomationEvent ? { openAutomationEvent: machine.openAutomationEvent } : {}),
     });
     let machineHandlers = createMachineHandlers(machineBindings);
     const refreshMachineBindings = () => {

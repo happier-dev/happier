@@ -2,10 +2,23 @@ import 'fake-indexeddb/auto';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { WorkflowTriggerSetV1Schema, AutomationDefinitionCreateRequestSchema, AutomationDefinitionDetailSchema,
-    AutomationDefinitionListResponseSchema, AutomationDefinitionReconcileRequestSchema, AutomationStoredWorkflowDefinitionRecipeV2Schema,
-    sealEncryptedDataKeyEnvelopeV1, ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent,
-    WorkflowDefinitionArtifactHeaderV1Schema, WorkflowDefinitionArtifactBodyV1Schema, type AutomationDefinitionDetail } from '@happier-dev/protocol';
+import { WorkflowTriggerSetV1Schema} from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
+import { AutomationDefinitionCreateRequestSchema, AutomationDefinitionDetailSchema,
+    AutomationDefinitionListResponseSchema, AutomationDefinitionReconcileRequestSchema, type AutomationDefinitionDetail } from '@happier-dev/protocol/automations/automationApiV3';
+import { AutomationStoredWorkflowDefinitionRecipeV2Schema,
+    AutomationStoredWorkflowDefinitionV2Schema} from '@happier-dev/protocol/automations/automationWorkflowRecipeV2';
+import {
+    sealEncryptedDataKeyEnvelopeV1} from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
+import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent} from '@happier-dev/protocol/storage/artifactStoredContent';
+import {
+    WorkflowDefinitionArtifactHeaderV1Schema, WorkflowDefinitionArtifactBodyV1Schema} from '@happier-dev/protocol/workflows/workflowDefinitionV1';
+import { AutomationTriggerDetailSchema} from '@happier-dev/protocol/automations/automationTriggerProjectionV1';
+import {
+    sealAutomationTriggerDefinitionStoredEnvelopeV1} from '@happier-dev/protocol/automations/automationTriggerDefinitionStoredContent';
+import { AutomationTriggerIdSchema} from '@happier-dev/protocol/automations/automationTriggerIdentity';
+import {
+    type AutomationTriggerDefinitionInput} from '@happier-dev/protocol/automations/automationTriggerDefinition';
+import { AutomationSourceSelectorIdV1Schema } from '@happier-dev/protocol/automations/automationEventJsonBoundsV1';
 import { createDeferred, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, createAccountTokenForTests, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
@@ -55,6 +68,25 @@ function trigger(id: string, hour = 9) {
         triggerDefinitionEnvelope: null, nextRunAt: null,
         schedule: { kind: 'cron', scheduleExpr: `0 ${hour} * * *`, everyMs: null, timezone: null } };
 }
+// The HTTP boundary persists private Event fields in the same revision-bound
+// envelope consumed by the real Account host and editor reader.
+function storedTrigger(automationId: string, id: string, revision: number, value: AutomationTriggerDefinitionInput,
+    previous?: AutomationDefinitionDetail['triggers'][number]) {
+    if (value.kind !== 'pluginEvent') return AutomationTriggerDetailSchema.parse({ ...value, id, revision,
+        createdAt: 1, updatedAt: 1, nextRunAt: null, triggerDefinitionEnvelope: null });
+    if (!('sourceInstanceId' in value) || value.observationTransport.kind === 'durablePush') throw new Error('Expected plain watcher fixture');
+    const sourceSelectorId = previous?.kind === 'pluginEvent' ? previous.sourceSelectorId : crypto.randomUUID();
+    return AutomationTriggerDetailSchema.parse({ id, revision, enabled: value.enabled, createdAt: 1, updatedAt: 1,
+        kind: 'pluginEvent', eventRef: value.eventRef, sourceSelectorId, sourceContractVersion: value.sourceContractVersion,
+        observation: { kind: value.observationTransport.kind,
+            watcher: { ...value.observationTransport.watcherMaterializationRef, machineInstallationId: 'observer-installation' } },
+        sourceStatus: null, sourceCatalogStatus: null,
+        triggerDefinitionEnvelope: JSON.stringify(sealAutomationTriggerDefinitionStoredEnvelopeV1({ mode: 'plain',
+            binding: { v: 1, automationId, triggerId: AutomationTriggerIdSchema.parse(id), triggerRevision: revision,
+                triggerKind: 'pluginEvent', eventRef: value.eventRef, sourceSelectorId: AutomationSourceSelectorIdV1Schema.parse(sourceSelectorId) },
+            definition: { v: 1, sourceInstanceId: value.sourceInstanceId, sourceConfig: value.sourceConfig,
+                displayLabel: value.displayLabel, filter: value.filter, maximumObservationAgeMs: value.maximumObservationAgeMs } })) });
+}
 function fixture(legacy = false, triggers = [trigger('t1')]) {
     return WorkflowTriggerSetV1Schema.parse({ automationId: 'digest', revision: 1, enabled: true,
         health: 'available', project, ...(legacy ? { legacy: { editable: false, reason: 'created_in_0_2' } } : {}),
@@ -97,11 +129,14 @@ function installRow(id: string) {
             workflowDefinitionId: input.workflowDefinitionId === undefined ? current.workflowDefinitionId : input.workflowDefinitionId,
             targetType: input.executionRecipe ? null : current.targetType, existingSessionId: input.executionRecipe ? null : current.existingSessionId,
             executionRecipe: input.executionRecipe ?? current.executionRecipe,
+            ...(current.observationOnly ? { observationOnly: { ...current.observationOnly, templateVersion: current.templateVersion + 1 } } : {}),
             assignments: input.assignments.map(value => ({ ...value, enabled: value.enabled ?? true, priority: value.priority ?? 0, updatedAt: 1 })),
             triggers: input.triggers.map(value => {
                 if (value.kind === 'new') throw new Error('Account edit fixture retains existing schedules');
                 const trigger = current.triggers.find(candidate => candidate.id === value.triggerId);
                 if (!trigger || trigger.revision !== value.expectedRevision) throw new Error('Trigger CAS fixture mismatch');
+                if (value.trigger?.kind === 'pluginEvent') return storedTrigger(id, trigger.id, trigger.revision + 1,
+                    { ...value.trigger, enabled: value.enabled ?? trigger.enabled }, trigger);
                 return { ...trigger, ...(value.trigger ?? {}), ...(value.enabled === undefined ? {} : { enabled: value.enabled }),
                     revision: trigger.revision + (value.trigger || value.enabled !== undefined ? 1 : 0) };
             }) });
@@ -165,10 +200,9 @@ beforeEach(async () => {
             description: input.description ?? null, enabled: input.enabled, templateVersion: 1,
             workflowDefinitionId: input.workflowDefinitionId ?? null, scopeSessionId: input.scopeSessionId ?? null,
             targetType: null, existingSessionId: null, lastRunAt: null, createdAt: 1, updatedAt: 1,
-            executionRecipe: input.executionRecipe, assignments: input.assignments?.map(value => ({ ...value,
+            executionRecipe: input.executionRecipe, observationOnly: input.observationOnly, assignments: input.assignments?.map(value => ({ ...value,
                 enabled: value.enabled ?? true, priority: value.priority ?? 0, updatedAt: 1 })) ?? [],
-            triggers: input.triggers.map(value => ({ ...value.trigger, id: value.triggerId, revision: 1,
-                createdAt: 1, updatedAt: 1, nextRunAt: null, triggerDefinitionEnvelope: null })) });
+            triggers: input.triggers.map(value => storedTrigger(input.automationId, value.triggerId, 1, value.trigger)) });
         rows = [...rows, row];
         installRow(row.id);
         return { body: row };
@@ -222,6 +256,84 @@ async function confirmAction(screen: Awaited<ReturnType<typeof renderAccountScre
 }
 
 describe('Account trigger editing', () => {
+    it.each(['account', 'activity'] as const)('stores and reopens Inbox-only source enrollment from %s without a Project or executable target', async (entry) => {
+        const { AutomationTriggerDefinitionInputSchema } = await import('@happier-dev/protocol/automations/automationTriggerDefinition');
+        const { AutomationRunPluginEventTriggerEvidenceV1Schema } = await import('@happier-dev/protocol/automations/automationRunExecutionRecipeV1');
+        const { TriggerFromActivityEvent } = await import('./TriggerFromActivityEvent');
+        const { PluginEventAutomationEditor } = await import('@/components/automations/editor/PluginEventAutomationEditor');
+        const source = AutomationTriggerDefinitionInputSchema.parse({ kind: 'pluginEvent', enabled: true,
+            eventRef: { pluginId: 'acme.monitor', localId: 'issue-transition' }, sourceInstanceId: 'project:42',
+            sourceContractVersion: 1, sourceConfig: { project: '42' }, displayLabel: 'Production issues', filter: null,
+            maximumObservationAgeMs: null, observationTransport: { kind: 'checkpointedPull', watcherMaterializationRef: {
+                machineId: 'observer-machine', pluginId: 'acme.monitor', materializationId: 'monitor-1',
+            } } });
+        if (source.kind !== 'pluginEvent' || !('sourceInstanceId' in source)) throw new Error('Expected configured source');
+        const evidence = AutomationRunPluginEventTriggerEvidenceV1Schema.parse({ v: 1, kind: 'pluginEvent', eventRef: source.eventRef,
+            sourceSelectorId: '11111111-1111-4111-8111-111111111111', occurrenceId: 'issue-1', occurredAt: 100,
+            sourceInstanceId: source.sourceInstanceId, sourceContractVersion: 1, observationReceivedAt: 100,
+            payload: {}, filter: { version: null, result: 'matched' } });
+        const screen = await renderAccountScreen(entry === 'account'
+            ? <NewAccountTriggerPopover anchorRef={React.createRef()} onRequestClose={() => undefined}
+                eventSeed={{ eventRef: source.eventRef, setupInput: { project: '42' } }} />
+            : <TriggerFromActivityEvent evidence={evidence} />);
+        if (entry === 'activity') await screen.pressByTestIdAsync('automation-run-event-create-trigger');
+        if (entry === 'account') {
+            // Configure's validated output enters its real completion callback;
+            // Save admission, Action dispatch and the HTTP persistence boundary stay real.
+            await act(async () => {
+                screen.findByType(PluginEventAutomationEditor).props.onComplete(source,
+                    { observationOnly: { kind: 'observationOnly' } });
+            });
+            expect(screen.findByTestId('workflows-column-new-trigger-popover-then')).toBeNull();
+            await screen.pressByTestIdAsync('workflows-column-new-trigger-popover-submit');
+            await waitForHomeGovernance(() => expect(rows).toHaveLength(1));
+        } else {
+            let operation!: Promise<void>;
+            await act(async () => {
+                operation = screen.findByType(TriggerPopover).props.onSubmit({ enabled: true,
+                    when: { kind: 'pluginEvent', value: source, observationOnly: { kind: 'observationOnly' } },
+                    then: { kind: 'sendPrompt', prompt: '' } }, {
+                    target: null, trigger: source, inputs: {}, observationOnly: { kind: 'observationOnly' },
+                });
+            });
+            await act(async () => { await operation; });
+        }
+        expect(rows).toHaveLength(1);
+        expect(rows[0]?.observationOnly).toEqual({ kind: 'observationOnly', templateVersion: 1 });
+        expect(rows[0]?.executionRecipe).toBeUndefined();
+        expect(rows[0]?.assignments).toEqual([]);
+        const { createAutomationDefinitionFromDetail } = await import('@/sync/domains/automations/automationDefinitionProjection');
+        const { readPluginEventAutomationEditSeed } = await import('@/sync/domains/automations/pluginEventAutomationEditSeed');
+        const saved = rows[0]!;
+        expect(readPluginEventAutomationEditSeed(createAutomationDefinitionFromDetail(saved), saved.triggers[0]!.id,
+            { mode: 'plain' })).toMatchObject({ source: { observationOnly: { kind: 'observationOnly' },
+                sourceConfig: source.sourceConfig }, observation: { kind: 'checkpointedPull',
+                watcherMaterializationRef: source.observationTransport.kind === 'checkpointedPull' ? source.observationTransport.watcherMaterializationRef : null } });
+        const id = rows[0]!.id;
+        await screen.unmount();
+
+        const reopened = await renderAccountScreen(<AccountTriggersSection />);
+        await waitForHomeGovernance(() => expect(reopened.findByTestId(`workflows-column:trigger:${id}`)).not.toBeNull());
+        await reopened.pressByTestIdAsync(`workflows-column:trigger:${id}`);
+        const editor = reopened.findByType(TriggerPopover);
+        expect(editor.props.initial).toMatchObject({ kind: 'observationOnly', when: {
+            kind: 'pluginEvent', observationOnly: { kind: 'observationOnly' }, eventRef: source.eventRef,
+        } });
+        let update!: Promise<void>;
+        await act(async () => {
+            update = editor.props.onSubmit({ enabled: true, when: { kind: 'pluginEvent', value: source,
+                observationOnly: { kind: 'observationOnly' } }, then: { kind: 'sendPrompt', prompt: '' } }, {
+                trigger: { ...source, displayLabel: 'Edited issues' }, target: null, inputs: {}, observationOnly: { kind: 'observationOnly' },
+            });
+        });
+        await act(async () => { await update; });
+        expect(rows[0]?.observationOnly).toEqual({ kind: 'observationOnly', templateVersion: 2 });
+        expect(rows[0]?.executionRecipe).toBeUndefined();
+        expect(rows[0]?.assignments).toEqual([]);
+        expect(writes().at(-1)?.triggers[0]).toMatchObject({ kind: 'existing', triggerId: rows[0]?.triggers[0]?.id });
+    });
+
+
     it('settles acknowledged trigger creation while the unrelated Automation listing refresh is pending', async () => {
         const { TokenStorage } = await import('@/auth/storage/tokenStorage');
         const credentials = await TokenStorage.getCredentialsForServerUrl(getActiveServerSnapshot().serverUrl);

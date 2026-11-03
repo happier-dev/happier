@@ -1,4 +1,5 @@
 import * as React from 'react';
+import type { PluginUiOpenAutomationEventRequestV1 } from '@happier-dev/protocol/plugins/ui';
 
 import type { AutomationEventFilterV1 } from '@happier-dev/protocol/automations/automationEventFilterV1';
 import type { DaemonContributionRegistryProjectionAutomationEligibleEventV1, PluginProjectionInstalledPackageV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
@@ -242,6 +243,7 @@ export function usePluginEventAutomationComposer(params: Readonly<{
     projectionInputs: DaemonMergedProjectionInputs | null;
     initialEditSeed?: PluginEventAutomationEditSeed | null;
     initialEventRef?: Readonly<{ pluginId: string; localId: string }> | null;
+    initialSetupSeed?: PluginUiOpenAutomationEventRequestV1;
 }>): PluginEventAutomationComposerModel {
     const accountLifetime = captureActiveServerAccountScopeLifetime();
     const { executeValue: executeWebhookAction } = useMountedActionExecution(accountLifetime?.scope, { openOnRequest: true });
@@ -249,6 +251,7 @@ export function usePluginEventAutomationComposer(params: Readonly<{
     const classifyRelease = useActivePluginAccountAvailabilityReleaseClassifier();
     const machineSnapshots = useAllProfileMachineInventorySnapshots();
     const initialEditSeed = params.initialEditSeed ?? null;
+    const initialEventRef = params.initialEventRef ?? params.initialSetupSeed?.eventRef ?? null;
     const [selectedEvent, setSelectedEvent] = React.useState<DaemonContributionRegistryProjectionAutomationEligibleEventV1 | null>(null);
     const selectedEventRef = React.useRef(selectedEvent);
     selectedEventRef.current = selectedEvent;
@@ -526,8 +529,8 @@ export function usePluginEventAutomationComposer(params: Readonly<{
     }, [eligibleEvents]);
 
     const appliedActivityIntentRef = React.useRef(false);
-    const initialEventPluginId = params.initialEventRef?.pluginId;
-    const initialEventLocalId = params.initialEventRef?.localId;
+    const initialEventPluginId = initialEventRef?.pluginId;
+    const initialEventLocalId = initialEventRef?.localId;
     React.useEffect(() => {
         if (initialEditSeed || appliedActivityIntentRef.current || !initialEventPluginId || !initialEventLocalId
             || eventCatalogStatus !== 'ready') return;
@@ -555,6 +558,20 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         setWebhookEndpoint(null);
         advanceRevision();
     }, []);
+
+    const appliedWatcherSeed = React.useRef(false);
+    React.useEffect(() => {
+        const seed = params.initialSetupSeed;
+        if (!seed?.monitoringMachineId || !selectedEvent || initialEditSeed || appliedWatcherSeed.current || selectedWatcherOrigin
+            || !arePluginContributionIdentitiesEqual(seed.eventRef, selectedEvent.event.identity)) return;
+        const candidates = watcherCandidates.filter(candidate =>
+            candidate.materialization.machineId === seed.monitoringMachineId
+            && isPluginMachineExecutionOriginCandidateSelectable(candidate));
+        if (candidates.length === 1) {
+            selectWatcher(candidates[0]!);
+            appliedWatcherSeed.current = true;
+        }
+    }, [initialEditSeed, params.initialSetupSeed, selectedEvent, selectedWatcherOrigin, selectWatcher, watcherCandidates]);
 
     const resolveExecutionOrigin = React.useCallback(() => {
         const event = selectedEventRef.current;
@@ -783,6 +800,8 @@ export function usePluginEventAutomationComposer(params: Readonly<{
             setWebhookEndpoint(null);
             const configured = await configurePluginEventAutomationSetup({
                 eligibleEvent: currentEvent,
+                ...(params.initialSetupSeed && arePluginContributionIdentitiesEqual(params.initialSetupSeed.eventRef, currentEvent.event.identity)
+                    ? { initialSetupSeed: params.initialSetupSeed } : {}),
                 observationTransport: effectiveObservationTransport,
                 filter: filter.value,
                 maximumObservationAgeMs: maximumObservationAgeMs.value,
@@ -832,6 +851,7 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         maximumObservationAgeMs.value,
         resolveExecutionOrigin,
         setupScope,
+        params.initialSetupSeed,
     ]);
 
     const webhookEndpointId = webhookEndpoint?.webhookEndpointId ?? null;

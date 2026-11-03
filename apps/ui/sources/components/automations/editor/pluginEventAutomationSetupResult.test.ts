@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
     DaemonContributionRegistryProjectionAutomationEligibleEventV1Schema,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 
 import { validatePluginEventAutomationSetupResult } from './pluginEventAutomationSetupResult';
 
@@ -55,6 +55,17 @@ const eligibleEvent = DaemonContributionRegistryProjectionAutomationEligibleEven
 });
 
 describe('Plugin Event Automation setup-result validation', () => {
+    it('derives observation-only intent from the Event declaration for new and edited sources', () => {
+        const event = DaemonContributionRegistryProjectionAutomationEligibleEventV1Schema.parse({ ...eligibleEvent,
+            event: { ...eligibleEvent.event, automation: { ...eligibleEvent.event.automation,
+                source: { ...eligibleEvent.event.automation.source, observationOnly: { kind: 'observationOnly' } } } } });
+        for (const source of [{}, { observationOnly: { kind: 'observationOnly' } }]) {
+            expect(validatePluginEventAutomationSetupResult({ eligibleEvent: event,
+                result: { v: 1, sourceInstanceId: 'repository:42', sourceContractVersion: 3,
+                    sourceConfig: { repositoryId: '42' }, displayLabel: 'acme/widgets', ...source },
+            })).toMatchObject({ kind: 'available', result: { observationOnly: { kind: 'observationOnly' } } });
+        }
+    });
     it('accepts only the selected Event declaration contract before the Automation writer', () => {
         expect(validatePluginEventAutomationSetupResult({
             eligibleEvent,

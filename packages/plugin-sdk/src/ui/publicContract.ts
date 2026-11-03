@@ -1,3 +1,4 @@
+import type { PluginUiOpenAutomationEventRequestV1 as ProtocolPluginUiOpenAutomationEventRequestV1 } from '@happier-dev/protocol/plugins/ui/client';
 import type { InboxItemAttentionTypeV1 as DtoInboxItemAttentionTypeV1, PluginUiToneV1 as DtoPluginUiToneV1, PluginUiAttachmentToneV1 as DtoPluginUiAttachmentToneV1, PluginUiIconTokenV1 as DtoPluginUiIconTokenV1 } from '../actions/dtos/actionDeclarativeNodeDto.generated.js';
 import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 import type { ProjectKeyV1, SessionServerStartSpawnDraftV1 } from '../sessions/authoring.js';
@@ -907,3 +908,6 @@ export type PublicToolchainCompatibilityV1 = {
 export type PluginLiveStreamReferenceV1 =
     | Readonly<{ kind: 'plugin'; source: Readonly<{ pluginId: string; localId: string }> }>
     | Readonly<{ kind: 'host'; sourceId: string }>;
+
+/** Canonical Protocol projection; no independent author wire shape. */
+export type PluginUiOpenAutomationEventRequestV1 = DeepReadonly<ProtocolPluginUiOpenAutomationEventRequestV1>;

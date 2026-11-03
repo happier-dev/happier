@@ -1,3 +1,4 @@
+import { PluginUiJsonValueV1Schema, type PluginUiOpenAutomationEventRequestV1 } from '@happier-dev/protocol/plugins/ui';
 import { arePluginMachineExecutionOriginsEqual, getPluginMachineExecutionOriginRef } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 import type { AutomationEventFilterV1 } from '@happier-dev/protocol/automations/automationEventFilterV1';
 import type { DaemonContributionRegistryProjectionAutomationEligibleEventV1 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
@@ -217,6 +218,7 @@ function resolveCurrentSetupSnapshot(params: Readonly<{
  * collection, and the canonical surface dispatcher owns invocation.
  */
 export async function configurePluginEventAutomationSetup(params: Readonly<{
+    initialSetupSeed?: PluginUiOpenAutomationEventRequestV1;
     eligibleEvent: DaemonContributionRegistryProjectionAutomationEligibleEventV1;
     /**
      * The transport the author chose. Durable push additionally ensures the
@@ -243,6 +245,7 @@ export async function configurePluginEventAutomationSetup(params: Readonly<{
         serverId: string | null;
         accountLifetime: ActiveServerAccountScopeLifetime;
         signal?: AbortSignal;
+        launchInput?: import('@happier-dev/protocol/plugins/ui').PluginUiLaunchInputV1;
     }>) => Promise<PluginEventAutomationSetupSurfaceSettlement>;
     dispatch?: PluginContributedActionDispatch;
 }>): Promise<SetupOutcome> {
@@ -291,6 +294,9 @@ export async function configurePluginEventAutomationSetup(params: Readonly<{
     try {
         const initial = await load(currentOrigin);
         if ('kind' in initial) return initial;
+        const seed = params.initialSetupSeed;
+        if (seed && (!arePluginContributionIdentitiesEqual(seed.eventRef, initial.event.event.identity)
+            || (seed.monitoringMachineId !== undefined && seed.monitoringMachineId !== initial.origin.machineTarget.target.machineId))) return { kind: 'unavailable', reason: 'invalid_seed' };
         actionSnapshotRef.current = initial.actionSnapshot;
         const controller = createPluginContributedActionController({
             resolveCurrent: () => actionSnapshotRef.current,
@@ -302,11 +308,17 @@ export async function configurePluginEventAutomationSetup(params: Readonly<{
         const selection = await controller.selectExactBoundActionInput({
             action: initial.event.setupAction.identity,
             expectedOccurrenceId: initial.event.setupAction.occurrenceId,
+            ...(seed ? { draft: seed.setupInput, connectedAccount: seed.connectedAccount, allowSchemaDeclaredDraftFields: true } : {}),
         });
         const settled = selection.kind === 'form'
             ? await (async () => {
                 try {
                     if (initial.event.setupSurface?.selectedRenderer.availability.state === 'available') {
+                        const initialInput = seed ? PluginUiJsonValueV1Schema.safeParse(selection.form.getInput()) : null;
+                        if (initialInput && !initialInput.success) {
+                            selection.form.cancel();
+                            return { kind: 'unavailable', reason: 'invalid_input' } as const;
+                        }
                         const surfaceSettlement = await (
                             params.presentSetupSurface ?? presentPluginEventAutomationSetupSurface
                         )({
@@ -315,6 +327,10 @@ export async function configurePluginEventAutomationSetup(params: Readonly<{
                             machineId: initial.origin.machineTarget.target.machineId,
                             serverId: initial.origin.machineTarget.serverId,
                             accountLifetime: params.accountLifetime,
+                            launchInput: {
+                                observerMachineId: initial.origin.machineTarget.target.machineId,
+                                ...(initialInput?.success ? { initialInput: initialInput.data } : {}),
+                            },
                             ...(operationScope.signal ? { signal: operationScope.signal } : {}),
                         });
                         if (surfaceSettlement.kind === 'cancelled') {
@@ -326,7 +342,7 @@ export async function configurePluginEventAutomationSetup(params: Readonly<{
                             selection.form.cancel();
                             return { kind: 'unavailable', reason: 'invalid_input' } as const;
                         }
-                        selection.form.replaceInput(candidate);
+                        selection.form.replaceInput(seed ? { ...selection.form.getInput(), ...candidate } : candidate);
                         const submitted = await selection.form.submit();
                         if (submitted.kind !== 'settled' || !submitted.outcome.ok) {
                             selection.form.cancel();
