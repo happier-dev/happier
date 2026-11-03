@@ -2,8 +2,7 @@ import * as React from 'react';
 import { readCurrentPluginUiRendererProjection, resolveBundledPluginUiRendererArtifact } from '@/sync/domains/plugins/availability/bundledPluginUiRendererArtifact';
 import { cloneStrictPluginJsonValue } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import { ActionApprovalPendingNotice } from '@/components/approvals/ActionApprovalPendingNotice';
-import { useActionApprovalContinuation } from '@/components/approvals/useActionApprovalContinuation';
-import { scopedHomeActionExecutor } from '@/sync/ops/actions/scopedHomeActionExecutor';
+import { usePluginSurfaceActionApproval } from './usePluginSurfaceActionApproval';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { useFindSurfaceRegistrationHost } from '@/keyboard/KeyboardShortcutProvider';
 import { useWidgetPresentation } from '@happier-dev/plugin-ui';
@@ -22,7 +21,6 @@ import { useSurfaceStateCardSize, useSurfaceStateQuietActions } from '@/componen
 import { useWidgetFrameHeaderBinding } from '@/components/widgets/frame/widgetFrameHeaderBinding';
 import { StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
-import { buildApprovalHref } from '@/components/approvals/approvalNavigation';
 import { useUnistyles } from 'react-native-unistyles';
 import { useGlassMaterialColorResolver } from '@/components/ui/glass/useGlassSurfaceColor';
 import { useContainingGlassSurfaceGroup } from '@/components/ui/glass/GlassSurface';
@@ -3419,31 +3417,12 @@ function PluginSurfaceHostMount(props: Readonly<(
             },
         });
     }, [accountLifetime, baseCreateMountedHostApiHandlers, controllerFacts.sessionId, currentUiContextMountPublisher, entityDragMountKey, entityDragRuntime, mountedPluginId]);
-    const pluginActionApproval = useActionApprovalContinuation({
+    const { approval: pluginActionApproval, pendingApproval, execute: defaultPluginActionExecute } = usePluginSurfaceActionApproval({
+        accountLifetime,
         scopeKey: JSON.stringify([accountLifetime?.scope ?? null, mountedSurfaceId, surfaceTargetAuthorityKey, props.mountInstanceKey ?? null]),
-        serverId: accountLifetime?.scope.serverId ?? serverId ?? '',
-        onExecuted: () => {},
+        serverId,
+        hasCustomExecutor: Boolean(controllerBindingWithConnectedAccounts.executeHostAction),
     });
-    const requestPluginActionApproval = pluginActionApproval.requestApproval;
-    const pendingApproval = React.useMemo(() => pluginActionApproval.approvalPending && pluginActionApproval.approvalId
-        ? { artifactId: pluginActionApproval.approvalId,
-            href: buildApprovalHref(pluginActionApproval.approvalId, accountLifetime?.scope.serverId ?? serverId ?? '') }
-        : null, [pluginActionApproval.approvalPending, pluginActionApproval.approvalId, accountLifetime, serverId]);
-    // This is a controller-lifetime input: presentation-only binding changes must retain the executor.
-    const defaultPluginActionExecute = React.useMemo(() => {
-        if (controllerBindingWithConnectedAccounts.executeHostAction || !accountLifetime
-            || (serverId && !areServerProfileIdentifiersEquivalent(serverId, accountLifetime.scope.serverId))) return undefined;
-        return scopedHomeActionExecutor(accountLifetime.scope, {
-            onBlockingApprovalPending: ({ artifactId, signal }) => {
-                if (!accountLifetime.isCurrent() || signal?.aborted) return;
-                // The executor keeps effect/result custody; this mounted observer only presents its Artifact.
-                requestPluginActionApproval({ artifactId, scope: accountLifetime.scope,
-                    refreshAfterExecution: false, ...(signal ? { signal } : {}),
-                    onExecuted: async () => 'ignored',
-                });
-            },
-        });
-    }, [accountLifetime, controllerBindingWithConnectedAccounts.executeHostAction, requestPluginActionApproval, serverId]);
     const effectiveControllerBinding = React.useMemo<BoundPluginSurfaceBinding | undefined>(() => {
         if (!baseCreateMountedHostApiHandlers && !currentUiContextMountPublisher && !accountLifetime) {
             return controllerBindingWithConnectedAccounts;

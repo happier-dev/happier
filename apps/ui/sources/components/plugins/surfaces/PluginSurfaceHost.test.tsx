@@ -15298,12 +15298,16 @@ describe('canonical action dispatch reaches every mounted placement (EU-2)', () 
         } finally { await screen.unmount(); }
     });
 
-    it.each(['approve', 'originUnavailable', 'reject', 'retire'] as const)('presents a plugin-page blocking approval from its exact Artifact without changing the plugin caller (%s)', async disposition => {
+    it.each(['approve', 'sourceUnavailable', 'reject', 'retire'] as const)('presents a plugin-page deferred approval from its exact Artifact without changing the plugin caller (%s)', async disposition => {
         const { createHomeGovernanceHarness } = await import('@/dev/testkit/harness/homeGovernanceHarness');
         const homes = createHomeGovernanceHarness();
         onTestFinished(() => homes.reset());
         const serverIdentityId = 'srv_server_dash_1';
         const serverId = await homes.addHome({ name: 'Plugin page', serverUrl: 'https://server-1', accountId: 'account-a', serverIdentityId, currentAccount: true });
+        const features = createRootLayoutFeaturesResponse({ features: { plugins: { enabled: true,
+            ui: { enabled: true, hostedWeb: { enabled: true }, reactNativeBundles: { enabled: true } },
+        } } });
+        for (const path of ['/v1/features', '/v1/features/authenticated']) homes.answer(serverId, path, { body: features });
         await homes.requireActionApproval(serverId, 'widgets.fragment.update', 'plugin');
         await pluginSurfaceAccountLifetime.setScope({ serverId, accountId: 'account-a' },
             (path, init) => {
@@ -15312,10 +15316,8 @@ describe('canonical action dispatch reaches every mounted placement (EU-2)', () 
                     installationId: 'approval-origin-installation', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER, runnerContentKeyBinding: null,
                     access: { custodian: { accountId: 'account-a', displayName: 'Owner' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' },
                 })]);
-                if (path === '/v1/actions/approval.request.decide') {
-                    throw new Error('A live plugin approval must resume its app waiter');
-                }
-                return homes.request(`https://server-1${path}`, init);
+                return createEmptyAccountBootstrapHttpResponse(path, init)
+                    ?? homes.request(`https://server-1${path}`, init);
             }, { serverIdentityId, currentAccount: true });
         // The mounted route addresses its local profile; Account custody uses
         // this same Home's portable identity. Neither may suppress its notice.
@@ -15344,7 +15346,7 @@ describe('canonical action dispatch reaches every mounted placement (EU-2)', () 
             machineId="machine_1" serverId={serverId} platform="web" reactNativeLoaderBackend={{
                 backendId: 'commonJs', available: true, loadInstalledBundle: vi.fn(async () => () => null),
             }} />);
-        let settled = false;
+        let outcome: unknown = 'pending';
         let operation: Promise<unknown> | undefined;
         let approvalId: string | null = null;
         let unmounted = false;
@@ -15353,7 +15355,7 @@ describe('canonical action dispatch reaches every mounted placement (EU-2)', () 
             await act(async () => {
                 operation = readMountedHostApi().executeAction('widgets.fragment.update', {
                     account, artifactId: 'page-saved-group', patch: { name: 'Ready to ship' },
-                }).then(value => { settled = true; return value; }, error => { settled = true; throw error; });
+                }).then(value => { outcome = value; return value; }, error => { outcome = error; throw error; });
                 // Handle early transport rejection until the deciding assertion consumes it below.
                 void operation.catch(() => {});
             });
@@ -15364,10 +15366,15 @@ describe('canonical action dispatch reaches every mounted placement (EU-2)', () 
             });
             expect(approvalId).not.toBeNull();
             expect(JSON.parse(homes.artifacts(serverId).readPlainBody(approvalId!)!)).toMatchObject({
-                actionId: 'widgets.fragment.update', executionOriginV1: { surface: 'plugin', authority: 'account_automation',
+                actionId: 'widgets.fragment.update', approval: { flow: 'deferred' },
+                executionOriginV1: { surface: 'plugin', authority: 'account_automation',
                     caller: { kind: 'plugin', pluginId: 'acme.browser', contributionLocalId: 'approval-page' } },
             });
-            expect(settled).toBe(false);
+            // Ordinary plugin Actions return the durable receipt immediately;
+            // the Artifact, rather than this invocation, owns later settlement.
+            await vi.waitFor(() => expect(outcome).toEqual({ kind: 'approval_request_created',
+                artifactId: approvalId, actionId: 'widgets.fragment.update' }));
+            expect(JSON.parse(homes.artifacts(serverId).readPlainBody('page-saved-group')!)).toMatchObject({ name: 'Release checks' });
             await vi.waitFor(async () => {
                 await flushHookEffects();
                 expect(screen.findByTestId('plugin-surface-approval-pending')).not.toBeNull();
@@ -15388,40 +15395,33 @@ describe('canonical action dispatch reaches every mounted placement (EU-2)', () 
                 onTestFinished(() => reactErrors.mockRestore());
                 await screen.unmount();
                 unmounted = true;
-                await expect(operation).rejects.toMatchObject({ code: 'stale_surface' });
+                await expect(operation).resolves.toMatchObject({ kind: 'approval_request_created', artifactId: approvalId });
                 expect(reactErrors.mock.calls.some(([message]) => typeof message === 'string'
                     && message.startsWith('useInsertionEffect must not schedule updates'))).toBe(false);
                 expect(JSON.parse(homes.artifacts(serverId).readPlainBody(approvalId!)!)).toMatchObject({ status: 'open' });
             } else {
-                if (disposition === 'originUnavailable') {
-                    // Source custody is revalidated at its daemon boundary even
-                    // when consent resumes an existing app-owned invocation.
+                if (disposition === 'sourceUnavailable') {
+                    // The Account owns this deferred effect. Losing the page's
+                    // source projection does not revoke its admitted proposal.
                     targetedContributionsReadMock.mockResolvedValue({ supported: false, reason: 'unavailable' });
                 }
-                const decision = await decideApprovalAsInbox(serverId, approvalId!, disposition === 'originUnavailable' ? 'approve' : disposition);
+                const decision = await decideApprovalAsInbox(serverId, approvalId!, disposition === 'sourceUnavailable' ? 'approve' : disposition);
                 expect(decision, JSON.stringify(decision.ok ? { ok: true } : {
                     ok: false, errorCode: decision.errorCode, error: decision.error,
-                })).toMatchObject({ ok: true, result: disposition === 'originUnavailable'
-                    ? { status: 'failed', execution: { ok: false, errorCode: 'approval_stale' } }
-                    : { status: disposition === 'approve' ? 'approved' : 'rejected' } });
-                if (disposition === 'approve') await operation;
-                else if (disposition === 'originUnavailable') await expect(operation).rejects.toMatchObject({ code: 'unavailable',
-                    diagnostics: [expect.objectContaining({ code: 'approval_stale' })] });
-                else await expect(operation).rejects.toMatchObject({ code: 'unavailable' });
+                })).toMatchObject({ ok: true, result: disposition === 'reject'
+                    ? { status: 'rejected' }
+                    : { status: 'executed', execution: { ok: true } } });
+                await expect(operation).resolves.toMatchObject({ kind: 'approval_request_created', artifactId: approvalId });
                 await vi.waitFor(() => expect(screen.findByTestId('plugin-surface-approval-pending')).toBeNull());
                 await vi.waitFor(async () => expect(await readMountedHostApi().context()).toMatchObject({ pendingApproval: null }));
             }
             expect(JSON.parse(homes.artifacts(serverId).readPlainBody('page-saved-group')!)).toMatchObject({
-                name: disposition === 'approve' ? 'Ready to ship' : 'Release checks',
+                name: disposition === 'approve' || disposition === 'sourceUnavailable' ? 'Ready to ship' : 'Release checks',
             });
         } finally {
-            try {
-                const body = approvalId ? homes.artifacts(serverId).readPlainBody(approvalId) : null;
-                if (body && JSON.parse(body).status === 'open') await decideApprovalAsInbox(serverId, approvalId!, 'reject');
-            } finally {
-                try { if (!unmounted) await screen.unmount(); }
-                finally { await operation?.catch(() => {}); }
-            }
+            // The harness resets its Artifact store. A deferred receipt has no
+            // live waiter to release by sending another approval decision.
+            if (!unmounted) await screen.unmount();
         }
     });
 
