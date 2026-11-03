@@ -63,6 +63,7 @@ import {
   type ConversationNonAdmissionReason,
 } from './commandPolicy.js';
 import { recommendConversationConnectionRecovery, recommendConversationBindingRecovery, recommendConversationIngressRecovery } from './recoveryRecommendation.js';
+import { channelStateSessionIdForTarget, withChannelStateDeleteFinalizationDueAt, withChannelStateSessionIdentity } from './collectionMigrations.js';
 
 const MANAGEMENT_SUMMARY_MAX_CODE_POINTS = 28;
 const storedBindingSchema = createProtocolStoredReadSchema(ConversationBindingV1Schema);
@@ -977,7 +978,7 @@ export function withConversationBindingPolicy(input: Readonly<{
   binding: ConversationBindingStateV1;
   updatedAt: number;
 }>): ChannelStateJsonRecord {
-  return {
+  return withChannelStateDeleteFinalizationDueAt(withChannelStateSessionIdentity({
     ...input.row.value,
     [CHANNEL_STATE_FIELD.updatedAt]: input.updatedAt,
     payload: {
@@ -994,7 +995,47 @@ export function withConversationBindingPolicy(input: Readonly<{
       enabled: input.binding.enabled,
       deletionState: input.current.binding.deletionState,
     },
-  } satisfies ChannelStateJsonRecord;
+  } satisfies ChannelStateJsonRecord, input.binding.target));
+}
+
+/** Same exact predicate for Session reads and content-free Collection observation. */
+export function conversationSessionBindingSelection(sessionId: string) {
+  if (sessionId.trim().length === 0) throw policyError('channels_binding_session_target_input_invalid', 'A Session selector requires an exact host-stamped identity.');
+  return {
+    index: CHANNEL_STATE_INDEX_ID.bySessionKindBindingUpdateV1,
+    prefix: [sessionId, CHANNEL_STATE_RECORD_KIND.binding],
+    order: 'asc' as const,
+  };
+}
+
+export async function readConversationSessionBindingRows(input: Readonly<{
+  collection: Pick<ChannelStateBindingCollection, 'query'>;
+  sessionId: string;
+  signal?: AbortSignal;
+  assertCurrent?: () => void;
+}>): Promise<readonly ChannelStateRow[]> {
+  const rows: ChannelStateRow[] = [];
+  let cursor: string | undefined;
+  do {
+    assertCurrent(input);
+    // Index admission/readiness errors deliberately propagate; absence is never a fallback scan.
+    const page = await input.collection.query({ ...conversationSessionBindingSelection(input.sessionId),
+      limit: PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1, ...(cursor === undefined ? {} : { cursor }),
+    }, input.signal === undefined ? undefined : { signal: input.signal });
+    assertCurrent(input);
+    for (const candidate of page.rows) {
+      const row = asChannelStateRow(candidate);
+      if (row === undefined || row.value[CHANNEL_STATE_FIELD.sessionId] !== input.sessionId
+        || row.value[CHANNEL_STATE_FIELD.recordKind] !== CHANNEL_STATE_RECORD_KIND.binding
+        || !isChannelStateJsonRecord(row.value.payload)
+        || channelStateSessionIdForTarget(row.value.payload.target) !== input.sessionId) {
+        throw policyError('channels_binding_session_target_row_invalid', 'The exact Session selector returned an invalid binding row.');
+      }
+      rows.push(row);
+    }
+    cursor = page.nextCursor;
+  } while (cursor !== undefined);
+  return rows;
 }
 
 function boundedSummary(value: string): string {
@@ -1103,8 +1144,9 @@ export async function readConversationBindingManagementPage(input: Readonly<{
     const bindings: ConversationBindingManagementRow[] = [];
     assertCurrent(input);
     const page = await input.collection.query({
-      index: CHANNEL_STATE_INDEX_ID.byKind,
-      prefix: [CHANNEL_STATE_RECORD_KIND.binding],
+      ...(input.sessionId === undefined
+        ? { index: CHANNEL_STATE_INDEX_ID.byKind, prefix: [CHANNEL_STATE_RECORD_KIND.binding] }
+        : conversationSessionBindingSelection(input.sessionId)),
       order: 'asc',
       limit: input.limit ?? PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1,
       ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
@@ -1112,6 +1154,10 @@ export async function readConversationBindingManagementPage(input: Readonly<{
     assertCurrent(input);
     for (const row of page.rows) {
       const current = readConversationBindingManagementCurrentRow(row);
+      if (input.sessionId !== undefined && (row.value[CHANNEL_STATE_FIELD.sessionId] !== input.sessionId
+        || channelStateSessionIdForTarget(current.binding.target) !== input.sessionId)) {
+        throw policyError('channels_binding_management_row_invalid', 'The Session binding selector disagrees with its retained target.');
+      }
       if (input.connectionId !== undefined && current.binding.connectionId !== input.connectionId) continue;
       if (input.parentBindingId !== undefined && current.binding.parentBindingId !== input.parentBindingId) continue;
       if (input.sessionId !== undefined
@@ -1150,18 +1196,7 @@ export async function readConversationSessionBindingDeliveryTargets(input: Reado
     );
   }
   const targets: ConversationSessionBindingDeliveryTarget[] = [];
-  let cursor: string | undefined;
-  do {
-    assertCurrent(input);
-    const page = await input.collection.query({
-      index: CHANNEL_STATE_INDEX_ID.byKind,
-      prefix: [CHANNEL_STATE_RECORD_KIND.binding],
-      order: 'asc',
-      limit: PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1,
-      ...(cursor === undefined ? {} : { cursor }),
-    }, input.signal === undefined ? undefined : { signal: input.signal });
-    assertCurrent(input);
-    for (const row of page.rows) {
+    for (const row of await readConversationSessionBindingRows(input)) {
       let current: ConversationBindingUpdateRow;
       try {
         current = readConversationBindingUpdateRow({ row, bindingId: row.rowId });
@@ -1182,9 +1217,7 @@ export async function readConversationSessionBindingDeliveryTargets(input: Reado
         connectionId: current.binding.connectionId,
       }));
     }
-    if (page.nextCursor === undefined) return Object.freeze(targets);
-    cursor = page.nextCursor;
-  } while (true);
+  return Object.freeze(targets);
 }
 
 /**

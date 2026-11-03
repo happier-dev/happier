@@ -80,6 +80,9 @@ export {
 export const CHANNEL_STATE_INDEX_ID = {
   byKind: 'by-kind',
   byConnectionBindingV2: 'by-connection-binding-v2',
+  byConnectionKindV1: 'by-connection-kind-v1',
+  bySessionKindBindingUpdateV1: 'by-session-kind-binding-update-v1',
+  byPullRequestSessionBindingV1: 'by-pr-session-binding-v1',
   byAttention: 'by-attention',
   byIngressDue: 'by-ingress-due',
 } as const;
@@ -1435,14 +1438,14 @@ const STATE_RECORDS: readonly StateRecordDefinition[] = [
 
 
 /**
- * One strict V10 Account Collection contract for all Channels configuration,
+ * One strict Account Collection contract for all Channels configuration,
  * ingress, checkpoint, projection-frontier, and rotation state. Every row
  * family remains explicit; no later core phase gets an opaque escape hatch.
  */
 export const CHANNEL_STATE_COLLECTION = defineAccountCollection({
   id: CHANNEL_STATE_COLLECTION_ID,
-  schemaVersion: 10,
-  readableSchemaVersions: [1, 2, 3, 4, 5, 6, 7, 8, 9],
+  schemaVersion: 19,
+  readableSchemaVersions: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18],
   schema: {
     type: 'object',
     properties: {
@@ -1457,6 +1460,9 @@ export const CHANNEL_STATE_COLLECTION = defineAccountCollection({
       // a null projection is omitted from the reconstructed logical row.
       [CHANNEL_STATE_FIELD.connectionId]: CONNECTION_ID_SCHEMA,
       [CHANNEL_STATE_FIELD.bindingId]: BINDING_ID_SCHEMA,
+      [CHANNEL_STATE_FIELD.sessionId]: boundedString(MAX_PLUGIN_ID_LENGTH),
+      [CHANNEL_STATE_FIELD.prBinding]: BOOLEAN_SCHEMA,
+      [CHANNEL_STATE_FIELD.prUpdateAt]: NON_NEGATIVE_SAFE_INTEGER_SCHEMA,
       [CHANNEL_STATE_FIELD.terminal]: BOOLEAN_SCHEMA,
       [CHANNEL_STATE_FIELD.attention]: BOOLEAN_SCHEMA,
       [CHANNEL_STATE_FIELD.dueAt]: NON_NEGATIVE_SAFE_INTEGER_SCHEMA,
@@ -1506,6 +1512,9 @@ export const CHANNEL_STATE_COLLECTION = defineAccountCollection({
     CHANNEL_STATE_FIELD.version,
     CHANNEL_STATE_FIELD.connectionId,
     CHANNEL_STATE_FIELD.bindingId,
+    CHANNEL_STATE_FIELD.sessionId,
+    CHANNEL_STATE_FIELD.prBinding,
+    CHANNEL_STATE_FIELD.prUpdateAt,
     CHANNEL_STATE_FIELD.terminal,
     CHANNEL_STATE_FIELD.attention,
     CHANNEL_STATE_FIELD.dueAt,
@@ -1534,6 +1543,34 @@ export const CHANNEL_STATE_COLLECTION = defineAccountCollection({
         { field: CHANNEL_STATE_FIELD.bindingId, direction: 'asc' },
         { field: CHANNEL_STATE_FIELD.recordKind, direction: 'asc' },
         { field: CHANNEL_STATE_FIELD.attention, direction: 'asc' },
+      ],
+    },
+    {
+      // Polling and exact provider reads select configuration without opening
+      // this connection's retained census/obligation history.
+      id: CHANNEL_STATE_INDEX_ID.byConnectionKindV1,
+      fields: [
+        { field: CHANNEL_STATE_FIELD.connectionId, direction: 'asc' },
+        { field: CHANNEL_STATE_FIELD.recordKind, direction: 'asc' },
+      ],
+    },
+    {
+      // Omitted selector scalars project to null; Data appends its canonical row-ID tie break.
+      id: CHANNEL_STATE_INDEX_ID.bySessionKindBindingUpdateV1,
+      fields: [
+        { field: CHANNEL_STATE_FIELD.sessionId, direction: 'asc' },
+        { field: CHANNEL_STATE_FIELD.recordKind, direction: 'asc' },
+        { field: CHANNEL_STATE_FIELD.bindingId, direction: 'asc' },
+        { field: CHANNEL_STATE_FIELD.prUpdateAt, direction: 'desc' },
+      ],
+    },
+    {
+      id: CHANNEL_STATE_INDEX_ID.byPullRequestSessionBindingV1,
+      fields: [
+        { field: CHANNEL_STATE_FIELD.recordKind, direction: 'asc' },
+        { field: CHANNEL_STATE_FIELD.prBinding, direction: 'asc' },
+        { field: CHANNEL_STATE_FIELD.sessionId, direction: 'asc' },
+        { field: CHANNEL_STATE_FIELD.bindingId, direction: 'asc' },
       ],
     },
     {

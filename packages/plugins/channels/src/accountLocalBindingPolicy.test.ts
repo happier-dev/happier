@@ -2,12 +2,17 @@ import type { JsonValue } from '@happier-dev/plugin-sdk';
 import { describe, expect, it, vi } from 'vitest';
 import { isConversationPendingEndpointRetarget } from './connectionLifecycle.js';
 import { PLUGIN_COLLECTION_REVISION_MAX } from '@happier-dev/plugin-sdk/collections';
+import { compilePluginJsonSchema, isValidPluginJsonSchemaValue } from '@happier-dev/plugin-sdk/manifest';
 
 import {
   asChannelStateRow,
   readConversationConnectionManagementRows,
+  readConversationBindingManagementRows,
   readConversationConnectionUpdateRow,
   readConversationIngressAttentionPage,
+  readConversationSessionBindingDeliveryTargets,
+  readConversationBindingUpdateRow,
+  withConversationBindingPolicy,
   updateConversationBindingPolicyInAccountCollection,
   updateConversationConnectionInAccountCollection,
   withConversationConnectionLifecycle,
@@ -17,6 +22,7 @@ import {
 import {
   CHANNEL_STATE_INDEX_ID,
   CHANNEL_STATE_RECORD_KIND,
+  CHANNEL_STATE_COLLECTION,
 } from './collections.js';
 import {
   createCurrentConversationConnectionFixture,
@@ -597,6 +603,54 @@ describe('updateConversationBindingPolicyInAccountCollection Account-resolvable 
       },
     };
   }
+
+  it('reads only the selected Session binding bodies independently of unrelated Account scale', async () => {
+    const collection = new MemoryCollection<Record<string, JsonValue>>();
+    const makeRow = (id: string, sessionId: string) => {
+      const source = bindingRow();
+      const current = readConversationBindingUpdateRow({ row: source, bindingId: source.rowId });
+      return {
+        ...withConversationBindingPolicy({
+          row: source, current,
+          binding: { ...current.binding, target: { ...sessionTarget, sessionId } }, updatedAt: 1_000,
+        }),
+        id, 'binding-id': id,
+      };
+    };
+    const target = makeRow('selected-binding', 'selected-session');
+    expect(isValidPluginJsonSchemaValue(compilePluginJsonSchema(CHANNEL_STATE_COLLECTION.schema), target)).toBe(true);
+    collection.rows.set('selected-binding', { rowId: 'selected-binding', revision: 1, value: target });
+    const query = vi.spyOn(collection, 'query');
+    const read = () => readConversationSessionBindingDeliveryTargets({
+      collection: collection as unknown as ChannelStateBindingCollection, sessionId: 'selected-session',
+    });
+    expect(await read()).toEqual([{ bindingId: 'selected-binding', connectionId: BINDING_CONNECTION_ID }]);
+    const smallPages = query.mock.results.length;
+    query.mockClear();
+    for (let index = 0; index < 2_000; index += 1) {
+      const id = `unrelated-binding-${index}`;
+      collection.rows.set(id, { rowId: id, revision: 1, value: makeRow(id, `unrelated-session-${index}`) });
+    }
+    expect(await read()).toEqual([{ bindingId: 'selected-binding', connectionId: BINDING_CONNECTION_ID }]);
+    const pages = await Promise.all(query.mock.results.map(result => result.value));
+    expect(pages.flatMap(page => page.rows).map(row => row.rowId)).toEqual(['selected-binding']);
+    expect(query).toHaveBeenCalledTimes(smallPages);
+    const retained = await collection.get('selected-binding');
+    if (retained === null) throw new Error('Missing seeded binding');
+    const current = readConversationBindingUpdateRow({ row: retained, bindingId: retained.rowId });
+    await collection.put(withConversationBindingPolicy({ row: retained, current,
+      binding: { ...current.binding, target: { ...sessionTarget, sessionId: 'retargeted-session' } },
+      updatedAt: 2_000,
+    }), { expectedRevision: retained.revision });
+    expect(await read()).toEqual([]);
+    expect(await readConversationSessionBindingDeliveryTargets({
+      collection: collection as unknown as ChannelStateBindingCollection, sessionId: 'retargeted-session',
+    })).toEqual([{ bindingId: 'selected-binding', connectionId: BINDING_CONNECTION_ID }]);
+    const corrupt = await collection.get('selected-binding');
+    if (corrupt === null) throw new Error('Missing retargeted binding');
+    collection.rows.set(corrupt.rowId, { ...corrupt, value: { ...corrupt.value, 'session-id': 'selected-session' } });
+    await expect(read()).rejects.toMatchObject({ code: 'channels_binding_session_target_row_invalid' });
+  });
 
   it('persists a Session target policy change offline through the one binding transition and CAS owner', async () => {
     const collection = accountCollection();

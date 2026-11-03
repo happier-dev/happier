@@ -215,6 +215,7 @@ export class MemoryCollection<TValue extends Record<string, unknown> = Record<st
     prefix?: readonly unknown[];
     cursor?: string;
     order?: 'asc' | 'desc';
+    range?: Readonly<{ lower?: number; upper?: number }>;
     limit: number;
   }>) {
     assertChannelsTestCollectionQueryLimit(input.limit);
@@ -224,6 +225,24 @@ export class MemoryCollection<TValue extends Record<string, unknown> = Record<st
     const compareRows = (left: StoredRow, right: StoredRow): number => {
       const comparison = input.index === CHANNEL_STATE_INDEX_ID.byConnectionBindingV2
         ? compareConnectionBindingRows(left, right)
+        : input.index === CHANNEL_STATE_INDEX_ID.byConnectionKindV1
+          ? compareCanonicalText(String(left.value['connection-id'] ?? ''), String(right.value['connection-id'] ?? ''))
+            || compareCanonicalText(String(left.value['record-kind']), String(right.value['record-kind']))
+            || compareCanonicalText(left.rowId, right.rowId)
+        : input.index === CHANNEL_STATE_INDEX_ID.byIngressDue
+          ? compareCanonicalText(String(left.value['record-kind']), String(right.value['record-kind']))
+            || Number(left.value['due-at'] ?? -1) - Number(right.value['due-at'] ?? -1)
+            || compareCanonicalText(left.rowId, right.rowId)
+        : input.index === CHANNEL_STATE_INDEX_ID.byPullRequestSessionBindingV1
+          ? compareCanonicalText(String(left.value['session-id'] ?? ''), String(right.value['session-id'] ?? ''))
+            || compareCanonicalText(String(left.value['binding-id'] ?? ''), String(right.value['binding-id'] ?? ''))
+            || compareCanonicalText(left.rowId, right.rowId)
+        : input.index === CHANNEL_STATE_INDEX_ID.bySessionKindBindingUpdateV1
+          ? compareCanonicalText(String(left.value['session-id'] ?? ''), String(right.value['session-id'] ?? ''))
+            || compareCanonicalText(String(left.value['record-kind']), String(right.value['record-kind']))
+            || compareCanonicalText(String(left.value['binding-id'] ?? ''), String(right.value['binding-id'] ?? ''))
+            || Number(right.value['pr-update-at'] ?? -1) - Number(left.value['pr-update-at'] ?? -1)
+            || compareCanonicalText(left.rowId, right.rowId)
         : left.rowId.localeCompare(right.rowId);
       return input.order === 'desc' ? -comparison : comparison;
     };
@@ -232,6 +251,25 @@ export class MemoryCollection<TValue extends Record<string, unknown> = Record<st
         if (row.deleted === true) return false;
         if (input.index === CHANNEL_STATE_INDEX_ID.byKind) {
           return row.value['record-kind'] === prefix;
+        }
+        if (input.index === CHANNEL_STATE_INDEX_ID.byIngressDue) {
+          const dueAt = row.value['due-at'];
+          return row.value['record-kind'] === prefix
+            && (input.range?.lower === undefined || (typeof dueAt === 'number' && dueAt >= input.range.lower))
+            && (input.range?.upper === undefined || (typeof dueAt === 'number' && dueAt <= input.range.upper));
+        }
+        if (input.index === CHANNEL_STATE_INDEX_ID.byConnectionKindV1) {
+          return row.value['connection-id'] === prefix
+            && row.value['record-kind'] === input.prefix?.[1];
+        }
+        if (input.index === CHANNEL_STATE_INDEX_ID.byPullRequestSessionBindingV1) {
+          return row.value['record-kind'] === prefix && row.value['pr-binding'] === input.prefix?.[1]
+            && (input.prefix?.[2] === undefined || row.value['session-id'] === input.prefix[2]);
+        }
+        if (input.index === CHANNEL_STATE_INDEX_ID.bySessionKindBindingUpdateV1) {
+          return (row.value['session-id'] ?? null) === prefix
+            && (input.prefix?.[1] === undefined || row.value['record-kind'] === input.prefix[1])
+            && (input.prefix?.[2] === undefined || (row.value['binding-id'] ?? null) === input.prefix[2]);
         }
         if (input.index === CHANNEL_STATE_INDEX_ID.byConnectionBindingV2
           || input.index === CHANNEL_DELIVERIES_INDEX_ID.byOwnerAttention) {

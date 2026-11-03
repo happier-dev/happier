@@ -15,6 +15,9 @@ export const CHANNEL_STATE_FIELD = {
   version: 'v',
   connectionId: 'connection-id',
   bindingId: 'binding-id',
+  sessionId: 'session-id',
+  prBinding: 'pr-binding',
+  prUpdateAt: 'pr-update-at',
   terminal: 'terminal',
   attention: 'attention',
   dueAt: 'due-at',
@@ -36,6 +39,71 @@ export const CHANNEL_STATE_RECORD_KIND = {
 
 function isChannelStateJsonRecord(value: JsonValue | undefined): value is Readonly<Record<string, JsonValue>> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+/** Opaque host Session identity only; provider identities and content stay encrypted. */
+export function channelStateSessionIdForTarget(target: JsonValue | undefined): string | undefined {
+  if (!isChannelStateJsonRecord(target)) return undefined;
+  const sessionId = target.kind === 'session' ? target.sessionId
+    : target.kind === 'automation' && isChannelStateJsonRecord(target.scopedTrigger)
+      ? target.scopedTrigger.sessionId : undefined;
+  return typeof sessionId === 'string' && sessionId.length > 0 ? sessionId : undefined;
+}
+
+/** Shared by lifecycle writers and V14→V15 migration; private bodies stay unopened at idle. */
+export function withChannelStateDeleteFinalizationDueAt(
+  value: Readonly<Record<string, JsonValue>>,
+): Readonly<Record<string, JsonValue>> {
+  if (value[CHANNEL_STATE_FIELD.recordKind] !== CHANNEL_STATE_RECORD_KIND.connection
+    && value[CHANNEL_STATE_FIELD.recordKind] !== CHANNEL_STATE_RECORD_KIND.binding) return value;
+  if (!isChannelStateJsonRecord(value.payload)) throw new Error('Channels delete selection requires a valid lifecycle payload.');
+  const { [CHANNEL_STATE_FIELD.dueAt]: _previous, ...rest } = value;
+  if (value.payload.deletionState !== 'finalizingDelete') return rest;
+  const updatedAt = value[CHANNEL_STATE_FIELD.updatedAt];
+  if (typeof updatedAt !== 'number' || !Number.isSafeInteger(updatedAt) || updatedAt < 0) {
+    throw new Error('Channels delete selection requires a valid lifecycle timestamp.');
+  }
+  // Cleanup is already due when finalization is committed. Reuse the existing
+  // kind/due index; this projection selects candidates, never grants authority.
+  return { ...rest, [CHANNEL_STATE_FIELD.dueAt]: updatedAt };
+}
+
+/** Shared by binding serializers and the forward migration; removes stale retarget metadata. */
+export function withChannelStateSessionIdentity(
+  value: Readonly<Record<string, JsonValue>>,
+  target: JsonValue | undefined,
+): Readonly<Record<string, JsonValue>> {
+  const { [CHANNEL_STATE_FIELD.sessionId]: _previous, [CHANNEL_STATE_FIELD.prBinding]: _previousPrBinding, ...rest } = value;
+  const sessionId = channelStateSessionIdForTarget(target);
+  if (sessionId === undefined) return rest;
+  const prBinding = value[CHANNEL_STATE_FIELD.recordKind] === CHANNEL_STATE_RECORD_KIND.binding
+    && isChannelStateJsonRecord(value.payload) && value.payload.deletionState === 'none'
+    && isChannelStateJsonRecord(target)
+    && (isChannelStateJsonRecord(target.pullRequestLink)
+      || (isChannelStateJsonRecord(target.scopedTrigger) && isChannelStateJsonRecord(target.scopedTrigger.pullRequest)));
+  return { ...rest, [CHANNEL_STATE_FIELD.sessionId]: sessionId, ...(prBinding ? { [CHANNEL_STATE_FIELD.prBinding]: true } : {}) };
+}
+
+/** The Account PR index selects membership before decoding a private chat binding. */
+export function migrateChannelStateV11ToV12(value: Readonly<Record<string, JsonValue>>): Readonly<Record<string, JsonValue>> {
+  if (value[CHANNEL_STATE_FIELD.recordKind] !== CHANNEL_STATE_RECORD_KIND.binding) return value;
+  if (!isChannelStateJsonRecord(value.payload)) throw new Error('Channels PR selector migration requires a valid binding payload.');
+  return withChannelStateSessionIdentity(value, value.payload.target);
+}
+
+export function migrateChannelStateV10ToV11(value: Readonly<Record<string, JsonValue>>): Readonly<Record<string, JsonValue>> {
+  if (value[CHANNEL_STATE_FIELD.recordKind] !== CHANNEL_STATE_RECORD_KIND.binding
+    && value[CHANNEL_STATE_FIELD.recordKind] !== CHANNEL_STATE_RECORD_KIND.ingressObligation) return value;
+  if (!isChannelStateJsonRecord(value.payload)) throw new Error('Channels Session selector migration requires a valid payload.');
+  // An accepted input freezes the actually resolved Session (including /new).
+  const accepted = value.payload.sessionInput;
+  if (value[CHANNEL_STATE_FIELD.recordKind] === CHANNEL_STATE_RECORD_KIND.ingressObligation
+    && isChannelStateJsonRecord(accepted)) {
+    if (typeof accepted.sessionId !== 'string' || accepted.sessionId.length === 0) throw new Error('Channels accepted input has no resolved Session identity.');
+    return withChannelStateSessionIdentity(value, { kind: 'session', sessionId: accepted.sessionId });
+  }
+  // Custody uses its own frozen target, never a lookup of today's binding.
+  return withChannelStateSessionIdentity(value, value.payload.target);
 }
 
 /**
@@ -186,6 +254,21 @@ export function migrateChannelStateV7ToV8(value: Readonly<Record<string, JsonVal
   } } };
 }
 
+/** Retain the reviewed SHA without re-reading native state or changing send custody. */
+export function migrateChannelStateV16ToV17(value: Readonly<Record<string, JsonValue>>): Readonly<Record<string, JsonValue>> {
+  if (value[CHANNEL_STATE_FIELD.recordKind] !== CHANNEL_STATE_RECORD_KIND.ingressObligation
+    || !isChannelStateJsonRecord(value.payload) || value.payload.kind !== 'configuredFix') return value;
+  const request = value.payload.request;
+  if (!isChannelStateJsonRecord(request) || !('head' in request)) return value;
+  // The admitted V16 schema requires a nonempty SHA. Never invent one if an
+  // invalid source bypasses that boundary; Data reports its typed invalid value.
+  if (!isChannelStateJsonRecord(request.head) || typeof request.head.sha !== 'string' || request.head.sha.length === 0) {
+    throw new Error('V16 Channels configured-Fix custody has no reviewed SHA.');
+  }
+  const { head, ...retainedRequest } = request;
+  return { ...value, payload: { ...value.payload, request: { ...retainedRequest, expectedHeadSha: head.sha } } };
+}
+
 export const CHANNEL_COLLECTION_MIGRATIONS = {
   [CHANNEL_STATE_COLLECTION_ID]: [{
     id: 'channel-state-v1-to-v2',
@@ -247,6 +330,59 @@ export const CHANNEL_COLLECTION_MIGRATIONS = {
     // Optional native-limit formatting widens a branch of the strict row
     // union. Data requires a versioned update; retained logical rows are valid.
     migrate: (value) => value,
+  }, {
+    id: 'channel-state-v10-to-v11',
+    fromSchemaVersion: 10,
+    toSchemaVersion: 11,
+    migrate: migrateChannelStateV10ToV11,
+  }, {
+    id: 'channel-state-v11-to-v12',
+    fromSchemaVersion: 11,
+    toSchemaVersion: 12,
+    migrate: migrateChannelStateV11ToV12,
+  }, {
+    id: 'channel-state-v12-to-v13',
+    fromSchemaVersion: 12,
+    toSchemaVersion: 13,
+    // Data prepares the new configuration-only index; logical rows stay intact.
+    migrate: (value) => value,
+  }, {
+    id: 'channel-state-v13-to-v14',
+    fromSchemaVersion: 13,
+    toSchemaVersion: 14,
+    // Configured Fix adds a cause to existing input custody; retained rows stay valid.
+    migrate: (value) => value,
+  }, {
+    id: 'channel-state-v14-to-v15',
+    fromSchemaVersion: 14,
+    toSchemaVersion: 15,
+    migrate: withChannelStateDeleteFinalizationDueAt,
+  }, {
+    id: 'channel-state-v15-to-v16',
+    fromSchemaVersion: 15,
+    toSchemaVersion: 16,
+    // Optional PR fix-resolution evidence changes the nested strict union.
+    // Data prepares its new contract; retained logical rows stay intact.
+    migrate: (value) => value,
+  }, {
+    id: 'channel-state-v16-to-v17',
+    fromSchemaVersion: 16,
+    toSchemaVersion: 17,
+    migrate: migrateChannelStateV16ToV17,
+  }, {
+    id: 'channel-state-v17-to-v18',
+    fromSchemaVersion: 17,
+    toSchemaVersion: 18,
+    // Session send fanout now admits optional Action effect evidence. The
+    // embedded strict union needs a new contract; retained custody is unchanged.
+    migrate: (value) => value,
+  }, {
+    id: 'channel-state-v18-to-v19',
+    fromSchemaVersion: 18,
+    toSchemaVersion: 19,
+    // Retired checkpoint counters and authority fields stay readable. Adopt
+    // the current writer contract without transforming retained rows.
+    migrate: (value) => value,
   }],
   [CHANNEL_DELIVERIES_COLLECTION_ID]: [{
     id: 'channel-deliveries-v1-to-v2',
@@ -260,5 +396,19 @@ export const CHANNEL_COLLECTION_MIGRATIONS = {
     // Retained text becomes the canonical content object. Compacted nulls,
     // structured content, custody identity and provider evidence stay intact.
     migrate: migrateChannelDeliveriesV2ToV3,
+  }, {
+    id: 'channel-deliveries-v3-to-v4',
+    fromSchemaVersion: 3,
+    toSchemaVersion: 4,
+    // Unknown-outcome recovery may retain its original claimed attempt. Data
+    // adopts the widened strict union; existing rows require no transformation.
+    migrate: (value) => value,
+  }, {
+    id: 'channel-deliveries-v4-to-v5',
+    fromSchemaVersion: 4,
+    toSchemaVersion: 5,
+    // Current writers omit retired fields; retained readers accept them. This
+    // contract adoption must not rewrite retained delivery custody.
+    migrate: (value) => value,
   }],
 } satisfies Readonly<Record<string, readonly PluginAccountCollectionMigration[]>>;

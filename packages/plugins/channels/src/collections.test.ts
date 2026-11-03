@@ -447,6 +447,31 @@ describe('Channels collection declarations', () => {
         ],
       },
       {
+        id: 'by-connection-kind-v1',
+        fields: [
+          { field: 'connection-id', direction: 'asc' },
+          { field: 'record-kind', direction: 'asc' },
+        ],
+      },
+      {
+        id: 'by-session-kind-binding-update-v1',
+        fields: [
+          { field: 'session-id', direction: 'asc' },
+          { field: 'record-kind', direction: 'asc' },
+          { field: 'binding-id', direction: 'asc' },
+          { field: 'pr-update-at', direction: 'desc' },
+        ],
+      },
+      {
+        id: 'by-pr-session-binding-v1',
+        fields: [
+          { field: 'record-kind', direction: 'asc' },
+          { field: 'pr-binding', direction: 'asc' },
+          { field: 'session-id', direction: 'asc' },
+          { field: 'binding-id', direction: 'asc' },
+        ],
+      },
+      {
         id: 'by-attention',
         fields: [
           { field: 'attention', direction: 'asc' },
@@ -490,8 +515,8 @@ describe('Channels collection declarations', () => {
       },
     } as const;
 
-    expect(CHANNEL_STATE_COLLECTION.schemaVersion).toBe(10);
-    expect(CHANNEL_STATE_COLLECTION.readableSchemaVersions).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    expect(CHANNEL_STATE_COLLECTION.schemaVersion).toBe(19);
+    expect(CHANNEL_STATE_COLLECTION.readableSchemaVersions).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]);
     expect(JSON.parse(JSON.stringify(CHANNEL_ACCOUNT_COLLECTION_DECLARATIONS)))
       .toEqual(CHANNEL_ACCOUNT_COLLECTION_DECLARATIONS);
     expect(staticDeclaration?.migrations).toEqual([{
@@ -524,6 +549,24 @@ describe('Channels collection declarations', () => {
       id: 'channel-state-v8-to-v9', fromSchemaVersion: 8, toSchemaVersion: 9,
     }, {
       id: 'channel-state-v9-to-v10', fromSchemaVersion: 9, toSchemaVersion: 10,
+    }, {
+      id: 'channel-state-v10-to-v11', fromSchemaVersion: 10, toSchemaVersion: 11,
+    }, {
+      id: 'channel-state-v11-to-v12', fromSchemaVersion: 11, toSchemaVersion: 12,
+    }, {
+      id: 'channel-state-v12-to-v13', fromSchemaVersion: 12, toSchemaVersion: 13,
+    }, {
+      id: 'channel-state-v13-to-v14', fromSchemaVersion: 13, toSchemaVersion: 14,
+    }, {
+      id: 'channel-state-v14-to-v15', fromSchemaVersion: 14, toSchemaVersion: 15,
+    }, {
+      id: 'channel-state-v15-to-v16', fromSchemaVersion: 15, toSchemaVersion: 16,
+    }, {
+      id: 'channel-state-v16-to-v17', fromSchemaVersion: 16, toSchemaVersion: 17,
+    }, {
+      id: 'channel-state-v17-to-v18', fromSchemaVersion: 17, toSchemaVersion: 18,
+    }, {
+      id: 'channel-state-v18-to-v19', fromSchemaVersion: 18, toSchemaVersion: 19,
     }]);
     expect(staticDeclaration).not.toHaveProperty('migrations.0.migrate');
     expect(censusPayload?.required).toContain('conflict');
