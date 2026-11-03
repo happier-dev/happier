@@ -5830,6 +5830,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
     },
 
     settingsFeatures: {
+        bots: "機器人",
         profiles: '啟動設定檔',
         expLiveActivities: '即時動態',
         // Features settings screen

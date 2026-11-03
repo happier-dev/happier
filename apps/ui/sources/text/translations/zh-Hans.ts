@@ -6658,6 +6658,7 @@ export const zhHans: TranslationStructure = {
 
   settingsFeatures: {
     deployments: "部署",
+    bots: "机器人",
     featureOptOutSubtitle: "显示此功能并允许新任务。已经开始的工作会继续。",
     // Features settings screen
     experiments: "实验功能",

@@ -6773,6 +6773,7 @@ encryptedUnavailable: "Zaszyfrowane dane niedostępne",
 
   settingsFeatures: {
     deployments: "Wdrożenia",
+    bots: "Boty",
     featureOptOutSubtitle: "Pokazuj tę funkcję i zezwalaj na nowe zadania. Rozpoczęta praca jest kontynuowana.",
     // Features settings screen
     experiments: "Eksperymenty",

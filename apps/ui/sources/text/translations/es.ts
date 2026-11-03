@@ -6926,6 +6926,7 @@ encryptedUnavailable: "Detalles cifrados no disponibles",
 
   settingsFeatures: {
     deployments: "Despliegues",
+    bots: "Bots",
     featureOptOutSubtitle: "Mostrar esta función y permitir nuevas tareas. El trabajo ya iniciado continúa.",
     // Features settings screen
     experiments: "Experimentos",

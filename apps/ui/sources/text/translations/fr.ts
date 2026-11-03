@@ -6755,6 +6755,7 @@ encryptedUnavailable: "Détails chiffrés indisponibles",
 
   settingsFeatures: {
     deployments: "Déploiements",
+    bots: "Bots",
     featureOptOutSubtitle: "Afficher cette fonctionnalité et autoriser de nouvelles actions. Le travail déjà lancé continue.",
     // Features settings screen
     experiments: "Expérimentations",

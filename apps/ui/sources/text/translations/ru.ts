@@ -6691,6 +6691,7 @@ export const ru: TranslationStructure = {
 
   settingsFeatures: {
     deployments: "Развёртывания",
+    bots: "Боты",
     featureOptOutSubtitle: "Показывать функцию и разрешать новые задачи. Уже начатая работа продолжается.",
     // Features settings screen
     experiments: "Эксперименты",

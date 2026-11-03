@@ -7037,6 +7037,7 @@ encryptedUnavailable: "Detalhes encriptados indisponíveis",
 
   settingsFeatures: {
     deployments: "Implantações",
+    bots: "Bots",
     featureOptOutSubtitle: "Mostrar este recurso e permitir novas tarefas. O trabalho já iniciado continua.",
     // Features settings screen
     experiments: "Experimentos",

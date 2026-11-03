@@ -6388,6 +6388,7 @@ encryptedUnavailable: "Detalls xifrats no disponibles",
 
     settingsFeatures: {
         deployments: "Desplegaments",
+        bots: "Bots",
         featureOptOutSubtitle: "Mostra aquesta funció i permet tasques noves. La feina ja iniciada continua.",
         expVoiceDaemonInference: "Veu a la màquina", expVoiceDaemonInferenceSubtitle: "Executa models de veu a les teves màquines",
         expLiveActivities: 'Activitats en directe', expLiveActivitiesSubtitle: 'Activa les superfícies d’activitats en directe per al progrés de les sessions',

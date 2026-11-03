@@ -8154,6 +8154,7 @@ const enSettingsAppearance = {
 
 const enSettingsFeatures = {
   deployments: "Deployments",
+  bots: "Bots",
   featureOptOutSubtitle: "Show this feature and allow new work. Work already started continues.",
   // Features settings screen
   experiments: 'Experiments',

@@ -7148,6 +7148,7 @@ encryptedUnavailable: "Dettagli crittografati non disponibili",
 
   settingsFeatures: {
     deployments: "Distribuzioni",
+    bots: "Bot",
     featureOptOutSubtitle: "Mostra questa funzione e consenti nuove attività. Il lavoro già avviato continua.",
     // Features settings screen
     experiments: "Esperimenti",

@@ -7242,6 +7242,7 @@ localTailscale: {
 
   settingsFeatures: {
     deployments: "デプロイ",
+    bots: "Bot",
     featureOptOutSubtitle: "この機能を表示し、新しい作業を許可します。開始済みの作業は継続します。",
     // Features settings screen
     experiments: "実験的機能",
