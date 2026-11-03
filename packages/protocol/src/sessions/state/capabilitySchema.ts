@@ -44,6 +44,8 @@ export const SessionStateCapabilitiesV1Schema = lazyZodSchema(() => z.strictObje
         sessionRoles: z.optional(SessionStateFieldCapabilitySchema),
         memoryEnabled: z.optional(SessionStateFieldCapabilitySchema),
         voicePreference: z.optional(SessionStateFieldCapabilitySchema),
+          templateDraftRef: z.optional(SessionStateFieldCapabilitySchema),
+          templateInstance: z.optional(SessionStateFieldCapabilitySchema),
         context: z.optional(SessionStateFieldCapabilitySchema),
         permissionMode: z.optional(SessionStateFieldCapabilitySchema),
         acpSessionMode: z.optional(SessionStateFieldCapabilitySchema),

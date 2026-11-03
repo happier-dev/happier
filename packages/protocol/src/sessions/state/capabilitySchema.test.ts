@@ -48,6 +48,8 @@ describe('SessionStateCapabilitiesV1Schema', () => {
       'intent.sessionRoles',
       'intent.memoryEnabled',
       'intent.voicePreference',
+      'intent.templateDraftRef',
+      'intent.templateInstance',
       'intent.context',
       'intent.permissionMode',
       'intent.acpSessionMode',

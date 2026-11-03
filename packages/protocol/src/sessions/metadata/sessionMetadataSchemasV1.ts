@@ -1,3 +1,5 @@
+import { BotTemplateInstanceV1Schema } from '../../bots/templates/templateInstanceV1.js';
+import { BotTemplateDraftRefV1Schema } from '../../bots/templates/botTemplateV1.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { AgentSessionToolPolicyShapeV1 } from '../../runtime/permissionIntentV1.js';
 import { createStoredReadSchema, defineStoredReadProjection } from '../../json/storedReadSchema.js';
@@ -1343,6 +1345,8 @@ const SessionOwnerWorkV1Schema = lazyZodSchema(() => z.strictObject({
   createdAsBot: z.optional(z.literal(true)),
   memoryEnabled: z.optional(z.boolean()),
   voicePreference: z.optional(SessionVoicePreferenceV1Schema),
+  templateDraftRef: z.optional(BotTemplateDraftRefV1Schema),
+  templateInstance: z.optional(BotTemplateInstanceV1Schema),
   promptStack: z.optional(SessionPromptStackV1Schema),
   disabledInheritedEntryIds: z.optional(SessionDisabledInheritedEntryIdsV1Schema),
   viewPreferences: z.optional(z.strictObject({ showToolCalls: z.optional(z.boolean()) })),

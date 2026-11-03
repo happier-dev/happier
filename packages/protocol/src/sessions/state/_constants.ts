@@ -6,6 +6,8 @@ export const SESSION_STATE_FIELD_IDS = [
   'intent.sessionRoles',
   'intent.memoryEnabled',
   'intent.voicePreference',
+  'intent.templateDraftRef',
+  'intent.templateInstance',
   'intent.context',
   'intent.permissionMode',
   'intent.acpSessionMode',

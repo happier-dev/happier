@@ -1,3 +1,5 @@
+import type { BotTemplateInstanceV1 } from '../../bots/templates/templateInstanceV1.js';
+import type { BotTemplateDraftRefV1Schema } from '../../bots/templates/botTemplateV1.js';
 import type { z } from 'zod/mini';
 import type { SessionBotV1 } from '../identity/sessionBotV1.js';
 
@@ -63,6 +65,8 @@ export interface SessionStateFieldRegistry {
   'intent.sessionRoles': { value: SessionRoleConfigurationV1 };
   'intent.memoryEnabled': { value: boolean };
   'intent.voicePreference': { value: SessionVoicePreferenceV1 | null };
+  'intent.templateDraftRef': { value: z.infer<typeof BotTemplateDraftRefV1Schema> | null };
+  'intent.templateInstance': { value: BotTemplateInstanceV1 | null };
   'intent.context': { value: SessionContextIntentV1 };
   'intent.permissionMode': { value: PermissionModeIntentV1 };
   'intent.acpSessionMode': { value: AcpSessionModeIntentV1 };

@@ -5,6 +5,8 @@ import type { SessionStateFieldDescriptor } from './_types.js';
 export const SESSION_STATE_FIELD_REGISTRY = {
   'intent.memoryEnabled': { id: 'intent.memoryEnabled', class: 'intent', conflictPolicy: 'bindingOwned', deliveryClass: 'durable_required' },
   'intent.voicePreference': { id: 'intent.voicePreference', class: 'intent', conflictPolicy: 'bindingOwned', deliveryClass: 'durable_required' },
+  'intent.templateDraftRef': { id: 'intent.templateDraftRef', class: 'intent', conflictPolicy: 'bindingOwned', deliveryClass: 'durable_required' },
+  'intent.templateInstance': { id: 'intent.templateInstance', class: 'intent', conflictPolicy: 'bindingOwned', deliveryClass: 'durable_required' },
   'intent.context': { id: 'intent.context', class: 'intent', conflictPolicy: 'bindingOwned', deliveryClass: 'durable_required' },
   'intent.sessionRoles': {
     id: 'intent.sessionRoles',

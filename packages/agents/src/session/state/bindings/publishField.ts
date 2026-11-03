@@ -1,3 +1,4 @@
+import { sessionTemplateDraftRefBinding, sessionTemplateInstanceBinding } from './context.js';
 import { SESSION_RUNNER_RUNTIME_METADATA_KEY } from '@happier-dev/protocol/sessions/control/sessionRunnerRuntimeV1';
 import { projectNativeJsonValueForTransport, sameStrictJsonValue, type JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { SessionMetadata, SessionStateFieldId, SessionStateFieldValue } from '@happier-dev/protocol';
@@ -41,6 +42,8 @@ const SESSION_STATE_METADATA_BINDINGS = {
   'intent.sessionRoles': sessionRoleConfigurationBinding,
   'intent.memoryEnabled': sessionMemoryEnabledBinding,
   'intent.voicePreference': sessionVoicePreferenceBinding,
+  'intent.templateDraftRef': sessionTemplateDraftRefBinding,
+  'intent.templateInstance': sessionTemplateInstanceBinding,
   'intent.context': sessionContextBinding,
   'intent.permissionMode': permissionModeIntentBinding,
   'intent.acpSessionMode': acpSessionModeIntentBinding,
@@ -128,6 +131,10 @@ export function clearSessionStateFieldFromMetadata(
       return sessionRoleBinding.write(metadata, { value: null });
     case 'intent.voicePreference':
       return sessionVoicePreferenceBinding.write(metadata, { value: null });
+    case 'intent.templateDraftRef':
+      return sessionTemplateDraftRefBinding.write(metadata, { value: null });
+    case 'intent.templateInstance':
+      return sessionTemplateInstanceBinding.write(metadata, { value: null });
     case 'intent.sessionRoles':
       return sessionRoleConfigurationBinding.write(metadata, { value: { overrides: {}, sessionRoles: {}, notes: '' } });
     case 'intent.acpConfigOption':

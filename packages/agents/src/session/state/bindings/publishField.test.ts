@@ -1,8 +1,34 @@
+import { createSessionOwnerMetadataV1 } from '@happier-dev/protocol';
 import { describe, expect, it } from 'vitest';
 
 import { clearSessionStateFieldFromMetadata, createSessionStateFieldMetadataUpdater, readSessionStateFieldFromMetadata, writeSessionStateFieldToMetadata } from './publishField.js';
 
 describe('readSessionStateFieldFromMetadata', () => {
+  it('retains a private template instance while preserving unrelated metadata and clears only that field', () => {
+    const instance = { v: 1 as const, source: { kind: 'artifact' as const, serverId: 'author-home', artifactId: 'release' },
+      acceptedVersion: '1.2.3', acceptedBase: { serverId: 'recipient-home', artifactId: 'private-base' },
+      skillIds: { research: 'recipient-skill' }, mcpServerIds: { search: 'recipient-mcp' }, follow: true, skippedVersion: '1.3.0' };
+    const metadata = { path: '/repo', work: { memoryEnabled: true,
+      templateDraftRef: { serverId: 'home', artifactId: 'own-draft' }, futureWork: { retained: true } } };
+    const next = writeSessionStateFieldToMetadata(metadata, 'intent.templateInstance', instance);
+    expect(readSessionStateFieldFromMetadata(next, 'intent.templateInstance')).toEqual(instance);
+    expect(next).toEqual({ ...metadata, work: { ...metadata.work, templateInstance: instance } });
+    expect(writeSessionStateFieldToMetadata(next, 'intent.templateInstance', { ...instance })).toBe(next);
+    expect(clearSessionStateFieldFromMetadata(next, 'intent.templateInstance')).toEqual(metadata);
+    expect(readSessionStateFieldFromMetadata({ work: { templateInstance: { ...instance, acceptedVersion: 'latest' } } },
+      'intent.templateInstance')).toBeUndefined();
+    expect(createSessionOwnerMetadataV1({ metadata: { work: { templateInstance: instance } } }))
+      .toEqual({ ok: true, ownerMetadata: { v: 1, work: { templateInstance: instance } } });
+  });
+  it('retains the private template address through the registered metadata writer and clears it independently', () => {
+    const ref = { serverId: 'home', artifactId: '7e23f798-230a-42f3-931f-e38b20736333' };
+    const metadata = { work: { memoryEnabled: true } };
+    const next = writeSessionStateFieldToMetadata(metadata, 'intent.templateDraftRef', ref);
+    expect(readSessionStateFieldFromMetadata(next, 'intent.templateDraftRef')).toEqual(ref);
+    expect(next).toEqual({ work: { memoryEnabled: true, templateDraftRef: ref } });
+    expect(writeSessionStateFieldToMetadata(next, 'intent.templateDraftRef', { ...ref })).toBe(next);
+    expect(clearSessionStateFieldFromMetadata(next, 'intent.templateDraftRef')).toEqual(metadata);
+  });
   it('compares semantic field values independently of JSON key order and snapshots an in-place competing change', () => {
     const preference = { providerContributionId: 'example.voice/speech', settingFieldPath: 'voice', value: { id: 'original', language: 'en' } };
     const update = createSessionStateFieldMetadataUpdater('intent.voicePreference', null);

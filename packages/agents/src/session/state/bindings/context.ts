@@ -1,3 +1,5 @@
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { BotTemplateDraftRefV1Schema, BotTemplateInstanceV1Schema, readBotTemplateInstanceV1 } from '@happier-dev/protocol/bots/templates/botTemplateV1';
 import { z } from 'zod/mini';
 import {
   readSessionMemoryEnabledV1,
@@ -17,6 +19,38 @@ export const sessionVoicePreferenceBinding: SessionStateBinding<'intent.voicePre
       ? work.voicePreference : undefined), updatedAt: null };
   },
   write: (metadata, update) => writeSessionVoicePreferenceV1ToMetadata(metadata, update.value),
+};
+
+export const sessionTemplateDraftRefBinding: SessionStateBinding<'intent.templateDraftRef'> = {
+  readMutationBasis: metadata => sessionTemplateDraftRefBinding.read(metadata).value,
+  read: metadata => {
+    const work = metadata.work;
+    const parsed = BotTemplateDraftRefV1Schema.safeParse(work && typeof work === 'object' && 'templateDraftRef' in work ? work.templateDraftRef : undefined);
+    return { value: parsed.success ? parsed.data : null, updatedAt: null };
+  },
+  write: (metadata, update) => {
+    const ref = z.nullable(BotTemplateDraftRefV1Schema).parse(update.value);
+    const work: Readonly<Record<string, unknown>> = { ...(metadata.work && typeof metadata.work === 'object' ? metadata.work : {}) };
+    if (sameStrictJsonValue('templateDraftRef' in work ? work.templateDraftRef : null, ref)) return metadata;
+    const { templateDraftRef: _previous, ...rest } = work;
+    return { ...metadata, work: ref === null ? rest : { ...rest, templateDraftRef: ref } };
+  },
+};
+
+export const sessionTemplateInstanceBinding: SessionStateBinding<'intent.templateInstance'> = {
+  readMutationBasis: metadata => sessionTemplateInstanceBinding.read(metadata).value,
+  read: metadata => {
+    const work = metadata.work;
+    return { value: readBotTemplateInstanceV1(work && typeof work === 'object' && 'templateInstance' in work
+      ? work.templateInstance : undefined), updatedAt: null };
+  },
+  write: (metadata, update) => {
+    const instance = z.nullable(BotTemplateInstanceV1Schema).parse(update.value);
+    const work: Readonly<Record<string, unknown>> = { ...(metadata.work && typeof metadata.work === 'object' ? metadata.work : {}) };
+    if (sameStrictJsonValue(work.templateInstance ?? null, instance)) return metadata;
+    const { templateInstance: _previous, ...rest } = work;
+    return { ...metadata, work: instance === null ? rest : { ...rest, templateInstance: instance } };
+  },
 };
 
 export const sessionMemoryEnabledBinding: SessionStateBinding<'intent.memoryEnabled'> = {
