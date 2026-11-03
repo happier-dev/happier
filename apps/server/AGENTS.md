@@ -63,6 +63,7 @@ Prefer existing domain folders and module owners before creating new top-level f
 - Do not use migrations as a workaround for unrelated schema drift. Identify and fix the owning schema/migration path.
 - Use `inTx` for database operations that must be transactional.
 - Use `afterTx` for events/side effects that must run only after a successful commit.
+- Read sets, not rows: a loop over a result that issues one query per item (access witness, host reference, membership) is an N+1; resolve the set in one query inside the same transaction. Scope predicates must be index-servable on every shipped engine: an `OR` of correlated relation arms forces a scan, so read each arm through its own index (`id IN (…)`) and check the plan shape on SQLite and PostgreSQL.
 - Do not run non-transactional side effects (file uploads, external calls, notifications, etc.) inside DB transactions.
 - For complex DB fields, use JSON deliberately and validate at the application boundary.
 
@@ -73,6 +74,7 @@ Prefer existing domain folders and module owners before creating new top-level f
 - Design retryable operations to be idempotent. Clients may retry automatically, and repeated calls should produce the same durable result as one call.
 - When writing DB-backed action functions, put each action in a dedicated file in the relevant app/domain subfolder. Prefer `entityAction` naming, for example `friendAdd`.
 - Do not return data from action functions “just in case”; return only the essential contract.
+- Liveness (presence, heartbeat, an active→active touch) updates a liveness field or an ephemeral event; it never creates a durable change entry, bumps a version or republishes content. Listing routes return the listing projection, not every item's full snapshot, and per-recipient updates carry the changed parts. Prove it with counts: SQL statements per request, change entries per heartbeat.
 - After writing an action, add/keep a documentation comment that explains the action logic and update it when logic changes.
 
 ## Privacy and encoding
