@@ -2,6 +2,7 @@ import type { PluginReactNativeBundleCache } from './bundleCache';
 import type {
     PluginReactNativeLoaderBackend,
     PluginReactNativeExecutableModuleReference,
+    PluginReactNativeExportLoaderResult,
 } from './loader';
 import { loadPluginReactNativeBundleExport } from './loader';
 import type { PluginReactNativeBundleCacheIdentity } from '@/sync/domains/plugins/ui/reactNativeRuntime';
@@ -63,6 +64,7 @@ export type PluginUiExecutableModuleHost = Readonly<{
         hostPlatform: string;
         authority: PluginUiExecutableAuthority;
         createScope: () => PluginUiExecutableActivationScope<TApi>;
+        loadExport?: () => Promise<PluginReactNativeExportLoaderResult>;
     }>): Promise<PluginUiExecutableModuleActivationResult>;
     replaceAuthority(authority: PluginUiExecutableAuthority | null): Promise<void>;
     invalidateActivation(input: Readonly<{
@@ -177,6 +179,7 @@ export function createPluginUiExecutableModuleHost(): PluginUiExecutableModuleHo
         hostPlatform: string;
         authority: PluginUiExecutableAuthority;
         createScope: () => PluginUiExecutableActivationScope<TApi>;
+        loadExport?: () => Promise<PluginReactNativeExportLoaderResult>;
     }>): Promise<PluginUiExecutableModuleActivationResult> {
         if (!authorityInitialized) {
             return Object.freeze({
@@ -227,13 +230,13 @@ export function createPluginUiExecutableModuleHost(): PluginUiExecutableModuleHo
         );
 
         const promise = (async (): Promise<PluginUiExecutableModuleActivationResult> => {
-            const loaded = await loadPluginReactNativeBundleExport({
+            const loaded = await (input.loadExport?.() ?? loadPluginReactNativeBundleExport({
                 cache: input.cache,
                 identity: input.identity,
                 moduleReference: input.moduleReference,
                 backend: input.backend,
                 hostPlatform: input.hostPlatform,
-            }).catch(() => null);
+            })).catch(() => null);
             if (loaded === null) {
                 return Object.freeze({
                     ok: false,

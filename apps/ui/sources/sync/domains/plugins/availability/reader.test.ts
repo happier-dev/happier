@@ -1,3 +1,4 @@
+import { acquirePluginSelectedArtifactLease } from './artifactLease';
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -17,7 +18,7 @@ import {
     createPluginAccountAvailabilityReaderStore,
     type PluginAccountAvailabilitySnapshot,
 } from './reader';
-import { normalizePluginUiDestinationBindingV1, PluginUiArtifactsManifestEntryV2Schema } from '@happier-dev/protocol/plugins/ui';
+import { computePluginUiArtifactFileSetSha256DigestV1, computePluginUiArtifactSha256DigestV1, normalizePluginUiDestinationBindingV1, PluginUiArtifactsManifestEntryV2Schema } from '@happier-dev/protocol/plugins/ui';
 import { artifactHtmlBundleFromBodyV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
 import { admitDeclarativeStaticModel } from '@/components/plugins/surfaces/declarativeStaticModel';
 import { projectPluginPortableUiDeclarationsV1 } from '@happier-dev/protocol/plugins/contributions/ui';
@@ -659,6 +660,79 @@ describe('Plugin Account Availability reader', () => {
         store.retire([manifest.id]);
         expect(reader.readCurrentArtifact(slot).kind).toBe('unavailable');
     });
+    it('projects descriptor-only Account authentication and retains unchanged rows across availability updates', async () => {
+        const file = { relativePath: 'react-native/account-authentication/entry.cjs.bundle',
+            bytes: new TextEncoder().encode('exports.authenticate = () => {};') };
+        const graph = PluginUiArtifactsManifestEntryV2Schema.parse({
+            artifactId: 'account-authentication', tier: 'reactNative', entry: file.relativePath,
+            digest: computePluginUiArtifactFileSetSha256DigestV1([file]),
+            files: [{ relativePath: file.relativePath, digest: computePluginUiArtifactSha256DigestV1(file.bytes), byteSize: file.bytes.byteLength }],
+            builtWith: { bundler: 'esbuild', version: '1.0.0' }, executable: { exports: ['authenticate'] }, hostUiApiRange: '^1.0.0',
+        });
+        const manifest = PluginPortableReleaseManifestV1Schema.parse({
+            ...intentRead().release!.normalizedManifest,
+            contributes: { connectedAccountDescriptors: [{ id: 'subscription', title: 'Subscription', authentication: {
+                account: { artifactId: graph.artifactId, exportName: 'authenticate' },
+                defaultModeId: 'device', modes: [{ id: 'device', kind: 'oauthDeviceCode', outcomeReconciliation: 'none' }],
+            } }] },
+        });
+        const store = createPluginAccountAvailabilityReaderStore({ hostBundledUi: [{
+            pluginId: manifest.id, pluginVersion: manifest.version, displayName: 'Fixture',
+            packageName: '@happier-dev/plugins-fixture', normalizedManifest: manifest, entriesById: {}, artifactGraphs: [graph],
+        }] });
+        const empty = snapshot({ intentReads: [], materializations: [], snapshots: [] });
+        store.replace({ scope, snapshot: empty });
+        const reader = store.bind(scope);
+        const selected = reader.readCurrentAccountExecution(manifest.id);
+        if (selected.kind !== 'available') throw new Error('Missing selected Account declaration');
+        const first = reader.readAccountUiProjection();
+        const key = `${manifest.id}/subscription`;
+        const descriptor = first?.connectedAccountDescriptorsById?.[key];
+        expect(descriptor).toMatchObject({ id: 'subscription', pluginId: manifest.id,
+            occurrenceId: selected.custodyId, definition: manifest.contributes.connectedAccountDescriptors![0],
+            hostAccountOrigin: { ...scope, custodyId: selected.custodyId, sourceCustody: selected.sourceCustody } });
+        expect(first?.installedPackagesById[manifest.id]).toMatchObject({ enabled: true, occurrenceId: selected.custodyId });
+        expect(first?.reactNativeBundlesById[`reactNativeBundle:${manifest.id}:connectedAccountDescriptors/subscription`])
+            .toMatchObject({ artifactGraph: graph, contributionId: 'connectedAccountDescriptors/subscription',
+                generatedOwnerKind: 'clientContribution', occurrenceId: selected.custodyId,
+                runtime: { decision: { state: 'load' } } });
+        const slot = { pluginId: manifest.id, contributionId: 'connectedAccountDescriptors/subscription',
+            tier: 'reactNative' as const, platform: 'web' as const };
+        expect(reader.readCurrentArtifact(slot)).toMatchObject({ kind: 'available',
+            artifact: { artifactId: graph.artifactId, digest: graph.digest } });
+        const acquired = await acquirePluginSelectedArtifactLease({ reader, slot, artifactGraph: graph,
+            accountLifetime: { isCurrent: () => true, onRetire: () => ({ dispose() {} }) },
+            sources: [{ kind: 'appExact', fetch: async () => new Map([[file.relativePath, file.bytes]]) }] });
+        expect(acquired.kind).toBe('available');
+        if (acquired.kind !== 'available') throw new Error('Missing selected authentication Artifact lease');
+        try {
+            expect(await acquired.lease.readFile(file.relativePath)).toMatchObject({ kind: 'available', bytes: file.bytes });
+            store.replace({ scope, snapshot: { ...empty, availabilityCursor: empty.availabilityCursor + 1 } });
+            expect(reader.readAccountUiProjection()?.connectedAccountDescriptorsById).toBe(first?.connectedAccountDescriptorsById);
+            expect(acquired.lease.isCurrent()).toBe(true);
+            const replacementFile = { ...file, bytes: new TextEncoder().encode('exports.authenticate = () => "updated";') };
+            const replacementGraph = { ...graph, digest: computePluginUiArtifactFileSetSha256DigestV1([replacementFile]),
+                files: [{ relativePath: file.relativePath, digest: computePluginUiArtifactSha256DigestV1(replacementFile.bytes),
+                    byteSize: replacementFile.bytes.byteLength }] };
+            const response = PluginAccountAvailabilityIntentReadResponseV1Schema.parse({ ...intentRead(),
+                intent: { ...intentRead().intent!, desiredVersion: '2.0.0', revision: 'intent-authentication-2' },
+                release: { ...intentRead().release!, ref: { pluginId: manifest.id, version: '2.0.0' },
+                    normalizedManifest: { ...manifest, version: '2.0.0' },
+                    uiSlots: [{ contributionId: slot.contributionId, tier: slot.tier, platform: slot.platform,
+                        artifactId: replacementGraph.artifactId, artifactDigest: replacementGraph.digest,
+                        hostUiApiRange: replacementGraph.hostUiApiRange, artifactGraph: replacementGraph }] }, uiArtifacts: [] });
+            store.replace({ scope, snapshot: { ...empty, availabilityCursor: empty.availabilityCursor + 2,
+                intentReads: [{ pluginId: manifest.id, response }] } });
+            expect(acquired.lease.isCurrent()).toBe(false);
+            expect(reader.readCurrentArtifact(slot)).toMatchObject({ kind: 'available',
+                artifact: { digest: replacementGraph.digest, releaseVersion: '2.0.0' } });
+            expect(reader.readAccountUiProjection()?.connectedAccountDescriptorsById?.[key]?.occurrenceId).not.toBe(selected.custodyId);
+            store.retire([manifest.id]);
+            expect(reader.readAccountUiProjection()?.connectedAccountDescriptorsById?.[key]).toBeUndefined();
+            expect(reader.readCurrentArtifact(slot).kind).toBe('unavailable');
+        } finally { acquired.lease.dispose(); }
+    });
+
     it('projects current portable Account Actions and exact graphs without a Machine, retiring disabled and replaced custody', () => {
         const artifactGraph = PluginUiArtifactsManifestEntryV2Schema.parse({
             artifactId: 'account-actions', tier: 'reactNative', entry: 'react-native/account-actions/entry.cjs.bundle',

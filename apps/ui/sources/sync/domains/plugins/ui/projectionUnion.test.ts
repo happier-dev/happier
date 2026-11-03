@@ -63,6 +63,32 @@ it('retains proven installed declarations on a cold client without fabricating r
     expect(mergeInstalledPluginUiProjections([], null)).toBeNull();
 });
 
+it('retains current Account authentication descriptors through AppShell composition and withdraws retired selections', () => {
+    const manifest = PluginPortableReleaseManifestV1Schema.parse({ schemaVersion: 2, id: 'happier.fixture', version: '1.0.0',
+        displayName: 'Fixture', runtime: { apiVersion: 1 }, contributes: { connectedAccountDescriptors: [{
+            id: 'subscription', title: 'Subscription', authentication: {
+                account: { artifactId: 'authentication', exportName: 'authenticate' },
+                defaultModeId: 'device', modes: [{ id: 'device', kind: 'oauthDeviceCode', outcomeReconciliation: 'none' }],
+            },
+        }] } });
+    const definition = manifest.contributes.connectedAccountDescriptors![0]!;
+    const key = `${manifest.id}/${definition.id}`;
+    const descriptor = { id: definition.id, pluginId: manifest.id, occurrenceId: 'account-selection', definition,
+        hostAccountOrigin: { serverId: 'home', accountId: 'account', custodyId: 'account-selection',
+            sourceCustody: { kind: 'bundled_first_party' as const,
+                packagedRuntime: { kind: 'source_declaration' as const, packageName: '@happier-dev/plugins-fixture' } } } };
+    const account = { ...EMPTY_PLUGIN_UI_PROJECTION, connectedAccountDescriptorsById: { [key]: descriptor } };
+    const publication = projectionUnion.createInstalledPluginUiProjectionPublication();
+    const first = publication.publish([account], EMPTY_PLUGIN_UI_PROJECTION);
+    expect(first?.connectedAccountDescriptorsById?.[key]).toBe(descriptor);
+    expect(publication.publish([account], EMPTY_PLUGIN_UI_PROJECTION)?.connectedAccountDescriptorsById)
+        .toBe(first?.connectedAccountDescriptorsById);
+    const changed = { ...descriptor, definition: { ...definition, title: 'Updated subscription' } };
+    expect(publication.publish([{ ...account, connectedAccountDescriptorsById: { [key]: changed } }], EMPTY_PLUGIN_UI_PROJECTION)
+        ?.connectedAccountDescriptorsById?.[key]).toBe(changed);
+    expect(publication.publish([], EMPTY_PLUGIN_UI_PROJECTION)?.connectedAccountDescriptorsById?.[key]).toBeUndefined();
+});
+
 it('retains current Account Actions through installed composition without replacing Machine Actions', () => {
     const digest = `sha256:${'a'.repeat(64)}`;
     const graph = PluginUiArtifactsManifestEntryV2Schema.parse({ artifactId: 'account', tier: 'reactNative', digest,

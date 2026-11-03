@@ -81,6 +81,49 @@ afterEach(async () => {
 });
 
 describe('apiQualifiedConnectedAccountsV4', () => {
+    it.each(['credential', 'configuration'] as const)('keeps a captured %s read on its cancellation and persistence purpose', async kind => {
+        const { getQualifiedConnectedAccountCredentialV4, getQualifiedConnectedAccountConfigurationV4 } = await import('./apiQualifiedConnectedAccountsV4');
+        const ref = { service, accountId: 'work' };
+        const controller = new AbortController();
+        let observedSignal: AbortSignal | null | undefined;
+        let observedPurpose: string | null = null;
+        const options = { signal: controller.signal, requestPurpose: 'connected-accounts:persistence' as const,
+            request: async (_path: string, init?: RequestInit) => {
+                observedSignal = init?.signal;
+                observedPurpose = new Headers(init?.headers).get('X-Happier-Request-Purpose');
+                const basis = { authenticationModeId: 'token', revisionSemantics: 'revisioned',
+                    credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS', configurationRevision: 'configuration' };
+                return Response.json(kind === 'credential' ? { ...basis, ref, content: { t: 'plain', v: {} }, metadata: { scopes: [] } }
+                    : { ...basis, target: { kind: 'account', ref }, configurationContent: { t: 'plain', v: {} } });
+            } };
+        await (kind === 'credential' ? getQualifiedConnectedAccountCredentialV4 : getQualifiedConnectedAccountConfigurationV4)(credentials, ref, options);
+        expect(observedSignal).toBe(controller.signal);
+        expect(observedPurpose).toBe('connected-accounts:persistence');
+    });
+
+    it('settles an explicitly single credential read failure without scheduling hidden retries', async () => {
+        const { getQualifiedConnectedAccountCredentialV4 } = await import('./apiQualifiedConnectedAccountsV4');
+        vi.useFakeTimers();
+        const controller = new AbortController();
+        let requests = 0;
+        let failure: unknown;
+        try {
+            const options = { signal: controller.signal, retry: 'none' as const, request: async () => {
+                requests += 1;
+                return Response.json({ error: 'server_unreachable' }, { status: 503 });
+            } };
+            void getQualifiedConnectedAccountCredentialV4(credentials, { service, accountId: 'work' }, options).catch(error => { failure = error; });
+            await vi.advanceTimersByTimeAsync(0);
+            expect(vi.getTimerCount()).toBe(0);
+            expect(requests).toBe(1);
+            expect(failure).toMatchObject({ code: 'server_unreachable' });
+        } finally {
+            controller.abort();
+            vi.clearAllTimers();
+            vi.useRealTimers();
+        }
+    });
+
     it('attributes credential, configuration and quota reads with existing diagnostic purposes', async () => {
         const ref = { service, accountId: 'work' };
         const credential = { ref, authenticationModeId: 'token', revisionSemantics: 'revisioned',

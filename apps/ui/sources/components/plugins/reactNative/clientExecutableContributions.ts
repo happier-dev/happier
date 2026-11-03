@@ -5,14 +5,12 @@ import { buildQualifiedPluginContributionKey, createPluginContributionIdentity }
 import { derivePluginAccountContributionRegistrationRights, derivePluginClientContributionRegistrationRights, type PluginContributionClientPlatform, type PluginContributionRegistrationRight } from '@happier-dev/protocol/plugins/contributions/catalog';
 import type { PluginProjectedActionV2, PluginProjectedDragSourceEntryV1, PluginProjectedDropTargetEntryV1 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import type { PluginAccountApi, PluginClientApi } from '@happier-dev/plugin-sdk';
+import type { PluginUiConnectedAccountDescriptorProjection } from '@/sync/domains/plugins/ui/projection';
 import type { PluginDragSourceRuntime, PluginDropTargetRuntime } from '@happier-dev/plugin-sdk';
 import type { PluginProjectedWorkItemsEntryV1 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { mergeAbortSignals, throwIfAborted } from '@/utils/runtime/abortSignals';
 import type { PluginAccountActionHandler, PluginClientActionHandler } from '@happier-dev/plugin-sdk/actions';
-import {
-    createPluginRegistrationScope,
-    type PluginRuntimeRegistration,
-} from '@happier-dev/plugin-sdk/host/registration';
+import { createPluginRegistrationScope, type PluginRuntimeRegistration } from '@/sync/domains/plugins/registrationScope';
 
 import type { PluginReactNativeBundleCache } from './bundleCache';
 import {
@@ -27,12 +25,14 @@ import {
 import type {
     PluginReactNativeLoaderBackend,
     PluginReactNativeExecutableModuleReference,
+    PluginReactNativeExportLoaderResult,
 } from './loader';
 import type { PluginReactNativeBundleCacheIdentity } from '@/sync/domains/plugins/ui/reactNativeRuntime';
 import { isPluginProjectedActionExecutable } from '@/sync/domains/plugins/ui/projection';
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { readPluginUiContributionOrigin, readPluginUiProjectionEntryExecutionOrigin } from '@/sync/domains/plugins/ui/projectionUnion';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
+import type { UiConnectedAccountAuthenticationRuntime } from '@/sync/ops/connectedAccounts/connectedAccountAuthenticationRuntime';
 
 type PluginWorkItemsRuntime = Parameters<PluginClientApi['workItems']['register']>[1];
 
@@ -60,6 +60,8 @@ export type PluginUiClientExecutableRegistrationLifecycle = Readonly<{
 
 /** One client registration from one exact target/origin/plugin occurrence. */
 export type PluginUiClientExecutableRegistration = Readonly<{
+    /** Host-only first-use preparation; declaration reads do not acquire code. */
+    prepare?: (signal?: AbortSignal) => Promise<void>;
     contribution: Readonly<{
         pluginId: string;
         localId: string;
@@ -75,12 +77,58 @@ export type PluginUiClientExecutableRegistration = Readonly<{
     accountLifetime?: ActiveServerAccountScopeLifetime;
     authority?: PluginUiExecutableAuthority;
     lifecycle: PluginUiClientExecutableRegistrationLifecycle;
+    /** Present only on the connected-account family; retired with this registration. */
+    connectedAccountAuthentication?: Readonly<{
+        acquire(create: () => Promise<UiConnectedAccountAuthenticationRuntime>): Promise<UiConnectedAccountAuthenticationRuntime>;
+    }>;
 }>;
 
 /** Read-only seam shared by the generic index and its installed composition. */
 export type PluginUiClientExecutableRegistrationReader = Readonly<{
     read(address: PluginUiClientExecutableRegistrationAddress): PluginUiClientExecutableRegistration | null;
+    readRefusal?(address: PluginUiClientExecutableRegistrationAddress, authority?: PluginUiExecutableAuthority): PluginUiClientExecutableFailure | null;
 }>;
+
+/** A deciding target failure, without executable bytes or author content. */
+export type PluginUiClientExecutableFailure = Readonly<{
+    ok: false;
+    code: string;
+    layer: 'artifact' | 'registration';
+    phase: 'preparation' | 'activation';
+    retryable: boolean;
+    diagnostics: readonly string[];
+}>;
+
+
+/** The selected Account authentication uses the same committed lazy index as Resources and Actions. */
+export async function resolvePluginUiAccountConnectedAccountRegistration(input: Readonly<{
+    descriptor: PluginUiConnectedAccountDescriptorProjection;
+    platform: PluginContributionClientPlatform;
+    reader?: PluginUiClientExecutableRegistrationReader;
+    signal?: AbortSignal;
+}>): Promise<Readonly<{
+    registration: PluginUiClientExecutableRegistration;
+    runtime: Parameters<PluginAccountApi['connectedAccounts']['register']>[1];
+}> | null> {
+    const { descriptor } = input;
+    const target = descriptor.definition.authentication.account;
+    const origin = readPluginUiAccountExecutableOrigin(descriptor);
+    if (!target || !origin || descriptor.occurrenceId !== origin.custodyId) return null;
+    const registration = (input.reader ?? getInstalledPluginUiClientExecutableComposition()).read({
+        family: 'connectedAccountDescriptors', pluginId: descriptor.pluginId, localId: descriptor.id,
+        target: { realm: 'account', ...target, platform: input.platform },
+        executionOrigin: null, occurrenceId: origin.custodyId,
+    });
+    if (!registration || registration.registration.family !== 'connectedAccountDescriptors'
+        || registration.right.target.realm !== 'account' || !registration.authority || !('kind' in registration.authority)
+        || registration.authority.serverId !== origin.serverId || registration.authority.accountId !== origin.accountId
+        || registration.authority.custodyId !== origin.custodyId) return null;
+    await registration.prepare?.(input.signal);
+    return Object.freeze({ registration, get runtime() {
+        // The SDK scope owns validation of the registered authentication ABI.
+        return registration.registration.value as Parameters<PluginAccountApi['connectedAccounts']['register']>[1];
+    } });
+}
 
 /**
  * One committed client Action registration that is safe for both presentation
@@ -112,6 +160,7 @@ export type PluginUiClientExecutableDerivedScope = Readonly<{
 }>;
 
 type PluginUiClientExecutableRegistrationScopeInput = Readonly<{
+        prepareRegistration?: (registration: PluginRuntimeRegistration) => Promise<PluginRuntimeRegistration>;
         pluginId: string;
         /** Every compatible declaration the shared module must register. */
         contributes: Readonly<Record<string, unknown>>;
@@ -137,6 +186,9 @@ export type PluginUiClientExecutableRegistrationIndex = Readonly<{
     createScope(input: PluginUiClientExecutableRegistrationScopeInput & Readonly<{ target: PluginUiClientExecutableTarget & { realm?: undefined } }>): PluginUiClientExecutableRegistrationScope;
     createScope(input: PluginUiClientExecutableRegistrationScopeInput): PluginUiExecutableRegistrationScope;
     read(address: PluginUiClientExecutableRegistrationAddress): PluginUiClientExecutableRegistration | null;
+    readRefusal(address: PluginUiClientExecutableRegistrationAddress, authority?: PluginUiExecutableAuthority): PluginUiClientExecutableFailure | null;
+    refuse(admission: PluginUiClientExecutableAdmission, failure: PluginUiClientExecutableFailure): void;
+    retainRefusals(isCurrent: (admission: PluginUiClientExecutableAdmission) => boolean): void;
     revision(): number;
     subscribe(listener: () => void): () => void;
 }>;
@@ -144,6 +196,10 @@ export type PluginUiClientExecutableRegistrationIndex = Readonly<{
 type IndexedRegistration = Readonly<{
     ownerToken: object;
     registration: PluginUiClientExecutableRegistration;
+}> | Readonly<{
+    ownerToken: object;
+    admission: PluginUiClientExecutableAdmission;
+    refusal: PluginUiClientExecutableFailure;
 }>;
 
 type RegistrationSnapshot = Readonly<Record<string, IndexedRegistration>>;
@@ -194,6 +250,24 @@ function isLifecycleCurrent(lifecycle: PluginUiClientExecutableRegistrationLifec
     } catch {
         return false;
     }
+}
+
+function awaitRegistrationPreparation<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
+    return new Promise((resolve, reject) => {
+        const abort = () => {
+            signal.removeEventListener('abort', abort);
+            reject(Object.assign(new Error('plugin_action_generation_retired'), { code: 'plugin_action_generation_retired' }));
+        };
+        signal.addEventListener('abort', abort, { once: true });
+        void work.then(value => {
+            signal.removeEventListener('abort', abort);
+            resolve(value);
+        }, error => {
+            signal.removeEventListener('abort', abort);
+            reject(error);
+        });
+        if (signal.aborted) abort();
+    });
 }
 
 function registrationIndexKey(input: Readonly<{
@@ -270,7 +344,7 @@ export function createPluginUiClientExecutableRegistrationIndex(): PluginUiClien
             return null;
         }
         const indexed = snapshot[key];
-        if (!indexed) return null;
+        if (!indexed || !('registration' in indexed)) return null;
         const registration = indexed.registration;
         return registration.occurrenceId === address.occurrenceId
             && sameTarget(registration.target, address.target)
@@ -278,6 +352,46 @@ export function createPluginUiClientExecutableRegistrationIndex(): PluginUiClien
             && isLifecycleCurrent(registration.lifecycle)
             ? registration
             : null;
+    };
+
+    const readRefusal = (address: Omit<PluginUiClientExecutableRegistrationAddress, 'family'> & Pick<PluginContributionRegistrationRight, 'family'>, authority?: PluginUiExecutableAuthority): PluginUiClientExecutableFailure | null => {
+        const entry = snapshot[registrationIndexKey(address)];
+        return entry && 'refusal' in entry && entry.admission.occurrenceId === address.occurrenceId
+            && (authority === undefined || getPluginUiExecutableAuthorityKey(authority) === getPluginUiExecutableAuthorityKey(entry.admission.authority))
+            && sameTarget(entry.admission.target, address.target)
+            && sameExecutionOrigin(entry.admission.executionOrigin, address.executionOrigin) ? entry.refusal : null;
+    };
+
+    const retainRefusals = (isCurrent: (admission: PluginUiClientExecutableAdmission) => boolean): void => {
+        let next: Record<string, IndexedRegistration> | undefined;
+        for (const [key, entry] of Object.entries(snapshot)) {
+            if (!('refusal' in entry) || isCurrent(entry.admission)) continue;
+            next ??= { ...snapshot };
+            delete next[key];
+        }
+        if (next) publish(next);
+    };
+
+    const refuse = (admission: PluginUiClientExecutableAdmission, refusal: PluginUiClientExecutableFailure): void => {
+        const rights = (admission.target.realm === 'account'
+            ? derivePluginAccountContributionRegistrationRights : derivePluginClientContributionRegistrationRights)(admission.contributes, admission.target);
+        const next = { ...snapshot };
+        let changed = false;
+        for (const right of rights) {
+            const address = { family: right.family, pluginId: admission.pluginId, localId: right.localId,
+                target: admission.target, executionOrigin: admission.executionOrigin, occurrenceId: admission.occurrenceId };
+            const key = registrationIndexKey(address);
+            // A redundant cold acquisition cannot replace an exact committed handler.
+            const prior = snapshot[key];
+            if (prior && 'registration' in prior && isLifecycleCurrent(prior.registration.lifecycle)) continue;
+            const existing = readRefusal(address);
+            if (existing?.code === refusal.code && existing.layer === refusal.layer && existing.phase === refusal.phase
+                && existing.retryable === refusal.retryable && existing.diagnostics.length === refusal.diagnostics.length
+                && existing.diagnostics.every((diagnostic, index) => diagnostic === refusal.diagnostics[index])) continue;
+            next[key] = { ownerToken: Object.freeze({}), admission, refusal };
+            changed = true;
+        }
+        if (changed) publish(next);
     };
 
     function createScope(input: PluginUiClientExecutableRegistrationScopeInput & Readonly<{ target: PluginUiClientExecutableTarget & { realm: 'account' } }>): PluginUiClientExecutableRegistrationScope<PluginAccountApi>;
@@ -371,9 +485,12 @@ export function createPluginUiClientExecutableRegistrationIndex(): PluginUiClien
                         throw new Error('client_executable_registration_duplicate');
                     }
                     const existing = snapshot[key];
-                    if (existing && existing.ownerToken !== ownerToken) {
+                    if (existing && 'registration' in existing && existing.ownerToken !== ownerToken) {
                         throw new Error('client_executable_registration_conflict');
                     }
+                    let currentRegistration = registration;
+                    const prepareRegistration = input.prepareRegistration;
+                    let authenticationRuntime: Promise<UiConnectedAccountAuthenticationRuntime> | undefined;
                     nextEntries.push(Object.freeze([key, Object.freeze({
                         ownerToken,
                         registration: Object.freeze({
@@ -382,7 +499,16 @@ export function createPluginUiClientExecutableRegistrationIndex(): PluginUiClien
                                 localId: registration.localId,
                             }),
                             right,
-                            registration,
+                            get registration() { return currentRegistration; },
+                            ...(prepareRegistration ? { async prepare(signal?: AbortSignal) {
+                                const cancellation = mergeAbortSignals([signal, lifecycle.signal]);
+                                try {
+                                    if (cancellation.signal.aborted) {
+                                        throw Object.assign(new Error('plugin_action_generation_retired'), { code: 'plugin_action_generation_retired' });
+                                    }
+                                    currentRegistration = await awaitRegistrationPreparation(prepareRegistration(registration), cancellation.signal);
+                                } finally { cancellation.dispose(); }
+                            } } : {}),
                             target: exact.target,
                             executionOrigin: exact.executionOrigin,
                             occurrenceId: input.occurrenceId,
@@ -392,6 +518,17 @@ export function createPluginUiClientExecutableRegistrationIndex(): PluginUiClien
                             ...(input.accountLifetime === undefined ? {} : { accountLifetime: input.accountLifetime }),
                             ...(input.authority === undefined ? {} : { authority: input.authority }),
                             lifecycle,
+                            ...(registration.family === 'connectedAccountDescriptors' ? {
+                                connectedAccountAuthentication: Object.freeze({
+                                    acquire(create: () => Promise<UiConnectedAccountAuthenticationRuntime>) {
+                                        authenticationRuntime ??= create().catch(error => {
+                                            authenticationRuntime = undefined;
+                                            throw error;
+                                        });
+                                        return authenticationRuntime;
+                                    },
+                                }),
+                            } : {}),
                         }),
                     })] as const));
                 }
@@ -423,6 +560,9 @@ export function createPluginUiClientExecutableRegistrationIndex(): PluginUiClien
     return Object.freeze({
         createScope,
         read,
+        readRefusal,
+        refuse,
+        retainRefusals,
         revision: () => revision,
         subscribe: (listener) => {
             listeners.add(listener);
@@ -447,6 +587,8 @@ export type PluginUiClientExecutableActivation = Readonly<{
     identity: PluginReactNativeBundleCacheIdentity;
     moduleReference: PluginReactNativeExecutableModuleReference;
     backend: PluginReactNativeLoaderBackend;
+    loadExport?: () => Promise<PluginReactNativeExportLoaderResult>;
+    prepareRegistration?: PluginUiClientExecutableRegistrationScopeInput['prepareRegistration'];
     authority: PluginUiExecutableAuthority;
     isCurrent(): boolean;
     /** A derived family may compose runtime state but cannot replace the ABI/index owner. */
@@ -457,7 +599,7 @@ export type PluginUiClientExecutableActivation = Readonly<{
 
 export type PluginUiClientExecutableCompositionAttempt = Readonly<{
     activation: PluginUiClientExecutableActivation;
-    result: PluginUiExecutableModuleActivationResult;
+    result: PluginUiExecutableModuleActivationResult | PluginUiClientExecutableFailure;
     /** The incumbent host scope remained current, so this input did not take ownership. */
     reused: boolean;
 }>;
@@ -471,10 +613,16 @@ export type PluginUiClientExecutableComposition = Readonly<{
     retain(admissions: readonly PluginUiClientExecutableAdmission[]): Promise<void>;
     /** A preparing or committed activation still owns its exact controller and index target. */
     isCurrentActivation(activation: PluginUiClientExecutableActivation): boolean;
+    /** Publish ready targets against the complete set already admitted by retain. */
+    adopt(
+        activations: readonly PluginUiClientExecutableActivation[],
+    ): Promise<readonly PluginUiClientExecutableCompositionAttempt[]>;
     reconcile(
         activations: readonly PluginUiClientExecutableActivation[],
     ): Promise<readonly PluginUiClientExecutableCompositionAttempt[]>;
     read(address: PluginUiClientExecutableRegistrationAddress): PluginUiClientExecutableRegistration | null;
+    readRefusal(address: PluginUiClientExecutableRegistrationAddress, authority?: PluginUiExecutableAuthority): PluginUiClientExecutableFailure | null;
+    refuse(admission: PluginUiClientExecutableAdmission, failure: PluginUiClientExecutableFailure): void;
     revision(): number;
     subscribe(listener: () => void): () => void;
     invalidatePlugin(pluginId: string): Promise<void>;
@@ -633,19 +781,21 @@ function isClientExecutableActivationCoherent(
         && (activation.pluginVersion === undefined || activation.pluginVersion.trim().length > 0);
 }
 
-function retiredClientExecutableResult(): PluginUiExecutableModuleActivationResult {
+function retiredClientExecutableResult(): PluginUiClientExecutableFailure {
     return Object.freeze({
         ok: false,
         code: 'artifact_replaced',
         diagnostics: Object.freeze(['artifact_replaced']),
+        layer: 'registration', phase: 'activation', retryable: false,
     });
 }
 
-function invalidClientExecutableResult(diagnostic: string): PluginUiExecutableModuleActivationResult {
+function invalidClientExecutableResult(diagnostic: string): PluginUiClientExecutableFailure {
     return Object.freeze({
         ok: false,
         code: 'activation_failed',
         diagnostics: Object.freeze([diagnostic]),
+        layer: 'registration', phase: 'activation', retryable: false,
     });
 }
 
@@ -670,6 +820,10 @@ export function createPluginUiClientExecutableComposition(input: Readonly<{
     const registrationIndex = input.registrationIndex
         ?? createPluginUiClientExecutableRegistrationIndex();
     const activeByTargetKey = new Map<string, ActiveClientExecutableTarget>();
+    const admittedByTargetKey = new Map<string, Readonly<{
+        fingerprint: string;
+        registrationContributes: Readonly<Record<string, unknown>>;
+    }>>();
     const authorityLeavesByKey = new Map<string, ExecutableAuthorityLeaf>();
     let firstExecutableHostAvailable = true;
 
@@ -727,6 +881,16 @@ export function createPluginUiClientExecutableComposition(input: Readonly<{
         }
         for (const key of duplicates) byKey.delete(key);
         const rights = clientExecutableRegistrationContributesByTarget([...byKey.values()]);
+        admittedByTargetKey.clear();
+        for (const [key, admission] of byKey) {
+            const registrationContributes = rights.get(key) ?? admission.contributes;
+            admittedByTargetKey.set(key, { fingerprint: clientExecutableActivationFingerprint(admission, registrationContributes),
+                registrationContributes });
+        }
+        registrationIndex.retainRefusals(admission => {
+            const admitted = admittedByTargetKey.get(getPluginUiClientExecutableTargetAddressKey(admission));
+            return admitted !== undefined && admitted.fingerprint === clientExecutableActivationFingerprint(admission, admitted.registrationContributes);
+        });
         const requestedAuthorities = new Set([...byKey.values()].map(admission => clientExecutableAuthorityKey(admission.authority)));
         const retirements: Promise<void>[] = [];
         for (const [key, active] of activeByTargetKey) {
@@ -748,10 +912,17 @@ export function createPluginUiClientExecutableComposition(input: Readonly<{
         await Promise.all(retirements);
     };
 
-    const reconcile = async (
+    const isAdmitted = (activation: PluginUiClientExecutableActivation): boolean => {
+        const admitted = admittedByTargetKey.get(getPluginUiClientExecutableTargetAddressKey(activation));
+        return admitted !== undefined && admitted.fingerprint === clientExecutableActivationFingerprint(
+            activation, admitted.registrationContributes,
+        );
+    };
+
+    const adopt = async (
         activations: readonly PluginUiClientExecutableActivation[],
     ): Promise<readonly PluginUiClientExecutableCompositionAttempt[]> => {
-        const results: Array<PluginUiExecutableModuleActivationResult | null> = activations.map(() => null);
+        const results: Array<PluginUiClientExecutableCompositionAttempt['result'] | null> = activations.map(() => null);
         const reused: boolean[] = activations.map(() => false);
         const grouped = new Map<string, {
             activation: PluginUiClientExecutableActivation;
@@ -791,6 +962,10 @@ export function createPluginUiClientExecutableComposition(input: Readonly<{
                 }
                 continue;
             }
+            if (!isAdmitted(group.activation)) {
+                for (const index of group.inputIndexes) results[index] = retiredClientExecutableResult();
+                continue;
+            }
             requestedAuthoritiesByKey.set(
                 clientExecutableAuthorityKey(group.activation.authority),
                 group.activation.authority,
@@ -802,36 +977,32 @@ export function createPluginUiClientExecutableComposition(input: Readonly<{
             }));
         }
 
-        const registrationContributesByTargetKey = clientExecutableRegistrationContributesByTarget(
-            preparedTargets.map(candidate => candidate.activation),
-        );
         const prepared: PreparedClientExecutableTarget[] = preparedTargets.map((preparedTarget) => Object.freeze({
             ...preparedTarget,
-            registrationContributes: registrationContributesByTargetKey.get(preparedTarget.key)
+            registrationContributes: admittedByTargetKey.get(preparedTarget.key)?.registrationContributes
                 ?? preparedTarget.activation.contributes,
         }));
-
-        await retain(prepared.map(candidate => candidate.activation));
 
         const leavesByAuthorityKey = new Map<string, ExecutableAuthorityLeaf>();
         for (const [authorityKey, requestedAuthority] of requestedAuthoritiesByKey.entries()) {
             leavesByAuthorityKey.set(authorityKey, await ensureAuthorityLeaf(requestedAuthority));
         }
 
-        for (const preparedTarget of prepared) {
+        await Promise.all(prepared.map(async (preparedTarget) => {
             const { activation } = preparedTarget;
             const authorityKey = clientExecutableAuthorityKey(activation.authority);
             const leaf = leavesByAuthorityKey.get(authorityKey);
-            if (!leaf) {
+            if (!leaf || !isAdmitted(activation) || !isClientExecutableActivationCurrent(activation)) {
                 for (const index of preparedTarget.inputIndexes) {
                     results[index] = retiredClientExecutableResult();
                 }
-                continue;
+                return;
             }
             const fingerprint = clientExecutableActivationFingerprint(
                 activation,
                 preparedTarget.registrationContributes,
             );
+            const remainsAdmitted = () => admittedByTargetKey.get(preparedTarget.key)?.fingerprint === fingerprint;
             const incumbent = activeByTargetKey.get(preparedTarget.key);
             const incumbentRemainsCurrent = incumbent !== undefined
                 && incumbent.fingerprint === fingerprint
@@ -857,6 +1028,7 @@ export function createPluginUiClientExecutableComposition(input: Readonly<{
                 identity: activation.identity,
                 moduleReference: activation.moduleReference,
                 backend: activation.backend,
+                ...(activation.loadExport ? { loadExport: activation.loadExport } : {}),
                 hostPlatform: activation.target.platform,
                 authority: activation.authority,
                 createScope: () => {
@@ -873,6 +1045,7 @@ export function createPluginUiClientExecutableComposition(input: Readonly<{
                         signal: active.controller.signal,
                         isCurrent: () => (
                             !active.controller.signal.aborted
+                            && remainsAdmitted()
                             && isClientExecutableActivationCurrent(activation)
                         ),
                     });
@@ -889,6 +1062,7 @@ export function createPluginUiClientExecutableComposition(input: Readonly<{
                             : { pluginVersion: activation.pluginVersion }),
                         ...(activation.accountLifetime === undefined ? {} : { accountLifetime: activation.accountLifetime }),
                         authority: activation.authority,
+                        ...(activation.prepareRegistration ? { prepareRegistration: activation.prepareRegistration } : {}),
                         lifecycle,
                     });
                     const derivedScope = activation.createScope?.(registrationScope);
@@ -939,11 +1113,14 @@ export function createPluginUiClientExecutableComposition(input: Readonly<{
                     });
                 },
             });
-            for (const index of preparedTarget.inputIndexes) results[index] = result;
+            const settled = result.ok
+                ? (!remainsAdmitted() || !isClientExecutableActivationCurrent(activation) ? retiredClientExecutableResult() : result)
+                : { ...result, layer: 'registration' as const, phase: 'activation' as const, retryable: false };
+            for (const index of preparedTarget.inputIndexes) results[index] = settled;
             for (const index of preparedTarget.inputIndexes) {
                 reused[index] = result.ok && incumbentRemainsCurrent && !createdScope;
             }
-            if (result.ok) {
+            if (settled.ok) {
                 if (!incumbentRemainsCurrent) {
                     activeByTargetKey.set(preparedTarget.key, Object.freeze({
                         fingerprint,
@@ -960,7 +1137,10 @@ export function createPluginUiClientExecutableComposition(input: Readonly<{
                 active.controller.abort();
                 activeByTargetKey.delete(preparedTarget.key);
             }
-        }
+            if (!settled.ok && remainsAdmitted()) {
+                registrationIndex.refuse(activation, settled);
+            }
+        }));
 
         return Object.freeze(activations.map((activation, index) => Object.freeze({
             activation,
@@ -975,11 +1155,25 @@ export function createPluginUiClientExecutableComposition(input: Readonly<{
             const active = activeByTargetKey.get(getPluginUiClientExecutableTargetAddressKey(activation));
             return active?.activation === activation && !active.controller.signal.aborted;
         },
-        reconcile,
+        adopt,
+        reconcile: async (activations) => {
+            const retention = retain(activations);
+            const attempts = adopt(activations);
+            const [result] = await Promise.all([attempts, retention]);
+            return result;
+        },
         read: registrationIndex.read,
+        readRefusal: registrationIndex.readRefusal,
+        refuse: (admission, failure) => {
+            const admitted = admittedByTargetKey.get(getPluginUiClientExecutableTargetAddressKey(admission));
+            if (admitted !== undefined && admitted.fingerprint === clientExecutableActivationFingerprint(admission, admitted.registrationContributes)) {
+                registrationIndex.refuse(admission, failure);
+            }
+        },
         revision: registrationIndex.revision,
         subscribe: registrationIndex.subscribe,
         invalidatePlugin: async (pluginId) => {
+            registrationIndex.retainRefusals(admission => admission.pluginId !== pluginId);
             const leaves = new Set<PluginUiExecutableModuleHost>();
             for (const [key, active] of activeByTargetKey.entries()) {
                 if (active.pluginId !== pluginId) continue;
@@ -990,6 +1184,8 @@ export function createPluginUiClientExecutableComposition(input: Readonly<{
             await Promise.all([...leaves].map((executableHost) => executableHost.invalidatePlugin(pluginId)));
         },
         unload: async () => {
+            admittedByTargetKey.clear();
+            registrationIndex.retainRefusals(() => false);
             for (const active of activeByTargetKey.values()) active.controller.abort();
             activeByTargetKey.clear();
             const leaves = [...authorityLeavesByKey.entries()];
@@ -1045,12 +1241,12 @@ function readProjectedClientRegistrationOrigin(
     return 'serverIdentityId' in entry || 'materializationRef' in entry ? null : { origin: null };
 }
 
-export function resolvePluginUiClientActionRegistration(input: Readonly<{
+function resolvePluginUiClientActionAddress(input: Readonly<{
     action: PluginProjectedActionV2;
     /** The one platform mapper is `resolvePluginUiClientExecutablePlatform`. */
     platform: PluginContributionClientPlatform;
     reader?: PluginUiClientExecutableRegistrationReader;
-}>): PluginUiClientActionRegistration | null {
+}>) {
     const { action, platform } = input;
     if (
         action.execution.target === 'daemon'
@@ -1079,6 +1275,35 @@ export function resolvePluginUiClientActionRegistration(input: Readonly<{
         executionOrigin: producer.origin ? freezeExecutionOrigin(producer.origin) : null,
         occurrenceId: action.occurrenceId,
     }) satisfies PluginUiClientExecutableRegistrationAddress;
+    return { address, accountOrigin, authorization: action.authorization };
+}
+
+export function resolvePluginUiClientActionRefusal(input: Readonly<{
+    action: PluginProjectedActionV2;
+    platform: PluginContributionClientPlatform;
+    reader?: PluginUiClientExecutableRegistrationReader;
+}>): PluginUiClientExecutableFailure | null {
+    const resolved = resolvePluginUiClientActionAddress(input);
+    if (!resolved) return null;
+    const account = resolved.accountOrigin;
+    const stamped = readPluginUiContributionOrigin(input.action);
+    const authority: PluginUiExecutableAuthority | undefined = account
+        ? { kind: 'account', serverId: account.serverId, accountId: account.accountId, custodyId: account.custodyId }
+        : stamped ? { machineId: stamped.machineId, serverId: stamped.serverId } : undefined;
+    if (!authority) return null;
+    return (input.reader ?? getInstalledPluginUiClientExecutableComposition()).readRefusal?.(resolved.address, authority) ?? null;
+}
+
+export function resolvePluginUiClientActionRegistration(input: Readonly<{
+    action: PluginProjectedActionV2;
+    /** The one platform mapper is `resolvePluginUiClientExecutablePlatform`. */
+    platform: PluginContributionClientPlatform;
+    reader?: PluginUiClientExecutableRegistrationReader;
+}>): PluginUiClientActionRegistration | null {
+    const resolved = resolvePluginUiClientActionAddress(input);
+    if (!resolved) return null;
+    const { address, accountOrigin, authorization } = resolved;
+    const { action } = input;
     let registration: PluginUiClientExecutableRegistration | null;
     try {
         registration = (input.reader ?? getInstalledPluginUiClientExecutableComposition()).read(address);
@@ -1109,14 +1334,14 @@ export function resolvePluginUiClientActionRegistration(input: Readonly<{
     return Object.freeze({
         registration,
         pluginVersion,
-        handler: registration.registration.value as unknown as PluginClientActionHandler | PluginAccountActionHandler,
+        get handler() { return registration.registration.value as unknown as PluginClientActionHandler | PluginAccountActionHandler; },
         // The daemon supplies desired occurrence and access facts. Application
         // in the client realm is proven by this exact committed SDK registration,
         // independently of whether the plugin's daemon entrypoint was demanded.
         authorization: Object.freeze({
-            ...action.authorization,
+            ...authorization,
             generation: Object.freeze({
-                ...action.authorization.generation,
+                ...authorization.generation,
                 appliedGeneration: registration.occurrenceId,
                 targetGenerationMode: 'current' as const,
             }),

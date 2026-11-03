@@ -3,6 +3,8 @@ import type {
 } from '@/sync/api/daemon/daemonContributionRegistryProjectionProtocol';
 import type { PluginContributionClientPlatform } from '@happier-dev/protocol';
 import type { PluginActionContributionV2 } from '@happier-dev/protocol';
+import { readPluginUiAccountExecutableOrigin } from './projectionOrigins';
+import type { PluginConnectedAccountDescriptorContributionV2 } from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
 import type { PluginMachineMaterializationV1 } from '@happier-dev/protocol/plugins/availability/v1';
 import type { PluginProjectedWorkItemsEntryV1 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import type { MachineAdministrationTargetV1 } from '@happier-dev/protocol/account/settings/machineAdministrationSelectionsV1';
@@ -396,6 +398,14 @@ export type PluginUiComposerAttachmentProjection = Readonly<
     }
 >;
 
+export type PluginUiConnectedAccountDescriptorProjection = Readonly<{
+    id: string;
+    pluginId: string;
+    occurrenceId: string;
+    definition: PluginConnectedAccountDescriptorContributionV2;
+    hostAccountOrigin: NonNullable<ReturnType<typeof readPluginUiAccountExecutableOrigin>>;
+}>;
+
 export type PluginUiProjectionModel = Readonly<{
     /** Host-private initial describe facts; these never admit an execution origin. */
     establishingExecutionTargetsByPluginId?: Readonly<Record<string, readonly MachineAdministrationTargetV1[]>>;
@@ -429,6 +439,8 @@ export type PluginUiProjectionModel = Readonly<{
     composerRegionsById: Readonly<Record<string, PluginProjectedComposerRegionEntryV1>>;
     composerReferencesById: Readonly<Record<string, PluginUiComposerReferenceProjection>>;
     actionsById: Readonly<Record<string, PluginUiActionProjection>>;
+    /** Exact descriptor metadata and authentication targets from Account Availability. */
+    connectedAccountDescriptorsById?: Readonly<Record<string, PluginUiConnectedAccountDescriptorProjection>>;
     /** Exact current Resource declarations for host-owned qualified consumers. */
     resourcesById: Readonly<Record<string, PluginUiResourceProjection>>;
     machineProvisionersById: NonNullable<DaemonContributionRegistryProjection['familiesById']['machineProvisioners']>['entriesById'];
@@ -463,6 +475,7 @@ export const EMPTY_PLUGIN_UI_PROJECTION: PluginUiProjectionModel = Object.freeze
     composerRegionsById: Object.freeze({}),
     composerReferencesById: Object.freeze({}),
     actionsById: Object.freeze({}),
+    connectedAccountDescriptorsById: Object.freeze({}),
     resourcesById: Object.freeze({}),
     machineProvisionersById: Object.freeze({}),
     inputTypesById: Object.freeze({}),

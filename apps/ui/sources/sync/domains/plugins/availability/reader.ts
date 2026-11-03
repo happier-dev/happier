@@ -1,3 +1,4 @@
+import { derivePluginAccountExecutionArtifactSlots } from '@happier-dev/protocol/plugins/contributions/catalog';
 import type {
     PackageAssetArchiveDescriptorV1,
     PluginAccountAvailabilityIntentReadResponseV1,
@@ -16,7 +17,7 @@ import {
     createPluginAccountBundledSelectionV1,
     type PluginAccountExecutionSelectionV1,
 } from '@happier-dev/protocol/plugins/availability';
-import { PluginUiArtifactsManifestEntryV2Schema, isPluginUiHostApiVersionCompatibleWithVersionV1, PLUGIN_UI_HOST_API_VERSION_V1,
+import { PluginUiArtifactsManifestEntryV2Schema, isPluginUiHostApiVersionCompatibleV1, PLUGIN_UI_HOST_API_VERSION_V1,
     type PluginUiArtifactsManifestEntryV2, type PluginUiArtifactDigestV1 } from '@happier-dev/protocol/plugins/ui';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
@@ -1265,29 +1266,43 @@ function prepareBundledUiDeclarations(bundles: readonly PluginHostBundledUiDecla
         const sourceManifest = declaration.normalizedManifest?.id === declaration.pluginId
             && declaration.normalizedManifest.version === declaration.pluginVersion ? declaration.normalizedManifest : null;
         const presentationManifest = sourceManifest ?? declaration.presentationManifest ?? null;
-        // Serialized compiler output cannot carry the decoder's process-local
-        // schema preparation. Initialize only those point schemas once here.
+        // Serialized compiler output needs immutable schema-byte ownership.
+        // Executable point parsers are acquired only by their demand-time reader.
         const contributes = sourceManifest ? preparePluginContributionPointDeclarationsV1(sourceManifest.contributes) : null;
         const manifest = sourceManifest && contributes && contributes !== sourceManifest.contributes
             ? freezeDeepDeclaration({ ...sourceManifest, contributes }) : sourceManifest;
         const artifactGraphs = declaration.artifactGraphs ?? Object.freeze([]);
+        const accountActionArtifactGraphs = distinctAccountActionArtifactGraphs(artifactGraphs);
+        const accountExecution = manifest ? createPluginAccountBundledSelectionV1({ packageName: declaration.packageName, manifest }) : null;
+        const accountPresentation = presentationManifest
+            ? createPluginAccountBundledSelectionV1({ packageName: declaration.packageName, manifest: presentationManifest }) : null;
         const entriesById = declaration.entriesById;
         const declaredArtifactGraphs = Object.values(entriesById).flatMap(entry => {
             const graph = entry.artifactGraph as PluginUiArtifactsManifestEntryV2 | undefined;
             return typeof entry.contributionId === 'string' && graph
                 ? [Object.freeze({ contributionId: entry.contributionId, graph })] : [];
         });
+        // The catalog owns Account slot coordinates. Prepare their graph matches
+        // beside declared renderer slots, rather than deriving rights per lease.
+        if (accountPresentation && presentationManifest) {
+            for (const { contributionId, registrationRight } of derivePluginAccountExecutionArtifactSlots(presentationManifest.contributes)) {
+                const reference = registrationRight.target;
+                declaredArtifactGraphs.push(...accountActionArtifactGraphs.flatMap(graph => graph.tier === 'reactNative'
+                    && graph.artifactId === reference.artifactId && graph.executable.exports.includes(reference.exportName)
+                    ? [Object.freeze({ contributionId, graph })] : []));
+            }
+        }
         const artifactGraphsByContributionId = new Map([...indexAvailabilityRows(declaredArtifactGraphs, entry => entry.contributionId)]
             .map(([id, entries]) => [id, Object.freeze(entries.map(entry => entry.graph))]));
         return Object.freeze({
             ...declaration,
             entriesById,
             artifactGraphs,
-            accountActionArtifactGraphs: distinctAccountActionArtifactGraphs(artifactGraphs),
+            accountActionArtifactGraphs,
             artifactGraphsByContributionId,
             ...(manifest ? { normalizedManifest: manifest } : {}),
-            accountExecution: manifest ? createPluginAccountBundledSelectionV1({ packageName: declaration.packageName, manifest }) : null,
-            accountPresentation: presentationManifest ? createPluginAccountBundledSelectionV1({ packageName: declaration.packageName, manifest: presentationManifest }) : null,
+            accountExecution,
+            accountPresentation,
         });
     }));
 }
@@ -1848,18 +1863,42 @@ function deriveAccountUiProjection(input: Readonly<{
         Object.freeze({ ...input.scope, custodyId, sourceCustody }),
     ] as const));
     const actions: Record<string, PluginUiActionProjection> = {};
+    const connectedAccountDescriptors: Record<string, NonNullable<PluginUiProjectionModel['connectedAccountDescriptorsById']>[string]> = {};
     for (const selected of selections) {
         const { manifest, custodyId } = selected;
         const hostAccountOrigin = accountUiOrigins.get(manifest.id)!;
         const graphs = accountActionArtifactGraphs(selected, candidates);
+        const projectAccountArtifact = (contributionId: string, executable: Readonly<{ artifactId: string; exportName: string }>) => {
+            const matching = graphs.filter(graph => graph.tier === 'reactNative' && graph.artifactId === executable.artifactId
+                && graph.executable.exports.includes(executable.exportName));
+            const graph = matching.length === 1 ? matching[0] : undefined;
+            const compatible = graph !== undefined && isPluginUiHostApiVersionCompatibleV1(graph.hostUiApiRange);
+            if (graph) {
+                const entry = projectPluginReactNativeArtifactEntryV1({ pluginId: manifest.id, pluginVersion: manifest.version,
+                    contributionId, artifactId: graph.artifactId, artifact: graph, generatedOwnerKind: 'clientContribution',
+                    artifactSelectionOwner: 'accountRelease', requiredHostMethods: [], exportName: executable.exportName,
+                    runtime: Object.freeze({ decision: { state: compatible ? 'load' : 'blocked',
+                        reason: compatible ? 'compatible' : 'generated_ui_host_api_mismatch',
+                        diagnostics: compatible ? [] : ['generated_ui_host_api_mismatch'] },
+                        ...(compatible ? { cacheKey: derivePluginReactNativeBundleCacheKey({ artifactDigest: graph.digest }),
+                            cacheIdentity: { artifactDigest: graph.digest }, loadPolicy: { source: 'installedArtifact' } } : {}) }),
+                });
+                entries[entry.id] = Object.freeze({ ...entry, occurrenceId: custodyId, hostAccountOrigin });
+            }
+            return compatible;
+        };
+        for (const definition of manifest.contributes.connectedAccountDescriptors ?? []) {
+            if (definition.authentication.account) {
+                projectAccountArtifact(`connectedAccountDescriptors/${definition.id}`, definition.authentication.account);
+            }
+            connectedAccountDescriptors[buildQualifiedPluginContributionKey({ pluginId: manifest.id, localId: definition.id })] = Object.freeze({
+                id: definition.id, pluginId: manifest.id, occurrenceId: custodyId, definition, hostAccountOrigin,
+            });
+        }
         for (const action of manifest.contributes.actions ?? []) {
             if (action.execution.target !== 'account') continue;
             const execution = action.execution;
-            const matchingGraphs = graphs.filter(graph => graph.tier === 'reactNative'
-                && graph.artifactId === execution.account.artifactId
-                && graph.executable.exports.includes(execution.account.exportName));
-            const graph = matchingGraphs.length === 1 ? matchingGraphs[0] : undefined;
-            const compatible = graph !== undefined && isPluginUiHostApiVersionCompatibleWithVersionV1(PLUGIN_UI_HOST_API_VERSION_V1, graph.hostUiApiRange);
+            const compatible = projectAccountArtifact(action.id, execution.account);
             const requestedAccess = action.hostAccess ?? [];
             const optionalAccess = manifest.hostAccess.optional.filter(request => requestedAccess.includes(request.id));
             const requiredAccess = manifest.hostAccess.required.filter(request => requestedAccess.includes(request.id));
@@ -1884,18 +1923,7 @@ function deriveAccountUiProjection(input: Readonly<{
                             && accountKvAdmission.kind === 'available' ? 'available' as const : 'unavailable' as const })),
                     operatingSystemAuthorization: [] },
             });
-            if (graph) {
-                const entry = projectPluginReactNativeArtifactEntryV1({ pluginId: manifest.id, pluginVersion: manifest.version,
-                    contributionId: action.id, artifactId: graph.artifactId, artifact: graph, generatedOwnerKind: 'clientContribution',
-                    artifactSelectionOwner: 'accountRelease', requiredHostMethods: [], exportName: execution.account.exportName,
-                    runtime: Object.freeze({ decision: { state: compatible ? 'load' : 'blocked',
-                        reason: compatible ? 'compatible' : 'generated_ui_host_api_mismatch',
-                        diagnostics: compatible ? [] : ['generated_ui_host_api_mismatch'] },
-                        ...(compatible ? { cacheKey: derivePluginReactNativeBundleCacheKey({ artifactDigest: graph.digest }),
-                            cacheIdentity: { artifactDigest: graph.digest }, loadPolicy: { source: 'installedArtifact' } } : {}) }),
-                });
-                entries[entry.id] = Object.freeze({ ...entry, occurrenceId: custodyId, hostAccountOrigin });
-            }
+
         }
     }
     const projection = normalizePluginInstalledUiDeclarations(entries);
@@ -1903,8 +1931,10 @@ function deriveAccountUiProjection(input: Readonly<{
         const hostAccountOrigin = accountUiOrigins.get(entry.pluginId);
         return hostAccountOrigin ? Object.freeze({ ...entry, occurrenceId: hostAccountOrigin.custodyId }) : entry;
     };
-    const model = Object.keys(entries).length > 0 || Object.keys(actions).length > 0 ? Object.freeze({ ...projection,
+    const model = Object.keys(entries).length > 0 || Object.keys(actions).length > 0
+        || Object.keys(connectedAccountDescriptors).length > 0 ? Object.freeze({ ...projection,
         actionsById: Object.freeze(actions),
+        connectedAccountDescriptorsById: Object.freeze(connectedAccountDescriptors),
         reactNativeBundlesById: Object.freeze(Object.fromEntries(Object.entries(projection.reactNativeBundlesById)
             .map(([key, entry]) => [key, withAccountOccurrence(entry)]))),
         hostedWebById: Object.freeze(Object.fromEntries(Object.entries(projection.hostedWebById)
@@ -1925,12 +1955,13 @@ function deriveAccountUiProjection(input: Readonly<{
             id: bundle.pluginId, displayName: bundle.displayName,
             version: bundle.pluginVersion, enabled: true, source: { kind: 'bundled' as const, locator: bundle.packageName },
             ...(bundle.declaredExecution ? { declaredExecution: bundle.declaredExecution } : {}),
-        }])), ...Object.fromEntries(selections.filter(selected => selected.manifest.contributes.actions?.some(action => action.execution.target === 'account'))
+        }])), ...Object.fromEntries(selections.filter(selected => selected.manifest.contributes.actions?.some(action => action.execution.target === 'account')
+            || (selected.manifest.contributes.connectedAccountDescriptors?.length ?? 0) > 0)
             .map(selected => {
                 const bundle = bundles.find(candidate => candidate.pluginId === selected.manifest.id);
                 return [selected.manifest.id, { id: selected.manifest.id,
                 displayName: typeof selected.manifest.displayName === 'string' ? selected.manifest.displayName : selected.manifest.displayName.fallback,
-                version: selected.manifest.version, enabled: true,
+                version: selected.manifest.version, enabled: true, occurrenceId: selected.custodyId,
                 source: selected.release ? { kind: 'archive', locator: selected.release.archiveDigestSha256 }
                     : { kind: 'bundled', locator: bundle!.packageName },
                 ...(bundle?.declaredExecution ? { declaredExecution: bundle.declaredExecution } : {}),

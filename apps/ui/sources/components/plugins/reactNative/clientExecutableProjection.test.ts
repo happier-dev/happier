@@ -195,6 +195,39 @@ function resolve(projectionInput: PluginUiProjectionModel) {
     });
 }
 
+it('activates an authentication-only Account module through its declared target and exact custody', () => {
+    const hostAccountOrigin = { serverId: 'home', accountId: 'account', custodyId: 'release:authentication',
+        sourceCustody: { kind: 'bundled_first_party' as const,
+            packagedRuntime: { kind: 'source_declaration' as const, packageName: '@acme/shared-actions' } } };
+    const definition = PluginContributesV2Schema.parse({ connectedAccountDescriptors: [{
+        id: 'subscription', title: 'Subscription', authentication: {
+            account: { artifactId: target.artifactId, exportName: target.exportName },
+            defaultModeId: 'device', modes: [{ id: 'device', kind: 'oauthDeviceCode', outcomeReconciliation: 'none' }],
+        },
+    }] }).connectedAccountDescriptors[0]!;
+    const descriptor = { id: definition.id, pluginId, occurrenceId: hostAccountOrigin.custodyId,
+        definition, hostAccountOrigin };
+    const accountBundle = { ...bundle(`connectedAccountDescriptors/${definition.id}`), hostAccountOrigin,
+        [PLUGIN_UI_CONTRIBUTION_ORIGIN_KEY]: undefined };
+    const projection = { ...EMPTY_PLUGIN_UI_PROJECTION,
+        connectedAccountDescriptorsById: { [`${pluginId}/${definition.id}`]: descriptor },
+        reactNativeBundlesById: { [accountBundle.id]: accountBundle } };
+    const result = resolve(projection);
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({ target: { realm: 'account', artifactId: target.artifactId, exportName: target.exportName },
+        contributes: { connectedAccountDescriptors: [definition] }, executionOrigin: null,
+        authority: { kind: 'account', custodyId: hostAccountOrigin.custodyId },
+        artifactAnchor: { artifactOwnerKind: 'clientContribution', clientContribution: {
+            family: 'connectedAccountDescriptors', contribution: { pluginId, localId: definition.id },
+        } } });
+    expect(resolve({ ...projection, connectedAccountDescriptorsById: { [`${pluginId}/${definition.id}`]: {
+        ...descriptor, occurrenceId: 'retired',
+    } } })).toEqual([]);
+    expect(resolve({ ...projection, reactNativeBundlesById: { [accountBundle.id]: {
+        ...accountBundle, hostAccountOrigin: { ...hostAccountOrigin, custodyId: 'other-selection' },
+    } } })).toEqual([]);
+});
+
 it('admits an Account Action and its exact custody without a Machine projection', () => {
     const accountOrigin = { serverId: 'home', accountId: 'account', custodyId: 'release:1',
         sourceCustody: PluginSourceCustodyV1Schema.parse({ kind: 'bundled_first_party',

@@ -202,6 +202,8 @@ function deriveInstalledPluginUiProjection(
         actionsById: Object.freeze(Object.assign({}, runtime?.actionsById,
             ...installed.map(model => Object.fromEntries(Object.entries(model.actionsById)
                 .filter(([, action]) => action.execution.target === 'account'))))),
+        connectedAccountDescriptorsById: Object.freeze(Object.assign({}, runtime?.connectedAccountDescriptorsById,
+            ...installed.map(model => model.connectedAccountDescriptorsById))),
         translationsByPluginId: merge(model => model.translationsByPluginId, { uiCensus: true }),
         sessionHeaderActionsById: merge(model => model.sessionHeaderActionsById, { uiCensus: true }),
         // Search binds the runtime Action's occurrence and origin, like
@@ -545,7 +547,7 @@ const DECLARATION_MAP_KEYS = ['translationsByPluginId', 'sessionHeaderActionsByI
     'actionsById', 'voiceProvidersById', 'dragSourcesById', 'workItemsById', 'dropTargetsById',
     'atmospherePicturesById', 'registrySourcesById', 'storeKindsById', 'skillsById', 'unknownEntriesById', 'inputTypesById',
     'composerControlsById', 'composerRegionsById', 'composerReferencesById'] as const;
-const UNION_MAP_KEYS = [...DECLARATION_MAP_KEYS, 'resourcesById', 'installedPackagesById'] as const;
+const UNION_MAP_KEYS = [...DECLARATION_MAP_KEYS, 'resourcesById', 'connectedAccountDescriptorsById', 'installedPackagesById'] as const;
 type UnionMapKey = typeof UNION_MAP_KEYS[number];
 
 type PublishedPluginSlice = Readonly<{ model: PluginUiProjectionModel; entries: readonly unknown[] }>;
@@ -569,7 +571,7 @@ function publishProjectionPluginIndex(model: PluginUiProjectionModel, index: Pub
 /** Index new raw inputs once; owned publications hand their current slices on. */
 function prepareProjectionPluginIndex(model: PluginUiProjectionModel, previous?: PublishedProjectionPluginIndex | null): PublishedProjectionPluginIndex {
     const groups = new Map<string, Partial<Record<UnionMapKey, Record<string, unknown>>>>();
-    for (const key of UNION_MAP_KEYS) for (const [entryId, entry] of Object.entries(model[key])) {
+    for (const key of UNION_MAP_KEYS) for (const [entryId, entry] of Object.entries(model[key] ?? {})) {
         const id = key === 'installedPackagesById' ? entryId : readString(asRecord(entry)?.pluginId);
         if (!id) continue;
         const group = groups.get(id) ?? {};
@@ -656,7 +658,7 @@ function publishInstalledPluginChanges(previous: PluginUiProjectionModel | null,
         }
     }
     const maps = Object.fromEntries(UNION_MAP_KEYS.map(key => {
-        const old = previous?.[key] ?? EMPTY_PLUGIN_UI_PROJECTION[key];
+        const old = previous?.[key] ?? EMPTY_PLUGIN_UI_PROJECTION[key]!;
         const updates = replacements.get(key);
         const removals = removed.get(key);
         if (!updates || !removals || [...removals].every(id => Object.hasOwn(old, id) === updates.has(id)
@@ -939,7 +941,7 @@ function publishPluginUnionChanges(snapshot: PluginUiProjectionUnion, members: r
         = readUnionPublicationFacts(members, selections, source);
     const maps: Partial<Record<UnionMapKey, Readonly<Record<string, unknown>>>> = {};
     for (const key of UNION_MAP_KEYS) {
-        const old = snapshot.pluginUiProjection?.[key] ?? EMPTY_PLUGIN_UI_PROJECTION[key];
+        const old = snapshot.pluginUiProjection?.[key] ?? EMPTY_PLUGIN_UI_PROJECTION[key]!;
         const updates = replacements.get(key) ?? new Map<string, unknown>();
         const removals = removed.get(key) ?? new Set<string>();
         const pictureOrderChanged = key === 'atmospherePicturesById' && (source.pictureSources.length !== previousSource.pictureSources.length
@@ -2024,6 +2026,7 @@ function derivePluginUiProjectionUnion(
         workItemsById: Object.freeze(workItemsById),
         dropTargetsById: Object.freeze(dropTargetsById),
         resourcesById: Object.freeze(resourcesById),
+        connectedAccountDescriptorsById: EMPTY_PLUGIN_UI_PROJECTION.connectedAccountDescriptorsById,
         inputTypesById: Object.freeze(inputTypesById),
         atmospherePicturesById: Object.freeze(atmospherePicturesById),
         registrySourcesById: Object.freeze(registrySourcesById),

@@ -82,7 +82,6 @@ import {
     unloadAppShellProjectedClientExecutables,
 } from './appShellClientExecutableActivation';
 import type { PluginUiClientExecutableReconciliationAttempt } from '@/components/plugins/reactNative/clientExecutableActivation';
-import type { PluginUiExecutableModuleActivationResult } from '@/components/plugins/reactNative/executableModuleHost';
 import {
     getBundledConversationRuntimeGenerationRevision,
     subscribeBundledConversationRuntimeGeneration,
@@ -127,7 +126,10 @@ export type AppShellClientExecutableActivationFailure = Readonly<{
     target: PluginUiClientExecutableReconciliationAttempt['activation']['target'] | null;
     executionOrigin: PluginUiClientExecutableReconciliationAttempt['activation']['executionOrigin'] | null;
     occurrenceId: string | null;
-    code: Extract<PluginUiExecutableModuleActivationResult, Readonly<{ ok: false }>>['code'];
+    code: Extract<PluginUiClientExecutableReconciliationAttempt['result'], Readonly<{ ok: false }>>['code'];
+    layer?: 'artifact' | 'registration';
+    phase?: 'preparation' | 'activation';
+    retryable?: boolean;
 }>;
 
 export type AppShellClientExecutableActivationState =
@@ -244,6 +246,8 @@ export async function settleAppShellPluginRuntimeUpdate(input: Readonly<{
                         executionOrigin: attempt.activation.executionOrigin,
                         occurrenceId: attempt.activation.occurrenceId,
                         code: attempt.result.code,
+                        ...('layer' in attempt.result ? { layer: attempt.result.layer, phase: attempt.result.phase,
+                            retryable: attempt.result.retryable } : {}),
                     })]
             ))
             : [];

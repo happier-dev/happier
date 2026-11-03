@@ -45,10 +45,20 @@ export type PluginReactNativeArtifactAvailabilityHandle = Readonly<{
     accountHosting?: Promise<PluginAccountHostedArtifactPublicationResult>;
 }>;
 
+type ArtifactPreparationRefusal = Extract<PluginSelectedArtifactLeaseAcquireResult, { kind: 'unavailable' }>
+    | Extract<PluginReactNativeArtifactLeaseCacheMaterializationResult, { kind: 'unavailable' }>;
+
 export type PluginReactNativeArtifactAvailability =
     | (Readonly<{ kind: 'available' }> & PluginReactNativeArtifactAvailabilityHandle)
-    | Extract<PluginSelectedArtifactLeaseAcquireResult, { kind: 'unavailable' }>
-    | Extract<PluginReactNativeArtifactLeaseCacheMaterializationResult, { kind: 'unavailable' }>;
+    | (ArtifactPreparationRefusal & Readonly<{ layer: 'artifact'; phase: 'preparation'; retryable: boolean }>);
+
+function refusePreparation(failure: ArtifactPreparationRefusal): Extract<PluginReactNativeArtifactAvailability, { kind: 'unavailable' }> {
+    // This owner has not entered an Action. Only a failed byte transport is
+    // transient here; selection, graph and integrity refusals require changed facts.
+    return Object.freeze({ ...failure, layer: 'artifact', phase: 'preparation', retryable:
+        failure.code === 'artifact_bytes_rpc_unavailable' || failure.code === 'artifact_bytes_fetch_failed'
+        || failure.code === 'transport_unavailable' });
+}
 
 export type PluginReactNativeArtifactAvailabilityProducer = Readonly<{
     acquire: (
@@ -84,7 +94,7 @@ export function createPluginReactNativeArtifactAvailabilityProducer(
     return Object.freeze({
         acquire: async (input): Promise<PluginReactNativeArtifactAvailability> => {
             if (!isCurrent(input)) {
-                return Object.freeze({ kind: 'unavailable', code: 'artifact_lease_revoked' });
+                return refusePreparation({ kind: 'unavailable', code: 'artifact_lease_revoked' });
             }
             const cache = dependencies.getCache();
             const persistent = createPluginReactNativeArtifactLeasePersistentScope({
@@ -97,7 +107,7 @@ export function createPluginReactNativeArtifactAvailabilityProducer(
             });
             try {
                 if (!isCurrent(input)) {
-                    return Object.freeze({ kind: 'unavailable', code: 'artifact_lease_revoked' });
+                    return refusePreparation({ kind: 'unavailable', code: 'artifact_lease_revoked' });
                 }
 
                 const selected = await acquirePluginReactNativeArtifactLease({
@@ -117,10 +127,10 @@ export function createPluginReactNativeArtifactAvailabilityProducer(
                     ...(input.daemon ? { daemon: input.daemon } : {}),
                     ...(input.daemons ? { daemons: input.daemons } : {}),
                 });
-                if (selected.kind !== 'available') return selected;
+                if (selected.kind !== 'available') return refusePreparation(selected);
                 if (!isCurrent(input)) {
                     selected.lease.dispose();
-                    return Object.freeze({ kind: 'unavailable', code: 'artifact_lease_revoked' });
+                    return refusePreparation({ kind: 'unavailable', code: 'artifact_lease_revoked' });
                 }
 
                 const materialized = await materializePluginReactNativeArtifactLeaseInCache({
@@ -132,7 +142,7 @@ export function createPluginReactNativeArtifactAvailabilityProducer(
                 });
                 if (materialized.kind !== 'available') {
                     selected.lease.dispose();
-                    return materialized;
+                    return refusePreparation(materialized);
                 }
                 return Object.freeze({
                     kind: 'available' as const,

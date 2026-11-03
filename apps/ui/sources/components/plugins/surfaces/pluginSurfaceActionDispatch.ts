@@ -982,6 +982,13 @@ async function prepareClientContributedAction(
 ) {
     const initial = resolveClientContributedActionSelection(input, identity, projectedAction);
     if (!initial) return failure('unavailable', 'plugin_surface_client_action_unavailable');
+    try {
+        await initial.registration.prepare?.(input.signal);
+    } catch (error) {
+        const code = error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
+            ? error.code : 'activation_failed';
+        return clientActionFailure(code);
+    }
     // Caller-supplied input (UI, Voice) is validated against the Action's
     // declared input schema, read per Action from its projecting machine. The
     // plugin is trusted code: its result is not re-validated here.

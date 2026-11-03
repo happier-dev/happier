@@ -1,3 +1,4 @@
+import * as executableRegistrations from './clientExecutableContributions';
 import { describe, expect, it, vi } from 'vitest';
 import {
     PluginContributesV2Schema,
@@ -5,6 +6,7 @@ import {
     type PluginProjectedActionV2,
 } from '@happier-dev/protocol';
 import type { PluginClientApi } from '@happier-dev/plugin-sdk';
+import type { ConnectedAccountRuntime } from '@happier-dev/plugin-sdk/connected-accounts';
 
 import { createPluginReactNativeBundleCache } from './bundleCache';
 import { createPluginUiCommonJsLoaderBackend } from './commonJsLoaderBackend';
@@ -27,6 +29,48 @@ import type {
 } from './loader';
 import type { PluginReactNativeBundleCacheIdentity } from '@/sync/domains/plugins/ui/reactNativeRuntime';
 import { PLUGIN_UI_CONTRIBUTION_ORIGIN_KEY } from '@/sync/domains/plugins/ui/projectionUnion';
+
+it('prepares the selected Account authentication registration and does not expose another Account custody', async () => {
+    const accountAuthority = { kind: 'account' as const, serverId: 'home', accountId: 'account', custodyId: 'auth-release' };
+    const hostAccountOrigin = { ...accountAuthority, sourceCustody: { kind: 'bundled_first_party' as const,
+        packagedRuntime: { kind: 'source_declaration' as const, packageName: '@acme/preview' } } };
+    const definition = PluginContributesV2Schema.parse({ connectedAccountDescriptors: [{ id: 'account', title: 'Account',
+        authentication: { account: { artifactId: target.artifactId, exportName: target.exportName }, defaultModeId: 'device',
+            modes: [{ id: 'device', kind: 'oauthDeviceCode', outcomeReconciliation: 'none' },
+                { id: 'native', kind: 'oauthDeviceCode', outcomeReconciliation: 'none' }] } }] }).connectedAccountDescriptors[0]!;
+    const descriptor = { id: definition.id, pluginId, occurrenceId: accountAuthority.custodyId, definition, hostAccountOrigin };
+    const index = createPluginUiClientExecutableRegistrationIndex();
+    const declared = { authentication: { modes: {} } };
+    const runtime = {
+        refresh: vi.fn<ConnectedAccountRuntime['refresh']>(),
+        revoke: vi.fn<ConnectedAccountRuntime['revoke']>(),
+        status: vi.fn<ConnectedAccountRuntime['status']>(),
+        materialize: vi.fn<ConnectedAccountRuntime['materialize']>(),
+        authentication: { modes: { device: { kind: 'oauthDeviceCode' as const,
+        begin: async () => ({ status: 'awaitingDeviceAuthorization' as const, verificationUri: 'https://auth.example.test',
+            userCode: 'ABCD', expiresAtMs: 90_000, pollIntervalMs: 5_000 }),
+        poll: async () => ({ status: 'pending' as const, retryAfterMs: 5_000 }), cancel: async () => {} } } } } satisfies ConnectedAccountRuntime;
+    const scope = index.createScope({ pluginId, contributes: { connectedAccountDescriptors: [definition] },
+        target: { ...target, realm: 'account' }, executionOrigin: null, occurrenceId: accountAuthority.custodyId,
+        pluginVersion: '1.0.0', authority: accountAuthority,
+        lifecycle: { signal: new AbortController().signal, isCurrent: () => true },
+        prepareRegistration: async registration => registration.family === 'connectedAccountDescriptors'
+            ? { ...registration, value: runtime }
+            : registration });
+    scope.api.connectedAccounts.register('account', declared);
+    scope.commit();
+    try {
+        const prepared = await executableRegistrations.resolvePluginUiAccountConnectedAccountRegistration({ descriptor,
+            platform: 'web', reader: index });
+        expect(Object.keys(prepared?.runtime.authentication.modes ?? {})).toEqual(['device']);
+        expect(await executableRegistrations.resolvePluginUiAccountConnectedAccountRegistration({
+            descriptor: { ...descriptor, hostAccountOrigin: { ...hostAccountOrigin, accountId: 'another-account' } },
+            platform: 'web', reader: index })).toBeNull();
+        await scope.unwind();
+        expect(await executableRegistrations.resolvePluginUiAccountConnectedAccountRegistration({ descriptor,
+            platform: 'web', reader: index })).toBeNull();
+    } finally { await scope.unwind(); }
+});
 
 const pluginId = 'acme.preview';
     const target = Object.freeze({

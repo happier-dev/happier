@@ -24,25 +24,33 @@ function headers(credentials: AuthCredentials): HeadersInit {
   };
 }
 
+export type QualifiedConnectedAccountReadOptions = Readonly<{
+  request?: ServerFetch;
+  signal?: AbortSignal;
+  requestPurpose?: 'connected-accounts:qualification' | 'connected-accounts:quota-qualification' | 'connected-accounts:persistence';
+  retry?: 'none';
+}>;
+
 async function readQualifiedSnapshot<T>(params: Readonly<{
   credentials: AuthCredentials;
   path: string;
   parse(value: unknown): T;
-  requestPurpose?: 'connected-accounts:qualification' | 'connected-accounts:quota-qualification';
   expectedActiveServer?: ExpectedActiveServerFetchBasis;
-  request?: ServerFetch;
-}>): Promise<T> {
+}> & QualifiedConnectedAccountReadOptions): Promise<T> {
   const request = params.request ?? createServerFetchForActiveServer(params.expectedActiveServer);
-  return await backoff(async () => {
+  const read = async () => {
+    params.signal?.throwIfAborted();
     const response = await request(
       params.path,
       {
         method: 'GET',
+        ...(params.signal ? { signal: params.signal } : {}),
         headers: { ...headers(params.credentials),
           ...(params.requestPurpose ? { 'X-Happier-Request-Purpose': params.requestPurpose } : {}) },
       },
       {
         includeAuth: false,
+        ...(params.retry ? { retry: params.retry } : {}),
         ...(params.expectedActiveServer
           ? { expectedActiveServer: params.expectedActiveServer }
           : {}),
@@ -61,7 +69,8 @@ async function readQualifiedSnapshot<T>(params: Readonly<{
         { status: response.status, kind: 'server' },
       );
     }
-  });
+  };
+  return params.retry === 'none' ? read() : backoff(read, { signal: params.signal });
 }
 
 async function mutateQualifiedSnapshot<T>(params: Readonly<{
@@ -117,7 +126,7 @@ function structuredQuery<T>(
 export async function getQualifiedConnectedAccountCredentialV4(
   credentials: AuthCredentials,
   ref: QualifiedConnectedAccountRef,
-  opts?: Readonly<{ request?: ServerFetch }>,
+  opts?: QualifiedConnectedAccountReadOptions,
 ): Promise<QualifiedConnectedAccountCredentialSnapshotV4> {
   const encoded = encodeURIComponent(
     encodeQualifiedConnectedAccountV4StructuredQueryValue(
@@ -128,10 +137,10 @@ export async function getQualifiedConnectedAccountCredentialV4(
   return await readQualifiedSnapshot({
     credentials,
     path: `/v4/connect/qualified/credential?ref=${encoded}`,
-    requestPurpose: 'connected-accounts:qualification',
+    requestPurpose: opts?.requestPurpose ?? 'connected-accounts:qualification',
     parse: (value) =>
       QualifiedConnectedAccountCredentialSnapshotV4Schema.parse(value),
-    ...(opts?.request ? { request: opts.request } : {}),
+    ...opts,
   });
 }
 
@@ -324,7 +333,7 @@ export async function getQualifiedConnectedAccountQuotaV4(
 export async function getQualifiedConnectedAccountConfigurationV4(
   credentials: AuthCredentials,
   ref: QualifiedConnectedAccountRef,
-  opts?: Readonly<{ request?: ServerFetch }>,
+  opts?: QualifiedConnectedAccountReadOptions,
 ): Promise<QualifiedConnectedAccountConfigurationSnapshotV4> {
   const target = { kind: 'account' as const, ref };
   const encoded = encodeURIComponent(
@@ -336,11 +345,11 @@ export async function getQualifiedConnectedAccountConfigurationV4(
   return await readQualifiedSnapshot({
     credentials,
     path: `/v4/connect/qualified/configuration?target=${encoded}`,
-    requestPurpose: 'connected-accounts:qualification',
+    requestPurpose: opts?.requestPurpose ?? 'connected-accounts:qualification',
     parse: (value) =>
       QualifiedConnectedAccountConfigurationSnapshotV4Schema.parse(
         value,
       ),
-    ...(opts?.request ? { request: opts.request } : {}),
+    ...opts,
   });
 }
