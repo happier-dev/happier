@@ -68,6 +68,11 @@ on:
         required: false
         default: auto
         type: string
+      promotion_source_ref:
+        description: "Preflight-admitted promotion source branch (empty for standalone channel publication)"
+        required: false
+        default: ""
+        type: string
       authorized_sha:
         required: false
         default: ""
@@ -316,25 +321,6 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Verify authorized source remains canonical
-        env:
-          AUTHORIZED_SHA: ${{ inputs.authorized_sha }}
-          CANONICAL_REF: ${{ steps.resolve_source.outputs.canonical_ref }}
-        run: |
-          set -euo pipefail
-          if [ -z "$AUTHORIZED_SHA" ]; then
-            exit 0
-          fi
-          if [ "$(git rev-parse HEAD)" != "$AUTHORIZED_SHA" ]; then
-            echo "Checked out source does not match authorized_sha." >&2
-            exit 1
-          fi
-          current_sha="$(git ls-remote origin "refs/heads/$CANONICAL_REF" | awk 'NR == 1 { print $1 }')"
-          if [ "$current_sha" != "$AUTHORIZED_SHA" ]; then
-            echo "Canonical source branch '$CANONICAL_REF' no longer resolves to authorized_sha." >&2
-            exit 1
-          fi
-
       - name: Verify launcher source matches npm source
         if: inputs.publish_cli || inputs.publish_stack
         env:
@@ -508,6 +494,26 @@ jobs:
           path: trusted-control
           fetch-depth: 1
           persist-credentials: false
+
+      - name: Verify admitted publication source
+        env:
+          AUTHORIZED_SHA: ${{ inputs.authorized_sha }}
+          PROMOTION_SOURCE_REF: ${{ inputs.promotion_source_ref }}
+          CANONICAL_REF: ${{ inputs.channel == 'production' && 'main' || 'preview' }}
+        run: |
+          set -euo pipefail
+          source_ref="$CANONICAL_REF"
+          args=()
+          if [ -n "$PROMOTION_SOURCE_REF" ]; then
+            test -n "$AUTHORIZED_SHA"
+            source_ref="$PROMOTION_SOURCE_REF"
+            args+=(--allow-source-ancestor)
+          fi
+          if [ -z "$AUTHORIZED_SHA" ]; then exit 0; fi
+          test "$(git rev-parse HEAD)" = "$AUTHORIZED_SHA"
+          node "$GITHUB_WORKSPACE/trusted-control/scripts/pipeline/github/resolve-authorized-release-source.mjs" \
+            --source-ref "refs/heads/$source_ref" \
+            --authorized-sha "$AUTHORIZED_SHA" "${args[@]}"
 
       - name: npm pack (pipeline)
         if: inputs.publish_cli || inputs.publish_stack || inputs.publish_server
