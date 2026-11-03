@@ -267,7 +267,10 @@ describe('createProductionDaemonWorkspaceSyncRuntime', () => {
     }
   });
 
-  it('keeps a chosen-child Project Root out of its unshared physical parent before purpose admission', async () => {
+  it.each([
+    { role: 'use' as const, reachesChildAdmission: false },
+    { role: 'manage' as const, reachesChildAdmission: true },
+  ])('keeps a chosen-child Project Root out of its unshared physical parent before purpose admission ($role)', async ({ role, reachesChildAdmission }) => {
     const parentReads: string[] = [];
     let admittedChildRead = false;
     const rows: ProjectAccountRowV1[] = [];
@@ -307,7 +310,7 @@ describe('createProductionDaemonWorkspaceSyncRuntime', () => {
       isCurrent: async () => true, createRequestHeaders: async () => ({ 'x-requester-proof': 'project-requester' }) } });
     const context: RpcHandlerContext = { signal: new AbortController().signal, callerAuthority: 'account_automation',
       callerInputAuthorization: authorization, machineAdmission: { actorAccountId: 'project-requester', custodianAccountId: 'owner',
-        machineId: fixture.targetChildRef.machineId, installationId: fixture.targetChildInstallationId, role: 'use', encryptionMode: 'plain' },
+        machineId: fixture.targetChildRef.machineId, installationId: fixture.targetChildInstallationId, role, encryptionMode: 'plain' },
       verifyMachineAdmissionCurrent: async () => true };
     const handlers = new Map<string, (request: unknown, context?: RpcHandlerContext) => unknown>();
     const registrar: RpcHandlerRegistrar = { registerHandler(method, handler) {
@@ -324,10 +327,12 @@ describe('createProductionDaemonWorkspaceSyncRuntime', () => {
       source: { kind: 'workspace', workspaceId: fixture.sourceRef.id },
       materialization: { kind: 'sync', targetPath: fixture.targetChildRef.rootPath,
         workspaceAction: { kind: 'copy_once', contentPolicy } } }, context);
-    // With no genuine purpose producer/Session bootstrap, refusal is safe;
-    // generic Parent read/Inspect is not a substitute for that admission.
+    // Use stops at the private-checkout owner before child admission. Manage
+    // reaches child admission, where generic Parent access cannot replace the
+    // missing purpose producer/Session bootstrap.
     expect(result).toMatchObject({ kind: 'refused' });
-    expect(admittedChildRead).toBe(true);
+    if (role === 'use') expect(result).toEqual({ kind: 'refused', code: 'workspace_private_checkout_required' });
+    expect(admittedChildRead).toBe(reachesChildAdmission);
     expect(parentReads).toEqual([]);
     expect(await readFile(join(fixture.sourcePath, 'payload.txt'), 'utf8')).toBe('before quiesce');
     await expect(stat(fixture.targetPath)).rejects.toMatchObject({ code: 'ENOENT' });
@@ -856,7 +861,8 @@ describe('createProductionDaemonWorkspaceSyncRuntime', () => {
       readCredentials: async () => { throw new Error('A requester Project cannot borrow the daemon Account'); },
     }, context);
     expect(writes, JSON.stringify(projectResult)).toEqual([]);
-    expect(projectResult).toEqual({ kind: 'refused', code: 'workspace_sync_update_required' });
+    expect(projectResult).toEqual({ kind: 'refused', code: accountId === 'owner'
+      ? 'workspace_sync_update_required' : 'workspace_private_checkout_required' });
     phase = 'private adapter preparation';
     const outcome = await fixture.parent.handoffAdapter.prepare(request, undefined, context).then(
       prepared => ({ kind: 'prepared' as const, prepared }),
@@ -899,7 +905,7 @@ describe('createProductionDaemonWorkspaceSyncRuntime', () => {
       action: { kind: 'relationship' as const, relationshipId: 'requester-relationship', flushBeforeCommit: true } },
     { label: 'linked Workspace', sameWorkspace: false, action: { kind: 'linked_workspace' as const } },
     { label: 'same Workspace linked no-op', sameWorkspace: true, action: { kind: 'linked_workspace' as const } },
-  ])('keeps private requester Sync siblings at their actual effect boundary ($label)', async ({ sameWorkspace, action }) => {
+  ])('refuses private requester Sync Open while direct Sync siblings retain their effect boundary ($label)', async ({ sameWorkspace, action }) => {
     const ownerRows: ProjectAccountRowV1[] = [];
     const requesterRows: ProjectAccountRowV1[] = [];
     const writes: { actor: 'owner' | 'requester'; request: unknown }[] = [];
@@ -981,13 +987,13 @@ describe('createProductionDaemonWorkspaceSyncRuntime', () => {
     expect(requesterRows.find(row => row.key.kind === 'relationship-graph')).toEqual(graphRow);
     expect(await readFile(join(fixture.sourcePath, 'payload.txt'), 'utf8')).toBe('before quiesce');
     expect(await readFile(join(fixture.targetPath, 'payload.txt'), 'utf8')).toBe('target unchanged');
+    // Before MACH-USE-SYNC supplies member-root materialization, Project Open
+    // refuses Use Sync. Direct Sync preparation retains its no-effect path.
+    expect(result).toEqual({ kind: 'refused', code: 'workspace_private_checkout_required' });
+    expect(writes).toEqual([]);
     if (!sameWorkspace) {
-      expect(writes).toEqual([]);
-      expect(result, JSON.stringify(directPreparation)).toEqual({ kind: 'refused', code: 'workspace_sync_update_required' });
       return;
     }
-    expect(result, JSON.stringify({ result, directPreparation })).toMatchObject({ kind: 'opened', directory: source.rootPath,
-      workspace: { workspaceId: source.id } });
     const prepared = await fixture.parent.handoffAdapter.prepare({ operationId: 'requester-linked-noop',
       accountServerId: fixture.serverId, action, sourceMachineId: source.machineId, targetMachineId: source.machineId,
       sourceRootPath: source.rootPath, targetRootPath: source.rootPath,
