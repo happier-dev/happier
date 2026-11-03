@@ -15,6 +15,7 @@ import {
 } from '@happier-dev/protocol';
 
 import type { Metadata } from '@/api/types';
+import { createProviderRedactionLease } from '@/providers/spawn/redaction';
 import { SPAWN_SESSION_ERROR_CODES } from '@/rpc/handlers/registerSessionHandlers';
 import type { TrackedSession } from '../types';
 import { createPersistedTakeoverAdmissionWaiter } from './persistedTakeoverAdmission';
@@ -1314,10 +1315,10 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
     const flushStreamingSanitizer = vi.fn(() => '');
     const params = {
       ...withCanonicalChildExitOwner(createParams()),
-      createStreamingSanitizer: () => ({
-        push: () => '',
-        flush: flushStreamingSanitizer,
-      }),
+      createStreamingSanitizer: () => {
+        const sanitizer = createProviderRedactionLease({ values: [] }).createStreamingSanitizer();
+        return { ...sanitizer, flush: () => { flushStreamingSanitizer(); return sanitizer.flush(); } };
+      },
     };
     params.spawnLifecycleCallbacks.persistAcceptedSpawnMarker.mockImplementationOnce(async () => {
       await markerPersisted;
@@ -1693,23 +1694,7 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
     mocks.spawnHappyCLI.mockReturnValueOnce(child);
     process.env.DEBUG = '1';
     const rawSecret = 'provider-secret-42';
-    const createStreamingSanitizer = () => {
-      let pending = '';
-      return {
-        push(value: string | Uint8Array) {
-          pending += typeof value === 'string' ? value : Buffer.from(value).toString('utf8');
-          if (!pending.includes(rawSecret)) return '';
-          const output = pending.replaceAll(rawSecret, '[REDACTED]');
-          pending = '';
-          return output;
-        },
-        flush() {
-          const output = pending.replaceAll(rawSecret, '[REDACTED]');
-          pending = '';
-          return output;
-        },
-      };
-    };
+    const createStreamingSanitizer = () => createProviderRedactionLease({ values: [rawSecret] }).createStreamingSanitizer();
 
     const { spawnRegularProcessAndWaitForWebhook } = await import('./spawnRegularProcessAndWaitForWebhook');
     const params = { ...withCanonicalChildExitOwner(createParams()), createStreamingSanitizer };
