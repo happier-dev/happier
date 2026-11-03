@@ -1418,6 +1418,9 @@ const browserPresenceTranslations = { ca: {
             setupTitle: ({ agent }) => `El navegador de ${agent} encara no està configurat`,
             unavailableBody: ({ agent }) => `${agent} continua navegant; les seves accions encara apareixen al xat.`,
             tryAgain: 'Torna-ho a provar',
+            directMode: 'Toc directe',
+            trackpadMode: 'Ratolí tàctil',
+            resetZoom: 'Ajusta la imatge',
             inputA11y: 'La pàgina. Toca, desplaça’t o escriu per prendre el control.',
         },
         recording: {
@@ -1428,6 +1431,9 @@ const browserPresenceTranslations = { ca: {
         slowPage: 'Aquesta pàgina triga una mica',
         confidentialHeld: ({ agent }) => `Entrada privada aquí · oculta a ${agent} fins que es tanqui la pàgina`,
         closePage: 'Tanca la pàgina',
+        interaction: {
+            showKeyboard: 'Mostra el teclat',
+        },
     } } satisfies Pick<Record<string, BrowserPresenceTranslations>, "ca">;
 
 return { browserPresenceTranslations };

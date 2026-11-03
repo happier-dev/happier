@@ -1418,6 +1418,9 @@ const browserPresenceTranslations = { fr: {
             setupTitle: ({ agent }) => `Le navigateur de ${agent} n’est pas encore configuré`,
             unavailableBody: ({ agent }) => `${agent} continue de naviguer ; ses actions apparaissent toujours dans la conversation.`,
             tryAgain: 'Réessayer',
+            directMode: 'Toucher direct',
+            trackpadMode: 'Pavé tactile',
+            resetZoom: 'Ajuster l’image',
             inputA11y: 'La page. Touche, fais défiler ou tape pour prendre la main.',
         },
         recording: {
@@ -1428,6 +1431,9 @@ const browserPresenceTranslations = { fr: {
         slowPage: 'Cette page met du temps à charger',
         confidentialHeld: ({ agent }) => `Saisie privée ici · masquée à ${agent} jusqu’à la fermeture de la page`,
         closePage: 'Fermer la page',
+        interaction: {
+            showKeyboard: 'Afficher le clavier',
+        },
     } } satisfies Pick<Record<string, BrowserPresenceTranslations>, "fr">;
 
 return { browserPresenceTranslations };

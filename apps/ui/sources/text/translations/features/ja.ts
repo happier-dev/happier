@@ -1418,6 +1418,9 @@ const browserPresenceTranslations = { ja: {
             setupTitle: ({ agent }) => `${agent} のブラウザーはまだセットアップされていません`,
             unavailableBody: ({ agent }) => `${agent} はブラウズを続けています。操作は引き続きチャットに表示されます。`,
             tryAgain: '再試行',
+            directMode: '直接タッチ',
+            trackpadMode: 'トラックパッド',
+            resetZoom: '画像を合わせる',
             inputA11y: 'ページ。タップ、スクロール、入力で操作を代われます。',
         },
         recording: {
@@ -1428,6 +1431,9 @@ const browserPresenceTranslations = { ja: {
         slowPage: 'このページの読み込みに時間がかかっています',
         confidentialHeld: ({ agent }) => `ここに非公開の入力があります · ページを閉じるまで${agent}には見えません`,
         closePage: 'ページを閉じる',
+        interaction: {
+            showKeyboard: 'キーボードを表示',
+        },
     } } satisfies Pick<Record<string, BrowserPresenceTranslations>, "ja">;
 
 return { browserPresenceTranslations };

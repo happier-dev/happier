@@ -1440,6 +1440,9 @@ const browserPresenceTranslations = { ru: {
             setupTitle: ({ agent }) => `Браузер ${agent} ещё не настроен`,
             unavailableBody: ({ agent }) => `${agent} продолжает работу; его действия по-прежнему видны в чате.`,
             tryAgain: 'Повторить',
+            directMode: 'Прямое касание',
+            trackpadMode: 'Трекпад',
+            resetZoom: 'Вписать изображение',
             inputA11y: 'Страница. Нажмите, прокрутите или печатайте, чтобы взять управление.',
         },
         recording: {
@@ -1450,6 +1453,9 @@ const browserPresenceTranslations = { ru: {
         slowPage: 'Страница загружается дольше обычного',
         confidentialHeld: ({ agent }) => `Здесь приватный ввод · скрыт от ${agent}, пока страница не будет закрыта`,
         closePage: 'Закрыть страницу',
+        interaction: {
+            showKeyboard: 'Показать клавиатуру',
+        },
     } } satisfies Pick<Record<string, BrowserPresenceTranslations>, "ru">;
 
 return { browserPresenceTranslations };

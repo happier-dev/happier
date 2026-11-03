@@ -1429,6 +1429,9 @@ const browserPresenceTranslations = { pl: {
             setupTitle: ({ agent }) => `Przeglądarka ${agent} nie jest jeszcze skonfigurowana`,
             unavailableBody: ({ agent }) => `${agent} nadal przegląda; jego działania wciąż pojawiają się w czacie.`,
             tryAgain: 'Spróbuj ponownie',
+            directMode: 'Dotyk bezpośredni',
+            trackpadMode: 'Gładzik',
+            resetZoom: 'Dopasuj obraz',
             inputA11y: 'Strona. Stuknij, przewiń lub pisz, aby przejąć sterowanie.',
         },
         recording: {
@@ -1439,6 +1442,9 @@ const browserPresenceTranslations = { pl: {
         slowPage: 'Ta strona ładuje się dłużej',
         confidentialHeld: ({ agent }) => `Prywatny wpis tutaj · ukryty przed ${agent} do zamknięcia strony`,
         closePage: 'Zamknij stronę',
+        interaction: {
+            showKeyboard: 'Pokaż klawiaturę',
+        },
     } } satisfies Pick<Record<string, BrowserPresenceTranslations>, "pl">;
 
 return { browserPresenceTranslations };

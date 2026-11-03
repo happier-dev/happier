@@ -1413,6 +1413,9 @@ const browserPresenceTranslations = { 'zh-Hant': {
             setupTitle: ({ agent }) => `${agent} 的瀏覽器尚未設定`,
             unavailableBody: ({ agent }) => `${agent} 仍在瀏覽；它的動作仍會顯示在聊天中。`,
             tryAgain: '重試',
+            directMode: '直接觸控',
+            trackpadMode: '觸控板',
+            resetZoom: '符合畫面',
             inputA11y: '頁面。點按、捲動或輸入即可接手控制。',
         },
         recording: {
@@ -1423,6 +1426,9 @@ const browserPresenceTranslations = { 'zh-Hant': {
         slowPage: '此頁面載入時間較長',
         confidentialHeld: ({ agent }) => `此處有私密輸入 · 關閉頁面前 ${agent} 無法看到`,
         closePage: '關閉頁面',
+        interaction: {
+            showKeyboard: '顯示鍵盤',
+        },
     } } satisfies Pick<Record<string, BrowserPresenceTranslations>, "zh-Hant">;
 
 return { browserPresenceTranslations };

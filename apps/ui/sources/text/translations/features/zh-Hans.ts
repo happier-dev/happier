@@ -1413,6 +1413,9 @@ const browserPresenceTranslations = { 'zh-Hans': {
             setupTitle: ({ agent }) => `${agent} 的浏览器尚未设置`,
             unavailableBody: ({ agent }) => `${agent} 仍在浏览；它的操作仍会显示在聊天中。`,
             tryAgain: '重试',
+            directMode: '直接触控',
+            trackpadMode: '触控板',
+            resetZoom: '适应画面',
             inputA11y: '页面。点按、滚动或输入即可接管控制。',
         },
         recording: {
@@ -1423,6 +1426,9 @@ const browserPresenceTranslations = { 'zh-Hans': {
         slowPage: '此页面加载时间较长',
         confidentialHeld: ({ agent }) => `此处有私密输入 · 关闭页面前 ${agent} 无法看到`,
         closePage: '关闭页面',
+        interaction: {
+            showKeyboard: '显示键盘',
+        },
     } } satisfies Pick<Record<string, BrowserPresenceTranslations>, "zh-Hans">;
 
 return { browserPresenceTranslations };

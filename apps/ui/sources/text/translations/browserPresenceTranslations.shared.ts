@@ -58,6 +58,9 @@ export type BrowserPresenceTranslations = Readonly<{
         unavailableBody: (params: AgentParams) => string;
         tryAgain: string;
         inputA11y: string;
+        directMode: string;
+        trackpadMode: string;
+        resetZoom: string;
     }>;
     recording: Readonly<{
         elapsedA11y: (params: Readonly<{ elapsed: string }>) => string;
@@ -68,6 +71,9 @@ export type BrowserPresenceTranslations = Readonly<{
     /** A confidential entry holds Agent reading and recording until the page itself closes. */
     confidentialHeld: (params: AgentParams) => string;
     closePage: string;
+    interaction: Readonly<{
+        showKeyboard: string;
+    }>;
 }>;
 
 
@@ -121,6 +127,9 @@ export const browserPresenceTranslationsEnglish = { en: {
             unavailableTitle: ({ agent }) => `Can’t show ${agent}’s browser here`,
             unavailableBody: ({ agent }) => `${agent} keeps browsing; its actions still appear in the chat.`,
             tryAgain: 'Try again',
+            directMode: 'Direct touch',
+            trackpadMode: 'Trackpad',
+            resetZoom: 'Fit picture',
             inputA11y: 'The page. Tap, scroll or type to take control.',
         },
         recording: {
@@ -131,4 +140,7 @@ export const browserPresenceTranslationsEnglish = { en: {
         slowPage: 'This page is taking a while',
         confidentialHeld: ({ agent }) => `Private entry here · hidden from ${agent} until the page closes`,
         closePage: 'Close page',
+        interaction: {
+            showKeyboard: 'Show keyboard',
+        },
     } } satisfies Pick<Record<string, BrowserPresenceTranslations>, "en">;

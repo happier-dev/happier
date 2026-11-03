@@ -1418,6 +1418,9 @@ const browserPresenceTranslations = { es: {
             setupTitle: ({ agent }) => `El navegador de ${agent} aún no está configurado`,
             unavailableBody: ({ agent }) => `${agent} sigue navegando; sus acciones siguen apareciendo en el chat.`,
             tryAgain: 'Reintentar',
+            directMode: 'Toque directo',
+            trackpadMode: 'Panel táctil',
+            resetZoom: 'Ajustar imagen',
             inputA11y: 'La página. Toca, desplázate o escribe para tomar el control.',
         },
         recording: {
@@ -1428,6 +1431,9 @@ const browserPresenceTranslations = { es: {
         slowPage: 'Esta página está tardando',
         confidentialHeld: ({ agent }) => `Entrada privada aquí · oculta para ${agent} hasta que se cierre la página`,
         closePage: 'Cerrar página',
+        interaction: {
+            showKeyboard: 'Mostrar teclado',
+        },
     } } satisfies Pick<Record<string, BrowserPresenceTranslations>, "es">;
 
 return { browserPresenceTranslations };

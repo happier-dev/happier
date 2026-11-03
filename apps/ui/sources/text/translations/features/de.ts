@@ -1412,6 +1412,9 @@ const browserPresenceTranslations = { de: {
             setupTitle: ({ agent }) => `Der Browser von ${agent} ist noch nicht eingerichtet`,
             unavailableBody: ({ agent }) => `${agent} surft weiter; seine Aktionen erscheinen weiterhin im Chat.`,
             tryAgain: 'Erneut versuchen',
+            directMode: 'Direkte Berührung',
+            trackpadMode: 'Trackpad',
+            resetZoom: 'Bild einpassen',
             inputA11y: 'Die Seite. Tippen, scrollen oder schreiben, um die Steuerung zu übernehmen.',
         },
         recording: {
@@ -1422,6 +1425,9 @@ const browserPresenceTranslations = { de: {
         slowPage: 'Diese Seite braucht etwas länger',
         confidentialHeld: ({ agent }) => `Private Eingabe hier · für ${agent} verborgen, bis die Seite geschlossen wird`,
         closePage: 'Seite schließen',
+        interaction: {
+            showKeyboard: 'Tastatur einblenden',
+        },
     } } satisfies Pick<Record<string, BrowserPresenceTranslations>, "de">;
 
 return { browserPresenceTranslations };
