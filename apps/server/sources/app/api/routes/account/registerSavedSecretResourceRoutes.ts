@@ -25,6 +25,7 @@ import {
 import { homeDomainActionPathForMethod } from "@/app/api/routes/actions/homeDomainActionRoute";
 import { readTeamOperationAuthenticationFromRequest } from "@/app/teams/actorContext";
 import { SavedSecretResourceMaterialSelectionV1Schema } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
+import { registerSavedSecretActivityRoutes } from '@/app/account/savedSecrets/registerSavedSecretActivityRoutes';
 
 function copyBytes(bytes: Uint8Array): Uint8Array<ArrayBuffer> {
     const copy = new Uint8Array(bytes.byteLength);
@@ -88,6 +89,7 @@ function savedSecretResourceErrorHttpStatus(
 }
 
 export function registerSavedSecretResourceRoutes(app: Fastify): void {
+    registerSavedSecretActivityRoutes(app);
     // Personal resource management does not require Teams. The resource owner
     // still gates every Team-derived audience/access arm before admitting it.
     const routes = app;

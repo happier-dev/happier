@@ -135,6 +135,31 @@ export const SavedSecretResourceMaterialSelectionV1Schema = lazyZodSchema(() => 
 })));
 export type SavedSecretResourceMaterialSelectionV1 = z.infer<typeof SavedSecretResourceMaterialSelectionV1Schema>;
 
+export const SavedSecretDisclosureOutcomeV1Schema = lazyZodSchema(() => z.enum(['requested', 'displayed', 'failed', 'cancelled', 'refused', 'outcome_unknown']));
+export const SavedSecretCopyOutcomeV1Schema = lazyZodSchema(() => z.enum(['requested', 'succeeded', 'refused', 'outcome_unknown']));
+export const SavedSecretDisclosureRecordV1Schema = lazyZodSchema(() => z.strictObject({
+  ref: SharedResourceReferenceSchema, expectedRevision: z.number().check(z.int(), z.positive()),
+  deviceId: z.string().check(z.minLength(1)),
+  historyEntryId: z.optional(z.string().check(z.minLength(1))),
+  outcome: SavedSecretDisclosureOutcomeV1Schema,
+}));
+export const SavedSecretCopyRecordV1Schema = lazyZodSchema(() => z.strictObject({
+  ref: SharedResourceReferenceSchema, expectedRevision: z.number().check(z.int(), z.positive()),
+  deviceId: z.string().check(z.minLength(1)), historyEntryId: z.string().check(z.minLength(1)),
+  outcome: SavedSecretCopyOutcomeV1Schema,
+}));
+export const SavedSecretDisclosureRecordResultV1Schema = lazyZodSchema(() => z.strictObject({ historyEntryId: z.string().check(z.minLength(1)) }));
+export const SavedSecretDisclosureHistoryV1Schema = lazyZodSchema(() => z.strictObject({
+  items: z.array(z.strictObject({
+    id: z.string(), ref: SharedResourceReferenceSchema, resourceRevision: z.number().check(z.int(), z.positive()),
+    actorDisplayName: z.nullable(z.string()), deviceId: z.string(), createdAt: z.string(),
+    // Viewer-relative presentation only. Older Homes omit this fact.
+    actorIsSelf: z.optional(z.boolean()),
+    outcome: SavedSecretDisclosureOutcomeV1Schema,
+    copyOutcome: z.nullable(SavedSecretCopyOutcomeV1Schema), copyRequestedAt: z.nullable(z.string()),
+  })),
+  nextCursor: z.nullable(z.string()),
+}));
 export const SharedSavedSecretListOutputV1Schema = lazyZodSchema(() => z.strictObject({
   resources: z.array(SavedSecretCatalogResultV1Schema),
 }));

@@ -46,7 +46,8 @@ model Account {
     createdDiscussionGroupGrants DiscussionGroupGrant[] @relation("DiscussionGroupGrantCreator")
     discussionKeyEnvelopes DiscussionKeyEnvelope[] @relation("DiscussionKeyEnvelopeRecipient")
     workflowRunDataKeyEnvelopes WorkflowRunDataKeyEnvelope[]
-    teamCredentialActivityEvents TeamCredentialActivityEvent[]
+    teamCredentialActivityEvents TeamCredentialActivityEvent[] @relation("CredentialActivityActor")
+    ownedCredentialActivityEvents TeamCredentialActivityEvent[] @relation("CredentialActivityOwner")
     custodiedTeamCredentialResources TeamCredentialResource[]
     ownedSavedSecretResources SavedSecretResource[] @relation("SavedSecretResourceOwner")
     savedSecretAccountGrants SavedSecretAccountGrant[] @relation("SavedSecretAccountGrantRecipient")
@@ -728,18 +729,27 @@ model TeamCredentialRecipientMaterial {
 // The resource service validates kind and the bounded subject display snapshot.
 model TeamCredentialActivityEvent {
     id                 String   @id @default(cuid())
-    teamId             String
+    teamId             String?
+    subjectKind        String   @default("team_credential")
+    ownerAccountId     String?
     resourceId         String
     kind               String
     actorAccountId     String?
     subjectDisplayName String
     createdAt          DateTime @default(now())
+    resourceRevision   Int?
+    deviceId           String?
+    outcome            String?
+    copyOutcome        String?
+    copyRequestedAt    DateTime?
 
-    team         Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
-    actorAccount Account? @relation(fields: [actorAccountId], references: [id], onDelete: SetNull)
+    team         Team?    @relation(fields: [teamId], references: [id], onDelete: Cascade)
+    actorAccount Account? @relation("CredentialActivityActor", fields: [actorAccountId], references: [id], onDelete: SetNull)
+    ownerAccount Account? @relation("CredentialActivityOwner", fields: [ownerAccountId], references: [id], onDelete: Cascade)
 
     @@index([teamId, resourceId, createdAt])
     @@index([actorAccountId])
+    @@index([ownerAccountId, resourceId, createdAt, id], map: "CredentialActivity_owner_resource_cursor_idx")
 }
 
 model TeamCredentialGroupGrant {
