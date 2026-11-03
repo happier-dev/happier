@@ -65,7 +65,9 @@ export function createLiveStreamGestureMapper() {
             if (!stroke) return result();
             const current = stroke;
             const actions: HappierLiveStreamInputGesture[] = [];
-            const durationMs = Math.max(0, input.at - current.at);
+            const elapsedMs = Math.max(0, input.at - current.at);
+            // Browser timestamps have sub-millisecond precision; wire gesture durations are positive integers.
+            const durationMs = Math.max(1, Math.round(elapsedMs));
             const point = pointerPoint(context);
             if (input.phase === 'cancel') {
                 if (current.held) actions.push({ kind: 'pointer', phase: 'cancel', point, ...geometry });
@@ -106,7 +108,7 @@ export function createLiveStreamGestureMapper() {
                     const dx = input.point.x - current.latest.x;
                     const dy = input.point.y - current.latest.y;
                     if (!current.intent && distance(current.start, input.point) >= HAPPIER_GESTURE_TIMING.slopPx) {
-                        current.intent = durationMs >= HAPPIER_GESTURE_TIMING.longPressMs ? 'drag' : 'move';
+                        current.intent = elapsedMs >= HAPPIER_GESTURE_TIMING.longPressMs ? 'drag' : 'move';
                         if (current.intent === 'drag' && context.supports('pointer')) {
                             actions.push({ kind: 'pointer', phase: 'down', point, ...geometry });
                             current.held = true;
@@ -165,7 +167,7 @@ export function createLiveStreamGestureMapper() {
                 const kind = context.supports('swipe') ? 'swipe' : context.supports('drag') ? 'drag' : null;
                 if (kind) return result([{ kind, from: normalize(current.start, context), to: normalize(current.latest, context), durationMs, ...geometry }]);
             }
-            if (durationMs >= HAPPIER_GESTURE_TIMING.longPressMs && context.supports('long_press')) return result([{ kind: 'long_press', point: normalize(current.latest, context), durationMs, ...geometry }]);
+            if (elapsedMs >= HAPPIER_GESTURE_TIMING.longPressMs && context.supports('long_press')) return result([{ kind: 'long_press', point: normalize(current.latest, context), durationMs, ...geometry }]);
             return result(context.supports('tap') ? [{ kind: 'tap', point: normalize(input.point, context), ...geometry }] : []);
         },
     };

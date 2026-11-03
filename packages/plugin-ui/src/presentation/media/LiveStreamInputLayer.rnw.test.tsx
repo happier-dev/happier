@@ -6,6 +6,24 @@ import { HappierLiveStreamInputLayer } from './LiveStreamInputLayer.js';
 import type { HappierLiveStreamInputGesture } from './inputGesture.js';
 
 describe('live stream keyboard focus', () => {
+    it.each(['direct', 'trackpad'] as const)('%s emits a wire-valid atomic drag from fractional browser timestamps', async mode => {
+        const actions: HappierLiveStreamInputGesture[] = [];
+        const mounted = mountThroughReactNativeWeb(<HappierLiveStreamInputLayer inputAccepted mode={mode}
+            supports={kind => kind !== 'pointer' && kind !== 'swipe'} viewport={{ width: 800, height: 400 }}
+            onGesture={({ action }) => actions.push(action)} testID="viewer" />);
+        const capture = mounted.container.querySelector('[data-testid="viewer-capture"]')!;
+        const mouse = (kind: string, at: number, x: number, y: number) => {
+            const event = new MouseEvent(kind, { bubbles: true, button: 0, buttons: kind === 'mouseup' ? 0 : 1, clientX: x, clientY: y });
+            Object.defineProperty(event, 'timeStamp', { value: at });
+            act(() => capture.dispatchEvent(event));
+        };
+        try {
+            mouse('mousedown', 1.125, 320, 172);
+            mouse('mousemove', 701.25, 380, 222);
+            mouse('mouseup', 1301.375, 380, 222);
+            expect(actions).toMatchObject([{ kind: 'drag', durationMs: 1300 }]);
+        } finally { mounted.unmount(); }
+    });
     it('turns a double tap into exactly one double click and drops delayed taps after control is lost', async () => {
         vi.useFakeTimers();
         const onGesture = vi.fn();

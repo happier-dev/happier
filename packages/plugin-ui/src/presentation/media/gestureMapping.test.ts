@@ -1,11 +1,23 @@
 import { describe, expect, it } from 'vitest';
 import { createLiveStreamGestureMapper } from './gestureMapping.js';
+import { HAPPIER_GESTURE_TIMING } from './inputGesture.js';
 
 const geometry = { viewport: { width: 800, height: 400 }, content: { x: 0, y: 0, width: 800, height: 400 }, orientation: 'portrait' } as const;
 const context = (mode: 'direct' | 'trackpad', pointer = true) => ({ ...geometry, mode, localZoom: true, supports: (kind: string) => pointer || kind !== 'pointer' });
 const event = (phase: 'start' | 'move' | 'end' | 'cancel', x: number, y: number, at: number, touches?: readonly { x: number; y: number }[]) => ({ phase, point: { x, y }, at, touches });
 
 describe('shared live stream gesture mapping', () => {
+    it('serializes sub-millisecond motion positively without rounding a short hold into a drag', () => {
+        const direct = createLiveStreamGestureMapper();
+        direct.map(event('start', 80, 40, 0.125), context('direct'));
+        direct.map(event('move', 140, 90, 0.25), context('direct'));
+        expect(direct.map(event('end', 140, 90, 0.375), context('direct')).actions)
+            .toMatchObject([{ kind: 'swipe', durationMs: 1 }]);
+        const trackpad = createLiveStreamGestureMapper();
+        trackpad.map(event('start', 80, 40, 0), context('trackpad', false));
+        trackpad.map(event('move', 140, 90, HAPPIER_GESTURE_TIMING.longPressMs - 0.125), context('trackpad', false));
+        expect(trackpad.map(event('end', 140, 90, HAPPIER_GESTURE_TIMING.longPressMs + 50), context('trackpad', false)).actions).toEqual([]);
+    });
     it.each(['direct', 'trackpad'] as const)('%s maps taps at the finger or retained pointer respectively', mode => {
         const mapper = createLiveStreamGestureMapper();
         mapper.map(event('start', 80, 40, 0), context(mode));
