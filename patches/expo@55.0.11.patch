@@ -1,0 +1,44 @@
+diff --git a/build/async-require/buildAsyncRequire.d.ts b/build/async-require/buildAsyncRequire.d.ts
+index 4a49b5b84e..45d18c5928 100644
+--- a/build/async-require/buildAsyncRequire.d.ts
++++ b/build/async-require/buildAsyncRequire.d.ts
+@@ -8,8 +8,8 @@
+  * Must satisfy the requirements of the Metro bundler.
+  * https://github.com/react-native-community/discussions-and-proposals/blob/main/proposals/0605-lazy-bundling.md#__loadbundleasync-in-metro
+  */
+-type AsyncRequire = (path: string) => Promise<void>;
++type AsyncRequire = (path: string | string[]) => Promise<void>;
+ /** Create an `loadBundleAsync` function in the expected shape for Metro bundler. */
+ export declare function buildAsyncRequire(): AsyncRequire;
+ export {};
+-//# sourceMappingURL=buildAsyncRequire.d.ts.map
+\ No newline at end of file
++//# sourceMappingURL=buildAsyncRequire.d.ts.map
+diff --git a/src/async-require/buildAsyncRequire.ts b/src/async-require/buildAsyncRequire.ts
+index 5b5ed3170b..68085aaa41 100644
+--- a/src/async-require/buildAsyncRequire.ts
++++ b/src/async-require/buildAsyncRequire.ts
+@@ -11,13 +11,21 @@ import { loadBundleAsync } from './loadBundle';
+  * Must satisfy the requirements of the Metro bundler.
+  * https://github.com/react-native-community/discussions-and-proposals/blob/main/proposals/0605-lazy-bundling.md#__loadbundleasync-in-metro
+  */
+-type AsyncRequire = (path: string) => Promise<void>;
++type AsyncRequire = (path: string | string[]) => Promise<void>;
+ 
+ /** Create an `loadBundleAsync` function in the expected shape for Metro bundler. */
+ export function buildAsyncRequire(): AsyncRequire {
+   const cache = new Map<string, Promise<void>>();
+ 
+-  return async function universal_loadBundleAsync(path: string): Promise<void> {
++  return async function universal_loadBundleAsync(path: string | string[]): Promise<void> {
++    // Exported async chunks can depend on a shared async vendor chunk. Reuse
++    // the same URL cache and failure recovery for each prerequisite in order.
++    if (Array.isArray(path)) {
++      for (const dependencyPath of path) {
++        await universal_loadBundleAsync(dependencyPath);
++      }
++      return;
++    }
+     if (cache.has(path)) {
+       return cache.get(path)!;
+     }

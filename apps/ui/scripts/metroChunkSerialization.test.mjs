@@ -31,7 +31,18 @@ function loadSerializer(source) {
     return loaded.exports;
 }
 
-const baselineSerializer = loadSerializer(upstream);
+// Compare discovery algorithms under one chunk policy. Reversing the complete
+// dependency patch also removes intentional lazy-common/load-plan changes, so
+// transplant only pinned upstream discovery into the candidate policy.
+const discoveryFunctions = /function getEntryModulesForChunkSettings\([\s\S]*?(?=function removeEntryDepsFromAsyncChunks\()/;
+const upstreamDiscovery = upstream.match(discoveryFunctions);
+assert.ok(upstreamDiscovery, 'the pinned upstream discovery functions must be present');
+assert.match(candidate, discoveryFunctions, 'the candidate discovery functions must be present');
+const baseline = candidate.replace(discoveryFunctions, () => upstreamDiscovery[0]).replace(
+    'gatherChunks(preModules, chunks, { path: entryFile }',
+    'gatherChunks(preModules, chunks, { test: pathToRegex(entryFile) }',
+);
+const baselineSerializer = loadSerializer(baseline);
 const patchedSerializer = loadSerializer(candidate);
 
 function makeModule(name, dependencies = [], script = false) {
@@ -100,7 +111,7 @@ test('chunk entry discovery visits the indexed graph linearly at export scale', 
     assert.ok(visits <= modules.length, `entry discovery visited ${visits} graph records for ${modules.length} modules`);
 });
 
-test('chunk entries, membership, workers, cycles, URLs, bundle bytes and maps match the pinned upstream', async () => {
+test('chunk entries, membership, workers, cycles, URLs, bundle bytes and maps match upstream discovery under the same chunk policy', async () => {
     const modules = [
         makeModule('index', [['entry-shared'], ['a', 'async'], ['b', 'async'], ['worker', 'worker'], [null]]),
         makeModule('entry-shared'),
