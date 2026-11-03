@@ -393,6 +393,13 @@ for x64 and arm64. Its installed absolute executable speaks CLI JSON envelope
 retained archive. Each selected source has a private temporary ref namespace,
 removed on close. Agent Desktop retains qualified snapshot refs for semantic
 element click/set-value; frame-only screenshots do not replace those refs.
+Agent Desktop 1.0.2 clipboard writes return `input_not_supported`: its public
+CLI accepts text only in argv, which other local OS users can inspect. Its
+`--file-url` option copies a file reference rather than the file's text, and
+`batch` also takes JSON in argv. Existing typing and element set-value retain
+that argv exposure on this pin; use Cua for confidential text. Cua sends typing
+and clipboard text over its existing MCP stdin channel. Clipboard reads remain
+available for both drivers. These are development-source limitations.
 
 Machine-keyed Account preferences `computerUseByMachineId` enable providers and
 select a default (Cua when absent). The provider resolver admits each Computer

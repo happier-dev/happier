@@ -246,11 +246,9 @@ export async function createAgentDesktopComputerDriver(params: Readonly<{ displa
           if (!result.success) return { ok: false, code: 'driver_result_invalid' };
           return result.data.text === undefined ? { ok: false, code: 'clipboard_text_unavailable' } : { ok: true, text: result.data.text };
         }
-        const result = z.object({ type: z.literal('text'), disposition: dispositionSchema })
-          .safeParse(await read(['clipboard-set', '--', operation.text]));
-        if (!result.success) return { ok: false, code: 'driver_result_invalid' };
-        return result.data.disposition.delivery === 'delivered_verified' || result.data.disposition.delivery === 'delivered_unverified'
-          ? { ok: true } : { ok: false, code: 'clipboard_write_failed' };
+        // Pinned 1.0.2 accepts clipboard text only in argv (including batch JSON).
+        // Refuse rather than disclose clipboard content to other local OS users.
+        return { ok: false, code: 'input_not_supported' };
       } catch (error) {
         return { ok: false, code: error instanceof ComputerDriverError ? error.code : 'driver_result_invalid' };
       }

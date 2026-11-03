@@ -36,7 +36,7 @@ function setup(respond: (args: string[]) => unknown = args => args.includes('lis
 afterEach(() => { vi.restoreAllMocks(); });
 
 describe('agent-desktop native driver', () => {
-  it('transfers text clipboard through the pinned clipboard commands and preserves missing-text failure', async () => {
+  it('refuses clipboard writes without exposing text in native argv and preserves clipboard reads', async () => {
     let clipboard: string | null = 'remote 日本';
     setup(args => {
       if (args.includes('clipboard-get')) return clipboard === null ? { type: 'text', found: false } : { type: 'text', text: clipboard };
@@ -46,9 +46,12 @@ describe('agent-desktop native driver', () => {
     const driver = await createAgentDesktopComputerDriver({ displayId: ':73', executablePath: '/managed/agent-desktop' });
     try {
       expect(await driver.clipboard?.(target, { kind: 'read' })).toEqual({ ok: true, text: 'remote 日本' });
-      expect(await driver.clipboard?.(target, { kind: 'write', text: '--local 👋' })).toEqual({ ok: true });
-      expect(clipboard).toBe('--local 👋');
-      expect(boundary.calls.find(args => args.includes('clipboard-set'))).toEqual(['clipboard-set', '--', '--local 👋']);
+      const text = '--local 👋 password\nwith whitespace';
+      const result = await driver.clipboard?.(target, { kind: 'write', text });
+      expect(boundary.calls.flat().some(arg => arg.includes(text))).toBe(false);
+      expect(result).toEqual({ ok: false, code: 'input_not_supported' });
+      expect(clipboard).toBe('remote 日本');
+      expect(boundary.calls.some(args => args.includes('clipboard-set'))).toBe(false);
       clipboard = null;
       expect(await driver.clipboard?.(target, { kind: 'read' })).toEqual({ ok: false, code: 'clipboard_text_unavailable' });
     } finally { await driver.close(); }
