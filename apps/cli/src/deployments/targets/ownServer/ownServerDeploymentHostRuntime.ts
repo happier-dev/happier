@@ -9,6 +9,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
 import type { DeploymentOwnServerContentV1, DeploymentEnvironmentDetailV1, DeploymentReceiptHeaderV1, DeploymentSourceIntentV1 } from '@happier-dev/deployment-protocol';
+import { DeploymentOwnServerContentV1Schema } from '@happier-dev/deployment-protocol';
 import { decodeBase64 } from '@/api/encryption';
 import { configuration } from '@/configuration';
 import { logger } from '@/ui/logger';
@@ -112,7 +113,10 @@ export function createOwnServerDeploymentRuntimeForHost(host: OwnServerDeploymen
                         ? { sourceIntent: request.sourceIntent } : {}),
                     ...('sha' in request && request.sha ? { sha: request.sha } : {}),
                     ...('materialization' in request && request.materialization.kind === 'restoration' ? { restoration: true } : {}) } });
-            const { sourceIntent: intent, workspace, sourceRepository } = capturedSource;
+            const { workspace, sourceRepository } = capturedSource;
+            const nativeSource = DeploymentOwnServerContentV1Schema.shape.sourceIntent.safeParse(capturedSource.sourceIntent);
+            if (!nativeSource.success) return refuse('deployment_invalid');
+            const intent = nativeSource.data;
             // Persist the actual resolved source intent before P42 re-admits
             // this exact candidate Artifact. Discovery later updates that head.
             const materialization = 'stageContent' in request

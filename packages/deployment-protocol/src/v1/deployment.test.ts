@@ -1,9 +1,23 @@
 import { describe, expect, it } from 'vitest';
 import { createDeploymentReceiptDetailV1, createDeploymentV1 } from '../testing/v1.js';
-import { canTransitionDeploymentV1, DeploymentContentV1Schema, DeploymentV1Schema } from './deployment.js';
+import { canTransitionDeploymentV1, DeploymentContentV1Schema, DeploymentV1Schema,
+    DeploymentPlatformContentV1Schema } from './deployment.js';
 import { DeploymentTargetRoleFailureV1Schema } from '@happier-dev/protocol/plugins/contributions/v2';
 
 describe('receipt structural integrity', () => {
+    it('admits provider-built repository source without admitting a native receipt without Compose', () => {
+        const { content } = createDeploymentReceiptDetailV1();
+        const sourceIntent = { kind: 'repository', projectSourceId: 'source', sourceRevision: 1, sha: 'a'.repeat(40) };
+        const platform = { sourceIntent, sourceMethod: 'gitIntegration', machines: [], images: [], machineResults: [], steps: [],
+            platform: { credentialPrincipal: { kind: 'account', accountId: 'owner', purpose: {
+                consumer: { pluginId: 'happier.deployment-vercel', localId: 'targets-inspect-v1' }, purpose: 'deploy.manage' },
+                target: { kind: 'account', account: { service: { pluginId: 'happier.machine-vercel', localId: 'vercel' }, accountId: 'connected' } } },
+                providerIdentity: { providerAccountId: 'team', providerResourceId: 'project', providerEnvironment: 'production' },
+                providerEnvironment: { kind: 'production' }, targetLinkRevision: 1,
+                observation: { v: 1, state: 'queued', observedAtMs: 1000 } } };
+        expect(DeploymentPlatformContentV1Schema.safeParse(platform).success).toBe(true);
+        expect(DeploymentContentV1Schema.safeParse({ ...content, sourceIntent }).success).toBe(false);
+    });
     it('retains canonical provider failure phases in serialized receipt content', () => {
         const { content } = createDeploymentReceiptDetailV1();
         const provider = DeploymentTargetRoleFailureV1Schema.parse({ v: 1,

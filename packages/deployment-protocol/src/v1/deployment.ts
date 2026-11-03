@@ -73,11 +73,16 @@ export const OwnServerDeploymentRuntimeProjectionV1Schema = z.strictObject({
     machineId: id, installationId: id, platform: text, ...runtimeProjection,
 }).check(z.refine(hasExactServicePlatforms, { message: 'Service platforms must cover the exact ordered selected services.' }));
 export type OwnServerDeploymentRuntimeProjectionV1 = z.infer<typeof OwnServerDeploymentRuntimeProjectionV1Schema>;
+/** Native receipts keep their required Compose selectors; platform source uses the same repository identity without them. */
+const ownServerSourceIntentV1Schema = z.discriminatedUnion('kind', [
+    z.required(DeploymentSourceIntentV1Schema._zod.def.options[0], { compose: true }),
+    DeploymentSourceIntentV1Schema._zod.def.options[1],
+]);
 /** Comparison inputs only. Never hash or retain a secret-interpolated native model. */
 export const OwnServerDeploymentInputBasisV1Schema = z.strictObject({
     v: z.literal(1), environmentId: id, environmentRevision: revision,
     targetLinkId: id, targetLinkRevision: revision,
-    sourceIntent: DeploymentSourceIntentV1Schema, ...runtimeProjection,
+    sourceIntent: ownServerSourceIntentV1Schema, ...runtimeProjection,
     members: DeploymentOwnServerTargetMachinesV1Schema,
     bindings: z.array(EnvironmentSecretBindingV1Schema), images,
     /** Capture the reviewed readiness policy; absence in old receipts means all services participate. */
@@ -134,7 +139,7 @@ export const DeploymentReceiptFailureV1Schema = z.strictObject({
 export type DeploymentReceiptFailureV1 = z.infer<typeof DeploymentReceiptFailureV1Schema>;
 /** The existing native serialized arm retains its exact builder/member/image proofs. */
 export const DeploymentOwnServerContentV1Schema = z.strictObject({
-    sourceIntent: DeploymentSourceIntentV1Schema,
+    sourceIntent: ownServerSourceIntentV1Schema,
     commitSubject: z.optional(z.string()), failure: z.optional(DeploymentReceiptFailureV1Schema),
     sourceMethod: z.optional(DeploymentSourceMethodV1Schema),
     correlations: z.optional(z.array(DeploymentCorrelationV1Schema)),

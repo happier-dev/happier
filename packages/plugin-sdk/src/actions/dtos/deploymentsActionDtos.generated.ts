@@ -287,7 +287,7 @@ export type DeploymentsActionInputById = {
                 repository: string;
             };
             commit: string;
-            compose: {
+            compose?: undefined | {
                 profiles: string[];
                 services: string[];
                 path: string;
@@ -673,7 +673,7 @@ export type DeploymentsActionInputById = {
                             projectSourceId: string;
                             sourceRevision: number;
                             sha: string;
-                            compose: {
+                            compose?: undefined | {
                                 profiles: string[];
                                 services: string[];
                                 path: string;
@@ -6537,7 +6537,7 @@ export type DeploymentsActionInputById = {
                                         projectSourceId: string;
                                         sourceRevision: number;
                                         sha: string;
-                                        compose: {
+                                        compose?: undefined | {
                                             profiles: string[];
                                             services: string[];
                                             path: string;
@@ -7699,7 +7699,7 @@ export type DeploymentsActionInputById = {
         } | {
             from: 'repository';
             ref: string;
-            compose: {
+            compose?: undefined | {
                 profiles: string[];
                 services: string[];
                 path: string;
@@ -8196,7 +8196,7 @@ export type DeploymentsActionInputById = {
                     projectSourceId: string;
                     sourceRevision: number;
                     sha: string;
-                    compose: {
+                    compose?: undefined | {
                         profiles: string[];
                         services: string[];
                         path: string;
@@ -8237,7 +8237,7 @@ export type DeploymentsActionInputById = {
             projectSourceId: string;
             sourceRevision: number;
             sha: string;
-            compose: {
+            compose?: undefined | {
                 profiles: string[];
                 services: string[];
                 path: string;
@@ -10019,7 +10019,7 @@ export type DeploymentsActionResultById = {
             } | {
                 from: 'repository';
                 ref: string;
-                compose: {
+                compose?: undefined | {
                     profiles: string[];
                     services: string[];
                     path: string;
@@ -10953,7 +10953,7 @@ export type DeploymentsActionResultById = {
                     projectSourceId: string;
                     sourceRevision: number;
                     sha: string;
-                    compose: {
+                    compose?: undefined | {
                         profiles: string[];
                         services: string[];
                         path: string;

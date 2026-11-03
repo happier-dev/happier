@@ -45,7 +45,7 @@ export type DeploymentStoredDefinitionInputV1 = z.infer<typeof DeploymentStoredD
 /** One exact source contract for the receipt, approval and protected pending transport. */
 export const DeploymentSourceIntentV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
     z.strictObject({ kind: z.literal('repository'), projectSourceId: id, sourceRevision: revision, sha: ScmCommitOidSchema,
-        compose: DeploymentRepositoryComposeV1Schema, pullRequestHead: z.optional(z.strictObject({ number: revision })) }),
+        compose: z.optional(DeploymentRepositoryComposeV1Schema), pullRequestHead: z.optional(z.strictObject({ number: revision })) }),
     DeploymentStoredDefinitionV1Schema,
 ]));
 export type DeploymentSourceIntentV1 = z.infer<typeof DeploymentSourceIntentV1Schema>;

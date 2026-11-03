@@ -157,7 +157,7 @@ export const DeploymentEnvironmentCreateIntentInputV1Schema = lazyZodSchema(() =
   name: DeploymentTextV1Schema,
   mode: z.optional(z.enum(['preview', 'apply'])),
   definition: z.optional(z.union([DeploymentStoredDefinitionInputV1Schema, DeploymentCatalogAppDefinitionInputV1Schema,
-    z.strictObject({ from: z.literal('repository'), ref: DeploymentTextV1Schema, compose: DeploymentRepositoryComposeV1Schema })])),
+    z.strictObject({ from: z.literal('repository'), ref: DeploymentTextV1Schema, compose: z.optional(DeploymentRepositoryComposeV1Schema) })])),
   copyFrom: z.optional(DeploymentEnvironmentCopyFromV1Schema),
   controllerMachineId: z.optional(DeploymentIdentifierV1Schema), buildMachineId: z.optional(DeploymentIdentifierV1Schema),
   retainPreviousDeployments: z.optional(DeploymentRetainPreviousDeploymentsV1Schema),
@@ -171,6 +171,8 @@ export const DeploymentEnvironmentCreateIntentInputV1Schema = lazyZodSchema(() =
   z.refine(input => input.definition?.from === 'catalogApp'
     || input.bindings === undefined && input.generatedSecretAudience === undefined && input.domainBindings === undefined,
     { message: 'Catalog variables and generation are prepared by the template owner.' }),
+  z.refine(input => input.firstTargetLink === undefined || input.definition?.from !== 'repository' || input.definition.compose !== undefined,
+    { message: 'An own-server first target requires repository Compose selectors.' }),
   z.refine(input => input.copyFrom !== undefined || input.definition !== undefined,
   { message: 'Create selects an authored definition or an exact source copy.' })));
 export const DeploymentEnvironmentCreateActionInputV1Schema = lazyZodSchema(() => z.union([
@@ -544,7 +546,7 @@ export const DeploymentPublishInputV1Schema = lazyZodSchema(() => z.strictObject
   ]),
   definition: z.discriminatedUnion('kind', [
     z.strictObject({ kind: z.literal('repository'), repository: ScmHostingRepositoryIdentityV1Schema,
-      commit: ScmCommitOidSchema, compose: DeploymentRepositoryComposeV1Schema, workspace: ProjectAccountWorkspaceRefKeyV1Schema }),
+      commit: ScmCommitOidSchema, compose: z.optional(DeploymentRepositoryComposeV1Schema), workspace: ProjectAccountWorkspaceRefKeyV1Schema }),
     z.pick(DeploymentStoredDefinitionV1Schema, { kind: true, contentRevision: true, composeDigest: true }),
   ]),
   destination: z.discriminatedUnion('kind', [
@@ -568,7 +570,9 @@ export const DeploymentPublishInputV1Schema = lazyZodSchema(() => z.strictObject
     deploy: DeploymentDeployInputV1Schema,
   }),
 }).check(z.refine(input => input.destination.kind !== 'ownServer' || input.hostMachineId !== null,
-  { message: 'Own-server Publish requires an existing reviewed Workflow host.' })));
+  { message: 'Own-server Publish requires an existing reviewed Workflow host.' }),
+  z.refine(input => input.destination.kind !== 'ownServer' || input.definition.kind !== 'repository' || input.definition.compose !== undefined,
+    { message: 'Own-server Publish requires repository Compose selectors.' })));
 export type DeploymentPublishInputV1 = z.infer<typeof DeploymentPublishInputV1Schema>;
 export const DeploymentHealthReadResultV1Schema = lazyZodSchema(() => z.union([DeploymentHealthReadSuccessV1Schema, DeploymentActionFailureV1Schema]));
 export const DeploymentDriftReadResultV1Schema = lazyZodSchema(() => z.union([DeploymentDriftReadSuccessV1Schema, DeploymentActionFailureV1Schema]));

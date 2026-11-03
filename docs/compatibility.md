@@ -4418,6 +4418,20 @@ facet or Composer V2 callback in the relevant SDK, Protocol, and CLI runtime
 paths. Those unpublished author contracts therefore create no reverse adapter or
 rollback obligation.
 
+Unreleased 0.3 deployment repository definitions and exact source intents allow
+omitting `compose` for provider-built platform targets. Authored Environment
+creation retains `{definition:{from:'repository',ref}}`; Publish retains the
+existing repository and platform destination arms. Native first-target creation,
+own-server Publish, native acquisition, native receipts and native review bases still require
+Compose selectors. All enclosing and nested objects remain closed, and no
+unknown field gains source or authority meaning. Existing Compose-bearing
+records remain readable unchanged. Matching development Protocol, CLI, server
+and UI readers are required: earlier strict readers reject the omitted required
+field, so there is no mixed-development fallback. This updates the unreleased
+V1 contract without a new wire epoch, package version, runtime ABI or database
+migration. The scoped-clean 0.2 predecessor at `b06b31d66f94` has no deployment
+Environment/source-intent owner; reverse development rollback is unsupported.
+
 ## Proportionate matrix
 
 List all affected reachable directions and mark each `required`, `unreachable`, or `unsupported` with a reason. Direct seam tests cover each required direction. End-to-end rows are selected by risk and real deployment order.

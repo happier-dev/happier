@@ -2,6 +2,20 @@
 
 This document records the server implementation behind deployment. Operator recipes and configuration are owned by the published [self-hosting guide](../apps/docs/content/docs/self-hosting/index.mdx), including [Docker and Kubernetes](../apps/docs/content/docs/self-hosting/docker.mdx#kubernetes).
 
+Repository-backed platform Environments use the existing
+`deployments.environments.create` Action with
+`definition: { from: 'repository', ref: 'main' }` and no `firstTargetLink`.
+The ordinary Project, protection, purpose, deployer and controller inputs still
+apply. Create stores a protected repository definition without fabricating
+Compose or a native runtime target. Inspect the provider against the created
+Environment and link its returned provider content with `deployments.targets.link`;
+the recorded target principal and repository-access observation remain the
+authority for provider operations. Deploy selects an exact repository commit
+through the existing source-intent owner. Platform Publish accepts the same
+absence of Compose; own-server Publish, first-target creation and native
+receipts retain their required Compose selectors. These are unreleased 0.3
+contracts and require matching development components.
+
 ## Runtime overview
 - **App server:** Fastify + Socket.IO. Published `relay-server` images run the packaged server binary and embed the web UI; source-based `server` images use the repository start script.
 - **Database:** selected independently by `HAPPIER_DB_PROVIDER`; prebuilt images include SQLite and Postgres.

@@ -28,7 +28,7 @@ export type { DeploymentCreationDefaultsV1, ProjectDeploymentDefaultsV1, Project
 export type { ProjectSourceOwnerV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 export { DeploymentRepositoryComposeV1Schema } from '@happier-dev/protocol';
 export const DeploymentEnvironmentDefinitionV1Schema = z.discriminatedUnion('kind', [
-    z.strictObject({ kind: z.literal('repository'), ref: text, compose: DeploymentRepositoryComposeV1Schema }),
+    z.strictObject({ kind: z.literal('repository'), ref: text, compose: z.optional(DeploymentRepositoryComposeV1Schema) }),
     DeploymentStoredDefinitionV1Schema,
 ]);
 export type DeploymentEnvironmentDefinitionV1 = z.infer<typeof DeploymentEnvironmentDefinitionV1Schema>;
