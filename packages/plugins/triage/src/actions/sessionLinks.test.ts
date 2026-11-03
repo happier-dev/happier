@@ -62,12 +62,12 @@ function registeredLinkHandler(localId = TRIAGE_LINK_ENTRY_TO_SESSION_ACTION_LOC
     return handler;
 }
 
-function createContext(collections: CorpusCollectionsV1): PluginInvocationContext {
+function createContext(collections: CorpusCollectionsV1, snapshot = testkitReadOnlySourceSnapshot()): PluginInvocationContext {
     return {
         signal: new AbortController().signal,
         services: {
             targetedContributions: { observeForSelf: () => ({
-                readCurrent: async () => testkitReadOnlySourceSnapshot(), dispose: () => {},
+                readCurrent: async () => snapshot, dispose: () => {},
             }) },
             storage: {
                 account: {
@@ -99,6 +99,22 @@ async function readLinkRows(
 }
 
 describe('the session-link writer Action', () => {
+    it('preserves source setup recovery through the registered Action only for unscoped Session reads', async () => {
+        const { collections } = createTestkitCorpusCollections();
+        const admitted = testkitReadOnlySourceSnapshot();
+        const snapshot = { contributions: admitted.contributions.map(contribution => ({
+            ...contribution, descriptor: { ...contribution.descriptor, settingsPageId: 'triage-sources' },
+        })) };
+        const context = { ...createContext(collections, snapshot), surface: 'api' as const };
+        const read = registeredLinkHandler(TRIAGE_READ_SOURCE_SESSION_LINKS_ACTION_LOCAL_ID_V1);
+        const unscoped = TriageReadSourceSessionLinksResultV1Schema.parse(await read({ v: 1, sessionId: 'session-a' }, context));
+        expect(unscoped.configureSources).toEqual([{
+            destination: { pluginId: admitted.contributions[0]!.contributor.pluginId, localId: 'triage-sources' },
+            displayName: 'Example source', kindNames: ['Pull request', 'Issue'],
+        }]);
+        const scoped = TriageReadSourceSessionLinksResultV1Schema.parse(await read({ v: 1, entryRef: testkitEntryRef() }, context));
+        expect(scoped).not.toHaveProperty('configureSources');
+    });
     it('codes a retained configured source missing from the admitted Machine view without invoking credentials', async () => {
         const { collections, control } = createTestkitCorpusCollections();
         const base = testkitConfiguredInstance();

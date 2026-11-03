@@ -44,7 +44,7 @@ export function createTriageReadSourceSessionLinksActionHandler(): TriageDataAct
                 return { kind: 'entries', entries: await relations.readEntries(input.entries) };
             }
             const result = await relations.read(input);
-            return { kind: result.kind, links: result.links, lanes: result.lanes };
+            return result;
         } catch { return { kind: 'failed', links: [] }; }
     };
 }
