@@ -6,6 +6,7 @@ import { PixelRatio, StyleSheet } from 'react-native';
 import { renderScreen } from '@/dev/testkit';
 import { SessionCockpitBottomChromeHeightContext } from '@/components/workspaceCockpit/session/SessionCockpitChromeRegistry';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { BrowserPresenceCapsule } from '@/components/browser/copresence/BrowserPresenceCapsule';
 
 import {
   ComputerScreenViewer,
@@ -75,6 +76,29 @@ function pictureStage(screen: Awaited<ReturnType<typeof renderScreen>>) {
 }
 
 describe('ComputerScreenViewer', () => {
+  it('keeps presence outside the input viewport and uses the inline footer layout', async () => {
+    const viewerProps = props({ compact: true,
+      presence: { kind: 'human', controlEpoch: 1, interruptedCompletion: null },
+      stream: { machineName: 'machine', input: { sourceId: 'computer-source', streamId: 'stream', send: vi.fn() },
+        playerState: { phase: 'playing', selectedCodec: 'image.mjpeg', activeRenderer: 'mjpeg',
+          lastFrameUrl: 'data:image/jpeg;base64,AQID', decodedFrames: 1, droppedFrames: 0, bufferedBytes: 0 } } });
+    const screen = await renderScreen(<ComputerScreenViewer {...viewerProps} />);
+    const stage = pictureStage(screen);
+    await act(async () => stage.props.onLayout({ nativeEvent: { layout: { width: 320, height: 380 } } }));
+    await screen.pressByTestIdAsync('v-input-controls-tabs:arrows');
+
+    // The viewport owns picture/input geometry; the existing inline primitive owns the footer's
+    // reserved space. Actual browser hit testing remains a loaded-runtime QA check.
+    expect(stage.findAllByType(BrowserPresenceCapsule).length).toBe(0);
+    expect(screen.root.findByType(BrowserPresenceCapsule).props.placement).toBe('inline');
+    expect(screen.findByTestId('v-input-controls-escape')?.props.disabled).toBe(false);
+    expect(screen.findByTestId('v-input-controls-keyboard')?.props.disabled).toBe(false);
+
+    // The floating/Session host owns its own footer, so the embedded body must not add another.
+    await screen.update(<ComputerScreenViewer {...viewerProps} chrome="none" />);
+    expect(screen.findByTestId('v-presence-frame')).toBeNull();
+    await screen.unmount();
+  });
   it('mounts remote control panels on the live Machine viewer and sends keys and clipboard through its input owner', async () => {
     const send = vi.fn();
     const clipboardShortcut = vi.fn(async (_action: 'copy' | 'cut' | 'paste') => ({ ok: true as const }));

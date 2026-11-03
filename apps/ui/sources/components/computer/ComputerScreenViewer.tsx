@@ -76,6 +76,11 @@ const stylesheet = StyleSheet.create((theme) => ({
         minHeight: 0,
         backgroundColor: theme.colors.surface.inset,
     },
+    presenceFooter: {
+        flexShrink: 0,
+        padding: theme.space.s12,
+        backgroundColor: theme.colors.surface.inset,
+    },
     fill: {
         ...StyleSheet.absoluteFillObject,
     },
@@ -557,22 +562,19 @@ export function ComputerScreenViewer(props: ComputerScreenViewerProps): React.Re
                         testID={`${testID}-agent-cursor`}
                     />
                 ) : null}
-                {props.shared && props.chrome !== 'none' && !needsPermission ? (
-                    // The capsule docks to the bottom of its frame: when the picture is smaller than the
-                    // stage, the frame is the picture's own rect, so the capsule hugs the picture.
-                    <View
-                        style={pageRect ? { position: 'absolute', left: pageRect.x, top: pageRect.y, width: pageRect.width, height: pageRect.height } : stylesheet.fill}
-                        pointerEvents="box-none"
-                        testID={`${testID}-presence-frame`}
-                    >
-                        <BrowserPresenceCapsule
-                            testID={`${testID}-presence`}
-                            {...resolveComputerPresenceCapsule(props)}
-                            compact={props.compact}
-                        />
-                    </View>
-                ) : null}
             </View>
+            {props.shared && props.chrome !== 'none' && !needsPermission ? (
+                // Reserve the capsule's own height below the picture and its input controls. A dock
+                // over the picture can cover Escape and the keyboard toggle when the picture fills it.
+                <View style={stylesheet.presenceFooter} testID={`${testID}-presence-frame`}>
+                    <BrowserPresenceCapsule
+                        testID={`${testID}-presence`}
+                        {...resolveComputerPresenceCapsule(props)}
+                        placement="inline"
+                        compact={props.compact}
+                    />
+                </View>
+            ) : null}
         </View>
         </GlassLivePictureBackdropContext.Provider>
     );
