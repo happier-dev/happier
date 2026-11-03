@@ -4,6 +4,8 @@ import type {
 } from '@happier-dev/protocol/account/settings/machineRetentionDefaultsV1';
 import { DEFAULT_MACHINE_UNUSED_RETENTION_MS_V1, isMachineRetainedWakeEligibleV1, resolveMachineRetentionNativeIntentV1 } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
 import type { RetentionV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { describeRetention as describeSharedRetention, formatRetentionDuration as formatSharedRetentionDuration,
+  type ManagedDurationLabels } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
 
 import { t } from '@/text';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
@@ -39,14 +41,13 @@ export function retentionParking(supportedIntents: Parameters<typeof resolveMach
   return resolveMachineRetentionNativeIntentV1('stop', supportedIntents) === 'suspend' ? 'suspend' : 'stop';
 }
 
+function durationLabels(): ManagedDurationLabels {
+  return { days: count => t('managedRetention.days', { count }), hours: count => t('managedRetention.hours', { count }),
+    minutes: count => t('managedRetention.minutes', { count }) };
+}
+
 export function formatRetentionDuration(ms: number): string {
-  if (ms >= DAY_MS && ms % DAY_MS === 0)
-    return t('managedRetention.days', { count: ms / DAY_MS });
-  if (ms >= HOUR_MS && ms % HOUR_MS === 0)
-    return t('managedRetention.hours', { count: ms / HOUR_MS });
-  return t('managedRetention.minutes', {
-    count: Math.max(1, Math.round(ms / MINUTE_MS)),
-  });
+  return formatSharedRetentionDuration(ms, durationLabels());
 }
 
 export function describeRetention(
@@ -54,26 +55,14 @@ export function describeRetention(
   formatTime: (at: number) => string = formatAsOfTime,
   parking: RetentionParking = 'stop',
 ): string {
-  switch (retention.kind) {
-    case 'until-delete':
-      return t('managedRetention.untilDelete');
-    case 'unused': {
-      const duration = formatRetentionDuration(retention.afterMs);
-      return retention.effect === 'delete'
-        ? t('managedRetention.deleteAfterUnused', { duration })
-        : parking === 'suspend'
-          ? t('managedRetention.suspendAfterUnused', { duration })
-          : t('managedRetention.stopAfterUnused', { duration });
-    }
-    case 'deadline': {
-      const time = formatTime(retention.at);
-      return retention.effect === 'delete'
-        ? t('managedRetention.deleteAt', { time })
-        : parking === 'suspend'
-          ? t('managedRetention.suspendAt', { time })
-          : t('managedRetention.stopAt', { time });
-    }
-  }
+  return describeSharedRetention(retention, { formatTime, parking, durationLabels: durationLabels(), labels: {
+    untilDelete: t('managedRetention.untilDelete'),
+    deleteAfterUnused: duration => t('managedRetention.deleteAfterUnused', { duration }),
+    stopAfterUnused: duration => t('managedRetention.stopAfterUnused', { duration }),
+    suspendAfterUnused: duration => t('managedRetention.suspendAfterUnused', { duration }),
+    deleteAt: time => t('managedRetention.deleteAt', { time }), stopAt: time => t('managedRetention.stopAt', { time }),
+    suspendAt: time => t('managedRetention.suspendAt', { time }),
+  } });
 }
 /** The descriptor facts a consequence depends on: where it runs, whether stopped bills, and who bills. */
 export type RetentionConsequenceFacts = Readonly<{

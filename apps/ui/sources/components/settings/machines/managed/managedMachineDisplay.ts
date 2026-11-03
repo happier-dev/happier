@@ -1,5 +1,6 @@
 import type * as React from 'react';
 import type { ProviderPriceFactV1 } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
+export { formatProviderAmount } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
 
 import { t } from '@/text';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
@@ -101,23 +102,6 @@ export type ManagedReceiptCost =
       }>[];
       note?: string;
     }>;
-
-/** "€0.0119", from the provider's own decimal string and currency; the digits are never rounded away. */
-export function formatProviderAmount(
-  price: Pick<ProviderPrice, 'amount' | 'currency'>,
-): string {
-  const decimals = price.amount.split('.')[1]?.length ?? 0;
-  try {
-    return new Intl.NumberFormat(undefined, {
-      style: 'currency',
-      currency: price.currency,
-      minimumFractionDigits: decimals,
-      maximumFractionDigits: decimals,
-    }).format(Number(price.amount));
-  } catch {
-    return `${price.amount} ${price.currency}`;
-  }
-}
 
 /** "an hour" / "a month" for the units providers report; another unit is said as the provider named it. */
 export function formatPriceUnit(unit: string): string {
