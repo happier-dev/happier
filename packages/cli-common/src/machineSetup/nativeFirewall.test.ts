@@ -53,7 +53,7 @@ afterEach(async () => {
     os.root = ''; os.owners.clear(); os.interfaces = {};
 });
 
-async function fixture() {
+async function fixture(listing?: Readonly<{ symbolic: string; numeric: string }>) {
     const fs = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
     os.root = await fs.mkdtemp(join(tmpdir(), 'happier-firewall-')); roots.push(os.root);
     const disk = (path: string) => path.startsWith(os.root + '/') ? path : join(os.root, path);
@@ -86,7 +86,8 @@ async function fixture() {
             if (args.includes('-c')) return { code: validate ? 0 : 1, stdout: '', stderr: '' };
             if (args.includes('-j') && args.includes('tables')) return { code: 0, stdout: JSON.stringify({ nftables: table ? [{ table: { family: 'inet', name: 'happier' } }] : [] }), stderr: '' };
             if (args.includes('-j') && args.includes('table')) return { code: table ? 0 : 1, stdout: JSON.stringify(nativePolicy), stderr: '' };
-            if (args.includes('list')) return { code: table ? 0 : 1, stdout: table ?? '', stderr: '' };
+            if (args.includes('list')) return { code: table ? 0 : 1,
+                stdout: table && listing ? args.includes('-nn') ? listing.numeric : listing.symbolic : table ?? '', stderr: '' };
             if (args.includes('-f')) { table = await fs.readFile(disk(args[args.indexOf('-f') + 1]!), 'utf8'); return { code: 0, stdout: '', stderr: '' }; }
             if (args[0] === 'delete') { table = undefined; return { code: 0, stdout: '', stderr: '' }; }
         }
@@ -153,6 +154,24 @@ async function stage(f: Awaited<ReturnType<typeof fixture>>, step = f.step): Pro
 }
 
 describe('native owned firewall', () => {
+    it('reconciles retained nft 1.1.6 rules using the same symbolic vocabulary as the owned file', async () => {
+        // Captured read-only from Lima #43, 2026-11-03: -nn converts ct,
+        // nfproto and l4proto values; -s preserves the saved rules' symbols.
+        const symbolic = 'table inet happier {\n chain input {\n type filter hook input priority filter - 10; policy accept;\n ct state established,related accept\n iifname "lo" accept\n meta nfproto ipv4 tcp dport 80 accept\n meta nfproto ipv4 tcp dport 443 accept\n ct state new drop\n }\n chain forward {\n type filter hook forward priority filter - 10; policy accept;\n ct state established,related accept\n meta l4proto tcp meta nfproto ipv4 ct original proto-dst 80 accept\n meta l4proto tcp meta nfproto ipv4 ct original proto-dst 443 accept\n ct state new ct direction original ct status dnat drop\n }\n}\n';
+        const numeric = symbolic.replaceAll('filter - 10', '-10').replaceAll('established,related', '0x2,0x4')
+            .replaceAll('nfproto ipv4', 'nfproto 2').replaceAll('l4proto tcp', 'l4proto 6')
+            .replaceAll('state new', 'state 0x8').replaceAll('direction original', 'direction 0').replaceAll('status dnat', 'status 0x20');
+        const f = await fixture({ symbolic, numeric });
+        const step = MachineRecipeStepV1Schema.parse({ ...f.step,
+            rules: 'table inet happier\ndelete table inet happier\n' + symbolic });
+        const plan = await checkMachineSetupEffectPlan({ basis, steps: [step], backend: f.backend });
+        expect(await applyMachineSetupEffectPlan({ plan, backend: f.backend })).toMatchObject({ status: 'applied' });
+        expect(await f.backend.observe(step)).toMatchObject({ status: 'satisfied' });
+        const repeated = await checkMachineSetupEffectPlan({ basis, steps: [step], backend: f.backend });
+        expect(await applyMachineSetupEffectPlan({ plan: repeated, backend: f.backend })).toMatchObject({ status: 'applied' });
+        expect(await f.fs.readFile(f.disk(rulesPath), 'utf8')).toBe(step.kind === 'firewall' ? step.rules : '');
+    });
+
     it('observes route-selected external and exposure-selected private interfaces and every live SSH endpoint without guessing from private addresses', async () => {
         const f = await fixture();
         await f.listenSsh('LISTEN 0 128 0.0.0.0:2205 0.0.0.0:* users:(("sshd",pid=412,fd=3))\nLISTEN 0 128 0.0.0.0:2206 0.0.0.0:* users:(("sshd",pid=412,fd=4))\n');

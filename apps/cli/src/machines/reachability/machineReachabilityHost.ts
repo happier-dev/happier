@@ -58,7 +58,9 @@ export type MachineReachabilityHostDependencies = Readonly<{
   publish(observation: MachineReachabilityObservationV1): Promise<MachineReachabilityObservationV1>;
 }>;
 
-const refuse = (code: string): never => { throw Object.assign(new Error(code), { code }); };
+const refuse = (code: string, details?: unknown): never => {
+  throw Object.assign(new Error(code), { code, ...(details === undefined ? {} : { details }) });
+};
 const errorCode = (error: unknown) => error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
   ? error.code : 'machine_reachability_unavailable';
 
@@ -638,5 +640,12 @@ export async function settleMachineCaddyFirewallForHost(input: Pick<RetainedSshT
       publicBindings: [...(input.caddy.publicBindings ?? [])],
     }, publicSsh: state.posture.management.publicSsh } });
   if (transitioned.status !== 'applied' && transitioned.status !== 'unchanged')
-    return refuse(transitioned.errorCode ?? transitioned.status);
+    return refuse(transitioned.errorCode ?? transitioned.status, {
+      ...(transitioned.failure ? { failure: transitioned.failure } : {}),
+      ...(transitioned.recovery ? { recovery: transitioned.recovery } : {}),
+      ...(transitioned.restoration ? { restoration: transitioned.restoration } : {}),
+      remedy: transitioned.status === 'outcome_unknown' || transitioned.status === 'recoveryRequired'
+        ? 'Inspect and reconcile the Happier firewall rules and service on this Machine before retrying the Domain action.'
+        : 'Check nftables and the Happier firewall setup prerequisites on this Machine, then retry the Domain action.',
+    });
 }

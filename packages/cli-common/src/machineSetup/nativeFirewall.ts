@@ -188,7 +188,9 @@ export function createNativeFirewallBackend(run: NativeRun, recover: NativeRun, 
             && entry.table !== null && typeof entry.table === 'object' && 'family' in entry.table && entry.table.family === 'inet'
             && 'name' in entry.table && entry.table.name === 'happier');
         if (!found) return null;
-        const result = await invoke(nft, ['-nn', '-s', 'list', 'table', 'inet', 'happier'], locale);
+        // Compare the same symbolic vocabulary as the owned rules file.
+        // Numeric output also rewrites ct state/direction and protocol names.
+        const result = await invoke(nft, ['-s', 'list', 'table', 'inet', 'happier'], locale);
         if (result.code !== 0) throw new MachineSetupEffectError('required_fact_unavailable');
         confinedTable(result.stdout);
         return result.stdout;

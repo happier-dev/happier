@@ -3,7 +3,7 @@ import type { MachineFirewallTransitionIntentV1 } from '@happier-dev/protocol/ma
 import type { MachineReachabilityPostureV1 } from '@happier-dev/protocol';
 import type { MachineMetadataFieldDefinitionV1, MachineMetadataFieldPortV1 } from '@happier-dev/protocol/machines/machineMetadataFieldV1';
 import type { MachineElevationDependencies } from '@/machines/adminAccess/runElevatedEffect';
-import type { MachineFirewallRecoveryV1, MachineFirewallRestorationV1 } from '@happier-dev/protocol/machines/adminAccessV1';
+import type { MachineElevatedResultV1, MachineFirewallRecoveryV1, MachineFirewallRestorationV1 } from '@happier-dev/protocol/machines/adminAccessV1';
 import type { MachineNativeEffectContext } from '@/daemon/local/services/launch/machineNativeEffectAdmission';
 import type { MachineReachabilityObservationV1 } from '@happier-dev/protocol/machines/reachability/machineReachabilityPostureV1';
 import { mutateMachineMetadataFieldV1 } from '@happier-dev/protocol/machines/machineMetadataFieldV1';
@@ -28,6 +28,7 @@ type TransitionResult = Readonly<{
   /** Last confirmed field read/write, not a current-state assertion on unknown. */
   metadataVersion: number; posture: MachineReachabilityPostureV1 | null;
   effectAttempted: boolean; errorCode?: string;
+  failure?: Extract<MachineElevatedResultV1, { outcome: 'outcome_unknown' }>['failure'];
   /** Exact native capture for the existing offline recovery card, not a store. */
   recovery?: MachineFirewallRecoveryV1;
   restoration?: MachineFirewallRestorationV1;
@@ -39,11 +40,13 @@ export async function executeRetainedSshTransition(input: RetainedSshTransitionI
   let posture = input.current, metadataVersion = input.expectedMetadataVersion, effectAttempted = false;
   let acknowledgedWrite = false, metadataUncertain = false, nativeRestored = false;
   let recovery: MachineFirewallRecoveryV1 | undefined, restoration: MachineFirewallRestorationV1 | undefined;
+  let failure: TransitionResult['failure'];
   const alreadyDesired = input.field.equal(input.current, input.desired);
   let failureCode = 'required_fact_unavailable';
   const result = (status: TransitionResult['status'], errorCode?: string): TransitionResult => ({
     status, posture, metadataVersion, effectAttempted, ...(errorCode ? { errorCode } : {}),
     ...(recovery ? { recovery } : {}), ...(restoration ? { restoration } : {}),
+    ...(failure ? { failure } : {}),
   });
   // The caller already admitted authority. P30 owns that context; P10's
   // later callbacks consume cancellation, never re-read Home authority or
@@ -90,6 +93,7 @@ export async function executeRetainedSshTransition(input: RetainedSshTransitionI
         },
       }));
     restoration = 'restoration' in elevated ? elevated.restoration : undefined;
+    failure = 'failure' in elevated ? elevated.failure : undefined;
     nativeRestored = restoration?.status === 'verified';
     if (elevated.outcome === 'applied' && acknowledgedWrite) return result(alreadyDesired ? 'unchanged' : 'applied');
     if (acknowledgedWrite && nativeRestored) {
@@ -107,7 +111,7 @@ export async function executeRetainedSshTransition(input: RetainedSshTransitionI
     // generic failed/cancelled event statuses never establish that proof.
     if (nativeRestored) return elevated.outcome === 'outcome_unknown'
       ? result('outcome_unknown', 'outcome_unknown') : result('rolledBack', failureCode);
-    if (elevated.outcome === 'not_applied' && !effectAttempted) return result('refused', elevated.reasonCode);
+    if (elevated.outcome === 'not_applied') return result('refused', elevated.reasonCode);
     if (elevated.outcome === 'needs_attendance') return result('refused', 'needs_attendance');
     return result('outcome_unknown', 'outcome_unknown');
   } catch {
