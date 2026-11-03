@@ -7236,6 +7236,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
 
 export type { HostReviewedChildrenPlanV1 } from './executor/types.js';
 
+export { WorkflowApprovedOperationParentV1Schema as HostReviewedParentV1Schema } from './approvedOperationV1.js';
 export { readHostReviewedParentV1, readHostReviewedChildReceivingAdmissionV1, invokeHostReviewedChildV1, readHostReviewedChildOperationV1, isHostAdmittedReviewedChildPolicyV1 } from './executor/deploymentRoleChild.js';
 
 export { resolveApprovalSurface } from './actionApprovalSurface.js';
