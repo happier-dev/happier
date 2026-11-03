@@ -9460,6 +9460,9 @@ const enSession = {
   },
   staleRunner: {
     banner: {
+      runnerUnavailableBody: "No runner is active yet. Resolve any startup issue, then Start or Resume the session before trying Restart again.",
+      updateDaemonBody: "Update Happier on this machine and restart its daemon, then try again.",
+      statusFailedBody: "The restart could not be confirmed. Check the machine connection and session status before trying again.",
       stopAndResumeBody: 'This runner cannot restart safely. Stop the session, then Resume to use the current runtime.',
       title: 'Session runner is out of date',
       body: 'This session is still running older runtime code. Restart the runner to use the current daemon runtime.',

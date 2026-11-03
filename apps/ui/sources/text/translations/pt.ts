@@ -8065,6 +8065,9 @@ encryptedUnavailable: "Detalhes encriptados indisponíveis",
     },
     staleRunner: {
       banner: {
+        runnerUnavailableBody: "Ainda não há um runner ativo. Resolva o problema de inicialização e inicie ou retome a sessão antes de tentar reiniciar novamente.",
+        updateDaemonBody: "Atualize o Happier nesta máquina e reinicie o daemon; depois tente novamente.",
+        statusFailedBody: "Não foi possível confirmar a reinicialização. Verifique a conexão da máquina e o estado da sessão antes de tentar novamente.",
         stopAndResumeBody: 'Este runner não pode reiniciar com segurança. Pare a sessão e depois retome para usar o runtime atual.',
         title: "O runner da sessão está desatualizado",
         body: "Esta sessão ainda usa código de runtime antigo. Reinicie o runner para usar o runtime atual do daemon.",

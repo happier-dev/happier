@@ -537,6 +537,13 @@ The development `session.runtime.refresh` Action reads the hosting Machine's
 current runner status and uses the banner's guarded `if_stale` request. Both
 surfaces wait under the caller lifetime while the daemon defers replacement;
 they do not impose a shorter client completion deadline.
+Status reads preserve typed transport failures and reject mismatched Session or
+Machine identities as `partial_failure` with `invalid_response`. Only a missing
+daemon RPC method (or the daemon's explicit unsupported-version response) produces
+`unsupported_daemon_version`. Before a runner starts, the existing identity guard
+returns `runner_not_active` with `no_tracked_process`; a missing V2 process witness
+on an active runner is `version_unknown`, not proof of an old daemon. The UI
+offers startup recovery, daemon update, or connection/status checks accordingly.
 Loaded-daemon replay requires the orchestrator's next authorized reload.
 
 ## Native Agent seam

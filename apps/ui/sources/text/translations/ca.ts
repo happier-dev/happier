@@ -7219,6 +7219,9 @@ encryptedUnavailable: "Detalls xifrats no disponibles",
         },
         staleRunner: {
             banner: {
+                runnerUnavailableBody: "Encara no hi ha cap executor actiu. Resol el problema d’inici i inicia o reprèn la sessió abans de tornar a provar de reiniciar-la.",
+                updateDaemonBody: "Actualitza Happier en aquesta màquina i reinicia el daemon; després torna-ho a provar.",
+                statusFailedBody: "No s’ha pogut confirmar el reinici. Comprova la connexió de la màquina i l’estat de la sessió abans de tornar-ho a provar.",
                 stopAndResumeBody: 'Aquest executor no es pot reiniciar de manera segura. Atura la sessió i reprèn-la per utilitzar el runtime actual.',
                 title: 'L’executor de la sessió no està actualitzat',
                 body: 'Aquesta sessió encara s’executa amb codi de runtime antic. Reinicia l’executor per utilitzar el runtime actual del daemon.',

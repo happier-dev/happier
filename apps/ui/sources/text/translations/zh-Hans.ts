@@ -7642,6 +7642,9 @@ export const zhHans: TranslationStructure = {
     },
     staleRunner: {
       banner: {
+        runnerUnavailableBody: "尚无活动运行器。请解决启动问题，然后启动或恢复会话，再尝试重启。",
+        updateDaemonBody: "请更新此机器上的 Happier 并重启守护进程，然后重试。",
+        statusFailedBody: "无法确认重启结果。请检查机器连接和会话状态，然后重试。",
         stopAndResumeBody: '此运行器无法安全重启。请停止会话，然后恢复会话以使用当前运行时。',
         title: "会话运行器已过期",
         body: "此会话仍在旧版运行时代码上运行。重启运行器以使用当前 daemon runtime。",

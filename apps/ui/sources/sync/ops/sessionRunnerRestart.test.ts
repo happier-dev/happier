@@ -109,6 +109,26 @@ const restartCases = [
 ] as const;
 
 describe('session runner restart op', () => {
+    it.each([
+        ['no runner yet', () => ({ v: 2, state: { ...runtimeState, machineId: null, runner: { ...runtimeState.runner, pid: null } }, runnerProcessIdentity: null }), 'runner_not_active', undefined],
+        ['wrong machine', () => statusResponse({ ...runtimeState, machineId: 'other-machine' }), 'partial_failure', 'invalid_response'],
+        ['transport failure', () => ({ ok: false, errorCode: RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE, error: 'unreachable' }), 'partial_failure', RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE],
+        ['method unavailable', () => ({ ok: false, errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE, error: 'unavailable' }), 'partial_failure', RPC_ERROR_CODES.METHOD_NOT_AVAILABLE],
+        ['old daemon', () => ({ ok: false, errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND, error: 'Method not found' }), 'unsupported_daemon', undefined],
+    ] as const)('keeps the refresh refusal honest for %s without dispatching a restart', async (_label, status, expectedStatus, errorCode) => {
+        response = status;
+        const { createDefaultActionExecutor } = await import('./actions/defaultActionExecutor');
+        const { ActionIdSchema } = await import('@happier-dev/protocol/actions/actionIds');
+        const result = await createDefaultActionExecutor().execute(ActionIdSchema.parse('session.runtime.refresh'),
+            { sessionId: 's1', machineId: 'm1', serverId: home.id },
+            { surface: 'ui', authority: 'present_user', serverId: home.id, actionCaller: { kind: 'host' } });
+        expect(result).toMatchObject({ ok: true, result: { ok: false, status: expectedStatus,
+            ...(errorCode ? { diagnostics: { errorCode } } : {}) } });
+        expect(decodedRequests.map(request => request.method)).toEqual(expectedStatus === 'unsupported_daemon'
+            ? [RPC_METHODS.DAEMON_SESSION_RUNNER_STATUS_V2_GET, RPC_METHODS.DAEMON_SESSION_RUNNER_STATUS_GET]
+            : [RPC_METHODS.DAEMON_SESSION_RUNNER_STATUS_V2_GET]);
+    });
+
     it('refreshes from the public Action through the banner primitive and exact Home RPC', async () => {
         response = method => method === RPC_METHODS.DAEMON_SESSION_RUNNER_RESTART
             ? { ok: true, status: 'restarted', sessionId: 's1' } : statusResponse(runtimeState);
@@ -413,10 +433,17 @@ describe('session runner restart op', () => {
         expect(decodedRequests.map(request => request.method)).toEqual([RPC_METHODS.DAEMON_SESSION_RUNNER_RESTART]);
     });
 
+    it.each([RPC_ERROR_CODES.FORBIDDEN, RPC_ERROR_CODES.METHOD_NOT_AVAILABLE])('retains %s from restart without observing or falling back', async errorCode => {
+        response = () => ({ ok: false, errorCode, error: 'request refused' });
+        await expect(restartCases[0][1]()).resolves.toMatchObject({ ok: false, status: 'partial_failure', diagnostics: { errorCode } });
+        expect(decodedRequests.map(request => request.method)).toEqual([RPC_METHODS.DAEMON_SESSION_RUNNER_RESTART]);
+    });
+
     it('fails closed without effects when machine, aggregate identity, or V2 process witness is absent', async () => {
-        await expect(ops.restartSessionRunnerOnCurrentRuntime({ runtimeState: { ...runtimeState, machineId: null } })).resolves.toMatchObject({ status: 'unsupported_daemon' });
+        await expect(ops.restartSessionRunnerOnCurrentRuntime({ runtimeState: { ...runtimeState, machineId: null } })).resolves.toMatchObject({ status: 'partial_failure', diagnostics: { errorCode: 'invalid_response' } });
         await expect(ops.restartSessionRunnerOnCurrentRuntime({ runtimeState: { ...runtimeState, runner: { ...runtimeState.runner, runtimeId: null } } })).resolves.toMatchObject({ status: 'version_unknown' });
-        await expect(ops.restartSessionRunnerForProviderBindingChange({ runtimeState, runnerProcessIdentity: null })).resolves.toMatchObject({ status: 'unsupported_daemon' });
+        await expect(ops.restartSessionRunnerForProviderBindingChange({ runtimeState, runnerProcessIdentity: null })).resolves.toMatchObject({ status: 'version_unknown', reasonCode: 'runner_generation_unattested' });
+        await expect(ops.restartSessionRunnerForProviderBindingChange({ runtimeState: { ...runtimeState, runner: { ...runtimeState.runner, pid: null } }, runnerProcessIdentity: null })).resolves.toMatchObject({ status: 'runner_not_active', reasonCode: 'no_tracked_process' });
         expect(boundary.requests).toEqual([]);
     });
 

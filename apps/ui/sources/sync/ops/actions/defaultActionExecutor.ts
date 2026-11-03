@@ -311,7 +311,7 @@ import { ensureAgentInstallablesBackground } from '@/capabilities/ensureAgentIns
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { readAgentScopedPluginSettingsSnapshot } from '@/agents/registry/agentScopedPluginSettings';
 import { readSessionSnapshotForAuthority } from '@/sync/runtime/orchestration/serverScopedRpc/readSessionSnapshotForAuthority';
-import { getSessionRunnerRuntimeStatus, restartSessionRunnerOnCurrentRuntime } from '@/sync/ops/sessionRunnerRestart';
+import { getSessionRunnerRuntimeStatusSnapshotResult, restartSessionRunnerOnCurrentRuntime } from '@/sync/ops/sessionRunnerRestart';
 import { runWithServerRequestAuthorityForServerAccountScope } from '@/sync/runtime/orchestration/serverScopedRpc/createServerRequestWithServerScope';
 import { resolveMachineControlTargetForSessionFromState } from '@/sync/domains/session/resolveMachineTargetForSessionFromState';
 import {
@@ -2287,13 +2287,11 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     sessionRuntimeRefresh: async ({ sessionId, machineId, serverId, signal }) => withAccountLifetime(signal, async signal => {
       accountContext?.assertCurrent();
       throwIfAborted(signal);
-      const runtimeState = await getSessionRunnerRuntimeStatus({ sessionId, machineId, serverId, signal });
+      const status = await getSessionRunnerRuntimeStatusSnapshotResult({ sessionId, machineId, serverId, signal });
       accountContext?.assertCurrent();
       throwIfAborted(signal);
-      if (!runtimeState || runtimeState.machineId !== machineId) {
-        return { ok: false, status: 'unsupported_daemon', sessionId, reasonCode: 'unsupported_daemon_version' } as const;
-      }
-      const result = await restartSessionRunnerOnCurrentRuntime({ runtimeState, serverId, signal });
+      if (!('state' in status)) return status;
+      const result = await restartSessionRunnerOnCurrentRuntime({ runtimeState: status.state, serverId, signal });
       return result ?? { ok: false, errorCode: 'cancelled', error: 'cancelled' };
     }),
 

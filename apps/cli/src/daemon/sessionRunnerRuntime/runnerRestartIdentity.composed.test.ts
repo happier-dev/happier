@@ -32,6 +32,44 @@ afterEach(async () => {
 afterAll(() => boundary.dispose());
 
 describe('wrapped runner status → UI provider restart → daemon signal custody', () => {
+  it('reports no runner before startup without blaming the current daemon version', async () => {
+    boundary.resetRequests();
+    resetScopedMachineTransportCacheForTests();
+    const home = await boundary.addHome('https://pending-restart.test', 'account-a');
+    boundary.setHttpResponder(async input => {
+      const path = new URL(String(input)).pathname;
+      if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+      if (path === '/v2/account/settings') return Response.json({ version: 1, content: { t: 'plain', v: {} } });
+      return null;
+    });
+    const currentIdentity = { status: 'known' as const, source: 'launch_spec' as const,
+      comparableId: 'version:0.3.0', entrypointVersion: '0.3.0' };
+    const app = createDaemonControlApp({ getChildren: () => [], controlToken: 'fixture-token',
+      stopSession: async () => ({ status: 'stopped' }), spawnSession: async () => ({ type: 'success', sessionId: 's1' }),
+      requestShutdown: () => {}, onHappySessionWebhook: () => {},
+      handleSessionRunnerStatusV2Get: async () => resolveSessionRunnerRuntimeStatusV2({ tracked: null,
+        state: resolveSessionRunnerRuntimeState({ sessionId: 's1', tracked: null, currentIdentity }) }),
+    });
+    const methods: string[] = [];
+    try {
+      await app.ready();
+      boundary.setRpcResponder(async request => {
+        methods.push(request.method);
+        const decoded = await socketRpcCodec.decodeRequestParams({ mode: 'plain' }, request.payload, `${request.targetId}:${request.method}`);
+        const response = await app.inject({ method: 'POST', url: '/session-runners/status-v2',
+          headers: { 'x-happier-daemon-token': 'fixture-token' }, payload: decoded.params });
+        expect(response.statusCode).toBe(200);
+        return socketRpcCodec.encodeResponse({ mode: 'plain' }, response.json(), decoded.callId);
+      });
+      const { createDefaultActionExecutor } = await import('../../../../ui/sources/sync/ops/actions/defaultActionExecutor');
+      const { ActionIdSchema } = await import('@happier-dev/protocol/actions/actionIds');
+      expect(await createDefaultActionExecutor().execute(ActionIdSchema.parse('session.runtime.refresh'),
+        { sessionId: 's1', machineId: 'm1', serverId: home.id },
+        { surface: 'ui', authority: 'present_user', serverId: home.id, actionCaller: { kind: 'host' } }))
+        .toMatchObject({ ok: true, result: { ok: false, status: 'runner_not_active', reasonCode: 'no_tracked_process' } });
+      expect(methods).toEqual([RPC_METHODS.DAEMON_SESSION_RUNNER_STATUS_V2_GET]);
+    } finally { await app.close(); }
+  });
   it.each(['stable', 'replaced before request', 'reused at signal'] as const)('uses the executable guard while retaining exact launcher cleanup custody (%s)', async change => {
     boundary.resetRequests();
     resetScopedMachineTransportCacheForTests();

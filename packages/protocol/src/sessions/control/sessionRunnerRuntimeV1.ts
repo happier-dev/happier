@@ -1,7 +1,7 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod/mini';
 
-import { SessionRunnerRestartDisabledReasonSchema } from './sessionRunnerRestartV1.js';
+import { SessionRunnerRestartDisabledReasonSchema, projectSessionRunnerReadFailureV1, type RestartSessionRunnerResultV1 } from './sessionRunnerRestartV1.js';
 
 export const SESSION_RUNNER_RUNTIME_STATE_FIELD_ID = 'runtime.sessionRunner' as const;
 export const SESSION_RUNNER_RUNTIME_METADATA_KEY = 'sessionRunnerRuntimeV1' as const;
@@ -93,6 +93,20 @@ export const SessionRunnerRuntimeStateV1Schema = lazyZodSchema(() => z.strictObj
     plannedRestart: SessionRunnerPlannedRestartStateV1Schema,
   }));
 export type SessionRunnerRuntimeStateV1 = z.infer<typeof SessionRunnerRuntimeStateV1Schema>;
+
+/** One target-identity decision after status decoding in CLI and UI refresh. */
+export function readSessionRunnerRuntimeStateForRestartV1(
+  state: SessionRunnerRuntimeStateV1,
+  target: Readonly<{ sessionId: string; machineId: string }>,
+): SessionRunnerRuntimeStateV1 | RestartSessionRunnerResultV1 {
+  if (state.sessionId !== target.sessionId || (state.machineId !== target.machineId
+    && !(state.machineId == null && state.runner.pid == null))) {
+    return projectSessionRunnerReadFailureV1(target.sessionId, null);
+  }
+  // Before startup the daemon can have neither a tracked process nor its Machine identity.
+  // The restart identity guard owns that runner_not_active decision.
+  return state;
+}
 
 export const SessionRunnerStatusGetRequestV1Schema = lazyZodSchema(() => z.strictObject({
     sessionId: SessionRunnerSessionIdV1Schema,

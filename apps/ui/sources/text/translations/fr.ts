@@ -7798,6 +7798,9 @@ encryptedUnavailable: "Détails chiffrés indisponibles",
     },
     staleRunner: {
       banner: {
+        runnerUnavailableBody: "Aucun exécuteur actif pour le moment. Résolvez le problème de démarrage, puis démarrez ou reprenez la session avant de réessayer.",
+        updateDaemonBody: "Mettez Happier à jour sur cette machine et redémarrez son daemon, puis réessayez.",
+        statusFailedBody: "Le redémarrage n’a pas pu être confirmé. Vérifiez la connexion à la machine et l’état de la session avant de réessayer.",
         stopAndResumeBody: 'Ce runner ne peut pas redémarrer en toute sécurité. Arrête la session, puis reprends-la pour utiliser le runtime actuel.',
         title: "Le runner de session est obsolète",
         body: "Cette session exécute encore du code runtime plus ancien. Redémarre le runner pour utiliser le runtime du daemon actuel.",

@@ -1,3 +1,4 @@
+import { alertComposerRunnerRestartFailure } from "./alertComposerFailure";
 import { resolveSessionContinuationDaemonGeneration } from '@/components/sessions/agentPicker/resolveSessionAgentContinuationEligibility';
 import { providerDeclarationContext } from '@/providers/catalog/accountProviderDeclarations';
 import { resolveSessionAutoResumeAdmissionV1 } from '@happier-dev/protocol/sessions/metadata/sessionExplicitStopV1';
@@ -200,7 +201,7 @@ import { EMPTY_SESSION_WORKFLOW_ACTIVITY, IDLE_SESSION_MANAGED_WORKFLOW_RUNS, us
 import { STALE_SESSION_RUNNER_STATUS_BADGE_KEY, buildStaleSessionRunnerNoticePresentation, type StaleSessionRunnerOperationStatus } from "@/components/sessions/sessionRunner/staleSessionRunnerNoticePresentation";
 import { readStaleSessionRunnerRuntimeState } from "@/sync/domains/sessionRunnerRuntime/sessionRunnerRuntimeStatus";
 import type { SessionRunnerRuntimeStatusSnapshot } from "@/sync/domains/sessionRunnerRuntime/sessionRunnerRuntimeStatusRetention";
-import { getSessionRunnerRuntimeStatusSnapshot, restartSessionRunnerForProviderBindingChange, restartSessionRunnerOnCurrentRuntime } from "@/sync/ops/sessionRunnerRestart";
+import { getSessionRunnerRuntimeStatusSnapshotResult, restartSessionRunnerForProviderBindingChange, restartSessionRunnerOnCurrentRuntime } from "@/sync/ops/sessionRunnerRestart";
 import { readSessionWorkStateFromMetadata } from "@/sync/domains/session/workState/readSessionWorkState";
 import { SessionWorkStatePopover } from "@/components/sessions/workState/SessionWorkStatePopover";
 import type { SessionWorkStateGoalSetRequest, SessionWorkStateOperationResult } from "@/components/sessions/workState/SessionWorkStateContent";
@@ -5584,7 +5585,7 @@ export function useSessionComposerController({
                 const runtimeStatus = cachedRuntimeStatus
                     ?? (
                         restartMachineId
-                            ? await getSessionRunnerRuntimeStatusSnapshot({
+                            ? await getSessionRunnerRuntimeStatusSnapshotResult({
                                 sessionId,
                                 machineId: restartMachineId,
                                 serverId: sessionRouteServerId,
@@ -5593,6 +5594,10 @@ export function useSessionComposerController({
                             : null
                     );
                 if (sessionViewCaller.signal.aborted) return false;
+                if (runtimeStatus && 'ok' in runtimeStatus) {
+                    alertComposerRunnerRestartFailure(runtimeStatus);
+                    return false;
+                }
                 if (!runtimeStatus) {
                     if (effectiveModelTransitionActionRequired) {
                         Modal.alert(t('common.error'), t('common.requestFailed'));

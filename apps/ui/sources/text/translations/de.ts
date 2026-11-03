@@ -7940,6 +7940,9 @@ encryptedUnavailable: "Verschlüsselte Details nicht verfügbar",
         },
         staleRunner: {
             banner: {
+                runnerUnavailableBody: "Es ist noch kein Runner aktiv. Behebe das Startproblem und starte die Session oder setze sie fort, bevor du den Neustart erneut versuchst.",
+                updateDaemonBody: "Aktualisiere Happier auf diesem Computer, starte den Daemon neu und versuche es erneut.",
+                statusFailedBody: "Der Neustart konnte nicht bestätigt werden. Prüfe die Verbindung zum Computer und den Session-Status, bevor du es erneut versuchst.",
                 stopAndResumeBody: 'Dieser Runner kann nicht sicher neu starten. Stoppe die Session und setze sie dann fort, um die aktuelle Runtime zu nutzen.',
                 title: 'Der Session-Runner ist veraltet',
                 body: 'Diese Session läuft noch mit älterem Runtime-Code. Starte den Runner neu, um die aktuelle Daemon-Runtime zu nutzen.',

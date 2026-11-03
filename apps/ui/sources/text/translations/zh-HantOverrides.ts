@@ -6481,6 +6481,9 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
           },
           staleRunner: {
             banner: {
+              runnerUnavailableBody: "尚無執行中的執行器。請解決啟動問題，然後啟動或繼續工作階段，再嘗試重新啟動。",
+              updateDaemonBody: "請更新此機器上的 Happier 並重新啟動 daemon，然後重試。",
+              statusFailedBody: "無法確認重新啟動結果。請檢查機器連線和工作階段狀態，然後重試。",
               stopAndResumeBody: '此執行器無法安全重新啟動。請停止工作階段，然後繼續工作階段以使用目前的執行階段。',
               title: '工作階段執行器已過期',
               body: '此工作階段仍在舊版執行階段程式碼上執行。重新啟動執行器以使用目前的 daemon runtime。',

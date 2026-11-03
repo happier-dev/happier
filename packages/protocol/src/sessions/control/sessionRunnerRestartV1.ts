@@ -1,6 +1,7 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod/mini';
 import type { SessionRunnerRuntimeStateV1 } from './sessionRunnerRuntimeV1.js';
+import { isMachineRpcTimeoutError, isRpcMethodNotFoundResult, readRpcErrorCode, RPC_ERROR_CODES, MACHINE_RPC_TIMEOUT_ERROR_CODE } from '../../rpc/errors.js';
 
 const SessionRunnerSessionIdV1Schema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1)));
 const SessionRunnerIdentityV1Schema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1)));
@@ -115,6 +116,19 @@ export const RestartSessionRunnerResultV1Schema = lazyZodSchema(() => z.strictOb
     diagnostics: z.optional(SessionRunnerDiagnosticsV1Schema),
   }));
 export type RestartSessionRunnerResultV1 = z.infer<typeof RestartSessionRunnerResultV1Schema>;
+
+/** Preserve a status/restart read failure without inferring a daemon version from missing data. */
+export function projectSessionRunnerReadFailureV1(sessionId: string, value: unknown): RestartSessionRunnerResultV1 {
+  const record = value && typeof value === 'object' ? value as Readonly<Record<string, unknown>> : {};
+  const errorCode = readRpcErrorCode(value)
+    ?? (isMachineRpcTimeoutError(value) ? MACHINE_RPC_TIMEOUT_ERROR_CODE : undefined)
+    ?? (typeof record.errorCode === 'string' ? record.errorCode : undefined);
+  if (isRpcMethodNotFoundResult(value) || errorCode === RPC_ERROR_CODES.METHOD_NOT_FOUND
+    || errorCode === 'METHOD_NOT_FOUND' || errorCode === 'unsupported_daemon_version') {
+    return { ok: false, sessionId, status: 'unsupported_daemon', reasonCode: 'unsupported_daemon_version' };
+  }
+  return { ok: false, sessionId, status: 'partial_failure', diagnostics: { errorCode: errorCode ?? 'invalid_response' } };
+}
 
 /** One request witness policy for the banner and public runtime-refresh Action. */
 export function readSessionRunnerRestartIdentityGuardV1(runtimeState: SessionRunnerRuntimeStateV1): Readonly<{

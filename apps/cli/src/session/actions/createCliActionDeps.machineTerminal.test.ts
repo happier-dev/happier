@@ -50,6 +50,22 @@ describe('CLI machine terminal Action', () => {
     }));
   });
   afterEach(() => { releaseHome(); vi.useRealTimers(); vi.restoreAllMocks(); });
+  it.each([
+    ['transport', { ok: false, errorCode: RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE, error: 'unreachable' }, 'partial_failure', RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE],
+    ['old daemon', { ok: false, errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND, error: 'Method not found' }, 'unsupported_daemon', undefined],
+    ['invalid response', { ok: true }, 'partial_failure', 'invalid_response'],
+  ] as const)('preserves the status-read failure for %s', async (_label, response, status, errorCode) => {
+    const credentials = { token: 'token', encryption: null };
+    const deps = createCliActionDeps({ token: credentials.token, credentials,
+      sessionId: 'session', serverId: 'home', serverIdentityId: 'home-identity', serverHttpBaseUrl: 'https://home.invalid', mode: 'plain', ctx: null });
+    responses.push(response);
+    expect(await deps.sessionRuntimeRefresh!({
+      sessionId: 'session', machineId: 'worker', serverId: 'home',
+      context: { surface: 'cli', authority: 'present_user', serverId: 'home' } }))
+      .toMatchObject({ ok: false, status,
+        ...(errorCode ? { diagnostics: { errorCode } } : { reasonCode: 'unsupported_daemon_version' }) });
+    expect(requests.map(request => request.method)).toEqual([`worker:${RPC_METHODS.DAEMON_SESSION_RUNNER_STATUS_GET}`]);
+  });
   it.each(['session', 'different-session', 'busy', 'activity_unavailable'])('preserves exact refresh acknowledgement and diagnostics (%s)', async scenario => {
     const credentials = { token: 'token', encryption: { type: 'legacy' as const, secret: new Uint8Array(32) } };
     const executor = createActionExecutor(createCliActionDeps({ token: credentials.token, credentials,

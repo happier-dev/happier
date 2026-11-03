@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildStaleSessionRunnerNoticePresentation } from './staleSessionRunnerNoticePresentation';
+import { buildStaleSessionRunnerNoticePresentation, readRestartResultBodyKey } from './staleSessionRunnerNoticePresentation';
 
 const runtimeState = {
     v: 1,
@@ -36,6 +36,14 @@ const runtimeState = {
 const translate = (key: string) => key;
 
 describe('stale session runner notice presentation', () => {
+    it.each([
+        ['runner_not_active', 'runnerUnavailableBody'],
+        ['unsupported_daemon', 'updateDaemonBody'],
+        ['partial_failure', 'statusFailedBody'],
+    ] as const)('offers recovery guidance for %s', (status, key) => {
+        expect(readRestartResultBodyKey({ ok: false, sessionId: 's1', status }))
+            .toBe(`session.staleRunner.banner.${key}`);
+    });
     it.each(['eligibility', 'result'] as const)('offers Stop and Resume guidance for unsupported restart %s', source => {
         const presentation = buildStaleSessionRunnerNoticePresentation({
             runtimeState: source === 'eligibility' ? { ...runtimeState,

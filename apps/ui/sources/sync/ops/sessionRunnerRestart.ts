@@ -1,7 +1,7 @@
-import { buildSessionRunnerRuntimeRefreshRequestV1, readSessionRunnerRestartIdentityGuardV1, RestartSessionRunnerResultV1Schema, type RestartSessionRunnerResultV1 } from '@happier-dev/protocol/sessions/control/sessionRunnerRestartV1';
+import { buildSessionRunnerRuntimeRefreshRequestV1, projectSessionRunnerReadFailureV1, readSessionRunnerRestartIdentityGuardV1, RestartSessionRunnerResultV1Schema, type RestartSessionRunnerResultV1 } from '@happier-dev/protocol/sessions/control/sessionRunnerRestartV1';
 import { RestartSessionRunnerRequestV2Schema } from '@happier-dev/protocol/sessions/control/sessionRunnerRestartV2';
 import { SessionProviderBindingSecurityChangeConfirmationV1Schema, type SessionProviderBindingMetadataV1 } from '@happier-dev/protocol/providers/sessions/bindingMetadataV1';
-import { SessionRunnerRuntimeStateV1Schema, SessionRunnerStatusGetRequestV1Schema, type SessionRunnerRuntimeStateV1, type SessionRunnerStatusGetRequestV1 } from '@happier-dev/protocol/sessions/control/sessionRunnerRuntimeV1';
+import { readSessionRunnerRuntimeStateForRestartV1, SessionRunnerRuntimeStateV1Schema, SessionRunnerStatusGetRequestV1Schema, type SessionRunnerRuntimeStateV1, type SessionRunnerStatusGetRequestV1 } from '@happier-dev/protocol/sessions/control/sessionRunnerRuntimeV1';
 import { SessionRunnerRuntimeStatusV2Schema, type SessionRunnerProcessIdentityV2 } from '@happier-dev/protocol/sessions/control/sessionRunnerRuntimeV2';
 import {
     isRpcMethodNotFoundResult,
@@ -64,20 +64,7 @@ function buildResult(input: Readonly<{
 }
 
 function isUnsupportedDaemonError(error: unknown): boolean {
-    const rpcErrorCode = readRpcErrorCode(error);
-    if (rpcErrorCode === RPC_ERROR_CODES.METHOD_NOT_FOUND || rpcErrorCode === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE) {
-        return true;
-    }
-    if (error && typeof error === 'object') {
-        const code = (error as { errorCode?: unknown; code?: unknown; status?: unknown }).errorCode
-            ?? (error as { code?: unknown }).code
-            ?? (error as { status?: unknown }).status;
-        return code === RPC_ERROR_CODES.METHOD_NOT_FOUND
-            || code === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE
-            || code === 'METHOD_NOT_FOUND'
-            || code === 'METHOD_NOT_AVAILABLE';
-    }
-    return false;
+    return projectSessionRunnerReadFailureV1('status-read', error).status === 'unsupported_daemon';
 }
 
 function buildUnsupportedDaemonResult(sessionId: string): RestartSessionRunnerResultV1 {
@@ -109,7 +96,7 @@ async function sendSessionRunnerRestartRequest<Request>(input: RestartSessionRun
 }>): Promise<RestartSessionRunnerResultV1> {
     input.signal?.throwIfAborted();
     const machineId = input.runtimeState.machineId?.trim() ?? '';
-    if (machineId.length === 0) return buildUnsupportedDaemonResult(input.runtimeState.sessionId);
+    if (machineId.length === 0) return projectSessionRunnerReadFailureV1(input.runtimeState.sessionId, null);
     const unsupported = () => input.fallbackMethod
         ? sendSessionRunnerRestartRequest({ ...input, method: input.fallbackMethod, fallbackMethod: undefined })
         : Promise.resolve(buildUnsupportedDaemonResult(input.runtimeState.sessionId));
@@ -128,34 +115,26 @@ async function sendSessionRunnerRestartRequest<Request>(input: RestartSessionRun
                 sessionId: input.runtimeState.sessionId,
             },
         });
-        if (isUnsupportedDaemonError(raw) || (!input.fallbackMethod && isRpcMethodNotFoundResult(raw))) {
+        if (isUnsupportedDaemonError(raw) || (input.fallbackMethod && readRpcErrorCode(raw) === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE)
+            || (!input.fallbackMethod && isRpcMethodNotFoundResult(raw))) {
             return await unsupported();
         }
 
         const parsed = RestartSessionRunnerResultV1Schema.safeParse(raw);
         result = parsed.success && parsed.data.sessionId === input.runtimeState.sessionId
-            ? parsed.data
-            : buildResult({
-                sessionId: input.runtimeState.sessionId,
-                status: 'partial_failure',
-                diagnostics: { errorCode: 'invalid_response' },
-            });
+            ? parsed.data : projectSessionRunnerReadFailureV1(input.runtimeState.sessionId, raw);
     } catch (error) {
         input.signal?.throwIfAborted();
-        if (isUnsupportedDaemonError(error)) {
+        if (isUnsupportedDaemonError(error) || (input.fallbackMethod && readRpcErrorCode(error) === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE)) {
             return await unsupported();
         }
-        result = buildResult({
-            sessionId: input.runtimeState.sessionId,
-            status: 'partial_failure',
-            diagnostics: {
-                errorCode: error instanceof Error ? error.message : 'request_failed',
-            },
-        });
+        result = projectSessionRunnerReadFailureV1(input.runtimeState.sessionId, error);
     }
 
     // Exact-process replacement cannot prove that a requested provider binding was
     // applied: V2 runtime status carries no binding evidence. Keep that failure closed.
+    if (result.diagnostics?.errorCode === RPC_ERROR_CODES.FORBIDDEN
+        || result.diagnostics?.errorCode === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE) return result;
     if (!input.reconcileMode || result.ok || ![
         'partial_failure', 'stop_failed', 'spawn_failed', 'runner_identity_changed', 'not_found',
     ].includes(result.status)) return result;
@@ -249,11 +228,11 @@ export async function restartSessionRunnerOnCurrentRuntime(
 export async function restartSessionRunnerForProviderBindingChange(
     input: RestartSessionRunnerForProviderBindingChangeInput,
 ): Promise<RestartSessionRunnerResultV1 | null> {
-    if (!input.runnerProcessIdentity) {
-        return buildUnsupportedDaemonResult(input.runtimeState.sessionId);
-    }
     const identityGuard = readSessionRunnerRestartIdentityGuardV1(input.runtimeState);
     if ('ok' in identityGuard) return identityGuard;
+    if (!input.runnerProcessIdentity) {
+        return buildResult({ sessionId: input.runtimeState.sessionId, status: 'version_unknown', reasonCode: 'runner_generation_unattested' });
+    }
     // Never combine a runtime guard with another process's birth witness.
     if (identityGuard.expectedRunnerPid !== input.runnerProcessIdentity.pid) {
         return buildResult({ sessionId: input.runtimeState.sessionId, status: 'runner_identity_changed' });
@@ -297,7 +276,7 @@ export async function getSessionRunnerRuntimeStatus(
 async function getSessionRunnerRuntimeStatusV1Fallback(
     input: GetSessionRunnerRuntimeStatusInput,
     payload: SessionRunnerStatusGetRequestV1,
-): Promise<FetchedSessionRunnerRuntimeStatus | null> {
+): Promise<FetchedSessionRunnerRuntimeStatus | RestartSessionRunnerResultV1> {
     try {
         const raw = await machineRpcWithServerScope<unknown, typeof payload>({
             machineId: input.machineId,
@@ -306,19 +285,27 @@ async function getSessionRunnerRuntimeStatusV1Fallback(
             payload,
             ...(input.signal ? { signal: input.signal } : {}),
         });
-        if (isRpcMethodNotFoundResult(raw) || isUnsupportedDaemonError(raw)) return null;
         const parsed = SessionRunnerRuntimeStateV1Schema.safeParse(raw);
-        if (!parsed.success || parsed.data.sessionId !== payload.sessionId) return null;
-        return { state: parsed.data, runnerProcessIdentity: null };
-    } catch {
+        if (!parsed.success) return projectSessionRunnerReadFailureV1(input.sessionId, raw);
+        const state = readSessionRunnerRuntimeStateForRestartV1(parsed.data, input);
+        return 'ok' in state ? state : { state, runnerProcessIdentity: null };
+    } catch (error) {
         input.signal?.throwIfAborted();
-        return null;
+        return projectSessionRunnerReadFailureV1(input.sessionId, error);
     }
 }
 
 export async function getSessionRunnerRuntimeStatusSnapshot(
     input: GetSessionRunnerRuntimeStatusInput,
 ): Promise<FetchedSessionRunnerRuntimeStatus | null> {
+    const result = await getSessionRunnerRuntimeStatusSnapshotResult(input);
+    return 'state' in result ? result : null;
+}
+
+/** Mutations retain the typed refusal; read-only status consumers retain their nullable projection. */
+export async function getSessionRunnerRuntimeStatusSnapshotResult(
+    input: GetSessionRunnerRuntimeStatusInput,
+): Promise<FetchedSessionRunnerRuntimeStatus | RestartSessionRunnerResultV1> {
     const payload = SessionRunnerStatusGetRequestV1Schema.parse({
         sessionId: input.sessionId,
     } satisfies SessionRunnerStatusGetRequestV1);
@@ -332,15 +319,21 @@ export async function getSessionRunnerRuntimeStatusSnapshot(
         });
         if (!isRpcMethodNotFoundResult(raw) && !isUnsupportedDaemonError(raw)) {
             const parsed = SessionRunnerRuntimeStatusV2Schema.safeParse(raw);
-            if (parsed.success && parsed.data.state.sessionId === payload.sessionId) {
+            if (parsed.success) {
+                const state = readSessionRunnerRuntimeStateForRestartV1(parsed.data.state, input);
+                if ('ok' in state) return state;
                 return {
-                    state: parsed.data.state,
+                    state,
                     runnerProcessIdentity: parsed.data.runnerProcessIdentity,
                 };
             }
+            if (raw && typeof raw === 'object' && 'errorCode' in raw) {
+                return projectSessionRunnerReadFailureV1(input.sessionId, raw);
+            }
         }
-    } catch {
+    } catch (error) {
         input.signal?.throwIfAborted();
+        if (!isUnsupportedDaemonError(error)) return projectSessionRunnerReadFailureV1(input.sessionId, error);
         // Additive V2 may be absent on supported older daemons; V1 remains the status fallback.
     }
     return await getSessionRunnerRuntimeStatusV1Fallback(input, payload);

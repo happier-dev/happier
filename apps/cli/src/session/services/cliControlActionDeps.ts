@@ -8,8 +8,8 @@ import { configuration } from '@/configuration';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import type { requestSessionStop } from '@/session/services/requestSessionStop';
 import type { setSessionMode } from '@/session/services/setSessionMode';
-import { buildSessionRunnerRuntimeRefreshRequestV1, RestartSessionRunnerResultV1Schema } from '@happier-dev/protocol/sessions/control/sessionRunnerRestartV1';
-import { SessionRunnerRuntimeStateV1Schema } from '@happier-dev/protocol/sessions/control/sessionRunnerRuntimeV1';
+import { buildSessionRunnerRuntimeRefreshRequestV1, projectSessionRunnerReadFailureV1, RestartSessionRunnerResultV1Schema } from '@happier-dev/protocol/sessions/control/sessionRunnerRestartV1';
+import { readSessionRunnerRuntimeStateForRestartV1, SessionRunnerRuntimeStateV1Schema } from '@happier-dev/protocol/sessions/control/sessionRunnerRuntimeV1';
 import type { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import type { callSessionRpc } from '@/session/transport/rpc/sessionRpc';
@@ -186,13 +186,19 @@ export function createCliControlActionDeps(
       const target = { machineId, serverId: serverId ?? context.serverId ?? params.serverId,
         context, effectActionId: 'session.runtime.refresh', exactMachine: true as const,
         ...(context.authority ? { authority: context.authority } : {}), ...(signal ? { signal } : {}) };
-      const rawState = await callMachineAction({ ...target,
-        method: RPC_METHODS.DAEMON_SESSION_RUNNER_STATUS_GET, request: { sessionId } });
-      const state = SessionRunnerRuntimeStateV1Schema.safeParse(rawState);
-      if (!state.success || state.data.sessionId !== sessionId || state.data.machineId !== machineId) {
-        return { ok: false, status: 'unsupported_daemon', sessionId, reasonCode: 'unsupported_daemon_version' };
+      let rawState: unknown;
+      try {
+        rawState = await callMachineAction({ ...target,
+          method: RPC_METHODS.DAEMON_SESSION_RUNNER_STATUS_GET, request: { sessionId } });
+      } catch (error) {
+        signal?.throwIfAborted();
+        return projectSessionRunnerReadFailureV1(sessionId, error);
       }
-      const request = buildSessionRunnerRuntimeRefreshRequestV1(state.data);
+      const parsed = SessionRunnerRuntimeStateV1Schema.safeParse(rawState);
+      if (!parsed.success) return projectSessionRunnerReadFailureV1(sessionId, rawState);
+      const state = readSessionRunnerRuntimeStateForRestartV1(parsed.data, { sessionId, machineId });
+      if ('ok' in state) return state;
+      const request = buildSessionRunnerRuntimeRefreshRequestV1(state);
       if ('ok' in request) return request;
       // The daemon's existing planned-restart lifecycle owns completion and deferral.
       const result = RestartSessionRunnerResultV1Schema.safeParse(await callMachineAction({ ...target,

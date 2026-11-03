@@ -1,7 +1,8 @@
 import type {
-    RestartSessionRunnerResultV1,
+    RestartSessionRunnerResultV1} from '@happier-dev/protocol/sessions/control/sessionRunnerRestartV1';
+import type {
     SessionRunnerRuntimeStateV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/control/sessionRunnerRuntimeV1';
 
 import type { AgentInputStatusBadge } from '@/components/sessions/agentInput/agentInputContracts';
 
@@ -15,6 +16,9 @@ export type StaleSessionRunnerTranslationKey =
     | 'session.staleRunner.banner.failedBody'
     | 'session.staleRunner.banner.unavailableBody'
     | 'session.staleRunner.banner.stopAndResumeBody'
+    | 'session.staleRunner.banner.runnerUnavailableBody'
+    | 'session.staleRunner.banner.updateDaemonBody'
+    | 'session.staleRunner.banner.statusFailedBody'
     | 'session.staleRunner.actions.restart'
     | 'session.staleRunner.actions.restarting'
     | 'session.staleRunner.actions.hideBanner'
@@ -73,10 +77,26 @@ function isRestartBusy(state: SessionRunnerRuntimeStateV1): boolean {
         || state.plannedRestart.disabledReason === 'restart_already_running';
 }
 
+function isStopAndResumeResult(result: RestartSessionRunnerResultV1): boolean {
+    return result.status === 'restart_admission_unsupported' || result.reasonCode === 'restart_admission_unsupported';
+}
+
 function requiresStopAndResume(state: SessionRunnerRuntimeStateV1, status: StaleSessionRunnerOperationStatus | null): boolean {
     return state.plannedRestart.disabledReason === 'restart_admission_unsupported'
-        || (status?.kind === 'result' && (status.result.status === 'restart_admission_unsupported'
-            || status.result.reasonCode === 'restart_admission_unsupported'));
+        || (status?.kind === 'result' && isStopAndResumeResult(status.result));
+}
+
+/** What a refused or failed restart says, for the banner and for any alert that reports the same result. */
+export function readRestartResultBodyKey(result: RestartSessionRunnerResultV1): StaleSessionRunnerTranslationKey | null {
+    if (isStopAndResumeResult(result)) return 'session.staleRunner.banner.stopAndResumeBody';
+    if (result.status === 'busy') return 'session.staleRunner.banner.busyBody';
+    if (result.status === 'runner_not_active' || result.status === 'not_found' || result.status === 'not_tracked') {
+        return 'session.staleRunner.banner.runnerUnavailableBody';
+    }
+    if (result.status === 'unsupported_daemon') return 'session.staleRunner.banner.updateDaemonBody';
+    if (result.status === 'partial_failure') return 'session.staleRunner.banner.statusFailedBody';
+    if (result.ok === false) return 'session.staleRunner.banner.failedBody';
+    return null;
 }
 
 function resolveBodyKey(
@@ -85,10 +105,8 @@ function resolveBodyKey(
 ): StaleSessionRunnerTranslationKey {
     if (status?.kind === 'pending') return 'session.staleRunner.banner.pendingBody';
     if (requiresStopAndResume(state, status)) return 'session.staleRunner.banner.stopAndResumeBody';
-    if (status?.kind === 'result') {
-        if (status.result.status === 'busy') return 'session.staleRunner.banner.busyBody';
-        if (status.result.ok === false) return 'session.staleRunner.banner.failedBody';
-    }
+    const resultBodyKey = status?.kind === 'result' ? readRestartResultBodyKey(status.result) : null;
+    if (resultBodyKey) return resultBodyKey;
     if (isRestartBusy(state)) return 'session.staleRunner.banner.busyBody';
     if (!isRestartAvailable(state)) return 'session.staleRunner.banner.unavailableBody';
     return 'session.staleRunner.banner.body';

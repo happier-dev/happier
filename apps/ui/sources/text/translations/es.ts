@@ -7958,6 +7958,9 @@ encryptedUnavailable: "Detalles cifrados no disponibles",
     },
     staleRunner: {
       banner: {
+        runnerUnavailableBody: "Aún no hay un ejecutor activo. Resuelve el problema de inicio y luego inicia o reanuda la sesión antes de volver a intentar reiniciarla.",
+        updateDaemonBody: "Actualiza Happier en esta máquina y reinicia su daemon; luego vuelve a intentarlo.",
+        statusFailedBody: "No se pudo confirmar el reinicio. Comprueba la conexión de la máquina y el estado de la sesión antes de volver a intentarlo.",
         stopAndResumeBody: 'Este runner no puede reiniciarse de forma segura. Detén la sesión y luego reanúdala para usar el runtime actual.',
         title: "El runner de la sesión no está actualizado",
         body: "Esta sesión aún se ejecuta con código de runtime anterior. Reinicia el runner para usar el runtime actual del daemon.",

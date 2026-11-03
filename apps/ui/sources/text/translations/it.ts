@@ -8181,6 +8181,9 @@ encryptedUnavailable: "Dettagli crittografati non disponibili",
     },
     staleRunner: {
       banner: {
+        runnerUnavailableBody: "Nessun runner è ancora attivo. Risolvi il problema di avvio, poi avvia o riprendi la sessione prima di riprovare il riavvio.",
+        updateDaemonBody: "Aggiorna Happier su questa macchina e riavvia il daemon, poi riprova.",
+        statusFailedBody: "Impossibile confermare il riavvio. Controlla la connessione della macchina e lo stato della sessione prima di riprovare.",
         stopAndResumeBody: 'Questo runner non può riavviarsi in sicurezza. Arresta la sessione, poi riprendila per usare il runtime corrente.',
         title: "Il runner della sessione non è aggiornato",
         body: "Questa sessione usa ancora codice runtime meno recente. Riavvia il runner per usare il runtime daemon corrente.",

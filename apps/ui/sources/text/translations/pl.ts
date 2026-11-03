@@ -7794,6 +7794,9 @@ encryptedUnavailable: "Zaszyfrowane dane niedostępne",
     },
     staleRunner: {
       banner: {
+        runnerUnavailableBody: "Nie ma jeszcze aktywnego runnera. Rozwiąż problem z uruchomieniem, a następnie uruchom lub wznów sesję przed ponowną próbą restartu.",
+        updateDaemonBody: "Zaktualizuj Happier na tej maszynie i uruchom ponownie demona, a potem spróbuj ponownie.",
+        statusFailedBody: "Nie udało się potwierdzić restartu. Sprawdź połączenie z maszyną i stan sesji przed ponowną próbą.",
         stopAndResumeBody: 'Tego runnera nie można bezpiecznie uruchomić ponownie. Zatrzymaj sesję, a następnie ją wznów, aby użyć bieżącego środowiska uruchomieniowego.',
         title: "Runner sesji jest nieaktualny",
         body: "Ta sesja nadal działa na starszym kodzie środowiska uruchomieniowego. Uruchom runner ponownie, aby użyć bieżącego runtime daemona.",
