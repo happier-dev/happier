@@ -2,8 +2,10 @@ import * as React from 'react';
 import { Platform } from 'react-native';
 
 import { useLocalSearchParams } from '@/components/appShell/workspace/destinationRoute';
-import { useMachineListByServerId } from '@/sync/domains/state/storage';
-import { useServerScopedMachine } from '@/sync/store/hooks';
+import { storage } from '@/sync/domains/state/storageStore';
+import type { StorageState } from '@/sync/store/types';
+import { isMachineVisibleForSelection } from '@/sync/domains/machines/identity/filterVisibleMachines';
+import { useMachineListForServerSelection, useServerScopedMachine } from '@/sync/store/hooks';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { areServerProfileIdentifiersEquivalent, getActiveServerId } from '@/sync/domains/server/serverProfiles';
 import { setActiveServerAndSwitch } from '@/sync/domains/server/activeServerSwitch';
@@ -15,6 +17,7 @@ import { getMachineSentenceName, resolveMachineDisplayNames } from '@/utils/sess
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { t } from '@/text';
 import { usePreferredLanguage } from '@/text/usePreferredLanguage';
+import { useManagedEnrolledMachine } from '@/components/settings/machines/managed/ManagedMachineSections';
 
 /** The Home that lists this machine: the focused Home first, else the first Home that has it. */
 export function resolveMachineServerIdFromList(params: Readonly<{
@@ -32,6 +35,42 @@ export function resolveMachineServerIdFromList(params: Readonly<{
         if (Array.isArray(machines) && machines.some((machine) => machine.id === machineId)) return serverId;
     }
     return '';
+}
+
+/**
+ * The page's Home and on-screen name, read as strings from the machine inventory: another
+ * Machine's daemon publication (each live resource sample) replaces the inventory lists but not
+ * these facts, so the page stays quiet.
+ */
+function useMachinePageNaming(input: Readonly<{ activeServerId: string; requestedServerId: string; machineId: string; language: string }>): Readonly<{
+    serverId: string;
+    /** The same name the lists show, told apart when another machine shares it; `null` while the Home does not list it. */
+    listedName: string | null;
+    managedName: string | undefined;
+}> {
+    const { activeServerId, requestedServerId, machineId, language } = input;
+    const selectServerId = React.useMemo(() => {
+        let lastLists: StorageState['machineListByServerId'] | undefined;
+        let serverId = '';
+        return (state: StorageState) => {
+            const lists = state.machineListByServerId ?? {};
+            if (lists === lastLists) return serverId;
+            lastLists = lists;
+            const visible = Object.fromEntries(Object.entries(lists).map(([key, machines]) => [key,
+                Array.isArray(machines) ? machines.filter(isMachineVisibleForSelection) : machines]));
+            serverId = resolveMachineServerIdFromList({ activeServerId, machineId, machineListByServerId: visible });
+            return serverId;
+        };
+    }, [activeServerId, machineId]);
+    const listedServerId = storage(selectServerId);
+    const serverId = requestedServerId || listedServerId || activeServerId;
+    const managedName = useManagedEnrolledMachine({ serverId, enrolledMachineId: machineId || undefined }).machine?.launch.name;
+    const listedName = useMachineListForServerSelection(serverId, React.useCallback((machines: readonly Machine[]) => (
+        machines.some((candidate) => candidate.id === machineId) ? resolveMachineDisplayNames(machines.map(candidate =>
+            candidate.id === machineId ? { ...candidate, managedName } : candidate)).get(machineId) ?? null : null
+    // `language`: names re-derive in the active locale.
+    ), [machineId, language, managedName]));
+    return { serverId, listedName, managedName };
 }
 
 export type MachinePageTarget = Readonly<{
@@ -63,13 +102,10 @@ export function useMachinePageTarget(): MachinePageTarget {
     const language = usePreferredLanguage();
     const params = useLocalSearchParams<{ id: string; serverId?: string }>();
     const machineId = typeof params.id === 'string' ? params.id : '';
-    const machineListByServerId = useMachineListByServerId();
     const activeServerId = getActiveServerId();
     const requestedServerId = typeof params.serverId === 'string' ? params.serverId.trim() : '';
-    const machineListServerId = React.useMemo(() => resolveMachineServerIdFromList({
-        activeServerId, machineId, machineListByServerId,
-    }), [activeServerId, machineId, machineListByServerId]);
-    const serverId = requestedServerId || machineListServerId || activeServerId;
+    const naming = useMachinePageNaming({ activeServerId, requestedServerId, machineId, language });
+    const serverId = naming.serverId;
     // The Home that lists the machine owns its row, whether or not that Home is the focused one.
     const machine = useServerScopedMachine(serverId, machineId);
     const presence = useMachinePresenceSummary(serverId, machineId);
@@ -123,14 +159,17 @@ export function useMachinePageTarget(): MachinePageTarget {
 
     const machineName = React.useMemo(() => {
         if (!machine) return t('machine.unknownMachine');
-        // The same name the lists show, told apart when another machine shares it.
-        const homeMachines = machineListByServerId[serverId] ?? [];
-        const siblings = homeMachines.some((candidate) => candidate.id === machine.id) ? homeMachines : [...homeMachines, machine];
-        return resolveMachineDisplayNames(siblings).get(machine.id) ?? t('machine.unknownMachine');
-    }, [language, machine, machineListByServerId, serverId]);
-    const machineSentenceName = React.useMemo(() => getMachineSentenceName(machine, machineName), [language, machine, machineName]);
+        // The same name the lists show, told apart when another machine shares it; a machine its Home
+        // does not list (yet) is named on its own.
+        return naming.listedName ?? resolveMachineDisplayNames([{ ...machine, managedName: naming.managedName }]).get(machine.id) ?? t('machine.unknownMachine');
+    }, [language, machine, naming.listedName, naming.managedName]);
+    const machineSentenceName = React.useMemo(() => getMachineSentenceName(machine && { ...machine, managedName: naming.managedName }, machineName),
+        [language, machine, machineName, naming.managedName]);
+    const online = presence.reachability === 'unknown' ? null : presence.reachability === 'reachable';
+    const switchReady = Boolean(machineId) && !isServerSwitching
+        && (!requestedServerId || areServerProfileIdentifiersEquivalent(requestedServerId, activeServerId));
 
-    return {
+    return React.useMemo(() => ({
         machineId,
         requestedServerId,
         serverId,
@@ -138,10 +177,10 @@ export function useMachinePageTarget(): MachinePageTarget {
         machine,
         machineName,
         machineSentenceName,
-        online: presence.reachability === 'unknown' ? null : presence.reachability === 'reachable',
+        online,
         isServerSwitching,
         isHydratingMachine,
-        switchReady: Boolean(machineId) && !isServerSwitching
-            && (!requestedServerId || areServerProfileIdentifiersEquivalent(requestedServerId, activeServerId)),
-    };
+        switchReady,
+    }), [activeServerId, isHydratingMachine, isServerSwitching, machine, machineId, machineName, machineSentenceName,
+        online, requestedServerId, serverId, switchReady]);
 }

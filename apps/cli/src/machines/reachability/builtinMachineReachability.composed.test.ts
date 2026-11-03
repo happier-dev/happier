@@ -61,7 +61,7 @@ describe.runIf(process.platform === 'linux' && userInfo().uid !== 0)('builtin Ma
     } finally { await api.dispose(); }
   });
 
-  it('reviews and configures the first posture against native SSH facts, refusing changed facts', async () => {
+  it.each([false, true])('reviews and configures the first posture against native SSH facts, refusing changed facts (socket activation: %s)', async socketActivated => {
     const { f, api } = prepared;
     try {
       const snapshot = api.client.getMachineMetadataSnapshot();
@@ -69,7 +69,7 @@ describe.runIf(process.platform === 'linux' && userInfo().uid !== 0)('builtin Ma
       const { reachabilityPosture: _posture, ...metadata } = snapshot.metadata;
       expect(await api.client.compareAndSwapMachineMetadata({ expectedMetadataVersion: snapshot.metadataVersion, metadata }))
         .toMatchObject({ status: 'applied' });
-      await f.hostNative.setNativeSshPort(22);
+      await f.hostNative.setNativeSshPort(22, socketActivated);
       const posture = MachineReachabilityPostureV1Schema.parse({ revision: 0,
         management: { providers: [], publicSsh: { kind: 'open', port: 22, sourceCidrs: ['0.0.0.0/0', '::/0'] },
           independentRecovery: { kind: 'providerConsole', evidence: 'userAttested', confirmedAtMs: 1_793_610_000_000 } },
@@ -88,11 +88,11 @@ describe.runIf(process.platform === 'linux' && userInfo().uid !== 0)('builtin Ma
       expect(review.plan?.basis).toMatchObject({ nativeFirewall: review.observation.nativeFirewall });
       const before = api.client.getMachineMetadataSnapshot();
       const stale = await executeReviewedReachabilityConfigure(f, api, review, {
-        async beforeDecision() { await f.hostNative.setNativeSshPort(2205); },
+        async beforeDecision() { await f.hostNative.setNativeSshPort(2205, socketActivated); },
       });
       expect(stale.result).toMatchObject({ ok: false, errorCode: 'plan_changed', effectAttempted: false });
       expect(api.client.getMachineMetadataSnapshot()).toEqual(before);
-      await f.hostNative.setNativeSshPort(22);
+      await f.hostNative.setNativeSshPort(22, socketActivated);
       const fresh = await reviewFirst();
       const saved = await executeReviewedReachabilityConfigure(f, api, fresh);
       expect(parseCompletedReachabilityConfigure(saved.result)).toMatchObject({ status: 'applied', posture });

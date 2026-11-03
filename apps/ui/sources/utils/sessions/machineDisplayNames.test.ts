@@ -89,6 +89,16 @@ describe('resolveMachineDisplayNames', () => {
         expect(byId.get('0c1d2e3f-9999-4000-8000')).toMatch(/^lima-happier-fresh · 0c1d/);
     });
 
+    it('tells same-named managed machines apart by a short id, never by their generated provider host', () => {
+        const guest = (id: string, host: string) => ({ ...m(id, undefined, host), managedName: 's0-guest-1101' });
+        const names = resolveMachineDisplayNames([
+            guest('c7911a7d-73f1-4657', 'lima-happier-10u6rgabqole5cz3nu8tma4h7kearwad94ocpx49ccn8gbw26x'),
+            guest('5b02aa10-1111-4000', 'lima-happier-8z2kq0v7x1m4p9t3r6w5y0b2n8c4d7e1f3g6h9j2k5l8m1'),
+        ]);
+        expect(names.get('c7911a7d-73f1-4657')).toMatch(/^s0-guest-1101 · c791/);
+        expect(names.get('5b02aa10-1111-4000')).toMatch(/^s0-guest-1101 · 5b02/);
+    });
+
     it('compares names regardless of case and leaves unique names untouched', () => {
         const names = resolveMachineDisplayNames([m('a-1', 'Studio'), m('b-2', 'studio'), m('c-3', 'Laptop')]);
         expect(names.get('a-1')).not.toBe('Studio');

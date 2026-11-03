@@ -3,6 +3,23 @@ import { nativeCaddyDomainRouteIdsV1 } from '@happier-dev/protocol/deployments/d
 import { materializeCaddyDomainRouteV1, materializeCaddyInitialConfigV1 } from './caddyRouteMaterialization';
 
 describe('Caddy public TLS materialization', () => {
+    it('exempts only the exact uncleaned private GET health path and keeps public health authenticated', () => {
+        for (const path of ['/healthz', '/', '/health"check']) {
+            const input: Parameters<typeof materializeCaddyDomainRouteV1>[0] = { domainId: 'health-auth', listener: 'privateOrigin',
+                domain: { hostname: 'app.example.test', target: { service: 'web', containerPort: 3000 },
+                    healthCheck: { path, expectStatus: 200 } },
+                upstreams: { kind: 'replicas', containerNames: ['web-1'] }, privateSourceRanges: ['100.64.0.0/10'],
+                basicAuth: [{ username: 'reader', bcryptHash: 'boundary-hash' }] };
+            const privateRoute = materializeCaddyDomainRouteV1(input).route;
+            expect(privateRoute).toHaveProperty('handle.0.routes.0.match.0.not.0', {
+                method: ['GET'], expression: `{http.request.uri.path} == ${JSON.stringify(path)}`,
+                remote_ip: { ranges: input.privateSourceRanges },
+            });
+            expect(materializeCaddyDomainRouteV1({ ...input, listener: 'public' }).route)
+                .not.toHaveProperty('handle.0.routes.0.match');
+        }
+    });
+
     it('keeps the private origin plain while seeding public TLS and HTTP redirect owners only when requested', () => {
         const privateOnly = materializeCaddyInitialConfigV1({ adminSocket: '/run/caddy/admin.sock', originListen: [':8080'] });
         expect(Object.keys(privateOnly.apps.http.servers)).toEqual(['happier_private']);

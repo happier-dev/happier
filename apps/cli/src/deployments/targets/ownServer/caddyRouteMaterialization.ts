@@ -228,7 +228,9 @@ function renderCaddyDomainRoute(input: CaddyDomainRenderInput, privatePeerAllowe
         : input.upstreams.endpoints;
     const healthMatcher: CaddyMatcher = {
         method: ['GET'],
-        path_regexp: exactPath(domain.healthCheck.path),
+        // Path matchers clean traversal segments, but reverse_proxy forwards
+        // the original path. Exempt only the exact path sent to the upstream.
+        expression: `{http.request.uri.path} == ${JSON.stringify(domain.healthCheck.path)}`,
         remote_ip: { ranges: input.privateSourceRanges },
     };
     const exemptPrivateHealth = listener === 'privateOrigin' && input.privateSourceRanges.length > 0;

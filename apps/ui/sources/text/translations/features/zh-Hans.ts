@@ -6202,6 +6202,7 @@ const machineDetailPageTranslations = { 'zh-Hans': translated({
                 terminal: "终端",
                 computer: "计算机控制",
                 connection: "连接",
+                network: "网络",
                 security: `安全`,
                 tools: "工具",
                 doctor: "诊断",

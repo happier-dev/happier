@@ -68,6 +68,7 @@ async function fixture() {
     let routes4: unknown = [{ dst: 'default', dev: 'ens18', gateway: '10.10.0.1' }], routes6: unknown = [];
     os.interfaces = { ens18: [nativeInterface('10.10.0.4')], tun42: [nativeInterface('100.96.0.4')] };
     let listeners4 = '', listeners6 = '', networkReadable = true, nativePolicy: unknown = { nftables: [] };
+    let socketUnits = '', socketServiceExecutable = '/usr/sbin/sshd', socketUnitsReadable = true;
     const calls: MachineSetupNativeCommand[] = [];
     const backend = createMachineSetupNativeBackend({ run: async command => {
         calls.push(command);
@@ -90,6 +91,9 @@ async function fixture() {
             if (args[0] === 'delete') { table = undefined; return { code: 0, stdout: '', stderr: '' }; }
         }
         if (command.executable === 'systemctl') {
+            if (args[0] === 'list-sockets') return { code: socketUnitsReadable ? 0 : 1, stdout: socketUnits, stderr: '' };
+            if (args[0] === 'show' && args.includes('--property=ExecStart')) return { code: 0,
+                stdout: `ExecStart={ path=${socketServiceExecutable} ; argv[]=${socketServiceExecutable} -D ; ignore_errors=no ; pid=0 ; code=(null) ; status=0/0 }\n`, stderr: '' };
             if (args[0] === 'show') {
                 const present = await fs.lstat(disk(unitPath)).then(() => true, () => false);
                 return { code: 0, stdout: `LoadState=${present ? 'loaded' : 'not-found'}\nUnitFileState=${enabled && bootVerification ? 'enabled' : 'disabled'}\nActiveState=${active ? 'active' : 'inactive'}\n`, stderr: '' };
@@ -122,6 +126,16 @@ async function fixture() {
             await rootFile('/usr/sbin/service-proxy', 'non-SSH native service fixture', 0o755);
             await fs.symlink('/usr/sbin/service-proxy', disk('/proc/413/exe'));
             listeners4 = ipv4; listeners6 = ipv6;
+        },
+        async listenSocketSsh(executable = '/usr/sbin/sshd', readable = true) {
+            await fs.mkdir(disk('/usr/lib/systemd'), { recursive: true, mode: 0o755 });
+            await rootFile('/usr/lib/systemd/systemd', 'system socket manager fixture', 0o755);
+            await fs.symlink('/usr/lib/systemd/systemd', disk('/proc/1/exe'));
+            await rootFile(executable, 'native socket service fixture', 0o755);
+            socketServiceExecutable = executable; socketUnitsReadable = readable;
+            listeners4 = 'LISTEN 0 4096 0.0.0.0:2205 0.0.0.0:* users:(("systemd",pid=1,fd=77))\n';
+            listeners6 = 'LISTEN 0 4096 [::]:2205 [::]:* users:(("systemd",pid=1,fd=79))\n';
+            socketUnits = '0.0.0.0:2205 remote-login.socket remote-login.service\n[::]:2205 remote-login.socket remote-login.service\n';
         },
         setNativePolicy(value: unknown) { nativePolicy = value; },
         unreadableNetwork() { networkReadable = false; },
@@ -163,6 +177,37 @@ describe('native owned firewall', () => {
         // No owned chain existed: neutral permits cannot weaken foreign chains.
         await expect(f.fs.lstat(f.disk(rulesPath))).rejects.toMatchObject({ code: 'ENOENT' });
         expect(f.calls.some(call => call.args.includes('-f') || call.executable === 'systemctl' && call.args[0] !== 'show')).toBe(false);
+    });
+
+    it('retains systemd-activated SSH sockets in both families before sshd starts, without assuming a port or unit name', async () => {
+        const f = await fixture();
+        await f.listenSocketSsh();
+        const facts = readMachineFirewallTransitionFactsV1(await f.backend.observe(f.step));
+        expect(facts).toMatchObject({ status: 'available', retainedSshEndpoints: [
+            { interfaceName: 'ens18', hostAddress: '0.0.0.0', port: 2205, sourceCidrs: ['0.0.0.0/0'] },
+            { interfaceName: 'tun42', hostAddress: '0.0.0.0', port: 2205, sourceCidrs: ['0.0.0.0/0'] },
+        ] });
+        // The actual kernel family/address inventory decides endpoint presence.
+        // Add IPv6 to the OS boundary so the v6 listener is observable here too.
+        f.setNetwork({ interfaces: { ens18: [nativeInterface('10.10.0.4'), nativeInterface('2001:db8::4')] } });
+        const dual = readMachineFirewallTransitionFactsV1(await f.backend.observe(f.step));
+        expect(dual).toMatchObject({ status: 'available', retainedSshEndpoints: [
+            { interfaceName: 'ens18', hostAddress: '0.0.0.0', port: 2205, sourceCidrs: ['0.0.0.0/0'] },
+            { interfaceName: 'ens18', hostAddress: '::', port: 2205, sourceCidrs: ['::/0'] },
+        ] });
+        expect(f.calls.filter(call => call.executable === 'systemctl' && call.args[0] === 'list-sockets')).toHaveLength(2);
+        expect(f.calls.filter(call => call.executable === 'systemctl' && call.args.includes('--property=ExecStart'))).toHaveLength(2);
+    });
+
+    it('does not label another socket-activated service SSH and leaves unreadable activation facts unanswered', async () => {
+        const other = await fixture();
+        await other.listenSocketSsh('/usr/sbin/another-service');
+        expect(readMachineFirewallTransitionFactsV1(await other.backend.observe(other.step)))
+            .toMatchObject({ status: 'available', retainedSshEndpoints: [] });
+        const unavailable = await fixture();
+        await unavailable.listenSocketSsh('/usr/sbin/sshd', false);
+        expect(readMachineFirewallTransitionFactsV1(await unavailable.backend.observe(unavailable.step)))
+            .toMatchObject({ status: 'unavailable', requiredFact: 'sshListeners' });
     });
 
     it('reports a positively empty live SSH listener set rather than inventing port 22', async () => {

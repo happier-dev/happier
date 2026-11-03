@@ -202,7 +202,9 @@ export function formatMachineDisplayNameParts(parts: Readonly<{ name: string; hi
 export function resolveMachineDisplayNameParts(machines: readonly MachineNameSource[]): ReadonlyMap<string, Readonly<{ name: string; hint: string | null }>> {
     return resolvePublishedMachineNameParts(machines.map(machine => ({
         id: machine.id, name: getMachineDisplayName(machine),
-        host: machine.absence || isMachineLocked(machine) ? null : machine.metadata?.host,
+        // A managed Machine's host is its provider's generated instance id, not something a person named:
+        // same-named managed Machines are told apart by the short id instead.
+        host: machine.absence || isMachineLocked(machine) || machine.managedName ? null : machine.metadata?.host,
         // An absent machine's null metadata is final, not hydrating: it is told apart by its short id.
         disambiguate: Boolean(machine.absence) || !isMachineDisplayHydrating(machine),
     })));

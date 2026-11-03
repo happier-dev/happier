@@ -5,6 +5,7 @@ import { networkInterfaces } from 'node:os';
 import type { MachineFirewallRecoveryV1 } from '@happier-dev/protocol/machines/adminAccessV1';
 import { MachineSetupEffectError, type MachineRecipeStepV1, type MachineSetupStepObservationV1, type MachineSetupNativeStageV1 } from './index.js';
 import type { NativeRun } from './nativeSystemBackend.js';
+import { nativeSocketSshReader } from './nativeFirewallSshSockets.js';
 import { activateNativeFile, assertProtectedNativeTarget, inspectNativeAncestors, inspectNativePath, isMissingNativeFile,
     nativeFileDigest, type NativeFileState } from './nativeFileSafety.js';
 
@@ -264,6 +265,7 @@ export function createNativeFirewallBackend(run: NativeRun, recover: NativeRun, 
             requiredFact = 'sshListeners';
             const retainedSshEndpoints: SshEndpoint[] = [];
             const executablePaths = new Map<number, string>();
+            const socketSsh = nativeSocketSshReader(output);
             for (const family of [4, 6]) {
                 const sockets = await output('ss', [`-${family}`, '-H', '-ltnp']);
                 for (const line of sockets.split('\n').filter(value => value.trim())) {
@@ -276,7 +278,8 @@ export function createNativeFirewallBackend(run: NativeRun, recover: NativeRun, 
                         let executable = executablePaths.get(pid);
                         if (!executable) {
                             executable = await readlink(`/proc/${pid}/exe`);
-                            if (basename(executable.replace(/ \(deleted\)$/, '')) === 'sshd') {
+                            if (basename(executable.replace(/ \(deleted\)$/, '')) === 'sshd'
+                                || pid === 1 && basename(executable) === 'systemd') {
                                 // A name alone is not a system SSH identity.
                                 // Reuse the native executable owner; the sshd
                                 // process itself may legitimately be non-root.
@@ -287,6 +290,9 @@ export function createNativeFirewallBackend(run: NativeRun, recover: NativeRun, 
                             executablePaths.set(pid, executable);
                         }
                         if (basename(executable.replace(/ \(deleted\)$/, '')) === 'sshd') ssh = true;
+                        else if (pid === 1 && basename(executable) === 'systemd') {
+                            if (await socketSsh(columns[3]!)) ssh = true;
+                        }
                     }
                     if (!ssh) continue;
                     const local = columns[3]!, colon = local.lastIndexOf(':');

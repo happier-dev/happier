@@ -6210,6 +6210,7 @@ const machineDetailPageTranslations = { fr: translated({
                 terminal: "Terminal",
                 computer: "Contrôle de l’ordinateur",
                 connection: "Connexion",
+                network: "Réseau",
                 security: `Sécurité`,
                 tools: "Outils",
                 doctor: "Diagnostic",

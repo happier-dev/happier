@@ -225,6 +225,7 @@ export const english = {
             terminal: "Terminal",
             computer: "Computer control",
             connection: "Connection",
+            network: "Network",
             security: `Security`,
             tools: "Tools",
             doctor: "Doctor",

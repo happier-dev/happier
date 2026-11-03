@@ -6212,6 +6212,7 @@ const machineDetailPageTranslations = { ca: translated({
                 terminal: "Terminal",
                 computer: "Control de l’ordinador",
                 connection: "Connexió",
+                network: "Xarxa",
                 security: `Seguretat`,
                 tools: "Eines",
                 doctor: "Diagnòstic",

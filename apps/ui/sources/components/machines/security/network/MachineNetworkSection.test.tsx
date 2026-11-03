@@ -19,7 +19,7 @@ import {
   type MachineNetworkFacts,
   type MachineNetworkRead,
 } from './networkSurface';
-import type { MachineNetworkModel } from './useMachineNetwork';
+import type { MachineNetworkViewModel } from './MachineNetworkSection';
 import type { MachineNetworkReview } from './useMachineNetworkReview';
 
 installMachinesSettingsCommonModuleMocks();
@@ -74,7 +74,7 @@ function model(
   read: MachineNetworkRead,
   reachable: boolean | null,
   refresh = vi.fn(async () => {}),
-): MachineNetworkModel {
+): MachineNetworkViewModel {
   return {
     ...presentMachineNetwork({ facts, read, reachable }),
     read,
@@ -84,7 +84,7 @@ function model(
 }
 
 async function render(
-  network: MachineNetworkModel,
+  network: MachineNetworkViewModel,
   online: boolean | null,
   review: MachineNetworkReview = { kind: 'idle' },
   controls: Partial<Record<'onApply' | 'onPrepare', () => void>> = {},

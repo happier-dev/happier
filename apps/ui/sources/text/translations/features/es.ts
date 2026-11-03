@@ -6212,6 +6212,7 @@ const machineDetailPageTranslations = { es: translated({
                 terminal: "Terminal",
                 computer: "Control del ordenador",
                 connection: "Conexión",
+                network: "Red",
                 security: `Seguridad`,
                 tools: "Herramientas",
                 doctor: "Diagnóstico",

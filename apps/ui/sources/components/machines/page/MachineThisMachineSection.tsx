@@ -33,6 +33,7 @@ const ROW_ICONS: Readonly<Record<MachineThisMachinePageId, IconName>> = {
     terminal: 'terminal',
     computer: 'cursor',
     connection: 'arrows-left-right',
+    network: 'tree-structure',
     security: 'shield',
     installables: 'cube',
     doctor: 'first-aid-kit',
@@ -78,6 +79,8 @@ export const MachineThisMachineSection = React.memo(function MachineThisMachineS
         terminal: describeMachineTerminalHost(terminalHost),
         computer: describeMachineComputerUse(readComputerUseSettingsForMachine({ computerUseByMachineId }, machineId)),
         connection,
+        // Network facts are read only while its page is open (Plan 21 R12); the row holds none.
+        network: undefined,
         // Updates are read only while Security is open (Plan 10: no detail subscription while closed).
         security: undefined,
         installables: undefined,

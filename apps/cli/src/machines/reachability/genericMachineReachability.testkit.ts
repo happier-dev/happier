@@ -720,6 +720,7 @@ export async function installGenericRootFileSystemBoundary(directory: string) {
     // Exact procfs/OS facts only. The production local-engine binding parser,
     // socket correlation and explicit Engine API probe remain untouched.
     if (sshProcessAvailable && method === 'readlink' && input === '/proc/412/exe') return '/usr/sbin/sshd';
+    if (sshProcessAvailable && method === 'readlink' && input === '/proc/1/exe') return '/usr/lib/systemd/systemd';
     if (dockerProcessAvailable) {
       const links: Readonly<Record<string, string>> = { '/proc/42/exe': '/usr/bin/dockerd', '/proc/42/root': '/',
         '/proc/42/ns/mnt': 'mnt:[1]', '/proc/self/ns/mnt': 'mnt:[1]',
@@ -1095,6 +1096,7 @@ export function createGenericHostNativeBoundary(params: Readonly<{
   const tailscaleMutations: string[][] = [];
   const engineId = 'fixture-observed-engine';
   let nativeSshPort: number | null | undefined;
+  let socketActivatedSsh = false;
   const externalInterface = Object.entries(networkInterfaces()).find(([, entries]) => entries?.some(entry => !entry.internal))?.[0];
   const ok = (stdout = '') => ({ code: 0, stdout, stderr: '' });
   const runNative = async (command: MachineSetupNativeCommand): Promise<MachineSetupNativeCommandResult> => {
@@ -1114,8 +1116,12 @@ export function createGenericHostNativeBoundary(params: Readonly<{
         expect(args).toEqual([expect.stringMatching(/^-([46])$/u), '-H', '-ltnp']);
         if (nativeSshPort === null) return ok();
         const address = args[0] === '-4' ? '0.0.0.0' : '[::]';
-        return ok(`LISTEN 0 128 ${address}:${nativeSshPort} *:* users(("sshd",pid=412,fd=3))\n`);
+        return ok(`LISTEN 0 128 ${address}:${nativeSshPort} *:* users(("${socketActivatedSsh ? 'systemd' : 'sshd'}",pid=${socketActivatedSsh ? 1 : 412},fd=3))\n`);
       }
+      if (command.executable === 'systemctl' && args[0] === 'list-sockets') return ok(
+        `0.0.0.0:${nativeSshPort} remote-login.socket remote-login.service\n[::]:${nativeSshPort} remote-login.socket remote-login.service\n`);
+      if (command.executable === 'systemctl' && args.includes('--property=ExecStart')) return ok(
+        'ExecStart={ path=/usr/sbin/sshd ; argv[]=/usr/sbin/sshd -D ; ignore_errors=no ; pid=0 ; code=(null) ; status=0/0 }\n');
     }
     if (command.executable.replace(/\\/gu, '/').split('/').at(-1) === 'tailscale') {
       if (args[0] === 'status') return ok(JSON.stringify({ BackendState: tailscaleState, HaveNodeKey: true, TUN: true,
@@ -1218,14 +1224,19 @@ export function createGenericHostNativeBoundary(params: Readonly<{
     throw new Error(`Unexpected P20 native process ${command.executable}`);
   };
   return { calls, runNative, installed, engineId, dockerUnitMutations,
-    async setNativeSshPort(port: number | null) {
+    async setNativeSshPort(port: number | null, socketActivated = false) {
       if (!externalInterface) throw new Error('The OS fixture requires an external interface');
       await mkdir('/usr/sbin', { recursive: true, mode: 0o755 });
       // Supply protected OS ancestors, independent of the test host's umask.
       for (const path of ['/usr', '/usr/sbin', '/etc', '/etc/systemd', '/etc/systemd/system']) await chmod(path, 0o755);
       for (const path of ['/usr/sbin/nft', '/usr/sbin/sshd']) await writeFile(path, 'fixture executable', { mode: 0o755 });
+      if (socketActivated) {
+        await mkdir('/usr/lib/systemd', { recursive: true, mode: 0o755 });
+        for (const path of ['/usr/lib', '/usr/lib/systemd']) await chmod(path, 0o755);
+        await writeFile('/usr/lib/systemd/systemd', 'fixture executable', { mode: 0o755 });
+      }
       params.filesystem.setSshProcessAvailable(true);
-      nativeSshPort = port;
+      nativeSshPort = port; socketActivatedSsh = socketActivated;
     },
     tailscaleMutations, tailscaleState: () => tailscaleState,
     setTailscaleProfileId(value: string) { tailscaleProfileId = value; },

@@ -2555,18 +2555,38 @@ export function useMachineListByServerId(presented = true, purpose: 'full' | 'la
  * off the whole multi-Home map while preserving the list hook's tombstone
  * filtering and source-array identity for unchanged inventory.
  */
+function readMachineListForServer(state: StorageState, serverId: string): Machine[] | null {
+  const inventory = state.machineListByServerId ?? EMPTY_MACHINE_LIST_BY_SERVER_ID;
+  for (const key of resolveServerScopedMachineInventoryKeys({ serverId, machineListByServerId: inventory })) {
+    const list = inventory[key];
+    if (list) return list;
+  }
+  return null;
+}
+
 export function useMachineListForServer(serverId: string, enabled = true): Machine[] | null {
-  const machines = getStorage()((state) => {
-    if (!enabled) return null;
-    const inventory = state.machineListByServerId ?? EMPTY_MACHINE_LIST_BY_SERVER_ID;
-    for (const key of resolveServerScopedMachineInventoryKeys({ serverId, machineListByServerId: inventory })) {
-      const list = inventory[key];
-      if (list) return list;
-    }
-    return null;
-  });
+  const machines = getStorage()((state) => enabled ? readMachineListForServer(state, serverId) : null);
   return React.useMemo(() => selectVisibleMachines(machines), [machines]);
 }
+
+/**
+ * One fact derived from one Home's visible inventory. Any machine's publication replaces the list, so a reader
+ * that needs only a name, a count or a boolean selects it here and redraws only when that value changes.
+ * `select` must be stable and return a value comparable with `Object.is`; it reruns only when the list changes.
+ */
+export function useMachineListForServerSelection<T>(serverId: string, select: (machines: readonly Machine[]) => T): T {
+  const selector = React.useMemo(() => {
+    let last: { list: Machine[] | null; value: T } | null = null;
+    return (state: StorageState): T => {
+      const list = readMachineListForServer(state, serverId);
+      if (last?.list === list) return last.value;
+      last = { list, value: select(selectVisibleMachines(list) ?? emptyArray as Machine[]) };
+      return last.value;
+    };
+  }, [select, serverId]);
+  return getStorage()(selector);
+}
+
 
 const EMPTY_MACHINE_LIST_STATUS_BY_SERVER_ID: Record<string, 'idle' | 'loading' | 'signedOut' | 'error'> = {};
 

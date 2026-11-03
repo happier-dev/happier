@@ -125,9 +125,12 @@ export function MachineNetworkSection(
   );
 }
 
+// The view consumes projected facts and review controls; resource handles stay in the hook.
+export type MachineNetworkViewModel = Omit<MachineNetworkModel, 'services' | 'exposure'>;
+
 export function MachineNetworkView(
   props: Readonly<{
-    network: MachineNetworkModel;
+    network: MachineNetworkViewModel;
     machineName: string;
     online: boolean | null;
     controls: ReviewControls;
@@ -221,7 +224,7 @@ export function MachineNetworkView(
 /** Retained facts stay at full strength; one line says why they may be old and offers the one recovery. */
 function NetworkFreshness(
   props: Readonly<{
-    network: MachineNetworkModel;
+    network: MachineNetworkViewModel;
     machineName: string;
     online: boolean | null;
   }>,
@@ -265,7 +268,7 @@ function NetworkFreshness(
 
 function ManagementGroup(
   props: Readonly<{
-    network: MachineNetworkModel;
+    network: MachineNetworkViewModel;
     providerTitle: MachineNetworkProviderTitle;
     machineName: string;
     controls: ReviewControls;
@@ -370,7 +373,7 @@ function ManagementGroup(
 
 function IngressGroup(
   props: Readonly<{
-    network: MachineNetworkModel;
+    network: MachineNetworkViewModel;
     providerTitle: MachineNetworkProviderTitle;
     machineName: string;
     controls: ReviewControls;
@@ -650,7 +653,7 @@ function PrivateNetworkRows(props: Readonly<{ network: MachinePrivateNetworkObse
  */
 function PortsGroup(
   props: Readonly<{
-    network: MachineNetworkModel;
+    network: MachineNetworkViewModel;
     machineName: string;
   }>,
 ) {
@@ -741,7 +744,7 @@ const styles = StyleSheet.create((theme) => ({
 /** Choices changed → Review changes → the host's plan → Apply, or the shared approval. */
 function NetworkReviewFoot(
   props: Readonly<{
-    network: MachineNetworkModel;
+    network: MachineNetworkViewModel;
     providerTitle: MachineNetworkProviderTitle;
     machineName: string;
     controls: ReviewControls;

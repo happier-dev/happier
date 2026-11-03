@@ -6239,6 +6239,7 @@ const machineDetailPageTranslations = { ru: translated({
                 terminal: "Терминал",
                 computer: "Управление компьютером",
                 connection: "Подключение",
+                network: "Сеть",
                 security: `Безопасность`,
                 tools: "Инструменты",
                 doctor: "Диагностика",

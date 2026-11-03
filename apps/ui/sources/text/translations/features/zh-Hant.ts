@@ -6202,6 +6202,7 @@ const machineDetailPageTranslations = { 'zh-Hant': translated({
                 terminal: "終端機",
                 computer: "電腦控制",
                 connection: "連線",
+                network: "網路",
                 security: `安全`,
                 tools: "工具",
                 doctor: "診斷",

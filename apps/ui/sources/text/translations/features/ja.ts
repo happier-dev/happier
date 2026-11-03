@@ -6207,6 +6207,7 @@ const machineDetailPageTranslations = { ja: translated({
                 terminal: "ターミナル",
                 computer: "コンピューター操作",
                 connection: "接続",
+                network: "ネットワーク",
                 security: `セキュリティ`,
                 tools: "ツール",
                 doctor: "診断",

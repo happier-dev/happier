@@ -42,6 +42,11 @@ admission and unknown failures still fail the operation.
 
 This document describes the Happier CLI (`apps/cli`) and its daemon. The CLI is both an interactive tool and a background session manager that keeps machine state in sync with the server.
 
+Native SSH observation includes systemd socket activation before `sshd` starts.
+For PID 1 listeners, it joins the actual socket address to its activated service
+and verifies that service's protected `sshd` executable. It does not infer SSH
+from port 22 or a unit name. Unreadable activation facts remain unavailable.
+
 ## Managed Linux Computer desktop (0.3 development)
 
 The existing Computer route owner starts one desktop on demand when Linux has no
