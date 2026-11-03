@@ -5,6 +5,7 @@ import { IDBFactory } from 'fake-indexeddb';
 import { AccountPetListResponseV1Schema, AccountProfileSchema, AutomationDefinitionListResponseSchema, CurrentCursorResponseSchema, DaemonContributionRegistryProjectionDescribeRequestSchema, DaemonContributionRegistryProjectionDescribeResponseSchema, FeaturesResponseSchema, PluginProjectionV2Schema, V2SessionListResponseSchema } from '@happier-dev/protocol';
 import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { PluginAvailabilityActionHttpPathsV1 } from '@happier-dev/protocol/plugins/availability';
+import { buildDeferredDaemonProjectionSections } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
@@ -274,6 +275,81 @@ describe('usePluginUiProjectionCurrentness', () => {
         await clearBrowserRecords();
         storage.setState(storage.getInitialState(), true);
         delete (globalThis as Record<string, unknown>).__TAURI_INTERNALS__;
+    });
+
+    it('admits bundled Voice from a cold passive projection and honors a later empty family', async () => {
+        const { PLUGIN_UI_SECTIONS } = await import('./usePluginUiProjectionCurrentness');
+        const { BUNDLED_FIRST_PARTY_VOICE_CONVERSATION_RUNTIME_ENTRIES } = await import('@/voice/registry/generatedBundledVoiceRuntimeEntries');
+        const { createBundledConversationRuntimeHostLease } = await import('@/voice/registry/bundledConversationRuntimeHost');
+        const { createBundledConversationRuntimes } = await import('@/voice/registry/bundledConversationRuntimes');
+        const { createDefaultVoiceProviderRegistry } = await import('@/voice/registry/defaultRegistry');
+        const { reconcileAppShellProjectedClientExecutables, unloadAppShellProjectedClientExecutables } = await import('@/components/appShell/plugins/appShellClientExecutableActivation');
+        const { createPluginUiExecutableModuleHost } = await import('@/components/plugins/reactNative/executableModuleHost');
+        const entry = BUNDLED_FIRST_PARTY_VOICE_CONVERSATION_RUNTIME_ENTRIES.find(candidate => candidate.declaration.id === 'realtime-codex');
+        if (!entry) throw new Error('Missing bundled Codex Voice fixture');
+        const response = DaemonContributionRegistryProjectionDescribeResponseSchema.parse({
+            ...supportedProjection('Cold presentation'), projectionDigest: 'd'.repeat(64),
+            projection: { ...projection('Cold presentation'), familiesById: {
+                ...projection('Cold presentation').familiesById,
+                voiceProviders: { family: 'voiceProviders', entriesById: {
+                    [entry.providerId]: { id: entry.providerId, pluginId: entry.pluginId, generation: 1,
+                        occurrenceId: 'cold-codex-occurrence', contributionKey: entry.providerId, definition: entry.declaration },
+                } },
+            } },
+        });
+        const deferred = buildDeferredDaemonProjectionSections(response);
+        const transferredDigests: string[] = [];
+        projectionRuntime.describe.mockImplementation(async (_machineId, options) => {
+            const request = DaemonContributionRegistryProjectionDescribeRequestSchema.parse((options as { payload: unknown }).payload);
+            if (request.selection !== undefined) throw new Error('Expected shared projection');
+            if (!request.sectionRead) return deferred.manifest;
+            if (request.sectionRead.offset === 0) transferredDigests.push(request.sectionRead.digest,
+                ...request.sectionRead.includeDigests ?? []);
+            return deferred.read(request.sectionRead.digest, request.sectionRead.offset,
+                request.sectionRead.includeDigests);
+        });
+        const target = { machineId: 'machine-1', serverId: serverIdentityId,
+            accountLifetime: captureActiveServerAccountScopeLifetime()! };
+        const lease = createBundledConversationRuntimeHostLease();
+        const runtimes = (await createBundledConversationRuntimes({ bundledEntries: [entry], host: lease.host }));
+        const host = createPluginUiExecutableModuleHost();
+        const registry = createDefaultVoiceProviderRegistry();
+        // An Agent-only consumer can populate this Machine's shared cache
+        // before the AppShell's passive observer mounts after a fresh load.
+        expect(await loadDaemonMergedProjectionCacheEntry({ ...target, sections: ['agentsById'] }))
+            .toMatchObject({ kind: 'ready' });
+        const rendered = await renderHook(() => usePluginUiProjectionCurrentness({ ...target, load: false }));
+        try {
+            expect(rendered.getCurrent().phase).toBe('establishing');
+            expect(registry.get(entry.providerId)?.providerId).toBe(entry.providerId);
+            await act(async () => {
+                expect(await loadDaemonMergedProjectionCacheEntry({ ...target, sections: PLUGIN_UI_SECTIONS, reuseFreshReady: true }))
+                    .toMatchObject({ kind: 'ready' });
+            });
+            await waitForHomeGovernance(() => expect(rendered.getCurrent().phase).toBe('current'));
+            const readsBeforeVoice = projectionRuntime.describe.mock.calls.length;
+            await reconcileAppShellProjectedClientExecutables({ projection: null, platform: 'web', voice: null,
+                voiceProviderProjection: rendered.getCurrent().pluginUiProjection, executableHost: host });
+            expect(registry.get(entry.providerId)?.providerId).toBe(entry.providerId);
+            expect(transferredDigests.filter(digest => digest === deferred.manifest.sections['familiesById.voiceProviders']))
+                .toHaveLength(1);
+            expect(projectionRuntime.describe).toHaveBeenCalledTimes(readsBeforeVoice);
+
+            // A complete empty answer still withdraws the service; fetching
+            // the family must not turn absence into a bundled fallback.
+            const { normalizePluginUiProjection } = await import('./projection');
+            const empty = normalizePluginUiProjection(PluginProjectionV2Schema.parse({
+                ...response.projection, generation: 2, familiesById: { voiceProviders: { family: 'voiceProviders', entriesById: {} } },
+            }));
+            await reconcileAppShellProjectedClientExecutables({ projection: null, platform: 'web', voice: null,
+                voiceProviderProjection: empty, executableHost: host });
+            expect(registry.get(entry.providerId)).toBeNull();
+        } finally {
+            await rendered.unmount();
+            await unloadAppShellProjectedClientExecutables(host);
+            await Promise.all(runtimes.map(runtime => runtime.dispose()));
+            lease.revoke();
+        }
     });
 
     it('publishes one exact Home Machine inventory through device-local and portable aliases', () => {

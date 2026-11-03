@@ -25,7 +25,8 @@ import {
     subscribeMachineContributionRegistryProjectionInvalidation,
     type MachineContributionRegistryProjectionFailureReason,
 } from '@/sync/ops/machineContributionRegistryProjection';
-import { loadDaemonMergedProjectionCacheEntry, readDaemonMergedProjectionRetryDelayMs } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
+import { daemonProjectionHasSections, loadDaemonMergedProjectionCacheEntry, readDaemonMergedProjectionRetryDelayMs,
+    readObservedDaemonMergedProjectionCacheEntry, subscribeDaemonMergedProjectionSummary } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
 import {
     useEndpointStatus,
     useSetting,
@@ -47,7 +48,7 @@ import {
     type ConnectedAccountDescriptorMachineProjection,
 } from '@/sync/domains/connectedServices/connectedAccountDescriptorProjection';
 
-import { PLUGIN_UI_SECTIONS } from './projectionSections';
+import { CONNECTED_ACCOUNT_PROJECTION_SECTIONS, PLUGIN_UI_SECTIONS } from './projectionSections';
 export { PLUGIN_UI_SECTIONS, PLUGIN_SEARCH_SECTIONS } from './projectionSections';
 
 const CONNECTED_ACCOUNT_PROJECTION_TRANSPORT_ERROR = Object.freeze({
@@ -216,6 +217,8 @@ export function usePluginUiProjectionCurrentness(params: Readonly<{
     serverId?: string | null;
     enabled?: boolean;
     reloadRevision?: number;
+    /** Observe admitted/retained presentation only; never create daemon demand. */
+    load?: boolean;
     /** Setup consumes the credential-use declarations, beyond ordinary UI presentation. */
     includeConnectedAccountPurposes?: boolean;
 }>): PluginUiProjectionCurrentness {
@@ -406,6 +409,7 @@ export function usePluginUiProjectionCurrentness(params: Readonly<{
                 return { ...retained, failureReason, phase: retained.phase === 'current' ? 'current' : 'unavailable',
                     connectedAccountProjection: CONNECTED_ACCOUNT_PROJECTION_TRANSPORT_ERROR };
             });
+            if (params.load === false) return;
             const delayMs = readDaemonMergedProjectionRetryDelayMs(nextRetryEntry);
             if (delayMs === null) return;
             retryTimer = setTimeout(() => {
@@ -413,6 +417,66 @@ export function usePluginUiProjectionCurrentness(params: Readonly<{
                 requestProjection();
             }, delayMs);
         };
+
+        const adoptProjection = (entry: Awaited<ReturnType<typeof loadDaemonMergedProjectionCacheEntry>>): void => {
+            if (!isRequestCurrent()) return;
+            nextRetryEntry = entry;
+            shareRetryCadence = true;
+            if (!entry || entry.kind === 'error') {
+                // Keep the last-known snapshot, but retry a current
+                // transient failure without letting it regain authority.
+                scheduleRetry(entry?.kind === 'error' ? entry.reason : 'error');
+                return;
+            }
+            if (entry.kind === 'unsupported') {
+                setLoadedProjection((previous) => previous.targetKey !== targetKey
+                    || previous.accountLifetime !== accountLifetime || !isRequestCurrent()
+                    ? previous : createUnavailableLoadedProjectionState(targetKey, accountLifetime));
+                return;
+            }
+            const projection = entry.inputs.pluginProjectionV2;
+            if (!projection) {
+                scheduleRetry();
+                return;
+            }
+            const presentationReady = daemonProjectionHasSections(entry, sections);
+            const connectedAccountsReady = daemonProjectionHasSections(entry, CONNECTED_ACCOUNT_PROJECTION_SECTIONS);
+            setLoadedProjection((previous) => {
+                if (previous.targetKey !== targetKey || previous.accountLifetime !== accountLifetime || !isRequestCurrent()) {
+                    return previous;
+                }
+                const connectedAccountProjection = connectedAccountsReady
+                    ? entry.inputs.connectedAccountProjection : previous.connectedAccountProjection;
+                // A catalog's answered descriptor family settles independently
+                // of UI sections nobody has requested. It grants no UI authority.
+                if (!presentationReady) return previous.connectedAccountProjection === connectedAccountProjection
+                    ? previous : { ...previous, connectedAccountProjection };
+                // A completed request and the shared subscription can deliver
+                // the same answer. Admit that model and authority only once.
+                if (previous.authorityKey === authorityKey && previous.phase === 'current'
+                    && previous.pluginUiProjection === entry.inputs.pluginUiProjection
+                    && previous.connectedAccountProjection === connectedAccountProjection) return previous;
+                return {
+                    targetKey, accountLifetime, authorityKey, phase: 'current',
+                    connectedAccountProjection,
+                    pluginUiProjection: entry.inputs.pluginUiProjection,
+                    pluginBrowserProjection: resolvePluginBrowserProjectionState(previous.pluginBrowserProjection, projection),
+                };
+            });
+        };
+
+        if (params.load === false) {
+            // Same passive-cache pattern as the merged-input detail hook.
+            // Observation has no TTL-driven acquisition: the canonical owner
+            // still checks exact Account, locale and projection revision.
+            const observe = () => {
+                const entry = readObservedDaemonMergedProjectionCacheEntry({ ...target, accountLifetime, sections: [] });
+                if (entry) adoptProjection(entry);
+            };
+            const unsubscribe = subscribeDaemonMergedProjectionSummary(target, observe);
+            observe();
+            return () => { cancelled = true; unsubscribe(); };
+        }
 
         const requestProjection = (): void => {
             if (!isRequestCurrent()) return;
@@ -426,59 +490,7 @@ export function usePluginUiProjectionCurrentness(params: Readonly<{
                 signal: abort.signal,
                 reuseFreshReady: shareRetryCadence,
                 shareRetryCadence,
-            }).then((entry) => {
-                if (!isRequestCurrent()) return;
-                nextRetryEntry = entry;
-                shareRetryCadence = true;
-                if (!entry || entry.kind === 'error') {
-                    // Keep the last-known snapshot, but retry a current
-                    // transient failure without letting it regain authority.
-                    scheduleRetry(entry?.kind === 'error' ? entry.reason : 'error');
-                    return;
-                }
-                if (entry.kind === 'unsupported') {
-                    // The full acquisition owner already retired this exact
-                    // machine's retained admission before publishing unsupported.
-                    setLoadedProjection((previous) => {
-                        if (
-                            previous.targetKey !== targetKey
-                            || previous.accountLifetime !== accountLifetime
-                            || !isRequestCurrent()
-                        ) {
-                            return previous;
-                        }
-                        return createUnavailableLoadedProjectionState(targetKey, accountLifetime);
-                    });
-                    return;
-                }
-                const projection = entry.inputs.pluginProjectionV2;
-                if (!projection) {
-                    scheduleRetry();
-                    return;
-                }
-                const connectedAccountProjection = entry.inputs.connectedAccountProjection;
-                setLoadedProjection((previous) => {
-                    if (
-                        previous.targetKey !== targetKey
-                        || previous.accountLifetime !== accountLifetime
-                        || !isRequestCurrent()
-                    ) {
-                        return previous;
-                    }
-                    return {
-                        targetKey,
-                        accountLifetime,
-                        authorityKey,
-                        phase: 'current',
-                        connectedAccountProjection,
-                        pluginUiProjection: entry.inputs.pluginUiProjection,
-                        pluginBrowserProjection: resolvePluginBrowserProjectionState(
-                            previous.pluginBrowserProjection,
-                            projection,
-                        ),
-                    };
-                });
-            }).catch(() => {
+            }).then(adoptProjection).catch(() => {
                 scheduleRetry();
             });
         };
@@ -490,7 +502,7 @@ export function usePluginUiProjectionCurrentness(params: Readonly<{
             abort.abort();
             if (retryTimer !== null) clearTimeout(retryTimer);
         };
-    }, [accountLifetime, authorityKey, platform, target, targetKey]);
+    }, [accountLifetime, authorityKey, params.load, platform, target, targetKey]);
 
     const hasLoadedCurrentScope = Boolean(
         targetKey
