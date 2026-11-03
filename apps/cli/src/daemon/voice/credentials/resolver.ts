@@ -1,3 +1,4 @@
+import type { TargetSecretSourcesV1 } from '@/plugins/runtime/lifecycle/contributions/targetSecretSources';
 import type { VoiceCredentialBindingIdentityV1, VoiceCredentialSourceSelection } from '@happier-dev/protocol';
 import { resolveSavedSecretCatalogVoiceCredentialSourceV1 } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
 import { readStoredCredentials, type StoredCredentials } from '@/persistence';
@@ -16,7 +17,7 @@ import {
   createSavedSecretMaterializerFromSnapshotV1,
   type SavedSecretResolutionV1,
 } from '@/settings/secrets/savedSecretCatalog';
-import { SavedSecretOperationAdmissionError } from "@/settings/secrets/savedSecretCatalogRead";
+import { acquireSavedSecretMaterializerForOperation, SavedSecretOperationAdmissionError } from "@/settings/secrets/savedSecretCatalogRead";
 import { savedSecretOperationAdmissionStatus, refreshSavedSecretCatalogForOperation } from "@/settings/secrets/hydrateSavedSecretCatalog";
 
 export type VoiceCredentialResolutionSource = 'account' | 'machine_override';
@@ -182,6 +183,8 @@ export function createVoiceCredentialResolver(params: Readonly<{
   credentials?: StoredCredentials;
   readCredentials?: () => Promise<StoredCredentials | null>;
   operationContext?: SavedSecretOperationContextV1;
+  machineAdmission?: SavedSecretOperationContextV1['machineAdmission'];
+  secretSources?: TargetSecretSourcesV1;
   ensureSnapshot?: () => Promise<void>;
 }>): VoiceCredentialResolver {
   const getSnapshot = params.getSnapshot ?? getActiveAccountSettingsSnapshot;
@@ -307,7 +310,11 @@ export function createVoiceCredentialResolver(params: Readonly<{
       const resolved = admittedInspection.reference;
       // The SavedSecret catalog is the only owner of "the material behind this
       // fingerprint moved"; ask it rather than re-deciding drift locally.
-      const material = createSavedSecretMaterializerFromSnapshotV1(admittedSnapshot)
+      const materializer = await acquireSavedSecretMaterializerForOperation({ snapshot: admittedSnapshot,
+        references: [{ ref: resolved.secretId }], operationContext: params.operationContext, secretSources: params.secretSources,
+        machineAdmission: params.machineAdmission,
+        isCurrent: () => getSnapshot() === admittedSnapshot && getLifetimeToken() === lifetimeToken });
+      const material = materializer
         .recheck(resolved.secretId, resolved.materialFingerprint);
       if (material.status !== 'ready') throw unavailable(material.status);
       const result = await input.use(material.value);

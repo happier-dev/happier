@@ -1,3 +1,6 @@
+import type { TargetSecretSourcesV1 } from '@/plugins/runtime/lifecycle/contributions/targetSecretSources';
+import { acquireSavedSecretMaterializerForOperation, type SavedSecretOperationReferenceV1 } from '@/settings/secrets/savedSecretCatalogRead';
+import { resolveProviderSecretBindingIdV1 } from '@happier-dev/protocol/providers/settings/operationsV1';
 import { randomUUID } from 'node:crypto';
 import { projectProviderModelGenerationSettings } from '@happier-dev/protocol/models/descriptor';
 import { lookup } from 'node:dns/promises';
@@ -109,6 +112,7 @@ import {
 } from '@/providers/managed/resolvePurposeBindingSnapshot';
 
 type SavedResolution = Readonly<{
+  resolveSavedSecretMaterializer?: ProviderProbeOperationScope['resolveSavedSecretMaterializer'];
   savedSecretSnapshot?: ActiveAccountSettingsSnapshot;
   request: ResolvedProviderProbeRpcRequest;
   connection: ResolvedProviderConnectionRecord;
@@ -327,6 +331,7 @@ function sourceForRow(row: ProviderMergedCatalogRowV1): 'manual' | 'static' | 'p
  * and catalog fact is re-derived from current daemon state.
  */
 export function createRuntimeProviderServices(input: Readonly<{
+  secretSources?: TargetSecretSourcesV1;
   machineId: string;
   featureGate?: Readonly<{ isEnabled(featureId: 'providers'): boolean }>;
   happyHomeDir?: string;
@@ -384,6 +389,7 @@ export function createRuntimeProviderServices(input: Readonly<{
     machineId: input.machineId,
   });
   const authorization = createRuntimeProviderProbeAuthorizationPort({
+    secretSources: input.secretSources,
     resolveRegistry,
     getAccountSettingsSnapshot: getSnapshot,
     ...(input.resolveAddresses ? { resolveAddresses: input.resolveAddresses } : {}),
@@ -399,6 +405,7 @@ export function createRuntimeProviderServices(input: Readonly<{
     ...(input.openTeamDirect ? { openTeamDirect: input.openTeamDirect } : {}),
   });
   const modelLoadAuthorization = createRuntimeProviderModelLoadAuthorizationPort({
+    secretSources: input.secretSources,
     resolveRegistry,
     getAccountSettingsSnapshot: getSnapshot,
     ...(input.resolveAddresses ? { resolveAddresses: input.resolveAddresses } : {}),
@@ -681,6 +688,9 @@ export function createRuntimeProviderServices(input: Readonly<{
     context: Omit<Extract<Awaited<ReturnType<typeof resolveConnectionContext>>, { ok: true }>['value'], 'readSnapshot'>,
     mode: SavedProbeMode,
     savedSecretResources = context.savedSecretResources,
+    admitSelectedCredentials?: (additionalCredentials: Parameters<typeof admitRuntimeProviderSavedSecret>[0]['additionalCredentials']) => Promise<
+      Readonly<{ ok: true; snapshot: ActiveAccountSettingsSnapshot }> | Readonly<{ ok: false; error: ProviderErrorV1 }>
+    >,
   ): Promise<SavedResolutionResult> {
     const {
       connection,
@@ -960,6 +970,15 @@ export function createRuntimeProviderServices(input: Readonly<{
     const credential = connection.source.kind === 'contribution'
       ? connection.source.definition.credential
       : connection.source.template.credential;
+    if (admitSelectedCredentials) {
+      const protocols = new Set(probes.flatMap(probe => connection.endpoints
+        .filter(endpoint => endpoint.endpointTemplateId === probe.endpointTemplateId).map(endpoint => endpoint.protocol)));
+      const additionalCredentials = credential?.transports.filter(transport => transport.uses.includes('probe')
+        && transport.protocols.some(protocol => protocols.has(protocol))).flatMap(transport => transport.additionalCredentials ?? []);
+      const admission = await admitSelectedCredentials(additionalCredentials);
+      if (!admission.ok) return admission;
+      savedSecretResources = admission.snapshot.savedSecretResources;
+    }
     const endpoints: ProviderProbeEndpoint[] = connection.endpoints.map((endpoint) => ({
       endpointTemplateId: endpoint.endpointTemplateId,
       protocol: endpoint.protocol,
@@ -1037,54 +1056,63 @@ export function createRuntimeProviderServices(input: Readonly<{
     if (!isProviderFeatureEnabled()) {
       return { ok: false, error: providerFeatureDisabled(identity).error };
     }
-    let context;
-    try {
-      context = await resolveConnectionContext(identity, scope);
-    } catch (error) {
-      if (error instanceof ProviderOperationAbandonedError) {
-        return {
-          ok: false,
-          error: createProviderErrorV1('provider_endpoint_unavailable', identity),
-        };
-      }
-      throw error;
-    }
+    const context = await resolveConnectionContext(identity, scope);
     if (!isProviderFeatureEnabled()) {
       return { ok: false, error: providerFeatureDisabled(identity).error };
     }
     if (!context.ok) return context;
-    const snapshot = context.value.snapshot;
+    return resolveSavedFromAdmittedContext(identity, context.value, mode, scope, admittedSnapshot);
+  }
+
+  async function resolveSavedFromAdmittedContext(
+    identity: RuntimeProviderIdentity,
+    context: Extract<Awaited<ReturnType<typeof resolveConnectionContext>>, { ok: true }>['value'],
+    mode: SavedProbeMode,
+    scope: RuntimeProviderOperationScope,
+    admittedSnapshot?: ActiveAccountSettingsSnapshot,
+  ): Promise<SavedResolutionResult> {
+    const snapshot = context.snapshot;
     if (!snapshot) return { ok: false, error: createProviderErrorV1('provider_authorization_changed', identity) };
-    if (admittedSnapshot && (admittedSnapshot.scopeKey !== snapshot.scopeKey
-      || admittedSnapshot.settingsVersion !== snapshot.settingsVersion
-      || admittedSnapshot.settings !== snapshot.settings)) {
+    if (admittedSnapshot && admittedSnapshot.scopeKey !== snapshot.scopeKey) {
       return { ok: false, error: createProviderErrorV1('provider_authorization_changed', identity) };
     }
-    const admission = admittedSnapshot
-      ? { ok: true as const, snapshot: admittedSnapshot }
-      : await admitRuntimeProviderSavedSecret({
-          connection: context.value.connection,
-          providerSettings: context.value.providerSettings,
-          snapshot,
-          getAccountSettingsSnapshot: scope.getAccountSettingsSnapshot ?? getSnapshot,
-          lifetime: scope.lifetime,
+    let savedSecretSnapshot = admittedSnapshot ?? snapshot;
+    let references: SavedSecretOperationReferenceV1[] = [];
+    const resolved = await resolveSavedFromConnectionContext(identity, context, mode, savedSecretSnapshot.savedSecretResources,
+      async additionalCredentials => {
+        const definition = context.connection.source.kind === 'contribution'
+          ? context.connection.source.definition : context.connection.source.template;
+        references = definition.credential ? [definition.credential.slotId, ...(additionalCredentials ?? []).map(row => row.slotId)]
+          .flatMap(slotId => {
+            const ref = resolveProviderSecretBindingIdV1(context.providerSettings, identity.connectionId, identity.machineId, slotId);
+            return ref ? [{ ref }] : [];
+          }) : [];
+        // Catalog and health in one operation share the authoritative catalog observation.
+        if (admittedSnapshot) return { ok: true, snapshot: savedSecretSnapshot };
+        const admission = await admitRuntimeProviderSavedSecret({
+          connection: context.connection, providerSettings: context.providerSettings,
+          snapshot: savedSecretSnapshot, getAccountSettingsSnapshot: scope.getAccountSettingsSnapshot ?? getSnapshot,
+          lifetime: scope.lifetime, additionalCredentials,
           ...(scope.getAccountSettingsSnapshot ? { operationContext: scope.savedSecretOperationContext ?? null } : {}),
         });
-    if (!admission.ok) return admission;
-    try {
-      const resolved = await resolveSavedFromConnectionContext(identity, context.value, mode, admission.snapshot.savedSecretResources);
-      return resolved.ok
-        ? { ok: true, value: { ...resolved.value, savedSecretSnapshot: admission.snapshot } }
-        : resolved;
-    } catch (error) {
-      if (error instanceof ProviderOperationAbandonedError) {
-        return {
-          ok: false,
-          error: createProviderErrorV1('provider_endpoint_unavailable', identity),
-        };
-      }
-      throw error;
-    }
+        if (admission.ok) savedSecretSnapshot = admission.snapshot;
+        return admission;
+      });
+    // This closure belongs to the admitted phase. Metadata resolution leaves it
+    // unused; all authenticated requests in the phase share its acquisition.
+    let materializer: ReturnType<typeof acquireSavedSecretMaterializerForOperation> | undefined;
+    const resolveSavedSecretMaterializer = (signal?: AbortSignal) => materializer ??= acquireSavedSecretMaterializerForOperation({
+      snapshot: savedSecretSnapshot,
+      references,
+      operationContext: scope.savedSecretOperationContext ?? undefined,
+      secretSources: input.secretSources,
+      signal,
+      isCurrent: () => (scope.getAccountSettingsSnapshot ?? getSnapshot)()?.scopeKey === savedSecretSnapshot.scopeKey
+        && !signal?.aborted,
+    });
+    return resolved.ok
+      ? { ok: true, value: { ...resolved.value, savedSecretSnapshot, resolveSavedSecretMaterializer } }
+      : resolved;
   }
 
   const projectResolvedCatalogContext = (
@@ -1328,6 +1356,7 @@ export function createRuntimeProviderServices(input: Readonly<{
         if (!resolved.ok) return { status: 'error', error: resolved.error };
         return await runResolvedCatalogProbe({ ...resolved.value.request, operationScope: {
           registry: resolved.value.registry,
+          resolveSavedSecretMaterializer: resolved.value.resolveSavedSecretMaterializer,
           ...(resolved.value.accountSettingsBasis ? { accountSettingsBasis: resolved.value.accountSettingsBasis } : {}),
           dnsEvidenceByConnectionId: new Map([[identity.connectionId, resolved.value.dnsEvidenceByEndpointUrl]]),
           // Shared scheduler work retains the containing deadline, independently
@@ -1423,6 +1452,7 @@ export function createRuntimeProviderServices(input: Readonly<{
         const admittedScope: RuntimeProviderOperationScope = {
           ...operationScope,
           registry: catalog.value.registry,
+          resolveSavedSecretMaterializer: catalog.value.resolveSavedSecretMaterializer,
           ...(operationScope.resolveContributedCatalogParsers
             ? { resolveContributedCatalogParsers: operationScope.resolveContributedCatalogParsers }
             : {}),
@@ -1461,6 +1491,7 @@ export function createRuntimeProviderServices(input: Readonly<{
       const admittedScope: RuntimeProviderOperationScope = {
         ...operationScope,
         registry: health.value.registry,
+        resolveSavedSecretMaterializer: health.value.resolveSavedSecretMaterializer,
         ...(operationScope.resolveContributedCatalogParsers
           ? { resolveContributedCatalogParsers: operationScope.resolveContributedCatalogParsers }
           : {}),

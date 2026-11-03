@@ -9,7 +9,7 @@ import type {
 } from '@happier-dev/protocol/teams';
 
 import type { ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
-import type { SavedSecretCatalogResourceInputV1 } from '@/settings/secrets/savedSecretCatalog';
+import { createSavedSecretMaterializerV1, type SavedSecretCatalogResourceInputV1 } from '@/settings/secrets/savedSecretCatalog';
 import { refreshSavedSecretCatalogForOperation } from '@/settings/secrets/hydrateSavedSecretCatalog';
 import type { ManagedProviderEndpointAccessProjection } from '@/plugins/runtime/invocation/services/managedServicesAdapter';
 import { resolveProviderConnectionForMachine } from '@/providers/registry';
@@ -192,9 +192,15 @@ export function resolveProviderConnectionBrokerSource(
   if (!credential || credential.slotId !== input.source.credentialSlotId) {
     return fail('provider_credential_transport_unavailable', input.source, input.machineId);
   }
+  const materializer = createSavedSecretMaterializerV1({
+    accountSettings: input.accountSettings,
+    settingsSecretsReadKeys: [],
+    resources: input.savedSecretResources,
+  });
   const reference = resolveProviderCredentialReference({
     providerSettings: input.providerSettings,
     accountSettings: input.accountSettings,
+    savedSecretMaterializer: materializer,
     ...(input.savedSecretResources
       ? { savedSecretResources: input.savedSecretResources }
       : {}),
@@ -202,8 +208,20 @@ export function resolveProviderConnectionBrokerSource(
     machineId: input.machineId,
     credentialSlotId: credential.slotId,
     required: true,
+    additionalCredentials: credential.transport.additionalCredentials,
   });
   if (!reference.ok) return reference;
+  if (reference.reference.kind === 'apiKey') {
+    const refs = [reference.reference.secretId, ...(reference.reference.additionalCredentials ?? []).map(row => row.secretId)];
+    for (const ref of refs) {
+      const content = materializer.resolveContent(ref);
+      if (content.status === 'forbidden'
+        || content.status === 'ready' && content.content.v === 2 && content.content.source.kind === 'external') {
+        return fail('provider_credential_transport_unavailable', input.source, input.machineId);
+      }
+    }
+  }
+
   return {
     ok: true,
     snapshot: {

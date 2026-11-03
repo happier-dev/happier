@@ -237,7 +237,7 @@ function resolveSpeechCredentialAccess(input: Readonly<{
 export function registerMachineVoiceSpeechRpcHandlers(params: Readonly<{
   rpcHandlerManager: RpcHandlerRegistrar;
   machineId?: string | null;
-  resolveSpeechRuntime?(target: VoiceSpeechTargetRef): Promise<VoiceSpeechRuntimeLease>;
+  resolveSpeechRuntime?(target: VoiceSpeechTargetRef, context?: RpcHandlerContext): Promise<VoiceSpeechRuntimeLease>;
   resolveRawCredentialDependencies?(): Promise<RawCredentialDependencies | null>;
 }>): MachineVoiceSpeechRpcRegistration {
   const ttlMs = Math.max(1_000, Math.trunc(configuration.filesTransferSessionTtlMs || 60_000));
@@ -264,7 +264,7 @@ export function registerMachineVoiceSpeechRpcHandlers(params: Readonly<{
       return Object.freeze({ credentials: storedCredentials });
     });
 
-  const resolveSpeechRuntime = params.resolveSpeechRuntime ?? (async (target: VoiceSpeechTargetRef): Promise<VoiceSpeechRuntimeLease> => {
+  const resolveSpeechRuntime = params.resolveSpeechRuntime ?? (async (target: VoiceSpeechTargetRef, context?: RpcHandlerContext): Promise<VoiceSpeechRuntimeLease> => {
     const lease = await acquireAuthoritativePluginRuntimeRegistryLease();
     try {
       await lease.registry.activateContributionsOnDemand([{
@@ -283,6 +283,8 @@ export function registerMachineVoiceSpeechRpcHandlers(params: Readonly<{
       >();
       let readAccountSettingsSnapshot = getActiveAccountSettingsSnapshot;
       const credentialResolver = createVoiceCredentialResolver({ machineId: params.machineId ?? null,
+        ...(lease.registry.secretSources ? { secretSources: lease.registry.secretSources } : {}),
+        ...(context?.machineAdmission ? { machineAdmission: context.machineAdmission } : {}),
         getSnapshot: () => readAccountSettingsSnapshot() });
       const manifest = lease.registry.contributes.activationTargets.find((candidate) => (
         candidate.pluginId === target.pluginId
@@ -360,6 +362,8 @@ export function registerMachineVoiceSpeechRpcHandlers(params: Readonly<{
                 throw Object.assign(new Error('provider_unavailable'), { code: 'provider_unavailable' });
               }
               rawCredentialMaterializers.set(phase, createDaemonPluginRawCredentialMaterializer({
+                ...(context?.machineAdmission ? { machineAdmission: context.machineAdmission } : {}),
+                ...(lease.registry.secretSources ? { secretSources: lease.registry.secretSources } : {}),
                 binding: {
                   manifest,
                   contribution: target,
@@ -659,7 +663,7 @@ export function registerMachineVoiceSpeechRpcHandlers(params: Readonly<{
     const { target, catalog } = parsed.data;
     let lease: VoiceSpeechRuntimeLease | null = null;
     try {
-      lease = await resolveSpeechRuntime(target);
+      lease = await resolveSpeechRuntime(target, context);
       if (
         !lease.runtime.catalog
         || !lease.contribution.catalogs?.some((declaration) => declaration.kind === catalog)
@@ -693,7 +697,7 @@ export function registerMachineVoiceSpeechRpcHandlers(params: Readonly<{
     if (!parsed.success) return DaemonVoiceSpeechSettingsActionResponseSchema.parse(invalid);
     let lease: VoiceSpeechRuntimeLease | null = null;
     try {
-      lease = await resolveSpeechRuntime(parsed.data.target);
+      lease = await resolveSpeechRuntime(parsed.data.target, context);
       const declared = lease.contribution.settings.actions?.some(
         (action) => action.id === parsed.data.actionId,
       ) === true;
@@ -817,7 +821,7 @@ export function registerMachineVoiceSpeechRpcHandlers(params: Readonly<{
     if (!parsed.success) return invalid;
     const { target, requestId, mimeType, uploadId } = parsed.data;
     try {
-      lease = await resolveSpeechRuntime(target);
+      lease = await resolveSpeechRuntime(target, context);
     } catch (error) {
       return classify(error);
     }
@@ -892,7 +896,7 @@ export function registerMachineVoiceSpeechRpcHandlers(params: Readonly<{
       return invalid;
     }
     try {
-      lease = await resolveSpeechRuntime(target);
+      lease = await resolveSpeechRuntime(target, context);
       if (!lease.runtime.synthesize) return invalid;
       return await runBounded(async (signal) => {
         assertOperationMayPublish(lease!, signal);

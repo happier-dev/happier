@@ -8,7 +8,7 @@ import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accou
 import type { ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { materializeMcpServerConfigRecord } from '@/mcp/servers/materializeMcpServerConfigRecord';
 import { createSavedSecretMaterializerFromSnapshotV1 } from '@/settings/secrets/savedSecretCatalog';
-import { readSavedSecretCatalogForOperation } from "@/settings/secrets/savedSecretCatalogRead";
+import { readSavedSecretMaterializerForOperation } from "@/settings/secrets/savedSecretCatalogRead";
 import { type SavedSecretOperationContextV1 } from "@/settings/secrets/savedSecretOperationContext";
 
 export async function resolveCustomHappierToolsContext(params: Readonly<{
@@ -38,10 +38,10 @@ export async function resolveCustomHappierToolsContext(params: Readonly<{
   const references = [...new Set(listMcpServerCatalogSavedSecretRefsV1({ v: 1, bindings: [], servers:
     Object.values(resolved.serversByName).filter(server => server.enabled === true).map(server => server.config),
   }).map(reference => reference.secretId))];
-  const admitted = await runWithServerHttpBaseUrl(context.serverHttpBaseUrl, () => readSavedSecretCatalogForOperation({
+  const admitted = await runWithServerHttpBaseUrl(context.serverHttpBaseUrl, () => readSavedSecretMaterializerForOperation({
     expectedScopeKey: scopeKey, operationContext: context, references: references.map(ref => ({ ref })), signal: params.signal,
   }));
-  const savedSecretMaterializer = createSavedSecretMaterializerFromSnapshotV1(admitted, { isCurrent: () => context.readSnapshot() === admitted });
+  const savedSecretMaterializer = admitted.materializer;
   const materialized = await materializeMcpServerConfigRecord({
     resolved,
     savedSecretMaterializer,

@@ -5,7 +5,16 @@ import {
   deriveAccountMachineKeyFromRecoverySecret,
   deriveSettingsSecretsKeyV1,
   encryptSecretStringV1,
+  FeaturesResponseSchema,
+  formatSharedSavedSecretRefV1,
+  sealSavedSecretResourceStoredContentV1,
 } from '@happier-dev/protocol';
+import { definePlugin } from '@happier-dev/plugin-sdk';
+import { createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
+import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import { projectLoadedPluginContributes } from '@/plugins/projection/registry/fullProjection';
+import { loadInstalledPlugins } from '@/plugins/discovery/load/installed';
+import * as persistence from '@/persistence';
 
 import { resolveProfileProbeEnvironment } from './resolveProfileProbeEnvironment';
 import { resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
@@ -26,6 +35,63 @@ const predecessorCatalog = { status: 'ready' as const, source: 'legacy' as const
 
 describe('resolveProfileProbeEnvironment', () => {
   afterEach(() => { resetActiveAccountSettingsSnapshotForTests(); vi.restoreAllMocks(); });
+  it.each(['use', 'manage'] as const)('consumes the admitted Machine %s role before acquiring profile vault material', async role => {
+    let acquisitions = 0;
+    const plugin = definePlugin({ id: 'acme.vault', version: '1.0.0', displayName: 'Vault', entrypoints: { daemon: './daemon.mjs' },
+      secretSources: { main: { declaration: { title: 'Vault' }, runtime: {
+        async acquire() { acquisitions += 1; return { ok: true, value: 'vault-key' }; },
+      } } },
+    });
+    const fixture = await createAuthoredAdmittedPluginRuntimeFixture({
+      plugins: [{ manifest: plugin.manifest, files: { 'daemon.mjs': 'export function activate() {}' },
+        instantiateCommittedModule: () => ({ activate: plugin.activate }) }], coldStart: true,
+      async resolveContributes(happyHomeDir) {
+        return createResolvedContributionRegistry(projectLoadedPluginContributes({
+          loadResult: await loadInstalledPlugins({ happyHomeDir }), provenance: 'external',
+        }));
+      },
+    });
+    try {
+      const ref = formatSharedSavedSecretRefV1('profile-vault');
+      const resource = { resourceId: 'profile-vault', encryptionMode: 'plain' as const, recipientEnvelope: null,
+        entry: { ref, source: 'shared_resource', relationship: 'owner', name: 'Vault', kind: 'apiKey', ownerAccountId: 'owner',
+          revision: 1, materialStatus: 'ready', capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true } },
+        storedContent: sealSavedSecretResourceStoredContentV1({ resourceId: 'profile-vault', mode: 'plain', content: {
+          v: 2, name: 'Vault', kind: 'apiKey', source: { kind: 'external', contribution: { pluginId: 'acme.vault', localId: 'main' },
+            account: 'account', reference: 'op://vault/item/field' },
+        } }),
+      };
+      vi.spyOn(persistence, 'readStoredCredentials').mockResolvedValue({ token: 'token', encryption: null });
+      vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify(FeaturesResponseSchema.parse({
+        features: { sharing: { enabled: true, savedSecrets: { enabled: true } }, encryption: { plaintextStorage: { enabled: true } } },
+      })), { status: 200, headers: { 'content-type': 'application/json' } }));
+      vi.spyOn(axios, 'get').mockImplementation(async url => {
+        const path = new URL(String(url)).pathname;
+        if (path === '/v1/account/saved-secrets/resources/materials') return { status: 200, data: { resources: [resource] } };
+        if (path === '/v1/artifacts') return { status: 200, data: artifactListResponse(String(url), []) };
+        if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
+        if (path === '/v1/account/authoring-memory/lastUsedProfile') return { status: 200, data: { status: 'absent' } };
+        if (path === '/v2/account/settings') return { status: 200, data: { content: null, version: 1 } };
+        throw new Error(`Unexpected profile probe HTTP path: ${path}`);
+      });
+      const request = {
+        agentId: 'codex', profileId: 'work', profileCatalog: predecessorCatalog,
+        accountSettings: { profiles: [{ id: 'work', name: 'Work', envVarRequirements: [{ name: 'PROFILE_KEY', kind: 'secret', required: true }],
+          compatibilityByTargetKey: { 'agent:codex': true }, defaultEnabled: true, isBuiltIn: false }] },
+        credentials: { token: 'token', encryption: null }, processEnv: {},
+        secretReferenceOverlay: { v: 1 as const, bindings: { PROFILE_KEY: { ref, revision: 1 } } }, secretSources: fixture.registry.secretSources,
+        machineAdmission: { actorAccountId: 'requester', custodianAccountId: 'custodian', role },
+      };
+      publishAccountSnapshot(request);
+      if (role === 'use') {
+        await expect(resolveProfileProbeEnvironment(request)).rejects.toMatchObject({ reason: 'reference_forbidden' });
+        expect(acquisitions).toBe(0);
+      } else {
+        await expect(resolveProfileProbeEnvironment(request)).resolves.toMatchObject({ env: { PROFILE_KEY: 'vault-key' } });
+        expect(acquisitions).toBe(1);
+      }
+    } finally { await fixture.dispose(); }
+  });
   it('probes the destination Profile row rather than a retained Settings definition', async () => {
     vi.spyOn(axios, 'get').mockImplementation(async (url) => {
       const path = new URL(String(url)).pathname;

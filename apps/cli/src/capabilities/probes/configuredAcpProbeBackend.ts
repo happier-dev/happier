@@ -13,7 +13,7 @@ import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { getActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshotLifetimeToken } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { savedSecretOperationAdmissionStatus } from '@/settings/secrets/savedSecretCatalog';
-import { SavedSecretOperationAdmissionError } from "@/settings/secrets/savedSecretCatalogRead";
+import { acquireSavedSecretMaterializerForOperation, SavedSecretOperationAdmissionError } from "@/settings/secrets/savedSecretCatalogRead";
 import { type SavedSecretOperationContextV1 } from "@/settings/secrets/savedSecretOperationContext";
 import { SavedSecretResolutionError } from '@/settings/secrets/savedSecretCatalog';
 
@@ -31,7 +31,10 @@ export async function createConfiguredAcpProbeBackend(params: Readonly<{
   credentials?: StoredCredentials | null;
   acpCatalogSnapshot?: AcpCatalogSnapshotV1;
   savedSecretOperationContext?: SavedSecretOperationContextV1;
+  machineAdmission?: SavedSecretOperationContextV1['machineAdmission'];
+  secretSources?: import('@/plugins/runtime/lifecycle/contributions/targetSecretSources').TargetSecretSourcesV1;
   processEnv?: NodeJS.ProcessEnv;
+  signal?: AbortSignal;
 }>): Promise<AcpProbeBackend | null> {
   if (!isConfiguredAcpProbeTarget(params)) return null;
 
@@ -113,6 +116,8 @@ export async function createConfiguredAcpProbeBackend(params: Readonly<{
     credentials,
     processEnv: params.processEnv,
     savedSecretResources: accountSnapshot.savedSecretResources,
+    savedSecretMaterializer: await acquireSavedSecretMaterializerForOperation({ snapshot: accountSnapshot, references, operationContext,
+      secretSources: params.secretSources, machineAdmission: params.machineAdmission, signal: params.signal }),
   });
 
   return createConfiguredAcpBackend({

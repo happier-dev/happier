@@ -1,9 +1,10 @@
+import type { TargetSecretSourcesV1 } from '@/plugins/runtime/lifecycle/contributions/targetSecretSources';
 import type { AccountSettings, WorkflowRunUpdateKindV1 } from '@happier-dev/protocol';
 import axios from '@/api/client/credentialAxios';
 import { resolveSessionFollowActionRequest } from '@happier-dev/protocol/sessions/follow/actionTransport';
 import { GetOtherAccountFollowResponseV1Schema, SessionFollowErrorResponseSchema } from '@happier-dev/protocol/sessions/follow/api';
 import type { NotificationChannelCatalogSnapshotV1 } from '@happier-dev/protocol/account/settings/notificationChannelRecordV1';
-import { createSavedSecretMaterializerFromSnapshotV1, type SavedSecretMaterializerV1 } from '@/settings/secrets/savedSecretCatalog';
+import type { SavedSecretMaterializerV1 } from '@/settings/secrets/savedSecretCatalog';
 
 import { getActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshotLifetimeToken,
   isActiveAccountSettingsSnapshotLifetimeCurrent } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
@@ -49,6 +50,8 @@ function updateKindForResult(
  */
 export function createWorkflowRunCommittedNotificationHandler(params: Readonly<{
   getSettingsSnapshot?: () => SettingsSnapshot | null;
+  secretSources?: TargetSecretSourcesV1;
+  operationContext?: Parameters<typeof dispatchActivityNotificationAsync>[0]['operationContext'];
   expoPushSender?: ExpoPushActivityNotificationSender | null;
   dispatch?: typeof dispatchActivityNotificationAsync;
   /** The source Account's captured Home; explicit Run Follow owns its personal terminal delivery. */
@@ -81,9 +84,10 @@ export function createWorkflowRunCommittedNotificationHandler(params: Readonly<{
         ? { scopeKey: active.scopeKey, lifetimeToken: getActiveAccountSettingsSnapshotLifetimeToken() } : null;
       await dispatch({
         settings: snapshot?.settings,
+        secretSources: params.secretSources,
+        operationContext: params.operationContext,
         notificationChannelCatalog: snapshot?.notificationChannelCatalog,
-        savedSecretMaterializer: snapshot?.savedSecretMaterializer ?? (snapshot === active && active
-          ? createSavedSecretMaterializerFromSnapshotV1(active) : undefined),
+        savedSecretMaterializer: snapshot?.savedSecretMaterializer,
         isCurrent: snapshot?.isCurrent ?? (incumbent ? () => isActiveAccountSettingsSnapshotLifetimeCurrent(incumbent) : undefined),
         ...(snapshot?.settingsSecretsReadKeys
           ? { settingsSecretsReadKeys: snapshot.settingsSecretsReadKeys }

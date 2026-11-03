@@ -185,6 +185,8 @@ export async function probeAgentModesBestEffort(params: {
   accountSettings?: Readonly<Record<string, unknown>> | null;
   acpCatalogSnapshot?: AcpCatalogSnapshotV1;
   savedSecretOperationContext?: SavedSecretOperationContextV1;
+  machineAdmission?: SavedSecretOperationContextV1['machineAdmission'];
+  secretSources?: Parameters<typeof probeConfiguredAcpBackend>[0]['secretSources'];
   pluginSettings?: AgentCliSessionCommandPluginSettingsV1;
   credentials?: StoredCredentials | null;
   env?: NodeJS.ProcessEnv;
@@ -286,6 +288,8 @@ export async function probeAgentModesBestEffort(params: {
         credentials: params.credentials,
         acpCatalogSnapshot: params.acpCatalogSnapshot,
         savedSecretOperationContext: params.savedSecretOperationContext,
+        machineAdmission: params.machineAdmission,
+        secretSources: params.secretSources,
         processEnv: params.env,
         signal: params.signal,
         cleanupScope: params.cleanupScope,

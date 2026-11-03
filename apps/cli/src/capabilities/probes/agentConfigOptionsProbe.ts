@@ -1,3 +1,4 @@
+import { probeConfiguredAcpBackend } from './probeConfiguredAcpBackend';
 import type { AgentCliSessionCommandPluginSettingsV1 } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { RuntimeDescriptorV1 } from '@happier-dev/protocol';
 import type { AgentConfigOptionsProbeObservation } from '@happier-dev/protocol/capabilities';
@@ -85,6 +86,8 @@ export async function probeAgentConfigOptionsBestEffort(params: {
   accountSettings?: Readonly<Record<string, unknown>> | null;
   acpCatalogSnapshot?: AcpCatalogSnapshotV1;
   savedSecretOperationContext?: SavedSecretOperationContextV1;
+  machineAdmission?: SavedSecretOperationContextV1['machineAdmission'];
+  secretSources?: Parameters<typeof probeConfiguredAcpBackend>[0]['secretSources'];
   pluginSettings?: AgentCliSessionCommandPluginSettingsV1;
   credentials?: StoredCredentials | null;
   env?: NodeJS.ProcessEnv;

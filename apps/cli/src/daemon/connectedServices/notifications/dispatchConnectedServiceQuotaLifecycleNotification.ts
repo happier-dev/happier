@@ -11,7 +11,7 @@ import type { AutomaticQuotaResetConsumedEvent, ConnectedServiceQuotaLifecycleTr
 import { resolveConnectedServiceNotificationDisplayName } from './connectedServiceNotificationLabels';
 
 type NotificationDeliveryContext = Pick<Parameters<typeof dispatchActivityNotificationAsync>[0],
-  'notificationChannelCatalog' | 'savedSecretMaterializer' | 'isCurrent' | 'pluginNotifications' | 'usageNoticeArtifactStore'>;
+  'notificationChannelCatalog' | 'savedSecretMaterializer' | 'operationContext' | 'secretSources' | 'isCurrent' | 'pluginNotifications' | 'usageNoticeArtifactStore' | 'signal'>;
 
 /** Live accepted B observations supply both sides; absent history is hydration, never a crossing. */
 function deriveUsageNotifications(transition: ConnectedServiceUsageSnapshotTransition & Readonly<{ preferences: UsageQuotaNotificationsV1 }>, nowMs: number): ConnectedServiceUsageNotificationV1[] {
@@ -95,7 +95,7 @@ export async function dispatchConnectedServiceAutomaticQuotaResetNotificationAsy
   event: AutomaticQuotaResetConsumedEvent;
   nowMs?: () => number;
   dedupeWindowMs?: number;
-}>): Promise<void> {
+}> & NotificationDeliveryContext): Promise<void> {
   const { event } = params;
   await dispatchActivityNotificationAsync({
     ...params,
@@ -142,6 +142,8 @@ export async function dispatchConnectedServiceQuotaLifecycleNotificationAsync(pa
       notificationChannelCatalog: params.notificationChannelCatalog,
       savedSecretMaterializer: params.savedSecretMaterializer,
       isCurrent: params.isCurrent,
+      operationContext: params.operationContext,
+      secretSources: params.secretSources,
       pluginNotifications: params.pluginNotifications,
       settings: params.settings,
       settingsSecretsReadKeys: params.settingsSecretsReadKeys,

@@ -15,6 +15,8 @@ import {
 } from './rawCredentialMaterializer';
 import { createAccountLifetimePluginPermissionGrantListReader } from '@/plugins/runtime/lifecycle/permissions/pluginPermissionGrantListReader';
 import { createRegistryInstallReviewPrincipalReader } from './registryInstallReviewPrincipalReader';
+import type { TargetSecretSourcesV1 } from '@/plugins/runtime/lifecycle/contributions/targetSecretSources';
+import type { SavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
 
 type DaemonRawCredentialCommonInput = Readonly<{
   binding: PluginRawCredentialMaterializerBinding;
@@ -30,6 +32,8 @@ type DaemonRawCredentialMaterializerInput = DaemonRawCredentialCommonInput & Rea
   credentials?: StoredCredentials;
   grants?: PluginPermissionGrantListReader;
   connectedAccounts?: Pick<StablePluginConnectedAccountsOwner, 'getBinding' | 'materialize'>;
+  secretSources?: TargetSecretSourcesV1;
+  machineAdmission?: SavedSecretOperationContextV1['machineAdmission'];
 }>;
 
 type DaemonRawCredentialAuthorizationInspectorInput = DaemonRawCredentialCommonInput & Readonly<{
@@ -122,6 +126,8 @@ export function createDaemonPluginRawCredentialMaterializer(
       currentInstallReviewPrincipal,
       readCurrentGrantAuthoritySource,
       grants,
+      ...(input.secretSources ? { secretSources: input.secretSources } : {}),
+      ...(input.machineAdmission ? { machineAdmission: input.machineAdmission } : {}),
       ...(input.connectedAccounts ? { connectedAccounts: input.connectedAccounts } : {}),
       ...(input.getAccountSettingsSnapshot
         ? { getAccountSettingsSnapshot: input.getAccountSettingsSnapshot }

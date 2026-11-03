@@ -1,8 +1,10 @@
+import { createHmac } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import axios from 'axios';
 
 import {
   deriveSettingsSecretsKeyV1,
+  sealSavedSecretResourceStoredContentV1,
   encryptSecretStringV1,
   LiveActivityRemoteUpdateRequestV1Schema,
   type LiveActivityRemoteUpdateRequestV1,
@@ -74,6 +76,64 @@ vi.mock('@/ui/logger', () => ({
 }));
 
 describe('dispatchActivityNotificationAsync', () => {
+  it('lists vault signing references without acquisition and acquires each selected reference once per notification', async () => {
+    const home = 'https://vault-notification.example';
+    const credentials = { token: `header.${Buffer.from(JSON.stringify({ sub: 'vault-account' })).toString('base64url')}.signature`, encryption: null };
+    const reference = 'happier:shared-secret:v1:signing-key';
+    const source = { kind: 'external' as const, contribution: { pluginId: 'acme.vault', localId: 'secrets' },
+      account: 'vault-account', reference: 'op://vault/webhook/key' };
+    const storedContent = sealSavedSecretResourceStoredContentV1({ resourceId: 'signing-key', mode: 'plain',
+      content: { v: 2, name: 'Signing key', kind: 'token', source } });
+    const resources = [{ resourceId: 'signing-key', ownerAccountId: 'vault-account', relationship: 'owner' as const,
+      displayName: 'Signing key', kind: 'token' as const, encryptionMode: 'plain' as const, revision: 1,
+      materialStatus: 'ready' as const, storedContent }];
+    const channels = ['first', 'second', 'unselected'].map(id => NotificationChannelRecordV1Schema.parse({ v: 1,
+      id, kind: 'webhook', enabled: true, topics: {}, url: `https://hooks.example.test/${id}`,
+      signingSecretRef: id === 'unselected' ? 'happier:shared-secret:v1:unselected' : reference }));
+    const snapshot = { source: 'network' as const, settings: accountSettingsParse({}), settingsVersion: 1,
+      loadedAtMs: 1, settingsSecretsReadKeys: [], savedSecretResources: resources, savedSecretCatalogState: 'ready' as const,
+      scopeKey: runWithServerHttpBaseUrl(home, () => resolveAccountSettingsScopeKey(credentials)),
+      notificationChannelCatalog: { status: 'ready' as const, channels, revision: 1, diagnostics: [] } };
+    let value = 'first-signing-key';
+    const acquisitions: string[] = [];
+    const operationContext = createInvocationSavedSecretOperationContextV1({ credentials, snapshot, serverHttpBaseUrl: home,
+      isCurrent: async () => true,
+      // Executable plugin source boundary; catalog admission and resolution stay real.
+      secretSources: { list: () => [], acquire: async locator => {
+        acquisitions.push(locator.reference);
+        return { ok: true, value };
+      }, listFields: async () => ({ ok: false, code: 'source_unavailable', repair: 'configure' }),
+      store: async () => ({ ok: false, code: 'source_unavailable', repair: 'configure' }) } });
+    const get = vi.spyOn(axios, 'get').mockImplementation(async input => {
+      const path = new URL(String(input)).pathname;
+      if (path === '/v1/account/saved-secrets/resources/materials') return { status: 200, data: { resources: resources.map(row => ({
+        resourceId: row.resourceId, encryptionMode: row.encryptionMode, storedContent: row.storedContent, recipientEnvelope: null,
+        entry: { ref: reference, source: 'shared_resource', relationship: 'owner', name: row.displayName, kind: row.kind,
+          ownerAccountId: row.ownerAccountId, revision: row.revision, materialStatus: row.materialStatus,
+          capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true } },
+      })) } };
+      if (path === '/v1/features') return { status: 200, data: { features: {}, capabilities: {} } };
+      throw new Error(`Unexpected vault notification transport: ${path}`);
+    });
+    const signatures: string[] = [];
+    try {
+      await listNotificationChannels({ settings: snapshot.settings, operationContext, pluginNotifications: null });
+      expect(acquisitions).toEqual([]);
+      const deliver = () => dispatchActivityNotification({ settings: snapshot.settings, operationContext, pluginNotifications: null,
+        channels: ['first', 'second'], event: { topic: 'notify_me', message: 'Vault notification' },
+        webhookNetwork: { resolveAddresses: async () => ['93.184.216.34'], openPinnedStream: async request => {
+          signatures.push(request.headers['x-happier-signature-256']!);
+          expect(request.headers['x-happier-signature-256']).toBe(`sha256=${createHmac('sha256', value).update(request.body!).digest('hex')}`);
+          return { status: 200, headers: {}, contentLength: 0, read: async () => null, cancel() {} };
+        } } });
+      await expect(deliver()).resolves.toMatchObject({ deliveredChannels: 2 });
+      value = 'rotated-signing-key';
+      await expect(deliver()).resolves.toMatchObject({ deliveredChannels: 2 });
+      expect(acquisitions).toEqual([source.reference, source.reference]);
+      expect(signatures).toHaveLength(4);
+    } finally { get.mockRestore(); }
+  });
+
   it.each([
     { original: { source: { kind: 'workflow_run', runId: 'followed-workflow' }, revision: 2 }, event: { kind: 'update_posted' } },
     { original: { source: { kind: 'execution_run', sessionId: 'run-session', runId: 'followed-execution' }, terminalEventId: 'terminal-1' },

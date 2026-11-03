@@ -34,13 +34,15 @@ export async function dispatchConnectedServiceCredentialHealthNotificationAsync(
   source: ConnectedServiceCredentialHealthNotificationSource;
   nowMs?: () => number;
   dedupeWindowMs?: number;
-}>): Promise<void> {
+}> & Pick<Parameters<typeof dispatchActivityNotificationAsync>[0], 'operationContext' | 'secretSources'>): Promise<void> {
   const profilesById = await loadConnectedServiceNotificationProfilesById({
     serviceId: params.source.serviceId,
     listConnectedServiceProfiles: params.listConnectedServiceProfiles,
   });
   await dispatchActivityNotificationAsync({
     settings: params.settings,
+    operationContext: params.operationContext,
+    secretSources: params.secretSources,
     settingsSecretsReadKeys: params.settingsSecretsReadKeys,
     expoPushSender: params.expoPushSender,
     event: {

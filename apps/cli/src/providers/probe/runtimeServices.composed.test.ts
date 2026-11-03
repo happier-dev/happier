@@ -1,3 +1,8 @@
+import { createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
+import { definePlugin } from '@happier-dev/plugin-sdk';
+import { projectLoadedPluginContributes } from '@/plugins/projection/registry/fullProjection';
+import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import { loadInstalledPlugins } from '@/plugins/discovery/load/installed';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -84,6 +89,96 @@ const contribution: ResolvedProviderContribution = {
   definition,
 };
 const registry = { providersByContributionKey: new Map([[contributionKey, contribution]]) };
+it.each([false, true])('acquires one vault field for a catalog phase with several authenticated probe requests (detach caller: %s)', async detachCaller => {
+  const secretId = formatSharedSavedSecretRefV1('catalog-vault');
+  const vaultDefinition = ProviderContributionV1Schema.parse({ ...definition,
+    endpointTemplates: [...definition.endpointTemplates, { ...definition.endpointTemplates[0], id: 'responses', protocol: 'openai-responses' }],
+    credential: { kind: 'apiKey', required: true, transports: [{ id: 'bearer', protocols: ['openai-chat', 'openai-responses'], uses: ['probe'],
+      destination: { kind: 'httpHeader', name: 'authorization', format: 'bearer' } }] },
+    catalog: { source: 'probe', manualModelPolicy: 'allowed', probes: [
+      { endpointTemplateId: 'chat', path: '/first', parser: 'openai-models' },
+      { endpointTemplateId: 'responses', path: '/second', parser: 'openai-models' },
+    ] },
+  });
+  const vaultRegistry = { providersByContributionKey: new Map([[contributionKey, { ...contribution, definition: vaultDefinition }]]) };
+  const settings = ProviderSettingsV1Schema.parse({ ...grantedSettings(vaultRegistry),
+    secretBindingsByConnectionId: { [connectionId]: { account: { apiKey: secretId }, byMachineId: {} } },
+  });
+  const resource = { resourceId: 'catalog-vault', encryptionMode: 'plain' as const, recipientEnvelope: null,
+    entry: { ref: secretId, source: 'shared_resource', relationship: 'owner', name: 'Vault', kind: 'apiKey', ownerAccountId: 'owner',
+      revision: 1, materialStatus: 'ready', capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true } },
+    storedContent: sealSavedSecretResourceStoredContentV1({ resourceId: 'catalog-vault', mode: 'plain', content: {
+      v: 2, name: 'Vault', kind: 'apiKey', source: { kind: 'external', contribution: { pluginId: 'acme.vault', localId: 'main' },
+        account: 'account', reference: 'op://vault/item/field' },
+    } }),
+  };
+  const snapshot = providerSnapshot(settings);
+  setActiveAccountSettingsSnapshot(snapshot);
+  vi.spyOn(persistence, 'readStoredCredentials').mockResolvedValue({ token: 'provider-probe-snapshot-account', encryption: null });
+  vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify(FeaturesResponseSchema.parse({
+    features: { sharing: { enabled: true, savedSecrets: { enabled: true } }, encryption: { plaintextStorage: { enabled: true } } },
+  })), { status: 200, headers: { 'content-type': 'application/json' } }));
+  vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, data: { resources: [resource] } });
+  let acquisitions = 0;
+  const acquisitionStarted = createDeferred<void>();
+  const releaseAcquisition = createDeferred<void>();
+  if (!detachCaller) releaseAcquisition.resolve();
+  const plugin = definePlugin({ id: 'acme.vault', version: '1.0.0', displayName: 'Vault', entrypoints: { daemon: './daemon.mjs' },
+    secretSources: { main: { declaration: { title: 'Vault' }, runtime: {
+      async acquire(_input, context) {
+        acquisitions += 1;
+        acquisitionStarted.resolve();
+        await releaseAcquisition.promise;
+        context.signal?.throwIfAborted();
+        return { ok: true, value: 'vault-key' };
+      },
+    } } },
+  });
+  const fixture = await createAuthoredAdmittedPluginRuntimeFixture({
+    plugins: [{ manifest: plugin.manifest, files: { 'daemon.mjs': 'export function activate() {}' },
+      instantiateCommittedModule: () => ({ activate: plugin.activate }) }], coldStart: true,
+    async resolveContributes(happyHomeDir) {
+      return createResolvedContributionRegistry(projectLoadedPluginContributes({
+        loadResult: await loadInstalledPlugins({ happyHomeDir }), provenance: 'external',
+      }));
+    },
+  });
+  const requests: string[] = [];
+  const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-vault-catalog-'));
+  temporaryPaths.push(happyHomeDir);
+  const services = createRuntimeProviderServices({ machineId: 'machine-a', happyHomeDir, registry: vaultRegistry,
+    getAccountSettingsSnapshot: getActiveAccountSettingsSnapshot, featureGate: { isEnabled: () => true },
+    resolveAddresses: async () => ['1.1.1.1'],
+    secretSources: fixture.registry.secretSources,
+    client: createProviderProbeHttpClient({ resolveAddresses: async () => ['1.1.1.1'], transport: async request => {
+      requests.push(request.headers.authorization ?? '');
+      if (new URL(request.url).pathname.endsWith('/first')) return { status: 404, headers: {}, body: Buffer.from('') };
+      return { status: 200, headers: { 'content-type': 'application/json' }, body: Buffer.from('{"data":[{"id":"vault-model"}]}') };
+    } }),
+  });
+  try {
+    await services.summary({ connectionId, machineId: 'machine-a' });
+    expect(acquisitions).toBe(0);
+    const identity = { connectionId, machineId: 'machine-a' };
+    const scheduled = vi.spyOn(services.probeInfrastructure.scheduler, 'runCatalog');
+    const caller = new AbortController();
+    const first = services.probe(identity, 'manual_refresh', { signal: caller.signal });
+    let result: Awaited<typeof first>;
+    if (detachCaller) {
+      await acquisitionStarted.promise;
+      const second = services.probe(identity);
+      await vi.waitFor(() => expect(scheduled).toHaveBeenCalledTimes(2));
+      caller.abort();
+      releaseAcquisition.resolve();
+      await expect(first).resolves.toMatchObject({ status: 'error', error: { code: 'provider_endpoint_unavailable' } });
+      result = await second;
+    } else result = await first;
+    expect(result).toMatchObject({ status: 'success', models: [{ id: 'vault-model' }] });
+    expect(requests).toEqual(['Bearer vault-key', 'Bearer vault-key']);
+    expect(acquisitions).toBe(1);
+  } finally { releaseAcquisition.resolve(); await fixture.dispose(); }
+});
+
 
 function providerSnapshot(providerSettings: ProviderSettingsV1): ActiveAccountSettingsSnapshot {
   const { catalog, defaults } = splitProviderSettingsV1(providerSettings);

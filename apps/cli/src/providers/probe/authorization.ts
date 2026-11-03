@@ -20,6 +20,7 @@ import type { ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/a
 import type { ResolveManagedProviderPurposeBindingIntent } from '../managed/resolvePurposeBindingSnapshot';
 import type { SavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
 import type { ManagedProviderInvocationAccountAuthority } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
+import type { SavedSecretMaterializerV1 } from '@/settings/secrets/savedSecretCatalog';
 import type { ResolveSharedManagedProviderGatewayBinding } from '@/plugins/runtime/invocation/services/managedServicesAdapter';
 
 /** One already-parsed Account settings generation owned by a bulk operation. */
@@ -42,6 +43,7 @@ export type ProviderProbeOperationScope = Readonly<{
   resolveManagedPurposeBindingIntent?: ResolveManagedProviderPurposeBindingIntent;
   isAccountCurrent?: () => boolean | Promise<boolean>;
   savedSecretOperationContext?: SavedSecretOperationContextV1 | null;
+  resolveSavedSecretMaterializer?: (signal?: AbortSignal) => Promise<SavedSecretMaterializerV1>;
   /** Null refuses explicit Account work without issued managed custody. */
   managedRuntimeAccount?: (ManagedProviderInvocationAccountAuthority & Readonly<{
     resolveSharedGateway: ResolveSharedManagedProviderGatewayBinding;

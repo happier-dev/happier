@@ -1,3 +1,4 @@
+import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import { generateKeyPair, randomBytes, randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { SystemTaskExecutionError } from '@happier-dev/cli-common/systemTasks/nativeRemoteSshBootstrap';
@@ -139,9 +140,9 @@ async function readBootstrapCredentialValue(params: ManagedMachineReconciliation
     assertBootstrapCredentialAccount(params, machine);
     if (!machine.bootstrapCredentialRef) throw new ManagedMachineControllerError('credential_unavailable');
     const [{ resolveAccountSettingsScopeKeyForToken }, { refreshSavedSecretCatalogForOperation, createInvocationSavedSecretOperationContextV1 },
-        { createSavedSecretMaterializerFromSnapshotV1 }, { bootstrapAccountSettingsContext }, { runWithServerHttpBaseUrl },
+        { acquireSavedSecretMaterializerForOperation }, { bootstrapAccountSettingsContext }, { runWithServerHttpBaseUrl },
         { fetchAccountProfile }, { fetchAccountEncryptionCurrentness }] = await Promise.all([
-        import('@/settings/accountSettings/accountSettingsScopeKey'), import('@/settings/secrets/hydrateSavedSecretCatalog'), import('@/settings/secrets/savedSecretCatalog'),
+        import('@/settings/accountSettings/accountSettingsScopeKey'), import('@/settings/secrets/hydrateSavedSecretCatalog'), import('@/settings/secrets/savedSecretCatalogRead'),
         import('@/settings/accountSettings/bootstrapAccountSettingsContext'), import('@/api/client/serverHttpBaseUrl'),
         import('@/api/accountProfile'), import('@/api/client/connectedServiceCredentialApi'),
     ]);
@@ -180,6 +181,8 @@ async function readBootstrapCredentialValue(params: ManagedMachineReconciliation
     // own version advance. Account custody is a separate mode/key/row lifetime.
     if (accountSettings.source !== 'network' || !await isCurrent()) throw new ManagedMachineControllerError('credential_unavailable');
     const operationContext = createInvocationSavedSecretOperationContextV1({ credentials, snapshot: accountSettings,
+        machineAdmission: readRequesterAccountActionContext(params.options.context?.externalActionExecutionAuthorization)
+            ?.savedSecretOperationContext.machineAdmission,
         serverHttpBaseUrl: params.input.serverUrl, isCurrent });
     const reference = formatSharedSavedSecretRefV1(machine.bootstrapCredentialRef.resourceId);
     try {
@@ -189,7 +192,10 @@ async function readBootstrapCredentialValue(params: ManagedMachineReconciliation
             operationContext, signal: params.options.signal,
         });
         if (!await isCurrent()) throw new ManagedMachineControllerError('credential_unavailable');
-        const secret = createSavedSecretMaterializerFromSnapshotV1(snapshot, { isCurrent: () => operationContext.readSnapshot() === snapshot }).resolve(reference);
+        const materializer = await acquireSavedSecretMaterializerForOperation({ snapshot, operationContext,
+            references: [{ ref: reference, ...(expectedRevision === undefined ? {} : { revision: expectedRevision }) }],
+            signal: params.options.signal, secretSources: params.input.runtimeRegistry.secretSources });
+        const secret = materializer.resolve(reference);
         const revision = snapshot.savedSecretResources?.find(resource => resource.resourceId === machine.bootstrapCredentialRef?.resourceId)?.revision;
         if (secret.status !== 'ready' || secret.source !== 'shared_resource' || revision === undefined) {
             throw new ManagedMachineControllerError('credential_unavailable');

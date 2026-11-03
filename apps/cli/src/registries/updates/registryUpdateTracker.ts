@@ -1,3 +1,4 @@
+import type { RegistryHostDepsV1 } from '@happier-dev/protocol/registries';
 import { checkRegistryUpstreamV1, registryUpstreamEqualV1, RegistryFetchErrorV1,
   type RegistryFetchContextV1, type RegistryKindV1, type RegistryProvenanceV1,
   type RegistrySourceDescriptorV1, type RegistryUpstreamV1, type RegistryUpdateCheckResultV1 } from '@happier-dev/protocol/registries';
@@ -21,6 +22,7 @@ export type RegistryUpdateTrackerV1 = Readonly<{
 export type RegistryUpdateCheckFilterV1 = Readonly<{ kind?: RegistryKindV1; keys?: readonly string[] }>;
 
 export function createRegistryUpdateCheck(params: Readonly<{
+  admitSource?: RegistryHostDepsV1['admitSource'];
   trackers: readonly RegistryUpdateTrackerV1[];
   ctx: RegistryFetchContextV1;
   readSources: () => Promise<readonly RegistrySourceDescriptorV1[]>;
@@ -45,7 +47,7 @@ export function createRegistryUpdateCheck(params: Readonly<{
         if (item.source && !projected.some(source => source.id === item.source!.id)) projected.push(item.source);
       }
       // Run-local keys preserve independent tracked kinds that share an item key.
-      observations = await checkRegistryUpstreamV1(params.ctx, { sources: projected,
+      observations = await checkRegistryUpstreamV1(params.ctx, { sources: projected, admitSource: params.admitSource,
         items: listed.map(({ item }, index) => ({ key: String(index), provenance: item.provenance })) });
     } catch (error) {
       params.ctx.signal?.throwIfAborted();

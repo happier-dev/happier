@@ -426,6 +426,7 @@ function createPluginMarketplaceCapability(
 
 export async function createCliCapabilitiesService(dependencies: Readonly<{
     secretSources?: CliProbeDependencies['secretSources'];
+    savedSecretOperationContext?: CliProbeDependencies['savedSecretOperationContext'];
     accountContext?: CliProbeDependencies['accountContext'];
     observeCliSnapshot?: (input: Readonly<{
         snapshot: NonNullable<Awaited<ReturnType<typeof buildDetectContext>>['cliSnapshot']>;

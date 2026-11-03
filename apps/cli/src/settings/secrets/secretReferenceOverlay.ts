@@ -1,3 +1,5 @@
+import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import type { ProviderErrorV1 } from '@happier-dev/protocol';
 import { listSecretReferenceOverlayV1BindingNames, readSecretReferenceOverlayV1Reference } from '@happier-dev/protocol/profiles/secretReferenceOverlayV1';
 import type { SecretReferenceOverlayV1 } from '@happier-dev/protocol/profiles/secretReferenceOverlayV1';
 import { parseSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
@@ -99,4 +101,13 @@ export function resolveProjectSecretReferenceEnvironment(params: ProjectSecretRe
     }
   }
   return environment;
+}
+
+/** The launch projection as one Provider refusal; a Saved Secret reason rides along unchanged. */
+export function createLaunchSecretReferenceOverlayProviderErrorV1(
+  reason: LaunchSecretReferenceOverlayFailureReasonV1,
+  context: Readonly<{ connectionId?: string; machineId?: string; sourceProfileId?: string }> = {},
+): ProviderErrorV1 {
+  return createProviderErrorV1(readLaunchSecretReferenceOverlayProviderErrorCodeV1(reason),
+    reason === 'undeclared_requirement' ? context : { ...context, savedSecretReason: reason });
 }

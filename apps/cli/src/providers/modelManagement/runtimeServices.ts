@@ -257,6 +257,7 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
   happyHomeDir?: string;
   resolveSharedGateway?: import('@/plugins/runtime/invocation/services/managedServicesAdapter').ResolveSharedManagedProviderGatewayBinding;
   registry?: ProviderContributionRegistryView;
+  secretSources?: Parameters<typeof createRuntimeProviderServices>[0]['secretSources'];
   resolveRegistry?: () => ProviderContributionRegistryView | Promise<ProviderContributionRegistryView>;
   getAccountSettingsSnapshot?: () => ActiveAccountSettingsSnapshot | null;
   runtimeStore?: ProviderRuntimeStateStore;
@@ -299,6 +300,7 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
     client,
     ...(input.happyHomeDir ? { happyHomeDir: input.happyHomeDir } : {}),
     ...(input.registry ? { registry: input.registry } : {}),
+    ...(input.secretSources ? { secretSources: input.secretSources } : {}),
     ...(input.resolveRegistry ? { resolveRegistry: input.resolveRegistry } : {}),
     ...(input.getAccountSettingsSnapshot
       ? { getAccountSettingsSnapshot: input.getAccountSettingsSnapshot }

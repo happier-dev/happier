@@ -1,3 +1,4 @@
+import type { TargetSecretSourcesV1 } from '@/plugins/runtime/lifecycle/contributions/targetSecretSources';
 import { randomUUID } from 'node:crypto';
 import { createSkillActionExecuteV1 } from '@happier-dev/protocol/prompts/library/skills/skillActionOperations';
 import type { StoredCredentials } from '@/persistence';
@@ -16,6 +17,7 @@ import { createSkillsUpdateTracker } from './trackers/skillsUpdateTracker';
 export function createCliRegistryUpdateCheck(input: Readonly<{
   credentials: StoredCredentials; serverId?: string; serverHttpBaseUrl?: string; signal?: AbortSignal;
   operationContext?: SavedSecretOperationContextV1;
+  secretSources?: TargetSecretSourcesV1;
 }>) {
   const baseUrl = input.operationContext?.serverHttpBaseUrl ?? input.serverHttpBaseUrl ?? resolveServerHttpBaseUrl();
   return runWithServerHttpBaseUrl(baseUrl, () => {
@@ -34,7 +36,7 @@ export function createCliRegistryUpdateCheck(input: Readonly<{
     const checker = createRegistryUpdateCheck({ trackers: [createSkillsUpdateTracker({ execute: skills, signal: input.signal }),
       createMcpRegistryUpdateTracker({ store: mcpStore }),
       createAgentRegistryUpdateTracker({ store: createCliAcpCatalogStore(input) })],
-      ctx: registry.fetchContext, readSources: registry.readSources });
+      ctx: registry.fetchContext, admitSource: registry.fetchContext.admitSource, readSources: registry.readSources });
     return {
       checkNow: (filter?: Parameters<typeof checker.checkNow>[0]) => runWithServerHttpBaseUrl(baseUrl, () => checker.checkNow(filter)),
       runBackgroundAutoUpdateCheck: () => runWithServerHttpBaseUrl(baseUrl, () => checker.runBackgroundAutoUpdateCheck()),

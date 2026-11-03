@@ -2,8 +2,10 @@ import type { SavedSecretOperationContextV1 } from './savedSecretOperationContex
 import {
   readRequestedSavedSecretOperationReferences,
   readSavedSecretCatalogForOperation,
+  readSavedSecretCatalogAdmissionForOperation,
   captureSavedSecretReferencesForOperation,
   type SavedSecretCatalogRefreshInputV1,
+  type SavedSecretCatalogOperationAdmissionV1,
 } from './savedSecretCatalogRead';
 import axios from 'axios';
 import { isDeepStrictEqual } from 'node:util';
@@ -77,20 +79,32 @@ export type { SavedSecretOperationAdmissionFailureReason } from './savedSecretCa
 export type { SavedSecretLegacyImportResultV1 } from './savedSecretCatalog';
 type SharedSavedSecretPromoteInputV1 = ReturnType<typeof SharedSavedSecretPromoteInputV1Schema.parse>;
 
-export async function refreshSavedSecretCatalogForOperation(input: SavedSecretCatalogRefreshInputV1): Promise<ActiveAccountSettingsSnapshot> {
+export async function refreshSavedSecretCatalogAdmissionForOperation(input: SavedSecretCatalogRefreshInputV1): Promise<SavedSecretCatalogOperationAdmissionV1> {
   const lifetimeToken = getActiveAccountSettingsSnapshotLifetimeToken();
   const result = await importLegacySavedSecretsForOperation(input);
   const observedSourceVersion = (input.operationContext ? input.operationContext.readSnapshot() : getActiveAccountSettingsSnapshot())?.settingsVersion;
-  const refreshed = await readSavedSecretCatalogForOperation(input);
-  const currentResult: SavedSecretLegacyImportResultV1 = observedSourceVersion === refreshed.settingsVersion
-    ? result : { status: 'pending', reason: 'source-unavailable' };
-  const committed = input.operationContext
-    ? await input.operationContext.commitLegacyImportResult({ expectedSettingsVersion: refreshed.settingsVersion, result: currentResult })
-    : commitActiveSavedSecretLegacyImport({ scopeKey: input.expectedScopeKey, lifetimeToken,
-      expectedSettingsVersion: refreshed.settingsVersion, result: currentResult });
+  let admission: SavedSecretCatalogOperationAdmissionV1;
+  try {
+    admission = await readSavedSecretCatalogAdmissionForOperation(input);
+  } finally {
+    // A denied reference still has an import outcome to report at this source.
+    const refreshed = input.operationContext ? input.operationContext.readSnapshot() : getActiveAccountSettingsSnapshot();
+    if (!refreshed) throw new Error('saved_secret_account_lifetime_changed');
+    const currentResult: SavedSecretLegacyImportResultV1 = observedSourceVersion === refreshed.settingsVersion
+      ? result : { status: 'pending', reason: 'source-unavailable' };
+    const committed = input.operationContext
+      ? await input.operationContext.commitLegacyImportResult({ expectedSettingsVersion: refreshed.settingsVersion, result: currentResult })
+      : commitActiveSavedSecretLegacyImport({ scopeKey: input.expectedScopeKey, lifetimeToken,
+        expectedSettingsVersion: refreshed.settingsVersion, result: currentResult });
+    if (!committed) throw new Error('saved_secret_account_lifetime_changed');
+  }
   const snapshot = input.operationContext ? input.operationContext.readSnapshot() : getActiveAccountSettingsSnapshot();
-  if (!committed || !snapshot) throw new Error('saved_secret_account_lifetime_changed');
-  return snapshot;
+  if (!snapshot) throw new Error('saved_secret_account_lifetime_changed');
+  return { snapshot, catalogRead: admission.catalogRead };
+}
+
+export async function refreshSavedSecretCatalogForOperation(input: SavedSecretCatalogRefreshInputV1): Promise<ActiveAccountSettingsSnapshot> {
+  return (await refreshSavedSecretCatalogAdmissionForOperation(input)).snapshot;
 }
 
 type SavedSecretDomainReferenceCatalogsV1 = Pick<SavedSecretReferenceCatalogsV1,

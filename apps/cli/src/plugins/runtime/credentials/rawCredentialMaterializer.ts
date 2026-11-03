@@ -24,9 +24,13 @@ import {
 import {
   createSavedSecretMaterializerFromSnapshotV1,
   type SavedSecretResolutionFailureStatusV1,
+  type SavedSecretMaterializerV1,
+  type SavedSecretResolutionV1,
 } from '@/settings/secrets/savedSecretCatalog';
 import { refreshSavedSecretCatalogForOperation, savedSecretOperationAdmissionStatus } from "@/settings/secrets/hydrateSavedSecretCatalog";
-import { SavedSecretOperationAdmissionError } from "@/settings/secrets/savedSecretCatalogRead";
+import { acquireSavedSecretMaterializerForOperation, SavedSecretOperationAdmissionError } from "@/settings/secrets/savedSecretCatalogRead";
+import type { TargetSecretSourcesV1 } from '@/plugins/runtime/lifecycle/contributions/targetSecretSources';
+import type { SavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
 import { evaluatePluginPermissionGrant } from '@/plugins/runtime/lifecycle/permissions/evaluatePluginPermissionGrant';
 import type { PluginPermissionGrantListReader } from '@/plugins/runtime/lifecycle/permissions/pluginPermissionGrantListReader';
 
@@ -172,28 +176,33 @@ type Authorization = Readonly<{
 class SavedSecretMaterializationUnavailable extends Error {
   readonly status: SavedSecretResolutionFailureStatusV1;
   readonly admissionReason?: SavedSecretOperationAdmissionError['reason'];
+  readonly sourceFailure?: Exclude<SavedSecretResolutionV1, { status: 'ready' }>['sourceFailure'];
 
   constructor(
     status: SavedSecretResolutionFailureStatusV1,
     admissionReason?: SavedSecretOperationAdmissionError['reason'],
+    sourceFailure?: Exclude<SavedSecretResolutionV1, { status: 'ready' }>['sourceFailure'],
   ) {
     super(`Saved Secret material is ${status}`);
     this.name = 'SavedSecretMaterializationUnavailable';
     this.status = status;
     this.admissionReason = admissionReason;
+    this.sourceFailure = sourceFailure;
   }
 }
 
 function savedSecretUnavailable(
   status: SavedSecretResolutionFailureStatusV1,
   admissionReason?: SavedSecretOperationAdmissionError['reason'],
+  sourceFailure?: Exclude<SavedSecretResolutionV1, { status: 'ready' }>['sourceFailure'],
 ): never {
-  throw new SavedSecretMaterializationUnavailable(status, admissionReason);
+  throw new SavedSecretMaterializationUnavailable(status, admissionReason, sourceFailure);
 }
 
 function unavailable(
   status?: SavedSecretResolutionFailureStatusV1,
   admissionReason?: SavedSecretOperationAdmissionError['reason'],
+  sourceFailure?: Exclude<SavedSecretResolutionV1, { status: 'ready' }>['sourceFailure'],
 ): PluginError {
   return new PluginError({
     code: 'plugin_voice_credential_access_unavailable',
@@ -203,6 +212,7 @@ function unavailable(
           details: {
             materialStatus: status,
             ...(admissionReason ? { admissionReason } : {}),
+            ...(sourceFailure ? { sourceFailure } : {}),
           },
         }
       : {}),
@@ -211,7 +221,7 @@ function unavailable(
 
 function unavailableFrom(error: unknown): PluginError {
   return error instanceof SavedSecretMaterializationUnavailable
-    ? unavailable(error.status, error.admissionReason)
+    ? unavailable(error.status, error.admissionReason, error.sourceFailure)
     : unavailable();
 }
 
@@ -734,6 +744,7 @@ function materializeSavedSecret(
 }
 
 async function materializeCurrentSavedSecret(input: Readonly<{
+  materializer: SavedSecretMaterializerV1;
   binding: PluginRawCredentialMaterializerBinding;
   authority: DeclarationAuthority;
   before: Authorization;
@@ -759,13 +770,11 @@ async function materializeCurrentSavedSecret(input: Readonly<{
   ) {
     throw unavailable();
   }
-  const resolved = createSavedSecretMaterializerFromSnapshotV1(
-    current.savedSecretCustody.snapshot,
-  ).recheck(
+  const resolved = input.materializer.recheck(
     current.savedSecretCustody.secretRef,
     current.savedSecretCustody.fingerprint,
   );
-  if (resolved.status !== 'ready') savedSecretUnavailable(resolved.status);
+  if (resolved.status !== 'ready') savedSecretUnavailable(resolved.status, undefined, resolved.sourceFailure);
   return materializeSavedSecret(input.request, resolved.value);
 }
 
@@ -948,6 +957,8 @@ export function createPluginRawCredentialMaterializer(input: Readonly<{
   readCurrentGrantAuthoritySource: CurrentPluginPermissionGrantAuthoritySourceReader;
   grants: PluginPermissionGrantListReader;
   connectedAccounts?: Pick<StablePluginConnectedAccountsOwner, 'getBinding' | 'materialize'>;
+  secretSources?: TargetSecretSourcesV1;
+  machineAdmission?: SavedSecretOperationContextV1['machineAdmission'];
   getAccountSettingsSnapshot?: () => ActiveAccountSettingsSnapshot | null;
   getAccountSettingsSnapshotLifetimeToken?: () => number;
   /** Joins the canonical daemon snapshot warm only before initial source admission. */
@@ -990,15 +1001,19 @@ export function createPluginRawCredentialMaterializer(input: Readonly<{
   const admitSavedSecretOperation = async (
     custody: NonNullable<SelectedSource['savedSecretCustody']>,
     signal: AbortSignal,
-  ): Promise<void> => {
+  ): Promise<SavedSecretMaterializerV1> => {
     const expectedScopeKey = custody.snapshot.scopeKey;
-    if (expectedScopeKey === undefined || expectedScopeKey.length === 0) return;
     try {
-      await refreshForOperation({
+      const snapshot = expectedScopeKey ? await refreshForOperation({
         expectedScopeKey,
         references: [{ ref: custody.secretRef }],
         signal,
-      });
+      }) : custody.snapshot;
+      const lifetime = getSnapshotLifetimeToken();
+      return await acquireSavedSecretMaterializerForOperation({ snapshot, references: [{ ref: custody.secretRef }],
+        isCurrent: () => !signal.aborted && getSnapshotLifetimeToken() === lifetime,
+        ...(input.machineAdmission ? { machineAdmission: input.machineAdmission } : {}),
+        ...(input.secretSources ? { secretSources: input.secretSources } : {}), signal });
     } catch (error) {
       signal.throwIfAborted();
       if (error instanceof SavedSecretOperationAdmissionError) {
@@ -1101,7 +1116,7 @@ export function createPluginRawCredentialMaterializer(input: Readonly<{
         try {
           const custody = before.selected.savedSecretCustody;
           if (!custody) throw unavailable();
-          await admitSavedSecretOperation(custody, signal);
+          const materializer = await admitSavedSecretOperation(custody, signal);
           callbackCredentialRevision = custody.callbackCredentialRevision;
           if (
             options.credentialRevisionBasis?.expectedCredentialRevision !== null
@@ -1109,6 +1124,7 @@ export function createPluginRawCredentialMaterializer(input: Readonly<{
             && callbackCredentialRevision !== options.credentialRevisionBasis.expectedCredentialRevision
           ) throw unavailable();
           result = await materializeCurrentSavedSecret({
+            materializer,
             binding: input.binding,
             authority,
             before,

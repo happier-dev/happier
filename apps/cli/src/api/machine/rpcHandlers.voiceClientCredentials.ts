@@ -122,6 +122,8 @@ export function registerMachineVoiceClientCredentialRpcHandlers(params: Readonly
         const connectedAccounts = lease.registry.resolveConnectedAccountPurposeBindingOwner?.() ?? null;
         if (!connectedAccounts) return failure(null);
         const materializer = createDaemonPluginRawCredentialMaterializer({
+          ...(context?.machineAdmission ? { machineAdmission: context.machineAdmission } : {}),
+          ...(lease.registry.secretSources ? { secretSources: lease.registry.secretSources } : {}),
           binding: {
             manifest: target.manifest,
             contribution: {

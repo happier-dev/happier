@@ -15,7 +15,7 @@ import { loadFreshMcpAccountSettingsContext } from '@/cli/commands/mcp/loadFresh
 import { McpServerCatalogUnavailableError, readMcpServersSettingsFromAccountSettings } from '@/mcp/servers/readMcpServersSettingsFromAccountSettings';
 import { resolveSessionCapabilitiesForDirectory } from '@/mcp/servers/resolveSessionCapabilitiesForDirectory';
 import { materializeMcpServerConfigRecord } from '@/mcp/servers/materializeMcpServerConfigRecord';
-import { createSavedSecretMaterializerFromSnapshotV1 } from '@/settings/secrets/savedSecretCatalog';
+import { acquireSavedSecretMaterializerForOperation } from '@/settings/secrets/savedSecretCatalogRead';
 import { createInvocationSavedSecretOperationContextV1, type SavedSecretOperationContextV1 } from "@/settings/secrets/savedSecretOperationContext";
 import { refreshSavedSecretCatalogForOperation } from "@/settings/secrets/hydrateSavedSecretCatalog";
 import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
@@ -274,8 +274,8 @@ export function registerMachineMcpServersRpcHandlers(params: Readonly<{
           }
         }
         await assertCurrent();
-        const savedSecretMaterializer = createSavedSecretMaterializerFromSnapshotV1(materialSnapshot, {
-          isCurrent: () => operationContext !== null && operationContext.readSnapshot() === materialSnapshot,
+        const savedSecretMaterializer = await acquireSavedSecretMaterializerForOperation({
+          snapshot: materialSnapshot, references, secretSources: pluginLease?.registry.secretSources, ...(operationContext ? { operationContext } : {}),
         });
 
         let requestAuth: McpTestRequestAuthAttachment | undefined;

@@ -35,7 +35,7 @@ import {
   type SavedSecretCatalogResourceInputV1,
 } from '@/settings/secrets/savedSecretCatalog';
 import { refreshSavedSecretCatalogForOperation, savedSecretOperationAdmissionStatus } from "@/settings/secrets/hydrateSavedSecretCatalog";
-import { SavedSecretOperationAdmissionError } from "@/settings/secrets/savedSecretCatalogRead";
+import { acquireSavedSecretMaterializerForOperation, SavedSecretOperationAdmissionError } from "@/settings/secrets/savedSecretCatalogRead";
 import { createInvocationSavedSecretOperationContextV1, type SavedSecretOperationContextV1 } from "@/settings/secrets/savedSecretOperationContext";
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
@@ -454,8 +454,10 @@ export async function resolveRunnerMcpServers(params: RunnerMcpServersParams): P
     builtIn.happierMcpServer.stop();
     throw new McpServerCatalogUnavailableError('scope-retired');
   }
-  const savedSecretMaterializer = operationContext && invocationSnapshot
-    ? createSavedSecretMaterializerFromSnapshotV1(invocationSnapshot, { isCurrent: () => operationContext.readSnapshot() === invocationSnapshot })
+  const sourceSignal = params.executionRun?.signal ?? params.session.getRuntimeLifetimeSignal?.() ?? undefined;
+  const savedSecretMaterializer = invocationSnapshot
+    ? await acquireSavedSecretMaterializerForOperation({ snapshot: invocationSnapshot,
+      references: listSelectedMcpSharedSecretReferences(resolvedSelection.selectedServersByName), operationContext, signal: sourceSignal, secretSources: pluginRegistry?.secretSources })
     : createSavedSecretMaterializerV1({
     accountSettings,
     settingsSecretsReadKeys,

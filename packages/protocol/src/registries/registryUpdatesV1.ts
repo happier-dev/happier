@@ -1,3 +1,4 @@
+import type { RegistryHostDepsV1 } from './registryHostV1.js';
 import type { RegistryProvenanceV1 } from './registryItemsV1.js';
 import { RegistryFetchErrorV1 } from './registryListV1.js';
 import { resolveLegacyRegistrySourceRefV1, type RegistrySourceDescriptorV1 } from './registrySourcesV1.js';
@@ -8,6 +9,7 @@ export * from './registryUpstreamV1.js';
 
 export async function checkRegistryUpstreamV1(ctx: RegistryFetchContextV1, input: Readonly<{
   sources: readonly RegistrySourceDescriptorV1[];
+  admitSource?: RegistryHostDepsV1['admitSource'];
   items: readonly Readonly<{ key: string; provenance: RegistryProvenanceV1 }>[];
 }>): Promise<ReadonlyMap<string, RegistryUpstreamCheckV1>> {
   ctx.signal?.throwIfAborted();
@@ -31,16 +33,17 @@ export async function checkRegistryUpstreamV1(ctx: RegistryFetchContextV1, input
       throw error;
     }
   };
-  const http: RegistryHttpV1 = {
-    getJson: (...args) => transport(() => ctx.http.getJson(...args)),
-    getText: (...args) => transport(() => ctx.http.getText(...args)),
-    getBytes: (...args) => transport(() => ctx.http.getBytes(...args)),
-  };
   await Promise.all([...groups].map(async ([source, items]) => {
     try {
+      const operationCtx = input.admitSource ? await input.admitSource(source) : ctx;
+      const http: RegistryHttpV1 = {
+        getJson: (...args) => transport(() => operationCtx.http.getJson(...args)),
+        getText: (...args) => transport(() => operationCtx.http.getText(...args)),
+        getBytes: (...args) => transport(() => operationCtx.http.getBytes(...args)),
+      };
       const adapter: RegistryFormatAdapterV1 | undefined = (REGISTRY_FORMAT_ADAPTERS_V1 as Partial<Record<string, RegistryFormatAdapterV1>>)[source.format];
       if (!adapter) throw new RegistryFetchErrorV1({ state: 'newer_format', found: source.format });
-      const latest = await adapter.latest({ ...ctx, http }, items.map(item => item.provenance), { source });
+      const latest = await adapter.latest({ ...operationCtx, http }, items.map(item => item.provenance), { source });
       ctx.signal?.throwIfAborted();
       for (const { key, provenance } of items) {
         const ref = latest.get(provenance.itemId);

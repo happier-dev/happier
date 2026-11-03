@@ -47,6 +47,7 @@ type ConnectedServiceProbeApi = Parameters<typeof resolveConnectedServiceAuthFor
 
 export type CliProbeDependencies = Readonly<{
     secretSources?: import('@/plugins/runtime/lifecycle/contributions/targetSecretSources').TargetSecretSourcesV1;
+    savedSecretOperationContext?: import('@/settings/secrets/savedSecretOperationContext').SavedSecretOperationContextV1;
     accountContext?: NonNullable<Parameters<typeof resolveProbeBackendContext>[1]>['accountContext'];
     createAgentInvocationServices?: CreateAgentInvocationServices;
     agentCatalogEntry?: AgentCatalogEntry | null;
@@ -298,6 +299,9 @@ export async function invokeCliPreflightMethod(
             catalogEntry: dependencies.agentCatalogEntry,
             registrySnapshot: dependencies.agentRegistrySnapshot,
             runtimeCacheKey: dependencies.agentRuntimeCacheKey,
+            savedSecretOperationContext: dependencies.savedSecretOperationContext,
+            secretSources: dependencies.secretSources,
+            machineAdmission: requestContext.machineAdmission,
             ...(requestContext.signal ? { signal: requestContext.signal } : {}),
             backendTarget: probeContext.backendTarget,
             runtimeDescriptorV1: probeContext.runtimeDescriptorV1,
@@ -321,6 +325,9 @@ export async function invokeCliPreflightMethod(
             accountSettings: probeContext.accountSettings,
             credentials: probeContext.credentials,
             processEnv: { ...process.env, ...explicitEnvironment },
+            savedSecretOperationContext: dependencies.savedSecretOperationContext,
+            secretSources: dependencies.secretSources,
+            machineAdmission: requestContext.machineAdmission,
         });
     } catch {
         return {
@@ -433,6 +440,9 @@ export async function invokeCliPreflightMethod(
         materializedEnv,
     })).env;
     const commonProbeArgs = {
+        machineAdmission: requestContext.machineAdmission,
+        savedSecretOperationContext: dependencies.savedSecretOperationContext,
+        secretSources: dependencies.secretSources,
         agentId,
         catalogEntry: dependencies.agentCatalogEntry,
         registrySnapshot: dependencies.agentRegistrySnapshot,

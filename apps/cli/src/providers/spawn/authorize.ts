@@ -60,7 +60,9 @@ import {
   type RetainedManagedProviderAuthorizationCurrentnessCheck,
 } from '../sessions/retainedManagedProviderPolicy';
 import { projectProviderRuntimeBindingBasis } from './runtimeBindingBasis';
-import { admitRuntimeProviderSavedSecret } from './runtimeCredential';
+import { admitRuntimeProviderSavedSecret, providerSavedSecretAdmissionError } from './runtimeCredential';
+import type { SavedSecretMaterializerV1 } from '@/settings/secrets/savedSecretCatalog';
+import { acquireSavedSecretMaterializerForOperation } from '@/settings/secrets/savedSecretCatalogRead';
 import type { SavedSecretOperationContextV1 } from '@/settings/secrets/hydrateSavedSecretCatalog';
 import { logger } from '@/ui/logger';
 
@@ -671,6 +673,7 @@ export async function createRuntimeProviderSpawnAuthorizationAttempt(input: Read
     });
   }
   let managedPurposeBindingSnapshot = input.managedPurposeBindingSnapshot;
+  let admittedSnapshot: ActiveAccountSettingsSnapshot | null = null;
   const resolveCurrent = async (
     lifetime = admissionLifetime,
     admitSavedSecret = false,
@@ -897,6 +900,7 @@ export async function createRuntimeProviderSpawnAuthorizationAttempt(input: Read
         : {}),
     });
     if (!authorization.ok) return authorization;
+    admittedSnapshot = snapshot;
     const modelLoadDescriptor =
       connectionResolution.status === 'resolved'
       && connectionResolution.record.source.kind === 'contribution'
@@ -920,6 +924,24 @@ export async function createRuntimeProviderSpawnAuthorizationAttempt(input: Read
   };
   const initial = await resolveCurrent(admissionLifetime, true);
   if (!initial.ok) return initial;
+  const credentialReference = initial.authorization.credentialReference;
+  let savedSecretMaterializer: SavedSecretMaterializerV1 | undefined;
+  try {
+    savedSecretMaterializer = admittedSnapshot && credentialReference.kind === 'apiKey'
+      ? await acquireSavedSecretMaterializerForOperation({
+      snapshot: admittedSnapshot,
+      references: [{ ref: credentialReference.secretId }, ...(credentialReference.additionalCredentials ?? []).map(row => ({ ref: row.secretId }))],
+      operationContext: input.savedSecretOperationContext,
+      secretSources: input.lease.registry.secretSources,
+      signal: admissionLifetime.signal,
+      isCurrent: () => getAccountSettingsSnapshot()?.scopeKey === initialScopeKey && !admissionLifetime.signal?.aborted,
+      }) : undefined;
+  } catch (error) {
+    if (error instanceof ProviderOperationAbandonedError || error instanceof Error && error.name === 'AbortError') throw error;
+    return { ok: false, error: providerSavedSecretAdmissionError(error, {
+      connectionId: initial.authorization.ticket.connectionId, machineId: input.machineId,
+    }) };
+  }
   const retainedManagedRuntimeBindingBasis =
     isManagedProviderSpawnAuthorization(initial.authorization)
       ? projectProviderRuntimeBindingBasis(initial.authorization)
@@ -1032,7 +1054,7 @@ export async function createRuntimeProviderSpawnAuthorizationAttempt(input: Read
           accountSettings: snapshot.settings,
           savedSecretResources: snapshot.savedSecretResources,
           settingsSecretsReadKeys: snapshot.settingsSecretsReadKeys,
-          ...(input.savedSecretOperationContext ? { isCurrent: () => input.savedSecretOperationContext?.readSnapshot() === snapshot } : {}),
+          savedSecretMaterializer,
           connectionId: initial.authorization.ticket.connectionId,
           machineId: input.machineId,
         });

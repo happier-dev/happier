@@ -9,8 +9,8 @@ import { warmActiveAccountSettingsSnapshotBestEffort } from '@/settings/accountS
 import { logger } from '@/ui/logger';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { resolveMergedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
-import { createSavedSecretMaterializerFromSnapshotV1 } from '@/settings/secrets/savedSecretCatalog';
-import { readSavedSecretCatalogForOperation, SavedSecretOperationAdmissionError } from "@/settings/secrets/savedSecretCatalogRead";
+import type { TargetSecretSourcesV1 } from '@/plugins/runtime/lifecycle/contributions/targetSecretSources';
+import { readSavedSecretMaterializerForOperation, SavedSecretOperationAdmissionError } from "@/settings/secrets/savedSecretCatalogRead";
 import { type SavedSecretOperationContextV1 } from "@/settings/secrets/savedSecretOperationContext";
 import { resolveValueRefPlaintext } from '@/settings/valueRefs/resolveValueRefPlaintext';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -29,6 +29,8 @@ export async function readCliRegistrySourcesV1(input:Readonly<{port?:PromptLibra
     createPluginRegistrySourceDescriptorV1({pluginId:entry.pluginId,definition:entry.definition,suppliers:[]}))});
 }
 export function createCliRegistryHostV1(input:Readonly<{credentials?:StoredCredentials;port?:PromptLibraryStackActionPortV1;signal?:AbortSignal;
+  secretSources?:TargetSecretSourcesV1;
+  readSources?:()=>Promise<readonly RegistrySourceDescriptorV1[]>;
   operationContext?:SavedSecretOperationContextV1;machineAdmission?:SocketRpcMachineAdmissionContextV1;
   updates?: RegistryHostDepsV1['updates']}>={}) {
   const operation=input.operationContext;
@@ -46,28 +48,37 @@ export function createCliRegistryHostV1(input:Readonly<{credentials?:StoredCrede
     port={serverId:'',assertCurrent:store.assertCurrent,readCatalog:store.readCatalog,writeRecord:store.writeRecord};
     return port;
   };
-  const readSources=async()=>readCliRegistrySourcesV1({port:await resolvePort(),signal:input.signal});
+  const readSources=input.readSources??(async()=>readCliRegistrySourcesV1({port:await resolvePort(),signal:input.signal}));
   const resolveToken=async(source:import('@happier-dev/protocol/registries').RegistrySourceV1)=>{
     const reference=source.token?.secretRef;if(!reference)return null;
     // A shared Machine grant reaches public registries, not the custodian's
     // private Account credential. Only authenticated ingress supplies this fact.
     if(input.machineAdmission&&input.machineAdmission.actorAccountId!==input.machineAdmission.custodianAccountId)
       throw new RegistryFetchErrorV1({state:'auth_failed'});
-    let snapshot=operation?operation.readSnapshot():getActiveAccountSettingsSnapshot();
+    const snapshot=operation?operation.readSnapshot():getActiveAccountSettingsSnapshot();
     const expectedScopeKey=scopeKey??snapshot?.scopeKey;if(!expectedScopeKey)return null;
     if(credentials)await resolvePort();
-    // Default daemon ingress uses the incumbent persisted-credential reader in
-    // this same operation owner; a hydrated snapshot is not authorization.
-    try{snapshot=await readSavedSecretCatalogForOperation({expectedScopeKey,
-      references:[{ref:reference}],signal:input.signal,operationContext:operation});}
-    catch(error){if(error instanceof SavedSecretOperationAdmissionError)return null;throw error;}
-    if(!snapshot)return null;
-    const value=resolveValueRefPlaintext({valueRef:{t:'savedSecret',secretId:reference},
-      savedSecretMaterializer:createSavedSecretMaterializerFromSnapshotV1(snapshot),processEnv:{}});
-    return value.status==='ready'?value.value:null;
+    try {
+      const read = () => readSavedSecretMaterializerForOperation({ expectedScopeKey,
+        references: [{ ref: reference }], signal: input.signal, operationContext: operation, secretSources: input.secretSources });
+      const admitted = operation ? await runWithServerHttpBaseUrl(operation.serverHttpBaseUrl, read) : await read();
+      const value=resolveValueRefPlaintext({valueRef:{t:'savedSecret',secretId:reference},
+        savedSecretMaterializer:admitted.materializer,processEnv:{}});
+      return value.status==='ready'?value.value:null;
+    } catch(error) { if(error instanceof SavedSecretOperationAdmissionError)return null;throw error; }
   };
-  const fetchContext = { signal: input.signal, http: createRegistryHttpV1({signal:input.signal,resolveToken}),
-    git: createRegistryGitProtocolV1({signal:input.signal,resolveToken}) };
+  const createFetchContext = (resolve: typeof resolveToken) => ({ signal: input.signal,
+    http: createRegistryHttpV1({signal:input.signal,resolveToken:resolve}),
+    git: createRegistryGitProtocolV1({signal:input.signal,resolveToken:resolve}) });
+  const baseContext = createFetchContext(resolveToken);
+  const admitSource: NonNullable<RegistryHostDepsV1['admitSource']> = async source => {
+    if ('packageContent' in source || !source.token) return baseContext;
+    const value = await resolveToken(source);
+    if (value === null) throw new RegistryFetchErrorV1({state:'auth_failed'});
+    const reference = source.token.secretRef;
+    return createFetchContext(async selected => selected.token?.secretRef === reference ? value : null);
+  };
+  const fetchContext = { ...baseContext, admitSource };
   const host=createRegistryHostV1({host:'node',...fetchContext,
     readSources, updates: input.updates,
     ...(input.port||credentials?{mutateSources:async(mutation:Parameters<typeof updatePromptLibraryRegistrySourcesV1>[1])=>{

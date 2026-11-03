@@ -189,6 +189,7 @@ function readListenerFailureMessage(error: unknown): string {
 
 export function createProductionPluginInvocationServiceOwners(params?: Readonly<{
     loggerSink?: PluginInvocationLogSink;
+    readSecretSources?(): import('../../lifecycle/contributions/targetSecretSources').TargetSecretSourcesV1 | undefined;
     now?: () => number;
     filesystemRoots?: PluginFileSystemRoots;
     resolveFilesystemRoots?: (pluginId: string) => PluginFileSystemRoots | null;
@@ -403,14 +404,15 @@ healthChecks?: import('./unavailable').PluginInvocationServicesFactoryParams['he
     const settingsHost = params?.settingsDeclarations
         ? createSettingsHost(params.settingsDeclarations)
         : null;
-    const accountSecretCustody = createAccountPluginSecretCustodyRouter(
-        accountCredentialAuthority
+    const accountSecretCustody = createAccountPluginSecretCustodyRouter({
+        get secretSources() { return params?.readSecretSources?.(); },
+        ...(accountCredentialAuthority
             ? {
                 readCredentials: accountCredentialAuthority.readCredentials,
                 accountScopeKey: null,
             }
-            : {},
-    );
+            : {}),
+    });
     const daemonSecretCustody = storagePaths
         ? createDaemonPluginSecretCustodyRouter({
             paths: storagePaths,

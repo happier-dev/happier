@@ -93,7 +93,7 @@ import { resolveSessionCapabilitiesForDirectory } from '@/mcp/servers/resolveSes
 import { agentReceivesUserMcpServersV1 } from '@happier-dev/protocol/plugins/contributions/v2';
 import { resolveAgentToolsDelivery } from '@/agent/tools/happierTools/runtime/resolveAgentToolsDelivery';
 import { listSelectedMcpSharedSecretReferences, materializeMcpServerConfigRecord } from '@/mcp/servers/materializeMcpServerConfigRecord';
-import { createSavedSecretMaterializerFromSnapshotV1 } from '@/settings/secrets/savedSecretCatalog';
+import { acquireSavedSecretMaterializerForOperation } from '@/settings/secrets/savedSecretCatalogRead';
 import { getActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshotLifetimeToken } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { projectResolvedMcpServers } from '@/mcp/runtime/projectResolvedMcpServers';
 import { readLoadedMcpNativeServerNames } from '@/mcp/runtime/assignMcpWireNames';
@@ -471,7 +471,10 @@ export function createNativeAgentExecutionRunContextLeaseFactory(params: Readonl
                 }
                 mcpMaterial = await materializeMcpServerConfigRecord({
                     resolved: { directory: params.directory, strictMode: selected.strictMode, serversByName: selected.selectedServersByName },
-                    savedSecretMaterializer: createSavedSecretMaterializerFromSnapshotV1(snapshot),
+                    savedSecretMaterializer: await acquireSavedSecretMaterializerForOperation({ snapshot,
+                        references: listSelectedMcpSharedSecretReferences(selected.selectedServersByName),
+                        operationContext: params.resolveAccountSettingsSnapshot?.readOperationContext?.() ?? undefined,
+                        secretSources: params.runtimeRegistry?.secretSources, signal }),
                     processEnv: { ...process.env, ...params.sourceEnvironment }, tmpDir: null,
                 });
                 const settings = readMcpServersSettingsFromAccountSettings(snapshot);

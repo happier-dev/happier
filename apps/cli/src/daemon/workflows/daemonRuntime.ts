@@ -297,6 +297,7 @@ export function createCredentialedWorkflowAcceptedAuthorizationCurrentness(param
 
 /** Production composition; the Automation worker remains the claim owner. */
 export function createProductionDaemonWorkflowRuntime(params: Readonly<{
+  secretSources?: import('./production').WorkflowProductionExecutionDeps['secretSources'];
   admissionDrain?: DaemonAdmissionDrain;
   credentials: StoredCredentials;
   accountId: string;
@@ -528,6 +529,7 @@ export function createProductionDaemonWorkflowRuntime(params: Readonly<{
             },
           },
           credentials: params.credentials,
+          secretSources: params.secretSources,
           serverId,
           ...(input.postWorkflowMessage ? { postWorkflowMessage: input.postWorkflowMessage } : {}),
           ...(input.serverIdentityId ? { serverIdentityId: input.serverIdentityId } : {}),
@@ -572,6 +574,7 @@ export function createProductionDaemonWorkflowRuntime(params: Readonly<{
         machineId: input.machineId,
         storage,
         onReviewEntered: createWorkflowRunReviewEntryNotificationHandler({
+          secretSources: params.secretSources,
           expoPushSender: createWorkflowRunPushNotificationClient(params.credentials.token),
         }),
         resolveAccountEncryption: async (signal) => await resolveAvailableEncryption(params.credentials, signal),

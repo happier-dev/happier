@@ -1263,6 +1263,7 @@ export class DurableWorkflowCoordinatorStore implements WorkflowCoordinatorStore
 }
 
 export type WorkflowProductionExecutionDeps = Readonly<{
+  secretSources?: NonNullable<Parameters<typeof createWorkflowRunCommittedNotificationHandler>[0]>['secretSources'];
   credentials: StoredCredentials;
   sessionStartup?: import('./sessionStepExecutor').WorkflowSessionStartup;
   /** Stable Home identity used by Account-scoped domain rows. */
@@ -1370,10 +1371,12 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
   });
   const onCommittedTransition = params.onCommittedTransition
     ?? createWorkflowRunCommittedNotificationHandler({
+      secretSources: params.execution.secretSources,
       expoPushSender: createWorkflowRunPushNotificationClient(params.token),
       followSource: { token: params.token, serverHttpBaseUrl: resolveServerHttpBaseUrl() },
     });
   const onReviewEntered = params.onReviewEntered ?? createWorkflowRunReviewEntryNotificationHandler({
+    secretSources: params.execution.secretSources,
     expoPushSender: createWorkflowRunPushNotificationClient(params.token),
   });
   return async (claim) => {

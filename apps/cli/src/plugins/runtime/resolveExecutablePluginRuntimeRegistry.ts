@@ -1943,7 +1943,8 @@ agentIsolation?: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').Ho
         ? async () => scopedActionRuntime.credentials
         : readStoredCredentials;
     const savedSecretOperationContext = params?.accountExecution?.savedSecretOperationContext
-        ? Object.freeze({ ...params.accountExecution.savedSecretOperationContext })
+        ? Object.freeze({ ...params.accountExecution.savedSecretOperationContext,
+            get secretSources() { return resolvedRuntimeRegistryOwner?.secretSources; } })
         : undefined;
     const accountCredentialAuthority = scopedActionRuntime || params?.accountExecution
         ? Object.freeze({
@@ -4669,6 +4670,7 @@ agentIsolation?: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').Ho
                 return machineId && identity ? { machineId, installationId: identity.installationId } : null;
             },
         }) } : {}),
+        readSecretSources: () => resolvedRuntimeRegistryOwner?.secretSources,
         ...(!params?.accountExecution ? {
             demandBackgroundService: (target) => activatedRegistry.demandBackgroundService(target),
         } : {}),

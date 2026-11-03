@@ -22,6 +22,8 @@ export async function probeConfiguredAcpBackend<T>(params: Readonly<{
   credentials?: StoredCredentials | null;
   acpCatalogSnapshot?: AcpCatalogSnapshotV1;
   savedSecretOperationContext?: SavedSecretOperationContextV1;
+  machineAdmission?: SavedSecretOperationContextV1['machineAdmission'];
+  secretSources?: import('@/plugins/runtime/lifecycle/contributions/targetSecretSources').TargetSecretSourcesV1;
   processEnv?: NodeJS.ProcessEnv;
   signal?: AbortSignal;
   cleanupScope?: PreflightCatalogCleanupScope;
@@ -36,7 +38,10 @@ export async function probeConfiguredAcpBackend<T>(params: Readonly<{
     credentials: params.credentials,
     acpCatalogSnapshot: params.acpCatalogSnapshot,
     savedSecretOperationContext: params.savedSecretOperationContext,
+    machineAdmission: params.machineAdmission,
+    secretSources: params.secretSources,
     processEnv: params.processEnv,
+    signal: params.signal,
   });
   if (!backend) return { kind: 'missing' };
 

@@ -367,6 +367,7 @@ export type MachineRpcHandlerDeps = Readonly<{
   }>;
   agentCatalogObservation?: AgentProviderCatalogObservationService;
   secretSources?: NonNullable<Parameters<typeof registerCapabilitiesHandlers>[1]>['secretSources'];
+  savedSecretOperationContext?: NonNullable<Parameters<typeof registerCapabilitiesHandlers>[1]>['savedSecretOperationContext'];
   createCapabilitiesApiClient?: NonNullable<
     Parameters<typeof registerCapabilitiesHandlers>[1]
   >['createApiClient'];
@@ -615,6 +616,7 @@ function registerMachineRpcHandlersOnce(params: Readonly<{
   // no Admin target picker, Session projection, or parallel daemon registry.
   registerCapabilitiesHandlers(rpcHandlerManager, {
     ...(params.deps?.secretSources ? { secretSources: params.deps.secretSources } : {}),
+    ...(params.deps?.savedSecretOperationContext ? { savedSecretOperationContext: params.deps.savedSecretOperationContext } : {}),
     filesystemEffectAdmission,
     ...(params.deps?.observeCapabilitiesCliSnapshot
       ? { observeCliSnapshot: params.deps.observeCapabilitiesCliSnapshot }

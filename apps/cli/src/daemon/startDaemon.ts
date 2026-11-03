@@ -631,6 +631,7 @@ export async function startDaemon(
     let workflowRuntime: ReturnType<typeof createProductionDaemonWorkflowRuntime> | null = null;
     const getWorkflowRuntime = externalActionAccountId
       ? () => workflowRuntime ??= createProductionDaemonWorkflowRuntime({
+          secretSources: daemonSecretSources,
           credentials,
           accountId: externalActionAccountId,
           serverId: configuration.activeServerId,
@@ -1469,6 +1470,7 @@ export async function startDaemon(
             ?.getSessionSyncPendingInputServerContractResult()
             ?? null,
         secrets: createActiveAccountSettingsConnectedAccountSecrets({
+          secretSources: daemonSecretSources,
           expectedScopeKey: resolveAccountSettingsScopeKey(credentials),
         }),
         onAccountSettled: async (settled) => {
@@ -1609,7 +1611,7 @@ export async function startDaemon(
       credentials,
       logger,
     });
-    const registryUpdateCheck = createCliRegistryUpdateCheck({ credentials, signal: homeTransportCancellation.signal });
+    const registryUpdateCheck = createCliRegistryUpdateCheck({ credentials, secretSources: daemonSecretSources, signal: homeTransportCancellation.signal });
     const checkRegistryUpdates = () => startBackgroundRegistryUpdateCheck(registryUpdateCheck);
     void checkRegistryUpdates()
       .catch(error => { if (!homeTransportCancellation.signal.aborted) logger.warn('[DAEMON RUN] Registry update check failed', error); });
@@ -1674,12 +1676,12 @@ export async function startDaemon(
         ? apiMachineForSessions.observeActionExecution(request)
         : Promise.resolve({ ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' }),
     });
-    confidentialSecretFill = api.createConfidentialSecretFillExecutor({
+    confidentialSecretFill = api.createConfidentialSecretFillExecutor({ secretSources: daemonSecretSources,
       machineId: () => machineId, readHostIdentity: resolveCurrentMachineExecutionOriginContext });
     confidentialActionInputs = api.createConfidentialActionInputsExecutor({ secretSources: daemonSecretSources,
       machineId: () => machineId, readHostIdentity: resolveCurrentMachineExecutionOriginContext });
     const pluginRegistrySourceHome = resolveServerHttpBaseUrl();
-    const pluginRegistrySourceHost = createCliRegistryHostV1({ credentials });
+    const pluginRegistrySourceHost = createCliRegistryHostV1({ credentials, secretSources: daemonSecretSources });
     const requesterRuntimeServerId = configuration.activeServerId;
     const isolationWorkspaceScope = `${requesterRuntimeServerId}:${resolveAccountSettingsScopeKey(credentials)}`;
 const readIsolationRoots = () => {
@@ -2585,7 +2587,7 @@ const pluginRuntimeOwner = createDaemonPluginRuntimeOwner({
         const target = machineResourceTarget();
         if (!snapshot || !target || snapshot.scopeKey !== resolveAccountSettingsScopeKey(credentials))
           throw new Error('guard_notification_account_unavailable');
-        await dispatchActivityNotificationAsync({ settings: snapshot.settings,
+        await dispatchActivityNotificationAsync({ settings: snapshot.settings, secretSources: daemonSecretSources,
           isCurrent: () => !homeTransportCancellation.signal.aborted && getActiveAccountSettingsSnapshot() === snapshot,
           expoPushSender: api.push(), event: buildMachineGuardEpisodeNotificationEvent({ machineId: target.machineId, episode }) });
       },
@@ -2675,7 +2677,7 @@ const pluginRuntimeOwner = createDaemonPluginRuntimeOwner({
             if (custody.requesterAccountId !== externalActionAccountId || !snapshot
               || snapshot.scopeKey !== resolveAccountSettingsScopeKey(credentials))
               throw new Error('guard_notification_account_unavailable');
-            await dispatchActivityNotificationAsync({ settings: snapshot.settings,
+            await dispatchActivityNotificationAsync({ settings: snapshot.settings, secretSources: daemonSecretSources,
               isCurrent: () => !signal.aborted && !homeTransportCancellation.signal.aborted
                 && getActiveAccountSettingsSnapshot() === snapshot,
               expoPushSender: api.push(), event: { topic: 'guard_stop_warning', machineId: target.machineId,
@@ -3860,7 +3862,7 @@ agentIsolation,
               registeredMachineId, admission, isCurrent, resolveCurrentMachineExecutionOriginContext,
               nativeIo: createProjectNativeIo({ ownerRemainder }), successHomeDir: configuration.happyHomeDir,
               prepareBetween: (request, signal, context) => runtime.handoffAdapter.prepareBetween(request, signal, context),
-              plugins: { async resolveProjectNativeAdapter(reference, role) {
+              plugins: { secretSources: daemonSecretSources, async resolveProjectNativeAdapter(reference, role) {
                 if (!await isCurrent()) return { kind: 'refused', code: 'native_adapter_retired' };
                 const lease = await acquireAuthoritativePluginRuntimeRegistryLease({
                   happyHomeDir: configuration.happyHomeDir, controller: pluginReloadController,

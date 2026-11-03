@@ -9,6 +9,34 @@ const source=(id:string):RegistrySourceDescriptorV1=>({id,title:id,format:'git',
 const tree={sha:'tree',tree:[{path:'review/SKILL.md',type:'blob',mode:'100644',sha:'blob',size:3},{path:'review',type:'tree',mode:'040000',sha:'subtree'}]};
 
 describe('registry link operation',()=>{
+  it('uses one admitted credential context for every transport read and refreshes it for the next fetch', async () => {
+    const selected = source('vault-registry');
+    let credential = 'first';
+    const admitted: string[] = [];
+    const reads: string[] = [];
+    const forbidden = async (): Promise<never> => { throw new Error('Unadmitted registry transport'); };
+    const host = createRegistryHostV1({ host: 'node', readSources: async () => [selected],
+      http: { getJson: forbidden, getText: forbidden, getBytes: forbidden },
+      admitSource: async descriptor => {
+        expect(descriptor.id).toBe(selected.id);
+        const captured = credential;
+        admitted.push(captured);
+        // HTTP transport boundary; real source selection and format adapters run.
+        return { http: { getJson: async url => {
+          reads.push(captured);
+          return { ok: true, fetchedAt: 1, value: url.includes('/commits/') ? { sha: commit } : tree };
+        }, getText: forbidden, getBytes: forbidden } };
+      },
+    });
+    await expect(host.fetchRequest({ op: 'list', kind: 'skill', sourceId: selected.id }))
+      .resolves.toMatchObject({ op: 'list', page: { status: { state: 'ok' }, total: 1 } });
+    credential = 'rotated';
+    await expect(host.fetchRequest({ op: 'list', kind: 'skill', sourceId: selected.id }))
+      .resolves.toMatchObject({ op: 'list', page: { status: { state: 'ok' }, total: 1 } });
+    expect(admitted).toEqual(['first', 'rotated']);
+    expect(reads).toEqual(['first', 'first', 'rotated', 'rotated']);
+  });
+
   it('retains app source detection without probing app catalogs for a selected skill link', async () => {
     const requests: string[] = [];
     const url = 'https://github.com/owner/catalog';
@@ -206,16 +234,21 @@ describe('registry mutation acknowledged receipt',()=>{
     const calls:{url:string;ref:string|undefined}[]=[];
     let stored:unknown;
     const unused=async()=>{throw new Error('unused transport');};
+    const admitted: string[] = [];
+    const selectedHttp: RegistryHttpV1 = {getText:unused,getBytes:unused,getJson:async(url,options)=>{
+      calls.push({url,ref:options?.source?.token?.secretRef});
+      return url.endsWith('/marketplace.json')?{ok:false,status:{state:'invalid_source'}}:{ok:true,value:{name:'private'},fetchedAt:1};
+    }};
     const host=createRegistryHostV1({host:'node',readSources:async()=>[],
-      http:{getText:unused,getBytes:unused,getJson:async(url,options)=>{
-        calls.push({url,ref:options?.source?.token?.secretRef});
-        return url.endsWith('/marketplace.json')?{ok:false,status:{state:'invalid_source'}}:{ok:true,value:{name:'private'},fetchedAt:1};
-      }},mutateSources:async mutation=>{stored=mutation;return {status:'updated',revision:1};}});
+      http:{getText:unused,getBytes:unused,getJson:unused},
+      admitSource: async source => { admitted.push(source.token?.secretRef ?? ''); return { http: selectedHttp }; },
+      mutateSources:async mutation=>{stored=mutation;return {status:'updated',revision:1};}});
     const token={secretRef:'happier:shared-secret:v1:private-resource'};
     const result=await host.execute('registries.sources.create',{url:'https://github.com/a/private',token});
     expect(result).toMatchObject({source:{token},existing:false});
     expect(stored).toMatchObject({kind:'create',source:{token}});
     expect(calls.every(call=>call.ref===token.secretRef)).toBe(true);
+    expect(admitted).toEqual([token.secretRef]);
     const failed=createRegistryHostV1({host:'node',readSources:async()=>[],http:{getText:unused,getBytes:unused,getJson:async()=>({ok:false,status:{state:'auth_failed'}})},
       mutateSources:async()=>{throw new Error('Failed authentication must not store a source');}});
     await expect(failed.execute('registries.sources.create',{url:'https://github.com/a/private',token})).rejects.toThrow('needs_token');

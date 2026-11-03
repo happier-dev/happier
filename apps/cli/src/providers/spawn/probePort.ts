@@ -42,6 +42,7 @@ import {
 import type { ProviderProbeHostCredentialReference } from './credentials';
 import { resolveRuntimeProviderCredential } from './runtimeCredential';
 import type { ProviderModelLoadOperationScope } from '../modelManagement/load';
+import type { TargetSecretSourcesV1 } from '@/plugins/runtime/lifecycle/contributions/targetSecretSources';
 
 export type RuntimeProviderModelLoadAuthorizationPort = Readonly<{
   authorize(
@@ -188,6 +189,7 @@ export function revalidateProviderModelLoadAuthorizationTicket(
 }
 
 export function createRuntimeProviderProbeAuthorizationPort(input: Readonly<{
+  secretSources?: TargetSecretSourcesV1;
   registry?: ProviderContributionRegistryView;
   resolveRegistry?: () => ProviderContributionRegistryView | Promise<ProviderContributionRegistryView>;
   getAccountSettingsSnapshot: () => ActiveAccountSettingsSnapshot | null;
@@ -462,6 +464,10 @@ export function createRuntimeProviderProbeAuthorizationPort(input: Readonly<{
       };
       return resolveRuntimeProviderCredential({ credentialRef,
         getAccountSettingsSnapshot: scope?.getAccountSettingsSnapshot ?? getAccountSettingsSnapshot,
+        operationContext: scope?.savedSecretOperationContext ?? undefined,
+        signal: scope?.lifetime.signal,
+        resolveSavedSecretMaterializer: scope?.resolveSavedSecretMaterializer,
+        secretSources: input.secretSources,
         ...(input.openTeamDirect ? { openTeamDirect: input.openTeamDirect } : {}),
       });
     },
@@ -469,6 +475,7 @@ export function createRuntimeProviderProbeAuthorizationPort(input: Readonly<{
 }
 
 export function createRuntimeProviderModelLoadAuthorizationPort(input: Readonly<{
+  secretSources?: TargetSecretSourcesV1;
   registry?: ProviderContributionRegistryView;
   resolveRegistry?: () => ProviderContributionRegistryView | Promise<ProviderContributionRegistryView>;
   getAccountSettingsSnapshot: () => ActiveAccountSettingsSnapshot | null;
@@ -619,6 +626,7 @@ export function createRuntimeProviderModelLoadAuthorizationPort(input: Readonly<
     resolveCredential: async (credentialRef) => resolveRuntimeProviderCredential({
       credentialRef,
       getAccountSettingsSnapshot,
+      secretSources: input.secretSources,
       ...(input.openTeamDirect ? { openTeamDirect: input.openTeamDirect } : {}),
     }),
   });

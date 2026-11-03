@@ -6,7 +6,7 @@ import { createClaudeMarketplaceRegistryAdapterV1 } from './formats/claudeMarket
 import { couldReadWellKnownSkillsV1, readWellKnownSkillsV1 } from './formats/wellKnownSkills.js';
 import { composeCatalogRegistryAdapterV1 } from './formats/composeCatalog.js';
 import type { RegistryDetectedSourceV1,RegistryFetchContextV1,RegistryHttpV1,RegistryFormatAdapterV1 } from './formats/registryFormatAdapterV1.js';
-import { HAPPIER_PICKS_SOURCE_ID,deriveRegistrySourceIdV1,normalizeRegistrySourceUrlV1,resolveLegacyRegistrySourceRefV1,type RegistrySourceV1,type RegistrySourceDescriptorV1 } from './registrySourcesV1.js';
+import { HAPPIER_PICKS_SOURCE_ID,deriveRegistrySourceIdV1,normalizeRegistrySourceUrlV1,resolveLegacyRegistrySourceRefV1,type RegistrySourceV1,type RegistrySourceDescriptorV1,type RegistryRemoteSourceDescriptorV1 } from './registrySourcesV1.js';
 import { RegistryFetchErrorV1 } from './registryListV1.js';
 import { RegistryItemV1Schema,type RegistryItemPointerV1,type RegistrySkillSourceV1,type RegistryItemV1,type RegistrySkillItemV1,type RegistrySkillContentRefV1 } from './registryItemsV1.js';
 import { deriveMarketplaceSourceId, normalizeMarketplaceSourceUrlV1 } from '../marketplace/marketplaceSourceRegistryV1.js';
@@ -16,6 +16,7 @@ import { RegistryFetchRequestV1Schema,RegistryFetchResponseV1Schema,type Registr
 import type { RegistrySourcesMutationV1,RegistrySourcesMutationResultV1 } from './registrySourcesMutationV1.js';
 import type { RegistryUpdateCheckResultV1 } from './registryUpdatesV1.js';
 export type RegistryHostDepsV1=Readonly<{
+  admitSource?:(source:RegistrySourceDescriptorV1)=>Promise<RegistryFetchContextV1>;
   host:'web'|'native'|'node';http:RegistryHttpV1;signal?:AbortSignal;git?:RegistryFetchContextV1['git'];
   withAppCatalog?:RegistryFetchContextV1['withAppCatalog'];
   readSources:()=>Promise<readonly RegistrySourceDescriptorV1[]>;
@@ -83,11 +84,12 @@ export function createRegistryHostV1(deps:RegistryHostDepsV1) {
       throw error;
     }
   };
-  const http: RegistryHttpV1 = {
-    getJson: (...args) => transport(() => deps.http.getJson(...args)),
-    getText: (...args) => transport(() => deps.http.getText(...args)),
-    getBytes: (...args) => transport(() => deps.http.getBytes(...args)),
-  };
+  const wrapHttp = (source: RegistryHttpV1): RegistryHttpV1 => ({
+    getJson: (...args) => transport(() => source.getJson(...args)),
+    getText: (...args) => transport(() => source.getText(...args)),
+    getBytes: (...args) => transport(() => source.getBytes(...args)),
+  });
+  const http = wrapHttp(deps.http);
   const ctx: RegistryFetchContextV1 = { http, signal: deps.signal, git: deps.git, withAppCatalog: deps.withAppCatalog };
   const viaDaemon = async (request: RegistryFetchRequestV1): Promise<RegistryFetchResponseV1> => {
     const fetch = deps.daemonFetch;
@@ -100,6 +102,12 @@ export function createRegistryHostV1(deps:RegistryHostDepsV1) {
     const source=(await deps.readSources()).find(source=>source.id===resolveLegacyRegistrySourceRefV1(id));
     if(!source) throw new RegistryFetchErrorV1({state:'invalid_source'});
     return source;
+  };
+  const admitSource = async (source: RegistrySourceDescriptorV1, operationCtx: RegistryFetchContextV1) => {
+    if (!source.enabled) throw new RegistryFetchErrorV1({ state: 'invalid_source' });
+    if (!deps.admitSource) return operationCtx;
+    const admitted = await deps.admitSource(source);
+    return { ...admitted, http: wrapHttp(admitted.http) };
   };
   const direct=async(request:Extract<RegistryFetchRequestV1,{sourceId:string}>,source:RegistrySourceDescriptorV1, operationCtx: RegistryFetchContextV1):Promise<RegistryFetchResponseV1>=>{
     const adapter=adapterFor(source);
@@ -154,14 +162,14 @@ export function createRegistryHostV1(deps:RegistryHostDepsV1) {
     }
     // Source-scoped transport retains token origin rules for every raw-file request.
     const http: RegistryHttpV1 = {
-      getJson: (url) => ctx.http.getJson(url, { source }),
-      getText: (url) => ctx.http.getText(url, { source }),
-      getBytes: (url) => ctx.http.getBytes(url, { source }),
+      getJson: (url) => operationCtx.http.getJson(url, { source }),
+      getText: (url) => operationCtx.http.getText(url, { source }),
+      getBytes: (url) => operationCtx.http.getBytes(url, { source }),
     };
-    return fetchRegistrySkillFilesV1({...ctx,http},skill);
+    return fetchRegistrySkillFilesV1({...operationCtx,http},skill);
   };
   const fetchRequest = async (raw: RegistryFetchRequestV1, admittedSource?: RegistrySourceDescriptorV1): Promise<RegistryFetchResponseV1> => {
-    return deps.git?.withOperation
+    return !('sourceId' in raw) && deps.git?.withOperation
       ? deps.git.withOperation(git => fetchRequestInOperation(raw, admittedSource, { ...ctx, git }))
       : fetchRequestInOperation(raw, admittedSource, ctx);
   };
@@ -172,24 +180,29 @@ export function createRegistryHostV1(deps:RegistryHostDepsV1) {
       if (!('sourceId' in request)) return await fetchLinkRequest(request, operationCtx);
       // A list already admitted this exact descriptor from its one Account inventory.
       const source = admittedSource ?? await sourceById(request.sourceId);
-      if (!source.enabled) throw new RegistryFetchErrorV1({ state: 'invalid_source' });
-      const placements = resolveRegistryFetchPlanV1({
-        host: deps.host, adapter: adapterFor(source), source, op: request.op,
-      });
-      for (const [index, placement] of placements.entries()) {
-        try {
-          const response = placement === 'direct'
-            ? await direct(request, source, operationCtx)
-            : await viaDaemon(request);
-          return RegistryFetchResponseV1Schema.parse(response);
-        } catch (error) {
-          if (error instanceof RegistryTransportFailureV1 && placement === 'direct' && index + 1 < placements.length) {
-            continue;
+      const admittedCtx = await admitSource(source, operationCtx);
+      const fetchSelected = async (operationCtx: RegistryFetchContextV1): Promise<RegistryFetchResponseV1> => {
+        const placements = resolveRegistryFetchPlanV1({
+          host: deps.host, adapter: adapterFor(source), source, op: request.op,
+        });
+        for (const [index, placement] of placements.entries()) {
+          try {
+            const response = placement === 'direct'
+              ? await direct(request, source, operationCtx)
+              : await viaDaemon(request);
+            return RegistryFetchResponseV1Schema.parse(response);
+          } catch (error) {
+            if (error instanceof RegistryTransportFailureV1 && placement === 'direct' && index + 1 < placements.length) {
+              continue;
+            }
+            throw error;
           }
-          throw error;
         }
-      }
-      throw new RegistryFetchErrorV1({ state: 'unreachable' });
+        throw new RegistryFetchErrorV1({ state: 'unreachable' });
+      };
+      return await (admittedCtx.git?.withOperation
+        ? admittedCtx.git.withOperation(git => fetchSelected({ ...admittedCtx, git }))
+        : fetchSelected(admittedCtx));
     } catch (error) {
       if (error instanceof RegistryFetchErrorV1) return { op: 'error', status: error.status };
       if (error instanceof RegistryTransportFailureV1) return { op: 'error', status: { state: 'unreachable' } };
@@ -410,11 +423,13 @@ export function createRegistryHostV1(deps:RegistryHostDepsV1) {
           output=await deps.createSourceOnDaemon({...args,url});
           break;
         }
-        const tokenSource:RegistrySourceV1|undefined=args.token?{id:deriveRegistrySourceIdV1(url),title:url,format:'git',kinds:['skill'],url,
+        const tokenSource:RegistryRemoteSourceDescriptorV1|undefined=args.token?{origin:{kind:'user'},removable:true,id:deriveRegistrySourceIdV1(url),title:url,format:'git',kinds:['skill'],url,
           enabled:true,addedAt:0,token:args.token}:undefined;
-        const tokenCtx:RegistryFetchContextV1=tokenSource?{...ctx,http:{
-          getJson:(url)=>ctx.http.getJson(url,{source:tokenSource}),getText:(url)=>ctx.http.getText(url,{source:tokenSource}),
-          getBytes:(url)=>ctx.http.getBytes(url,{source:tokenSource}),
+        const admittedCtx = tokenSource && deps.admitSource ? await deps.admitSource(tokenSource) : ctx;
+        const admittedHttp = admittedCtx === ctx ? ctx.http : wrapHttp(admittedCtx.http);
+        const tokenCtx:RegistryFetchContextV1=tokenSource?{...admittedCtx,http:{
+          getJson:(url)=>admittedHttp.getJson(url,{source:tokenSource}),getText:(url)=>admittedHttp.getText(url,{source:tokenSource}),
+          getBytes:(url)=>admittedHttp.getBytes(url,{source:tokenSource}),
         }}:ctx;
         const detection = tokenSource?{op:'detect' as const,detected:await detectRegistrySourceV1(tokenCtx,url)}:await fetchRequest({ op: 'detect', url });
         if (detection.op !== 'detect') {

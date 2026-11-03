@@ -1,4 +1,7 @@
 import { isDeepStrictEqual } from 'node:util';
+import type { TargetSecretSourcesV1 } from '@/plugins/runtime/lifecycle/contributions/targetSecretSources';
+import { NotificationChannelCatalogUnavailableError, readRuntimeNotificationCatalog } from './runtimeNotificationCatalog';
+export { NotificationChannelCatalogUnavailableError } from './runtimeNotificationCatalog';
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
 import { guardStopWarningNotificationIdV1 } from '@happier-dev/protocol/activity/webhookPayload';
 import { isUsageQuotaNotificationEnabled } from '@happier-dev/protocol/account/settings/usagePacingPreferencesV1';
@@ -207,58 +210,10 @@ function resolveExpoPushDeliveryOptions(decision: AttentionDeliveryDecision): Pu
   };
 }
 
-export class NotificationChannelCatalogUnavailableError extends Error {
-  readonly code = 'notification_channel_catalog_unavailable' as const;
-  constructor(readonly reason: string) {
-    super('Notification channel catalog is unavailable');
-    this.name = 'NotificationChannelCatalogUnavailableError';
-  }
-}
-
-async function readRuntimeNotificationCatalog(params: Readonly<{
-  settings: AccountSettings | null | undefined;
-  operationContext?: SavedSecretOperationContextV1;
-  notificationChannelCatalog?: NotificationChannelCatalogSnapshotV1;
-  savedSecretMaterializer?: SavedSecretMaterializerV1;
-  isCurrent?: () => boolean | Promise<boolean>;
-}>) {
-  const operation = params.operationContext;
-  if (operation) {
-    if (!await operation.isCurrent()) throw new NotificationChannelCatalogUnavailableError('scope-retired');
-    const existing = operation.readSnapshot()?.notificationChannelCatalog;
-    if (!existing || existing.status === 'loading') await hydrateNotificationChannelCatalogForOperation({ operationContext: operation });
-    const snapshot = operation.readSnapshot();
-    if (!snapshot || !await operation.isCurrent()) throw new NotificationChannelCatalogUnavailableError('scope-retired');
-    const catalog = snapshot.notificationChannelCatalog;
-    if (catalog?.status !== 'ready') throw new NotificationChannelCatalogUnavailableError(
-      catalog?.status === 'unavailable' ? catalog.reason : catalog?.status === 'partial' ? 'catalog-incomplete' : 'loading');
-    return { settings: snapshot.settings, channels: catalog.channels,
-      assertCurrent: async () => {
-        if (!await operation.isCurrent() || operation.readSnapshot() !== snapshot || params.isCurrent && !await params.isCurrent()) {
-          throw new NotificationChannelCatalogUnavailableError('scope-retired');
-        }
-      }, savedSecretMaterializer: createSavedSecretMaterializerFromSnapshotV1(snapshot,
-        { isCurrent: () => operation.readSnapshot() === snapshot }) };
-  }
-  const active = getActiveAccountSettingsSnapshot();
-  const captured = active?.settings === params.settings ? active : null;
-  const catalog = params.notificationChannelCatalog ?? captured?.notificationChannelCatalog ?? { status: 'loading' as const };
-  if (catalog.status !== 'ready') throw new NotificationChannelCatalogUnavailableError(
-    catalog.status === 'unavailable' ? catalog.reason : catalog.status === 'partial' ? 'catalog-incomplete' : 'loading');
-  const lifetimeToken = getActiveAccountSettingsSnapshotLifetimeToken();
-  const incumbent = !params.notificationChannelCatalog && captured?.scopeKey ? { scopeKey: captured.scopeKey, lifetimeToken } : null;
-  return { settings: params.settings, channels: catalog.channels, assertCurrent: async () => {
-    if (params.isCurrent && !await params.isCurrent()
-      || incumbent && !isActiveAccountSettingsSnapshotLifetimeCurrent(incumbent)) throw new NotificationChannelCatalogUnavailableError('scope-retired');
-  },
-    savedSecretMaterializer: params.savedSecretMaterializer ?? (!params.notificationChannelCatalog && captured
-      ? createSavedSecretMaterializerFromSnapshotV1(captured) : undefined) };
-}
-
-/** Discovery projects the same configured delivery set the Activity owner dispatches. */
 export async function listActivityNotificationChannels(params: Readonly<{
   settings: AccountSettings | null | undefined;
   operationContext?: SavedSecretOperationContextV1;
+  secretSources?: TargetSecretSourcesV1;
   notificationChannelCatalog?: NotificationChannelCatalogSnapshotV1;
   savedSecretMaterializer?: SavedSecretMaterializerV1;
   isCurrent?: () => boolean | Promise<boolean>;
@@ -298,6 +253,7 @@ export async function dispatchActivityNotificationAsync(params: Readonly<{
   settings: AccountSettings | null | undefined;
   signal?: AbortSignal;
   operationContext?: SavedSecretOperationContextV1;
+  secretSources?: TargetSecretSourcesV1;
   notificationChannelCatalog?: NotificationChannelCatalogSnapshotV1;
   savedSecretMaterializer?: SavedSecretMaterializerV1;
   isCurrent?: (signal?: AbortSignal) => boolean | Promise<boolean>;
@@ -371,7 +327,7 @@ export async function dispatchActivityNotificationAsync(params: Readonly<{
   }
   const runtime = await readRuntimeNotificationCatalog(params);
   const settings = accountSettingsParse(runtime.settings ?? {});
-  const { channels, savedSecretMaterializer, assertCurrent } = runtime;
+  const { channels, assertCurrent } = runtime;
   await assertCurrent();
   const nowMs = params.nowMs?.() ?? Date.now();
   const dedupeWindowMs = params.dedupeWindowMs ?? 60_000;
@@ -397,6 +353,10 @@ export async function dispatchActivityNotificationAsync(params: Readonly<{
 
   // Admit the entire selected signing set before any outward delivery. A
   // missing credential must not produce a partially delivered occurrence.
+  const savedSecretMaterializer = await runtime.acquireSigningMaterializer(channels.flatMap(channel =>
+    channel.kind === 'webhook' && selects(channel.id) && isTopicEnabled(channel, params.event)
+      && channelDecision('webhook').delivery !== 'suppress' && channel.signingSecretRef
+      ? [channel.signingSecretRef] : []), params.signal);
   for (const channel of channels) {
     if (channel.kind !== 'webhook' || !selects(channel.id) || !isTopicEnabled(channel, params.event)) continue;
     const decision = channelDecision('webhook');

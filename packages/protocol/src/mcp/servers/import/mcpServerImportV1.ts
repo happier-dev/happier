@@ -1,7 +1,8 @@
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { ValueRefV1Schema, type ValueRefV1 } from '../../../valueRefs/valueRefV1.js';
-import { PERSONAL_SAVED_SECRET_ACTION_INPUT_SCHEMAS_V1, PERSONAL_SAVED_SECRET_ACTION_OUTPUT_SCHEMAS_V1 } from '../../../account/settings/personalSavedSecretActionsV1.js';
+import { PERSONAL_SAVED_SECRET_ACTION_INPUT_SCHEMAS_V1, PERSONAL_SAVED_SECRET_ACTION_OUTPUT_SCHEMAS_V1,
+    PersonalSavedSecretCreateInputObjectV1Schema } from '../../../account/settings/personalSavedSecretActionsV1.js';
 import { McpServerCatalogEntryV1Schema, type McpServerCatalogEntryV1 } from '../settingsV1.js';
 import type { DetectedMcpServerV1 } from '../daemonRpcV1.js';
 import { isMcpImportSecretNameV1, mcpImportValueInputIdV1,
@@ -10,8 +11,8 @@ import { isMcpImportSecretNameV1, mcpImportValueInputIdV1,
 
 export const McpImportValueChoiceV1Schema = lazyZodSchema(() => z.union([
     ValueRefV1Schema,
-    (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(PERSONAL_SAVED_SECRET_ACTION_INPUT_SCHEMAS_V1['secrets.create'], { t: z.literal('createSecret') })),
-    (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(z.omit(PERSONAL_SAVED_SECRET_ACTION_INPUT_SCHEMAS_V1['secrets.create'], { value: true }), { t: z.literal('saveSecret') })),
+    z.extend(PersonalSavedSecretCreateInputObjectV1Schema, { t: z.literal('createSecret') }),
+    z.extend(z.omit(PersonalSavedSecretCreateInputObjectV1Schema, { value: true }), { t: z.literal('saveSecret') }),
 ]));
 export type McpImportValueChoiceV1 = z.infer<typeof McpImportValueChoiceV1Schema>;
 export const McpImportValuesV1Schema = lazyZodSchema(() => z.record(z.string(), McpImportValueChoiceV1Schema));

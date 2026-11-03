@@ -11,7 +11,10 @@ import {
 import {
   createSavedSecretMaterializerV1,
   type SavedSecretCatalogResourceInputV1,
+  type SavedSecretMaterializerV1,
 } from '@/settings/secrets/savedSecretCatalog';
+import type { ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import type { SavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
 import type { ProviderProbeAuthorizationRequest } from '../probe/authorization';
 
 export type ProviderCredentialReference =
@@ -20,6 +23,7 @@ export type ProviderCredentialReference =
       kind: 'apiKey';
       secretId: string;
       secretRecordFingerprint: string;
+      additionalCredentials?: readonly Readonly<{ slotId: string; secretId: string; secretRecordFingerprint: string }>[];
     }>
   | Readonly<{
       kind: 'team_direct';
@@ -36,6 +40,9 @@ export type ProviderProbeHostCredentialReference = Readonly<{
   reference: ProviderCredentialReference;
   transport: ProviderCredentialTransportV1;
   protocol: ProviderProbeAuthorizationRequest['protocol'];
+  /** Host-only material captured at this operation's admission, never a wire value. */
+  admittedSnapshot?: ActiveAccountSettingsSnapshot;
+  admittedOperationContext?: SavedSecretOperationContextV1;
 }>;
 
 type ProviderCredentialReferenceResult =
@@ -49,10 +56,12 @@ export function resolveProviderCredentialReference(input: Readonly<{
   providerSettings: ProviderSettingsV1;
   accountSettings: unknown;
   savedSecretResources?: readonly SavedSecretCatalogResourceInputV1[];
+  savedSecretMaterializer?: SavedSecretMaterializerV1;
   connectionId: ProviderConnectionId | string;
   machineId: string;
   credentialSlotId: string;
   required: boolean;
+  additionalCredentials?: readonly Readonly<{ slotId: string }>[];
 }>): ProviderCredentialReferenceResult {
   const context = { connectionId: input.connectionId, machineId: input.machineId };
   const secretId = resolveProviderSecretBindingIdV1(
@@ -66,16 +75,27 @@ export function resolveProviderCredentialReference(input: Readonly<{
       ? { ok: false, error: createProviderErrorV1('provider_secret_missing', context) }
       : { ok: true, reference: { kind: 'none' } };
   }
-  const inspected = createSavedSecretMaterializerV1({
+  const materializer = input.savedSecretMaterializer ?? createSavedSecretMaterializerV1({
     accountSettings: input.accountSettings,
     settingsSecretsReadKeys: [],
     resources: input.savedSecretResources,
-  }).inspect(secretId);
+  });
+  const inspected = materializer.inspect(secretId);
   if (
     inspected.status !== 'ready'
     || (inspected.source === 'personal' && inspected.storage !== 'settings_encrypted')
   ) {
     return { ok: false, error: createProviderErrorV1('provider_secret_missing', context) };
+  }
+  const additionalCredentials: Array<{ slotId: string; secretId: string; secretRecordFingerprint: string }> = [];
+  for (const { slotId } of input.additionalCredentials ?? []) {
+    const additionalId = resolveProviderSecretBindingIdV1(input.providerSettings, input.connectionId, input.machineId, slotId);
+    const additional = additionalId === null ? null : materializer.inspect(additionalId);
+    if (!additionalId || !additional || additional.status !== 'ready'
+      || (additional.source === 'personal' && additional.storage !== 'settings_encrypted')) {
+      return { ok: false, error: createProviderErrorV1('provider_secret_missing', context) };
+    }
+    additionalCredentials.push({ slotId, secretId: additionalId, secretRecordFingerprint: additional.fingerprint });
   }
   return {
     ok: true,
@@ -83,14 +103,16 @@ export function resolveProviderCredentialReference(input: Readonly<{
       kind: 'apiKey',
       secretId,
       secretRecordFingerprint: inspected.fingerprint,
+      ...(additionalCredentials.length ? { additionalCredentials } : {}),
     },
   };
 }
 
 export type ProviderResolvedCredential =
   | Readonly<{ kind: 'none' }>
-  | Readonly<{ kind: 'apiKey'; value: string }>;
+  | Readonly<{ kind: 'apiKey'; value: string; additionalCredentials?: readonly Readonly<{ slotId: string; value: string }>[] }>;
 
+/** One authority witness includes every bound record without changing the ticket shape. */
 export type ProviderCredentialPlaintextResultForSpawn =
   | Readonly<{ ok: true; credential: ProviderResolvedCredential }>
   | Readonly<{ ok: false; error: ProviderErrorV1 }>;
@@ -123,6 +145,7 @@ export async function resolveProviderCredentialPlaintextAsync(input: Readonly<{
   accountSettings: unknown;
   savedSecretResources?: readonly SavedSecretCatalogResourceInputV1[];
   settingsSecretsReadKeys: ReadonlyArray<Uint8Array | null | undefined>;
+  savedSecretMaterializer?: SavedSecretMaterializerV1;
   isCurrent?: () => boolean;
   connectionId: ProviderConnectionId | string;
   machineId: string;
@@ -162,24 +185,7 @@ export async function resolveProviderCredentialPlaintextAsync(input: Readonly<{
     }
     return { ok: true, credential: { kind: 'apiKey', value: opened.payload.material.value } };
   }
-  const materializer = createSavedSecretMaterializerV1({
-    accountSettings: input.accountSettings,
-    settingsSecretsReadKeys: input.settingsSecretsReadKeys.filter((key): key is Uint8Array => key instanceof Uint8Array),
-    resources: input.savedSecretResources,
-    ...(input.isCurrent ? { isCurrent: input.isCurrent } : {}),
-  });
-  const current = materializer.inspect(input.reference.secretId);
-  if (current.status !== 'ready') {
-    return { ok: false, error: createProviderErrorV1('provider_authorization_changed', context) };
-  }
-  if (current.fingerprint !== input.reference.secretRecordFingerprint) {
-    return { ok: false, error: createProviderErrorV1('provider_authorization_changed', context) };
-  }
-  const resolved = materializer.resolve(input.reference.secretId);
-  if (resolved.status !== 'ready' || !resolved.value) {
-    return { ok: false, error: createProviderErrorV1('provider_secret_missing', context) };
-  }
-  return { ok: true, credential: { kind: 'apiKey', value: resolved.value } };
+  return resolveProviderCredentialPlaintext({ ...input, reference: input.reference });
 }
 
 export function resolveProviderCredentialPlaintext(input: Readonly<{
@@ -187,25 +193,37 @@ export function resolveProviderCredentialPlaintext(input: Readonly<{
   accountSettings: unknown;
   savedSecretResources?: readonly SavedSecretCatalogResourceInputV1[];
   settingsSecretsReadKeys: ReadonlyArray<Uint8Array | null | undefined>;
+  savedSecretMaterializer?: SavedSecretMaterializerV1;
   isCurrent?: () => boolean;
   connectionId: ProviderConnectionId | string;
   machineId: string;
 }>): ProviderCredentialPlaintextResultForSpawn {
   if (input.reference.kind === 'none') return { ok: true, credential: { kind: 'none' } };
   const context = { connectionId: input.connectionId, machineId: input.machineId };
-  const materializer = createSavedSecretMaterializerV1({
+  const materializer = input.savedSecretMaterializer ?? createSavedSecretMaterializerV1({
     accountSettings: input.accountSettings,
     settingsSecretsReadKeys: input.settingsSecretsReadKeys.filter((key): key is Uint8Array => key instanceof Uint8Array),
     resources: input.savedSecretResources,
     ...(input.isCurrent ? { isCurrent: input.isCurrent } : {}),
   });
-  const current = materializer.inspect(input.reference.secretId);
-  if (current.status !== 'ready' || current.fingerprint !== input.reference.secretRecordFingerprint) {
-    return { ok: false, error: createProviderErrorV1('provider_authorization_changed', context) };
+  const read = (reference: Readonly<{ secretId: string; secretRecordFingerprint: string }>) => {
+    const current = materializer.inspect(reference.secretId);
+    if (current.status !== 'ready' || current.fingerprint !== reference.secretRecordFingerprint) {
+      return { ok: false as const, error: createProviderErrorV1('provider_authorization_changed', context) };
+    }
+    const resolved = materializer.resolve(reference.secretId);
+    return resolved.status !== 'ready' || !resolved.value
+      ? { ok: false as const, error: createProviderErrorV1('provider_secret_missing', context) }
+      : { ok: true as const, value: resolved.value };
+  };
+  const primary = read(input.reference);
+  if (!primary.ok) return primary;
+  const additionalCredentials: Array<{ slotId: string; value: string }> = [];
+  for (const additional of input.reference.additionalCredentials ?? []) {
+    const material = read(additional);
+    if (!material.ok) return material;
+    additionalCredentials.push({ slotId: additional.slotId, value: material.value });
   }
-  const resolved = materializer.resolve(input.reference.secretId);
-  if (resolved.status !== 'ready' || !resolved.value) {
-    return { ok: false, error: createProviderErrorV1('provider_secret_missing', context) };
-  }
-  return { ok: true, credential: { kind: 'apiKey', value: resolved.value } };
+  return { ok: true, credential: { kind: 'apiKey', value: primary.value,
+    ...(additionalCredentials.length ? { additionalCredentials } : {}) } };
 }

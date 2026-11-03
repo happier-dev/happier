@@ -140,10 +140,10 @@ function accountSettings(activeRegistry = registry) {
   }));
 }
 
-function providerSecret(value: string, revision = 1) {
-  return { ...sharedSecretResource, resourceId: 'secret-a', revision, displayName: 'Gateway key',
+function providerSecret(value: string, revision = 1, resourceId = 'secret-a') {
+  return { ...sharedSecretResource, resourceId, revision, displayName: 'Gateway key',
     encryptionMode: 'e2ee' as const, resourceDataKey: key,
-    storedContent: sealSavedSecretResourceStoredContentV1({ resourceId: 'secret-a', mode: 'e2ee',
+    storedContent: sealSavedSecretResourceStoredContentV1({ resourceId, mode: 'e2ee',
       resourceDataKey: key, randomBytes: length => new Uint8Array(length).fill(revision + 10),
       content: { v: 1, name: 'Gateway key', kind: 'apiKey', value } }) };
 }
@@ -182,6 +182,40 @@ function resourceSource(settings = accountSettings(), activeRegistry = registry)
 }
 
 describe('Provider Connection Team broker source', () => {
+  it.each([
+    { externalSlot: 'primary', relationship: 'owner' }, { externalSlot: 'companion', relationship: 'owner' },
+    { externalSlot: 'primary', relationship: 'recipient' }, { externalSlot: 'companion', relationship: 'recipient' },
+  ] as const)('refuses an external $externalSlot credential ($relationship) before linking or broker materialization', async ({ externalSlot, relationship }) => {
+    const pairedDefinition = ProviderContributionV1Schema.parse({ ...definition, credential: { ...definition.credential,
+      transports: [{ ...definition.credential!.transports[0], additionalCredentials: [{ slotId: 'upstreamKey',
+        destination: { kind: 'httpHeader', name: 'x-upstream-key', format: 'raw' } }] }],
+    } });
+    const pairedRegistry = { ...registry, providersByContributionKey: new Map(registry.providersByContributionKey)
+      .set(contributionKey, { ...contribution, definition: pairedDefinition }) };
+    const settings = readProviderSettingsForCli(accountSettings(pairedRegistry)).settings;
+    let current = { ...snapshotFromProviderSettings({ ...settings, secretBindingsByConnectionId: {
+      ...settings.secretBindingsByConnectionId, [connectionId]: { ...settings.secretBindingsByConnectionId[connectionId],
+        account: { apiKey: formatSharedSavedSecretRefV1('secret-a'), upstreamKey: formatSharedSavedSecretRefV1('secret-b') } },
+    } }), savedSecretResources: [providerSecret('source-secret'), providerSecret('upstream-secret', 1, 'secret-b')] };
+    const source = resourceSource(current, pairedRegistry);
+    const resolve = () => resolveProviderConnectionBrokerSource({ source, machineId: 'machine-a',
+      protocol: 'openai-responses', endpointTemplateId: 'responses', ...sourceFacts(current), registry: pairedRegistry, dnsEvidenceByEndpointUrl });
+    const admitted = resolve();
+    if (!admitted.ok) throw new Error('Expected inline credentials to be supported');
+    const resourceId = externalSlot === 'primary' ? 'secret-a' : 'secret-b';
+    current = { ...current, savedSecretResources: current.savedSecretResources.map(resource => resource.resourceId !== resourceId ? resource : {
+      ...resource, relationship, storedContent: sealSavedSecretResourceStoredContentV1({ resourceId, mode: 'e2ee', resourceDataKey: key,
+        randomBytes: length => new Uint8Array(length).fill(21),
+        content: { v: 2, name: 'Gateway key', kind: 'apiKey', source: { kind: 'external',
+          contribution: { pluginId: 'acme.vault', localId: 'main' }, account: 'personal', reference: 'op://vault/item/field' } },
+      }),
+    }) };
+    const unsupported = { ok: false, error: { code: 'provider_credential_transport_unavailable', retryable: false, action: 'review_credential_transport' } };
+    expect(resolve()).toMatchObject(unsupported);
+    await expect(materializeProviderConnectionBrokerSource({ expected: admitted.snapshot, registry: pairedRegistry,
+      dnsEvidenceByEndpointUrl, getAccountSettingsSnapshot: () => current })).resolves.toMatchObject(unsupported);
+  });
+
   it('opens the exact Provider source through CPX and leases current credential material per request', async () => {
     const settings = accountSettings();
     const sourceBinding = resourceSource(settings);

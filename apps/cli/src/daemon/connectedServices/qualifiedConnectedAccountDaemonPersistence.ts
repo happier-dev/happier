@@ -1,3 +1,5 @@
+import type { TargetSecretSourcesV1 } from '@/plugins/runtime/lifecycle/contributions/targetSecretSources';
+import { acquireSavedSecretMaterializerForOperation, readSavedSecretMaterializerForOperation } from '@/settings/secrets/savedSecretCatalogRead';
 import {
   randomBytes as nodeRandomBytes,
   randomUUID,
@@ -51,6 +53,7 @@ import { promoteSavedSecretsWithConnectedAccountCatalog, refreshSavedSecretCatal
 import { type SavedSecretOperationContextV1 } from "@/settings/secrets/savedSecretOperationContext";
 import {
   createSavedSecretMaterializerFromSnapshotV1,
+  type SavedSecretMaterializerV1,
 } from '@/settings/secrets/savedSecretCatalog';
 import {
   parseConnectedAccountConfigurationRecordContent,
@@ -213,6 +216,7 @@ function defaultRandomBytes(length: number): Uint8Array {
 export function createActiveAccountSettingsConnectedAccountSecrets(input: Readonly<{
   /** The daemon's Account; admission never validates refs for another Account. */
   expectedScopeKey: string;
+  secretSources?: TargetSecretSourcesV1;
 }>): ConnectedAccountDaemonPersistence['configuration']['secrets'] {
   return createAccountSettingsConnectedAccountSecrets(input);
 }
@@ -221,31 +225,40 @@ export function createActiveAccountSettingsConnectedAccountSecrets(input: Readon
 export function createAccountSettingsConnectedAccountSecrets(input: Readonly<{
   expectedScopeKey: string;
   operationContext?: SavedSecretOperationContextV1;
+  secretSources?: TargetSecretSourcesV1;
 }>): ConnectedAccountDaemonPersistence['configuration']['secrets'] {
   const readSnapshot = input.operationContext ? () => input.operationContext!.readSnapshot() : getActiveAccountSettingsSnapshot;
+  const operationReader = (materializer: SavedSecretMaterializerV1) => {
+    const readMaterial: NonNullable<ConnectedAccountDaemonPersistence['configuration']['secrets']['readMaterial']> = async (secretId, options) => {
+      options?.signal?.throwIfAborted();
+      const resolved = materializer.resolve(secretId);
+      return resolved.status === 'ready' ? Object.freeze({ value: resolved.value, fingerprint: resolved.fingerprint }) : null;
+    };
+    return Object.freeze({ readMaterial, read: async (secretId: string, options?: Readonly<{ signal?: AbortSignal }>) =>
+      (await readMaterial(secretId, options))?.value ?? null });
+  };
   const readMaterial: NonNullable<ConnectedAccountDaemonPersistence['configuration']['secrets']['readMaterial']> = async (secretId, options) => {
     options?.signal?.throwIfAborted();
     if (input.operationContext && !await input.operationContext.isCurrent(options?.signal)) return null;
     const snapshot = readSnapshot();
     if (!snapshot || snapshot.scopeKey !== input.expectedScopeKey) return null;
-    const resolved = createSavedSecretMaterializerFromSnapshotV1(snapshot, { isCurrent: () => readSnapshot() === snapshot }).resolve(secretId);
-    if (resolved.status !== 'ready') return null;
-    options?.signal?.throwIfAborted();
-    return readSnapshot() === snapshot
-      ? Object.freeze({ value: resolved.value, fingerprint: resolved.fingerprint })
-      : null;
+    const materializer = await acquireSavedSecretMaterializerForOperation({ snapshot, references: [{ ref: secretId }],
+      operationContext: input.operationContext, secretSources: input.secretSources, signal: options?.signal });
+    return operationReader(materializer).readMaterial(secretId, options);
   };
   return Object.freeze({
     async admit(secretIds, options) {
       // A record without references has nothing to admit; the admission owner
       // itself resolves personal-only batches without a Home request.
       if (secretIds.length === 0) return;
-      await refreshSavedSecretCatalogForOperation({
+      const { materializer } = await readSavedSecretMaterializerForOperation({
         expectedScopeKey: input.expectedScopeKey,
+        secretSources: input.secretSources,
         ...(input.operationContext ? { operationContext: input.operationContext } : {}),
         references: secretIds.map((ref) => ({ ref })),
         ...(options?.signal ? { signal: options.signal } : {}),
       });
+      return operationReader(materializer);
     },
     async has(secretId) {
       if (input.operationContext && !await input.operationContext.isCurrent()) return false;

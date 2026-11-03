@@ -2,12 +2,20 @@ import { describe, expect, it } from 'vitest';
 import { McpServerCatalogEntryV1Schema } from '../settingsV1.js';
 import { parseMcpServerImportV1 } from './parseMcpServerImportV1.js';
 import { materializeMcpServerImportV1, prepareMcpServerImportV1, prepareDetectedMcpServerImportV1,
-    McpImportPreviewV1Schema, McpImportCommitV1Schema } from './mcpServerImportV1.js';
+    McpImportPreviewV1Schema, McpImportCommitV1Schema, McpImportValueChoiceV1Schema } from './mcpServerImportV1.js';
 
 const parsed = parseMcpServerImportV1(JSON.stringify({ servers: { one: { command: 'tool', env: { API_KEY: 'private-token', MODE: 'read' } } } }));
 const base = { parsed, catalog: { servers: [] }, nowMs: 10, newId: () => 'server-1',
     createSecret: async () => { throw new Error('unexpected secret write'); } };
 describe('MCP import preparation', () => {
+    it('admits create and save choices without imposing create-only cross-field checks on save metadata', () => {
+        const create = { t: 'createSecret', name: 'Imported credential', value: 'private-token' };
+        const save = { t: 'saveSecret', name: 'Imported credential' };
+        expect(McpImportValueChoiceV1Schema.parse(create)).toEqual(create);
+        expect(McpImportValueChoiceV1Schema.parse(save)).toEqual(save);
+        expect(McpImportValueChoiceV1Schema.safeParse({ ...save, value: 'unexpected' }).success).toBe(false);
+        expect(McpImportValueChoiceV1Schema.safeParse({ ...create, unexpected: true }).success).toBe(false);
+    });
     it('exposes the inferred transport in the strict preview and commits a revised explicit choice', async () => {
         const config = { mcpServers: { one: { url: 'https://mcp.example.test/sse' } } };
         const initial = parseMcpServerImportV1(JSON.stringify(config));

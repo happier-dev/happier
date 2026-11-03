@@ -1,3 +1,4 @@
+import { acquireSavedSecretMaterializerForOperation } from '@/settings/secrets/savedSecretCatalogRead';
 import { homedir } from 'node:os';
 import { realpath, rm } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -1207,6 +1208,17 @@ export async function prepareForegroundAgentRuntimeAdmission(
                 };
               }
               try {
+                const bindings = resolveEffectiveLaunchProfileSecretBindings({
+                  profile: exactProfileSnapshot.profile, accountSettings: exactProfileSnapshot.settingsSnapshot.settings,
+                  secretReferenceOverlay: request.secretReferenceOverlay,
+                });
+                const savedSecretMaterializer = await acquireSavedSecretMaterializerForOperation({
+                  snapshot: exactProfileSnapshot.settingsSnapshot,
+                  secretSources: lease.registry.secretSources,
+                  references: Object.entries(bindings)
+                    .filter(([name]) => !foregroundSatisfiedProfileSecretRequirementNames.includes(name)).map(([, binding]) => binding),
+                  ...(requester ? { operationContext: requester.savedSecretOperationContext } : {}),
+                });
                 savedProfileEnvironment =
                   resolveForegroundProfileSavedSecretEnvironment({
                     profile: exactProfileSnapshot.profile,
@@ -1217,6 +1229,7 @@ export async function prepareForegroundAgentRuntimeAdmission(
                         .settingsSecretsReadKeys,
                     savedSecretResources:
                       exactProfileSnapshot.settingsSnapshot.savedSecretResources,
+                    savedSecretMaterializer,
                     foregroundSatisfiedSecretRequirementNames:
                       foregroundSatisfiedProfileSecretRequirementNames,
                     ...(request.secretReferenceOverlay

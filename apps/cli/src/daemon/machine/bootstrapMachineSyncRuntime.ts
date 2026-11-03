@@ -592,6 +592,7 @@ export async function retireMachineSyncRuntimeAttempt(
 
 export type BootstrapMachineSyncRuntimeParams = Readonly<{
   secretSources?: MachineRpcHandlerDeps['secretSources'];
+  savedSecretOperationContext?: MachineRpcHandlerDeps['savedSecretOperationContext'];
   mcpServers?: MachineRpcHandlerDeps['mcpServers'];
   cliVersion: string;
   machineId: string;
@@ -1319,7 +1320,9 @@ export async function bootstrapMachineSyncRuntime(
       },
       {
         secretSources: params.secretSources,
-        createRegistryHost:(signal,context)=>createCliRegistryHostV1({credentials:params.credentials,signal,machineAdmission:context?.machineAdmission}),
+        savedSecretOperationContext: params.savedSecretOperationContext,
+        createRegistryHost:(signal,context)=>createCliRegistryHostV1({credentials:params.credentials,signal,
+          secretSources:params.secretSources,operationContext:params.savedSecretOperationContext,machineAdmission:context?.machineAdmission}),
         ...(params.mcpServers ? { mcpServers: params.mcpServers } : {}),
         ...(params.sessionRunnerStatus ? { sessionRunnerStatus: params.sessionRunnerStatus } : {}),
         sessionPendingResetStartInstalled: pendingResetStartPorts !== null,

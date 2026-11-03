@@ -37,6 +37,22 @@ async function imported(http: RegistryHttpV1) {
 }
 
 describe('registry upstream content observations', () => {
+  it('admits each selected update source once for all of its upstream reads', async () => {
+    const f = fixture();
+    const provenance = await imported(f.http);
+    f.move(next, 'next-tree');
+    f.calls.length = 0;
+    const admitted: string[] = [];
+    const forbidden = async (): Promise<never> => { throw new Error('Unadmitted upstream transport'); };
+    const result = await checkRegistryUpstreamV1({ http: { getJson: forbidden, getText: forbidden, getBytes: forbidden } }, {
+      sources: [source], items: [{ key: 'skill', provenance }],
+      admitSource: async selected => { admitted.push(selected.id); return { http: f.http }; },
+    });
+    expect(result.get('skill')).toMatchObject({ state: 'update_available', latest: { commit: next } });
+    expect(admitted).toEqual([source.id]);
+    expect(f.calls).toHaveLength(2);
+  });
+
   it('projects the strict unchecked result for schema consumers without admitting a successful source reason', () => {
     expect(() => z.toJSONSchema(RegistryUpdateCheckResultV1Schema)).not.toThrow();
     const result = { checkedAt: 1, results: [{ kind: 'skill', key: 'item', upstream: { state: 'unchecked', reason: { state: 'rate_limited' } } }] };

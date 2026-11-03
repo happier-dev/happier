@@ -15,6 +15,7 @@ type ManifestHostAccessContributionFamily =
     | 'resources'
     | 'backgroundServices'
     | 'projectNativeAdapters'
+    | 'secretSources'
     | 'notificationChannels'
     | 'connectedAccountDescriptors'
     | 'composerReferences'
@@ -43,6 +44,11 @@ type ManifestHostAccessContributionPolicy = Readonly<{
  * contributions select the request ids their declaration names.
  */
 const MANIFEST_HOST_ACCESS_CONTRIBUTION_POLICIES: readonly ManifestHostAccessContributionPolicy[] = Object.freeze([
+    Object.freeze({
+        family: 'secretSources',
+        scope: 'manifest',
+        readDeclarations: (manifest: Pick<CanonicalPluginManifest, 'contributes'>) => manifest.contributes.secretSources,
+    }),
     Object.freeze({
         family: 'composerReferences',
         scope: 'manifest',

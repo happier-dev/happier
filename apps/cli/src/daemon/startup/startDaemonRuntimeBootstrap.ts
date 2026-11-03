@@ -1,3 +1,4 @@
+import type { TargetSecretSourcesV1 } from '@/plugins/runtime/lifecycle/contributions/targetSecretSources';
 import type { ProviderAccountUsageUsageIdentityResolver } from '../connectedServices/accountUsage/hydration';
 import type { RequesterConnectedAccountObservation } from '@/api/client/accountEncryptionCurrentnessObservation';
 import { readQualifiedConnectedAccountCredentialIdentity, readQualifiedConnectedAccountCredentialMaterial } from '../connectedServices/qualifiedConnectedAccountEstablishedRuntimeOwner';
@@ -139,6 +140,7 @@ function resolveTrackedSessionNotificationTitle(tracked: TrackedSession | null |
 }
 
 export type StartDaemonRuntimeBootstrapParams = Readonly<{
+  secretSources?: TargetSecretSourcesV1;
   artifactQueryHints?: Readonly<{ signal: AbortSignal; isCurrent(): Promise<boolean>; resolveServerFeaturesSnapshot: ArtifactQueryHintFeatures }>;
   publicProfileRefresh?: Omit<Parameters<typeof startPublicProfileRefresh>[0], 'scheduler'>;
   api: ApiClient;
@@ -253,7 +255,7 @@ export async function startDaemonRuntimeBootstrap(
   const directPeerRuntimeConfig = resolveMachineTransferRuntimeConfig();
   const stackDebugDirectPeerStartServer =
     await resolveStackDebugDirectPeerStartServer();
-  const directTransferRegistryHost = createCliRegistryHostV1({credentials:params.credentials});
+  const directTransferRegistryHost = createCliRegistryHostV1({credentials:params.credentials,secretSources:params.secretSources});
   const directPeerServerEnabled = directPeerRuntimeConfig.directPeer.serverEnabled;
   const tailscaleServeEnabled = directPeerServerEnabled && directPeerRuntimeConfig.tailscaleServe.enabled;
   const directPeerLocalListenerClasses = ['loopback_http' as const];
@@ -416,7 +418,7 @@ export async function startDaemonRuntimeBootstrap(
 /** One Account-bound coordinator composition for daemon and requester Session custody. */
 export async function startDaemonConnectedServiceRuntime(
   params: Pick<StartDaemonRuntimeBootstrapParams,
-    'activeServerDir' | 'api' | 'credentials' | 'machineId' | 'machineIdProvider' | 'runtimeId'
+    'activeServerDir' | 'api' | 'credentials' | 'secretSources' | 'machineId' | 'machineIdProvider' | 'runtimeId'
     | 'happyHomeDir' | 'logger' | 'processEnv' | 'pidToTrackedSession' | 'isDaemonQuiescing'
     | 'connectedServiceAuthGroupPreTurnSwitchCoordinator' | 'connectedServicePredictiveSwitchGuard'
     | 'connectedServiceQuotaFetcherDescriptors' | 'connectedServiceRuntimeQuotaSnapshots'
@@ -427,6 +429,7 @@ export async function startDaemonConnectedServiceRuntime(
     | 'resolveConnectedServiceQualifiedPurposeBindingSnapshot' | 'resolveQualifiedConnectedAccountPeerClass'
     | 'resolveQualifiedConnectedAccountPeerOperationTransport' | 'resolveConnectedAccountUsageIdentity' | 'activatePurposeBindings'> & Readonly<{
     accountSettingsSnapshot?: () => import('@/settings/accountSettings/activeAccountSettingsSnapshot').ActiveAccountSettingsSnapshot | null;
+    savedSecretOperationContext?: import('@/settings/secrets/savedSecretOperationContext').SavedSecretOperationContextV1;
     subscribeAccountSettingsSnapshot?: (listener: () => void) => () => void;
     connectedServicesMaterializationBaseDir?: string;
     isAccountRuntimeCurrent?: () => Promise<boolean>;
@@ -593,6 +596,8 @@ export async function startDaemonConnectedServiceRuntime(
         await Promise.all(notificationTargets.map(async (target) => {
           await dispatchConnectedServiceCredentialHealthNotificationAsync({
             settings: settingsSnapshot?.settings ?? null,
+            secretSources: params.secretSources,
+            operationContext: params.savedSecretOperationContext,
             settingsSecretsReadKeys: settingsSnapshot?.settingsSecretsReadKeys ?? [],
             expoPushSender: params.api.push(),
             listConnectedServiceProfiles: params.api.listConnectedServiceProfiles.bind(params.api),
@@ -848,6 +853,8 @@ export async function startDaemonConnectedServiceRuntime(
         const settingsSnapshot = readAccountSettingsSnapshot();
         await dispatchConnectedServiceAutomaticQuotaResetNotificationAsync({
           settings: settingsSnapshot?.settings ?? null,
+          secretSources: params.secretSources,
+          operationContext: params.savedSecretOperationContext,
           settingsSecretsReadKeys: settingsSnapshot?.settingsSecretsReadKeys ?? [],
           expoPushSender: params.api.push(), event,
         });
@@ -856,6 +863,8 @@ export async function startDaemonConnectedServiceRuntime(
         const settingsSnapshot = readAccountSettingsSnapshot();
         await dispatchConnectedServiceQuotaLifecycleNotificationAsync({
           settings: settingsSnapshot?.settings ?? null,
+          secretSources: params.secretSources,
+          operationContext: params.savedSecretOperationContext,
           settingsSecretsReadKeys: settingsSnapshot?.settingsSecretsReadKeys ?? [],
           expoPushSender: params.api.push(),
           transition,
@@ -874,6 +883,8 @@ export async function startDaemonConnectedServiceRuntime(
         const settingsSnapshot = readAccountSettingsSnapshot();
         await dispatchConnectedServiceQuotaLifecycleNotificationAsync({
           settings: settingsSnapshot?.settings ?? null,
+          secretSources: params.secretSources,
+          operationContext: params.savedSecretOperationContext,
           settingsSecretsReadKeys: settingsSnapshot?.settingsSecretsReadKeys ?? [],
           ...(params.accountSettingsSnapshot ? {
             notificationChannelCatalog: settingsSnapshot?.notificationChannelCatalog ?? { status: 'loading' as const },
