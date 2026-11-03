@@ -53,6 +53,15 @@ export type BundledPluginUiAppArtifact = Readonly<{
 
 export type BundledPluginUiAppArtifactInventory = readonly BundledPluginUiAppArtifact[];
 
+/** Packaged Resource byte locators; JSON contents remain outside the JavaScript graph. */
+export type BundledPluginPackagedResource = Readonly<{
+    pluginId: string;
+    releaseVersion: string;
+    resourceId: string;
+    digest: PluginUiArtifactDigestV1;
+    asset: BundledPluginUiAppArtifactFile['asset'];
+}>;
+
 /** Manifest-declared packaged marks; descriptive app bytes, never execution authority. */
 export type BundledPluginBrandMark = Readonly<{
     pluginId: string;

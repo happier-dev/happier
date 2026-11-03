@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { runInNewContext } from 'node:vm';
@@ -20,6 +20,7 @@ import {
   listBundledPluginUiArtifactExports,
   resolveBundledPluginUiArtifactsInputPaths,
   resolveBundledPluginUiArtifactsOutputPath,
+  resolveBundledPluginUiArtifactsRetainedRoots,
 } from './generateBundledPluginUiArtifacts.mjs';
 
 const execFileAsync = promisify(execFile);
@@ -192,6 +193,147 @@ test('conditional portable source exports publish executable graphs through sour
     assert.equal(declaration.artifactGraphs.length, 1);
   } finally { await rm(fixture.repoRoot, { recursive: true, force: true }); }
 });
+
+async function addFixtureTranslationResources(fixture) {
+  const root = join(fixture.repoRoot, 'packages/plugins/fixture');
+  const manifestPath = join(root, '.happier-plugin/plugin.json');
+  const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
+  const bytes = Buffer.from('{"label":"resource-only-sentinel"}\n');
+  await mkdir(join(root, 'assets/i18n'), { recursive: true });
+  await writeFile(join(root, 'assets/i18n/en.json'), bytes);
+  manifest.contributes.resources = [
+    ...(manifest.contributes.resources ?? []),
+    { id: 'locale/en', kind: 'asset', path: 'assets/i18n/en.json', contentType: 'application/json' },
+    { id: 'same-file-alias', kind: 'asset', path: 'assets/i18n/en.json', contentType: 'application/json' },
+  ];
+  manifest.contributes.ui.translations = [{ locale: 'en', resourceId: 'locale/en' }];
+  await writeFile(manifestPath, JSON.stringify(manifest));
+  return { root, manifestPath, manifest, bytes };
+}
+
+for (const sourceStore of [false, true]) {
+  test(`packaged JSON Resources use exact raw Metro assets through the existing publication graph (source store: ${sourceStore})`, async () => {
+    const fixture = await createFixture();
+    try {
+      const resource = await addFixtureTranslationResources(fixture);
+      if (!sourceStore) {
+        await writeFile(join(resource.root, 'package.json'), JSON.stringify({ name: '@happier-dev/plugins-fixture', version: '0.0.0',
+          exports: { [`./happier-plugin-ui/${fixture.relativePath}`]: `./dist/happier-plugin-ui/${fixture.relativePath}` } }));
+        await mkdir(join(fixture.repoRoot, 'node_modules/@happier-dev'), { recursive: true });
+        await symlink(resource.root, join(fixture.repoRoot, 'node_modules/@happier-dev/plugins-fixture'), 'dir');
+      }
+      const options = { repoRoot: fixture.repoRoot, ...(sourceStore ? {
+        artifactRoots: { fixture: fixture.artifactRoot }, artifactStoreDir: join(fixture.repoRoot, 'consumer/artifacts'),
+        outputPath: join(fixture.repoRoot, 'consumer/inventory.js'),
+      } : {}) };
+      const result = await generateBundledPluginUiArtifacts(options);
+      assert.deepEqual(result.pluginFailures, []);
+      const output = await readFile(result.outputPath, 'utf8');
+      const imports = [];
+      const emitted = readEmittedPluginUiInventory(output, path => { imports.push(path); return path; });
+      const resources = emitted.BUNDLED_PLUGIN_PACKAGED_RESOURCES;
+      assert.equal(resources.length, 2);
+      assert.deepEqual(Array.from(resources, row => ({ pluginId: row.pluginId, resourceId: row.resourceId,
+        releaseVersion: row.releaseVersion, digest: row.digest })), ['locale/en', 'same-file-alias'].map(resourceId => ({
+        pluginId: 'happier.fixture', resourceId, releaseVersion: '0.0.0', digest: computePluginUiArtifactSha256DigestV1(resource.bytes),
+      })));
+      assert.equal(resources[0].asset, resources[1].asset, 'Resource aliases share the same physical Metro asset');
+      assert.ok(resources[0].asset.endsWith(join('packaged-resources', 'assets', 'i18n', 'en.json.bundle')));
+      assert.deepEqual(await readFile(resources[0].asset), resource.bytes);
+      assert.equal(imports.filter(path => path.endsWith('.json.bundle')).length, 1, 'one physical asset import per declared file');
+      assert.ok(imports.every(path => !path.endsWith('.json')), 'JSON values never enter an executable require');
+      assert.doesNotMatch(output, /resource-only-sentinel/);
+      assert.equal(emitted.BUNDLED_PLUGIN_UI_APP_ARTIFACTS[0].digest,
+        JSON.parse(await readFile(join(fixture.artifactRoot, 'ui-artifacts.json'), 'utf8')).entries[0].digest);
+      // Installed exports resolve in a packaged Node environment. The source
+      // preparation loader above deliberately knows only the real repository's
+      // first-party workspaces, not this external package filesystem fixture.
+      const inventory = sourceStore ? {
+        paths: resolveBundledPluginUiArtifactsInputPaths(result.outputPath),
+        roots: [...resolveBundledPluginUiArtifactsRetainedRoots(result.outputPath)],
+      }
+        : JSON.parse((await execFileAsync(process.execPath, [
+          '--conditions=happier-source', '--import', 'tsx', '--input-type=module', '--eval', `
+            import { resolveBundledPluginUiArtifactsInputPaths, resolveBundledPluginUiArtifactsRetainedRoots } from ${JSON.stringify(new URL('./generateBundledPluginUiArtifacts.mjs', import.meta.url).href)};
+            process.stdout.write(JSON.stringify({ paths: resolveBundledPluginUiArtifactsInputPaths(process.argv[1]),
+              roots: [...resolveBundledPluginUiArtifactsRetainedRoots(process.argv[1])] }));
+          `, result.outputPath,
+        ], { env: { ...process.env, NODE_OPTIONS: '' } })).stdout);
+      assert.ok(inventory.paths?.includes(resources[0].asset));
+      assert.equal(new Map(inventory.roots).get('happier.fixture'), result.artifactRoots.fixture);
+      const first = await stat(resources[0].asset);
+      await generateBundledPluginUiArtifacts(options);
+      assert.equal((await stat(resources[0].asset)).ino, first.ino, 'unchanged Resource bytes do not republish a physical asset');
+      if (sourceStore) {
+        const changed = Buffer.from('{"label":"updated-resource-sentinel"}\n');
+        await writeFile(join(resource.root, 'assets/i18n/en.json'), changed);
+        await generateBundledPluginUiArtifacts(options);
+        const next = readEmittedPluginUiInventory(await readFile(result.outputPath, 'utf8'), path => path);
+        assert.notEqual(next.BUNDLED_PLUGIN_PACKAGED_RESOURCES[0].asset, resources[0].asset);
+        assert.deepEqual(await readFile(next.BUNDLED_PLUGIN_PACKAGED_RESOURCES[0].asset), changed);
+        assert.deepEqual(await readFile(resources[0].asset), resource.bytes, 'delayed consumers retain the previous raw bytes');
+        assert.equal(next.BUNDLED_PLUGIN_UI_APP_ARTIFACTS[0].digest, emitted.BUNDLED_PLUGIN_UI_APP_ARTIFACTS[0].digest);
+      } else {
+        await generateBundledPluginUiArtifacts({ ...options, mode: 'check' });
+      }
+    } finally { await rm(fixture.repoRoot, { recursive: true, force: true }); }
+  });
+}
+
+for (const sourceStore of [false, true]) test(`source preparation publishes Resource-only plugins without executable UI artifacts or package dist writes (source store: ${sourceStore})`, async () => {
+  const fixture = await createFixture();
+  try {
+    const resource = await addFixtureTranslationResources(fixture);
+    resource.manifest.contributes.ui = { translations: resource.manifest.contributes.ui.translations };
+    await rm(fixture.artifactRoot, { recursive: true });
+    const { prepareSourcePluginUiArtifacts } = await import('./prepareSourcePluginUiArtifacts.mjs');
+    const outputDir = join(fixture.repoRoot, 'private-inputs');
+    const artifactStoreDir = join(fixture.repoRoot, 'consumer/artifacts');
+    const result = await prepareSourcePluginUiArtifacts({ repoRoot: fixture.repoRoot, outputDir,
+      ...(sourceStore ? { artifactStoreDir } : {}),
+      plugins: [{ directory: 'fixture', manifest: resource.manifest, uiArtifacts: false }] });
+    assert.deepEqual(result.pluginFailures, []);
+    const emitted = readEmittedPluginUiInventory(await readFile(result.outputPath, 'utf8'), path => path);
+    assert.equal(emitted.BUNDLED_PLUGIN_UI_APP_ARTIFACTS.length, 0);
+    assert.equal(emitted.BUNDLED_PLUGIN_PACKAGED_RESOURCES.length, 2);
+    const asset = emitted.BUNDLED_PLUGIN_PACKAGED_RESOURCES[0].asset;
+    assert.ok(asset.startsWith(`${sourceStore ? join(artifactStoreDir, 'fixture') : join(outputDir, 'fixture/happier-plugin-ui')}${sep}`));
+    assert.deepEqual(await readFile(asset), resource.bytes);
+    assert.ok(resolveBundledPluginUiArtifactsInputPaths(result.outputPath).includes(asset));
+    assert.equal(resolveBundledPluginUiArtifactsRetainedRoots(result.outputPath).get('happier.fixture'), result.artifactRoots.fixture);
+    if (sourceStore) {
+      await rm(join(outputDir, 'fixture'), { recursive: true, force: true });
+      assert.deepEqual(await readFile(asset), resource.bytes, 'live Resource bytes outlive compiler scratch');
+    }
+    await assert.rejects(stat(fixture.artifactRoot), { code: 'ENOENT' });
+  } finally { await rm(fixture.repoRoot, { recursive: true, force: true }); }
+});
+
+for (const invalid of ['missing', 'escape', 'symlink']) {
+  test(`invalid packaged Resource bytes are diagnosed per plugin (${invalid})`, async () => {
+    const fixture = await createFixture();
+    try {
+      const resource = await addFixtureTranslationResources(fixture);
+      await addSecondPlugin(fixture.repoRoot);
+      if (invalid === 'missing') await rm(join(resource.root, 'assets/i18n/en.json'));
+      else if (invalid === 'escape') {
+        for (const entry of resource.manifest.contributes.resources) entry.path = '../outside.json';
+        await writeFile(resource.manifestPath, JSON.stringify(resource.manifest));
+      } else {
+        await rm(join(resource.root, 'assets/i18n'), { recursive: true });
+        const outside = join(fixture.repoRoot, 'outside-resource');
+        await mkdir(outside);
+        await writeFile(join(outside, 'en.json'), resource.bytes);
+        await symlink(outside, join(resource.root, 'assets/i18n'), 'dir');
+      }
+      const result = await generateBundledPluginUiArtifacts({ repoRoot: fixture.repoRoot });
+      assert.deepEqual(result.pluginFailures.map(row => row.pluginId), ['happier.fixture']);
+      const emitted = readEmittedPluginUiInventory(await readFile(result.outputPath, 'utf8'));
+      assert.equal(emitted.BUNDLED_PLUGIN_PACKAGED_RESOURCES.length, 0);
+      assert.deepEqual(Array.from(emitted.BUNDLED_PLUGIN_UI_APP_ARTIFACTS, row => row.pluginId), ['happier.second']);
+    } finally { await rm(fixture.repoRoot, { recursive: true, force: true }); }
+  });
+}
 
 test('the UI prebuild owns one universal exact app-preseed registry from canonical artifact manifests', async () => {
   const fixture = await createFixture();

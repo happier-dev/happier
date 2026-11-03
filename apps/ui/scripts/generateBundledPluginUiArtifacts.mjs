@@ -1,10 +1,9 @@
-import { lstat, mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { projectBundledPluginUiDeclaration, projectBundledPluginUiFirstPaintDeclaration } from '../../cli/scripts/build-owned/bundledPlugins/uiDeclarations.mjs';
-
 import { readBundledPluginUiDeclarationSource, renderBundledPluginUiDeclarationSource } from './bundledPluginUiDeclarationSource.mjs';
 
 import {
@@ -55,28 +54,65 @@ function readBundledPluginUiArtifactsInventory(inventoryPath) {
     const specifier = JSON.parse(encoded);
     return isAbsolute(specifier) ? specifier : resolve(dirname(inventoryPath), specifier);
   });
-  return { source, references: paths.slice(1), declarationPaths, paths: Array.from(new Set([...paths, ...declarationPaths])) };
+  // Empty compiler graphs have no asset row from which to recover their root.
+  // Keep those existing reuse records reachable without adding runtime imports.
+  const rootRecord = source.match(/^\/\/ BUNDLED_PLUGIN_UI_ARTIFACT_ROOTS = (.+);$/m);
+  let artifactRoots = {};
+  try {
+    if (rootRecord) artifactRoots = Object.fromEntries(Object.entries(JSON.parse(rootRecord[1]))
+      .filter(([, root]) => typeof root === 'string' && isAbsolute(root)));
+  } catch { /* Optional compiler reuse metadata does not decide byte availability. */ }
+  return { source, artifactRoots, references: paths.slice(1), declarationPaths, paths: Array.from(new Set([...paths, ...declarationPaths])) };
 }
 
 export function resolveBundledPluginUiArtifactsInputPaths(inventoryPath) {
   return readBundledPluginUiArtifactsInventory(inventoryPath)?.paths ?? null;
 }
 
-/** Recover roots from this producer's static rows without evaluating UI code.
- * These are candidates only; publication revalidates their entire byte graph. */
 export function resolveBundledPluginUiArtifactsRetainedRoots(inventoryPath) {
+  return readBundledPluginUiArtifactsRetainedInventory(inventoryPath).roots;
+}
+
+/** Recover the producer's admitted declarations with their candidate roots.
+ * Compiler reuse metadata is optional; it does not own last-green availability. */
+export function readBundledPluginUiArtifactsRetainedInventory(inventoryPath) {
   const retained = readBundledPluginUiArtifactsInventory(inventoryPath);
   const roots = new Map();
-  if (!retained) return roots;
+  const declarations = new Map();
+  if (!retained) return { roots, declarations };
+  for (const [pluginId, root] of Object.entries(retained.artifactRoots)) roots.set(pluginId, root);
+  const retainRoot = (pluginId, relativePath, assetIndex) => {
+    const path = retained.references[Number(assetIndex)];
+    if (!path) return;
+    const segments = relativePath.split('/');
+    const root = resolve(dirname(path), ...segments.slice(1).map(() => '..'));
+    if (resolve(root, ...segments) === path) roots.set(pluginId, root);
+  };
   const rows = /pluginId: ("(?:[^"\\]|\\.)*"),[\s\S]*?files: Object.freeze\(\[\s*Object.freeze\(\{\s*relativePath: ("(?:[^"\\]|\\.)*"),\s*asset: BUNDLED_PLUGIN_UI_APP_ASSET_(\d+),/g;
   for (const [, pluginId, relativePath, assetIndex] of retained.source.matchAll(rows)) {
-    const path = retained.references[Number(assetIndex)];
-    if (!path) continue;
-    const segments = JSON.parse(relativePath).split('/');
-    const root = resolve(dirname(path), ...segments.slice(1).map(() => '..'));
-    if (resolve(root, ...segments) === path) roots.set(JSON.parse(pluginId), root);
+    retainRoot(JSON.parse(pluginId), JSON.parse(relativePath), assetIndex);
   }
-  return roots;
+  for (const [, json] of retained.source.matchAll(/^const BUNDLED_PLUGIN_UI_APP_DECLARATION_\d+ = (.+);$/gm)) {
+    try {
+      const declaration = JSON.parse(json);
+      declarations.set(declaration.pluginId, declaration);
+    } catch { return { roots, declarations }; }
+  }
+  for (const path of retained.declarationPaths) {
+    try {
+      const source = readFileSync(path, 'utf8');
+      const declaration = readBundledPluginUiDeclarationSource(source);
+      declarations.set(declaration.pluginId, declaration);
+    } catch { return { roots, declarations }; }
+  }
+  const resources = /^  Object.freeze\(\{\n    pluginId: ("(?:[^"\\]|\\.)*"),\n    resourceId: ("(?:[^"\\]|\\.)*"),\n    releaseVersion: [^\n]+\n    digest: [^\n]+\n    asset: BUNDLED_PLUGIN_UI_APP_ASSET_(\d+),/gm;
+  for (const [, encodedPluginId, encodedResourceId, assetIndex] of retained.source.matchAll(resources)) {
+    const pluginId = JSON.parse(encodedPluginId);
+    const resourceId = JSON.parse(encodedResourceId);
+    const resource = declarations.get(pluginId)?.normalizedManifest?.contributes?.resources?.find(entry => entry.id === resourceId);
+    if (resource?.path) retainRoot(pluginId, `packaged-resources/${resource.path}.bundle`, assetIndex);
+  }
+  return { roots, declarations };
 }
 
 /** Seed the existing consumer inventory from producer-owned retained bytes.
@@ -167,7 +203,7 @@ export function listBundledPluginUiArtifactExports(packageJson) {
     ? Object.keys(packageJson.exports).filter(key => key.startsWith('./happier-plugin-ui/')) : [];
 }
 
-export async function collectBundledPluginUiArtifactSources(repoRoot, initialPluginFailures = [], artifactRoots, pluginManifests = {}, artifactOutputDirs = {}, artifactStoreDir) {
+export async function collectBundledPluginUiArtifactSources(repoRoot, initialPluginFailures = [], artifactRoots, pluginManifests = {}, artifactOutputDirs = {}, artifactStoreDir, writePackagedResources = false) {
   const {
     PluginUiArtifactsManifestV2Schema,
     computePluginUiArtifactFileSetSha256DigestV1,
@@ -184,8 +220,10 @@ export async function collectBundledPluginUiArtifactSources(repoRoot, initialPlu
     .map((entry) => entry.name)
     .sort((left, right) => left.localeCompare(right));
   const sources = [];
+  const packagedResources = [];
   const declarations = new Map();
   const publishedArtifactRoots = {};
+  const compilerRoots = {};
   const pluginFailures = [...initialPluginFailures];
   const excludedPackageNames = new Set(initialPluginFailures.map((failure) => failure.packageName));
   const coordinateOwners = new Map();
@@ -250,26 +288,28 @@ export async function collectBundledPluginUiArtifactSources(repoRoot, initialPlu
         manifest: pluginManifest, artifactGraphs: parsedManifest?.success ? parsedManifest.data.entries : [] });
       if (declaration) declarations.set(declaration.pluginId, declaration);
     }
-    if (!artifactsRoot) break;
     if (artifactManifestError) {
       if (artifactManifestError.code === 'ENOENT') {
         const bundleExports = listBundledPluginUiArtifactExports(packageJson);
-        if (bundleExports.length === 0 && !artifactRoots) continue;
-        pluginId = readRequiredString(pluginManifest, 'id', pluginManifestPath);
-        throw new Error(
-          `Bundled Plugin UI artifact manifest is missing for '${pluginId}' with declared UI artifact exports: ${bundleExports.join(', ')}`,
-        );
+        if (bundleExports.length > 0 || artifactRoots) {
+          pluginId = readRequiredString(pluginManifest, 'id', pluginManifestPath);
+          throw new Error(
+            `Bundled Plugin UI artifact manifest is missing for '${pluginId}' with declared UI artifact exports: ${bundleExports.join(', ')}`,
+          );
+        }
+      } else {
+        throw artifactManifestError;
       }
-      throw artifactManifestError;
     }
 
     pluginId = readRequiredString(pluginManifest, 'id', pluginManifestPath);
-    if (!parsedManifest?.success) {
+    if (rawArtifactManifest !== undefined && !parsedManifest?.success) {
       throw new Error(`Invalid bundled Plugin UI artifact manifest for '${packageName}'`);
     }
+    const entries = parsedManifest?.success ? parsedManifest.data.entries : [];
     // App dependency membership applies to executable UI graphs. Daemon-only
     // packages may emit empty manifests and still contribute packaged brands.
-    if (!artifactRoots && parsedManifest.data.entries.length > 0 && uiDependencies[packageName] !== packageVersion) {
+    if (!artifactRoots && entries.length > 0 && uiDependencies[packageName] !== packageVersion) {
       throw new Error(
         `apps/ui must depend on bundled Plugin UI package '${packageName}' at '${packageVersion}'`,
       );
@@ -278,7 +318,36 @@ export async function collectBundledPluginUiArtifactSources(repoRoot, initialPlu
     let destination = artifactOutputDirs[pluginDirectory] && resolve(artifactOutputDirs[pluginDirectory]);
     const pluginSources = [];
     const pluginFiles = [];
-    for (const entry of parsedManifest.data.entries) {
+    const pluginResources = [];
+    const resourceFiles = new Map();
+    const rawResources = pluginManifest?.contributes?.resources ?? [];
+    const declaration = declarations.get(pluginId);
+    if (rawResources.some(resource => resource.source !== 'dynamic' && resource.kind === 'asset'
+      && resource.contentType === 'application/json') && !declaration) {
+      throw new Error(`Invalid packaged Resource declaration for '${packageName}'`);
+    }
+    for (const resource of declaration?.normalizedManifest?.contributes.resources ?? []) {
+      if (resource.source === 'dynamic' || resource.kind !== 'asset' || resource.contentType !== 'application/json') continue;
+      const relativePath = `packaged-resources/${resource.path}.bundle`;
+      let file = resourceFiles.get(relativePath);
+      if (!file) {
+        const path = assertArtifactPath(packageRoot, resource.path, packageName);
+        try {
+          if (!(await lstat(path)).isFile()) throw new Error('not a regular file');
+          const realRoot = await realpath(packageRoot);
+          const realPath = await realpath(path);
+          assertArtifactPath(realRoot, relative(realRoot, realPath).split(sep).join('/'), packageName);
+          file = { relativePath, bytes: new Uint8Array(await readFile(path)) };
+        } catch (error) {
+          throw new Error(`Invalid packaged Resource file for '${packageName}': '${resource.path}' (${String(error)})`);
+        }
+        resourceFiles.set(relativePath, file);
+      }
+      pluginResources.push({ pluginId, resourceId: resource.id, releaseVersion: packageVersion,
+        digest: computePluginUiArtifactSha256DigestV1(file.bytes), relativePath });
+    }
+    if (!artifactsRoot && pluginResources.length === 0) break;
+    for (const entry of entries) {
       const verifiedFiles = [];
       for (const file of entry.files) {
         const absolutePath = assertArtifactPath(artifactsRoot, file.relativePath, packageName);
@@ -332,6 +401,7 @@ export async function collectBundledPluginUiArtifactSources(repoRoot, initialPlu
             : `${packageName}/happier-plugin-ui/${file.relativePath}` })),
       });
     }
+    pluginFiles.push(...resourceFiles.values());
     if (!destination && artifactStoreDir) {
       // Reuse the canonical graph digest: changes in compiler inputs that emit
       // identical bytes must not duplicate those bytes in a serving Expo.
@@ -339,18 +409,34 @@ export async function collectBundledPluginUiArtifactSources(repoRoot, initialPlu
       const digest = computePluginUiArtifactFileSetSha256DigestV1(files);
       destination = resolve(artifactStoreDir, pluginDirectory, digest.slice('sha256:'.length));
     }
+    if (!destination && pluginResources.length > 0) destination = artifactsRoot;
+    if (pluginResources.length > 0 && !destination) {
+      throw new Error(`Packaged Resource output root is unavailable for '${packageName}'`);
+    }
     // Finite native construction owns fresh output roots. Write the exact
     // bytes just verified, so a concurrent package publication cannot change
     // the retained graph between validation and materialization.
     if (destination && destination !== artifactsRoot) {
       await materializeArtifactGraph(destination, [...pluginFiles,
-        { relativePath: 'ui-artifacts.json', bytes: Buffer.from(JSON.stringify(parsedManifest.data)) }], Boolean(artifactStoreDir));
+        ...(parsedManifest?.success ? [{ relativePath: 'ui-artifacts.json', bytes: Buffer.from(JSON.stringify(parsedManifest.data)) }] : [])], Boolean(artifactStoreDir));
       for (const source of pluginSources) {
         source.files = source.files.map((file) => ({ ...file,
           specifier: assertArtifactPath(destination, file.relativePath, source.packageName) }));
       }
     }
+    if (destination && pluginResources.length > 0) {
+      if (writePackagedResources && destination === artifactsRoot) {
+        await materializeArtifactGraph(destination, [...resourceFiles.values()], true);
+      } else if (!writePackagedResources) for (const file of resourceFiles.values()) {
+        const path = assertArtifactPath(destination, file.relativePath, packageName);
+        if (!(await readFile(path)).equals(file.bytes)) throw new Error(`Packaged Resource bytes are out of date for '${packageName}': '${file.relativePath}'`);
+      }
+      for (const resource of pluginResources) {
+        packagedResources.push({ ...resource, specifier: assertArtifactPath(destination, resource.relativePath, packageName) });
+      }
+    }
     publishedArtifactRoots[pluginDirectory] = destination ?? artifactsRoot;
+    if (parsedManifest?.success) compilerRoots[pluginId] = destination ?? artifactsRoot;
     for (const source of pluginSources) {
       coordinateOwners.set([source.pluginId, source.artifactId, source.tier, source.packageVersion].join('\u001f'), source.packageName);
       sources.push(source);
@@ -375,11 +461,12 @@ export async function collectBundledPluginUiArtifactSources(repoRoot, initialPlu
     || left.tier.localeCompare(right.tier)
     || left.digest.localeCompare(right.digest)
   ));
-  return { sources, declarations: [...declarations.values()].sort((left, right) => left.packageName.localeCompare(right.packageName)),
-    pluginFailures, artifactRoots: publishedArtifactRoots };
+  packagedResources.sort((left, right) => left.pluginId.localeCompare(right.pluginId) || left.resourceId.localeCompare(right.resourceId));
+  return { sources, packagedResources, declarations: [...declarations.values()].sort((left, right) => left.packageName.localeCompare(right.packageName)),
+    pluginFailures, artifactRoots: publishedArtifactRoots, compilerRoots };
 }
 
-async function renderBundledPluginUiArtifactInventory(sources, declarations, declarationPaths) {
+async function renderBundledPluginUiArtifactInventory(sources, declarations, packagedResources, declarationPaths, artifactRoots) {
   const lines = [
     '/**',
     ' * GENERATED FILE CONTRACT (APP-BUNDLED-PLUGIN-UI-ARTIFACTS)',
@@ -393,9 +480,10 @@ async function renderBundledPluginUiArtifactInventory(sources, declarations, dec
     ' */',
     '',
   ];
+  lines.push(`// BUNDLED_PLUGIN_UI_ARTIFACT_ROOTS = ${JSON.stringify(artifactRoots)};`, '');
   const assetSymbolBySpecifier = new Map();
-  for (const source of sources) {
-    for (const file of source.files) {
+  for (const files of [...sources.map(source => source.files), packagedResources]) {
+    for (const file of files) {
       const specifier = file.specifier;
       if (assetSymbolBySpecifier.has(specifier)) continue;
       const symbol = `BUNDLED_PLUGIN_UI_APP_ASSET_${assetSymbolBySpecifier.size}`;
@@ -445,6 +533,18 @@ async function renderBundledPluginUiArtifactInventory(sources, declarations, dec
       );
     }
     lines.push('    ]),', '  }),');
+  }
+  lines.push(']);', '');
+  lines.push("/** @type {ReadonlyArray<import('./bundledPluginUiArtifactInventory').BundledPluginPackagedResource>} */",
+    'export const BUNDLED_PLUGIN_PACKAGED_RESOURCES = Object.freeze([');
+  for (const resource of packagedResources) {
+    lines.push('  Object.freeze({',
+      `    pluginId: ${JSON.stringify(resource.pluginId)},`,
+      `    resourceId: ${JSON.stringify(resource.resourceId)},`,
+      `    releaseVersion: ${JSON.stringify(resource.releaseVersion)},`,
+      `    digest: ${JSON.stringify(resource.digest)},`,
+      `    asset: ${assetSymbolBySpecifier.get(resource.specifier)},`,
+      '  }),');
   }
   lines.push(']);', '');
   return lines.join('\n');
@@ -539,7 +639,7 @@ export async function generateBundledPluginUiArtifacts({
     [...inheritedCliFailures, ...pluginFailures].map((failure) => [failure.packageName, failure]),
   ).values()];
   const collected = await collectBundledPluginUiArtifactSources(repoRoot, initialFailures, artifactRoots, pluginManifests,
-    mode === 'write' ? artifactOutputDirs : {}, mode === 'write' ? artifactStoreDir : undefined);
+    mode === 'write' ? artifactOutputDirs : {}, mode === 'write' ? artifactStoreDir : undefined, mode === 'write');
   // A compiler failure can still have a validated retained byte graph. Only
   // unavailable graphs enter the existing failure set; every error is reported.
   const compilationFailureByPackage = new Map(compilationFailures.map((failure) => [failure.packageName, failure]));
@@ -577,7 +677,8 @@ export async function generateBundledPluginUiArtifacts({
     else if (!(await readFile(path)).equals(bytes)) throw new Error(`Bundled Plugin UI declaration is out of date: ${path}`);
     declarationPaths.set(declaration.pluginId, path);
   }
-  const output = await renderBundledPluginUiArtifactInventory(sources, collected.declarations, declarationPaths) + renderBundledPluginBrandMarks(brands.marks);
+  const output = await renderBundledPluginUiArtifactInventory(sources, collected.declarations, collected.packagedResources, declarationPaths,
+    collected.compilerRoots) + renderBundledPluginBrandMarks(brands.marks);
   if (mode === 'check') {
     let current = null;
     try {

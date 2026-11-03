@@ -20,6 +20,7 @@ import { resolveDependencyRefreshMarkerPath } from '../../stack/scripts/utils/pr
 export async function prepareSourcePluginUiArtifacts({ repoRoot, outputDir, plugins, resolveSourceImport, sourceImportConditions: conditions = SOURCE_PLUGIN_UI_IMPORT_CONDITIONS, artifactOutputDirs = {}, artifactStoreDir, outputPath = join(outputDir, 'inventory.js'), retainedInventoryPath = outputPath }) {
   const artifactRoots = {};
   const pluginManifests = {};
+  const outputDirs = { ...artifactOutputDirs };
   const compilationFailures = [];
   const retainedRoots = resolveBundledPluginUiArtifactsRetainedRoots(retainedInventoryPath);
   const producerRoots = resolveBundledPluginUiArtifactsRetainedRoots(resolveBundledPluginUiArtifactsOutputPath(repoRoot));
@@ -53,7 +54,10 @@ export async function prepareSourcePluginUiArtifacts({ repoRoot, outputDir, plug
     try {
       manifest = loadManifest ? await loadManifest() : suppliedManifest;
       pluginManifests[directory] = manifest;
-      if (!uiArtifacts) continue;
+      if (!uiArtifacts) {
+        if (!artifactStoreDir) outputDirs[directory] ??= artifactOutputDir;
+        continue;
+      }
       candidates = [...new Set([artifactOutputDir, retainedRoots.get(manifest.id),
         producerRoots.get(manifest.id), join(projectRoot, 'dist/happier-plugin-ui')].filter(Boolean))];
       const files = await readSourcePluginUiBuildInputs({ repoDir: repoRoot, pluginDirectory: directory, packages, packageInputs,
@@ -99,7 +103,7 @@ export async function prepareSourcePluginUiArtifacts({ repoRoot, outputDir, plug
     }
   }
   const result = await generateBundledPluginUiArtifacts({
-    repoRoot, outputPath, artifactRoots, artifactOutputDirs, artifactStoreDir,
+    repoRoot, outputPath, artifactRoots, artifactOutputDirs: outputDirs, artifactStoreDir,
     pluginManifests, compilationFailures, publicationMode: 'source',
   });
   const publicationPackageInputs = new Map();
