@@ -115,6 +115,20 @@ export function resolveExpoAppEnvironmentForChannel(channel) {
   return expoAppEnv === 'production' ? 'production' : 'preview';
 }
 
+/**
+ * Expo env for any web UI bundle built for a release channel (published ui-web or the
+ * server runtime's embedded ui-web/current). Without it app.config.js falls back to the
+ * internal development variant. An explicitly set APP_ENV/EXPO_UPDATES_CHANNEL wins.
+ * @param {import('@happier-dev/release-runtime/releaseRings').PublicReleaseRingId} channel
+ * @param {Record<string, string | undefined>} [env]
+ */
+export function resolveUiWebBuildEnvForChannel(channel, env = process.env) {
+  return {
+    APP_ENV: env.APP_ENV ?? resolveExpoAppEnvironmentForChannel(channel),
+    EXPO_UPDATES_CHANNEL: env.EXPO_UPDATES_CHANNEL ?? getPublicReleaseRingEntry(channel).expoUpdatesChannel,
+  };
+}
+
 function parseOptionalPositiveInt(value) {
   const raw = String(value ?? '').trim();
   if (!raw || !/^\d+$/.test(raw)) return null;

@@ -21,6 +21,7 @@ import {
   maybeSignFile,
   writeChecksumsFile,
 } from './lib/binary-release.mjs';
+import { resolveUiWebBuildEnvForChannel } from './lib/public-release-rings.mjs';
 
 async function main() {
   const repoRoot = resolveRepoRoot();
@@ -62,7 +63,11 @@ async function main() {
   const buildDbProviders = String(
     process.env.HAPPIER_BUILD_DB_PROVIDERS ?? process.env.HAPPY_BUILD_DB_PROVIDERS ?? 'all',
   ).trim() || 'all';
-  const uiWebDistPath = await prepareUiWebDist({ repoRoot });
+  // The embedded ui-web/current must match the server's channel (#846).
+  const uiWebDistPath = await prepareUiWebDist({
+    repoRoot,
+    env: { ...process.env, ...resolveUiWebBuildEnvForChannel(channel, process.env) },
+  });
 
   const artifacts = [];
   for (const target of targets) {
