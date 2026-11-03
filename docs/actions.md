@@ -4730,6 +4730,13 @@ write. A deferred nested approval remains an `approval_request_created` outcome,
 not a completed preference update. Consent-required settings still require a
 present user and cannot be enabled by an Agent for itself.
 
+The development UI Account relay projects mounted Plugin caller descriptors
+onto the closed private requester invocation schema before native reads and
+Session input admission. Process-local version, display and initiating-caller
+metadata stays outside that carrier; Plugin identity, occurrence, source custody,
+materialization and the original automation authority remain intact. This same
+projection serves semantic workspace writes.
+
 An original CLI request can reach a retained same-Account remote Machine through
 the existing Home Action carrier without starting a local daemon. The canonical
 fixed-Home daemon publication keeps positively matching local targets on their

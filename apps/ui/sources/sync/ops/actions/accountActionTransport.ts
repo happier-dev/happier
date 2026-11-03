@@ -27,6 +27,17 @@ export type UiAccountActionExecute = (args: Readonly<{
     signal?: AbortSignal;
 }>) => Promise<unknown>;
 
+/** Project process-local Plugin descriptors onto the incumbent private caller contract. */
+export function projectUiAccountRequesterCaller(caller: ActionExecutorContext['actionCaller']): unknown {
+    if (caller?.kind !== 'plugin') return caller;
+    // Live descriptors also contain display/version/initiator facts. The closed
+    // requester carrier owns its identity fields; retain those without teaching
+    // each sender another copy of that schema. Admission still validates below.
+    const fields = ExternalActionRequesterInvocationV1Schema.shape.caller._zod.def.options
+        .flatMap(option => Object.keys(option.shape));
+    return Object.fromEntries(Object.entries(caller).filter(([key]) => fields.includes(key)));
+}
+
 /** Shared Account-to-daemon relay; reachability does not create a resource target. */
 export function createUiAccountActionTransport(params: Readonly<{
     account: Readonly<{ serverId: string; accountId: string; assertCurrent: () => void }>;
@@ -52,7 +63,7 @@ export function createUiAccountActionTransport(params: Readonly<{
         const workspaceWrites = args.context.workspaceWrites === 'deny' || args.context.agentStartWorkspaceWrites === 'deny'
             ? 'deny' : args.context.workspaceWrites ?? args.context.agentStartWorkspaceWrites;
         const provenance = !args.context.externalActionCredential
-            ? ExternalActionRequesterInvocationV1Schema.safeParse({ caller: args.context.actionCaller,
+            ? ExternalActionRequesterInvocationV1Schema.safeParse({ caller: projectUiAccountRequesterCaller(args.context.actionCaller),
                 surface: args.context.surface, authority: args.context.authority,
                 ...(args.context.callerPermissionMode !== undefined ? { callerPermissionMode: typeof args.context.callerPermissionMode === 'string'
                     ? parseAgentPermissionIntentV1Alias(args.context.callerPermissionMode) ?? args.context.callerPermissionMode : args.context.callerPermissionMode } : {}),

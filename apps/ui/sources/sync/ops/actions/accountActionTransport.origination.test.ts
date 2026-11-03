@@ -22,17 +22,20 @@ describe('private Account Action origination', () => {
         { workspaceWrites: 'allow' as const, agentStartWorkspaceWrites: 'deny' as const },
     ])('preserves bounded Account provenance and the stricter workspace policy %#', async workspacePolicy => {
         const { createUiAccountActionTransport } = await import('./accountActionTransport');
-        const caller = { kind: 'plugin' as const, pluginId: 'happier.test', contributionLocalId: 'notify' };
+        const caller = { kind: 'plugin' as const, pluginId: 'happier.triage', contributionLocalId: 'sessions/run-configured-v1',
+            occurrenceId: '["@happier-dev/plugins-triage","happier.triage","0.0.0"]' };
+        const mountedCaller = { ...caller, pluginVersion: '0.0.0', contributionQualifiedId: 'happier.triage/sessions/run-configured-v1',
+            originSurface: 'ui' as const, initiatingCaller: { kind: 'host' as const } };
         const input = { message: 'Review requested' };
         const execute = createUiAccountActionTransport({ account: { serverId: 'home', accountId: 'requester', assertCurrent() {} },
             resolveFallbackMachineId: () => 'machine', transport: async request => {
-                expect(request.invocation).toEqual({ caller, surface: 'ui', authority: 'account_automation',
+                expect(request.invocation).toEqual({ caller, surface: 'plugin', authority: 'account_automation',
                     callerPermissionMode: 'read-only', callerInputConstraints: { models: null, permissionModes: ['read-only'] }, workspaceWrites: 'deny' });
                 expect(request.payload).toEqual(input);
                 return { ok: true, result: { attemptedChannels: 1, deliveredChannels: 1 } };
             } });
         expect(await execute({ actionId: 'notifications.notify_me', input, context: { serverId: 'home', runtimeAccountId: 'requester',
-            surface: 'ui', authority: 'account_automation', actionCaller: caller, callerPermissionMode: 'read-only',
+            surface: 'plugin', authority: 'account_automation', actionCaller: mountedCaller, callerPermissionMode: 'read-only',
             callerInputConstraints: { models: null, permissionModes: ['read-only'] }, ...workspacePolicy } }))
             .toEqual({ ok: true, result: { attemptedChannels: 1, deliveredChannels: 1 } });
     });

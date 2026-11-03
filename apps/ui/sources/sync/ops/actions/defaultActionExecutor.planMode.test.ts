@@ -591,9 +591,11 @@ describe('default Action executor mode and catalog contracts', () => {
         status: { observedRevision: 'session-message-row-revision:v1:8' } });
     } finally { held.release(); held.restore(); await hook.unmount(); }
   });
-  it.each(['ui', 'human_return', 'voice', 'legacy', 'schema_legacy', 'extended_send', 'native_command', 'schema_nested_legacy', 'schema_nested_legacy_none', 'review_send'] as const)('keeps an Ask on the canonical daemon send owner with its exact input and observation intent (%s)', async client => {
-    const surface = client === 'voice' ? 'voice' : 'ui';
-    const reply = client === 'human_return' ? 'return' : client === 'extended_send' || client === 'native_command' || client === 'schema_nested_legacy_none' || client === 'review_send' ? 'none' : 'wait';
+  it.each(['ui', 'human_return', 'voice', 'legacy', 'schema_legacy', 'extended_send', 'triage_send', 'native_command', 'schema_nested_legacy', 'schema_nested_legacy_none', 'review_send'] as const)('keeps an Ask on the canonical daemon send owner with its exact input and observation intent (%s)', async client => {
+    const surface = client === 'voice' ? 'voice' : client === 'triage_send' ? 'plugin' : 'ui';
+    const triageCaller = { kind: 'plugin' as const, pluginId: 'happier.triage', contributionLocalId: 'sessions/run-configured-v1',
+      occurrenceId: '["@happier-dev/plugins-triage","happier.triage","0.0.0"]' };
+    const reply = client === 'human_return' ? 'return' : client === 'extended_send' || client === 'triage_send' || client === 'native_command' || client === 'schema_nested_legacy_none' || client === 'review_send' ? 'none' : 'wait';
     const humanReturn = client === 'human_return' ? { returnToSessionId: 'origin-session' } : {};
     const withReview = client === 'schema_nested_legacy' || client === 'schema_nested_legacy_none' || client === 'review_send';
     const withStructuredInput = client === 'ui' || client === 'schema_legacy' || withReview;
@@ -605,8 +607,8 @@ describe('default Action executor mode and catalog contracts', () => {
     const installation = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(7));
     homes.answer(serverId, '/v1/machines', { body: [{ ...createPlainMachineRowFixture({ id: 'machine-a', accountId: 'alice' }),
       installationId: 'ask-installation', installationPublicKey: encodeBase64(installation.publicKey),
-      ...(client === 'legacy' || client === 'extended_send' || client === 'native_command' ? {} : { operationProtocolCapabilities: { sessionMessageReply: { protocolVersions: [1] } }, operationProtocolCapabilitiesRevision: 1 }) }] });
-    if (client === 'extended_send' || client === 'native_command' || client === 'schema_nested_legacy_none' || client === 'review_send') {
+      ...(client === 'legacy' || client === 'extended_send' || client === 'native_command' ? {} : { operationProtocolCapabilities: { sessionInputAdmission: { protocolVersions: [1, 2] }, sessionMessageReply: { protocolVersions: [1] } }, operationProtocolCapabilitiesRevision: 1 }) }] });
+    if (client === 'extended_send' || client === 'triage_send' || client === 'native_command' || client === 'schema_nested_legacy_none' || client === 'review_send') {
       const sessions = { ...storage.getState().sessions };
       delete sessions['ask-session'];
       storage.setState({ sessions });
@@ -652,7 +654,9 @@ describe('default Action executor mode and catalog contracts', () => {
       try {
       const authorized = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
       if (authorized.envelope.v !== 1) throw new Error('Expected the plain Ask fixture envelope');
-      expect(authorized.envelope).toMatchObject({ target: { kind: 'machine', machineId: 'machine-a' }, input: client === 'native_command' ? {
+      expect(authorized.envelope).toMatchObject({ target: { kind: 'machine', machineId: 'machine-a' }, input: client === 'triage_send' ? {
+        sessionId: 'ask-session', message: 'What did you find?', idempotencyKey: 'triage-receipt-input',
+      } : client === 'native_command' ? {
         sessionId: 'ask-session', kind: 'sessionSubagentCommand', command: { kind: 'agent_team_delete', teamId: 'team-1' },
         localId: 'ask-input', idempotencyKey: 'native-command-1',
       } : {
@@ -665,11 +669,14 @@ describe('default Action executor mode and catalog contracts', () => {
       expect(openExternalActionRequesterAccountContextV1({ authorization: authorized.executionAuthorization,
         purpose: { kind: 'external_action' }, machineId: 'machine-a', installationId: 'ask-installation', serverIdentityId: 'srv_mode_home',
         installationPrivateKey: installation.secretKey, includeInvocation: true })).toMatchObject({ invocation: {
-          caller: { kind: 'host' }, surface, authority: surface === 'voice' ? 'account_automation' : 'present_user' } });
+          caller: client === 'triage_send' ? triageCaller : { kind: 'host' }, surface,
+          authority: surface === 'voice' || surface === 'plugin' ? 'account_automation' : 'present_user' } });
       return { body: { v: 1, actionId: 'session.message.send', requestId: authorized.envelope.requestId, execution: { ok: true, result: outcome } } };
       } catch (error) { boundaryFailure = error; throw error; }
     } });
-    const input = client === 'native_command' ? {
+    const input = client === 'triage_send' ? {
+      sessionId: 'ask-session', message: 'What did you find?', idempotencyKey: 'triage-receipt-input',
+    } as const : client === 'native_command' ? {
       sessionId: 'ask-session', kind: 'sessionSubagentCommand', command: { kind: 'agent_team_delete', teamId: 'team-1' },
       localId: 'ask-input', idempotencyKey: 'native-command-1',
     } as const : {
@@ -683,7 +690,9 @@ describe('default Action executor mode and catalog contracts', () => {
       ? JSON.parse(await (await import('@/voice/tools/handlers')).createVoiceToolHandlers({
           resolveSessionId: explicit => explicit ?? 'origin-session', currentSessionAddress: { serverId, sessionId: 'origin-session' },
         }).action_execute({ actionId: 'session.message.send', input }, { serverId }))
-      : await createDefaultActionExecutor().execute('session.message.send', input, context());
+      : await createDefaultActionExecutor().execute('session.message.send', input, client === 'triage_send'
+        ? { ...context(), surface, authority: 'account_automation', actionCaller: { ...triageCaller, pluginVersion: '0.0.0' } }
+        : context());
     if (client === 'legacy' || client === 'schema_legacy' || client === 'schema_nested_legacy' || client === 'schema_nested_legacy_none') {
       expect(result).toMatchObject({ ok: false, errorCode: 'session_input_target_update_required' });
       expect(homes.requestsFor('/v1/actions/session.message.send')).toHaveLength(0);

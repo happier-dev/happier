@@ -10,6 +10,7 @@ import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/ser
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
 import { getActionOperation } from '@/sync/ops/actionOperations';
 import { withActionAccountRequestSignal, type LazyActionAccountContext } from './actionAccountContext';
+import { projectUiAccountRequesterCaller } from './accountActionTransport';
 
 const failure = (errorCode: string) => ({ ok: false as const, errorCode, error: errorCode });
 
@@ -92,7 +93,7 @@ function admitUiMachineWrite(account: LazyActionAccountContext | undefined, mach
         || context.serverId && !areServerProfileIdentifiersEquivalent(context.serverId, account.serverId)
         || context.runtimeAccountId && context.runtimeAccountId !== account.accountId) return null;
     const invocation = ExternalActionRequesterInvocationV1Schema.safeParse({
-        caller: context.actionCaller ?? { kind: 'host' }, surface: context.surface ?? 'rpc',
+        caller: projectUiAccountRequesterCaller(context.actionCaller ?? { kind: 'host' }), surface: context.surface ?? 'rpc',
         authority: context.authority ?? 'account_automation', callerPermissionMode: context.callerPermissionMode,
         callerInputConstraints: context.callerInputConstraints, workspaceWrites: context.workspaceWrites,
         defaultSessionId: context.defaultSessionId,
