@@ -12,23 +12,21 @@ import { resolve } from 'node:path';
 import { z } from 'zod/mini';
 
 import { buildSessionWorkspaceLocationV1 } from '@happier-dev/protocol/sessions/metadata/sessionWorkspaceLocationV1';
-import { writeSessionCapabilitySelectionToMetadataV1 } from '@happier-dev/protocol/reach/sessionCapabilityMetadataV1';
 import { AgentSessionToolPolicyShapeV1 } from '@happier-dev/protocol/runtime/permissionIntentV1';
 import type { SessionMetadata, SessionModelSelectionIntentV1, RuntimeDescriptorV1, ConnectedServiceMaterializationIdentityV1 } from '@happier-dev/protocol';
-import { SessionRolesV1Schema } from '@happier-dev/protocol/prompts/roles/sessionRolesSnapshot';
 import type { SpawnSessionOptions } from '@/session/shared/spawnSessionContract';
 import { SessionIdentityAdditionsV1Schema, type SessionIdentityAdditions } from '@happier-dev/protocol/sessions/identity/sessionBotV1';
-import { SessionAttestedContextV1Schema, type SessionAttestedContextV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
-import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
+import { type SessionAttestedContextV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import { ConnectedServiceBindingsV2IngressSchema } from '@happier-dev/protocol/connect/connected-service-bindings';
-import { SessionPromptStackV1Schema, type SessionPromptStackV1 } from '@happier-dev/protocol/sessions/context/sessionContextV1';
-import { PluginUiNewSessionSeedOriginV1Schema, type PluginUiNewSessionSeedOriginV1 } from '@happier-dev/protocol/plugins/ui';
+import { type SessionPromptStackV1 } from '@happier-dev/protocol/sessions/context/sessionContextV1';
+import { type PluginUiNewSessionSeedOriginV1 } from '@happier-dev/protocol/plugins/ui';
 import {
-    applyAcpConfigOptionIntentSessionMetadata,
+    buildCommittedLaunchMetadata as buildPortableCommittedLaunchMetadata,
+    applyInitialSessionCreationFactsToMetadata,
+    applySessionConfigOptionOverridesToMetadata,
     applyAcpSessionModeIntentSessionMetadata,
     applyModelIntentSessionMetadata,
     applyPermissionModeIntentSessionMetadata,
-    applyDisplayTitleSessionMetadata,
 } from '@happier-dev/agents/session/state/metadataWriters';
 
 import type { AgentState, Metadata, PermissionMode } from '@/api/types';
@@ -190,55 +188,9 @@ export function captureSessionLaunchControlMetadata(params: Readonly<{
     return captured;
 }
 
-/** All fresh row creators use the same birth facts; source metadata cannot choose a child's kind. */
-export function applyInitialSessionCreationFactsToMetadata<TMetadata extends SessionMetadata & Pick<Metadata, 'work'>>(
-    metadata: TMetadata,
-    facts: Readonly<{ allowedTools?: readonly string[]; unlistedTools?: 'ask' | 'deny'; workspaceWrites?: 'allow' | 'deny'; identity?: SessionIdentityAdditions;
-        attestedContext?: SessionAttestedContextV1; memoryEnabled?: boolean; promptStack?: SessionPromptStackV1;
-        authoringOrigin?: PluginUiNewSessionSeedOriginV1;
-        accountSettings?: Readonly<Record<string, unknown>> }>,
-): Omit<TMetadata, 'bot' | 'createdAsBot' | 'work' | 'allowedTools' | 'unlistedTools' | 'workspaceWrites' | 'attestedContext'> & SessionIdentityAdditions
-    & Pick<Metadata, 'allowedTools' | 'unlistedTools' | 'workspaceWrites' | 'attestedContext'> & { work: NonNullable<Metadata['work']> } {
-    const { bot: _inheritedBot, createdAsBot: _inheritedBirthFact, allowedTools: _inheritedAllowedTools,
-        unlistedTools: _inheritedUnlistedTools, workspaceWrites: _inheritedWorkspaceWrites,
-        attestedContext: _inheritedAttestation, work, ...base } = metadata;
-    const identity = facts.identity === undefined ? undefined : SessionIdentityAdditionsV1Schema.parse(facts.identity);
-    const settings = accountSettingsParse(facts.accountSettings ?? {});
-    return {
-        ...base,
-        ...identity,
-        ...(facts.attestedContext === undefined ? {} : { attestedContext: SessionAttestedContextV1Schema.parse(facts.attestedContext) }),
-        ...(facts.allowedTools === undefined ? {} : { allowedTools: [...facts.allowedTools] }),
-        ...(facts.unlistedTools === undefined ? {} : { unlistedTools: facts.unlistedTools }),
-        ...(facts.workspaceWrites === undefined ? {} : { workspaceWrites: facts.workspaceWrites }),
-        work: { ...work,
-            ...(facts.authoringOrigin === undefined ? {} : { authoringOriginV1: PluginUiNewSessionSeedOriginV1Schema.parse(facts.authoringOrigin) }),
-            ...(facts.promptStack === undefined ? {} : { promptStack: SessionPromptStackV1Schema.parse(facts.promptStack) }),
-            memoryEnabled: facts.memoryEnabled ?? (identity?.bot?.kind === 'bot'
-                ? settings.memoryUseInNewBots : settings.memoryUseInNewSessions) },
-    };
-}
+export { applyInitialSessionCreationFactsToMetadata, applySessionConfigOptionOverridesToMetadata } from '@happier-dev/agents/session/state/metadataWriters';
 
-export function applySessionConfigOptionOverridesToMetadata<TMetadata extends SessionMetadata>(
-    metadata: TMetadata,
-    overrides: SessionMetadataConfigOptionOverrides | null,
-): TMetadata {
-    if (!overrides) return metadata;
-
-    let nextMetadata = metadata;
-    for (const [configId, entry] of Object.entries(overrides.overrides)) {
-        nextMetadata = applyAcpConfigOptionIntentSessionMetadata(nextMetadata, {
-            v: 1,
-            configId,
-            value: entry.value,
-            updatedAt: entry.updatedAt,
-        });
-    }
-
-    return nextMetadata;
-}
-
-/** Birth intents an attaching runner preserves instead of taking from its process. */
+/** CLI environment adapter for the shared portable birth metadata owner. */
 export function buildCommittedLaunchMetadata(input: Readonly<{
     options: SpawnSessionOptions;
     directory: string;
@@ -247,36 +199,9 @@ export function buildCommittedLaunchMetadata(input: Readonly<{
     materializationIdentity?: ConnectedServiceMaterializationIdentityV1;
     accountSettings?: Readonly<Record<string, unknown>>;
 }>): SessionMetadata {
-    const { options } = input;
-    const machineId = options.machineId || options.sessionCreationCorrespondence?.recipe.execution.machineId;
-    let metadata: SessionMetadata = {
-        path: input.directory, host: os.hostname(),
-        ...(machineId ? { machineId } : {}),
-        ...(options.sessionCreationCorrespondence ? { sessionCreationCorrespondenceV1: options.sessionCreationCorrespondence } : {}),
-        ...(options.sessionCreationCorrespondence?.recipe.checkout?.branchName !== undefined
-            ? { branch: options.sessionCreationCorrespondence.recipe.checkout.branchName } : {}),
-        ...(options.placementOrigin ? { placementOrigin: options.placementOrigin } : {}),
-        ...(options.runtimeDescriptorV1 ? { runtimeDescriptorV1: options.runtimeDescriptorV1 } : {}),
-        ...(options.connectedServices ? { connectedServices: ConnectedServiceBindingsV2IngressSchema.parse(options.connectedServices) } : {}),
-        ...(options.connectedServicesUpdatedAt !== undefined ? { connectedServicesUpdatedAt: options.connectedServicesUpdatedAt } : {}),
-        ...(input.materializationIdentity ? { connectedServiceMaterializationIdentityV1: input.materializationIdentity } : {}),
-        ...(options.initialSessionRolesV1 ? { work: { sessionRolesV1: SessionRolesV1Schema.parse(options.initialSessionRolesV1) } } : {}),
-    };
-    if (options.capabilitySelection !== undefined) metadata = writeSessionCapabilitySelectionToMetadataV1(
-        metadata, options.capabilitySelection, { sessionActive: false },
-    );
-    if (options.initialTitle) metadata = applyDisplayTitleSessionMetadata(metadata, {
-        title: options.initialTitle, staleBehavior: 'bump-if-value-changed',
+    return buildPortableCommittedLaunchMetadata({ ...input,
+        ...(input.directory !== undefined ? { host: os.hostname() } : {}),
     });
-    const agentModeId = input.agentModeId?.trim();
-    if (agentModeId) metadata = applyAcpSessionModeIntentSessionMetadata(metadata, {
-        v: 1, modeId: agentModeId, updatedAt: input.agentModeUpdatedAt ?? Date.now(),
-    });
-    return applySessionConfigOptionOverridesToMetadata(
-        applyInitialSessionCreationFactsToMetadata(metadata, { ...options, accountSettings: input.accountSettings }),
-        options.sessionConfigOptionOverrides
-            ? parseSessionMetadataConfigOptionOverridesJson(JSON.stringify(options.sessionConfigOptionOverrides)) : null,
-    );
 }
 
 function applyInitialIntentMetadata(metadata: Metadata, opts: CreateSessionMetadataOptions): Metadata {

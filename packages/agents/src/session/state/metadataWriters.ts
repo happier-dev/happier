@@ -1,3 +1,16 @@
+import { z } from 'zod/mini';
+import { ApprovalProfileIdV1Schema } from '@happier-dev/protocol/actions';
+import { SessionIdentityAdditionsV1Schema, type SessionIdentityAdditions } from '@happier-dev/protocol/sessions/identity/sessionBotV1';
+import { SessionAttestedContextV1Schema, type SessionAttestedContextV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
+import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
+import { ConnectedServiceBindingsV2IngressSchema } from '@happier-dev/protocol/connect/connected-service-bindings';
+import { SessionPromptStackV1Schema, type SessionPromptStackV1 } from '@happier-dev/protocol/sessions/context/sessionContextV1';
+import { PluginUiNewSessionSeedOriginV1Schema, type PluginUiNewSessionSeedOriginV1 } from '@happier-dev/protocol/plugins/ui';
+import { SessionRolesV1Schema } from '@happier-dev/protocol/prompts/roles/sessionRolesSnapshot';
+import { writeSessionCapabilitySelectionToMetadataV1 } from '@happier-dev/protocol/reach/sessionCapabilityMetadataV1';
+import { AcpConfigOptionOverridesV1Schema } from '@happier-dev/protocol/sessions/metadata/overrides';
+import type { SessionOwnerMetadataV1, SessionCreationCorrespondenceV1, MachinePoolSelectionOriginV1, ConnectedServiceMaterializationIdentityV1, SessionRolesV1, SessionCapabilitySelectionV1, SessionModelSelectionV1, AcpConfigOptionOverridesV1 } from '@happier-dev/protocol';
+import type { SessionTeamCredentialBindingIntentListV1 } from '@happier-dev/protocol/teams';
 import type {
   RuntimeDescriptorV1,
   ProviderBoundModelRef,
@@ -352,4 +365,140 @@ export function clearAcpConfigOptionIntentSessionMetadata<TMetadata extends Sess
 ): TMetadata {
   if (expected) return clearMatchingAcpConfigOptionIntentFromMetadata(metadata, expected) as TMetadata;
   return clearSessionStateFieldFromMetadata(metadata, 'intent.acpConfigOption') as TMetadata;
+}
+
+type SessionBirthMetadataFieldsV1 = Pick<SessionOwnerMetadataV1, 'work'>
+  & Pick<NonNullable<SessionOwnerMetadataV1['runtime']>, 'allowedTools' | 'unlistedTools' | 'workspaceWrites' | 'approvalProfileId'>
+  & Pick<NonNullable<SessionOwnerMetadataV1['system']>, 'attestedContext'>;
+
+export type CommittedLaunchMetadataOptionsV1 = Readonly<{
+  machineId?: string;
+  sessionCreationCorrespondence?: SessionCreationCorrespondenceV1;
+  placementOrigin?: MachinePoolSelectionOriginV1;
+  runtimeDescriptorV1?: RuntimeDescriptorV1;
+  connectedServices?: unknown;
+  connectedServicesUpdatedAt?: number;
+  initialSessionRolesV1?: SessionRolesV1;
+  capabilitySelection?: SessionCapabilitySelectionV1;
+  initialTitle?: string;
+  modelSelection?: SessionModelSelectionV1;
+  teamCredentialBindings?: SessionTeamCredentialBindingIntentListV1;
+  sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1;
+  allowedTools?: readonly string[];
+  unlistedTools?: 'ask' | 'deny';
+  workspaceWrites?: 'allow' | 'deny';
+  identity?: SessionIdentityAdditions;
+  attestedContext?: SessionAttestedContextV1;
+  memoryEnabled?: boolean;
+  promptStack?: SessionPromptStackV1;
+  approvalProfileId?: string | null;
+  authoringOrigin?: PluginUiNewSessionSeedOriginV1;
+}>;
+
+/** All fresh row creators use the same birth facts; source metadata cannot choose a child's kind. */
+export function applyInitialSessionCreationFactsToMetadata<TMetadata extends SessionMetadata & Pick<SessionBirthMetadataFieldsV1, 'work' | 'approvalProfileId'>>(
+    metadata: TMetadata,
+    facts: Readonly<{ allowedTools?: readonly string[]; unlistedTools?: 'ask' | 'deny'; workspaceWrites?: 'allow' | 'deny'; identity?: SessionIdentityAdditions;
+        attestedContext?: SessionAttestedContextV1; memoryEnabled?: boolean; promptStack?: SessionPromptStackV1; approvalProfileId?: string | null;
+        authoringOrigin?: PluginUiNewSessionSeedOriginV1;
+        accountSettings?: Readonly<Record<string, unknown>> }>,
+): Omit<TMetadata, keyof SessionIdentityAdditions | 'work' | 'allowedTools' | 'unlistedTools' | 'workspaceWrites' | 'attestedContext' | 'approvalProfileId'> & SessionIdentityAdditions
+    & Pick<SessionBirthMetadataFieldsV1, 'allowedTools' | 'unlistedTools' | 'workspaceWrites' | 'attestedContext' | 'approvalProfileId'> & { work: NonNullable<SessionBirthMetadataFieldsV1['work']> } {
+    const { bot: _inheritedBot, botFace: _inheritedBotFace, createdAsBot: _inheritedCreatedAsBot,
+        approvalProfileId: inheritedApprovalProfileId, allowedTools: _inheritedAllowedTools,
+        unlistedTools: _inheritedUnlistedTools, workspaceWrites: _inheritedWorkspaceWrites,
+        attestedContext: _inheritedAttestation, work, ...base } = metadata;
+    const identity = facts.identity === undefined ? undefined : SessionIdentityAdditionsV1Schema.parse(facts.identity);
+    const approvalProfileId = facts.approvalProfileId === undefined ? inheritedApprovalProfileId
+        : z.nullable(ApprovalProfileIdV1Schema).parse(facts.approvalProfileId);
+    const settings = accountSettingsParse(facts.accountSettings ?? {});
+    return {
+        ...base,
+        ...identity,
+        ...(approvalProfileId === undefined ? {} : { approvalProfileId }),
+        ...(facts.attestedContext === undefined ? {} : { attestedContext: SessionAttestedContextV1Schema.parse(facts.attestedContext) }),
+        ...(facts.allowedTools === undefined ? {} : { allowedTools: [...facts.allowedTools] }),
+        ...(facts.unlistedTools === undefined ? {} : { unlistedTools: facts.unlistedTools }),
+        ...(facts.workspaceWrites === undefined ? {} : { workspaceWrites: facts.workspaceWrites }),
+        work: { ...work,
+            ...(facts.authoringOrigin === undefined ? {} : { authoringOriginV1: PluginUiNewSessionSeedOriginV1Schema.parse(facts.authoringOrigin) }),
+            ...(facts.promptStack === undefined ? {} : { promptStack: SessionPromptStackV1Schema.parse(facts.promptStack) }),
+            memoryEnabled: facts.memoryEnabled ?? (identity?.bot?.kind === 'bot'
+                ? settings.memoryUseInNewBots : settings.memoryUseInNewSessions) },
+    };
+}
+
+export function applySessionConfigOptionOverridesToMetadata<TMetadata extends SessionMetadata>(
+    metadata: TMetadata,
+    overrides: AcpConfigOptionOverridesV1 | null,
+): TMetadata {
+    if (!overrides) return metadata;
+
+    let nextMetadata = metadata;
+    for (const [configId, entry] of Object.entries(overrides.overrides)) {
+        nextMetadata = applyAcpConfigOptionIntentSessionMetadata(nextMetadata, {
+            v: 1,
+            configId,
+            value: entry.value,
+            updatedAt: entry.updatedAt,
+        });
+    }
+
+    return nextMetadata;
+}
+
+/** Birth intents an attaching runner preserves instead of taking from its process. */
+export function buildCommittedLaunchMetadata(input: Readonly<{
+    options: CommittedLaunchMetadataOptionsV1;
+    directory?: string;
+    host?: string;
+    agentModeId?: string;
+    agentModeUpdatedAt?: number;
+    materializationIdentity?: ConnectedServiceMaterializationIdentityV1;
+    accountSettings?: Readonly<Record<string, unknown>>;
+}>): SessionMetadata {
+    const { options } = input;
+    const machineId = options.machineId || options.sessionCreationCorrespondence?.recipe.execution.machineId;
+    let metadata: SessionMetadata = {
+        ...(input.directory !== undefined ? { path: input.directory, ...(input.host ? { host: input.host } : {}) } : {}),
+        ...(machineId ? { machineId } : {}),
+        ...(options.sessionCreationCorrespondence ? { sessionCreationCorrespondenceV1: options.sessionCreationCorrespondence } : {}),
+        ...(options.sessionCreationCorrespondence?.recipe.checkout?.branchName !== undefined
+            ? { branch: options.sessionCreationCorrespondence.recipe.checkout.branchName } : {}),
+        ...(options.placementOrigin ? { placementOrigin: options.placementOrigin } : {}),
+        ...(options.runtimeDescriptorV1 ? { runtimeDescriptorV1: options.runtimeDescriptorV1 } : {}),
+        ...(options.connectedServices ? { connectedServices: ConnectedServiceBindingsV2IngressSchema.parse(options.connectedServices) } : {}),
+        ...(options.connectedServicesUpdatedAt !== undefined ? { connectedServicesUpdatedAt: options.connectedServicesUpdatedAt } : {}),
+        ...(input.materializationIdentity ? { connectedServiceMaterializationIdentityV1: input.materializationIdentity } : {}),
+        ...(options.initialSessionRolesV1 ? { work: { sessionRolesV1: SessionRolesV1Schema.parse(options.initialSessionRolesV1) } } : {}),
+    };
+    if (options.capabilitySelection !== undefined) metadata = writeSessionCapabilitySelectionToMetadataV1(
+        metadata, options.capabilitySelection, { sessionActive: false },
+    );
+    if (options.initialTitle) metadata = applyDisplayTitleSessionMetadata(metadata, {
+        title: options.initialTitle, staleBehavior: 'bump-if-value-changed',
+    });
+    const agentModeId = input.agentModeId?.trim();
+    if (agentModeId) metadata = applyAcpSessionModeIntentSessionMetadata(metadata, {
+        v: 1, modeId: agentModeId, updatedAt: input.agentModeUpdatedAt ?? Date.now(),
+    });
+    if (options.modelSelection) {
+        const model = options.modelSelection;
+        const teamBinding = options.teamCredentialBindings?.find(binding => binding.slot.kind === 'provider_model');
+        // Commit the selected source with its binding. The runner's later startup
+        // merge replays this accepted intent rather than choosing a native source.
+        metadata = teamBinding?.resourceId && teamBinding.teamId && model.ref.providerConnectionId === null
+            ? { ...metadata, modelSelectionIntentV2: SessionModelSelectionV2Schema.parse({ v: 2, updatedAt: model.updatedAt, ref: {
+                    source: 'team_resource', resourceId: teamBinding.resourceId, teamId: teamBinding.teamId,
+                    expectedResourceRevision: teamBinding.expectedResourceRevision, deliveryMode: teamBinding.deliveryMode,
+                    agentTargetKey: model.ref.agentTargetKey, modelId: model.ref.modelId,
+                    ...(teamBinding.nativeDelivery ? { nativeDelivery: teamBinding.nativeDelivery } : {}),
+                } }) }
+            : applyModelIntentSessionMetadata(metadata, { v: 1, updatedAt: model.updatedAt, selection: model.ref });
+    }
+    return applySessionConfigOptionOverridesToMetadata(
+        applyInitialSessionCreationFactsToMetadata(metadata, { ...options, accountSettings: input.accountSettings }),
+        options.sessionConfigOptionOverrides
+            ? (() => { const parsed = AcpConfigOptionOverridesV1Schema.safeParse(options.sessionConfigOptionOverrides); return parsed.success ? parsed.data : null; })() : null,
+    );
 }

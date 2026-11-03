@@ -30,6 +30,25 @@ function createMetadata(
 }
 
 describe('createSessionMetadata', () => {
+    it('uses only admitted face birth facts and never inherits a replay source face', () => {
+        const source = createTestMetadata({ bot: { kind: 'bot' }, botFace: { seed: 'source-face' }, createdAsBot: true });
+        expect(applyInitialSessionCreationFactsToMetadata(source, {})).not.toHaveProperty('botFace');
+        const identity = { bot: { kind: 'bot' as const }, botFace: { body: 'crab' as const, seed: 'draft-preview' }, createdAsBot: true as const };
+        const born = applyInitialSessionCreationFactsToMetadata(source, { identity, memoryEnabled: false });
+        expect(born).toMatchObject({ ...identity, work: { memoryEnabled: false } });
+        expect(projectSessionSharedMetadataV1({ metadata: born })).toMatchObject({ bot: identity.bot, botFace: identity.botFace });
+    });
+    it('keeps the selected approval profile in private owner runtime metadata at birth', () => {
+        for (const approvalProfileId of ['builtin:apply-safe', null]) {
+            const metadata = buildCommittedLaunchMetadata({ options: { directory: '/repo', approvalProfileId }, directory: '/repo' });
+            const owner = createSessionOwnerMetadataV1({ metadata });
+            if (!owner.ok) throw new Error(owner.unsupportedFields.join(','));
+            expect(owner.ownerMetadata.runtime).toMatchObject({ approvalProfileId });
+            expect(projectSessionSharedMetadataV1({ metadata })).not.toHaveProperty('approvalProfileId');
+            expect(applyInitialSessionCreationFactsToMetadata({ approvalProfileId: 'parent-profile' }, { approvalProfileId }))
+                .toMatchObject({ approvalProfileId });
+        }
+    });
     it('commits private authoring origin at birth beside resolved worker context', () => {
         const authoringOrigin = { kind: 'project' as const, accountId: 'original-account',
             workspace: { serverId: 'original-home', workspaceId: 'original-workspace', machineId: 'original-machine', rootPath: '/private/original' }, page: 'scripts' as const };
@@ -501,6 +520,38 @@ describe('createSessionMetadata', () => {
         expect(metadata).toMatchObject({ machineId: 'machine-1', mcpSelectionV1: mcp, skillSelectionV1: skills });
         expect(metadata).not.toHaveProperty('mcpSelectionRestartRequiredV1');
         expect(metadata).not.toHaveProperty('skillSelectionRestartRequiredV1');
+    });
+
+    it('preserves the exact accepted native Team witness through committed birth and runner attach', () => {
+        const nativeDelivery = { managedId: 'managed', controllerInstallationId: 'controller-installation',
+            guestInstallationId: 'guest-installation', bindingKey: 'binding', placeholderRef: 'placeholder',
+            sourceRevision: 'source-1', providerTicket: 't'.repeat(43) };
+        const current = createTestMetadata(buildCommittedLaunchMetadata({ directory: '/project', options: {
+            directory: '/project', modelSelection: { v: 1, updatedAt: 123,
+                ref: { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: null, modelId: 'gpt-6-luna' } },
+            teamCredentialBindings: [{ v: 1, slot: { kind: 'provider_model' }, resourceId: 'resource', teamId: 'team',
+                expectedResourceRevision: 1, deliveryMode: 'vendor-native', nativeDelivery }],
+        } }));
+        expect(current).toMatchObject({ modelSelectionIntentV2: { ref: { source: 'team_resource', nativeDelivery } } });
+        const next = createMetadata({ flavor: 'codex', machineId: 'machine-1' }).metadata;
+        expect(mergeSessionMetadataForStartup({ current, next, mode: 'attach', nowMs: 124 }))
+            .toMatchObject({ modelSelectionIntentV2: { ref: { source: 'team_resource', nativeDelivery } } });
+        const pending = createTestMetadata(buildCommittedLaunchMetadata({ directory: '/project', options: {
+            directory: '/project', modelSelection: { v: 1, updatedAt: 123,
+                ref: { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: null, modelId: 'gpt-6-luna' } },
+            teamCredentialBindings: [{ v: 1, slot: { kind: 'provider_model' }, resourceId: 'resource', teamId: 'team',
+                expectedResourceRevision: 1, deliveryMode: 'vendor-native' }],
+        } }));
+        const accepted = { v: 1 as const, slot: { kind: 'provider_model' as const }, resourceId: 'resource', teamId: 'team',
+            expectedResourceRevision: 1, deliveryMode: 'vendor-native' as const, nativeDelivery,
+            providerModelSelection: { agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'gpt-6-luna',
+                nativeSource: { sourceRevision: nativeDelivery.sourceRevision, providerTicket: nativeDelivery.providerTicket } } };
+        expect(mergeSessionMetadataForStartup({ current: pending, next, mode: 'attach', nowMs: 124,
+            acceptedTeamCredentialBinding: accepted }))
+            .toMatchObject({ modelSelectionIntentV2: { updatedAt: 123, ref: { nativeDelivery } } });
+        expect(mergeSessionMetadataForStartup({ current: pending, next, mode: 'attach', nowMs: 124,
+            acceptedTeamCredentialBinding: { ...accepted, providerModelSelection: { ...accepted.providerModelSelection, modelId: 'another-model' } } }))
+            .not.toHaveProperty('modelSelectionIntentV2.ref.nativeDelivery');
     });
 
     it('preserves brokered connected-service selection through committed birth and runner attach', () => {

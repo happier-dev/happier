@@ -3,6 +3,7 @@ import { computeMonotonicUpdatedAt } from '@happier-dev/agents/session/timestamp
 import {
     readAcpSessionModeIntentFromMetadata,
     readPermissionModeIntentFromMetadata,
+    readSessionModelSelectionV2FromMetadata,
     resolveModelSelectionIntentFromSessionMetadata,
 } from '@happier-dev/agents/session/state/metadataReaders';
 import {
@@ -27,6 +28,28 @@ import type { ProviderBoundModelRef, SessionModelSelectionIntentV1, SessionAttac
 import { resolveSessionConfigOptionOverridesFromMetadataSnapshot } from './sessionConfigOptionOverrideSync';
 import { resolveBackendTargetFromSessionMetadata } from '@/session/backendTargets/resolveBackendTargetFromSessionMetadata';
 import { hasSameSessionCheckout } from '@/session/metadata/sessionCheckoutIdentity';
+
+import type { SessionTeamCredentialBindingIntentV1 } from '@happier-dev/protocol/teams/credentials/sessionBindingIntentV1';
+import { SessionModelSelectionV2Schema, type SessionModelSelectionV2 } from '@happier-dev/protocol/providers/selection/v2';
+
+/** Initial birth precedes Home's native binding allocation. Fill only that
+ * missing representation from the exact accepted source; never replace a
+ * changed desired witness or turn a V1 carried prompt into native auth. */
+export function restoreAcceptedSessionTeamCredentialModelIntent(
+    intent: SessionModelSelectionV2 | null,
+    binding: SessionTeamCredentialBindingIntentV1 | null | undefined,
+): SessionModelSelectionV2 | null {
+    if (intent?.ref.source !== 'team_resource' || intent.ref.deliveryMode !== 'vendor-native' || intent.ref.nativeDelivery
+        || binding?.slot.kind !== 'provider_model' || binding.resourceId === null || binding.deliveryMode !== 'vendor-native'
+        || !binding.nativeDelivery || !binding.providerModelSelection
+        || binding.resourceId !== intent.ref.resourceId || binding.teamId !== intent.ref.teamId
+        || binding.expectedResourceRevision !== intent.ref.expectedResourceRevision
+        || binding.providerModelSelection.agentTargetKey !== intent.ref.agentTargetKey
+        || binding.providerModelSelection.modelId !== intent.ref.modelId
+        || binding.providerModelSelection.nativeSource?.sourceRevision !== binding.nativeDelivery.sourceRevision
+        || binding.providerModelSelection.nativeSource?.providerTicket !== binding.nativeDelivery.providerTicket) return intent;
+    return { ...intent, ref: { ...intent.ref, nativeDelivery: binding.nativeDelivery } };
+}
 
 type AcpConfigOptionOverrideUpdate = Readonly<{
     configId: string;
@@ -360,6 +383,8 @@ export function mergeSessionMetadataForStartup(opts: {
     permissionModeOverride?: PermissionModeOverride | null;
     sessionModeOverride?: SessionModeOverride | null;
     modelOverride?: ModelOverride | null;
+    capturedTeamCredentialBinding?: SessionTeamCredentialBindingIntentV1 | null;
+    acceptedTeamCredentialBinding?: SessionTeamCredentialBindingIntentV1 | null;
     metadataKeysToUnsetOnAttach?: readonly string[] | null;
     attachMetadataIdentityPolicy?: SessionAttachMetadataIdentityPolicy | null;
     appliedCapabilitySelection?: SessionCapabilitySelectionV1 | 'preserved_process';
@@ -504,14 +529,53 @@ export function mergeSessionMetadataForStartup(opts: {
         merged = clearAcpSessionModeIntentSessionMetadata(merged) as Metadata;
     }
 
-    const model = resolveModelOverrideForStartup({
-        current: opts.current,
-        next: opts.next,
-        nowMs: opts.nowMs,
-        override: opts.modelOverride,
-        mode,
-    });
-    if (model) {
+    const retainedModelV2 = restoreAcceptedSessionTeamCredentialModelIntent(
+        readSessionModelSelectionV2FromMetadata(opts.current), opts.acceptedTeamCredentialBinding);
+    const capturedModel = opts.modelOverride;
+    const capturedBinding = opts.capturedTeamCredentialBinding;
+    const acceptedBinding = opts.acceptedTeamCredentialBinding;
+    const currentModel = capturedModel?.selection
+        ? resolveModelSelectionIntentFromSessionMetadata(opts.current, capturedModel.selection.agentTargetKey) : null;
+    // A legacy launch carrier cannot name its Team source. Qualify only the
+    // exact captured birth intent while its accepted Home source is unchanged
+    // on this CAS attempt. Revision is refreshable policy input, not source identity.
+    // A newer native choice or cleared/replaced source stays V1.
+    const capturedTeamModel = !retainedModelV2 && capturedModel?.selection?.providerConnectionId === null
+        && currentModel?.updatedAt === capturedModel.updatedAt
+        && JSON.stringify(currentModel.selection) === JSON.stringify(capturedModel.selection)
+        && capturedBinding?.slot.kind === 'provider_model' && capturedBinding.resourceId !== null
+        && capturedBinding.teamId && acceptedBinding?.slot.kind === 'provider_model' && acceptedBinding.resourceId !== null
+        && acceptedBinding.resourceId === capturedBinding.resourceId && acceptedBinding.teamId === capturedBinding.teamId
+        && acceptedBinding.deliveryMode === capturedBinding.deliveryMode
+        ? SessionModelSelectionV2Schema.parse({ v: 2, updatedAt: capturedModel.updatedAt, ref: {
+            source: 'team_resource', resourceId: acceptedBinding.resourceId, teamId: capturedBinding.teamId,
+            expectedResourceRevision: acceptedBinding.expectedResourceRevision, deliveryMode: acceptedBinding.deliveryMode,
+            agentTargetKey: capturedModel.selection.agentTargetKey, modelId: capturedModel.selection.modelId,
+            ...(acceptedBinding.nativeDelivery ? { nativeDelivery: acceptedBinding.nativeDelivery } : {}),
+        } }) : null;
+    // Attach replays process configuration. Only the model-selection owner
+    // can replace a retained Team route; defaults or carried V1 timestamps
+    // cannot express an explicit source change.
+    const preserveModelV2 = retainedModelV2 && ((mode === 'attach' && retainedModelV2.ref.source === 'team_resource') || !capturedModel || (
+        capturedModel.updatedAt <= retainedModelV2.updatedAt
+        && capturedModel.selection?.agentTargetKey === retainedModelV2.ref.agentTargetKey
+        && capturedModel.selection.modelId === retainedModelV2.ref.modelId
+        && capturedModel.selection.providerConnectionId === (retainedModelV2.ref.source === 'account_provider_connection'
+            ? retainedModelV2.ref.providerConnectionId : null)
+    ));
+    const model = preserveModelV2 || capturedTeamModel ? null : resolveModelOverrideForStartup({
+            current: opts.current,
+            next: opts.next,
+            nowMs: opts.nowMs,
+            override: opts.modelOverride,
+            mode,
+        });
+    if (capturedTeamModel) {
+        // Representation normalization is not a newer person-authored choice.
+        merged = { ...clearModelIntentSessionMetadata(merged), modelSelectionIntentV2: capturedTeamModel } as Metadata;
+    } else if (preserveModelV2) {
+        merged = { ...clearModelIntentSessionMetadata(merged), modelSelectionIntentV2: retainedModelV2 } as Metadata;
+    } else if (model) {
         merged = applyModelIntentSessionMetadata(clearModelIntentSessionMetadata(merged), {
             v: 1,
             selection: model.selection,

@@ -1,3 +1,4 @@
+import { ApprovalProfileIdV1Schema } from '../../actions/approvalProfiles.js';
 import { BotTemplateInstanceV1Schema } from '../../bots/templates/templateInstanceV1.js';
 import { BotTemplateDraftRefV1Schema } from '../../bots/templates/botTemplateV1.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
@@ -1069,6 +1070,7 @@ const SessionOwnerRollbackRangesV1Schema = lazyZodSchema(() => z.strictObject({
 
 const SessionOwnerRuntimeV1Schema = lazyZodSchema(() => z.strictObject({
   ...AgentSessionToolPolicyShapeV1,
+  approvalProfileId: z.optional(z.nullable(ApprovalProfileIdV1Schema)),
   workspaceWrites: z.optional(z.enum(['allow', 'deny'])),
   externalSessionOperationV1: z.optional(ExternalSessionOperationStateV1Schema),
   terminal: z.optional(SessionOwnerTerminalV1Schema),
@@ -2027,6 +2029,7 @@ const RELEASED_NATIVE_SESSION_COMPATIBILITY_KEYS = [
 ] as const;
 
 const RUNTIME_OWNER_KEYS = [
+  'approvalProfileId',
   'allowedTools',
   'unlistedTools',
   'workspaceWrites',
