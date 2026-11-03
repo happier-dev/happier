@@ -216,7 +216,7 @@ describe('AcpBackend required initial mode', () => {
         initialSessionModeId: 'default', disableSessionModeUpdates: true,
       });
       try {
-        await expect(backend.startSession('must not dispatch')).rejects.toThrow(error);
+        await expect(backend.startSession()).rejects.toThrow(error);
         const requests = (await readFile(recordedRequestsPath, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
         expect(requests.some(request => request.method === 'session/prompt')).toBe(false);
       } finally {

@@ -37,6 +37,19 @@ import type {
 import type { ProtocolComposableSchema } from '../protocol/protocolFacade.js';
 
 describe('Session input canonical SDK projections', () => {
+    it('projects native Session creation placement into public Action input', () => {
+        const input = {
+            executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
+            directory: { kind: 'path', path: '/workspace/project' },
+            agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+            organizationPlacement: { folderId: 'section-1', tagIds: ['tag-1'] },
+        };
+        const native = publicSessions.SessionSpawnNewInputV2Schema.parse(input);
+        const action = publicSessions.projectSessionSpawnNewActionInputV2(native);
+        expect(action).toEqual({ ...input, organizationPlacement: { sectionId: 'section-1', tagIds: ['tag-1'] } });
+        expect(native).toEqual(input);
+        expect(sessions.projectSessionSpawnNewActionInputV2).toBe(publicSessions.projectSessionSpawnNewActionInputV2);
+    });
     it('reads native mode facts and fails closed on malformed current metadata through /sessions', () => {
         expect(publicSessions.readSessionModesMetadata).toBeTypeOf('function');
         const current = {

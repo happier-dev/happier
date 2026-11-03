@@ -238,7 +238,7 @@ describe('AcpBackend spawn environment', () => {
           HOME: dir, HAPPIER_TEST_ENV_CAPTURE: capturePath, SOURCE_EXPLICIT: 'launch-override',
           ...Object.fromEntries(transformer.materialization.env.flatMap(entry => entry.value === null ? [] : [[entry.name, entry.value]])),
         },
-        unsetEnv: ['source_unset'], hostFinalizedLaunch,
+        unsetEnv: ['source_unset'], ...(hostFinalizedLaunch ? { hostFinalizedLaunch: true as const } : {}),
         transformAgentChildLaunchEnvironment: transformer.transform,
         providerTurnSource: async host => {
           sourceHost = host;
@@ -283,7 +283,7 @@ describe('AcpBackend spawn environment', () => {
       });
 
       try {
-        await expect(backend.startSession()).rejects.toThrow(secret);
+        await expect(backend.startSession()).rejects.toThrow('provider rejected:');
         const logged = debugSpy.mock.calls.flatMap((call) => call).map((value) => (
           value instanceof Error ? `${value.message}\n${value.stack ?? ''}` : JSON.stringify(value)
         )).join('\n');

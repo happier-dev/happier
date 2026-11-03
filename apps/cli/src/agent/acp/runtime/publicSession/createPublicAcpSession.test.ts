@@ -43,17 +43,11 @@ import {
   readHappierStructuredInputV1FromMeta,
 } from '@happier-dev/protocol/runtime';
 import type {
-  HostCurrentSessionInteractionsService as PluginCurrentSessionInteractionsService,
   HostSessionApprovalRequest as PluginSessionApprovalRequest,
   HostSessionApprovalResult as PluginSessionApprovalResult,
-  HostSessionConfirmationRequest as PluginSessionConfirmationRequest,
-  HostSessionConfirmationResult as PluginSessionConfirmationResult,
-  HostSessionInteractionRequest as PluginSessionInteractionRequest,
-  HostSessionInteractionResult as PluginSessionInteractionResult,
-  HostSessionQuestionsRequest as PluginSessionQuestionsRequest,
-  HostSessionQuestionsResult as PluginSessionQuestionsResult,
 } from '@/agent/runtime/state/currentSessionUiTypes';
 
+import { TestInteractions } from '@/agent/acp/testkit/interactionsFixture';
 import { writeAcpTestAgentScript } from '@/agent/acp/testkit/subprocessHarness';
 import { createAcpExecutionRunRuntimeContextFixture, createAcpSessionRuntimeContextFixture } from '@/agent/acp/testkit/runtimeContextFixture';
 import { createUnavailablePluginServices } from '@/plugins/runtime/invocation/services/unavailable';
@@ -90,21 +84,6 @@ type ApprovalRequester = (
   request: PluginSessionApprovalRequest,
   options?: { signal?: AbortSignal },
 ) => Promise<PluginSessionApprovalResult>;
-
-class TestInteractions implements PluginCurrentSessionInteractionsService {
-  constructor(private readonly requestApproval: ApprovalRequester) {}
-
-  request(request: PluginSessionApprovalRequest, options?: { signal?: AbortSignal }): Promise<PluginSessionApprovalResult>;
-  request(request: PluginSessionQuestionsRequest, options?: { signal?: AbortSignal }): Promise<PluginSessionQuestionsResult>;
-  request(request: PluginSessionConfirmationRequest, options?: { signal?: AbortSignal }): Promise<PluginSessionConfirmationResult>;
-  async request(
-    request: PluginSessionInteractionRequest,
-    options?: { signal?: AbortSignal },
-  ): Promise<PluginSessionInteractionResult> {
-    if (request.kind !== 'approval') throw new Error(`Unexpected ${request.kind} interaction`);
-    return await this.requestApproval(request, options);
-  }
-}
 
 function createApprovalRequestMock() {
   let nextRequestId = 1;
@@ -1126,7 +1105,10 @@ function createFixture(
       isCurrent: () => current,
       modes: publications.services.modes,
       systemTools: { resolve },
-      interactions: new TestInteractions(requestInteraction),
+      interactions: new TestInteractions((request, options) => {
+        if (request.kind !== 'approval') throw new Error(`Unexpected ${request.kind} interaction`);
+        return requestInteraction(request, options);
+      }),
       media: Object.freeze({ registerSourceRoot: registerMediaSourceRoot }),
       models: Object.freeze({
         bind(source) {

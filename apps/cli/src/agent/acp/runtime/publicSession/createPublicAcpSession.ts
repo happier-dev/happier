@@ -1953,7 +1953,7 @@ async function createPublicAcpConversationFromAwaitableAdapter(
       const capabilities = backend.getNegotiatedSessionCapabilities();
       return {
         localControl: null,
-        ...(options.providerTurnSource ? { providerContinuations: { supported: true } } : {}),
+        ...(options.providerTurnSource ? { providerContinuations: { supported: true as const } } : {}),
         sessionCapabilities: {
           sessionListing: capabilities.listSessions ? 'supported' : 'unsupported',
           sessionFork: {

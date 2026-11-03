@@ -17,6 +17,7 @@ export type { SessionAuthoringCheckoutCreationDraftV1 } from '../services/sessio
 export { SessionAuthoringCheckoutCreationDraftV1Schema } from '../services/sessions.js';
 export type { SessionSpawnNewInputV2 } from '../services/sessions.js';
 export { SessionSpawnNewInputV2Schema } from '../services/sessions.js';
+export { projectSessionSpawnNewActionInputV2 } from '../services/sessions.js';
 export type { SessionServerStartSpawnDraftV1 } from '../services/sessions.js';
 export { SessionServerStartSpawnDraftV1Schema } from '../services/sessions.js';
 export type { SessionSchema } from '../services/sessions.js';

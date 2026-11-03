@@ -143,7 +143,7 @@ export function createAcpClientHandlers(params: Readonly<{
           : (params.getActiveSessionId() ?? '');
       try { await params.beforePermissionRequest?.(requestSessionId, toolCallId); }
       catch {
-        logger.warnFile('[AcpBackend] Provider permission has no proven turn owner');
+        logger.warnLocalFile('[AcpBackend] Provider permission has no proven turn owner');
         return { outcome: { outcome: 'cancelled' } };
       }
       const permissionRequest = params.capturePermissionRequest(requestSessionId);

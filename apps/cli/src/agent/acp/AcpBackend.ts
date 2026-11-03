@@ -1125,6 +1125,7 @@ export class AcpBackend implements CatalogAcpBackend {
               assertCurrent();
               return { assertCurrent };
             }
+          return undefined;
           },
         })
       );

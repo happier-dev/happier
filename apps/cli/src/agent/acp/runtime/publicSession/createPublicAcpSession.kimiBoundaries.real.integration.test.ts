@@ -1,3 +1,4 @@
+import { PluginAgentContributionV2Schema } from '@happier-dev/protocol/plugins/contributions/v2';
 import { access, readFile, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -6,11 +7,13 @@ import type {
   AgentAcpRuntimeOptions,
   AgentSessionOpenRequest,
   AgentSessionRuntime,
-  AgentSessionRuntimeContext,
   AgentSessionRuntimeEvent,
 } from '@happier-dev/plugin-sdk/agents/runtime';
+import { TestInteractions } from '@/agent/acp/testkit/interactionsFixture';
+import { createAcpSessionRuntimeContextFixture } from '@/agent/acp/testkit/runtimeContextFixture';
+import { PLUGIN_MANIFEST } from '../../../../../../../packages/plugins/kimi/src/manifest';
 import { createKimiAgentRuntime } from '../../../../../../../packages/plugins/kimi/src/agent/runtime/factory';
-import { createPublicAcpSession, type PublicAcpComposerDependencies } from './createPublicAcpSession';
+import { createPublicAcpSession, createPublicAcpExecutionRun, type PublicAcpComposerDependencies } from './createPublicAcpSession';
 import {
   createKimiLoopbackModel,
   createKimiLoopbackEnvironment,
@@ -52,17 +55,19 @@ async function withOfficialSession(options: Options, run: (fixture: Fixture) => 
     const events: Event[] = [];
     const approvals: unknown[] = [];
     let runtime: AgentSessionRuntime | undefined;
+    let contextFixture: ReturnType<typeof createAcpSessionRuntimeContextFixture> | undefined;
     try {
       const launch = await options.prepare?.({ directory, model }) ?? { executablePath: executable! };
       const dependencies: PublicAcpComposerDependencies = {
         pluginId: 'happier.agent.kimi', agentId: 'kimi',
         signal: lifetime.signal, isCurrent: () => !lifetime.signal.aborted,
         systemTools: { resolve: async () => ({ toolId: 'kimi-cli', launch: { kind: 'binary', ...launch } }) },
-        interactions: { request: async (request, input) => {
+        interactions: new TestInteractions(async (request, input) => {
           approvals.push({ request, permissionContext: input?.permissionContext });
-          return options.approved === false ? { status: 'declined' as const }
-            : { status: 'approved' as const, ...(options.persistApproval ? { persistence: 'session' as const } : {}) };
-        } },
+          if (request.kind !== 'approval') throw new Error(`Unexpected ${request.kind} interaction`);
+          return options.approved === false ? { requestId: 'fixture-approval', kind: 'approval', status: 'declined' }
+            : { requestId: 'fixture-approval', kind: 'approval', status: 'approved', ...(options.persistApproval ? { persistence: 'session' as const } : {}) };
+        }),
         media: { async registerSourceRoot() { throw new Error('Unexpected generated media'); } },
         models: { bind: () => ({ dispose() {} }) }, modes: { bind: () => ({ dispose() {} }) },
       };
@@ -71,15 +76,20 @@ async function withOfficialSession(options: Options, run: (fixture: Fixture) => 
         agent: { id: 'kimi' }, signal: lifetime.signal,
       });
       if (!factory.sessions) throw new Error('Missing Kimi session factory');
-      const context = { signal: lifetime.signal, protocols: { acp: {
-        open: (request: AgentSessionOpenRequest, options: AgentAcpRuntimeOptions) =>
-          createPublicAcpSession(request, options, dependencies),
-      } } } as AgentSessionRuntimeContext;
+      const agent = PluginAgentContributionV2Schema.parse(PLUGIN_MANIFEST.contributes.agents?.find(candidate => candidate.id === 'kimi'));
+      if (!agent) throw new Error('Missing Kimi Agent declaration');
+      contextFixture = createAcpSessionRuntimeContextFixture({ agent, pluginId: PLUGIN_MANIFEST.id,
+        pluginVersion: PLUGIN_MANIFEST.version, sessionId: 'public-boundary', directory: model.workspace,
+        signal: lifetime.signal, protocols: { acp: {
+          open: (request: AgentSessionOpenRequest, options: AgentAcpRuntimeOptions) => createPublicAcpSession(request, options, dependencies),
+          openExecutionRunV1: (request, options) => createPublicAcpExecutionRun(request, options, dependencies),
+        } },
+      });
       runtime = await factory.sessions.open({
         kind: 'create', sessionId: 'public-boundary', cwd: model.workspace,
         ...(options.mcpServers ? { mcpServers: await options.mcpServers({ directory, model }) } : {}),
         launchEnvironment: createKimiLoopbackEnvironment(model.home),
-      }, context);
+      }, contextFixture.context);
       const session = runtime;
       session.watch(event => { events.push(event); });
       await run({
@@ -99,7 +109,7 @@ async function withOfficialSession(options: Options, run: (fixture: Fixture) => 
     } finally {
       model.releaseContinuation();
       await model.releaseBackground();
-      await runtime?.dispose();
+      try { await runtime?.dispose(); } finally { await contextFixture?.dispose(); }
       lifetime.abort();
       await model.close();
     }

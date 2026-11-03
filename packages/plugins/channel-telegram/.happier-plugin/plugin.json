@@ -3,6 +3,7 @@
     "iconResourceId": "brand-icon"
   },
   "contributes": {
+    "accessProviders": [],
     "accountCollections": [],
     "actions": [
       {

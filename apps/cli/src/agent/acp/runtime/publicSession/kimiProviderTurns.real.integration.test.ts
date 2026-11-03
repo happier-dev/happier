@@ -1,6 +1,10 @@
+import { PluginAgentContributionV2Schema } from '@happier-dev/protocol/plugins/contributions/v2';
 import { describe, expect, it } from 'vitest';
 import type { AgentSessionRuntime, AgentSessionRuntimeEvent, AgentAcpRuntimeOptions,
-  AgentSessionOpenRequest, AgentSessionRuntimeContext, AgentExecutionRunRuntimeContextV1, AgentExecutionRunOpenRequest, AgentExecutionRunEvent, AgentExecutionRunRuntime } from '@happier-dev/plugin-sdk/agents/runtime';
+  AgentSessionOpenRequest, AgentExecutionRunOpenRequest, AgentExecutionRunEvent, AgentExecutionRunRuntime } from '@happier-dev/plugin-sdk/agents/runtime';
+import { TestInteractions } from '@/agent/acp/testkit/interactionsFixture';
+import { createAcpSessionRuntimeContextFixture, createAcpExecutionRunRuntimeContextFixture } from '@/agent/acp/testkit/runtimeContextFixture';
+import { PLUGIN_MANIFEST } from '../../../../../../../packages/plugins/kimi/src/manifest';
 import { createKimiAgentRuntime } from '../../../../../../../packages/plugins/kimi/src/agent/runtime/factory';
 import { createPublicAcpSession, createPublicAcpExecutionRun, type PublicAcpComposerDependencies } from './createPublicAcpSession';
 import { createKimiLoopbackEnvironment, createKimiLoopbackModel, KIMI_FIXTURE_BACKGROUND, KIMI_FIXTURE_FOREGROUND,
@@ -34,24 +38,31 @@ async function fixture(options: KimiLoopbackModelOptions & { holdPlanPublication
     const dependencies: PublicAcpComposerDependencies = {
       pluginId: 'happier.agent.kimi', agentId: 'kimi', signal: lifetime.signal, isCurrent: () => !lifetime.signal.aborted,
       systemTools: { resolve: async () => ({ toolId: 'kimi-cli', launch: { kind: 'binary', executablePath: executable! } }) },
-      interactions: { request: async (_request, input) => {
+      interactions: new TestInteractions(async (request, input) => {
         permissions.push(input?.permissionContext);
-        return approval ? { status: 'approved' as const } : { status: 'declined' as const };
-      } },
+        if (request.kind !== 'approval') throw new Error(`Unexpected ${request.kind} interaction`);
+        return { requestId: 'fixture-approval', kind: 'approval', status: approval ? 'approved' : 'declined' };
+      }),
       media: { async registerSourceRoot() { throw new Error('Unexpected generated media'); } },
       models: { bind: () => ({ dispose() {} }) }, modes: { bind: () => ({ dispose() {} }) },
     };
     const factory = await createKimiAgentRuntime({ plugin: { id: 'happier.agent.kimi', version: '0.0.0' },
       agent: { id: 'kimi' }, signal: lifetime.signal });
     if (!factory.sessions) throw new Error('Missing Kimi session factory');
-    const context = { signal: lifetime.signal, protocols: { acp: {
-      open: (request: AgentSessionOpenRequest, options: AgentAcpRuntimeOptions) => createPublicAcpSession(request, options, dependencies),
-    } } } as AgentSessionRuntimeContext;
+    const agent = PluginAgentContributionV2Schema.parse(PLUGIN_MANIFEST.contributes.agents?.find(candidate => candidate.id === 'kimi'));
+    if (!agent) throw new Error('Missing Kimi Agent declaration');
+    const contextFixture = createAcpSessionRuntimeContextFixture({ agent, pluginId: PLUGIN_MANIFEST.id,
+      pluginVersion: PLUGIN_MANIFEST.version, sessionId: 'public-kimi', directory: model.workspace,
+      signal: lifetime.signal, protocols: { acp: {
+        open: (request: AgentSessionOpenRequest, options: AgentAcpRuntimeOptions) => createPublicAcpSession(request, options, dependencies),
+          openExecutionRunV1: (request, options) => createPublicAcpExecutionRun(request, options, dependencies),
+      } },
+    });
     let runtime: AgentSessionRuntime | undefined;
     try {
       runtime = await factory.sessions.open({ kind: 'create', sessionId: 'public-kimi', cwd: model.workspace,
         launchEnvironment: createKimiLoopbackEnvironment(model.home),
-      }, context);
+      }, contextFixture.context);
       const session = runtime;
       session.watch(async event => {
         events.push(event);
@@ -84,7 +95,7 @@ async function fixture(options: KimiLoopbackModelOptions & { holdPlanPublication
       model.releaseAfterPlan();
       model.releaseContinuation();
       await model.releaseBackground();
-      await runtime?.dispose();
+      try { await runtime?.dispose(); } finally { await contextFixture.dispose(); }
       lifetime.abort();
       await model.close();
     }
@@ -186,27 +197,33 @@ it.skipIf(!executable || process.platform === 'win32')('opens the official Kimi 
     const dependencies: PublicAcpComposerDependencies = {
       pluginId: 'happier.agent.kimi', agentId: 'kimi', signal, isCurrent: () => true,
       systemTools: { resolve: async () => ({ toolId: 'kimi-cli', launch: { kind: 'binary', executablePath: executable! } }) },
-      interactions: { request: async () => ({ status: 'approved' as const }) },
+      interactions: new TestInteractions(async request => {
+        if (request.kind !== 'approval') throw new Error(`Unexpected ${request.kind} interaction`);
+        return { requestId: 'fixture-approval', kind: 'approval', status: 'approved' };
+      }),
       media: { async registerSourceRoot() { throw new Error('Unexpected media'); } },
       models: { bind: () => ({ dispose() {} }) }, modes: { bind: () => ({ dispose() {} }) },
     };
     const factory = await createKimiAgentRuntime({ plugin: { id: 'happier.agent.kimi', version: '0.0.0' }, agent: { id: 'kimi' }, signal });
-    const context = { signal, protocols: { acp: {
+    const contextFixture = createAcpExecutionRunRuntimeContextFixture({ pluginId: PLUGIN_MANIFEST.id,
+      pluginVersion: PLUGIN_MANIFEST.version, agentId: 'kimi', executionRunId: 'kimi-run',
+      directory: model.workspace, signal, protocols: { acp: {
+      open: (request, options) => createPublicAcpSession(request, options, dependencies),
       openExecutionRunV1: (request: AgentExecutionRunOpenRequest, options: AgentAcpRuntimeOptions) => {
         declaredObserver = typeof options.providerTurnSource === 'function';
         return createPublicAcpExecutionRun(request, options, dependencies);
       },
-    } } } as AgentExecutionRunRuntimeContextV1;
+    } } });
     try {
       native = await factory.sessions!.executionRunContextV1!.open({ kind: 'create', runId: 'kimi-run', cwd: model.workspace,
         profile: { pluginId: 'happier.agent.kimi', localId: 'kimi' }, input: { text: 'Complete this isolated run.' },
         localInputId: 'run-input', launchEnvironment: createKimiLoopbackEnvironment(model.home),
-      }, context);
+      }, contextFixture.context);
       native.watch(event => { events.push(event); });
       await expect.poll(() => events.some(event => event.kind === 'run-complete'), { timeout: 15_000 }).toBe(true);
       expect(declaredObserver).toBe(true);
       expect(model.getRequestCount()).toBe(1);
       expect(events.some(event => event.kind === 'run-failed')).toBe(false);
-    } finally { await native?.dispose(); await model.close(); }
+    } finally { try { await native?.dispose(); } finally { await contextFixture.dispose(); await model.close(); } }
   });
 }, 60_000);

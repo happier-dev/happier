@@ -1,22 +1,26 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { AgentAcpProviderTurnSourceHost, AgentSessionRuntimeEvent, AgentSessionRuntime } from '@happier-dev/plugin-sdk/agents/runtime';
+import type { AgentAcpProviderTurnSourceHost, AgentSessionRuntimeEvent } from '@happier-dev/plugin-sdk/agents/runtime';
+import { TestInteractions, type TestInteractionRequester } from '@/agent/acp/testkit/interactionsFixture';
 import { writeProviderTurnAgent } from '../../testkit/providerTurnAgent';
 import { withTempDir } from '@/testkit/fs/tempDir';
-import { createPublicAcpSession, type PublicAcpComposerDependencies } from './createPublicAcpSession';
+import { createPublicAcpSession, type PublicAcpSessionRuntime, type PublicAcpComposerDependencies } from './createPublicAcpSession';
 
 describe('public ACP provider continuation', () => {
   it('retains the originating authority after a later turn and publishes lifecycle/output/terminal in order', async () => {
     await withTempDir('public-provider-turn-', async directory => {
       let host: AgentAcpProviderTurnSourceHost | undefined;
       const events: AgentSessionRuntimeEvent[] = [];
-      const requestInteraction = vi.fn(async () => ({ status: 'approved' as const }));
+      const requestInteraction = vi.fn<TestInteractionRequester>(async request => {
+        if (request.kind === 'questions') throw new Error('Unexpected questions');
+        return { requestId: 'fixture-interaction', kind: request.kind, status: 'approved' };
+      });
       const script = writeProviderTurnAgent(directory);
       const dependencies: PublicAcpComposerDependencies = {
         pluginId: 'fixture', agentId: 'fixture', signal: new AbortController().signal, isCurrent: () => true,
         systemTools: { resolve: async () => ({ toolId: 'fixture', launch: {
           kind: 'binary', executablePath: process.execPath, args: [script],
         } }) },
-        interactions: { request: requestInteraction },
+        interactions: new TestInteractions(requestInteraction),
         media: { async registerSourceRoot() { throw new Error('Unexpected media'); } },
         models: { bind: () => ({ dispose() {} }) }, modes: { bind: () => ({ dispose() {} }) },
       };
@@ -69,7 +73,7 @@ describe('public ACP provider continuation', () => {
 });
 
 async function withPublicContinuation(run: (fixture: {
-  runtime: AgentSessionRuntime;
+  runtime: PublicAcpSessionRuntime;
   host: AgentAcpProviderTurnSourceHost;
   events: AgentSessionRuntimeEvent[];
   requestInteraction: ReturnType<typeof vi.fn>;
@@ -81,7 +85,10 @@ async function withPublicContinuation(run: (fixture: {
     let catchUp = async () => {};
     const events: AgentSessionRuntimeEvent[] = [];
     let listener: ((event: AgentSessionRuntimeEvent) => Promise<void>) | undefined;
-    const requestInteraction = vi.fn(async () => ({ status: 'approved' as const }));
+    const requestInteraction = vi.fn<TestInteractionRequester>(async request => {
+        if (request.kind === 'questions') throw new Error('Unexpected questions');
+        return { requestId: 'fixture-interaction', kind: request.kind, status: 'approved' };
+      });
     const runtime = await createPublicAcpSession({ kind: 'create', sessionId: 'public', cwd: directory }, {
       transport: { kind: 'stdio', executable: { kind: 'systemTool', id: 'fixture' } },
       providerTurnSource: async value => { host = value; return { catchUp: () => catchUp(), dispose() {} }; },
@@ -89,7 +96,7 @@ async function withPublicContinuation(run: (fixture: {
       pluginId: 'fixture', agentId: 'fixture', signal: new AbortController().signal, isCurrent: () => true,
       systemTools: { resolve: async () => ({ toolId: 'fixture', launch: {
         kind: 'binary', executablePath: process.execPath, args: [writeProviderTurnAgent(directory)],
-      } }) }, interactions: { request: requestInteraction },
+      } }) }, interactions: new TestInteractions(requestInteraction),
       media: { async registerSourceRoot() { throw new Error('Unexpected media'); } },
       models: { bind: () => ({ dispose() {} }) }, modes: { bind: () => ({ dispose() {} }) },
     });
@@ -215,7 +222,7 @@ it('observes a retired source catch-up rejection after a failed terminal', async
 it.each(['process exit', 'source failure'] as const)('publishes runtime termination after the failed turn for %s', async failure => {
   await withPublicContinuation(async ({ runtime, host, events, setCatchUp }) => {
     const status = await runtime.requestExtension!('test/status', {});
-    if (!status || typeof status !== 'object' || Array.isArray(status) || typeof status.pid !== 'number') {
+    if (!status || typeof status !== 'object' || !('pid' in status) || typeof status.pid !== 'number') {
       throw new Error('Missing fixture process identity');
     }
     setCatchUp(async () => { throw new Error('journal unavailable'); });

@@ -2604,6 +2604,7 @@
 | `./sessions` | `normalizeSessionAttachmentUploadPath` | value | any |
 | `./sessions` | `normalizeSlashCommandName` | value | any |
 | `./sessions` | `parseSpecialCommand` | value | any |
+| `./sessions` | `projectSessionSpawnNewActionInputV2` | value | daemon |
 | `./sessions` | `readHappierStructuredInputV1FromMeta` | value | any |
 | `./sessions` | `readLeadingSlashCommandName` | value | any |
 | `./sessions` | `readPendingLocalId` | value | any |
