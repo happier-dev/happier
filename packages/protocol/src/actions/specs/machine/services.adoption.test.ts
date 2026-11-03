@@ -8,6 +8,7 @@ const isolatedAdoption = spawnSync(process.execPath, ['--import', 'tsx', '--inpu
   import assert from 'node:assert/strict';
   await import('./packages/protocol/src/actions/operations/v1.ts');
   const { MACHINE_SERVICE_ADOPT_SPEC } = await import('./packages/protocol/src/actions/specs/machine/serviceAdoption.ts');
+  const [spec] = MACHINE_SERVICE_ADOPTION_ACTION_SPECS;
   const { getActionSpec } = await import('./packages/protocol/src/actions/actionSpecs.ts');
   assert.equal(MACHINE_SERVICE_ADOPT_SPEC.id, 'machines.services.adopt');
   assert.equal(getActionSpec(MACHINE_SERVICE_ADOPT_SPEC.id).id, MACHINE_SERVICE_ADOPT_SPEC.id);

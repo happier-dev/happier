@@ -5,7 +5,7 @@ import type { PreNormalizedActionSpec } from '../../actionSpecs.js';
 import { RPC_METHODS } from '../../../rpc/methods.js';
 import { actionInputServerId } from '../definition.js';
 
-export const MACHINE_SERVICE_ADOPT_SPEC = {
+export const MACHINE_SERVICE_ADOPTION_ACTION_SPECS = [{
   id: 'machines.services.adopt', title: 'Adopt a Compose project',
   description: 'Review a watched Compose project and create its Environment without changing the running project.',
   safety: 'danger', sideEffectClass: 'write', approval: { result: 'required' }, approvalScope: 'machine',
@@ -25,4 +25,4 @@ export const MACHINE_SERVICE_ADOPT_SPEC = {
     { path: 'mode', title: 'Review or apply', widget: 'text', required: true },
     { path: 'profiles', title: 'Profiles to use from now on', widget: 'json', required: true },
   ] },
-} as const satisfies PreNormalizedActionSpec;
+}] as const satisfies readonly PreNormalizedActionSpec[];
