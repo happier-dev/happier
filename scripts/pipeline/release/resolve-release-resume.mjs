@@ -111,7 +111,7 @@ function resolveUiFlowCompletion(value, identity) {
     ? [`Publish ${identity.channel} channel / deploy_ui / `]
     : identity.statusArtifactName === `happier-release-status-${identity.channel}`
       ? [`Release ${identity.channel} channel / deploy_ui / `]
-      : ['deploy_ui / ', 'Release single channel / deploy_ui / '];
+      : [`Release ${identity.channel} channel / deploy_ui / `, 'deploy_ui / ', 'Release single channel / deploy_ui / '];
   /** @param {string} name @param {string[]} stepNames */
   const accepted = (name, stepNames) => {
     const matches = jobs.filter((job) => prefixes.some(prefix => job.name === `${prefix}${name}`));
