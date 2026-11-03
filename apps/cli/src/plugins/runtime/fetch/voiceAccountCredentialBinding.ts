@@ -226,9 +226,14 @@ function hasExactBody(actual: Uint8Array | undefined, expected: Uint8Array | nul
     return expected.every((byte, index) => actual[index] === byte);
 }
 
-function hasExactDeclaredOrigin(url: string, declaredOrigin: string): boolean {
+export function hasExactPluginHttpCredentialScope(input: Readonly<{
+    url: string;
+    method: string;
+    issued: Readonly<{ origin: string; method: string }>;
+}>): boolean {
     try {
-        return new URL(url).origin === declaredOrigin;
+        return new URL(input.url).origin === input.issued.origin
+            && input.method === input.issued.method;
     } catch {
         return false;
     }
@@ -381,7 +386,8 @@ function authorizeVoiceAccountOperation(input: Readonly<{
     } catch {
         throw unauthorized();
     }
-    if (!hasExactDeclaredOrigin(materialized.url, operation.request.origin)) throw unauthorized();
+    if (!hasExactPluginHttpCredentialScope({ url: materialized.url, method: materialized.method,
+        issued: operation.request })) throw unauthorized();
     const recipientContract = createVoiceProviderRecipientContract(declaration);
     if (!recipientContract) throw unauthorized();
     const requiredRecipientApprovalDigest =
@@ -451,7 +457,8 @@ async function executeVoiceAccountOperation(input: Readonly<{
             sourceCredentials: readonly string[],
         ): Promise<VoiceAccountOperationResponse> => {
                 assertCurrent(input.authority);
-                if (!hasExactDeclaredOrigin(materialized.url, operation.request.origin)) {
+                if (!hasExactPluginHttpCredentialScope({ url: materialized.url, method: materialized.method,
+                    issued: operation.request })) {
                     throw unauthorized();
                 }
                 const response = await input.execute(Object.freeze({
@@ -618,7 +625,7 @@ export function createVoiceAccountPluginHttpCredentialBindingHost(params: Readon
             if (
                 input.seed.surface !== 'ui'
                 || materialized.url !== input.request.url
-                || materialized.method !== method
+                || !hasExactPluginHttpCredentialScope({ url: input.request.url, method, issued: operation.request })
                 || materialized.redirect !== input.request.redirect
                 || !hasExactHeaders(input.request.headers, materialized.headers)
                 || !hasExactBody(input.request.body, materialized.body)

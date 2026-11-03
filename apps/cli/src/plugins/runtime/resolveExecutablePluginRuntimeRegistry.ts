@@ -436,6 +436,7 @@ import {
 import {
     createStablePluginHttpHost,
 } from './fetch/service';
+import { createConnectedAccountPluginHttpPurposeHost } from './fetch/connectedAccountPurpose';
 import {
     createVoiceAccountPluginHttpCredentialBindingHost,
 } from './fetch/voiceAccountCredentialBinding';
@@ -3959,6 +3960,9 @@ agentIsolation?: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').Ho
         }))),
     });
     const stableHttpHost = createStablePluginHttpHost({
+        ...(params?.connectedAccounts ? { purposeHost: createConnectedAccountPluginHttpPurposeHost(params.connectedAccounts, {
+            registerRawForRedaction(seed, value) { invocationServiceOwners.registerRawForRedaction(seed, value); },
+        }) } : {}),
         containsRegisteredSecret({ seed, value }) {
             return invocationServiceOwners.containsRegisteredDiagnosticValue({
                 pluginId: seed.plugin.id, occurrenceId: seed.occurrenceId, correlationId: seed.correlationId,
