@@ -1,10 +1,15 @@
 import { AccountEncryptionModeResponseSchema } from '@happier-dev/protocol/account/encryptionMode';
-import { eraseAccountSettingsPluginSecretBindings } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
+import { eraseAccountSettingsPluginSecretBindings, listUnreferencedPluginCreatedSecretResources } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
+import { parseSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { openAccountScopedBlobCiphertext, sealAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { PluginAccountSettingsMutationResponseV1Schema, PluginAccountSettingsReadResponseV1Schema, PluginAccountSettingsStorageUnavailableV1Schema, PluginAccountSettingsValuesV1Schema, PluginAccountSettingsValuesV1StoredSchema } from '@happier-dev/protocol/plugins/settings/accountSettingsV1';
 
 import { getRandomBytes } from '@/platform/cryptoRandom';
-import { randomUUID } from '@/platform/randomUUID';
+import { createSavedSecretResource, deleteSavedSecretResource } from '@/sync/ops/settings/savedSecretResourceOperations';
+import { withProfileAccount, readProfileTransferSourceInContext } from '@/sync/api/account/apiProfileCatalog';
+import { readSavedSecretCatalogInContext } from '@/sync/api/account/apiSavedSecretCatalog';
+import { runTeamAction } from '@/sync/ops/teams/teamActionClient';
+import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { areAccountSettingsScopesEqual } from '@/sync/domains/settings/scope/accountSettingsScope';
 import {
     captureActiveServerAccountScopeLifetime,
@@ -163,7 +168,20 @@ function createAccountPluginSecretSettingsBoundary(
     context: ActiveAccountRequestContext,
     signal?: AbortSignal,
 ): AccountPluginSecretSettingsBoundary {
+    const assertCurrent = () => {
+        signal?.throwIfAborted();
+        if (!isCurrent(context)) throw new Error('plugin_settings_target_not_current');
+    };
     return Object.freeze({
+        async createResource(input) {
+            assertCurrent();
+            const result = await createSavedSecretResource({ scope: context.lifetime.scope, name: input.name, kind: 'other', value: input.value,
+                accountGrants: [], teamGrants: [], groupGrants: [],
+                executeAdmittedMutation: async mutation => { assertCurrent(); return runTeamAction(mutation); } });
+            if (!result.ok) throw new Error('plugin_secret_resource_unavailable');
+            return result.resourceRef;
+        },
+        deleteResource: ref => deletePluginCreatedResource(context.lifetime.scope, ref, assertCurrent),
         readSnapshot({ target }) {
             return !signal?.aborted && isExactAccountTarget(target, context.target)
                 ? readAccountPluginSecretSettingsSnapshot(context)
@@ -218,6 +236,35 @@ function createAccountPluginSecretSettingsBoundary(
     });
 }
 
+async function deletePluginCreatedResource(scope: ServerAccountScope, reference: string, assertCurrent: () => void): Promise<void> {
+    const ref = parseSavedSecretRefV1(reference);
+    if (ref.kind !== 'shared_resource') return;
+    try {
+        assertCurrent();
+        await withProfileAccount(scope, undefined, async account => {
+            const catalog = await readSavedSecretCatalogInContext(account);
+            assertCurrent();
+            if (!catalog.ok) throw new Error('plugin_secret_resource_unavailable');
+            const resource = catalog.resources.find(row => 'resourceId' in row && row.resourceId === ref.resourceId);
+            if (!resource) return;
+            if (!('resourceId' in resource) || resource.entry.relationship !== 'owner' || resource.entry.revision === null) {
+                throw new Error('plugin_secret_resource_unavailable');
+            }
+            const source = await readProfileTransferSourceInContext(account);
+            assertCurrent();
+            const result = await deleteSavedSecretResource({ scope, resourceId: ref.resourceId, expectedRevision: resource.entry.revision,
+                expectedSettingsVersion: source.source.version,
+                executeAdmittedMutation: async mutation => { assertCurrent(); return runTeamAction(mutation); } });
+            if (!result.ok && result.reason !== 'in_use') throw new Error('plugin_secret_resource_cleanup_unavailable');
+        });
+    } catch (error) {
+        // A retired Account cannot authorize cleanup. Preserve the known
+        // binding/erase response and leave its private resource with the owner.
+        try { assertCurrent(); } catch { return; }
+        throw error;
+    }
+}
+
 /**
  * The single Settings/SavedSecret arm for a user-initiated plugin erase.
  * Callers provide only an already-selected Account target and plugin id; this
@@ -237,15 +284,20 @@ export async function eraseCurrentAccountPluginSecretBindings(input: Readonly<{
         try {
             account.assertCurrent();
             let changed = false;
+            let resourcesToDelete: readonly string[] = [];
             const result = await account.mutateRawSettings(raw => {
                 input.signal?.throwIfAborted();
                 account.assertCurrent();
                 const erased = eraseAccountSettingsPluginSecretBindings(raw, input.pluginId);
                 changed = erased.removedBindingCount > 0;
+                resourcesToDelete = listUnreferencedPluginCreatedSecretResources(raw, erased.settings);
                 return { ...erased.settings };
             }, { rebaseOnConflict: false, observeOutcome: true });
             if (result.status === 'conflict') return { status: 'conflict' };
             if (result.status === 'outcomeUnknown') return { status: 'outcomeUnknown' };
+            for (const ref of resourcesToDelete) await deletePluginCreatedResource(account.accountLifetime.scope, ref, () => {
+                input.signal?.throwIfAborted(); account.assertCurrent();
+            });
             return { status: 'completed', changed };
         } catch {
             return { status: 'unavailable' };
@@ -271,11 +323,6 @@ const unavailableScopedPluginSettingsWatch: ScopedPluginSettingsWatch = Object.f
     dispose(): void {},
 });
 
-const accountPluginSecretSettingsAdapterOptions = Object.freeze({
-    createId: () => `plugin_secret_${randomUUID()}`,
-    now: () => Date.now(),
-});
-
 function createRuntimeAccountPluginSecretSettingsAdapter(
     input: ScopedPluginSettingsReadInput | ScopedPluginSettingsWriteInput,
 ): ScopedPluginSettingsAdapter {
@@ -286,7 +333,6 @@ function createRuntimeAccountPluginSecretSettingsAdapter(
         context
             ? createAccountPluginSecretSettingsBoundary(context)
             : unavailableAccountPluginSecretBoundary,
-        accountPluginSecretSettingsAdapterOptions,
     );
 }
 

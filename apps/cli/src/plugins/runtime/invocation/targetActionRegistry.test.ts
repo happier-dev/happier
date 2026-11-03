@@ -576,6 +576,8 @@ describe('target action invocation registry', () => {
             module: actionContractProducer,
             // The plugin Secrets service is a persistent host boundary; its handler stays real.
             services: { secrets: {
+                async readSavedSecret() { throw new Error('Saved Secret reference reads are not provided by this fixture'); },
+                async saveShared() { throw new Error('Shared save is not provided by this fixture'); },
                 async status(id) { return { state: material.has(id) ? 'configured' : 'missing', revision: 'r0' }; },
                 async set(id, value) { material.set(id, value); return { revision: 'r1' }; },
                 async get(id) { const value = material.get(id); if (value === undefined) throw new Error('Secret missing'); return value; },

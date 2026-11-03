@@ -45,6 +45,15 @@ export function createPluginSurfaceAccountNetworkServices(input: Readonly<{
             } finally { context.dispose(); }
         } finally { cancellation.dispose(); }
     };
+    const read = (ref: string, options?: { resourceRevision?: number; signal?: AbortSignal }) => withAccount(options?.signal, async context => {
+        const result = await readSavedSecretReferenceInContext(context, ref, options?.signal);
+        if (!result.ok) return unavailable();
+        if (options?.resourceRevision !== undefined && result.revision !== options.resourceRevision) {
+            throw new PluginError({ code: 'plugin_secret_revision_conflict' });
+        }
+        register(result.value);
+        return result.value;
+    });
     const secretId = (id: string) => PluginDirectSecretDeclarationV1Schema.parse({ id }).id;
     const binding = async (id: string, context: Awaited<ReturnType<typeof captureLazyActionAccountContext>>) => {
         const snapshot = await context.readRawSettingsSnapshot();
@@ -83,7 +92,7 @@ export function createPluginSurfaceAccountNetworkServices(input: Readonly<{
         } finally { cancellation.dispose(); }
     };
     const secrets: SecretsService = {
-        status,
+        readSavedSecret: read, status,
         get: (id, options) => withAccount(options?.signal, async context => {
             const selected = await binding(id, context);
             if (!selected) throw new PluginError({ code: 'plugin_secret_missing' });
@@ -94,6 +103,7 @@ export function createPluginSurfaceAccountNetworkServices(input: Readonly<{
         }),
         set: (id, value, options) => { assertCurrent(); register(value); return mutate(id, { kind: 'set', value }, options); },
         delete: (id, options) => mutate(id, { kind: 'delete' }, options),
+        async saveShared() { throw new PluginError({ code: 'plugin_secret_save_not_admitted' }); },
     };
     const transport = createFetchPluginHttpRuntime(runtimeFetchManualResponse);
     const http = createStablePluginHttpHost({ adapter: {

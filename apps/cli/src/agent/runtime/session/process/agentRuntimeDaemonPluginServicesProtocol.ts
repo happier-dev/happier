@@ -2,6 +2,7 @@ import { lazyZodSchema } from '@happier-dev/protocol/lazyZodSchema';
 import { z } from 'zod/mini';
 import { z as zMini } from 'zod/mini';
 
+import { SharedSavedSecretCreateInputV1Schema } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
 import { ConnectedAccountMaterializationRequestSchema } from '@happier-dev/protocol/connect/connected-account-purposes';
 import { ConnectedAccountRequestAuthUsesV1Schema } from '@happier-dev/protocol/connect/connected-account-request-auth';
 import { AgentRuntimeJsonValueV1Schema } from '@happier-dev/protocol/runtime/agentSessionV1';
@@ -712,6 +713,29 @@ export const RUNNER_DAEMON_PLUGIN_SERVICE_OPERATION_V1_SCHEMAS = [
         ...OptionalWitnessSchema,
         id: BoundedIdSchema,
         reason: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(4_096))),
+        sourceKind: z.optional(z.literal('inline')),
+    })),
+    lazyZodSchema(() => z.strictObject({
+        kind: z.literal('plugin_secrets.read_saved_secret_v1'),
+        ...OperationBaseSchema,
+        ...OptionalWitnessSchema,
+        ref: BoundedIdSchema,
+        resourceRevision: z.optional(SafeNonNegativeIntegerSchema),
+    })),
+    lazyZodSchema(() => z.strictObject({
+        kind: z.literal('plugin_secrets.save_shared_v1'),
+        ...OperationBaseSchema,
+        ...OptionalWitnessSchema,
+        id: BoundedIdSchema,
+        input: z.strictObject({
+            label: SharedSavedSecretCreateInputV1Schema.shape.displayName,
+            bytes: Base64Schema,
+            audience: z.strictObject({
+                accountGrants: SharedSavedSecretCreateInputV1Schema.shape.accountGrants,
+                teamGrants: SharedSavedSecretCreateInputV1Schema.shape.teamGrants,
+                groupGrants: SharedSavedSecretCreateInputV1Schema.shape.groupGrants,
+            }),
+        }),
     })),
     lazyZodSchema(() => z.strictObject({
         kind: z.literal('plugin_secrets.set_v1'),

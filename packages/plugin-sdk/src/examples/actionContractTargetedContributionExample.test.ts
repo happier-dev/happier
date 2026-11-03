@@ -422,6 +422,12 @@ describe('cross-plugin contribution public authoring example', () => {
         };
         let revision = 'secret-r0';
         const secrets = Object.freeze({
+            async readSavedSecret(): Promise<never> {
+                throw new Error('Saved Secret reference reads are not provided by this fixture');
+            },
+            async saveShared(): Promise<never> {
+                throw new Error('plugin_secret_save_not_admitted');
+            },
             async status(id: string) {
                 calls.push(`status:${id}`);
                 return stored.has(id)

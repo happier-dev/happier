@@ -3,9 +3,9 @@ import { parseSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/sa
 
 import type { ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { createSavedSecretMaterializerFromSnapshotV1 } from '@/settings/secrets/savedSecretCatalog';
-import type { SavedSecretOperationReferenceV1 } from '@/settings/secrets/savedSecretCatalogRead';
-
-
+import { acquireSavedSecretMaterializerForOperation, type SavedSecretOperationReferenceV1 } from '@/settings/secrets/savedSecretCatalogRead';
+import type { SavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
+import type { TargetSecretSourcesV1 } from '@/plugins/runtime/lifecycle/contributions/targetSecretSources';
 
 type Reference = Readonly<Pick<SavedSecretOperationReferenceV1, 'ref' | 'revision'>>;
 type Material = Readonly<{ read(ref: string): string; assertCurrent(): void }>;
@@ -20,9 +20,9 @@ export type AccountPluginSecretReadCustody = Readonly<{
 export function createAccountPluginSecretReadCustody(params: Readonly<{
     /** Already bound by the Account router; throws after its captured lifetime retires. */
     readSnapshot(): ActiveAccountSettingsSnapshot;
-
+    secretSources?: TargetSecretSourcesV1;
     /** The requester's Machine access; acquisition owns the native-source Manage rule. */
-
+    machineAdmission?: SavedSecretOperationContextV1['machineAdmission'];
     isCurrent?(signal?: AbortSignal): Promise<boolean>;
     admitSharedReferences(input: Readonly<{
         references: readonly Reference[]; expectedScopeKey: string; signal?: AbortSignal;
@@ -57,7 +57,11 @@ export function createAccountPluginSecretReadCustody(params: Readonly<{
                 }
                 const snapshot = await assertAsyncCurrent();
                 const isCurrent = () => { try { currentSnapshot(); return true; } catch { return false; } };
-                const materializer = createSavedSecretMaterializerFromSnapshotV1(snapshot, { isCurrent });
+                const materializer = await acquireSavedSecretMaterializerForOperation({ snapshot,
+                    isCurrent,
+                    references: [...references.values()], ...(params.secretSources ? { secretSources: params.secretSources } : {}),
+                    ...(params.machineAdmission ? { machineAdmission: params.machineAdmission } : {}),
+                    ...(input.sourceKind ? { sourceKind: input.sourceKind } : {}), ...(input.signal ? { signal: input.signal } : {}) });
                 for (const [ref, reference] of references) {
                     if (reference.revision !== undefined && !materializer.matchesSharedResourceRevision(ref, reference.revision)) {
                         throw new PluginError({ code: 'secret_missing', message: 'Secret revision is no longer current' });
@@ -71,7 +75,7 @@ export function createAccountPluginSecretReadCustody(params: Readonly<{
                             && !resource.resourceDataKey && resource.materialStatus === 'ready';
                         throw new PluginError({ code: needsClient ? 'secret_use_client_required' : 'secret_missing',
                             message: 'Account secret material is unavailable', details: { materialStatus: resolved.status,
-                                 },
+                                ...(resolved.sourceFailure ? { sourceFailure: resolved.sourceFailure } : {}) },
                             retryable: resolved.status === 'temporarily_unavailable' });
                     }
                     selected.set(ref, { value: resolved.value, fingerprint: resolved.fingerprint,

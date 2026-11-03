@@ -2846,6 +2846,10 @@ describe('runner daemon PluginServices proxy', () => {
         });
         const path = { root: 'workspace' as const, relativePath: 'fixture.txt' };
         const calls = [
+            ['plugin_secrets.read_saved_secret_v1', (signal: AbortSignal) => services.secrets.readSavedSecret('saved-secret', { resourceRevision: 7, signal })],
+            ['plugin_secrets.save_shared_v1', (signal: AbortSignal) => services.secrets.saveShared('secret', {
+                label: 'Shared', bytes: new Uint8Array([0, 255]), audience: {},
+            }, { signal })],
             ['plugin_secrets.get_v1', (signal: AbortSignal) => services.secrets.get('secret', { signal })],
             ['plugin_secrets.set_v1', (signal: AbortSignal) => services.secrets.set('secret', 'value', { signal })],
             ['plugin_secrets.delete_v1', (signal: AbortSignal) => services.secrets.delete('secret', { signal })],

@@ -660,11 +660,12 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         Reflect.set(sync, 'settingsSecretsReadKeys', [localSecretKey]);
         Reflect.set(sync, 'pendingSettingsScope', scope);
         Reflect.set(sync, 'pendingSettings', {});
-        const baseline = presentation === 'data-retired' ? {} : applyAccountSettingsSavedSecretMutation({}, {
-            kind: 'replacePluginSecret', target: { pluginId: 'acme.settings', localId: 'apiToken' },
+        const baseline = presentation === 'data-retired' ? {} : applyAccountSettingsSavedSecretMutation({
+            secrets: [{ id: 'existing-plugin-secret', name: 'Existing token', kind: 'other',
+            encryptedValue: { _isSecretValue: true, value: 'old-secret-not-for-renderer' }, createdAt: 1, updatedAt: 1 }] }, {
+            kind: 'bindPluginSecret', target: { pluginId: 'acme.settings', localId: 'apiToken' },
             expectedSecretId: null, expectedSecretUpdatedAt: null,
-            secret: { id: 'existing-plugin-secret', name: 'Existing token', kind: 'other',
-                encryptedValue: { _isSecretValue: true, value: 'old-secret-not-for-renderer' }, createdAt: 1, updatedAt: 1 },
+            secretId: 'existing-plugin-secret',
         }).settings;
         const { recordAccountStoredContentServerRequirements } = await import('@/sync/http/accountStoredContentCompatibility');
         recordAccountStoredContentServerRequirements({ serverUrl: profile.serverUrl, requirements: {

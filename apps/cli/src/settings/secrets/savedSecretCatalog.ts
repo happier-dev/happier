@@ -27,6 +27,7 @@ export type SavedSecretCatalogResourceInputV1 = Omit<SavedSecretCatalogResourceV
   displayName: string | null;
   storedContent: SavedSecretResourceStoredContentV1 | null;
   resourceDataKey?: Uint8Array;
+  deploymentReferenceState?: 'referenced' | 'unreferenced' | 'unavailable';
 }>;
 
 export type SavedSecretCatalogState = 'ready' | 'temporarily_unavailable' | 'disabled';

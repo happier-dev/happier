@@ -478,7 +478,7 @@ export const PLUGIN_SERVICE_DESCRIPTORS = Object.freeze({
         id: 'secrets', publicProperty: 'secrets', availabilityOwner: 'host', unavailableCode: PLUGIN_SERVICE_UNAVAILABLE_CODE, deniedCode: PLUGIN_SERVICE_RESOURCE_NOT_SELECTED_CODE,
         createUnavailable(code?: string, diagnostic?: PluginServiceUnavailableDiagnostic): SecretsService {
             const fail = unavailableMethod('secrets', code, diagnostic);
-            return Object.freeze({ status: fail, get: fail, set: fail, delete: fail });
+            return Object.freeze({ status: fail, get: fail, set: fail, delete: fail, saveShared: fail, readSavedSecret: fail });
         },
         createAvailable({ seed, params }): SecretsService | null {
             if (!params.secrets || !params.secretRedactor) return null;
@@ -486,6 +486,7 @@ export const PLUGIN_SERVICE_DESCRIPTORS = Object.freeze({
                 pluginId: seed.plugin.id,
                 signal: seed.signal,
                 isOccurrenceCurrent: seed.isOccurrenceCurrent,
+                ...(seed.sharedSaveAdmission ? { sharedSaveAdmission: seed.sharedSaveAdmission } : {}),
                 registerRawForRedaction: (value) => params.secretRedactor!.registerRaw({
                     pluginId: seed.plugin.id,
                     occurrenceId: seed.occurrenceId,

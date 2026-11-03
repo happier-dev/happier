@@ -10,7 +10,17 @@ export type SecretStatus = Readonly<{
 
 export type SecretMutationResult = Readonly<{ revision: string }>;
 
+export type SharedSecretSaveInput = Readonly<{
+    label: string;
+    bytes: Uint8Array;
+    audience: SharedSecretAudience;
+}>;
+
 export interface SecretsService {
+    /** Save under the exact id, purpose and audience reviewed by the parent Action. */
+    saveShared(id: string, input: SharedSecretSaveInput, options?: { signal?: AbortSignal }): Promise<SharedSecretSaveResult>;
+    /** Read a Saved Secret reference through this invocation's captured Account custody. */
+    readSavedSecret(ref: string, options?: { resourceRevision?: number; signal?: AbortSignal }): Promise<string>;
     status(id: string): Promise<SecretStatus>;
     get(id: string, options?: { reason?: string; signal?: AbortSignal; sourceKind?: 'inline' }): Promise<string>;
     set(

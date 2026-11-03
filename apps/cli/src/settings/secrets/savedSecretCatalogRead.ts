@@ -88,6 +88,7 @@ async function accountContentPrivateKey(token: string, suppliedCredentials?: Sto
 export async function hydrateSavedSecretCatalog(input: Readonly<{
   token: string;
   serverFeatures: FeaturesResponse | null;
+  includeReferenceCensus?: boolean;
   signal?: AbortSignal;
   operationContext?: SavedSecretOperationContextV1;
 }>): Promise<HydratedSavedSecretCatalog> {
@@ -123,6 +124,7 @@ export async function hydrateSavedSecretCatalog(input: Readonly<{
           ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
         },
         signal: input.signal,
+        ...(input.includeReferenceCensus ? { params: { includeReferenceCensus: true } } : {}),
         timeout: 15_000,
         validateStatus: () => true,
       },
@@ -165,6 +167,7 @@ export async function hydrateSavedSecretCatalog(input: Readonly<{
         revision: row.entry.revision ?? 1,
         storedContent: row.storedContent,
         materialStatus: row.entry.materialStatus,
+        ...(row.entry.deploymentReferenceState ? { deploymentReferenceState: row.entry.deploymentReferenceState } : {}),
         ...(resourceDataKey ? { resourceDataKey } : {}),
       };
     });
@@ -199,6 +202,7 @@ export type SavedSecretCatalogRefreshInputV1 = Readonly<{
   signal?: AbortSignal;
   /** Resource imports need an authoritative absence/tombstone observation before create. */
   refreshCatalog?: boolean;
+  includeReferenceCensus?: boolean;
   operationContext?: SavedSecretOperationContextV1;
   secretSources?: TargetSecretSourcesV1;
   /** Existing host-private ingress proof when the caller already owns Account custody. */
@@ -294,6 +298,7 @@ export async function readSavedSecretCatalogAdmissionForOperation(input: SavedSe
     throw new Error('saved_secret_account_credentials_unavailable');
   }
   await hydrateSavedSecretCatalog({
+    ...(input.includeReferenceCensus ? { includeReferenceCensus: true } : {}),
     token: credentials.token,
     serverFeatures: await fetchServerFeaturesSnapshot({
       serverUrl: context?.serverHttpBaseUrl ?? resolveServerHttpBaseUrl(),

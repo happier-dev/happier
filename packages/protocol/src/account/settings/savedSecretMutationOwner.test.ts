@@ -1233,6 +1233,28 @@ function settingsWithEverySavedSecretReferenceFamily(): Record<string, unknown> 
 }
 
 describe('Account Settings SavedSecret mutation owner', () => {
+  it('keeps new plugin material outside Settings and identifies only unused binding-created resource cleanup', () => {
+    const target = { pluginId: 'acme.settings', localId: 'token' };
+    const ref = formatSharedSavedSecretRefV1('plugin-created');
+    const before = { preferredLanguage: 'fr' };
+    const bound = applyAccountSettingsSavedSecretMutation(before, { kind: 'replacePluginSecret', target,
+      expectedSecretId: null, expectedSecretUpdatedAt: null, secretId: ref }).settings;
+    expect(bound).not.toHaveProperty('secrets');
+    expect(resolveAccountSettingsPluginSecretBinding(bound, target)).toMatchObject({ savedSecretId: ref, createdForBinding: true });
+    const otherTarget = { pluginId: 'acme.settings', localId: 'other' };
+    const reused = applyAccountSettingsSavedSecretMutation(bound, { kind: 'bindPluginSecret', target: otherTarget,
+      expectedSecretId: null, expectedSecretUpdatedAt: null, secretId: ref }).settings;
+    const unbound = applyAccountSettingsSavedSecretMutation(reused, { kind: 'unbindPluginSecret', target,
+      expectedSecretId: ref, expectedSecretUpdatedAt: null }).settings;
+    expect(savedSecretOwner.listUnreferencedPluginCreatedSecretResources(reused, unbound)).toEqual([]);
+    const removed = applyAccountSettingsSavedSecretMutation(bound, { kind: 'unbindPluginSecret', target,
+      expectedSecretId: ref, expectedSecretUpdatedAt: null }).settings;
+    expect(savedSecretOwner.listUnreferencedPluginCreatedSecretResources(bound, removed)).toEqual([ref]);
+    expect(removed).not.toHaveProperty('secrets');
+    const selected = applyAccountSettingsSavedSecretMutation(before, { kind: 'bindPluginSecret', target,
+      expectedSecretId: null, expectedSecretUpdatedAt: null, secretId: ref }).settings;
+    expect(savedSecretOwner.listUnreferencedPluginCreatedSecretResources(selected, before)).toEqual([]);
+  });
   it('round-trips strict shared refs while preserving opaque legacy personal ids', () => {
     const sharedRef = formatSharedSavedSecretRefV1('resource_01');
     const maxResourceId = 'r'.repeat(256 - 'happier:shared-secret:v1:'.length);
@@ -1782,7 +1804,7 @@ describe('Account Settings SavedSecret mutation owner', () => {
       expectedSecretUpdatedAt: secret.updatedAt,
     });
 
-    expect(result.settings.pluginSecretBindingsV1).toBeUndefined();
+    expect(result.settings.pluginSecretBindingsV1).toEqual({});
     expect((result.settings.secrets as readonly { id: string }[]).map(({ id }) => id))
       .toEqual([secret.id]);
   });

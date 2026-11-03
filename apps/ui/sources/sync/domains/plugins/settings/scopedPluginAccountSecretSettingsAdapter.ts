@@ -1,4 +1,4 @@
-import { applyAccountSettingsSavedSecretMutation, eraseAccountSettingsPluginSecretBindings, resolveAccountSettingsPluginSecretBinding, resolveAccountSettingsPluginSecret } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
+import { applyAccountSettingsSavedSecretMutation, eraseAccountSettingsPluginSecretBindings, resolveAccountSettingsPluginSecretBinding, resolveAccountSettingsPluginSecret, listUnreferencedPluginCreatedSecretResources } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
 import { parseSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 
 import type {
@@ -42,6 +42,8 @@ export type AccountPluginSecretSettingsEraseResult =
  * to a plugin Settings renderer.
  */
 export type AccountPluginSecretSettingsBoundary = Readonly<{
+    createResource?(input: Readonly<{ name: string; value: string }>): Promise<string>;
+    deleteResource?(ref: string): Promise<void>;
     readSnapshot(input: Readonly<{
         target: ScopedPluginSettingsAccountTarget;
     }>): AccountPluginSecretSettingsSnapshot | null;
@@ -79,7 +81,13 @@ export async function eraseAccountPluginSecretSettingsBindings(params: Readonly<
             // recompute the erase from a later raw document inside the writer.
             mutate: () => ({ ...erased.settings }),
         });
-        if (result.status === 'applied') return { status: 'completed', changed: true };
+        if (result.status === 'applied') {
+            for (const ref of listUnreferencedPluginCreatedSecretResources(before.settings, erased.settings)) {
+                if (!params.boundary.deleteResource) return { status: 'unavailable' };
+                await params.boundary.deleteResource(ref);
+            }
+            return { status: 'completed', changed: true };
+        }
         if (result.status === 'outcomeUnknown') return { status: 'outcomeUnknown' };
         return result.status === 'conflict'
             ? { status: 'conflict' }
@@ -88,11 +96,6 @@ export async function eraseAccountPluginSecretSettingsBindings(params: Readonly<
         return { status: 'unavailable' };
     }
 }
-
-export type AccountPluginSecretSettingsAdapterOptions = Readonly<{
-    createId(): string;
-    now(): number;
-}>;
 
 function unavailable(reason: 'transport' | 'scope-mismatch' | 'target-mismatch') {
     return { status: 'unavailable' as const, reason };
@@ -179,7 +182,6 @@ function isSupportedAccountSecretMutation(input: ScopedPluginSettingsWriteInput)
  */
 export function createAccountPluginSecretSettingsAdapter(
     boundary: AccountPluginSecretSettingsBoundary,
-    options: AccountPluginSecretSettingsAdapterOptions,
 ): ScopedPluginSettingsAdapter {
     async function read(input: ScopedPluginSettingsReadInput): Promise<ScopedPluginSettingsReadResult> {
         if (!isAccountSecretInput(input)) return unavailable('scope-mismatch');
@@ -211,14 +213,6 @@ export function createAccountPluginSecretSettingsAdapter(
             // A one-shot Account Settings mutation is never replayed after a
             // conflict. Allocate replacement metadata once before it crosses
             // that CAS boundary so the admitted mutation is stable as well.
-            const replacement = typeof requestedSecretValue === 'string'
-                ? {
-                    id: options.createId(),
-                    value: requestedSecretValue,
-                    at: options.now(),
-                }
-                : null;
-
             try {
                 const existingBinding = resolveAccountSettingsPluginSecretBinding(before.settings, {
                     pluginId: input.pluginId,
@@ -228,6 +222,12 @@ export function createAccountPluginSecretSettingsAdapter(
                     return projectSecretSnapshot(input, before);
                 }
                 if (!isWriteIntentCurrent(input)) return unavailable('transport');
+                if (typeof requestedSecretValue === 'string' && !boundary.createResource) return unavailable('transport');
+                const replacementRef = typeof requestedSecretValue === 'string'
+                    ? await boundary.createResource!({ name: secretName(input.pluginId, input.fieldId), value: requestedSecretValue })
+                    : null;
+                if (!isWriteIntentCurrent(input)) return unavailable('transport');
+                let producedSettings: Record<string, unknown> | null = null;
                 const result = await boundary.writeOnce({
                     target: input.target,
                     expectedRevision: before.revision,
@@ -249,22 +249,13 @@ export function createAccountPluginSecretSettingsAdapter(
                         const expectedSecretId = binding?.savedSecretId ?? null;
                         const expectedSecretUpdatedAt = resolved?.secret.updatedAt ?? null;
                         const target = { pluginId: input.pluginId, localId: input.fieldId };
-                        const mutation = replacement !== null
+                        const mutation = replacementRef !== null
                             ? {
                                 kind: 'replacePluginSecret' as const,
                                 target,
                                 expectedSecretId,
                                 expectedSecretUpdatedAt,
-                                secret: {
-                                    id: replacement.id,
-                                    name: secretName(input.pluginId, input.fieldId),
-                                    kind: 'other' as const,
-                                    // The Account Settings CAS owner seals this
-                                    // strict SecretString with Account material.
-                                    encryptedValue: { _isSecretValue: true as const, value: replacement.value },
-                                    createdAt: replacement.at,
-                                    updatedAt: replacement.at,
-                                },
+                                secretId: replacementRef,
                             }
                             : input.mutation.kind === 'bind'
                                 ? {
@@ -287,7 +278,8 @@ export function createAccountPluginSecretSettingsAdapter(
                                         expectedSecretId: binding!.savedSecretId,
                                         expectedSecretUpdatedAt,
                                     };
-                        return applyAccountSettingsSavedSecretMutation(settings, mutation).settings;
+                        producedSettings = applyAccountSettingsSavedSecretMutation(settings, mutation).settings;
+                        return producedSettings;
                     },
                 });
                 if (!isWriteIntentCurrent(input)) {
@@ -298,6 +290,7 @@ export function createAccountPluginSecretSettingsAdapter(
                 }
                 if (result.status === 'unavailable') return unavailable('transport');
                 if (result.status === 'conflict') {
+                    if (replacementRef && boundary.deleteResource) await boundary.deleteResource(replacementRef);
                     return result.snapshot
                         ? projectSecretConflict(input, result.snapshot)
                         : { status: 'conflict' };
@@ -308,6 +301,12 @@ export function createAccountPluginSecretSettingsAdapter(
                     return projected.status === 'ready'
                         ? { status: 'outcomeUnknown', snapshot: projected.snapshot }
                         : { status: 'outcomeUnknown' };
+                }
+                if (producedSettings) {
+                    for (const ref of listUnreferencedPluginCreatedSecretResources(before.settings, producedSettings)) {
+                        if (!boundary.deleteResource) return { status: 'outcomeUnknown' };
+                        await boundary.deleteResource(ref);
+                    }
                 }
                 const projected = result.snapshot ? projectSecretSnapshot(input, result.snapshot) : null;
                 return projected?.status === 'ready'

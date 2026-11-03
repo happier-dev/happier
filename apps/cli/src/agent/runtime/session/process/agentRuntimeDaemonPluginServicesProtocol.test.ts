@@ -64,6 +64,8 @@ const retainedRunnerOperationClassification = [
             'plugin_settings.watch.open_v1',
             'plugin_secrets.status_v1',
             'plugin_secrets.get_v1',
+            'plugin_secrets.read_saved_secret_v1',
+            'plugin_secrets.save_shared_v1',
             'plugin_secrets.set_v1',
             'plugin_secrets.delete_v1',
             'plugin_events.emit_v1',
@@ -147,6 +149,24 @@ const retainedRunnerOperationClassification = [
 }>[];
 
 describe('runner daemon PluginServices v1 protocol', () => {
+    it('accepts saved-secret operands while rejecting caller-supplied admission and Account authority', () => {
+        const read = { kind: 'plugin_secrets.read_saved_secret_v1', requestId: 'read', invocationId: 'invocation',
+            ref: 'saved-secret', resourceRevision: 7 };
+        const save = { kind: 'plugin_secrets.save_shared_v1', requestId: 'save', invocationId: 'invocation', id: 'token',
+            input: { label: 'Shared', bytes: 'AP8=', audience: { teamGrants: ['team-1'] } } };
+        expect(RunnerDaemonPluginServiceOperationV1Schema.safeParse(read).success).toBe(true);
+        expect(RunnerDaemonPluginServiceOperationV1Schema.safeParse(save).success).toBe(true);
+        for (const authority of [{ sharedSaveAdmission: { id: 'token', purpose: 'data.connection' } },
+            { accountId: 'other' }, { credentials: { token: 'caller-token' } }]) {
+            expect(RunnerDaemonPluginServiceOperationV1Schema.safeParse({ ...read, ...authority }).success).toBe(false);
+            expect(RunnerDaemonPluginServiceOperationV1Schema.safeParse({ ...save, ...authority }).success).toBe(false);
+            expect(RunnerDaemonPluginServiceOperationV1Schema.safeParse({ ...save, input: { ...save.input, ...authority } }).success).toBe(false);
+        }
+        expect(RunnerDaemonPluginServiceOperationV1Schema.safeParse({ ...save,
+            input: { ...save.input, audience: { teamGrants: ['team-1'], accountId: 'other' } } }).success).toBe(false);
+        expect(RunnerDaemonPluginServiceOperationV1Schema.safeParse({ ...save,
+            input: { ...save.input, bytes: 'not-base64' } }).success).toBe(false);
+    });
     it.each([
         ['command', { command: `/${'c'.repeat(32_768)}` }],
         ['cwd', { cwd: `/${'d'.repeat(32_768)}` }],

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { accountSettingsParse, normalizeActionsSettingsV1, type PluginSettingsContributionV2 } from '@happier-dev/protocol';
-
+import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { createPluginAccountActionSettingsService } from '@happier-dev/cli-common/plugins/registration';
 import { clearActiveAccountSettingsSnapshot, setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { createAccountPluginSettingsRecordStorage } from '../../context/accountPluginSettingsRecordStorage';
@@ -64,7 +64,9 @@ describe('production invocation services for a scoped principal', () => {
         } finally { await owners.dispose(); }
     });
 
-    it('keeps ambient Account settings and secrets unavailable without a scoped Account-state producer', () => {
+    it('keeps ambient Account settings and secret reads unavailable without a scoped Account-state producer', async () => {
+        setActiveAccountSettingsSnapshot({ source: 'network', settings: accountSettingsParse({}), settingsVersion: 1,
+            loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey: 'unrelated-ambient-account' });
         const actionsSettingsProvider = {
             getActionsSettings: () => normalizeActionsSettingsV1({ v: 1, actions: {} }),
         };
@@ -97,9 +99,12 @@ describe('production invocation services for a scoped principal', () => {
             status: 'unavailable',
             code: 'plugin_service_unavailable',
         });
-        expect(services.availability('secrets')).toEqual({
-            status: 'unavailable',
-            code: 'plugin_service_unavailable',
-        });
+        try {
+            await expect(services.secrets.status('account-token')).resolves.toMatchObject({ state: 'unavailable' });
+            await expect(services.secrets.get('account-token'))
+                .rejects.toMatchObject({ code: 'plugin_secret_custody_unavailable' });
+            await expect(services.secrets.readSavedSecret(formatSharedSavedSecretRefV1('missing-authority-resource')))
+                .rejects.toMatchObject({ code: 'plugin_secret_custody_unavailable' });
+        } finally { await owners.dispose(); }
     });
 });

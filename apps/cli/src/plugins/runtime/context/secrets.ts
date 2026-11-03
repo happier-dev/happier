@@ -8,8 +8,9 @@ import { SecretStringV1Schema } from '@happier-dev/protocol/crypto/settingsSecre
 import { PluginDirectSecretDeclarationV1Schema } from '@happier-dev/protocol/plugins/contributions/settings';
 import { readManagedServiceEndpointUrl } from '@happier-dev/protocol/plugins/managedServiceEndpointUrl';
 import type { PluginSettingManagedServiceOriginV1, SecretStringV1 } from '@happier-dev/protocol';
-import { isPluginError, PluginError, type JsonValue } from '@happier-dev/plugin-sdk';
-import { type SecretsService } from '@happier-dev/plugin-sdk/secrets';
+import { isPluginError, PluginError } from '@happier-dev/plugin-sdk/errors';
+import type { JsonValue } from '@happier-dev/plugin-sdk';
+import type { SecretsService, SharedSecretAudience, SharedSecretSaveInput, SharedSecretSaveResult } from '@happier-dev/plugin-sdk/secrets';
 
 import type { PluginStorePaths } from '@/plugins/store/paths';
 import { withJsonOwnerFileLock } from '@/utils/fs/jsonOwnerFileLock';
@@ -404,7 +405,27 @@ export type DeclaredDaemonPluginSecretAdministrationPort = Readonly<{
 
 type SecretMutationCurrentnessCheck = () => void;
 
+/** Exact reviewed parent Action authority; never plugin input or SDK context. */
+export type PluginSharedSaveAdmission = Readonly<{
+    id: string;
+    purpose: string;
+    audience: SharedSecretAudience;
+    assertCurrent(): void;
+}>;
+
 export type PluginSecretCustody = Readonly<{
+    readSavedSecret?(input: Readonly<{
+        ref: string;
+        resourceRevision?: number;
+        signal: AbortSignal;
+    }>): Promise<string>;
+    saveShared?(input: Readonly<{
+        secretId: string;
+        input: SharedSecretSaveInput;
+        admission: PluginSharedSaveAdmission;
+        signal: AbortSignal;
+        assertCurrent(): void;
+    }>): Promise<SharedSecretSaveResult>;
     status(secretId: string, scope?: Readonly<{
         canonicalOrigin?: string;
     }>): Promise<Readonly<{
@@ -413,6 +434,8 @@ export type PluginSecretCustody = Readonly<{
     }>>;
     get(secretId: string, scope?: Readonly<{
         canonicalOrigin?: string;
+        sourceKind?: 'inline';
+        signal?: AbortSignal;
     }>): Promise<Readonly<{
         value: string;
         revision: string;
@@ -438,14 +461,14 @@ export type PluginSecretCustody = Readonly<{
 
 export type PluginSecretCustodyResolver = (input: Readonly<{
     pluginId: string;
-    declaration: DeclaredPluginSecret;
+    declaration: DeclaredPluginSecret | Readonly<{ custody: 'account' }>;
     /** Invocation lifetime for custody bindings that must release observers. */
     signal?: AbortSignal;
 }>) => PluginSecretCustody | null;
 
 /**
- * The only declaration-routed decision point between Account and daemon
- * secret custody.  A declared custody selects exactly one owner; absence is
+ * The only data-routing decision point between Account and daemon secret
+ * custody. The selected custody has exactly one owner; an absent owner is
  * unavailable, never a fallback to the other owner.
  */
 export function createPluginSecretCustodyRouter(params: Readonly<{
@@ -591,9 +614,8 @@ export function createDaemonPluginSecretCustodyRouter(params: Readonly<{
 }
 
 /**
- * Binds the SDK secret surface to declarations, a single custody router, and
- * the invocation lifetime.  Secret declarations replace HostAccess grants:
- * plugin code can act only on identifiers from its own manifest.
+ * Binds the SDK secret surface to one custody router and invocation lifetime.
+ * Declarations select data custody; other ids use the captured Account owner.
  */
 export function createDeclaredPluginSecretsService(params: Readonly<{
     pluginId: string;
@@ -602,6 +624,7 @@ export function createDeclaredPluginSecretsService(params: Readonly<{
     signal: AbortSignal;
     isOccurrenceCurrent(): boolean;
     registerRawForRedaction(value: string): void;
+    sharedSaveAdmission?: PluginSharedSaveAdmission;
 }>): SecretsService {
     const declarations = new Map<string, DeclaredPluginSecret>();
     for (const declaration of params.declarations) {
@@ -624,19 +647,15 @@ export function createDeclaredPluginSecretsService(params: Readonly<{
                 : {}),
         }));
     }
-    // Bind Account declarations once for this invocation. An Account-backed
+    // Bind Account custody once for this invocation. An Account-backed
     // service must not begin under one Account and resolve a different Account
     // after a switch before its first secret operation. Daemon custody remains
     // lazy so an unused declaration cannot initialize device-local storage.
-    const accountCustodyBySecretId = new Map<string, PluginSecretCustody | null>();
-    for (const declaration of declarations.values()) {
-        if (declaration.custody !== 'account') continue;
-        accountCustodyBySecretId.set(declaration.id, params.resolveCustody({
-            pluginId: params.pluginId,
-            declaration,
-            signal: params.signal,
-        }) ?? null);
-    }
+    const accountCustody = params.resolveCustody({
+        pluginId: params.pluginId,
+        declaration: { custody: 'account' },
+        signal: params.signal,
+    }) ?? null;
 
     function assertCurrent(signal?: AbortSignal): void {
         if (signal?.aborted || params.signal.aborted || !params.isOccurrenceCurrent()) {
@@ -646,19 +665,12 @@ export function createDeclaredPluginSecretsService(params: Readonly<{
 
     function resolveDeclaration(secretId: string): DeclaredPluginSecret {
         const normalizedId = assertValidDeclaredPluginSecretId(secretId);
-        const declaration = declarations.get(normalizedId);
-        if (!declaration) {
-            throw stableSecretError(
-                'plugin_secret_undeclared',
-                `Plugin secret '${normalizedId}' is not declared`,
-            );
-        }
-        return declaration;
+        return declarations.get(normalizedId) ?? Object.freeze({ id: normalizedId, custody: 'account' });
     }
 
     function readInvocationCustody(declaration: DeclaredPluginSecret): PluginSecretCustody | null {
         if (declaration.custody === 'account') {
-            return accountCustodyBySecretId.get(declaration.id) ?? null;
+            return accountCustody;
         }
         return params.resolveCustody({
             pluginId: params.pluginId,
@@ -701,6 +713,41 @@ export function createDeclaredPluginSecretsService(params: Readonly<{
     }
 
     return Object.freeze({
+        async readSavedSecret(ref: string, options?: { resourceRevision?: number; signal?: AbortSignal }) {
+            assertCurrent(options?.signal);
+            if (!accountCustody?.readSavedSecret) {
+                throw stableSecretError('plugin_secret_custody_unavailable', 'Account Saved Secret custody is unavailable');
+            }
+            const value = await accountCustody.readSavedSecret({ ref,
+                ...(options?.resourceRevision === undefined ? {} : { resourceRevision: options.resourceRevision }),
+                signal: options?.signal ? AbortSignal.any([params.signal, options.signal]) : params.signal,
+            });
+            assertCurrent(options?.signal);
+            params.registerRawForRedaction(value);
+            return value;
+        },
+        async saveShared(id: string, input: SharedSecretSaveInput, options?: { signal?: AbortSignal }) {
+            assertCurrent(options?.signal);
+            const secretId = assertValidDeclaredPluginSecretId(id);
+            const admission = params.sharedSaveAdmission;
+            if (!admission || admission.id !== secretId || !admission.purpose) {
+                throw stableSecretError('plugin_secret_save_not_admitted', 'Shared save is not admitted for this id');
+            }
+            admission.assertCurrent();
+            if (!accountCustody?.saveShared) throw stableSecretError('plugin_secret_custody_unavailable', 'Shared save custody is unavailable');
+            const bytes = new Uint8Array(input.bytes);
+            try {
+                const value = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes);
+                params.registerRawForRedaction(value);
+                return await accountCustody.saveShared({ secretId, input: { ...input, bytes }, admission,
+                    signal: options?.signal ? AbortSignal.any([params.signal, options.signal]) : params.signal,
+                    assertCurrent() { assertCurrent(options?.signal); admission.assertCurrent(); },
+                });
+            } catch (error) {
+                if (isPluginError(error)) throw error;
+                throw stableSecretError('plugin_secret_custody_unavailable', 'Shared resource creation is unavailable');
+            } finally { bytes.fill(0); }
+        },
         async status(id: string) {
             assertCurrent();
             const declaration = resolveDeclaration(id);
@@ -721,11 +768,14 @@ export function createDeclaredPluginSecretsService(params: Readonly<{
             assertCurrent();
             return status;
         },
-        async get(id: string, options?: { reason?: string; signal?: AbortSignal }) {
+        async get(id: string, options?: { reason?: string; signal?: AbortSignal; sourceKind?: 'inline' }) {
             assertCurrent(options?.signal);
             const declaration = resolveDeclaration(id);
             rejectSdkUnscopedAccess(declaration);
-            const resolved = await requireInvocationCustody(declaration).get(declaration.id);
+            const resolved = await requireInvocationCustody(declaration).get(declaration.id, {
+                ...(options?.sourceKind ? { sourceKind: options.sourceKind } : {}),
+                signal: options?.signal ? AbortSignal.any([params.signal, options.signal]) : params.signal,
+            });
             assertCurrent(options?.signal);
             if (!resolved) {
                 throw stableSecretError('plugin_secret_missing', `Plugin secret '${declaration.id}' is not configured`);
@@ -767,6 +817,7 @@ export type StableDeclaredPluginSecretsHost = Readonly<{
         signal: AbortSignal;
         isOccurrenceCurrent(): boolean;
         registerRawForRedaction(value: string): void;
+        sharedSaveAdmission?: PluginSharedSaveAdmission;
     }>): SecretsService | null;
     /**
      * Secret-native daemon administration. This does not materialize a
@@ -791,10 +842,8 @@ export type StableDeclaredPluginSecretsHost = Readonly<{
 }>;
 
 /**
- * Keeps declaration lookup outside individual consumers.  A plugin with no
- * declared secret has no SDK secrets service; a declared Account secret keeps
- * the service surface so `status()` can truthfully report unavailable until
- * the Account custody port is present.
+ * Keeps data-custody declaration lookup outside individual consumers. Account
+ * service availability does not depend on declaring secret identifiers.
  */
 export function createStableDeclaredPluginSecretsHost(params: Readonly<{
     declarations: readonly Readonly<{
@@ -809,30 +858,24 @@ export function createStableDeclaredPluginSecretsHost(params: Readonly<{
         declarations.push(entry.declaration);
         declarationsByPluginId.set(entry.pluginId, declarations);
     }
-    const declarationsForPlugin = (pluginId: string): readonly DeclaredPluginSecret[] | null => (
-        declarationsByPluginId.get(pluginId) ?? null
+    const declarationsForPlugin = (pluginId: string): readonly DeclaredPluginSecret[] => (
+        declarationsByPluginId.get(pluginId) ?? []
     );
     const bind = (input: Readonly<{
         pluginId: string;
         signal: AbortSignal;
         isOccurrenceCurrent(): boolean;
         registerRawForRedaction(value: string): void;
-    }>): Readonly<{
-        declarations: readonly DeclaredPluginSecret[];
-        service: SecretsService;
-    }> | null => {
-        const declarations = declarationsForPlugin(input.pluginId);
-        if (!declarations || declarations.length === 0) return null;
-        return Object.freeze({
-            declarations,
-            service: createDeclaredPluginSecretsService({
-                pluginId: input.pluginId,
-                declarations,
-                resolveCustody: params.resolveCustody,
-                signal: input.signal,
-                isOccurrenceCurrent: input.isOccurrenceCurrent,
-                registerRawForRedaction: input.registerRawForRedaction,
-            }),
+        sharedSaveAdmission?: PluginSharedSaveAdmission;
+    }>): SecretsService => {
+        return createDeclaredPluginSecretsService({
+            pluginId: input.pluginId,
+            declarations: declarationsForPlugin(input.pluginId),
+            resolveCustody: params.resolveCustody,
+            signal: input.signal,
+            isOccurrenceCurrent: input.isOccurrenceCurrent,
+            registerRawForRedaction: input.registerRawForRedaction,
+            ...(input.sharedSaveAdmission ? { sharedSaveAdmission: input.sharedSaveAdmission } : {}),
         });
     };
     const bindDaemonPluginSecretAdministrationPort = (input: Readonly<{
@@ -971,9 +1014,7 @@ export function createStableDeclaredPluginSecretsHost(params: Readonly<{
         });
     };
     return Object.freeze({
-        bind(input) {
-            return bind(input)?.service ?? null;
-        },
+        bind,
         bindDaemonPluginSecretAdministrationPort,
         bindManagedServiceSecretReadPort(input) {
             const declarations = declarationsForPlugin(input.pluginId);

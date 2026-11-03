@@ -1,14 +1,15 @@
 import {
     applyAccountSettingsSavedSecretMutation,
-    formatSharedSavedSecretRefV1,
     resolveAccountSettingsPluginSecretBinding,
     resolveAccountSettingsPluginSecret,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
+import {
+    formatSharedSavedSecretRefV1} from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { describe, expect, it, vi } from 'vitest';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 
 import {
-    createAccountPluginSecretSettingsAdapter,
+    createAccountPluginSecretSettingsAdapter as createAdapter,
     eraseAccountPluginSecretSettingsBindings,
     type AccountPluginSecretSettingsBoundary,
     type AccountPluginSecretSettingsSnapshot,
@@ -20,20 +21,31 @@ const TARGET = Object.freeze({ kind: 'account' as const, serverIdentityId: 'serv
 const FIELDS = Object.freeze([{ key: FIELD_ID, redacted: true }]);
 
 function initialSettings(): Record<string, unknown> {
-    return applyAccountSettingsSavedSecretMutation({}, {
-        kind: 'replacePluginSecret',
-        target: { pluginId: PLUGIN_ID, localId: FIELD_ID },
-        expectedSecretId: null,
-        expectedSecretUpdatedAt: null,
-        secret: {
+    // Retained Settings source fixture, not a new-write path.
+    return {
+        secrets: [{
             id: 'existing-secret',
             name: 'Existing plugin token',
             kind: 'other',
             encryptedValue: { _isSecretValue: true, value: 'old-token-must-not-reach-renderer' },
             createdAt: 1,
             updatedAt: 1,
-        },
-    }).settings as Record<string, unknown>;
+        }],
+        pluginSecretBindingsV1: { [JSON.stringify([PLUGIN_ID, 'account', FIELD_ID])]: {
+            pluginId: PLUGIN_ID, custody: 'account', localId: FIELD_ID, savedSecretId: 'existing-secret', createdForBinding: true,
+        } },
+    };
+}
+
+// Resource persistence is outside the adapter's deterministic Settings logic.
+// Composed coverage in savedSecretResourceOperations.test.ts uses real resource owners.
+function createAccountPluginSecretSettingsAdapter(boundary: AccountPluginSecretSettingsBoundary,
+    options: Readonly<{ createId(): string; now(): number }>) {
+    return createAdapter({
+        async createResource() { return formatSharedSavedSecretRefV1(options.createId()); },
+        async deleteResource() {},
+        ...boundary,
+    });
 }
 
 function existingSavedSecretSettings(): Record<string, unknown> {
@@ -277,13 +289,13 @@ describe('Account plugin SavedSecret Settings adapter', () => {
             },
         });
         expect(JSON.stringify(replaced)).not.toContain('new-token-must-not-reach-renderer');
-        expect(resolveAccountSettingsPluginSecret(snapshot.settings, {
+        expect(resolveAccountSettingsPluginSecretBinding(snapshot.settings, {
             pluginId: PLUGIN_ID,
             localId: FIELD_ID,
         })).toMatchObject({
-            binding: { savedSecretId: 'replacement-secret' },
-            secret: { encryptedValue: { value: 'new-token-must-not-reach-renderer' } },
+            savedSecretId: formatSharedSavedSecretRefV1('replacement-secret'), createdForBinding: true,
         });
+        expect(snapshot.settings.secrets).toEqual([]);
 
         const cleared = await adapter.write({
             pluginId: PLUGIN_ID,

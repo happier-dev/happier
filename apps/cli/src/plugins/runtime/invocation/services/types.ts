@@ -71,6 +71,8 @@ export type PluginExternalActionContext = Readonly<{
 export type PluginInvocationServicesSeed = Readonly<{
     /** Bound by the actual Domain admission, never by plugin-authored operands. */
     machineConnectorSecrets?: PluginServices['machineConnectorSecrets'];
+    /** Exact shared-save id/purpose/audience reviewed by the root Action. */
+    sharedSaveAdmission?: import('@/plugins/runtime/context/secrets').PluginSharedSaveAdmission;
     /** Bound only by the canonical daemon background-service lifecycle. */
     demandBackgroundService?: PluginServices['backgroundServices']['demand'];
     /** Host invocation identity; never projected into the public plugin context. */

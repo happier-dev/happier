@@ -1,3 +1,7 @@
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import {
     accountSettingsParse,
     applyAccountSettingsSavedSecretMutation,
@@ -6,8 +10,9 @@ import {
     resolveAccountSettingsPluginSecretBinding,
     sealSavedSecretResourceStoredContentV1,
 } from '@happier-dev/protocol';
-import { PluginError } from '@happier-dev/plugin-sdk';
-import { describe, expect, it, vi } from 'vitest';
+import { PluginError } from '@happier-dev/plugin-sdk/errors';
+import { listUnreferencedPluginCreatedSecretResources } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import {
     resolveAccountSettingsScopeKey,
@@ -21,8 +26,12 @@ import {
     type ActiveAccountSettingsSnapshot,
 } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 
-import { createAccountPluginSecretCustodyRouter } from './accountPluginSecretCustody';
+import { createAccountPluginSecretCustodyRouter as createRouter } from './accountPluginSecretCustody';
+import { createSecretSourceHostFixture } from '@/plugins/testkit/secretSources';
+import { createInvocationSavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
+import { resolvePluginStorePaths } from '@/plugins/store/paths';
 import {
+    createDaemonPluginSecretCustodyRouter,
     createDeclaredPluginSecretsService,
     createPluginSecretCustodyRouter,
 } from './secrets';
@@ -39,6 +48,8 @@ const {
 
 vi.mock('axios', () => ({
     default: {
+        // The credential transport reads Axios defaults before the HTTP boundary.
+        defaults: {},
         get: axiosGetMock,
         post: axiosPostMock,
     },
@@ -46,7 +57,8 @@ vi.mock('axios', () => ({
     post: axiosPostMock,
 }));
 
-vi.mock('@/persistence', () => ({
+vi.mock('@/persistence', async original => ({
+    ...await original<typeof import('@/persistence')>(),
     readStoredCredentials: () => readStoredCredentialsMock(),
 }));
 
@@ -61,7 +73,217 @@ vi.mock('@/features/serverFeaturesClient', () => ({
     })),
 }));
 
+// In-memory Settings and resource persistence boundaries for the custody tests.
+// The companion resources test exercises the real HTTP/crypto/Action composition.
+function createAccountPluginSecretCustodyRouter(params: NonNullable<Parameters<typeof createRouter>[0]>
+    & Readonly<{ createId?: () => string; nowMs?: () => number; onResourceRead?: () => void }> = {}) {
+    const readSnapshot = params.owner?.readSnapshot ?? getActiveAccountSettingsSnapshot;
+    let sequence = 0;
+    const publish = (resources: NonNullable<ActiveAccountSettingsSnapshot['savedSecretResources']>) => {
+        const snapshot = readSnapshot();
+        if (!snapshot) throw new Error('Fixture Account is unavailable');
+        if (params.owner) Object.assign(snapshot, { savedSecretResources: resources, savedSecretCatalogState: 'ready' });
+        else setActiveAccountSettingsSnapshot({ ...snapshot, savedSecretResources: resources, savedSecretCatalogState: 'ready' });
+    };
+    return createRouter({ ...params, resources: params.resources ?? {
+        ...(params.onResourceRead ? { async readCensus(assertCurrent: () => void) {
+            params.onResourceRead?.();
+            assertCurrent();
+            return { resources: [] };
+        } } : {}),
+        async create(input) {
+            input.assertCurrent();
+            const resourceId = params.createId?.() ?? `fixture-resource-${++sequence}`;
+            publish([...(readSnapshot()?.savedSecretResources ?? []), { resourceId, ownerAccountId: 'fixture-owner', displayName: input.name,
+                kind: 'other', encryptionMode: 'plain', revision: 1, materialStatus: 'ready', relationship: 'owner',
+                storedContent: sealSavedSecretResourceStoredContentV1({ resourceId, mode: 'plain',
+                    content: { v: 1, name: input.name, kind: 'other', value: input.value } }) }]);
+            return formatSavedSecretCatalogReferenceV1({ kind: 'shared_resource', id: resourceId });
+        },
+        async delete(input) {
+            input.assertCurrent();
+            publish((readSnapshot()?.savedSecretResources ?? []).filter(row =>
+                formatSavedSecretCatalogReferenceV1({ kind: 'shared_resource', id: row.resourceId }) !== input.ref));
+        },
+    } });
+}
+
 describe('createAccountPluginSecretCustodyRouter', () => {
+    it('keeps undeclared Account binding ids distinct through one invocation custody', async () => {
+        let snapshot: ActiveAccountSettingsSnapshot = { source: 'network', scopeKey: 'account:ids',
+            settings: accountSettingsParse({}), settingsVersion: 1, loadedAtMs: 1,
+            settingsSecretsReadKeys: [], savedSecretCatalogState: 'ready' };
+        const router = createAccountPluginSecretCustodyRouter({ owner: {
+            readSnapshot: () => snapshot,
+            // The in-memory resource boundary already publishes the exact rows.
+            async admitSharedSecretForOperation() {},
+            async updateOnce(input) {
+                input.assertCurrent();
+                snapshot = { ...snapshot, settings: accountSettingsParse(input.mutate(snapshot.settings)),
+                    settingsVersion: snapshot.settingsVersion + 1 };
+                return { status: 'applied', settings: snapshot.settings, version: snapshot.settingsVersion };
+            },
+        } });
+        const service = createDeclaredPluginSecretsService({ pluginId: 'acme.example', declarations: [],
+            resolveCustody: router.resolve, signal: new AbortController().signal,
+            isOccurrenceCurrent: () => true, registerRawForRedaction: () => {} });
+        await service.set('first', 'first-value');
+        await service.set('second', 'second-value');
+        await expect(service.get('first')).resolves.toBe('first-value');
+        await expect(service.get('second')).resolves.toBe('second-value');
+        await service.delete('first');
+        await expect(service.get('first')).rejects.toMatchObject({ code: 'plugin_secret_missing' });
+        await expect(service.get('second')).resolves.toBe('second-value');
+    });
+    it('saves without declaration opt-in with separately reviewed audiences and no cross-id write', async () => {
+        const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-shared-save-custody-'));
+        onTestFinished(async () => { await rm(happyHomeDir, { recursive: true, force: true }); });
+        const scopeKey = 'shared-save-account';
+        const snapshot: ActiveAccountSettingsSnapshot = { source: 'network', scopeKey,
+            settings: accountSettingsParse({}), settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [] };
+        let activeSnapshot: ActiveAccountSettingsSnapshot | null = snapshot;
+        const created: string[] = [];
+        const resourceCandidates: Array<NonNullable<Parameters<typeof listUnreferencedPluginCreatedSecretResources>[2]>['resources'][number]> = [];
+        let beforeSharedCommit = () => {};
+        const router = createRouter({ owner: { readSnapshot: () => activeSnapshot,
+            updateOnce: async () => { throw new Error('Shared save must not mutate Settings'); } },
+            resources: { create: async () => { throw new Error('Personal creation must not run'); }, delete: async () => {},
+                createShared: async input => { input.assertCurrent(); beforeSharedCommit(); input.assertCurrent(); created.push(input.name);
+                    resourceCandidates.push({ ref: `happier:shared-secret:v1:${input.name}`,
+                        createdByPlugin: input.createdByPlugin, deploymentReferenceState: 'unreferenced' });
+                    return { ref: `happier:shared-secret:v1:${input.name}`, resourceRevision: 1 }; } } });
+        const resolveCustody = createPluginSecretCustodyRouter({ account: router.resolve,
+            daemon: createDaemonPluginSecretCustodyRouter({ paths: resolvePluginStorePaths({ happyHomeDir }),
+                resolveDeviceLocalSecretStorage: async () => ({ deriveSecretKey: () => new Uint8Array(32).fill(7) }),
+            }).resolve,
+        }).resolve;
+        const declarations = [{ id: 'database', custody: 'account' as const },
+            { id: 'backup', custody: 'account' as const },
+            { id: 'settingsOnly', custody: 'account' as const }, { id: 'local', custody: 'daemon' as const }];
+        const redacted: string[] = [];
+        const signal = new AbortController();
+        let current = true;
+        const serviceFor = (id: string, audience: { teamGrants: string[] }) => createDeclaredPluginSecretsService({
+            pluginId: 'acme.example', declarations: id === 'backup' ? [...declarations].reverse() : declarations,
+            resolveCustody, signal: signal.signal,
+            isOccurrenceCurrent: () => current, registerRawForRedaction: value => redacted.push(value),
+            sharedSaveAdmission: { id, purpose: id, audience, assertCurrent: () => {} },
+        });
+        const admittedAudience = { teamGrants: ['team-db'] };
+        const first = serviceFor('database', admittedAudience);
+        const bytes = new TextEncoder().encode('\uFEFFshared-save-sentinel');
+        await expect(first.saveShared('database', { label: 'database', bytes, audience: { teamGrants: ['team-db', 'team-db'] } }))
+            .resolves.toEqual({ ref: 'happier:shared-secret:v1:database', resourceRevision: 1 });
+        expect([...bytes]).toEqual([...new TextEncoder().encode('\uFEFFshared-save-sentinel')]);
+        expect(listUnreferencedPluginCreatedSecretResources(snapshot.settings, snapshot.settings,
+            { resources: resourceCandidates })).toEqual(['happier:shared-secret:v1:database']);
+        // Home boundary projection after real bindings.set/unbind is proved by
+        // the companion server DB contract; the canonical census remains real here.
+        resourceCandidates[0] = { ...resourceCandidates[0]!, deploymentReferenceState: 'referenced' };
+        expect(listUnreferencedPluginCreatedSecretResources(snapshot.settings, snapshot.settings,
+            { resources: resourceCandidates })).toEqual([]);
+        resourceCandidates[0] = { ...resourceCandidates[0]!, deploymentReferenceState: 'unreferenced' };
+        expect(listUnreferencedPluginCreatedSecretResources(snapshot.settings, snapshot.settings,
+            { resources: resourceCandidates })).toEqual(['happier:shared-secret:v1:database']);
+        expect(snapshot.settings).not.toHaveProperty('pluginSecretBindingsV1');
+        for (const id of ['backup', 'missing', 'settingsOnly', 'local']) {
+            await expect(first.saveShared(id, { label: 'refused', bytes, audience: { teamGrants: ['team-db'] } })).rejects.toBeDefined();
+        }
+        await expect(first.saveShared('database', { label: 'refused', bytes, audience: { teamGrants: ['team-db', 'team-other'] } }))
+            .rejects.toMatchObject({ code: 'plugin_secret_save_not_admitted' });
+        await expect(serviceFor('settingsOnly', { teamGrants: ['team-db'] }).saveShared('settingsOnly', {
+            label: 'settingsOnly', bytes, audience: { teamGrants: ['team-db'] },
+        })).resolves.toEqual({ ref: 'happier:shared-secret:v1:settingsOnly', resourceRevision: 1 });
+        await expect(serviceFor('undeclared', { teamGrants: ['team-db'] }).saveShared('undeclared', {
+            label: 'undeclared', bytes, audience: { teamGrants: ['team-db'] },
+        })).resolves.toEqual({ ref: 'happier:shared-secret:v1:undeclared', resourceRevision: 1 });
+        const daemonRouted = serviceFor('local', { teamGrants: ['team-db'] });
+        await daemonRouted.set('local', 'daemon-original');
+        await expect(daemonRouted.saveShared('local', { label: 'local', bytes, audience: { teamGrants: ['team-db'] } }))
+            .resolves.toEqual({ ref: 'happier:shared-secret:v1:local', resourceRevision: 1 });
+        await expect(daemonRouted.get('local')).resolves.toBe('daemon-original');
+        expect(snapshot.settings).not.toHaveProperty('pluginSecretBindingsV1');
+        await expect(Reflect.apply(first.saveShared, first, [undefined, {
+            label: 'refused', bytes, audience: { teamGrants: ['team-db'] },
+        }])).rejects.toBeDefined();
+        await expect(serviceFor('backup', { teamGrants: ['team-backup'] }).saveShared('backup', {
+            label: 'backup', bytes, audience: { teamGrants: ['team-backup'] },
+        })).resolves.toEqual({ ref: 'happier:shared-secret:v1:backup', resourceRevision: 1 });
+        const aborted = new AbortController(); aborted.abort();
+        await expect(first.saveShared('database', { label: 'refused', bytes, audience: { teamGrants: ['team-db'] } }, { signal: aborted.signal }))
+            .rejects.toBeDefined();
+        current = false;
+        await expect(first.saveShared('database', { label: 'refused', bytes, audience: { teamGrants: ['team-db'] } })).rejects.toBeDefined();
+        current = true;
+        beforeSharedCommit = () => { current = false; };
+        await expect(first.saveShared('database', { label: 'refused', bytes, audience: { teamGrants: ['team-db'] } })).rejects.toBeDefined();
+        beforeSharedCommit = () => {};
+        current = true;
+        activeSnapshot = { ...snapshot, scopeKey: 'another-account' };
+        await expect(first.saveShared('database', { label: 'refused', bytes, audience: { teamGrants: ['team-db'] } }))
+            .rejects.toMatchObject({ code: 'plugin_secret_custody_unavailable' });
+        activeSnapshot = snapshot;
+        beforeSharedCommit = () => { admittedAudience.teamGrants.push('team-other'); };
+        await expect.soft(first.saveShared('database', { label: 'refused', bytes, audience: { teamGrants: ['team-db'] } }))
+            .rejects.toMatchObject({ code: 'plugin_secret_save_not_admitted' });
+        beforeSharedCommit = () => {};
+        admittedAudience.teamGrants = ['team-db'];
+        signal.abort();
+        await expect(first.saveShared('database', { label: 'refused', bytes, audience: { teamGrants: ['team-db'] } })).rejects.toBeDefined();
+        expect.soft(created).toEqual(['database', 'settingsOnly', 'undeclared', 'local', 'backup']);
+        expect.soft(redacted).toContain('\uFEFFshared-save-sentinel');
+    });
+    it('keeps the rejected binding outcome when cleanup loses the Account lifetime', async () => {
+        let lifetime = 1;
+        const snapshot: ActiveAccountSettingsSnapshot = { source: 'network', scopeKey: 'account:a',
+            settings: accountSettingsParse({}), settingsVersion: 4, loadedAtMs: 1, settingsSecretsReadKeys: [] };
+        const router = createAccountPluginSecretCustodyRouter({ owner: {
+            readSnapshot: () => snapshot,
+            readLifetimeToken: () => lifetime,
+            async updateOnce(input) {
+                input.assertCurrent();
+                lifetime++;
+                return { status: 'conflict', currentVersion: 5 };
+            },
+        } });
+        const custody = router.resolve({ pluginId: 'acme.example', declaration: { id: 'token', custody: 'account' } });
+        if (!custody) throw new Error('Fixture custody unavailable');
+        await expect(custody.set({ secretId: 'token', value: 'fixture-material' })).rejects.toMatchObject({
+            code: 'plugin_secret_revision_conflict',
+        });
+        expect(snapshot.savedSecretResources?.length).toBe(1);
+    });
+    it('keeps an acknowledged replacement when cleanup loses the Account lifetime', async () => {
+        let lifetime = 1;
+        const resourceReads = vi.fn();
+        const ref = formatSavedSecretCatalogReferenceV1({ kind: 'shared_resource', id: 'previous-created' });
+        let snapshot: ActiveAccountSettingsSnapshot = { source: 'network', scopeKey: 'account:a',
+            settings: accountSettingsParse(applyAccountSettingsSavedSecretMutation({}, {
+                kind: 'replacePluginSecret', target: { pluginId: 'acme.example', localId: 'token' },
+                expectedSecretId: null, expectedSecretUpdatedAt: null, secretId: ref,
+            }).settings), settingsVersion: 4, loadedAtMs: 1, settingsSecretsReadKeys: [],
+            savedSecretResources: [{ resourceId: 'previous-created', ownerAccountId: 'fixture-owner', displayName: 'Previous',
+                kind: 'other', encryptionMode: 'plain', revision: 1, materialStatus: 'ready', relationship: 'owner',
+                storedContent: sealSavedSecretResourceStoredContentV1({ resourceId: 'previous-created', mode: 'plain',
+                    content: { v: 1, name: 'Previous', kind: 'other', value: 'previous-fixture' } }) }] };
+        const router = createAccountPluginSecretCustodyRouter({ onResourceRead: resourceReads, owner: {
+            readSnapshot: () => snapshot,
+            readLifetimeToken: () => lifetime,
+            async updateOnce(input) {
+                input.assertCurrent();
+                snapshot = { ...snapshot, settings: accountSettingsParse(input.mutate(snapshot.settings)), settingsVersion: 5 };
+                lifetime++;
+                return { status: 'applied', version: 5, settings: snapshot.settings };
+            },
+        } });
+        const custody = router.resolve({ pluginId: 'acme.example', declaration: { id: 'token', custody: 'account' } });
+        if (!custody) throw new Error('Fixture custody unavailable');
+        await expect(custody.set({ secretId: 'token', value: 'replacement-fixture' })).resolves.toMatchObject({
+            revision: expect.stringMatching(/^account-secret-r1:/u),
+        });
+        expect(snapshot.savedSecretResources?.length).toBe(2);
+        expect(resourceReads, 'retirement withdraws resource-read authority before cleanup starts').not.toHaveBeenCalled();
+    });
     it('binds and materializes a current shared ref, rotates by revision, and fails terminally after revocation', async () => {
         const resourceId = 'resource-plugin';
         const sharedRef = formatSavedSecretCatalogReferenceV1({ kind: 'shared_resource', id: resourceId });
@@ -154,14 +376,13 @@ describe('createAccountPluginSecretCustodyRouter', () => {
         expect(JSON.stringify(await custody.status('token'))).not.toContain('shared-v2');
 
         const replacement = await custody.set({ secretId: 'token', value: 'plugin-personal' });
-        expect(resolveAccountSettingsPluginSecret(snapshot.settings, {
+        expect(resolveAccountSettingsPluginSecretBinding(snapshot.settings, {
             pluginId: 'acme.example',
             localId: 'token',
         })).toMatchObject({
-            binding: { createdForBinding: true },
-            secret: { encryptedValue: { value: 'plugin-personal' } },
+            createdForBinding: true,
         });
-        expect(snapshot.savedSecretResources).toEqual([]);
+        expect(snapshot.savedSecretResources?.length).toBe(1);
         await custody.delete({ secretId: 'token', expectedRevision: replacement.revision });
         expect(resolveAccountSettingsPluginSecretBinding(snapshot.settings, {
             pluginId: 'acme.example',
@@ -229,7 +450,7 @@ describe('createAccountPluginSecretCustodyRouter', () => {
         }
     });
 
-    it('creates and binds a SavedSecret through one explicit Account Settings version', async () => {
+    it('creates resource material without adding a Settings secret through one explicit binding version', async () => {
         let snapshot: ActiveAccountSettingsSnapshot = {
             source: 'network',
             settings: accountSettingsParse({ secrets: [] }),
@@ -277,6 +498,8 @@ describe('createAccountPluginSecretCustodyRouter', () => {
 
         const result = await custody.set({ secretId: 'token', value: 'raw-secret' });
 
+        expect(snapshot.settings.secrets.length).toBe(0);
+        expect(snapshot.savedSecretResources?.length).toBe(1);
         expect(result.revision).toMatch(/^account-secret-r1:/u);
         expect(updateOnce).toHaveBeenCalledTimes(1);
         expect(updateOnce).toHaveBeenCalledWith(expect.objectContaining({ expectedVersion: 4 }));
@@ -284,12 +507,11 @@ describe('createAccountPluginSecretCustodyRouter', () => {
             state: 'configured',
             revision: result.revision,
         });
-        expect(resolveAccountSettingsPluginSecret(snapshot.settings, {
+        expect(resolveAccountSettingsPluginSecretBinding(snapshot.settings, {
             pluginId: 'acme.example',
             localId: 'token',
         })).toMatchObject({
-            binding: { savedSecretId: 'saved-secret-1', createdForBinding: true },
-            secret: { id: 'saved-secret-1' },
+            savedSecretId: formatSavedSecretCatalogReferenceV1({ kind: 'shared_resource', id: 'saved-secret-1' }), createdForBinding: true,
         });
     });
 
@@ -470,7 +692,7 @@ describe('createAccountPluginSecretCustodyRouter', () => {
         expect(updateOnce).not.toHaveBeenCalled();
     });
 
-    it('binds Account custody when the invocation service is created, not on its first secret read', async () => {
+    it.each([true, false])('binds Account custody at invocation creation with declared=%s, not on its first secret read', async declared => {
         let snapshot: ActiveAccountSettingsSnapshot | null = {
             source: 'network',
             settings: accountSettingsParse({}),
@@ -489,7 +711,7 @@ describe('createAccountPluginSecretCustodyRouter', () => {
         });
         const service = createDeclaredPluginSecretsService({
             pluginId: 'acme.example',
-            declarations: [{ id: 'token', custody: 'account' }],
+            declarations: declared ? [{ id: 'token', custody: 'account' }] : [],
             resolveCustody: createPluginSecretCustodyRouter({
                 account: accountCustody.resolve,
             }).resolve,
@@ -606,7 +828,7 @@ describe('createAccountPluginSecretCustodyRouter', () => {
         const controller = new AbortController();
         const credentials = {
             token: 'account-a',
-            encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(4) },
+            encryption: null,
         };
         resetActiveAccountSettingsSnapshotForTests();
         readStoredCredentialsMock.mockResolvedValue(credentials);
@@ -662,7 +884,7 @@ describe('createAccountPluginSecretCustodyRouter', () => {
         const controller = new AbortController();
         const credentials = {
             token: 'account-a',
-            encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(4) },
+            encryption: null,
         };
         let accountSettingsReads = 0;
         let submittedContent: unknown = null;
@@ -1037,5 +1259,8 @@ describe('createAccountPluginSecretCustodyRouter', () => {
         await expect(custody.set({ secretId: 'token', value: 'raw-secret' })).rejects.toMatchObject({
             code: 'plugin_secret_outcome_unknown',
         });
+        expect(snapshot.savedSecretResources?.length).toBe(1);
     });
+
+
 });

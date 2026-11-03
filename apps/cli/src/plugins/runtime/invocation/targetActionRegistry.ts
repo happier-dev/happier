@@ -65,6 +65,8 @@ import type {
     ManagedBootstrapCredentialInvocationBinding,
 } from './services/types';
 import { createPluginInvocationPresentation } from './services/interactions';
+import { readReviewedSharedSaveAdmission } from './sharedSaveAdmission';
+import type { PluginSharedSaveAdmission } from '../context/secrets';
 import {
     createPluginInvocationLifetime,
     type PluginInvocationLifetime,
@@ -494,6 +496,7 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
         serviceBinding: PluginInvocationServiceBinding,
         correlationId: string,
         lifetime: PluginInvocationLifetime,
+        sharedSaveAdmission?: PluginSharedSaveAdmission,
     ): Promise<TargetActionInvocationResult> {
         const { registration } = indexed;
         let actionHandlerInvocation: PluginActionHandlerInvocation | undefined = 'notStarted';
@@ -558,6 +561,7 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                 };
                 const seed = Object.freeze({
                     ...(invocation.machineConnectorSecrets ? { machineConnectorSecrets: invocation.machineConnectorSecrets } : {}),
+                    ...(sharedSaveAdmission ? { sharedSaveAdmission } : {}),
                     plugin: Object.freeze({ id: registration.pluginId, version: registration.pluginVersion }),
                     contribution: Object.freeze({ id: registration.localId, qualifiedId }),
                     occurrenceId: registration.occurrenceId,
@@ -824,6 +828,7 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                 result: unavailable('plugin_action_generation_retired', 'Plugin action occurrence is no longer current'),
             });
             let operationProgress = invocation.operationProgress;
+            let sharedSaveAdmission: PluginSharedSaveAdmission | undefined;
             let correlationId: string = randomUUID();
             const lifetime = createPluginInvocationLifetime(AbortSignal.any([
                 registryController.signal,
@@ -1039,6 +1044,7 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                         serviceBinding,
                         correlationId,
                         lifetime,
+                        sharedSaveAdmission,
                     );
                 },
                 ...(params.redactDiagnosticText
@@ -1061,7 +1067,14 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                     ...(invocation.requireCurrentIntent === true ? { requireCurrentIntent: true as const } : {}),
                     ...(invocation.requestCurrentIntent ? {
                         requestCurrentIntent: async (request: TargetActionCurrentIntentRequest) => {
+                            const reviewedSave = readReviewedSharedSaveAdmission(request.action.input, () => {
+                                if (lifetime.signal.aborted || !indexed.isCurrent()) {
+                                    throw new PluginError({ code: 'plugin_action_generation_retired', message: 'Shared save Action authority retired' });
+                                }
+                            });
                             const result = await invocation.requestCurrentIntent!(request);
+                            sharedSaveAdmission = result.status === 'approved' && result.fingerprint === request.fingerprint
+                                ? reviewedSave : undefined;
                             if (result.status === 'approved' && result.fingerprint === request.fingerprint
                                 && result.artifactId !== undefined) {
                                 // Approval custody, not this preparation attempt, owns replay identity.

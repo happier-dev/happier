@@ -1,12 +1,14 @@
-import type { SavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
-import { createAccountPluginSecretReadCustody, type AccountPluginSecretReadCustody } from './accountPluginSecretReadCustody';
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash } from 'node:crypto';
 
-import { AccountSettingsSavedSecretMutationError, applyAccountSettingsSavedSecretMutation, resolveAccountSettingsPluginSecretBinding, resolveAccountSettingsPluginSecret } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
-import { isSharedSavedSecretReferenceV1 } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
+import { AccountSettingsSavedSecretMutationError, applyAccountSettingsSavedSecretMutation, resolveAccountSettingsPluginSecretBinding, resolveAccountSettingsPluginSecret, listUnreferencedPluginCreatedSecretResources } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
+import { PERSONAL_SAVED_SECRET_ACTION_OUTPUT_SCHEMAS_V1, type PersonalSavedSecretActionIdV1 } from '@happier-dev/protocol/account/settings/personalSavedSecretActionsV1';
+import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { parseSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import type { PluginAccountSecretBinding, PluginAccountSecretBindingTarget } from '@happier-dev/protocol';
-import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
+import { isPluginError, PluginError } from '@happier-dev/plugin-sdk/errors';
+import type { SharedSecretAudience, SharedSecretSaveResult } from '@happier-dev/plugin-sdk/secrets';
+import { SharedSavedSecretCreateInputV1Schema } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
+import { isDeepStrictEqual } from 'node:util';
 
 import {
     getActiveAccountSettingsSnapshot,
@@ -16,9 +18,19 @@ import {
 
 import { readStoredCredentials } from '@/persistence';
 import { refreshAccountSettingsForMinimumVersion } from '@/settings/accountSettings/refreshAccountSettingsForMinimumVersion';
+import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
 import type { AccountSettingsMutationResult } from '@/settings/accountSettings/updateAccountSettingsV2WithRetry';
 import { createSavedSecretMaterializerFromSnapshotV1 } from '@/settings/secrets/savedSecretCatalog';
 import { refreshSavedSecretCatalogForOperation } from '@/settings/secrets/hydrateSavedSecretCatalog';
+import { readSavedSecretCatalogForOperation } from '@/settings/secrets/savedSecretCatalogRead';
+import { createCliPersonalSavedSecretActionExecute } from '@/settings/secrets/personalSavedSecretActionHost';
+import { createAccountServerActionDeps } from '@/api/accountServerActionDeps';
+import type { SavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
+import type { TargetSecretSourcesV1 } from '@/plugins/runtime/lifecycle/contributions/targetSecretSources';
+import { createSharedSavedSecretForPlugin } from './sharedSavedSecretCreation';
+import { openSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
+import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
+import { createAccountPluginSecretReadCustody, type AccountPluginSecretReadCustody } from './accountPluginSecretReadCustody';
 
 import { updateActivePluginAccountSettingsOnce } from './accountSettingsStorage';
 import type {
@@ -117,23 +129,32 @@ function savedSecretName(pluginId: string, secretId: string): string {
 }
 
 /**
- * Account secret declarations bind to the protocol-owned SavedSecret record
- * for precisely `(pluginId, secretId)`. The SavedSecret mutation owner keeps
- * reference integrity and replacement cleanup atomic with the Account CAS;
- * this adapter never adds a second Account secret store or publishes bytes in
- * settings projections.
+ * Account plugin bindings point to the protocol-owned SavedSecret record
+ * for precisely `(pluginId, secretId)`. Material belongs to resource custody;
+ * the Protocol owner changes references through the Account Settings CAS.
+ * Cleanup runs through the resource owner's live reference census after that CAS.
  */
 export function createAccountPluginSecretCustodyRouter(params: Readonly<{
     operationContext?: SavedSecretOperationContextV1;
+    secretSources?: TargetSecretSourcesV1;
     owner?: AccountSettingsMutationOwner;
     /** Exact authenticated Account reader selected by the enclosing runtime. */
     readCredentials?: typeof readStoredCredentials;
     /** When supplied, Account-backed custody is available only to this exact Account lifetime. */
     accountScopeKey?: string | null;
-    createId?: () => string;
-    nowMs?: () => number;
+    /** Resource persistence boundary; production uses the personal SavedSecret Action owner. */
+    resources?: Readonly<{
+        create(input: Readonly<{ name: string; value: string; assertCurrent(): void }>): Promise<string>;
+        createShared?(input: Readonly<{ name: string; value: string; audience: SharedSecretAudience;
+            createdByPlugin: Readonly<{ pluginId: string; secretId: string }>;
+            signal: AbortSignal; assertCurrent(): void }>): Promise<SharedSecretSaveResult>;
+        delete(input: Readonly<{ ref: string; assertCurrent(): void }>): Promise<void>;
+        readCensus?(assertCurrent: () => void, references: readonly string[]): Promise<NonNullable<Parameters<typeof listUnreferencedPluginCreatedSecretResources>[2]>>;
+    }>;
 }> = {}): Readonly<{
     resolve: PluginSecretCustodyResolver;
+    /** Host-only exact-resource reads; the same custody backs declared secrets.get. */
+    bindReadCustody(input: Readonly<{ signal: AbortSignal; isCurrent(): boolean }>): AccountPluginSecretReadCustody | null;
     /**
      * Host-private administration port for selecting an already-existing
      * SavedSecret. It intentionally has no raw secret-value input or result.
@@ -145,15 +166,13 @@ export function createAccountPluginSecretCustodyRouter(params: Readonly<{
         expectedRevision?: string;
         assertCurrent?: () => void;
     }>): Promise<Readonly<{ revision: string }>>;
-    /** Removes a plugin-to-SavedSecret binding without deleting the SavedSecret. */
+    /** Removes a binding and cleans up its unused binding-created resource. */
     unbind(input: Readonly<{
         pluginId: string;
         secretId: string;
         expectedRevision?: string;
         assertCurrent?: () => void;
     }>): Promise<Readonly<{ revision: string }>>;
-    bindReadCustody(input: Readonly<{ signal: AbortSignal; isCurrent(): boolean }>): AccountPluginSecretReadCustody | null;
-
 }> {
     const readCredentials = params.readCredentials ?? (params.operationContext
         ? async () => params.operationContext!.credentials : readStoredCredentials);
@@ -209,8 +228,88 @@ export function createAccountPluginSecretCustodyRouter(params: Readonly<{
                 : null;
         },
     });
-    const createId = params.createId ?? (() => `plugin_secret_${randomUUID()}`);
-    const nowMs = params.nowMs ?? (() => Date.now());
+    async function executePersonal(actionId: PersonalSavedSecretActionIdV1, input: unknown, assertCurrent: () => void) {
+        assertCurrent();
+        const credentials = await readCredentials();
+        assertCurrent();
+        if (!credentials || resolveAccountSettingsScopeKeyForToken(credentials.token) !== requireSnapshot().scopeKey) {
+            throw custodyError('plugin_secret_custody_unavailable', 'Account credentials are unavailable for this custody');
+        }
+        const isCredentialCurrent = () => { assertCurrent(); return true; };
+        const home = createAccountServerActionDeps({ token: credentials.token, credentials, isCredentialCurrent }).homeDomainAction;
+        if (!home) throw custodyError('plugin_secret_custody_unavailable', 'Account resource custody is unavailable');
+        const execute = createCliPersonalSavedSecretActionExecute({ credentials, home, isCredentialCurrent });
+        const result = await execute({ actionId, input, context: { surface: 'cli' } });
+        const failure = ActionExecuteFailureSchema.safeParse(result);
+        if (failure.success) {
+            if (failure.data.errorCode === 'in_use' || failure.data.errorCode === 'not_found') return result;
+            throw custodyError(failure.data.errorCode === 'outcome_unknown' ? 'plugin_secret_outcome_unknown' : 'plugin_secret_custody_unavailable',
+                'Account resource mutation did not complete');
+        }
+        return result;
+    }
+    const resources = params.resources ?? {
+        async readCensus(assertCurrent: () => void, references: readonly string[]) {
+            const snapshot = await readSavedSecretCatalogForOperation({ expectedScopeKey: requireSnapshot().scopeKey ?? '',
+                refreshCatalog: true, includeReferenceCensus: true,
+                ...(params.operationContext ? { operationContext: params.operationContext } : {}) });
+            assertCurrent();
+            const requested = new Set(references);
+            return { resources: (snapshot.savedSecretResources ?? []).filter(row => row.relationship !== 'recipient'
+                && requested.has(formatSharedSavedSecretRefV1(row.resourceId))).map(row => {
+                const content = !row.storedContent ? null : row.encryptionMode === 'plain'
+                    ? openSavedSecretResourceStoredContentV1({ resourceId: row.resourceId, mode: 'plain', storedContent: row.storedContent })
+                    : row.resourceDataKey ? openSavedSecretResourceStoredContentV1({ resourceId: row.resourceId,
+                        mode: 'e2ee', storedContent: row.storedContent, resourceDataKey: row.resourceDataKey }) : null;
+                return { ref: formatSharedSavedSecretRefV1(row.resourceId),
+                    ...(content && 'createdByPlugin' in content && content.createdByPlugin ? { createdByPlugin: content.createdByPlugin } : {}),
+                    ...(row.deploymentReferenceState ? { deploymentReferenceState: row.deploymentReferenceState } : {}) };
+            }) };
+        },
+        async createShared(input: Readonly<{ name: string; value: string; audience: SharedSecretAudience;
+            createdByPlugin: Readonly<{ pluginId: string; secretId: string }>;
+            signal: AbortSignal; assertCurrent(): void }>) {
+            return await createSharedSavedSecretForPlugin({ ...input, readCredentials,
+                expectedScopeKey: requireSnapshot().scopeKey ?? '',
+                ...(params.operationContext ? { operationContext: params.operationContext } : {}),
+            });
+        },
+        async create(input: Readonly<{ name: string; value: string; assertCurrent(): void }>) {
+            return PERSONAL_SAVED_SECRET_ACTION_OUTPUT_SCHEMAS_V1['secrets.create'].parse(await executePersonal('secrets.create', {
+                name: input.name, kind: 'other', value: input.value,
+            }, input.assertCurrent)).secretRef;
+        },
+        async delete(input: Readonly<{ ref: string; assertCurrent(): void }>) {
+            input.assertCurrent();
+            const ref = parseSavedSecretRefV1(input.ref);
+            if (ref.kind !== 'shared_resource') return;
+            const snapshot = await readSavedSecretCatalogForOperation({ expectedScopeKey: requireSnapshot().scopeKey ?? '',
+                references: [{ ref: input.ref }], refreshCatalog: true });
+            input.assertCurrent();
+            const resource = snapshot.savedSecretResources?.find(row => row.resourceId === ref.resourceId);
+            if (!resource) return;
+            if (resource.relationship === 'recipient') throw custodyError('plugin_secret_custody_unavailable', 'Plugin-created resource is not owned');
+            await executePersonal('secrets.delete', { secretId: ref.resourceId, expectedUpdatedAt: resource.revision }, input.assertCurrent);
+        },
+    };
+
+    async function cleanup(before: AccountSecretSnapshot, after: AccountSecretSnapshot, assertCurrent: () => void) {
+        try {
+            assertCurrent();
+            // This mutation authorizes retirement only of its removed binding-created refs.
+            const retired = new Set(listUnreferencedPluginCreatedSecretResources(before.settings, after.settings));
+            if (retired.size === 0) return;
+            const census = await resources.readCensus?.(assertCurrent, [...retired]);
+            for (const ref of listUnreferencedPluginCreatedSecretResources(before.settings, after.settings, census)) {
+                if (!retired.has(ref)) continue;
+                await resources.delete({ ref, assertCurrent });
+            }
+        } catch {
+            // Retirement withdraws cleanup authority, not the settled binding outcome.
+            try { assertCurrent(); } catch { return; }
+            throw custodyError('plugin_secret_cleanup_failed', 'The binding changed but resource cleanup did not complete');
+        }
+    }
 
     function requireSnapshot(): AccountSecretSnapshot {
         const snapshot = owner.readSnapshot();
@@ -277,6 +376,19 @@ export function createAccountPluginSecretCustodyRouter(params: Readonly<{
             binding.pluginId,
             binding.localId,
         ))?.secret.updatedAt ?? null;
+    }
+
+    function stateForSettledMutation(
+        snapshot: AccountSecretSnapshot,
+        target: PluginAccountSecretBindingTarget,
+        assertCurrent: () => void,
+    ) {
+        // Acknowledgement survives retirement; only a still-current operation
+        // can borrow catalog facts refreshed by its resource cleanup.
+        try { assertCurrent(); } catch { return state(snapshot, target); }
+        const current = owner.readSnapshot();
+        return state(current && sameAccount(snapshot, current) && current.settingsVersion === snapshot.settingsVersion
+            ? current : snapshot, target);
     }
 
     function assertExpectedRevision(
@@ -395,14 +507,11 @@ export function createAccountPluginSecretCustodyRouter(params: Readonly<{
         }
     }
 
-    const resolve: PluginSecretCustodyResolver = ({ pluginId, declaration }) => {
+    function bindAccountSnapshotReader(): (() => AccountSecretSnapshot) | null {
         const boundAccount: AccountSecretSnapshot | null = owner.readSnapshot();
-        if (declaration.custody !== 'account') return null;
         if (!boundAccount) return null;
         const boundAccountSnapshot: AccountSecretSnapshot = boundAccount;
         const boundLifetimeToken = owner.readLifetimeToken?.();
-        const target = targetFor(pluginId, declaration.id);
-
         function requireBoundAccountSnapshot(): AccountSecretSnapshot {
             if (
                 boundLifetimeToken !== undefined
@@ -422,9 +531,93 @@ export function createAccountPluginSecretCustodyRouter(params: Readonly<{
             }
             return snapshot;
         }
+        return requireBoundAccountSnapshot;
+    }
+
+    function createReadCustody(
+        readSnapshot: () => AccountSecretSnapshot,
+        admitSharedReferences: Parameters<typeof createAccountPluginSecretReadCustody>[0]['admitSharedReferences'] = async input => {
+            await readSavedSecretCatalogForOperation({ ...input,
+                references: input.references.map(reference => ({ ref: reference.ref, required: false })),
+                ...(params.operationContext ? { operationContext: params.operationContext } : {}),
+            });
+        },
+    ): AccountPluginSecretReadCustody {
+        return createAccountPluginSecretReadCustody({ readSnapshot, admitSharedReferences,
+            ...((params.secretSources ?? params.operationContext?.secretSources)
+                ? { secretSources: params.secretSources ?? params.operationContext?.secretSources } : {}),
+            ...(params.operationContext ? { isCurrent: (signal?: AbortSignal) => params.operationContext!.isCurrent(signal) } : {}),
+            ...(params.operationContext?.machineAdmission ? { machineAdmission: params.operationContext.machineAdmission } : {}),
+        });
+    }
+
+    const resolve: PluginSecretCustodyResolver = ({ pluginId, declaration, signal }) => {
+        if (declaration.custody !== 'account') return null;
+        const boundReader = bindAccountSnapshotReader();
+        if (!boundReader) return null;
+        const requireBoundAccountSnapshot = () => { signal?.throwIfAborted(); return boundReader(); };
+        const admitBoundSharedReferences: Parameters<typeof createAccountPluginSecretReadCustody>[0]['admitSharedReferences'] = async input => {
+            // Binding reads retain their existing legacy-import preparation;
+            // that wrapper delegates admission to the same resource read owner.
+            if (!owner.admitSharedSecretForOperation) throw new Error('saved_secret_admission_unavailable');
+            for (const reference of input.references) {
+                await owner.admitSharedSecretForOperation({ ref: reference.ref, expectedScopeKey: input.expectedScopeKey });
+            }
+        };
 
         const custody: PluginSecretCustody = Object.freeze({
-            async status() {
+            async readSavedSecret(input) {
+                return await createReadCustody(requireBoundAccountSnapshot).withSecrets({
+                    references: [{ ref: input.ref,
+                        ...(input.resourceRevision === undefined ? {} : { revision: input.resourceRevision }) }],
+                    signal: input.signal,
+                }, material => material.read(input.ref));
+            },
+            async saveShared(input) {
+                input.signal.throwIfAborted();
+                input.assertCurrent();
+                requireBoundAccountSnapshot();
+                if (input.admission.id !== input.secretId || !input.admission.purpose) {
+                    throw custodyError('plugin_secret_save_not_admitted', 'Shared save is not admitted for this id');
+                }
+                const normalizeAudience = (audience: SharedSecretAudience) => {
+                    if (!audience || Object.keys(audience).some(key => !['accountGrants', 'teamGrants', 'groupGrants'].includes(key))) {
+                        throw custodyError('plugin_secret_save_not_admitted', 'Shared save audience is invalid');
+                    }
+                    return {
+                        accountGrants: [...new Set(SharedSavedSecretCreateInputV1Schema.shape.accountGrants.parse(audience.accountGrants) ?? [])].sort(),
+                        teamGrants: [...new Set(SharedSavedSecretCreateInputV1Schema.shape.teamGrants.parse(audience.teamGrants) ?? [])].sort(),
+                        groupGrants: [...new Set(SharedSavedSecretCreateInputV1Schema.shape.groupGrants.parse(audience.groupGrants) ?? [])].sort(),
+                    };
+                };
+                const audience = normalizeAudience(input.input.audience);
+                if (!isDeepStrictEqual(audience, normalizeAudience(input.admission.audience))) {
+                    throw custodyError('plugin_secret_save_not_admitted', 'Shared save audience differs from the reviewed audience');
+                }
+                const reviewedPurpose = input.admission.purpose;
+                const assertCurrent = () => {
+                    input.signal.throwIfAborted();
+                    input.assertCurrent();
+                    requireBoundAccountSnapshot();
+                    if (input.admission.id !== input.secretId || input.admission.purpose !== reviewedPurpose
+                        || !isDeepStrictEqual(audience, normalizeAudience(input.admission.audience))
+                        || !isDeepStrictEqual(audience, normalizeAudience(input.input.audience))) {
+                        throw custodyError('plugin_secret_save_not_admitted', 'Shared save admission changed before creation');
+                    }
+                };
+                if (!resources.createShared) throw custodyError('plugin_secret_custody_unavailable', 'Shared resource creation is unavailable');
+                const value = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(input.input.bytes);
+                assertCurrent();
+                const result = await resources.createShared({ name: input.input.label, value, audience,
+                    createdByPlugin: { pluginId, secretId: input.secretId }, signal: input.signal, assertCurrent });
+                const ref = parseSavedSecretRefV1(result.ref);
+                if (ref.kind !== 'shared_resource' || !Number.isSafeInteger(result.resourceRevision) || result.resourceRevision <= 0) {
+                    throw custodyError('plugin_secret_outcome_unknown', 'Shared resource creation returned no usable reference');
+                }
+                return Object.freeze({ ref: result.ref, resourceRevision: result.resourceRevision });
+            },
+            async status(secretId) {
+                const target = targetFor(pluginId, secretId);
                 const snapshot = requireBoundAccountSnapshot();
                 const current = state(snapshot, target);
                 return Object.freeze({
@@ -432,91 +625,90 @@ export function createAccountPluginSecretCustodyRouter(params: Readonly<{
                     revision: current.revision,
                 });
             },
-            async get() {
-                let snapshot = requireBoundAccountSnapshot();
-                let current = state(snapshot, target);
+            async get(secretId, options) {
+                const target = targetFor(pluginId, secretId);
+                const snapshot = requireBoundAccountSnapshot();
+                const current = state(snapshot, target);
                 if (!current.binding) return null;
                 const boundSecretId = current.binding.savedSecretId;
-                if (isSharedSavedSecretReferenceV1(boundSecretId)) {
-                    try {
-                        if (!owner.admitSharedSecretForOperation) throw new Error('saved_secret_admission_unavailable');
-                        await owner.admitSharedSecretForOperation({ ref: boundSecretId, expectedScopeKey: snapshot.scopeKey ?? '' });
-                    } catch {
-                        throw custodyError(
-                            'plugin_secret_custody_unavailable',
-                            'The Home did not admit this shared Saved Secret for a new operation',
-                            undefined,
-                            true,
-                        );
+                const readCustody = createReadCustody(() => {
+                    const admitted = requireBoundAccountSnapshot();
+                    if (resolveBinding(admitted, target)?.savedSecretId !== boundSecretId) {
+                        throw custodyError('plugin_secret_custody_unavailable', 'The plugin secret binding changed during admission');
                     }
-                    // The admission committed the Home's current catalog into
-                    // the Account snapshot; resolve against that, not the
-                    // snapshot captured before it.
-                    snapshot = requireBoundAccountSnapshot();
-                    current = state(snapshot, target);
-                    if (current.binding?.savedSecretId !== boundSecretId) {
-                        throw custodyError(
-                            'plugin_secret_custody_unavailable',
-                            'The plugin secret binding changed while it was being admitted',
-                        );
-                    }
-                }
-                assertSnapshotCurrent(snapshot);
-                const material = createSavedSecretMaterializerFromSnapshotV1(snapshot)
-                    .resolve(current.binding.savedSecretId);
-                requireBoundAccountSnapshot();
-                if (material.status !== 'ready') {
+                    return admitted;
+                }, admitBoundSharedReferences);
+                try {
+                    return await readCustody.withSecrets({ references: [{ ref: boundSecretId }],
+                        ...(options?.sourceKind ? { sourceKind: options.sourceKind } : {}),
+                        ...(options?.signal ? { signal: options.signal } : {}) }, material => {
+                        const admitted = state(requireBoundAccountSnapshot(), target);
+                        return Object.freeze({ value: material.read(boundSecretId), revision: admitted.revision });
+                    });
+                } catch (error) {
+                    const details = isPluginError(error) ? error.details : undefined;
+                    const materialStatus = details && typeof details === 'object' && !Array.isArray(details)
+                        && 'materialStatus' in details && typeof details.materialStatus === 'string' ? details.materialStatus : undefined;
                     throw custodyError(
                         'plugin_secret_custody_unavailable',
                         'Account plugin secret material is unavailable',
-                        { materialStatus: material.status },
-                        material.status === 'temporarily_unavailable',
+                        materialStatus ? { materialStatus } : undefined,
+                        isPluginError(error) ? error.retryable : true,
                     );
                 }
-                return Object.freeze({ value: material.value, revision: current.revision });
             },
             async set(input) {
+                const target = targetFor(pluginId, input.secretId);
+                if (params.operationContext && !params.owner) {
+                    throw custodyError('plugin_secret_custody_unavailable', 'This invocation has no scoped plugin binding writer');
+                }
                 input.assertCurrent?.();
                 const snapshot = requireBoundAccountSnapshot();
                 const current = state(snapshot, target);
                 assertExpectedRevision(current, input.expectedRevision);
                 const existing = current.binding;
-                const now = nowMs();
-                const savedSecretId = createId();
-                const after = await update(
-                    snapshot,
-                    (settings) => ({
-                        ...applyAccountSettingsSavedSecretMutation(settings, {
-                            kind: 'replacePluginSecret',
-                            target,
-                            expectedSecretId: existing?.savedSecretId ?? null,
-                            expectedSecretUpdatedAt: personalSecretRevision(snapshot, existing),
-                            secret: {
-                                id: savedSecretId,
-                                name: savedSecretName(pluginId, declaration.id),
-                                kind: 'other',
-                                encryptedValue: {
-                                    _isSecretValue: true,
-                                    value: input.value,
-                                },
-                                createdAt: now,
-                                updatedAt: now,
-                            },
-                        }).settings,
-                    }),
-                    () => {
-                        input.assertCurrent?.();
-                        requireBoundAccountSnapshot();
-                    },
-                    (reread) => {
-                        const binding = resolveBinding(reread, target);
-                        if (!binding || binding.savedSecretId !== savedSecretId) return false;
-                        const resolved = createSavedSecretMaterializerFromSnapshotV1(reread)
-                            .resolve(savedSecretId);
-                        return resolved.status === 'ready' && resolved.value === input.value;
-                    },
-                );
-                const next = state(after, target);
+                const assertCurrent = () => { input.assertCurrent?.(); requireBoundAccountSnapshot(); };
+                let savedSecretId: string;
+                try {
+                    savedSecretId = await resources.create({ name: savedSecretName(pluginId, input.secretId), value: input.value, assertCurrent });
+                } catch (error) {
+                    if (isPluginError(error)) throw error;
+                    throw custodyError('plugin_secret_custody_unavailable', 'Account resource creation is unavailable');
+                }
+                let after: AccountSecretSnapshot;
+                try {
+                    after = await update(
+                        snapshot,
+                        (settings) => ({
+                            ...applyAccountSettingsSavedSecretMutation(settings, {
+                                kind: 'replacePluginSecret',
+                                target,
+                                expectedSecretId: existing?.savedSecretId ?? null,
+                                expectedSecretUpdatedAt: personalSecretRevision(snapshot, existing),
+                                secretId: savedSecretId,
+                            }).settings,
+                        }),
+                        assertCurrent,
+                        (reread) => {
+                            const binding = resolveBinding(reread, target);
+                            return binding?.savedSecretId === savedSecretId && binding.createdForBinding;
+                        },
+                    );
+                } catch (error) {
+                    // An unknown binding outcome may still reference this resource.
+                    if (!isPluginError(error) || error.code !== 'plugin_secret_outcome_unknown') {
+                        try {
+                            await resources.delete({ ref: savedSecretId, assertCurrent });
+                        } catch {
+                            try { assertCurrent(); } catch { throw error; }
+                            throw custodyError('plugin_secret_cleanup_failed', 'The binding was rejected but resource cleanup did not complete',
+                                { bindingErrorCode: isPluginError(error) ? error.code : 'plugin_secret_custody_unavailable' });
+                        }
+                    }
+                    throw error;
+                }
+                await cleanup(snapshot, after, assertCurrent);
+                const next = stateForSettledMutation(after, target, assertCurrent);
                 if (!next.binding) {
                     throw custodyError(
                         'plugin_secret_custody_unavailable',
@@ -526,12 +718,17 @@ export function createAccountPluginSecretCustodyRouter(params: Readonly<{
                 return Object.freeze({ revision: next.revision });
             },
             async delete(input) {
+                const target = targetFor(pluginId, input.secretId);
+                if (params.operationContext && !params.owner) {
+                    throw custodyError('plugin_secret_custody_unavailable', 'This invocation has no scoped plugin binding writer');
+                }
                 input.assertCurrent?.();
                 const snapshot = requireBoundAccountSnapshot();
                 const current = state(snapshot, target);
                 assertExpectedRevision(current, input.expectedRevision);
                 const existing = current.binding;
                 if (!existing) return Object.freeze({ revision: current.revision });
+                const assertCurrent = () => { input.assertCurrent?.(); requireBoundAccountSnapshot(); };
                 const after = await update(
                     snapshot,
                     (settings) => ({
@@ -542,13 +739,11 @@ export function createAccountPluginSecretCustodyRouter(params: Readonly<{
                             expectedSecretUpdatedAt: personalSecretRevision(snapshot, existing),
                         }).settings,
                     }),
-                    () => {
-                        input.assertCurrent?.();
-                        requireBoundAccountSnapshot();
-                    },
+                    assertCurrent,
                     (reread) => resolveBinding(reread, target) === null,
                 );
-                return Object.freeze({ revision: state(after, target).revision });
+                await cleanup(snapshot, after, assertCurrent);
+                return Object.freeze({ revision: stateForSettledMutation(after, target, assertCurrent).revision });
             },
         });
         return custody;
@@ -610,7 +805,8 @@ export function createAccountPluginSecretCustodyRouter(params: Readonly<{
                     && binding.createdForBinding === false;
             },
         );
-        const next = state(after, target);
+        await cleanup(snapshot, after, assertCurrent);
+        const next = stateForSettledMutation(after, target, assertCurrent);
         if (
             next.binding?.savedSecretId !== input.savedSecretId
             || next.binding.createdForBinding !== false
@@ -664,11 +860,12 @@ export function createAccountPluginSecretCustodyRouter(params: Readonly<{
             assertCurrent,
             (reread) => resolveBinding(reread, target) === null,
         );
-        return Object.freeze({ revision: state(after, target).revision });
+        await cleanup(snapshot, after, assertCurrent);
+        return Object.freeze({ revision: stateForSettledMutation(after, target, assertCurrent).revision });
     }
 
-    return Object.freeze({ resolve, bindExisting, unbind ,
-bindReadCustody(input: Readonly<{ signal: AbortSignal; isCurrent(): boolean }>) {
+    return Object.freeze({ resolve, bindExisting, unbind,
+        bindReadCustody(input: Readonly<{ signal: AbortSignal; isCurrent(): boolean }>) {
             const reader = bindAccountSnapshotReader();
             if (!reader) return null;
             return createReadCustody(() => {
@@ -677,47 +874,6 @@ bindReadCustody(input: Readonly<{ signal: AbortSignal; isCurrent(): boolean }>) 
                 }
                 return reader();
             });
-        }
-});
-
-function createReadCustody(
-        readSnapshot: () => AccountSecretSnapshot,
-        admitSharedReferences: Parameters<typeof createAccountPluginSecretReadCustody>[0]['admitSharedReferences'] = async input => {
-            await refreshSavedSecretCatalogForOperation({ ...input,
-                references: input.references.map(reference => ({ ref: reference.ref })),
-                ...(params.operationContext ? { operationContext: params.operationContext } : {}),
-            });
         },
-    ): AccountPluginSecretReadCustody {
-        return createAccountPluginSecretReadCustody({ readSnapshot, admitSharedReferences,
-            ...(params.operationContext ? { isCurrent: (signal?: AbortSignal) => params.operationContext!.isCurrent(signal) } : {}),
-        });
-    }
-
-function bindAccountSnapshotReader(): (() => AccountSecretSnapshot) | null {
-        const boundAccount: AccountSecretSnapshot | null = owner.readSnapshot();
-        if (!boundAccount) return null;
-        const boundAccountSnapshot: AccountSecretSnapshot = boundAccount;
-        const boundLifetimeToken = owner.readLifetimeToken?.();
-        function requireBoundAccountSnapshot(): AccountSecretSnapshot {
-            if (
-                boundLifetimeToken !== undefined
-                && owner.readLifetimeToken?.() !== boundLifetimeToken
-            ) {
-                throw custodyError(
-                    'plugin_secret_custody_unavailable',
-                    'The Account lifetime ended after plugin secret custody was resolved',
-                );
-            }
-            const snapshot = requireSnapshot();
-            if (!sameAccount(boundAccountSnapshot, snapshot)) {
-                throw custodyError(
-                    'plugin_secret_custody_unavailable',
-                    'The active Account changed after plugin secret custody was resolved',
-                );
-            }
-            return snapshot;
-        }
-        return requireBoundAccountSnapshot;
-    }
+    });
 }

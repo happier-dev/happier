@@ -59,6 +59,14 @@ import { createServer, type Server } from 'node:http';
 import { createRunnerManagedProviderConsumerAccess } from '@/agent/runtime/session/process/runnerManagedProviderConsumerAccess';
 import { AgentRuntimeDaemonServiceResponseV1Schema } from '@/agent/runtime/session/process/agentRuntimeDaemonServiceProtocol';
 
+import { accountSettingsParse, applyAccountSettingsSavedSecretMutation, formatSavedSecretCatalogReferenceV1 } from '@happier-dev/protocol';
+import { createAccountPluginSecretCustodyRouter } from '@/plugins/runtime/context/accountPluginSecretCustody';
+import { createDeclaredPluginSecretsService } from '@/plugins/runtime/context/secrets';
+import { createSecretSourceHostFixture } from '@/plugins/testkit/secretSources';
+import type { ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { createInvocationSavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
+import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
+
 const binding = createAgentSessionRunnerFactoryBinding({
     v: 1,
     pluginId: 'fixture.plugin',
@@ -201,6 +209,80 @@ function isWireRecord(
 }
 
 describe('runner daemon PluginServices host', () => {
+    it('keeps saved-secret reads, inline intent and shared-save refusal in captured Account custody', async () => {
+        let nativeReads = 0;
+        const source = await createSecretSourceHostFixture({ runtime: { async acquire() {
+            nativeReads += 1;
+            return { ok: true, value: 'external-material' };
+        } } });
+        const ref = formatSavedSecretCatalogReferenceV1({ kind: 'shared_resource', id: 'external-field' });
+        let snapshot: ActiveAccountSettingsSnapshot = {
+            source: 'network', scopeKey: resolveAccountSettingsScopeKeyForToken('fixture-token'), settingsVersion: 1, loadedAtMs: 1,
+            settingsSecretsReadKeys: [], savedSecretCatalogState: 'ready',
+            settings: accountSettingsParse(applyAccountSettingsSavedSecretMutation({ secrets: [{
+                id: 'personal-secret', name: 'Personal', kind: 'apiKey', createdAt: 1, updatedAt: 1,
+                encryptedValue: { _isSecretValue: true, value: 'personal-material' },
+            }] }, { kind: 'replacePluginSecret', target: { pluginId: 'fixture.plugin', localId: 'token' },
+                expectedSecretId: null, expectedSecretUpdatedAt: null, secretId: ref }).settings),
+            savedSecretResources: [{ resourceId: 'external-field', ownerAccountId: 'owner', relationship: 'owner',
+                displayName: 'External field', kind: 'password', encryptionMode: 'plain', revision: 1, materialStatus: 'ready',
+                storedContent: { t: 'plain', v: { v: 2, name: 'External field', kind: 'password', source: {
+                    kind: 'external', contribution: source.contribution, account: 'owner', reference: 'op://vault/item/field',
+                } } } }],
+        };
+        // Only persistence is replaced; Account binding, acquisition and SDK admission remain real.
+        const write = vi.fn(async (): Promise<never> => { throw new Error('No resource write was admitted'); });
+        const router = createAccountPluginSecretCustodyRouter({
+            owner: { readSnapshot: () => snapshot, updateOnce: write, async admitSharedSecretForOperation() {} },
+            resources: { create: write, createShared: write, delete: write },
+            operationContext: createInvocationSavedSecretOperationContextV1({ snapshot,
+                credentials: { token: 'fixture-token', encryption: null }, serverHttpBaseUrl: 'https://home.example',
+                machineAdmission: { actorAccountId: 'owner', custodianAccountId: 'owner', role: 'manage' },
+                isCurrent: async () => true, secretSources: source.host }),
+        });
+        const unavailable = createUnavailablePluginServices();
+        const redacted: string[] = [];
+        const host = createRunnerDaemonPluginServicesHost({ async createInvocation({ signal }) {
+            const secrets = createDeclaredPluginSecretsService({ pluginId: 'fixture.plugin', declarations: [],
+                resolveCustody: router.resolve, signal, isOccurrenceCurrent: () => true,
+                registerRawForRedaction: value => { redacted.push(value); } });
+            const services = { ...unavailable, secrets, availability: (id: PluginServiceId) => id === 'secrets'
+                ? { status: 'available' as const } : unavailable.availability(id) };
+            return { services, resourceDescriptors: {},
+                subscriptionCapabilities: { settingsWatch: false, eventSubscriptions: [], resourceWatches: [], notificationPreferencesWatch: false },
+                dispose() {}, authorizeOperation: () => true, executeCurrentGlobalAction: services.actions.execute,
+                currentGlobalMcp: services.mcp, currentGlobalExternalSessions: services.sessions.external };
+        } });
+        try {
+            const services = await prepareRunnerDaemonPluginServices({ invocationId: 'invocation-1',
+                signal: new AbortController().signal, local: unavailable, readActiveTurnAdmissionWitness: () => witness,
+                dispatch: async (operation, options) => {
+                    const response = await host.dispatch({ ...direct,
+                        operation: RunnerDaemonPluginServiceOperationV1Schema.parse(operation), signal: options?.signal });
+                    return decodeRunnerDaemonPluginServiceWireValueV1(response.value);
+                },
+            });
+            await expect(services.secrets.readSavedSecret('personal-secret')).resolves.toBe('personal-material');
+            expect(redacted).toContain('personal-material');
+            // A resource revision cannot silently turn into an unversioned personal read.
+            await expect(services.secrets.readSavedSecret('personal-secret', { resourceRevision: 7 }))
+                .rejects.toMatchObject({ code: 'secret_missing' });
+            await expect(services.secrets.get('token', { sourceKind: 'inline' }))
+                .rejects.toMatchObject({ code: 'plugin_secret_custody_unavailable' });
+            expect(nativeReads).toBe(0);
+            await expect(services.secrets.get('token')).resolves.toBe('external-material');
+            expect(nativeReads).toBe(1);
+            const bytes = new Uint8Array([0, 255, 195, 169]);
+            await expect(services.secrets.saveShared('token', { label: 'Shared', bytes, audience: { teamGrants: ['team-1'] } }))
+                .rejects.toMatchObject({ code: 'plugin_secret_save_not_admitted' });
+            expect(write).not.toHaveBeenCalled();
+            expect(bytes).toEqual(new Uint8Array([0, 255, 195, 169]));
+            await expect(services.secrets.readSavedSecret('missing-secret')).rejects.toMatchObject({ code: 'secret_missing' });
+            snapshot = { ...snapshot, scopeKey: 'account:other' };
+            await expect(services.secrets.readSavedSecret('personal-secret'))
+                .rejects.toMatchObject({ code: 'plugin_secret_custody_unavailable' });
+        } finally { await host.dispose(); await source.dispose(); }
+    });
     it('prepares Session HTTP reads once through the canonical host before executing and preserves typed refusals', async () => {
         const unavailable = createUnavailablePluginServices();
         let transportSignal: AbortSignal | undefined;

@@ -68,10 +68,13 @@ describe('UI plugin Settings Action owner', () => {
             const daemonTarget = { kind: 'daemon' as const, serverIdentityId: 'srv_a', serverId: 'home-a', machineId: 'machine-a' };
             const target = custody === 'account' ? accountTarget : daemonTarget;
             const secretAdapter = createAccountPluginSecretSettingsAdapter({ readSnapshot: () => accountSnapshot,
+                // Persistent resources are external to this Action-admission fixture.
+                async createResource() { return 'happier:shared-secret:v1:saved-token'; },
+                async deleteResource() {},
                 async writeOnce(input) {
                     accountSnapshot = { revision: accountSnapshot.revision + 1, settings: input.mutate(accountSnapshot.settings) };
                     return { status: 'applied', revision: accountSnapshot.revision, snapshot: accountSnapshot };
-                } }, { createId: () => 'saved-token', now: () => 2 });
+                } });
             const secretInput = { pluginId: 'acme.settings', scope: { kind: 'account' as const }, target: accountTarget,
                 fields: [{ key: 'token', redacted: true }], fieldId: 'token', expectedRevision: { kind: 'account-secret' as const, value: 5 } };
             expect(await secretAdapter.write({ ...secretInput, mutation: { kind: 'set', value: 'synthetic-private-token' } })).toMatchObject({ status: 'ready' });
@@ -207,7 +210,7 @@ describe('UI plugin Settings Action owner', () => {
                 async writeOnce(input) {
                     snapshot = { revision: snapshot.revision + 1, settings: input.mutate(snapshot.settings) };
                     return { status: 'applied', revision: snapshot.revision, snapshot };
-                } }, { createId: () => 'unused-id', now: () => 2 });
+                } });
             const target = { kind: 'account' as const, serverIdentityId: 'srv_a' };
             const groups = projectAccountDeclaredPluginSettingsGroups({ pluginId: 'acme.settings', declaration: { id: 'acme.settings',
                 contributes: { settings: [PluginSettingsContributionV2Schema.parse({ id: 'preferences', title: 'Preferences', scope: 'account',

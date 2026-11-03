@@ -1475,6 +1475,24 @@ export async function prepareRunnerDaemonPluginServices(
         },
     } satisfies PluginServices['settings']);
     const secrets: PluginServices['secrets'] = Object.freeze({
+        async readSavedSecret(ref, options) {
+            assertAvailable('secrets');
+            return await dispatch<Awaited<ReturnType<PluginServices['secrets']['readSavedSecret']>>>({
+                kind: 'plugin_secrets.read_saved_secret_v1',
+                ...requestBase(),
+                ref,
+                ...(options?.resourceRevision === undefined ? {} : { resourceRevision: options.resourceRevision }),
+            }, options?.signal ? { signal: options.signal } : undefined);
+        },
+        async saveShared(id, input, options) {
+            assertAvailable('secrets');
+            return await dispatch<Awaited<ReturnType<PluginServices['secrets']['saveShared']>>>({
+                kind: 'plugin_secrets.save_shared_v1',
+                ...requestBase(),
+                id,
+                input: { label: input.label, bytes: Buffer.from(input.bytes).toString('base64'), audience: input.audience },
+            }, options?.signal ? { signal: options.signal } : undefined);
+        },
         async status(id) {
             assertAvailable('secrets');
             return await dispatch<Awaited<ReturnType<
@@ -1491,6 +1509,7 @@ export async function prepareRunnerDaemonPluginServices(
                 kind: 'plugin_secrets.get_v1',
                 ...requestBase(),
                 id,
+                ...(options?.sourceKind ? { sourceKind: options.sourceKind } : {}),
                 ...(options?.reason
                     ? { reason: options.reason }
                     : {}),

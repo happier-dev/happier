@@ -513,7 +513,8 @@ export type AccountSettingsSavedSecretMutation =
       target: PluginAccountSecretBindingTarget;
       expectedSecretId: string | null;
       expectedSecretUpdatedAt: number | null;
-      secret: SavedSecret;
+      /** Already-created resource; this mutation never accepts secret material. */
+      secretId: string;
     }>
   | Readonly<{
       kind: 'bindPluginSecret';
@@ -919,8 +920,9 @@ function withPluginAccountSecretBindings(
   bindings: Readonly<Record<string, PluginAccountSecretBinding>>,
 ): Readonly<Record<string, unknown>> {
   if (Object.keys(bindings).length === 0) {
-    const { [PLUGIN_SECRET_BINDINGS_SETTINGS_KEY]: _removed, ...withoutBindings } = settings;
-    return Object.freeze(withoutBindings);
+    // Settings callback writes preserve omitted roots for forward compatibility.
+    // An explicit empty dictionary clears the last binding on that path too.
+    return Object.freeze({ ...settings, [PLUGIN_SECRET_BINDINGS_SETTINGS_KEY]: Object.freeze({}) });
   }
   // Re-parse through the strict bounded reader before committing the root.
   const canonical = JSON.parse(canonicalPluginSecretBindingsJson(bindings)) as Record<
@@ -1015,7 +1017,7 @@ function removeUnreferencedBindingCreatedSecret(input: Readonly<{
   binding: PluginAccountSecretBinding | null;
   catalogs?: SavedSecretReferenceCatalogsV1;
 }>): readonly SavedSecret[] {
-  if (!input.binding?.createdForBinding) return input.secrets;
+  if (!input.binding?.createdForBinding || isStrictSharedSavedSecretRefV1(input.binding.savedSecretId)) return input.secrets;
   const stillReferenced = listAccountSettingsSavedSecretReferences(
     input.settings,
     input.binding.savedSecretId,
@@ -1024,6 +1026,26 @@ function removeUnreferencedBindingCreatedSecret(input: Readonly<{
   return stillReferenced
     ? input.secrets
     : input.secrets.filter((secret) => secret.id !== input.binding!.savedSecretId);
+}
+
+/** Candidates only: the resource owner rechecks its complete live reference census before deletion. */
+export function listUnreferencedPluginCreatedSecretResources(
+  before: Readonly<Record<string, unknown>>,
+  after: Readonly<Record<string, unknown>>,
+  census?: Readonly<{ resources: readonly Readonly<{
+    ref: string;
+    createdByPlugin?: Readonly<{ pluginId: string; secretId: string }>;
+    deploymentReferenceState?: 'referenced' | 'unreferenced' | 'unavailable';
+  }>[] }>,
+): readonly string[] {
+  const resources = new Map(census?.resources.map(resource => [resource.ref, resource]));
+  return [...new Set([...Object.values(readPluginAccountSecretBindings(before))
+    .filter(binding => binding.createdForBinding && isStrictSharedSavedSecretRefV1(binding.savedSecretId))
+    .map(binding => binding.savedSecretId), ...[...resources.values()]
+    .filter(resource => resource.createdByPlugin && isStrictSharedSavedSecretRefV1(resource.ref))
+    .map(resource => resource.ref)])]
+    .filter(ref => (!census || resources.get(ref)?.deploymentReferenceState === 'unreferenced')
+      && listAccountSettingsSavedSecretReferences(after, ref).length === 0);
 }
 
 /**
@@ -3138,17 +3160,10 @@ function applySavedSecretMutation(
     });
   }
   if (mutation.kind === 'replacePluginSecret') {
-    const replacementSecret = SavedSecretSchema.safeParse(mutation.secret);
-    if (!replacementSecret.success) {
+    if (!isStrictSharedSavedSecretRefV1(mutation.secretId)) {
       throw new AccountSettingsSavedSecretMutationError(
         'saved_secret_invalid',
         'Plugin SavedSecret replacement is invalid',
-      );
-    }
-    if (secrets.some((candidate) => candidate.id === replacementSecret.data.id)) {
-      throw new AccountSettingsSavedSecretMutationError(
-        'saved_secret_conflict',
-        'Plugin SavedSecret identity already exists',
       );
     }
     const targetState = readPluginAccountSecretBindingTarget(settings, mutation.target);
@@ -3165,7 +3180,7 @@ function applySavedSecretMutation(
         pluginId: targetState.target.pluginId,
         custody: 'account',
         localId: targetState.target.localId,
-        savedSecretId: replacementSecret.data.id,
+        savedSecretId: mutation.secretId,
         createdForBinding: true,
       }),
     });
@@ -3178,7 +3193,7 @@ function applySavedSecretMutation(
     return Object.freeze({
       settings: Object.freeze({
         ...rebound,
-        secrets: Object.freeze([mutation.secret, ...retained]),
+        ...(retained === secrets ? {} : { secrets: Object.freeze(retained) }),
       }),
     });
   }
@@ -3254,7 +3269,7 @@ function applySavedSecretMutation(
     return Object.freeze({
       settings: Object.freeze({
         ...unbound,
-        secrets: Object.freeze(retained),
+        ...(retained === secrets ? {} : { secrets: Object.freeze(retained) }),
       }),
     });
   }
@@ -3271,12 +3286,7 @@ function applySavedSecretMutation(
       target: targetState.target,
       binding: null,
     });
-    return Object.freeze({
-      settings: Object.freeze({
-        ...unbound,
-        secrets: Object.freeze(secrets),
-      }),
-    });
+    return Object.freeze({ settings: unbound });
   }
   if (mutation.kind === 'replaceVoiceCredentialSecret') {
     const replacementSecret = SavedSecretSchema.safeParse(mutation.secret);

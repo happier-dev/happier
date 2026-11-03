@@ -1622,12 +1622,26 @@ export function createRunnerDaemonPluginServicesHost(input: Readonly<{
                 return result(
                     operation,
                     await services.secrets.get(operation.id, {
+                        ...(operation.sourceKind ? { sourceKind: operation.sourceKind } : {}),
                         ...(operation.reason
                             ? { reason: operation.reason }
                             : {}),
                         ...operationOptions,
                     }),
                 );
+            case 'plugin_secrets.read_saved_secret_v1':
+                return result(operation, await services.secrets.readSavedSecret(operation.ref, {
+                    ...(operation.resourceRevision === undefined ? {} : { resourceRevision: operation.resourceRevision }),
+                    ...operationOptions,
+                }));
+            case 'plugin_secrets.save_shared_v1': {
+                const bytes = Buffer.from(operation.input.bytes, 'base64');
+                try {
+                    return result(operation, await services.secrets.saveShared(operation.id, {
+                        label: operation.input.label, bytes, audience: operation.input.audience,
+                    }, operationOptions));
+                } finally { bytes.fill(0); }
+            }
             case 'plugin_secrets.set_v1':
                 return result(
                     operation,
