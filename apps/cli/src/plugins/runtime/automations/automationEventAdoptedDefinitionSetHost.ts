@@ -141,6 +141,7 @@ async function projectStoredDefinition(params: Readonly<{
   }
   if (params.transport.kind !== params.storedDefinition.observationTransport.kind) return null;
   const projected = AutomationEventSourceDefinitionV1Schema.safeParse({
+    ...(params.storedDefinition.observationOnly ? { observationOnly: params.storedDefinition.observationOnly } : {}),
     automationId: params.storedDefinition.automationId,
     triggerId: params.storedDefinition.triggerId,
     triggerRevision: params.storedDefinition.triggerRevision,

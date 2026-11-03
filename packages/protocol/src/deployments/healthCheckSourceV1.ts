@@ -74,6 +74,15 @@ export const HealthCheckSourceConfigV1Schema = lazyZodSchema(() => z.strictObjec
 export type HealthCheckSourceConfigV1 = z.infer<typeof HealthCheckSourceConfigV1Schema>;
 export const HealthCheckSourceConfigV1ProtocolSchema = lazyDefinition(() => projectZodProtocolSchema(HealthCheckSourceConfigV1Schema));
 
+/** Threshold decisions belong to the observer; consumers receive only its
+ * committed transition, never endpoint configuration or probe evidence. */
+export const HealthCheckTransitionV1Schema = lazyZodSchema(() => z.strictObject({
+    sourceInstanceId: z.string(), subject: HealthCheckSubjectV1Schema, checkId: z.string(),
+    transition: z.enum(['failed', 'recovered']), observedAt: z.number().check(z.int(), z.minimum(0)),
+}));
+export type HealthCheckTransitionV1 = z.infer<typeof HealthCheckTransitionV1Schema>;
+export const HealthCheckTransitionV1ProtocolSchema = lazyDefinition(() => projectZodProtocolSchema(HealthCheckTransitionV1Schema));
+
 /** User Action operands reference saved checks; callers cannot replace endpoints or policy. */
 export const SavedHealthCheckSelectorV1Schema = lazyZodSchema(() => z.strictObject({
     sourceInstanceId: AutomationEventSourceInstanceIdV1Schema, checkId: id,

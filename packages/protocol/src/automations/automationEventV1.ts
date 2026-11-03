@@ -777,6 +777,7 @@ export function isSameAutomationEventDeclarationReleaseV1(
  * exact materialization; it is not a public Action result or SDK surface.
  */
 export const AutomationEventStoredDefinitionProjectionV1Schema = lazyZodSchema(() => z.strictObject({
+  observationOnly: z.optional(z.strictObject({ kind: z.literal('observationOnly') })),
   automationId: asProtocolZod(AutomationIdV1Schema),
   triggerId: AutomationTriggerIdSchema,
   triggerRevision: AutomationTriggerRevisionSchema,

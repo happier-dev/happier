@@ -27,7 +27,7 @@ export type HealthCheckFiniteLeafContextV1 = Readonly<{
     isCurrent(): Promise<boolean>;
     /** The existing HTTP owner bound by P50 to this exact saved endpoint,
      * observer and network policy, including destination/redirect admission. */
-    http: HttpService;
+    http: Pick<HttpService, 'request'>;
 }>;
 
 function endpoint(check: AdmittedHttpHealthCheckV1): string {

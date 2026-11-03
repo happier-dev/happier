@@ -4,6 +4,7 @@ import { z } from 'zod/mini';
 import { createStoredReadSchema, defineStoredReadProjection } from '../json/storedReadSchema.js';
 
 import { createCanonicalJsonSigningInput } from '../crypto/canonicalJson.js';
+import { DeploymentEnvironmentRefV1Schema } from '../deployments/deploymentEnvironmentRefV1.js';
 import {
   WorkflowRoleOverridesV1Schema,
   WorkflowResolvedInputsV1Schema,
@@ -25,6 +26,22 @@ export const AutomationManagedTargetV1Schema = lazyZodSchema(() => z.strictObjec
   managedId: preservedBoundedNfcString(191, 'Managed resource ids'),
 }));
 export type AutomationManagedTargetV1 = z.infer<typeof AutomationManagedTargetV1Schema>;
+
+/** Non-executable Event enrollment, stored by the existing Definition revision owner. */
+export const AutomationObservationOnlyDefinitionV1Schema = lazyZodSchema(() => z.strictObject({
+  kind: z.literal('observationOnly'),
+  templateVersion: z.number().check(z.int(), z.positive(), z.maximum(Number.MAX_SAFE_INTEGER)),
+  deploymentEnvironment: z.optional(DeploymentEnvironmentRefV1Schema),
+}));
+export type AutomationObservationOnlyDefinitionV1 = z.infer<typeof AutomationObservationOnlyDefinitionV1Schema>;
+
+export function parseAutomationObservationOnlyDefinitionV1(serialized: unknown): AutomationObservationOnlyDefinitionV1 | null {
+  if (typeof serialized !== 'string') return null;
+  let value: unknown;
+  try { value = JSON.parse(serialized); } catch { return null; }
+  const parsed = AutomationObservationOnlyDefinitionV1Schema.safeParse(value);
+  return parsed.success ? parsed.data : null;
+}
 
 export const AutomationStoredWorkflowDefinitionV2Schema = lazyZodSchema(() => z.strictObject({
   workspace: z.strictObject({

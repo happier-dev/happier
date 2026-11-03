@@ -4,6 +4,7 @@ import { AutomationEventSourcesListInputV1Schema, type AutomationEventCheckpoint
 import { AutomationEventStoredDefinitionProjectionV1Schema, AutomationEventStoredDefinitionsReadResultV1Schema, type AutomationEventStoredDefinitionsReadResultV1, type AutomationEventDeclarationReleaseV1 } from '@happier-dev/protocol/automations/event';
 import { PluginWebhookInvocationReferenceV1Schema, type PluginWebhookInvocationReferenceV1 } from '@happier-dev/protocol/plugins/webhooks/deliveryV1';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
+import { parseAutomationObservationOnlyDefinitionV1 } from '@happier-dev/protocol/automations/automationWorkflowRecipeV2';
 import { decodeBase64, encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 
 import { acquireAccountEncryptionTransitionFenceInTx } from "@/app/encryption/accountEncryptionTransition";
@@ -447,6 +448,7 @@ export async function readAutomationEventStoredDefinitionsV1(params: Readonly<{
                 watcherPluginId: true,
                 watcherMaterializationId: true,
                 definitionEnvelope: true,
+                automation: { select: { templateCiphertext: true, templateVersion: true } },
             },
         });
         const pageRows = rows.slice(0, input.pageSize);
@@ -555,7 +557,10 @@ export async function readAutomationEventStoredDefinitionsV1(params: Readonly<{
                 binding,
             });
             if (envelope.kind !== "available") fail("definition_content_unavailable");
+            const observationOnly = parseAutomationObservationOnlyDefinitionV1(row.automation.templateCiphertext);
+            if (observationOnly && observationOnly.templateVersion !== row.automation.templateVersion) fail("definition_content_unavailable");
             return AutomationEventStoredDefinitionProjectionV1Schema.parse({
+                ...(observationOnly ? { observationOnly: { kind: "observationOnly" } } : {}),
                 automationId: row.automationId,
                 triggerId: row.id,
                 triggerRevision: row.revision,

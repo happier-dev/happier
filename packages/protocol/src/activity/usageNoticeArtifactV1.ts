@@ -9,6 +9,7 @@ export { HEALTH_CHECK_KINDS_V1, HealthCheckKindV1Schema, HealthCheckStatusV1Sche
   HealthCheckResultV1Schema, HealthCheckResultV1ProtocolSchema,
   type HealthCheckKindV1, type HealthCheckStatusV1, type HealthCheckResultV1 } from '../deployments/healthCheckV1.js';
 export { HealthCheckDefinitionV1Schema, HealthCheckSourceConfigV1Schema, HealthCheckSourceConfigV1ProtocolSchema,
+  HealthCheckTransitionV1Schema, HealthCheckTransitionV1ProtocolSchema, type HealthCheckTransitionV1,
   HealthCheckConditionBindingV1Schema, HealthCheckDomainHttpConfigV1Schema, HealthCheckServiceHttpConfigV1Schema,
   HealthCheckTcpConfigV1Schema, HealthCheckTcpConfigV1ProtocolSchema,
   HealthCheckDnsConfigV1Schema, HealthCheckDnsConfigV1ProtocolSchema,
@@ -268,3 +269,5 @@ function matchingRecoveryChoices(value: z.infer<ReturnType<typeof noticeContentS
 
 export { healthAlertIdentityTupleV1 } from './healthAlertIdentityV1.js';
 export { PluginNoticePageV1Schema } from './accountNoticePageV1.js';
+
+export type { ServiceHealthNoticePageV1 } from './accountNoticePageV1.js';

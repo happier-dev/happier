@@ -6,6 +6,8 @@ import { lazyZodSchema } from '../lazyZodSchema.js';
 import { defineStoredReadProjection } from '../json/storedReadSchema.js';
 import { PluginUiSubPathV1Schema } from '../plugins/ui/semanticCommands.js';
 
+export type ServiceHealthNoticePageV1 = z.infer<typeof ServiceHealthNoticePageV1Schema>;
+
 /** Shared plugin-local page routing; identity and routing fields stay closed. */
 export const AccountNoticePageV1Schema = lazyZodSchema(() => z.union([PluginNoticePageV1Schema, ServiceHealthNoticePageV1Schema]));
 defineStoredReadProjection(AccountNoticePageV1Schema, () => AccountNoticePageV1Schema);
@@ -19,10 +21,11 @@ const machineServicePage = lazyZodSchema(() => z.strictObject({
   machine: ServiceHealthNoticeMachineV1Schema,
   service: MachineServiceIdentityV1Schema, environment: z.optional(DeploymentEnvironmentRefV1Schema),
 }).check(z.refine(value => value.machine.machineId === value.service.machineId
-  && (!value.environment || value.environment.environmentId === value.service.environmentId
+  && (value.service.kind === 'adopted' ? value.environment === undefined
+    : !value.environment || value.environment.environmentId === value.service.environmentId
       && value.environment.serverId === value.machine.serverId))));
 export const ServiceHealthNoticePageV1Schema = lazyZodSchema(() => z.discriminatedUnion('page', [
   machineServicePage,
   z.strictObject({ kind: z.literal('host'), page: z.literal('environment'),
-    environment: DeploymentEnvironmentRefV1Schema, targetLinkId: z.string().check(z.minLength(1)) }),
+    environment: DeploymentEnvironmentRefV1Schema, targetLinkId: z.optional(z.string().check(z.minLength(1))) }),
 ]));

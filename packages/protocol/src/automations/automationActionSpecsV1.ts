@@ -77,6 +77,7 @@ export type AutomationEventSourceObservationTransportV1 = z.infer<
 >;
 
 export const AutomationEventSourceDefinitionV1Schema = lazyZodSchema(() => z.strictObject({
+  observationOnly: z.optional(z.strictObject({ kind: z.literal('observationOnly') })),
   automationId: asProtocolZod(AutomationIdV1Schema),
   triggerId: AutomationTriggerIdSchema,
   triggerRevision: AutomationTriggerRevisionSchema,

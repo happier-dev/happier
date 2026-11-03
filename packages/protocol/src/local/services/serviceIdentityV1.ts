@@ -18,10 +18,15 @@ export const MachineDeploymentServiceIdentityV1Schema = lazyZodSchema(() => z.st
 })));
 export type MachineDeploymentServiceIdentityV1 = z.infer<typeof MachineDeploymentServiceIdentityV1Schema>;
 
-export const MachineServiceIdentityV1Schema = MachineDeploymentServiceIdentityV1Schema;
+/** Adopted identity comes from the same admitted Machine-service list/detail row. */
+export const MachineServiceIdentityV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
+  MachineDeploymentServiceIdentityV1Schema,
+  z.strictObject({ kind: z.literal('adopted'), machineId: id, serviceId: id, watchId: id, watchRevision: id }),
+]));
 export type MachineServiceIdentityV1 = z.infer<typeof MachineServiceIdentityV1Schema>;
 
 /** C1 owns occurrence encoding; this owner supplies only the canonical service tuple. */
 export function machineServiceIdentityTupleV1(identity: MachineServiceIdentityV1): readonly string[] {
+  if (identity.kind === 'adopted') return [identity.kind, identity.machineId, identity.serviceId, identity.watchId];
   return [identity.kind, identity.machineId, identity.environmentId, identity.environmentInstanceId, identity.composeService, identity.serviceId];
 }

@@ -168,7 +168,7 @@ import type { resolveBackendTargetFromSessionMetadata } from '@/session/backendT
 import { createCliActionInventoryDeps } from './cliActionDeps/createCliActionInventoryDeps';
 
 import { createAutomationConversationActionExecutor } from '@/plugins/runtime/automations/automationConversationActionExecutor';
-import { createAutomationEventActionExecutor } from '@/plugins/runtime/automations/automationEventActionExecutor';
+import { createAutomationEventActionExecutor, type CommittedAutomationEventObservationV1 } from '@/plugins/runtime/automations/automationEventActionExecutor';
 
 
 
@@ -543,6 +543,21 @@ export function createCliActionDeps(params: CliActionDepsParams,
     ? createAutomationEventActionExecutor({
       credentials: params.credentials,
       resolveAdoptedDefinitionSet: params.resolveAutomationEventAdoptedDefinitionSet,
+      onCommittedObservation: async (observation: CommittedAutomationEventObservationV1) => {
+        const { createConfiguredHealthCheckNotices } = await import('@/deployments/deploymentServiceHealthNotices');
+        const health = await createConfiguredHealthCheckNotices({ credentials: params.credentials!, serverId: projectHomeId,
+          serverHttpBaseUrl: todoHomeBaseUrl, machineId: observation.caller.machineId,
+          readEnvironment: (environmentId, signal) => readOpenedDeploymentEnvironment(environmentId, { signal }),
+          readService: async (subject, signal) => {
+            const { MachineServicesDetailResultV1Schema } = await import('@happier-dev/protocol/actions/specs/machine/services');
+            const result = MachineServicesDetailResultV1Schema.parse(await machineResourceDeps.machineServiceAction!({
+              actionId: 'machines.services.detail', input: { serverId: projectHomeId, ...subject }, context: { signal }, signal,
+            }));
+            return result.kind === 'service' ? result.service : null;
+          },
+        })(observation);
+        if (health.kind === 'consumed') return;
+      },
       ...(params.revalidatePluginActionCallerMaterialization
         ? { revalidateCallerMaterialization: params.revalidatePluginActionCallerMaterialization }
         : {}),
@@ -663,6 +678,45 @@ export function createCliActionDeps(params: CliActionDepsParams,
     resolveTransportForSession, readCurrentMachineControlIdentity, readTransportSessionOwnerMetadata, resumeInactiveSessionTransport, callMachineAction, isMachineActionServerScopeCurrent, normalizeStringValue, isExecutionRunActionAbort, executionRunActionFailure,
   });
 
+  const readOpenedDeploymentEnvironment = async (environmentId: string, context: ActionExecutorContext) => {
+      const [{ readDeploymentEnvironmentForHost }, { DeploymentEnvironmentGetResultV1Schema }] = await Promise.all([
+        import('@/deployments/readEnvironmentForHost'), import('@happier-dev/protocol'),
+      ]);
+      const assertCurrent = async (caller: ActionExecutorContext) => {
+        caller.signal?.throwIfAborted();
+        const denied = await admitAccountStorage(projectHomeId, caller);
+        if (denied) throw Object.assign(new Error(denied.errorCode), { code: denied.errorCode });
+        await assertProjectRequesterCurrent(caller);
+        if (params.isCredentialCurrent && !await params.isCredentialCurrent()) {
+          throw Object.assign(new Error('action_account_scope_changed'), { code: 'action_account_scope_changed' });
+        }
+      };
+      await assertCurrent(context);
+      return readDeploymentEnvironmentForHost({ environmentId, context }, {
+        readMetadata: async request => {
+          const loaded = await deploymentStorage('deployments.environments.get', {
+            serverId: projectHomeId, environmentId: request.environmentId,
+          }, request.context);
+          const parsed = DeploymentEnvironmentGetResultV1Schema.safeParse(loaded);
+          if (!parsed.success || !parsed.data.ok) {
+            const code = 'errorCode' in loaded ? loaded.errorCode : parsed.success && !parsed.data.ok ? parsed.data.error : 'invalid_action_output';
+            throw Object.assign(new Error(code), { code });
+          }
+          return parsed.data;
+        },
+        open: async (artifactId, caller) => {
+          await assertCurrent(caller);
+          if (caller.externalActionExecutionAuthorization) return (await readProjectRequesterArtifact({
+            kind: 'doc', serverId: projectHomeId, artifactId,
+          }, { signal: caller.signal }, caller))?.document ?? null;
+          if (!roleArtifactStore) throw Object.assign(new Error('not_authenticated'), { code: 'not_authenticated' });
+          return withProjectHome(() => roleArtifactStore.read(artifactId, { signal: caller.signal,
+            prepareRecipients: false, includeSharedAudience: false }));
+        },
+        assertCurrent,
+      });
+  };
+
   const workflowRunStorageHost = createCliWorkflowRunStorage(params, resolveCurrentSessionValue, resolveServerRequestHeaders, normalizeStringValue);
   const { workflowTriggers, readWorkflowApprovedOperation, workflowAction, workflowActionPort,
     startCombinedWorkflow, waitForCombinedWorkflow, readCombinedWorkflowInvocations } = createCliWorkflowFamily(params, {
@@ -741,44 +795,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
   const rolesDeps = createCliRolesActionDeps(params, { artifactCallerContext, callSessionActionRpc, isWorkflowAuthorizationCurrent, prepareAccountRoleOverrides, readRawRoleSettings, readReadyAccountRoleOverrides, readRoleSources, resolveActionCallerSession, resolveAgentStartContext, resolveServerRequestHeaders, resolveTransportForSession, roleAccountLifetimeToken, roleAccountScopeKey, roleArtifactStore, sessionList, readAccountRoleOverrides }, () => readEffectiveDeps?.() ?? actionDeps);
   const { sessionUsageLimitWaitResumeEnable, sessionUsageLimitWaitResumeCancel, sessionUsageLimitCheckNow, sessionUsageLimitSwitchAccountNow, sessionUsageLimitConsumeResetCredit } = createCliUsageLimitRecoveryActionDeps(params, { callSessionRpcForTransport, normalizeStringValue, readTransportSessionOwnerMetadata, resolveTransportForSession });
   const promptsDeps = createCliPromptsActionDeps(params, { approvalsStore, callMachineAction, callSessionActionRpc, notSupported, projectHomeId, readCurrentMachineControlIdentity, requireLocalPromptActionMachine, resolveServerRequestHeaders, resolveTransportForSession,
-    readRegistryAppEnvironment: async (environmentId, context) => {
-      const [{ readDeploymentEnvironmentForHost }, { DeploymentEnvironmentGetResultV1Schema }] = await Promise.all([
-        import('@/deployments/readEnvironmentForHost'), import('@happier-dev/protocol'),
-      ]);
-      const assertCurrent = async (caller: ActionExecutorContext) => {
-        caller.signal?.throwIfAborted();
-        const denied = await admitAccountStorage(projectHomeId, caller);
-        if (denied) throw Object.assign(new Error(denied.errorCode), { code: denied.errorCode });
-        await assertProjectRequesterCurrent(caller);
-        if (params.isCredentialCurrent && !await params.isCredentialCurrent()) {
-          throw Object.assign(new Error('action_account_scope_changed'), { code: 'action_account_scope_changed' });
-        }
-      };
-      await assertCurrent(context);
-      return readDeploymentEnvironmentForHost({ environmentId, context }, {
-        readMetadata: async request => {
-          const loaded = await deploymentStorage('deployments.environments.get', {
-            serverId: projectHomeId, environmentId: request.environmentId,
-          }, request.context);
-          const parsed = DeploymentEnvironmentGetResultV1Schema.safeParse(loaded);
-          if (!parsed.success || !parsed.data.ok) {
-            const code = 'errorCode' in loaded ? loaded.errorCode : parsed.success && !parsed.data.ok ? parsed.data.error : 'invalid_action_output';
-            throw Object.assign(new Error(code), { code });
-          }
-          return parsed.data;
-        },
-        open: async (artifactId, caller) => {
-          await assertCurrent(caller);
-          if (caller.externalActionExecutionAuthorization) return (await readProjectRequesterArtifact({
-            serverId: projectHomeId, artifactId,
-          }, { signal: caller.signal }, caller))?.document ?? null;
-          if (!roleArtifactStore) throw Object.assign(new Error('not_authenticated'), { code: 'not_authenticated' });
-          return withProjectHome(() => roleArtifactStore.read(artifactId, { signal: caller.signal,
-            prepareRecipients: false, includeSharedAudience: false }));
-        },
-        assertCurrent,
-      });
-    },
+    readRegistryAppEnvironment: readOpenedDeploymentEnvironment,
   });
   const { sessionVendorPluginCatalogList, sessionSkillCatalogList } = createCliSessionCatalogActionDeps(params, { callSessionRpcForTransport, readCurrentMachineControlIdentity, readTransportSessionOwnerMetadata, resolveTransportForSession });
   const { sessionExchangePrepare, sessionExchangeControl, sessionTurnCancel, sessionCompact, sessionRuntimeRefresh, sessionStop, sessionControlSwitch, sessionModeSet } = createCliControlActionDeps(params, { callMachineAction, readServerFeaturesSnapshot, resolveServerRequestHeaders, resolveTransportForSession, withProjectHome });

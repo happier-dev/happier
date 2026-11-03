@@ -6,7 +6,8 @@ import { composeRuntime } from './compose.js';
 import { HealthCheckSourceConfigV1ProtocolSchema } from '@happier-dev/plugin-sdk';
 import { computeCanonicalDomainSeparatedDigest, createCanonicalJsonSigningInput } from '@happier-dev/plugin-sdk';
 import { createPluginEventAutomationSetupResultV1JsonSchema } from '@happier-dev/plugin-sdk/events';
-import { savedHealthActions, HEALTH_STATUS_EVENT, healthTransition, runHealthCheckObserver } from './healthObserver.js';
+import { savedHealthActions, HEALTH_STATUS_EVENT, HEALTH_CHECK_FAILED_EVENT, HEALTH_CHECK_RECOVERED_EVENT,
+    healthTransition, runHealthCheckObserver } from './healthObserver.js';
 
 const httpConfig = { anyOf: [
     { type: 'object', properties: { keyword: { type: 'string', minLength: 1 } }, additionalProperties: false },
@@ -45,12 +46,18 @@ export const plugin = definePlugin({
         delivery: 'recordReceiptOnly' } },
     healthCheckKinds: Object.fromEntries(HEALTH_CHECK_KINDS_V1.map(id => [id, { ...healthKinds[id],
         action: `health/${id}` } satisfies Omit<HealthCheckKindContributionV1, 'id'>])),
-    events: { [HEALTH_STATUS_EVENT]: { declaration: { kind: 'event', title: 'Health status changed',
+    events: { ...Object.fromEntries(([
+        [HEALTH_STATUS_EVENT, 'healthStatus', 'Health status changed', 'A saved health check failed or recovered.'],
+        [HEALTH_CHECK_FAILED_EVENT, 'healthCheckFailed', 'Health check failed', 'A saved health check entered a failed condition.'],
+        [HEALTH_CHECK_RECOVERED_EVENT, 'healthCheckRecovered', 'Health check recovered', 'A failed saved health check returned to healthy.'],
+    ] as const).map(([id, key, title, description]) => [id, { declaration: { kind: 'event' as const,
+        title: { key: `machineServices.events.${key}.title`, fallback: title },
+        description: { key: `machineServices.events.${key}.description`, fallback: description },
         payloadSchema: healthTransition.jsonSchema,
         automation: { v: 1, eligible: true, source: { sourceContractVersion: 1,
             supportedObservationTransports: ['checkpointedPull'], sourceConfigSchema: HealthCheckSourceConfigV1ProtocolSchema.jsonSchema,
             setupActionRef: { pluginId: 'happier.machine.services', localId: 'health/setup' } } },
-    } } },
+    } }])) },
     backgroundServices: [{ declaration: { id: 'health-observer', title: 'Saved health checks', placement: 'daemon' }, runner: runHealthCheckObserver }],
     hostAccess: { required: [{ id: 'health-status-storage', capability: 'storage.account',
         reason: 'Retain the last admitted health status and pending transition for enabled saved checks.', scope: { enabled: true },

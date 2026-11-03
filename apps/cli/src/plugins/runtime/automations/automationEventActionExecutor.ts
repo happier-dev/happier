@@ -6,6 +6,8 @@ import { AutomationEventActionHttpPathsV1, AutomationEventActionHttpRequestSchem
 import { AutomationEventActionOutputSchemasV1, AutomationEventAdmitHttpResultV1Schema, AutomationEventAdmitInputV1Schema, AutomationEventAdmitResultV1Schema, AutomationEventSourceStatusReportV1Schema, AutomationEventSourcesListInputV1Schema } from '@happier-dev/protocol/automations/automationActionSpecsV1';
 import { PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1 } from '@happier-dev/protocol/plugins/installations/manifests';
 import { PluginMachineMaterializationRefV1Schema } from '@happier-dev/protocol/plugins/availability/materializationRefV1';
+import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
+import type { AutomationEventAdmitInputV1, AutomationEventSourceDefinitionV1 } from '@happier-dev/protocol/automations/automationActionSpecsV1';
 import type { ActionExecutorDeps, AutomationEventActionHttpCallerV1, AutomationEventActionHttpRequestByIdV1, AutomationEventAdmitHttpRequestV1, AutomationEventAdmitItemResultV1, AutomationEventAdmitResultV1, AutomationAccountCurrentnessWitnessV1, AutomationEventActionIdV1, AutomationEventSourceStatusReportV1, AutomationEventSourcesListInputV1, AutomationEventSourcesListTransportV1, PluginMachineMaterializationRefV1, PluginWebhookInvocationReferenceV1 } from '@happier-dev/protocol';
 
 import { fetchChangesAccountId } from '@/api/changes';
@@ -55,6 +57,13 @@ export type AutomationEventActionTransport = Readonly<{
     request: AutomationEventActionHttpRequestByIdV1[TActionId],
     signal?: AbortSignal,
   ): Promise<unknown>;
+}>;
+
+export type CommittedAutomationEventObservationV1 = Readonly<{
+  caller: PluginMachineMaterializationRefV1;
+  definition: AutomationEventSourceDefinitionV1;
+  observation: AutomationEventAdmitInputV1;
+  signal: AbortSignal;
 }>;
 
 function failure(
@@ -169,6 +178,8 @@ export function createAutomationEventActionExecutor(params: Readonly<{
   revalidateCallerOccurrence?: RevalidatePluginActionCallerOccurrence;
   resolveAccountId?: (signal?: AbortSignal) => Promise<string>;
   resolveAdoptedDefinitionSet?: ResolveAutomationEventAdoptedDefinitionSetV1;
+  /** Commits source-owned projections before the runner may advance its checkpoint. */
+  onCommittedObservation?(input: CommittedAutomationEventObservationV1): Promise<void>;
   randomBytes?: (length: number) => Uint8Array;
 }>): ExecuteAutomationEventAction {
   const transport = params.transport ?? createDefaultTransport(params.credentials);
@@ -460,6 +471,13 @@ export function createAutomationEventActionExecutor(params: Readonly<{
           return admissionFailure('automation_event_host_evidence_unavailable');
         }
 
+        // Preparation owns first-use adoption. Read its public projection only
+        // after that owner has acquired the source snapshot.
+        const projection = params.onCommittedObservation ? adoptedDefinitionSet.readPublicProjection() : null;
+        if (projection && projection.kind !== 'available') {
+          return admissionFailure('automation_event_adopted_definitions_unavailable');
+        }
+
         let successorAccountCurrentness: AutomationAccountCurrentnessWitnessV1 | undefined;
         while (mergedResults.length < preparedInput.definitions.length) {
           if (signal.aborted) {
@@ -544,6 +562,25 @@ export function createAutomationEventActionExecutor(params: Readonly<{
         const result: AutomationEventAdmitResultV1 = AutomationEventAdmitResultV1Schema.parse({
           results: orderedResults,
         });
+        if (params.onCommittedObservation && projection?.kind === 'available') {
+          const definitionsBySelector = new Map(projection.definitions.map(definition =>
+            [automationEventAdmissionSelectorKey(definition), definition]));
+          const committedSources = new Set<string>();
+          for (const [index, selector] of preparedDefinitions.entries()) {
+            const outcome = mergedResults[index];
+            if (!outcome?.checkpointSafe) continue;
+            const definition = definitionsBySelector.get(automationEventAdmissionSelectorKey(selector));
+            if (!definition || outcome.kind === 'skipped'
+              && !(outcome.reason === 'occurrenceRejected' && definition.observationOnly?.kind === 'observationOnly')) continue;
+            const sourceKey = createCanonicalJsonSigningInput({ eventRef: definition.eventRef,
+              sourceInstanceId: definition.sourceInstanceId, sourceContractVersion: definition.sourceContractVersion,
+              sourceConfig: definition.sourceConfig, observationTransport: definition.observationTransport });
+            if (committedSources.has(sourceKey)) continue;
+            committedSources.add(sourceKey);
+            await params.onCommittedObservation({ caller: materialization.data, definition,
+              observation: admissionInput.data, signal });
+          }
+        }
         recordCurrentPluginWebhookAutomationAdmissionResultV1({ input: admissionInput.data, result });
         return result;
       }

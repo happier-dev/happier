@@ -7,6 +7,7 @@ import {
     HealthCheckSubjectV1ProtocolSchema as canonicalSubject,
     HealthCheckResultV1ProtocolSchema as canonicalResult,
     HealthCheckSourceConfigV1ProtocolSchema as canonicalSourceConfig,
+    HealthCheckTransitionV1ProtocolSchema as canonicalTransition,
     SavedHealthCheckSelectorV1ProtocolSchema as canonicalSelector,
     HealthCheckTcpConfigV1ProtocolSchema as canonicalTcpConfig,
     HealthCheckDnsConfigV1ProtocolSchema as canonicalDnsConfig,
@@ -16,6 +17,7 @@ import type {
     HealthCheckSubjectV1,
     HealthCheckResultV1,
     HealthCheckSourceConfigV1,
+    HealthCheckTransitionV1,
     SavedHealthCheckSelectorV1,
     HealthCheckTcpConfigV1,
     HealthCheckDnsConfigV1,
@@ -39,6 +41,7 @@ export type { HealthCheckKindV1, HealthCheckStatusV1, HealthCheckSubjectV1, Heal
 export const HealthCheckSubjectV1ProtocolSchema: ProtocolComposableSchema<HealthCheckSubjectV1> = canonicalSubject;
 export const HealthCheckResultV1ProtocolSchema: ProtocolComposableSchema<HealthCheckResultV1> = canonicalResult;
 export const HealthCheckSourceConfigV1ProtocolSchema: ProtocolComposableSchema<HealthCheckSourceConfigV1> = canonicalSourceConfig;
+export const HealthCheckTransitionV1ProtocolSchema: ProtocolComposableSchema<HealthCheckTransitionV1> = canonicalTransition;
 export const SavedHealthCheckSelectorV1ProtocolSchema: ProtocolComposableSchema<SavedHealthCheckSelectorV1> = canonicalSelector;
 
 /** @realm daemon

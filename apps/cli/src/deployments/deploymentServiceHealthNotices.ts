@@ -11,6 +11,88 @@ import { createCommittedServiceHealthDelivery } from '@/notifications/activity/c
 import { observeNativeWorkload } from './healthChecks/readNativeWorkload';
 import type { createMachineServiceRowProjection } from '@/daemon/local/services/launch/machineServiceRowProjection';
 import type { CurrentDomainEdgeObservation } from './healthChecks/currentDomainEdgeObservation';
+import type { CommittedAutomationEventObservationV1 } from '@/plugins/runtime/automations/automationEventActionExecutor';
+import type { MachineServiceRowV1 } from '@happier-dev/protocol/actions/specs/machine/services';
+import { HealthCheckSourceConfigV1Schema, HealthCheckTransitionV1Schema,
+    type ServiceHealthNoticePageV1 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+
+export type ConfiguredHealthCheckNoticeHost = Readonly<{
+    credentials: StoredCredentials; serverId: string; serverHttpBaseUrl: string; machineId: string;
+    readService(subject: Readonly<{ machineId: string; serviceId: string }>, signal: AbortSignal): Promise<MachineServiceRowV1 | null>;
+    readEnvironment(environmentId: string, signal: AbortSignal): Promise<Pick<DeploymentEnvironmentDetailV1, 'environment' | 'content'>>;
+}>;
+
+/** The observer already settled thresholds and E2 admitted this occurrence.
+ * C1 alone decides equal updates, private retention and notification opening. */
+export function createConfiguredHealthCheckNotices(host: ConfiguredHealthCheckNoticeHost) {
+    const store = createCredentialedAccountArtifactStore(host.credentials);
+    const deliver = createCommittedServiceHealthDelivery(host);
+    const unavailable = (): never => { throw Object.assign(new Error('health_check_subject_unavailable'), {
+        code: 'health_check_subject_unavailable',
+    }); };
+    return async (input: CommittedAutomationEventObservationV1) => {
+        const source = HealthCheckSourceConfigV1Schema.safeParse(input.definition.sourceConfig);
+        if (!source.success) return { kind: 'notApplicable' as const };
+        const transition = HealthCheckTransitionV1Schema.parse(input.observation.payload);
+        const check = source.data.checks.find(check => check.checkId === transition.checkId);
+        if (!check || check.binding.kind !== 'healthCheck') return { kind: 'notApplicable' as const };
+        if (input.definition.sourceInstanceId !== transition.sourceInstanceId
+            || !sameStrictJsonValue(source.data.subject, transition.subject)) return unavailable();
+        input.signal.throwIfAborted();
+        const accountId = readAccountIdFromToken(host.credentials.token);
+        if (!accountId) throw Object.assign(new Error('notice_account_scope_mismatch'), { code: 'notice_account_scope_mismatch' });
+        let page: ServiceHealthNoticePageV1;
+        let protection: DeploymentEnvironmentDetailV1['environment']['protection'] = 'nonProduction';
+        let controllerMachineId: string | null | undefined = host.machineId;
+        let name: string;
+        const subject = source.data.subject;
+        if (subject.kind === 'environment') {
+            const detail = await host.readEnvironment(subject.environmentId, input.signal);
+            if (detail.environment.id !== subject.environmentId || !detail.environment.capabilities.read) return unavailable();
+            page = { kind: 'host', page: 'environment', targetLinkId: detail.environment.runtimeTargetLinkId,
+                environment: { serverId: host.serverId, projectSourceId: detail.environment.projectSourceId,
+                    environmentId: subject.environmentId } };
+            protection = detail.environment.protection;
+            controllerMachineId = detail.environment.controllerMachineId;
+            name = detail.content.name;
+        } else {
+            const service = await host.readService(subject, input.signal);
+            if (!service || service.serviceId !== subject.serviceId || service.unavailableReason) return unavailable();
+            const identity = service.deployment?.service ?? (service.authority === 'machine' && service.watchId && service.watchRevision
+                ? { kind: 'adopted' as const, machineId: subject.machineId, serviceId: subject.serviceId,
+                    watchId: service.watchId, watchRevision: service.watchRevision } : null);
+            if (!identity) return unavailable();
+            page = { kind: 'host', page: 'machine_service', machine: { serverId: host.serverId, machineId: subject.machineId },
+                service: identity };
+            name = service.name;
+            if (identity.kind === 'deployment') {
+                const detail = await host.readEnvironment(identity.environmentId, input.signal);
+                page = { ...page, environment: { serverId: host.serverId, projectSourceId: detail.environment.projectSourceId,
+                    environmentId: identity.environmentId } };
+                protection = detail.environment.protection;
+                controllerMachineId = detail.environment.controllerMachineId;
+            }
+        }
+        input.signal.throwIfAborted();
+        const recovered = transition.transition === 'recovered';
+        const committed = await runWithServerHttpBaseUrl(host.serverHttpBaseUrl, () => store.writeNotice({
+            accountId, source: { kind: 'host', topic: 'service_health', subject: { kind: 'healthCheck', subject,
+                checkId: check.checkId } }, page,
+            title: `${name}: ${check.checkId} ${recovered ? 'recovered' : 'needs attention'}`,
+            type: !recovered && protection === 'production' ? 'blocked' : 'update',
+            healthPhase: recovered ? 'recovered' : 'open', resolved: false,
+            body: `Saved health check ${recovered ? 'recovered' : 'failed'}.`, signal: input.signal,
+        }));
+        try { await deliver({ receipt: committed, signal: input.signal, controllerMachineId }); }
+        catch (error) {
+            if (!input.signal.aborted) logger.infoFile('[deploymentHealth] Check notice delivery unavailable', {
+                errorCode: error instanceof Error && 'code' in error ? error.code : 'notice_delivery_failed',
+            });
+        }
+        return { kind: 'consumed' as const, changed: committed.changed, artifactId: committed.artifactId };
+    };
+}
 
 export type DeploymentServiceHealthNoticeInput = Readonly<{
     credentials: StoredCredentials;

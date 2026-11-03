@@ -1,5 +1,5 @@
 import { HealthCheckResultV1ProtocolSchema, HealthCheckSourceConfigV1ProtocolSchema,
-    HealthCheckSubjectV1ProtocolSchema, SavedHealthCheckSelectorV1ProtocolSchema, HEALTH_CHECK_KINDS_V1,
+    HealthCheckTransitionV1ProtocolSchema, SavedHealthCheckSelectorV1ProtocolSchema, HEALTH_CHECK_KINDS_V1,
     computeCanonicalDomainSeparatedDigest, createCanonicalJsonSigningInput, arePluginMachineMaterializationRefsEqual,
     type HealthCheckSourceConfigV1, type HealthCheckResultV1, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { isPluginError, PluginError } from '@happier-dev/plugin-sdk/errors';
@@ -10,12 +10,11 @@ import { runCheckpointedPluginEventObserverV1, type BackgroundServiceContext,
     type PluginCheckpointedEventSourceAdapterV1 } from '@happier-dev/plugin-sdk/background-services';
 
 export const HEALTH_STATUS_EVENT = 'health-status';
+export const HEALTH_CHECK_FAILED_EVENT = 'health-check-failed';
+export const HEALTH_CHECK_RECOVERED_EVENT = 'health-check-recovered';
 const status = defineProtocolUnion([defineProtocolLiteral('up'), defineProtocolLiteral('down'), defineProtocolLiteral('degraded')]);
 const ordinal = defineProtocolNumber({ integer: true, minimum: 0 });
-export const healthTransition = defineProtocolObject({ sourceInstanceId: defineProtocolString(),
-    subject: HealthCheckSubjectV1ProtocolSchema, checkId: defineProtocolString(),
-    phase: defineProtocolUnion([defineProtocolLiteral('open'), defineProtocolLiteral('resolved')]),
-    result: HealthCheckResultV1ProtocolSchema }, { policy: 'closed' });
+export const healthTransition = HealthCheckTransitionV1ProtocolSchema;
 const cursorSchema = defineProtocolObject({ basis: defineProtocolString(),
     checks: defineProtocolArray(defineProtocolObject({ checkId: defineProtocolString(), status, ordinal }, { policy: 'closed' })),
     pending: defineProtocolArray(defineProtocolObject({ checkId: defineProtocolString(), ordinal,
@@ -33,11 +32,11 @@ export function createHealthCheckSourceAdapter(now: () => number = Date.now,
         due: Map<string, number | null>; failures: Map<string, number>; pendingChecks: Set<string> }>();
     return {
         decode(definition) {
-            if (definition.eventRef.localId !== HEALTH_STATUS_EVENT) return null;
+            if (![HEALTH_STATUS_EVENT, HEALTH_CHECK_FAILED_EVENT, HEALTH_CHECK_RECOVERED_EVENT].includes(definition.eventRef.localId)) return null;
             const parsed = HealthCheckSourceConfigV1ProtocolSchema.safeParse(definition.sourceConfig);
             return parsed.success ? parsed.data : null;
         },
-        async observe({ context, definition, source }) {
+        async observe({ context, definition, definitions, source }) {
             const storage = requireAccountStorage(context, { code: 'health_check_storage_unavailable', message: 'Health status storage is unavailable' }).kv;
             const key = `health:${computeCanonicalDomainSeparatedDigest('happier.health.status.v1', [definition.sourceInstanceId])}`;
             const basis = createCanonicalJsonSigningInput({ sourceInstanceId: definition.sourceInstanceId,
@@ -88,7 +87,9 @@ export function createHealthCheckSourceAdapter(now: () => number = Date.now,
                         if (check.kind.localId === 'heartbeat') due.set(identity, null);
                     } else failures.delete(identity);
                     const prior = next.get(check.checkId);
-                    if (prior?.status === result.status) continue;
+                    // Down and degraded are the same failed condition. A change
+                    // between them does not recover or open another failure.
+                    if (prior && (prior.status === 'up') === (result.status === 'up')) continue;
                     const nextOrdinal = (prior?.ordinal ?? 0) + 1;
                     next.set(check.checkId, { checkId: check.checkId, status: result.status, ordinal: nextOrdinal });
                     changed = true;
@@ -101,14 +102,22 @@ export function createHealthCheckSourceAdapter(now: () => number = Date.now,
                     version = written.version;
                 }
             }
-            const observations = pending.map(value => ({ eventRef: definition.eventRef,
-                sourceInstanceId: definition.sourceInstanceId, sourceContractVersion: definition.sourceContractVersion,
-                occurrenceId: computeCanonicalDomainSeparatedDigest('happier.health.transition.v1',
-                    [definition.sourceInstanceId, basis, value.checkId, String(value.ordinal), value.result.status]),
-                occurredAt: value.result.observedAt, observationReceivedAt: value.receivedAt, observedDelta: replaying ? 0 as const : 1 as const,
-                payload: healthTransition.parse({ sourceInstanceId: definition.sourceInstanceId,
-                    subject: source.subject, checkId: value.checkId, phase: value.result.status === 'up' ? 'resolved' : 'open', result: value.result }),
-            }));
+            const observations = pending.flatMap(value => {
+                const localId = value.result.status === 'up' ? HEALTH_CHECK_RECOVERED_EVENT : HEALTH_CHECK_FAILED_EVENT;
+                // The incumbent health-status enrollment remains readable. All
+                // subscriptions share this producer, probe and occurrence cursor.
+                const subscribed = new Map(definitions.filter(member => member.eventRef.localId === localId
+                    || member.eventRef.localId === HEALTH_STATUS_EVENT).map(member => [member.eventRef.localId, member.eventRef]));
+                return [...subscribed.values()].map(eventRef => ({ eventRef,
+                    sourceInstanceId: definition.sourceInstanceId, sourceContractVersion: definition.sourceContractVersion,
+                    occurrenceId: computeCanonicalDomainSeparatedDigest('happier.health.transition.v1',
+                        [definition.sourceInstanceId, basis, value.checkId, String(value.ordinal), value.result.status]),
+                    occurredAt: value.result.observedAt, observationReceivedAt: value.receivedAt, observedDelta: replaying ? 0 as const : 1 as const,
+                    payload: healthTransition.parse({ sourceInstanceId: definition.sourceInstanceId,
+                        subject: source.subject, checkId: value.checkId,
+                        transition: value.result.status === 'up' ? 'recovered' : 'failed', observedAt: value.result.observedAt }),
+                }));
+            });
             const deadlines = source.checks.map(check => due.has(check.checkId) ? due.get(check.checkId) : time + check.periodMs)
                 .filter((value): value is number => typeof value === 'number');
             return { observations, complete: true,
