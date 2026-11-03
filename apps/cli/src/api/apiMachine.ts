@@ -241,6 +241,7 @@ import { parseConnectedAccountCatalogPhysicalKeyV1 } from '@happier-dev/protocol
 import { CONNECTED_PRESENTATION_ACCOUNT_KV_KEY_V1, CONNECTED_ACKNOWLEDGEMENTS_ACCOUNT_KV_KEY_V1 } from '@happier-dev/protocol/connect/connectedAccountPresentationRowsV1';
 import { refreshDemandedActiveConnectedMetadataCatalog } from '@/settings/connected/hydrateConnectedMetadataCatalog';
 import {
+    captureServerHttpBaseUrl,
     resolveServerHttpBaseUrl,
     resolveServerSocketIoTransports,
     runWithServerHttpBaseUrl,
@@ -756,7 +757,11 @@ export class ApiMachineClient {
     private readonly rpcLifecycleRegistrations: MachineRpcLifecycleRegistration[] = [];
     private executionRunAccountSnapshots: ReturnType<typeof createExecutionRunAccountSettingsSnapshotResolver> | null = null;
     private readonly executionBudgetRegistry = createExecutionBudgetRegistry();
-    private readonly machineRuntimeServerHttpBaseUrl: string;
+    private readonly readMachineRuntimeServerHttpBaseUrl: () => string;
+
+    private get machineRuntimeServerHttpBaseUrl(): string {
+        return this.readMachineRuntimeServerHttpBaseUrl();
+    }
     private readonly machineRuntimeServerId = configuration.activeServerId;
     private machineServicesBinding: ReturnType<typeof createApiMachineServicesBinding> | null = null;
 
@@ -1355,7 +1360,8 @@ export class ApiMachineClient {
         this.ownershipMetadata = ownershipMetadata ?? {};
         this.lifecycleDependencies = lifecycleDependencies ?? {};
         const machineRuntimeServerId = configuration.activeServerId;
-        const machineRuntimeServerHttpBaseUrl = resolveServerHttpBaseUrl();
+        this.readMachineRuntimeServerHttpBaseUrl = captureServerHttpBaseUrl();
+        const readMachineRuntimeServerHttpBaseUrl = this.readMachineRuntimeServerHttpBaseUrl;
         const captureRecipientPreparationAuthority = async (signal: AbortSignal) => {
             const transportGeneration = this.activeTransportGeneration;
             const credential = await readStoredCredentialsForServerId(machineRuntimeServerId).catch(() => null);
@@ -1380,7 +1386,7 @@ export class ApiMachineClient {
                 if (!await isCurrent()) return;
                 await runSessionDataKeyPreparationDetached(JSON.stringify([machineRuntimeServerId, accountId, 'machine-data-key-envelopes', machineId]),
                     () => prepareMachineAccessKeyEnvelopes({ credentials: credential, serverId: machineRuntimeServerId,
-                        serverHttpBaseUrl: machineRuntimeServerHttpBaseUrl, machineId, signal, isCredentialCurrent: isCurrent }));
+                        serverHttpBaseUrl: readMachineRuntimeServerHttpBaseUrl(), machineId, signal, isCredentialCurrent: isCurrent }));
             }
         };
         this.prepareSessionRecipientEnvelopes = async (sessionIds, signal) => {
@@ -1398,7 +1404,7 @@ export class ApiMachineClient {
                 try {
                     await runSessionDataKeyPreparationDetached(JSON.stringify([machineRuntimeServerId, accountId, 'session-data-key-envelopes', sessionId]),
                         () => prepareSessionRecipientEnvelopes({ credentials: credential, sessionId, signal,
-                            serverHttpBaseUrl: machineRuntimeServerHttpBaseUrl,
+                            serverHttpBaseUrl: readMachineRuntimeServerHttpBaseUrl(),
                             isScopeCurrent: () => !this.projectionSchedulingClosed && this.isActiveTransportGeneration(transportGeneration) }));
                 } catch (error) {
                     signal.throwIfAborted();
@@ -1410,11 +1416,10 @@ export class ApiMachineClient {
                 }
             }
         };
-        this.machineRuntimeServerHttpBaseUrl = machineRuntimeServerHttpBaseUrl;
         this.machineContentContext = { codec: createMachineContentCodec(this.machine), ready: true };
         this.sessionSyncPendingInputServerContractController =
             createSessionSyncPendingInputServerContractController({
-                serverUrl: resolveServerHttpBaseUrl(),
+                get serverUrl() { return readMachineRuntimeServerHttpBaseUrl(); },
                 token: this.token,
             });
         const rpcTransportConfig = this.machine.encryptionMode === 'plain'
@@ -1426,7 +1431,7 @@ export class ApiMachineClient {
             };
         this.machineRpcAdmissionBoundary = {
             machineId: this.machine.id,
-            resolveCustodianAccountId: (signal) => runWithServerHttpBaseUrl(machineRuntimeServerHttpBaseUrl, () => this.getAccountId(signal)),
+            resolveCustodianAccountId: (signal) => runWithServerHttpBaseUrl(readMachineRuntimeServerHttpBaseUrl(), () => this.getAccountId(signal)),
             resolveInstallationId: () => readInstallationIdentityIfExistsSync()?.installationId ?? null,
             verifyMachineAdmission: async ({ context, method, signal, custodySubjectAccountId, workspaceSyncSourceRouting, workspaceSyncSourceExecution, workspaceSyncTargetRouting, workspaceSyncSourceWriterTargetRouting, workspaceSyncSeedRouting, callerInputAuthorization }) => {
                 const installation = readInstallationIdentityIfExistsSync();
@@ -1451,7 +1456,7 @@ export class ApiMachineClient {
                             accountId: readAccountIdFromToken(this.token) ?? '' } } : {}),
                         ...(callerInputAuthorization ? { callerInputAuthorization } : {}) } : {}),
                     privateKey: installation.privateKey, daemonToken: this.token,
-                    serverHttpBaseUrl: machineRuntimeServerHttpBaseUrl,
+                    serverHttpBaseUrl: readMachineRuntimeServerHttpBaseUrl(),
                     ...(signal ? { signal } : {}),
                 });
             },
@@ -1477,9 +1482,9 @@ export class ApiMachineClient {
                     && await verifyMachineRpcAdmissionCurrent({ context,
                         method: `${authorization.sessionId}:${RPC_METHODS.APPROVAL_REQUEST_DECIDE}`, sessionDecision,
                         privateKey: installation.privateKey, daemonToken: credentials.token,
-                        serverHttpBaseUrl: machineRuntimeServerHttpBaseUrl, signal });
+                        serverHttpBaseUrl: readMachineRuntimeServerHttpBaseUrl(), signal });
                 if (!await isCurrent()) return null;
-                const transport = await runWithServerHttpBaseUrl(machineRuntimeServerHttpBaseUrl, () => resolveSessionTransportContext({
+                const transport = await runWithServerHttpBaseUrl(readMachineRuntimeServerHttpBaseUrl(), () => resolveSessionTransportContext({
                     credentials, idOrPrefix: authorization.sessionId, signal,
                 }));
                 if (!transport.ok || transport.sessionId !== authorization.sessionId) return null;
@@ -1553,7 +1558,7 @@ export class ApiMachineClient {
                 ? { onInspection: this.lifecycleDependencies.onProjectOperationInspection } : {}),
             publishSnapshot: createActionOperationSnapshotPublisher({
                 resolveAccountId: async () => await this.getAccountId(),
-                serverBaseUrl: machineRuntimeServerHttpBaseUrl,
+                get serverBaseUrl() { return readMachineRuntimeServerHttpBaseUrl(); },
                 readCredentials: async () => this.projectionSchedulingClosed || configuration.activeServerId !== machineRuntimeServerId
                     ? null : await readStoredCredentialsForServerId(machineRuntimeServerId),
                 publishContent: (content) => emitActionOperationSnapshotV1({
@@ -1861,6 +1866,7 @@ export class ApiMachineClient {
         externalActionIngressOwner?: ExternalActionIngressOwner;
         sessionPendingResetStartInstalled?: boolean;
     }>): MachineRpcLifecycleRegistration {
+        const readMachineRuntimeServerHttpBaseUrl = this.readMachineRuntimeServerHttpBaseUrl;
         const executionRunRuntimeAccountId = readAccountIdFromToken(this.token) ?? undefined;
         const executionRunServerId = this.machineRuntimeServerId;
         const executionRunAccountOwnerCurrent = () => !this.projectionSchedulingClosed
@@ -1890,7 +1896,7 @@ export class ApiMachineClient {
         };
         let executionRunAccountSettings: Awaited<ReturnType<typeof bootstrapAccountSettingsContext>>['settings'] | null = null;
         const resolveExecutionRunAccountSettingsSnapshot = createExecutionRunAccountSettingsSnapshotResolver({
-            machineId: this.machine.id, serverHttpBaseUrl: this.machineRuntimeServerHttpBaseUrl,
+            machineId: this.machine.id, get serverHttpBaseUrl() { return readMachineRuntimeServerHttpBaseUrl(); },
             readCredentials: readExecutionRunAccountCredentials, isOwnerCurrent: executionRunAccountOwnerCurrent,
             onSettings: settings => { executionRunAccountSettings = settings; },
         });
@@ -1898,8 +1904,8 @@ export class ApiMachineClient {
         this.executionRunAccountSnapshots = resolveExecutionRunAccountSettingsSnapshot;
         void previousAccountSnapshots?.dispose();
         const workSummaryInstallation = readInstallationIdentityIfExistsSync();
-        const workSummaryAccess = createAccountServerActionDeps({ token: this.token,
-            serverId: executionRunServerId, serverHttpBaseUrl: this.machineRuntimeServerHttpBaseUrl,
+        const readWorkSummaryAccess = () => createAccountServerActionDeps({ token: this.token,
+            serverId: executionRunServerId, serverHttpBaseUrl: readMachineRuntimeServerHttpBaseUrl(),
             isCredentialCurrent: async () => (await readStoredCredentialsForServerId(executionRunServerId).catch(() => null))?.token === this.token,
         });
         const executionRunApprovalDeps = createExecutionRunRpcApprovalDeps({ readCredentials: async () => {
@@ -1915,7 +1921,7 @@ export class ApiMachineClient {
             deps?.externalActionIngressOwner?.externalActionMachineRequestPrivateKey !== undefined;
         this.agentCatalogObservation = deps?.agentCatalogObservation ?? null;
         const resolveExternalActionOrigin = createCurrentMachineExecutionOriginContextResolver({
-            serverUrl: resolveServerHttpBaseUrl(),
+            get serverUrl() { return readMachineRuntimeServerHttpBaseUrl(); },
             resolveCurrentMachineId: () => this.machine.id,
         });
         const machineRpcLifecycleRegistration = registerMachineRpcHandlers({
@@ -1952,7 +1958,7 @@ export class ApiMachineClient {
                 sessionHandoffPreflight: {
                     readCredentials: readExecutionRunAccountCredentials,
                     callMachine: createSessionHandoffPreflightMachineRpc({ callMachine: callHandoffMachine,
-                        authorization: { serverHttpBaseUrl: this.machineRuntimeServerHttpBaseUrl,
+                        authorization: { get serverHttpBaseUrl() { return readMachineRuntimeServerHttpBaseUrl(); },
                             readSourceInstallation: readHandoffSourceInstallation } }),
                 },
                 ...(deps?.deviceLocalSecretStorage && workSummaryInstallation && executionRunRuntimeAccountId ? {
@@ -1960,7 +1966,7 @@ export class ApiMachineClient {
                         authority: { serverId: executionRunServerId, accountId: executionRunRuntimeAccountId, machineId: this.machine.id },
                         installationId: workSummaryInstallation.installationId,
                         activeServerDir: configuration.activeServerDir,
-                        serverHttpBaseUrl: this.machineRuntimeServerHttpBaseUrl,
+                        get serverHttpBaseUrl() { return readMachineRuntimeServerHttpBaseUrl(); },
                         token: this.token,
                         storage: deps.deviceLocalSecretStorage,
                         readCredentials: async () => this.projectionSchedulingClosed
@@ -1980,7 +1986,7 @@ export class ApiMachineClient {
                         activity: this.lifecycleDependencies.managedActivity.activity,
                         ...(this.lifecycleDependencies.readProjectFiniteLoad
                             ? { readFiniteLoad: this.lifecycleDependencies.readProjectFiniteLoad } : {}),
-                        readAccess: async (signal) => await workSummaryAccess.machineAccessAction!({ actionId: 'machines.access.grants.list',
+                        readAccess: async (signal) => await readWorkSummaryAccess().machineAccessAction!({ actionId: 'machines.access.grants.list',
                             input: { serverId: executionRunServerId, machineId: this.machine.id }, context: { surface: 'cli', serverId: executionRunServerId }, signal }),
                     },
                 } : {}),
@@ -2033,7 +2039,7 @@ export class ApiMachineClient {
                 ...(this.lifecycleDependencies.requesterSessionRuntime ? { requesterSessionRuntime: this.lifecycleDependencies.requesterSessionRuntime } : {}),
                 requesterBootstrapBoundary: this.lifecycleDependencies.requesterBootstrapBoundary ?? {
                     serverId: this.machineRuntimeServerId,
-                    serverHttpBaseUrl: this.machineRuntimeServerHttpBaseUrl,
+                    get serverHttpBaseUrl() { return readMachineRuntimeServerHttpBaseUrl(); },
                     happyHomeDir: configuration.happyHomeDir,
                     getObservedServerIdentityId: async () => (await resolveExternalActionOrigin())?.serverIdentityId ?? null,
                     readInstallation: async () => {
@@ -2048,11 +2054,11 @@ export class ApiMachineClient {
                 ...(executionRunRuntimeAccountId ? { executionRunRuntimeAccountId } : {}),
                 executionRunApprovalDeps,
                 executionRunAccountSettings: {
-                    serverUrl: this.machineRuntimeServerHttpBaseUrl,
+                    get serverUrl() { return readMachineRuntimeServerHttpBaseUrl(); },
                     resolveAccountSettings: async () => (await resolveExecutionRunAccountSettingsSnapshot()).settings,
                     resolveAccountSettingsSnapshot: resolveExecutionRunAccountSettingsSnapshot,
                     readModelProjection: createAccountScopedProviderModelProjectionReader({
-                        serverUrl: this.machineRuntimeServerHttpBaseUrl,
+                        get serverUrl() { return readMachineRuntimeServerHttpBaseUrl(); },
                         readCredentials: readExecutionRunAccountCredentials,
                         readAccountSettingsSnapshot: resolveExecutionRunAccountSettingsSnapshot,
                         isCurrent: executionRunAccountOwnerCurrent,
@@ -2118,7 +2124,7 @@ export class ApiMachineClient {
                                     ...input,
                                     privateKey: installation.privateKey,
                                     installationId: installation.installationId,
-                                    serverHttpBaseUrl: resolveServerHttpBaseUrl(),
+                                    serverHttpBaseUrl: readMachineRuntimeServerHttpBaseUrl(),
                                 });
                             },
                         },
@@ -4618,7 +4624,7 @@ export class ApiMachineClient {
                 ...DEFAULT_MANAGED_CONNECTION_POLICY,
                 classifyTransportErrorToProbeResult,
                 createTransport: () => {
-                    const serverUrl = resolveServerHttpBaseUrl();
+                    const serverUrl = this.machineRuntimeServerHttpBaseUrl;
                     const transportGeneration = this.activeTransportGeneration + 1;
                     this.activeTransportGeneration = transportGeneration;
                     const installationIdentity = configuration.installationIdentityFile

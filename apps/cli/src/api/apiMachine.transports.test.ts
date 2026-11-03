@@ -1,6 +1,8 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createServer } from 'node:http';
+import { Server } from 'socket.io';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
@@ -17,6 +19,7 @@ import { resolveSessionClientDurableMutationJournalPaths } from './session/clien
 import { ApiMachineClient } from './apiMachine';
 import type { Machine } from './types';
 import { decryptLegacy, decodeBase64 } from './encryption';
+import { publishServerHttpRuntimeOrigin } from './client/serverHttpBaseUrl';
 
 const { configurationMock, mockAxiosIsAxiosError, mockAxiosPost, mockIo } = vi.hoisted(() => ({
   configurationMock: {
@@ -211,12 +214,18 @@ describe('ApiMachineClient transports', () => {
 
   it('routes a descriptor replacement through the existing connection supervisor', async () => {
     vi.useFakeTimers();
+    const releases = [publishServerHttpRuntimeOrigin('http://127.0.0.1:43235', 'iroh')];
+    let client: ApiMachineClient | undefined;
     try {
       const firstSocket = createApiSessionSocketStub();
       const replacementSocket = createApiSessionSocketStub();
       bindApiSessionSocketSequenceMock(mockIo, [firstSocket, replacementSocket]);
-      const prepareServerTransportForReconnect = vi.fn(async () => ({ status: 'ready' as const }));
-      const client = new ApiMachineClient('fake-token', {
+      const prepareServerTransportForReconnect = vi.fn(async () => {
+        releases.push(publishServerHttpRuntimeOrigin('http://127.0.0.1:40109', 'iroh'));
+        releases[0]();
+        return { status: 'ready' as const };
+      });
+      client = new ApiMachineClient('fake-token', {
         id: 'test-machine',
         encryptionKey: new Uint8Array(32),
         encryptionVariant: 'legacy',
@@ -228,15 +237,58 @@ describe('ApiMachineClient transports', () => {
 
       client.connect({ prepareServerTransportForReconnect });
       expect(mockIo).toHaveBeenCalledTimes(1);
+      expect(mockIo.mock.calls[0]?.[0]).toBe('http://127.0.0.1:43235');
 
       expect(client.requestServerTransportReconnect()).toBe(true);
       await vi.advanceTimersByTimeAsync(300);
 
       expect(prepareServerTransportForReconnect).toHaveBeenCalledOnce();
       expect(mockIo).toHaveBeenCalledTimes(2);
-      await client.shutdown();
+      expect(mockIo.mock.calls[1]?.[0]).toBe('http://127.0.0.1:40109');
     } finally {
+      await client?.shutdown();
+      for (const release of releases.reverse()) release();
       vi.useRealTimers();
+    }
+  });
+
+  it('reconnects the real machine socket through the replacement Home carrier', async () => {
+    const { io } = await vi.importActual<typeof import('socket.io-client')>('socket.io-client');
+    const firstHttp = createServer();
+    const nextHttp = createServer();
+    const firstHome = new Server(firstHttp, { path: '/v1/updates/' });
+    const nextHome = new Server(nextHttp, { path: '/v1/updates/' });
+    const listen = async (server: ReturnType<typeof createServer>) => {
+      await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+      const address = server.address();
+      if (!address || typeof address === 'string') throw new Error('Expected a loopback HTTP listener');
+      return `http://127.0.0.1:${address.port}`;
+    };
+    const releases: Array<() => void> = [];
+    let client: ApiMachineClient | undefined;
+    try {
+      const firstOrigin = await listen(firstHttp);
+      const nextOrigin = await listen(nextHttp);
+      releases.push(publishServerHttpRuntimeOrigin(firstOrigin, 'iroh'));
+      mockIo.mockImplementation((url, options) => io(url, options));
+      client = new ApiMachineClient('fixture-token', {
+        id: 'test-machine', encryptionKey: new Uint8Array(32), encryptionVariant: 'legacy',
+        metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0,
+      });
+      client.connect({ prepareServerTransportForReconnect: async () => {
+        releases.push(publishServerHttpRuntimeOrigin(nextOrigin, 'iroh'));
+        releases[0]();
+        return { status: 'ready' };
+      } });
+      await vi.waitFor(() => expect(firstHome.sockets.sockets.size).toBe(1));
+      await vi.waitFor(() => expect(mockIo.mock.results[0]?.value.connected).toBe(true));
+      expect(client.requestServerTransportReconnect()).toBe(true);
+      await vi.waitFor(() => expect(nextHome.sockets.sockets.size).toBe(1));
+      expect(firstHome.sockets.sockets.size).toBe(0);
+    } finally {
+      await client?.shutdown();
+      for (const release of releases.reverse()) release();
+      await Promise.all([firstHome, nextHome].map(server => new Promise<void>(resolve => server.close(() => resolve()))));
     }
   });
 
