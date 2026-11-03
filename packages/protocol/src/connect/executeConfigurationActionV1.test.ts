@@ -3,7 +3,7 @@ import { executeConnectedServiceConfigurationActionV1, type ConnectedServiceConf
 import { CONNECTED_SERVICE_CONFIGURATION_ACTION_INPUT_SCHEMAS_V1, CONNECTED_SERVICE_CONFIGURATION_ACTION_OUTPUT_SCHEMAS_V1, reorderConnectedServicePoolMembersV1 } from './configurationActionsV1.js';
 import { buildAgentDefaultChoices } from './agentDefaultChoices.js';
 import { accountSettingsParse } from '../account/settings/accountSettings.js';
-import { QualifiedConnectedAccountGroupV4Schema, QualifiedConnectedAccountGroupMemberDeleteV4Schema, QualifiedConnectedAccountGroupMemberMutationV4Schema, QualifiedConnectedAccountGroupRefSchema } from './qualifiedConnectedAccountsV4.js';
+import { QualifiedConnectedAccountCredentialMutationV4Schema, QualifiedConnectedAccountCredentialSnapshotV4Schema, QualifiedConnectedAccountGroupV4Schema, QualifiedConnectedAccountGroupMemberDeleteV4Schema, QualifiedConnectedAccountGroupMemberMutationV4Schema, QualifiedConnectedAccountGroupRefSchema } from './qualifiedConnectedAccountsV4.js';
 import { parseQualifiedConnectedAccountV4StructuredQueryValue } from './qualifiedConnectedAccountsV4QueryCodec.js';
 import { ConnectedServiceAuthGroupPolicyV1Schema } from './connectedServiceSchemas.js';
 import { createActionExecutor, type ActionExecutorDeps } from '../actions/actionExecutor.js';
@@ -16,6 +16,10 @@ import { PluginConnectedAccountAuthenticationModeV2Schema } from './pluginConnec
 import type { ConnectedConfigurationCatalogV1 } from './connectedAccountConfigurationRowsV1.js';
 import type { ConnectedServiceConfigurationCatalogWriteV1 } from './connectedServiceConfigurationCatalogV1.js';
 import { formatSharedSavedSecretRefV1 } from '../account/settings/savedSecretReferenceV1.js';
+
+import { openQualifiedConnectedAccountContentEnvelope, resolveQualifiedConnectedAccountCredentialValuesV1, sealQualifiedConnectedAccountContentEnvelope } from './qualifiedConnectedAccountContentEnvelope.js';
+
+import { parseQualifiedConnectedAccountCredentialPlaintextV1 } from './legacyConnectedServiceCompatibility.js';
 
 const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' };
 const agent = { agentId: 'codex', title: 'Codex', identity: { pluginId: 'happier.agent.codex', localId: 'codex' }, connectedAccounts: [{ purpose: 'model', service }] };
@@ -34,6 +38,19 @@ function purposeCatalogBoundary(read: () => Record<string, unknown>, apply: (del
 }
 
 describe('connected-service configuration Action owner', () => {
+    it('keeps Account-direct key input live-only and secret-free on every public observation surface', () => {
+        const spec = getActionSpec('connectedServices.accounts.credentials.save');
+        const input = spec.inputSchema.parse({ account: { service, accountId: 'direct' }, modeId: 'api-key', fields: { token: 'private-key' } });
+        expect(spec.executionPlacement).toBe('account');
+        expect(spec.approvalInputCustody).toBe('live_only');
+        expect(spec.surfaces).toMatchObject({ ui: true, cli: true, agent: true, mcp: true });
+        expect(spec.bindings?.mcpToolName).toBe('connected_services_accounts_credentials_save');
+        expect(spec.projectObservationInput?.(input)).not.toHaveProperty('fields');
+        expect(JSON.stringify(spec.projectObservationInput?.(input))).not.toContain('private-key');
+        expect(isApprovalRequiredByActionsSettings(spec.id, ActionsSettingsV1Schema.parse({ v: 1 }), { surface: 'agent', authority: 'account_automation' })).toBe(true);
+        expect(spec.inputSchema.safeParse({ ...input, machineId: 'unrelated-machine' }).success).toBe(false);
+        expect(spec.outputSchema.safeParse({ applied: true, account: { service, accountId: 'direct' }, fields: { token: 'private-key' } }).success).toBe(false);
+    });
     it('lists saved accounts and credential health through the Action dispatcher without a Machine or provider refresh', async () => {
         const id = 'connectedServices.accounts.list';
         expect(ActionIdSchema.safeParse(id).success).toBe(true);
@@ -1003,4 +1020,126 @@ describe('connected-service configuration Action owner', () => {
         expect(writes).toHaveLength(3);
     });
 
+    describe('Account-direct key custody (one credential record)', () => {
+        const anthropic = { pluginId: 'happier.agent.claude', localId: 'anthropic' };
+        const apiKeyMode = PluginConnectedAccountAuthenticationModeV2Schema.parse({ id: 'api-key', kind: 'manual', outcomeReconciliation: 'none',
+            accountDirectSave: true, credentialOrigin: 'authentication',
+            fields: [{ id: 'token', title: 'Anthropic API key', secret: true, schema: { type: 'string', minLength: 1 } }] });
+        type Promotion = Parameters<NonNullable<ConnectedServiceConfigurationActionHostV1['promoteAccountCredentialSecrets']>>[0];
+        function directHost(outcome: 'applied' | 'outcome_unknown' | 'conflict', promotions: Promotion[], rawWrites: unknown[]): ConnectedServiceConfigurationActionHostV1 {
+            let id = 0;
+            return {
+                assertCurrent() {},
+                async request(request) { rawWrites.push(request); return { success: true, credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS', configurationRevision: null }; },
+                async mutatePurposeBindings() { throw new Error('save_must_not_change_defaults'); },
+                async resolveAgent() { throw new Error('save_must_not_probe'); },
+                async resetQuota() { throw new Error('save_must_not_refresh'); },
+                configurationCatalog: { read: async () => { throw new Error('save_must_not_read_catalog'); }, resolveMode: async () => apiKeyMode,
+                    hasSecret: async () => true, createRevision: () => 'r', write: async () => { throw new Error('save_must_not_write_catalog'); } },
+                sealAccountCredential: async payload => sealQualifiedConnectedAccountContentEnvelope({ kind: 'credential', accountMode: 'plain', payload,
+                    randomBytes: length => new Uint8Array(length) }),
+                createSavedSecretResourceId: () => `cred-key-${++id}`,
+                async promoteAccountCredentialSecrets(input) { promotions.push(input); return outcome; },
+                readAccountCredential: async ref => QualifiedConnectedAccountCredentialSnapshotV4Schema.parse({ ref,
+                    authenticationModeId: 'api-key', revisionSemantics: 'revisioned', credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
+                    configurationRevision: null, content: { t: 'plain', v: { v: 1, values: { token: 'legacy-key' } } }, metadata: { scopes: [] } }),
+                openAccountCredential: async content => openQualifiedConnectedAccountContentEnvelope({ kind: 'credential', accountMode: 'plain', envelope: content }),
+            };
+        }
+
+        it('saves a declared secret field into one Saved Secret resource and stores only its reference', async () => {
+            const promotions: Promotion[] = [];
+            const rawWrites: unknown[] = [];
+            const account = { service: anthropic, accountId: 'direct' };
+            const result = await executeConnectedServiceConfigurationActionV1(directHost('applied', promotions, rawWrites), 'connectedServices.accounts.credentials.save',
+                { account, modeId: 'api-key', fields: { token: 'sk-ant-one-record' } });
+            expect(result).toEqual({ applied: true, account });
+            // No second raw credential write beside the resource transaction.
+            expect(rawWrites).toEqual([]);
+            expect(promotions).toHaveLength(1);
+            const { secrets, credential } = promotions[0]!;
+            expect(secrets).toEqual([{ resourceId: 'cred-key-1', displayName: 'Anthropic API key', kind: 'apiKey', value: 'sk-ant-one-record' }]);
+            expect(credential).toMatchObject({ ref: account, authenticationModeId: 'api-key', expectedCredentialRevision: null,
+                savedSecretResourceIds: ['cred-key-1'] });
+            // Double custody: the credential row holds the reference, never the key bytes.
+            expect(JSON.stringify(credential)).not.toContain('sk-ant-one-record');
+            const payload = parseQualifiedConnectedAccountCredentialPlaintextV1({ ref: account, authenticationModeId: 'api-key',
+                plaintext: openQualifiedConnectedAccountContentEnvelope({ kind: 'credential', accountMode: 'plain', envelope: credential.content }) });
+            expect(payload).toEqual({ v: 1, values: {}, secretRefs: { token: formatSharedSavedSecretRefV1('cred-key-1') } });
+            // Rotation divergence: rotating the one resource is what the credential's reader sees next.
+            const resources = new Map(secrets.map(secret => [formatSharedSavedSecretRefV1(secret.resourceId), secret.value]));
+            const read = async (ref: string) => resources.get(ref) ?? null;
+            expect((await resolveQualifiedConnectedAccountCredentialValuesV1(payload, read)).values).toEqual({ token: 'sk-ant-one-record' });
+            resources.set(formatSharedSavedSecretRefV1('cred-key-1'), 'sk-ant-rotated');
+            expect((await resolveQualifiedConnectedAccountCredentialValuesV1(payload, read)).values).toEqual({ token: 'sk-ant-rotated' });
+        });
+
+        it('converts an existing key on edit into one record, fenced by its current credential revision', async () => {
+            const promotions: Promotion[] = [];
+            const rawWrites: unknown[] = [];
+            const account = { service: anthropic, accountId: 'released-key' };
+            const revision = 'csr_0123456789ABCDEFGHJKMNPQRS';
+            expect(await executeConnectedServiceConfigurationActionV1(directHost('applied', promotions, rawWrites), 'connectedServices.accounts.credentials.save',
+                { account, modeId: 'api-key', fields: { token: 'sk-ant-edited' }, expectedCredentialRevision: revision })).toEqual({ applied: true, account });
+            expect(rawWrites).toEqual([]);
+            expect(promotions[0]?.credential).toMatchObject({ ref: account, expectedCredentialRevision: revision, expectedConfigurationRevision: null,
+                savedSecretResourceIds: ['cred-key-1'] });
+            expect(JSON.stringify(promotions[0]?.credential)).not.toContain('sk-ant-edited');
+        });
+
+        it('links a selected key without opening or copying its value, and acquires its next rotation late', async () => {
+            const promotions: Promotion[] = [];
+            const rawWrites: { body?: unknown }[] = [];
+            const account = { service: anthropic, accountId: 'selected' };
+            const selected = { ref: formatSharedSavedSecretRefV1('existing-key'), resourceRevision: 4 };
+            const host = directHost('applied', promotions, rawWrites);
+            const result = await executeConnectedServiceConfigurationActionV1(host, 'connectedServices.accounts.credentials.save',
+                { account, modeId: 'api-key', fields: {}, selectedSecrets: { token: selected } });
+            expect(result).toEqual({ applied: true, account });
+            expect(promotions).toEqual([]);
+            expect(rawWrites).toHaveLength(1);
+            const mutation = rawWrites[0]!.body;
+            expect(mutation).toMatchObject({ savedSecretResourceIds: ['existing-key'] });
+            const credential = QualifiedConnectedAccountCredentialMutationV4Schema.parse(mutation);
+            const payload = parseQualifiedConnectedAccountCredentialPlaintextV1({ ref: account, authenticationModeId: 'api-key',
+                plaintext: openQualifiedConnectedAccountContentEnvelope({ kind: 'credential', accountMode: 'plain', envelope: credential.content }) });
+            expect(payload).toEqual({ v: 1, values: {}, secretRefs: { token: selected.ref } });
+            const material = new Map([[selected.ref, 'rotated-key']]);
+            expect((await resolveQualifiedConnectedAccountCredentialValuesV1(payload, async ref => material.get(ref) ?? null)).values)
+                .toEqual({ token: 'rotated-key' });
+        });
+
+        it('edits a held key through its resource owner without creating a replacement resource', async () => {
+            const promotions: Promotion[] = [];
+            const rawWrites: { body?: unknown }[] = [];
+            const rotations: (readonly Readonly<{ resourceId: string; value: string }>[])[] = [];
+            const account = { service: anthropic, accountId: 'held' };
+            const revision = 'csr_0123456789ABCDEFGHJKMNPQRS';
+            const host = { ...directHost('applied', promotions, rawWrites),
+                readAccountCredential: async () => QualifiedConnectedAccountCredentialSnapshotV4Schema.parse({ ref: account,
+                    authenticationModeId: 'api-key', revisionSemantics: 'revisioned', credentialRevision: revision, configurationRevision: null,
+                    content: { t: 'plain', v: { v: 1, values: {}, secretRefs: { token: formatSharedSavedSecretRefV1('held-key') } } }, metadata: { scopes: [] } }),
+                rotateAccountCredentialSecrets: async ({ secrets }: Readonly<{ secrets: readonly Readonly<{ resourceId: string; value: string }>[] }>) => {
+                    rotations.push(secrets); return 'applied' as const;
+                },
+            };
+            expect(await executeConnectedServiceConfigurationActionV1(host, 'connectedServices.accounts.credentials.save',
+                { account, modeId: 'api-key', fields: { token: 'rotated-key' }, expectedCredentialRevision: revision })).toEqual({ applied: true, account });
+            expect(promotions).toEqual([]);
+            expect(rotations).toEqual([[{ resourceId: 'held-key', value: 'rotated-key' }]]);
+            expect(rawWrites).toHaveLength(1);
+            expect(rawWrites[0]?.body).toMatchObject({ savedSecretResourceIds: ['held-key'], expectedCredentialRevision: revision });
+            expect(JSON.stringify(rawWrites)).not.toContain('rotated-key');
+        });
+
+        it.each(['outcome_unknown', 'conflict'] as const)('reports %s without a fallback raw credential write', async outcome => {
+            const promotions: Promotion[] = [];
+            const rawWrites: unknown[] = [];
+            const result = await executeConnectedServiceConfigurationActionV1(directHost(outcome, promotions, rawWrites), 'connectedServices.accounts.credentials.save',
+                { account: { service: anthropic, accountId: 'direct' }, modeId: 'api-key', fields: { token: 'sk-ant-one-record' } });
+            expect(result).toMatchObject({ ok: false, errorCode: outcome === 'conflict' ? 'connected_account_credential_changed' : 'outcome_unknown' });
+            expect(promotions).toHaveLength(1);
+            expect(rawWrites).toEqual([]);
+        });
+    });
 });

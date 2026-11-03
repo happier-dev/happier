@@ -1,10 +1,23 @@
+import { createUnavailablePluginServices } from '@/plugins/runtime/invocation/services/unavailable';
+import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
+import { createAccountScopedCryptoMaterialSnapshotV1, sealAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { parseQualifiedConnectedAccountCredentialPlaintextV1 } from '@happier-dev/protocol/connect/legacyConnectedServiceCompatibility';
+import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
+import { homeDomainActionTransportV1 } from '@happier-dev/protocol/actions/homeDomainActionFamily';
+import { SharedSavedSecretPromoteInputV1Schema } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
+import { openQualifiedConnectedAccountContentEnvelope, resolveQualifiedConnectedAccountCredentialValuesV1 } from '@happier-dev/protocol/connect/qualifiedConnectedAccountContentEnvelope';
+import { activate as activateGemini, manifest as geminiManifest } from '@happier-dev/plugins-gemini';
+import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
+import type { AxiosRequestConfig, AxiosResponse } from 'axios';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import axios from 'axios';
 import nacl from 'tweetnacl';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
 import Fastify from 'fastify';
-import { QualifiedConnectedAccountGroupV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
+import { QualifiedConnectedAccountGroupV4Schema, QualifiedConnectedAccountCredentialMutationV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import { API_TOKEN_FULL_GRANT_V1, AccountSettingsV2UpdateRequestSchema, ConnectedServiceCredentialRevisionV1Schema, accountSettingsParse, buildRecoveryCreditConsumeIdempotencyKey, createActionExecutor, type ActionExecutorContext, type ActionExecutorDeps, type ApprovalRequest } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { DaemonContributionRegistryProjectionDescribeRequestSchema, DaemonContributionRegistryProjectionDescribeResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
@@ -43,8 +56,207 @@ function unrelatedHistoryAuthorityResponse(path: string) {
   return undefined;
 }
 
+const promotePath = homeDomainActionTransportV1('secrets.shared.promote').path;
+function directKeyAccount(subject: string) {
+  const token = `header.${Buffer.from(JSON.stringify({ sub: subject })).toString('base64url')}.signature`;
+  const credentials: StoredCredentials = { token, encryption: null };
+  return { token, credentials, operationContext: (home: string, isCurrent: () => Promise<boolean> = async () => true) =>
+    createInvocationSavedSecretOperationContextV1({ credentials, serverHttpBaseUrl: home, isCurrent,
+      snapshot: { source: 'network', settings: accountSettingsParse({}), rawSettings: {}, settingsVersion: 1, loadedAtMs: 1,
+        settingsSecretsReadKeys: [], scopeKey: resolveAccountSettingsScopeKey(credentials) } }) };
+}
+// The Saved Secret catalog boundary of a plain Home with no existing resources.
+function serveEmptySavedSecretCatalog(server: ReturnType<typeof Fastify>) {
+  server.get('/v1/features', async () => ({ features: { teams: { enabled: true } }, capabilities: {} }));
+  server.get('/v1/account/saved-secrets/resources/materials', async () => ({ resources: [] }));
+}
+
+// The genuine CLI host has already received the person's confirmation for this exact save.
+const accountDirectUserContext = { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' },
+  presentUserConfirmation: { actionId: 'connectedServices.accounts.credentials.save' } } satisfies ActionExecutorContext;
+
 describe('native connected-service Action adapter', () => {
   afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); resetActiveAccountSettingsSnapshotForTests(); });
+
+  it.each([
+    { mode: 'plain', provider: 'anthropic' }, { mode: 'e2ee', provider: 'anthropic' }, { mode: 'locked', provider: 'anthropic' },
+    { mode: 'plain', provider: 'openai' }, { mode: 'plain', provider: 'gemini' }, { mode: 'e2ee', provider: 'gemini' },
+  ] as const)('saves an Account-direct $provider key as one Saved Secret record using the $mode Account authority without machine routing', async ({ mode, provider }) => {
+    const material = { type: 'legacy' as const, secret: new Uint8Array(32).fill(19) };
+    const token = `header.${Buffer.from(JSON.stringify({ sub: 'direct-key-requester' })).toString('base64url')}.signature`;
+    const credentials: StoredCredentials = { token, encryption: mode === 'e2ee' ? material : null };
+    const snapshot = createAccountScopedCryptoMaterialSnapshotV1({ accountEncryptionMode: 'e2ee', material });
+    const server = Fastify();
+    server.get('/v1/account/encryption/currentness', async () => ({ mode: mode === 'plain' ? 'plain' : 'e2ee', version: 1,
+      signingKeyFingerprint: mode === 'plain' ? null : 'signing',
+      contentKeyFingerprint: mode === 'plain' ? null : convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1(snapshot.contentPublicKeyFingerprint),
+      updatedAt: 1, recipientEnvelopeReadiness: mode === 'plain' ? { status: 'unavailable', reason: 'plain_account' } : { status: 'available' } }));
+    const rawWrites: unknown[] = [];
+    server.post('/v4/connect/qualified/credential', async request => {
+      rawWrites.push(request.body);
+      return { success: true, credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS', configurationRevision: null };
+    });
+    server.get('/v1/features', async () => ({ features: { teams: { enabled: true } }, capabilities: {} }));
+    server.get('/v1/account/saved-secrets/resources/materials', async () => ({ resources: [] }));
+    const promotions: ReturnType<typeof SharedSavedSecretPromoteInputV1Schema.parse>[] = [];
+    server.post(homeDomainActionTransportV1('secrets.shared.promote').path, async request => {
+      const promotion = SharedSavedSecretPromoteInputV1Schema.parse(request.body);
+      promotions.push(promotion);
+      return { resourceId: promotion.resourceId, settingsVersion: 1 };
+    });
+    const home = await server.listen({ host: '127.0.0.1', port: 0 });
+    let machineCalls = 0;
+    // The invocation's captured Account, as the real Action host binds it.
+    const operationContext = createInvocationSavedSecretOperationContextV1({ credentials, serverHttpBaseUrl: home, isCurrent: async () => true,
+      snapshot: { source: 'network', settings: accountSettingsParse({}), rawSettings: {}, settingsVersion: 1, loadedAtMs: 1,
+        settingsSecretsReadKeys: [], scopeKey: resolveAccountSettingsScopeKey(credentials) } });
+    const action = createCliConnectedServiceAction({ credentials, serverHttpBaseUrl: home, operationContext,
+      resolveHeaders: () => ({ Authorization: `Bearer ${token}` }),
+      callMachineAction: async () => { machineCalls += 1; throw new Error('Account save has no Machine'); } });
+    try {
+      const service = provider === 'gemini' ? { pluginId: 'happier.agent.gemini', localId: 'gemini-account' }
+        : provider === 'openai' ? { pluginId: 'happier.voice.openai', localId: 'openai' }
+          : { pluginId: 'happier.agent.claude', localId: 'anthropic' };
+      const result = await createActionExecutor({ ...createUnavailableActionTransportDeps(), connectedServiceAction: action }).execute('connectedServices.accounts.credentials.save',
+        { account: { service, accountId: 'direct-key-account' }, modeId: 'api-key', fields: { token: 'sk-ant-direct-key' } },
+        accountDirectUserContext);
+      // The released raw-credential write is never used for a declared secret key.
+      expect(rawWrites).toEqual([]);
+      if (mode === 'locked') {
+        expect(result).toMatchObject({ ok: false });
+        expect(promotions).toEqual([]);
+      } else {
+        expect(result).toMatchObject({ ok: true, result: { applied: true, account: { service, accountId: 'direct-key-account' } } });
+        expect(promotions).toHaveLength(1);
+        const promotion = promotions[0]!;
+        const write = promotion.connectedAccountCredentialMutation!;
+        expect(promotion).toMatchObject({ kind: 'apiKey', encryptionMode: mode, referenceCensus: { scope: 'catalogs', accountMode: mode, catalogs: {} } });
+        expect(write).toMatchObject({ ref: { service }, authenticationModeId: 'api-key', expectedCredentialRevision: null, metadata: { scopes: [] },
+          savedSecretResourceIds: [promotion.resourceId] });
+        expect(write.metadata).not.toHaveProperty('authenticationProvenance');
+        // One record: the key bytes live in the resource, never in the credential.
+        expect(JSON.stringify(write)).not.toContain('sk-ant-direct-key');
+        if (mode === 'plain') expect(promotion.storedContent).toMatchObject({ t: 'plain', v: { value: 'sk-ant-direct-key', kind: 'apiKey' } });
+        else expect(promotion.storedContent.t).toBe('encrypted');
+        const plaintext = openQualifiedConnectedAccountContentEnvelope(mode === 'plain'
+          ? { kind: 'credential', accountMode: 'plain', envelope: write.content }
+          : { kind: 'credential', accountMode: 'e2ee', material, envelope: write.content });
+        const stored = parseQualifiedConnectedAccountCredentialPlaintextV1({ ref: write.ref, authenticationModeId: write.authenticationModeId, plaintext });
+        const key = provider === 'gemini' ? 'apiKey' : 'token';
+        expect(stored).toEqual({ v: 1, values: {}, secretRefs: { [key]: formatSharedSavedSecretRefV1(promotion.resourceId) } });
+        const payload = await resolveQualifiedConnectedAccountCredentialValuesV1(stored,
+          async ref => ref === formatSharedSavedSecretRefV1(promotion.resourceId) ? 'sk-ant-direct-key' : null);
+        expect(payload).toEqual({ v: 1, values: { [key]: 'sk-ant-direct-key' } });
+        if (provider === 'gemini') {
+          const kit = await createPluginTestkit({ manifest: geminiManifest, module: { activate: activateGemini } });
+          try {
+            const runtime = kit.registration('connectedAccountDescriptors', 'gemini-account');
+            if (!runtime) throw new Error('Gemini runtime unavailable');
+            // Host-service fixture boundary: this real materializer reads only the retained credential store/configuration.
+            const context = { plugin: { id: geminiManifest.id, version: geminiManifest.version },
+              contribution: { id: 'gemini-account', qualifiedId: buildQualifiedPluginContributionKey({ pluginId: geminiManifest.id, localId: 'gemini-account' }) },
+              surface: 'cli', invokedAtMs: 0,
+              account: write.ref, configuration: { target: { kind: 'account', account: write.ref, modeId: write.authenticationModeId },
+              revision: 'configuration-1', values: {}, getSecret: async () => null }, signal: new AbortController().signal, services: createUnavailablePluginServices(),
+              credentials: { get: async (key: string) => payload.values[key] ?? null } } satisfies Parameters<typeof runtime.materialize>[1];
+            expect(await runtime.materialize({ kind: 'environment', keys: ['GEMINI_API_KEY', 'GOOGLE_API_KEY'] }, context))
+              .toEqual({ kind: 'environment', env: { GEMINI_API_KEY: 'sk-ant-direct-key', GOOGLE_API_KEY: 'sk-ant-direct-key' } });
+          } finally { await kit.dispose(); }
+        }
+      }
+      expect(machineCalls).toBe(0);
+    } finally { await server.close(); }
+  });
+
+  it.each(['invalid-fields', 'undeclared-mode'] as const)('rejects an Account-direct %s before credential persistence', async failure => {
+    const server = Fastify();
+    let requests = 0;
+    server.addHook('onRequest', async () => { requests += 1; });
+    const home = await server.listen({ host: '127.0.0.1', port: 0 });
+    const action = createCliConnectedServiceAction({ credentials: { token: 'direct-key-requester', encryption: null }, serverHttpBaseUrl: home,
+      resolveHeaders: () => ({ Authorization: 'Bearer direct-key-requester' }),
+      callMachineAction: async () => { throw new Error('Invalid direct save must not contact a Machine'); } });
+    try {
+      const result = await createActionExecutor({ ...createUnavailableActionTransportDeps(), connectedServiceAction: action }).execute('connectedServices.accounts.credentials.save', {
+        account: { service: { pluginId: 'happier.agent.claude', localId: failure === 'undeclared-mode' ? 'claude-subscription' : 'anthropic' }, accountId: 'invalid-key' },
+        modeId: failure === 'undeclared-mode' ? 'setup-token' : 'api-key', fields: { token: 'not-an-anthropic-key' },
+      }, accountDirectUserContext);
+      expect(result).toMatchObject({ ok: false, errorCode: failure === 'invalid-fields'
+        ? 'connected_account_manual_fields_invalid' : 'connected_account_direct_save_unsupported' });
+      expect(requests).toBe(0);
+    } finally { await server.close(); }
+  });
+
+  it.each(['acknowledged-then-cancelled', 'acknowledged-then-retired', 'invalid-acknowledgement', 'lost-acknowledgement'] as const)(
+    'preserves an Account-direct credential write disposition after %s', async disposition => {
+      const server = Fastify();
+      server.get('/v1/account/encryption/currentness', async () => ({ mode: 'plain', version: 1,
+        signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
+        recipientEnvelopeReadiness: { status: 'unavailable', reason: 'plain_account' } }));
+      let persisted = false;
+      serveEmptySavedSecretCatalog(server);
+      server.post(promotePath, async (request, reply) => {
+        const promotion = SharedSavedSecretPromoteInputV1Schema.parse(request.body);
+        QualifiedConnectedAccountCredentialMutationV4Schema.parse(promotion.connectedAccountCredentialMutation);
+        persisted = true;
+        if (disposition === 'lost-acknowledgement') { reply.raw.destroy(); return reply; }
+        return disposition === 'invalid-acknowledgement' ? { applied: true }
+          : { resourceId: promotion.resourceId, settingsVersion: 1 };
+      });
+      const home = await server.listen({ host: '127.0.0.1', port: 0 });
+      const requester = directKeyAccount('stable-direct-key-requester');
+      const controller = new AbortController();
+      let current = true;
+      const request = axios.request;
+      // The HTTP carrier delivers a valid ACK, then the calling intent ends before its consumer resumes.
+      vi.spyOn(axios, 'request').mockImplementation(async <T = unknown, R = AxiosResponse<T>, D = unknown>(config: AxiosRequestConfig<D>): Promise<R> => {
+        const response = await request<T, R, D>(config);
+        if (disposition === 'acknowledged-then-cancelled' && String(config.url).endsWith(promotePath)) controller.abort();
+        if (disposition === 'acknowledged-then-retired' && String(config.url).endsWith(promotePath)) current = false;
+        return response;
+      });
+      const account = { service: { pluginId: 'happier.agent.claude', localId: 'anthropic' }, accountId: 'stable-direct-key' };
+      const action = createCliConnectedServiceAction({ credentials: requester.credentials, serverHttpBaseUrl: home,
+        operationContext: requester.operationContext(home), isCredentialCurrent: () => current,
+        resolveHeaders: () => ({ Authorization: `Bearer ${requester.token}` }),
+        callMachineAction: async () => { throw new Error('Account save has no Machine'); } });
+      try {
+        const result = await createActionExecutor({ ...createUnavailableActionTransportDeps(), connectedServiceAction: action }).execute('connectedServices.accounts.credentials.save',
+          { account, modeId: 'api-key', fields: { token: 'sk-ant-direct-key' } },
+          { ...accountDirectUserContext, signal: controller.signal });
+        expect(persisted).toBe(true);
+        expect(result).toEqual(disposition.startsWith('acknowledged-then-') ? { ok: true, result: { applied: true, account } }
+          : { ok: false, errorCode: 'outcome_unknown', error: 'outcome_unknown' });
+      } finally { await server.close(); }
+    },
+  );
+
+  it('refuses Account-direct credential issuance when captured authority retires after sealing', async () => {
+    const server = Fastify();
+    server.get('/v1/account/encryption/currentness', async () => ({ mode: 'plain', version: 1,
+      signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
+      recipientEnvelopeReadiness: { status: 'unavailable', reason: 'plain_account' } }));
+    let writes = 0;
+    server.post('/v4/connect/qualified/credential', async () => { writes += 1; return {}; });
+    serveEmptySavedSecretCatalog(server);
+    server.post(promotePath, async () => { writes += 1; return {}; });
+    const home = await server.listen({ host: '127.0.0.1', port: 0 });
+    let current = true;
+    const requester = directKeyAccount('retiring-direct-key-requester');
+    const action = createCliConnectedServiceAction({ credentials: requester.credentials, serverHttpBaseUrl: home,
+      operationContext: requester.operationContext(home), isCredentialCurrent: () => current,
+      resolveHeaders: (_context, _actionId, request) => {
+        if (request.method === 'POST' && request.path === promotePath) current = false;
+        return { Authorization: `Bearer ${requester.token}` };
+      }, callMachineAction: async () => { throw new Error('Account save has no Machine'); } });
+    try {
+      expect(await createActionExecutor({ ...createUnavailableActionTransportDeps(), connectedServiceAction: action }).execute('connectedServices.accounts.credentials.save', {
+        account: { service: { pluginId: 'happier.agent.claude', localId: 'anthropic' }, accountId: 'retired-before-save' },
+        modeId: 'api-key', fields: { token: 'sk-ant-direct-key' },
+      }, accountDirectUserContext)).toMatchObject({ ok: false, errorCode: 'scope-retired' });
+      expect(writes).toBe(0);
+    } finally { await server.close(); }
+  });
 
   it.each(['member', 'pool'] as const)('sends a bodyless %s DELETE through the real JSON HTTP parser', async kind => {
     const group = { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, groupId: 'bodyless-pool' };

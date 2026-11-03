@@ -15,6 +15,8 @@ import { ConnectedAccountRevokeCommandV1Schema, ConnectedAccountRevokeResponseV1
   ConnectedAccountControlTargetSchema, ConnectedAccountConfigurationTargetSchema } from './connectedAccountDaemonRpcV1.js';
 import { ConnectedAccountServiceConfigurationEntryV1Schema } from '../account/settings/connectedAccountServiceConfigurationsV1.js';
 import { PluginConnectedAccountAuthenticationModeV2Schema } from './pluginConnectedAccountAuthenticationV2.js';
+import { ConnectedAccountAuthenticationCommandSchemas } from './connectedAccountDaemonRpcV1.js';
+import { ConnectedServiceCredentialRevisionV1Schema } from './connectedServiceSchemas.js';
 import { ConnectedMetadataCleanupV1Schema } from './connectedAccountPresentationSchemasV1.js';
 import { CONNECTED_SERVICE_CONFIGURATION_ACTION_IDS_V1 } from './configurationActionIdsV1.js';
 import { ConnectedServiceQuotaGetInputV1Schema, ConnectedServiceQuotaGetResultV1Schema } from './providerAccountUsageHistorySchemasV1.js';
@@ -53,6 +55,14 @@ const ConfigurationView = z.strictObject({ status: z.enum(['ready', 'configurati
 export const CONNECTED_SERVICE_CONFIGURATION_ACTION_INPUT_SCHEMAS_V1 = {
   ...CONNECTED_ACCOUNT_AUTHENTICATION_ACTION_INPUT_SCHEMAS,
   'connectedServices.accounts.list': z.strictObject({ service: z.optional(QualifiedConnectedAccountGroupRefSchema.shape.service) }),
+  'connectedServices.accounts.credentials.save': z.strictObject({
+    account: asProtocolZod(QualifiedConnectedAccountRefSchema), modeId: ConnectedAccountServiceConfigurationEntryV1Schema.shape.modeId,
+    fields: ConnectedAccountAuthenticationCommandSchemas.submitManual.shape.fields,
+    selectedSecrets: ConnectedAccountAuthenticationCommandSchemas.submitManual.shape.selectedSecrets,
+    displayName: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(512))),
+    /** Convert on edit: replace this exact existing credential with one held by its Saved Secret record. */
+    expectedCredentialRevision: z.optional(ConnectedServiceCredentialRevisionV1Schema),
+  }),
   'connectedServices.catalog.list': z.strictObject({}),
   'connectedServices.configuration.get': lazyZodSchema(() => z.union([ConfigurationTarget, MachineConfigurationTarget])),
   'connectedServices.configuration.replace': lazyZodSchema(() => z.union([
@@ -107,6 +117,7 @@ export const CONNECTED_SERVICE_CONFIGURATION_ACTION_INPUT_SCHEMAS_V1 = {
 } as const;
 export const CONNECTED_SERVICE_CONFIGURATION_ACTION_OUTPUT_SCHEMAS_V1 = {
   ...CONNECTED_ACCOUNT_AUTHENTICATION_ACTION_OUTPUT_SCHEMAS,
+  'connectedServices.accounts.credentials.save': z.strictObject({ applied: z.literal(true), account: asProtocolZod(QualifiedConnectedAccountRefSchema) }),
   'connectedServices.accounts.list': lazyZodSchema(() => z.strictObject({
     accounts: z.array(z.strictObject({ account: QualifiedConnectedAccountProfileV4Schema, health: z.enum(['healthy', 'attention', 'error']) })),
     pools: z.array(z.strictObject({ pool: QualifiedConnectedAccountGroupV4Schema, health: z.nullable(z.enum(['healthy', 'attention', 'error'])) })),

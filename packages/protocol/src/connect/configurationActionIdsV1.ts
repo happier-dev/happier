@@ -20,6 +20,7 @@ export const CONNECTED_SERVICE_CONFIGURATION_ACTION_IDS_V1 = [
   'connectedServices.billing.open',
   'connectedServices.subscription.price.set',
   'connectedServices.accounts.list',
+  'connectedServices.accounts.credentials.save',
   'connectedServices.catalog.list',
   'connectedServices.accounts.rename',
   'connectedServices.accounts.revoke',

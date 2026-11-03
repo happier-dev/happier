@@ -209,7 +209,7 @@ export async function captureSavedSecretReferenceCatalogsForOperation(input: Rea
 }
 
 export type SavedSecretPromotionOperationResultV1 =
-  | Readonly<{ status: 'applied'; resourceId: string; settingsVersion: number }>
+  | Readonly<{ status: 'applied' } & ReturnType<typeof SharedSavedSecretPromoteOutputV1Schema.parse>>
   | Readonly<{ status: 'conflict' | 'unavailable' | 'invalid' }>
   | Readonly<{ status: 'outcome_unknown'; resourceObserved?: true }>;
 

@@ -5,6 +5,23 @@ import type { PluginJsonValueV2 } from '../../identity.js';
 import type { BoundedLegacyJsonValue, PluginPolicyExpressionV2, PluginSettingFieldSchemaV2 } from './pluginActionDtoSupport.generated.js';
 
 export type ConnectedServicesConfigurationActionInputById = {
+    readonly "connectedServices.accounts.credentials.save": {
+        account: {
+            service: {
+                pluginId: string;
+                localId: string;
+            };
+            accountId: string;
+        };
+        modeId: string;
+        fields: Record<string, string>;
+        selectedSecrets?: Record<string, {
+            ref: string;
+            resourceRevision: number;
+        }> | undefined;
+        displayName?: string | undefined;
+        expectedCredentialRevision?: string | undefined;
+    };
     readonly "connectedServices.accounts.list": {
         service?: {
             pluginId: string;
@@ -759,6 +776,16 @@ export type ConnectedServicesConfigurationActionInputById = {
     };
 };
 export type ConnectedServicesConfigurationActionResultById = {
+    readonly "connectedServices.accounts.credentials.save": {
+        applied: true;
+        account: {
+            service: {
+                pluginId: string;
+                localId: string;
+            };
+            accountId: string;
+        };
+    };
     readonly "connectedServices.accounts.list": {
         accounts: {
             account: {

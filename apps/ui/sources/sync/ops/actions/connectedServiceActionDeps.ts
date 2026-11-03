@@ -1,7 +1,7 @@
 import type { ActionExecutorDeps } from '@happier-dev/protocol';
 import { CONNECTED_SERVICE_POOL_SELECTION_RPC_METHOD } from '@happier-dev/protocol/connect/connectedServicePoolSelection';
 import { executeConnectedServiceConfigurationActionV1, prepareConnectedServiceRevokeInputV1, type ConnectedServiceConfigurationActionHostV1 } from '@happier-dev/protocol/connect/execute-configuration-action';
-import { QualifiedConnectedAccountSuccessV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
+import { QualifiedConnectedAccountSuccessV4Schema, QualifiedConnectedAccountCredentialMutationSuccessV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import { ConnectedServiceApiError, throwConnectedServiceApiError } from '@/sync/api/account/connectedServiceApiError';
 import { classifyHttpMutationRequestFailure } from '@/sync/http/mutationRequestOutcome';
 import { invalidateConnectedServiceGroupsRefreshSignal } from '@/sync/domains/connectedServices/connectedServiceGroupsRefreshSignal';
@@ -17,7 +17,11 @@ import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugi
 import { projectConnectedAccountDescriptorV1 } from '@happier-dev/protocol/connect/connectedAccountUiProjectionV1';
 import { resolveConnectedAccountPurposeDefaultTargetV1, resolveConnectedAccountPurposeDefaultOriginV1 } from '@happier-dev/protocol/connect/connectedAccountPurposeSelectionV1';
 
+import { createUiConnectedAccountContent } from '@/sync/ops/connectedAccounts/connectedAccountContent';
+import { randomUUID } from '@/platform/randomUUID';
+
 export function createUiConnectedServiceAction(account: LazyActionAccountContext, quotaReadOptions?: Pick<ProviderAccountUsageQuotaReadOptions, 'readAllHistory' | 'projectionDocuments' | 'includePendingWork'>): NonNullable<ActionExecutorDeps['connectedServiceAction']> {
+    const content = createUiConnectedAccountContent(account);
     const invoke = async ({ actionId, input, signal }: Parameters<NonNullable<ActionExecutorDeps['connectedServiceAction']>>[0], prepare: boolean) => {
         const assertCurrent = () => { signal?.throwIfAborted(); account.assertCurrent(); };
         const localSettings = actionId === 'connectedServices.identityPrivacy.set'
@@ -28,6 +32,34 @@ export function createUiConnectedServiceAction(account: LazyActionAccountContext
             const { createUiConnectedServiceConfigurationCatalogHost } = await import('@/sync/api/account/apiConnectedAccountCatalog');
             const host: ConnectedServiceConfigurationActionHostV1 = {
                 assertCurrent,
+                readAccountCredential: async ref => {
+                    const { getQualifiedConnectedAccountCredentialV4 } = await import('@/sync/api/account/apiQualifiedConnectedAccountsV4');
+                    return getQualifiedConnectedAccountCredentialV4(account.credentials, ref, { request: account.request,
+                        signal, requestPurpose: 'connected-accounts:persistence', retry: 'none' });
+                },
+                openAccountCredential: async envelope => content.open('credential', await content.resolveAccountMode(), envelope),
+                sealAccountCredential: async payload => {
+                    const mode = await content.resolveAccountMode('fresh-authority');
+                    assertCurrent();
+                    return content.seal('credential', mode, payload);
+                },
+                createSavedSecretResourceId: randomUUID,
+                rotateAccountCredentialSecrets: async ({ secrets }) => {
+                    const { updateSavedSecretResourceInContext } = await import('@/sync/ops/settings/savedSecretResourceOperations');
+                    for (const secret of secrets) {
+                        const result = await updateSavedSecretResourceInContext(account, { resourceId: secret.resourceId, nextValue: secret.value });
+                        if (!result.ok) return result.reason === 'changed' ? 'conflict'
+                            : result.reason === 'outcome_unknown' ? 'outcome_unknown' : 'unavailable';
+                    }
+                    return 'applied';
+                },
+                // The Saved Secret owner's one transaction: the key resources and the credential that references them.
+                promoteAccountCredentialSecrets: async ({ secrets, credential }) => {
+                    assertCurrent();
+                    const { createSavedSecretResourcesWithConnectedAccountCredentialInContext } = await import('@/sync/ops/settings/savedSecretResourceOperations');
+                    return (await createSavedSecretResourcesWithConnectedAccountCredentialInContext(account, {
+                        scope: { serverId: account.serverId, accountId: account.accountId }, secrets, credential })).status;
+                },
                 readSetupCatalog: async () => {
                     assertCurrent();
                     const registry = getConnectedServiceRegistrySnapshot(account.accountLifetime.scope);
@@ -54,6 +86,10 @@ export function createUiConnectedServiceAction(account: LazyActionAccountContext
                 configurationCatalog: createUiConnectedServiceConfigurationCatalogHost(account, async target => {
                     const current = getAccountConnectedServiceConfigurationMode(target, account.accountLifetime.scope);
                     if (current) return current;
+                    const entry = getConnectedServiceRegistrySnapshot(account.accountLifetime.scope).entries.find(entry =>
+                        entry.service?.pluginId === target.service.pluginId && entry.service.localId === target.service.localId);
+                    // A known policy refusal cannot fall through to bundled authoring.
+                    if (entry) return null;
                     const declaration = BUNDLED_ACCOUNT_CONNECTED_SERVICE_DECLARATIONS[`${target.service.pluginId}/${target.service.localId}`];
                     return declaration?.descriptor.authentication.modes.find(mode => mode.id === target.modeId) ?? null;
                 }, signal),
@@ -66,16 +102,19 @@ export function createUiConnectedServiceAction(account: LazyActionAccountContext
                     }, { includeAuth: false, onIssued: () => { if (method !== 'GET') mutationIssued = true; } });
                     if (!response.ok) await throwConnectedServiceApiError(response);
                     const result: unknown = await response.json();
-                    // Only the exact executor's validated, content-free DELETE
+                    // Only the exact executor's validated, content-free effect
                     // receipt survives retirement; reads and member replies do not.
-                    const definiteGroupDelete = expectedEffect === 'qualified-connected-group-delete'
+                    const definiteDelete = expectedEffect === 'qualified-connected-group-delete'
                         ? QualifiedConnectedAccountSuccessV4Schema.parse(result) : null;
-                    if (!definiteGroupDelete) account.assertCurrent();
+                    const definiteCredentialCreate = expectedEffect === 'qualified-connected-credential-create'
+                        ? QualifiedConnectedAccountCredentialMutationSuccessV4Schema.safeParse(result) : null;
+                    if (definiteCredentialCreate && !definiteCredentialCreate.success) throw new ConnectedServiceApiError({ code: 'outcome_unknown' });
+                    if (!definiteDelete && !definiteCredentialCreate?.success) account.assertCurrent();
                     // Publish every acknowledged patch, including a prefix of a reorder that later fails.
                     if (method !== 'GET' && path.startsWith('/v4/connect/qualified/group') && account.accountLifetime.isCurrent()) {
                         invalidateConnectedServiceGroupsRefreshSignal();
                     }
-                    return definiteGroupDelete ?? result;
+                    return definiteDelete ?? (definiteCredentialCreate?.success ? definiteCredentialCreate.data : result);
                 },
                 mutatePurposeBindings: async mutate => {
                     const { mutateConnectedAccountPurposeDefaultsInContext } = await import('@/sync/ops/connectedAccounts/connectedAccountPurposeDefaults');

@@ -26,10 +26,14 @@ import { normalizeConnectedAccountConfigurationV1, normalizeConnectedAccountConf
 export { normalizeConnectedAccountConfigurationV1, normalizeConnectedAccountConfiguredOrigin, replaceConnectedServiceConfigurationCatalogV1 } from './connectedServiceConfigurationCatalogV1.js';
 export type { ConnectedServiceConfigurationCatalogHostV1, ConnectedServiceConfigurationCatalogWriteV1 } from './connectedServiceConfigurationCatalogV1.js';
 
-import type { PluginConnectedAccountAuthenticationModeV2 } from './pluginConnectedAccountAuthenticationV2.js';
-import type { SharedSavedSecretReferenceSelectionV1 } from '../account/settings/savedSecretReferenceV1.js';
+import { isAccountDirectConnectedAccountModeV1, listAccountDirectSecretCredentialKeysV1, type PluginConnectedAccountAuthenticationModeV2 } from './pluginConnectedAccountAuthenticationV2.js';
+import { formatSharedSavedSecretRefV1, parseSavedSecretRefV1, type SharedSavedSecretReferenceSelectionV1 } from '../account/settings/savedSecretReferenceV1.js';
 import { compilePluginJsonSchema, isValidPluginJsonSchemaValue } from '../plugins/actions/jsonSchemaValidation.js';
 
+import { QualifiedConnectedAccountCredentialPayloadV1Schema } from './qualifiedConnectedAccountContentEnvelope.js';
+import { parseQualifiedConnectedAccountCredentialPlaintextV1, projectQualifiedConnectedAccountCredentialPlaintextV1 } from './legacyConnectedServiceCompatibility.js';
+import { QualifiedConnectedAccountCredentialCreateV4Schema, QualifiedConnectedAccountCredentialMutationSuccessV4Schema, QualifiedConnectedAccountCredentialMutationV4Schema, type QualifiedConnectedAccountCredentialSnapshotV4 } from './qualifiedConnectedAccountsV4.js';
+import type { StoredJsonContentEnvelope } from '../storage/storedJsonContentEnvelope.js';
 type QuotaResetInput = ReturnType<(typeof inputs)['connectedServices.quota.reset']['parse']>;
 /** One field admission for daemon authentication and declared Account-direct credentials. */
 export function areConnectedAccountManualFieldsValidV1(mode: Extract<PluginConnectedAccountAuthenticationModeV2, { kind: 'manual' }>,
@@ -53,9 +57,27 @@ export type ConnectedServiceConfigurationActionHostV1 = Readonly<{
   /** Held, admitted descriptors only: never activate or probe a Machine to enumerate setup. */
   readSetupCatalog?(): Promise<ReturnType<(typeof outputs)['connectedServices.catalog.list']['parse']>>;
   configurationCatalog?: ConnectedServiceConfigurationCatalogHostV1;
+  /** Fresh Account-mode admission and the canonical credential envelope codec; no Machine or provider access. */
+  sealAccountCredential?(payload: ReturnType<typeof projectQualifiedConnectedAccountCredentialPlaintextV1>): Promise<StoredJsonContentEnvelope>;
+  /** Existing Account-scoped snapshot owner for entered-key edits and incumbent revision admission. */
+  readAccountCredential?(ref: QualifiedConnectedAccountCredentialSnapshotV4['ref']): Promise<QualifiedConnectedAccountCredentialSnapshotV4 | null>;
+  openAccountCredential?(content: StoredJsonContentEnvelope): Promise<unknown>;
+  rotateAccountCredentialSecrets?(input: Readonly<{ secrets: readonly Readonly<{ resourceId: string; value: string }>[] }>):
+    Promise<'applied' | 'conflict' | 'unavailable' | 'outcome_unknown'>;
+  /** A fresh opaque Saved Secret resource identity for a declared credential secret. */
+  createSavedSecretResourceId?(): string;
+  /**
+   * The Saved Secret resource owner's one transaction: create `secrets` and the
+   * credential that references them, or neither. The credential content is
+   * already sealed; the host seals only the resources.
+   */
+  promoteAccountCredentialSecrets?(input: Readonly<{
+    secrets: readonly Readonly<{ resourceId: string; displayName: string; kind: 'apiKey'; value: string }>[];
+    credential: ReturnType<typeof QualifiedConnectedAccountCredentialMutationV4Schema.parse>;
+  }>): Promise<'applied' | 'conflict' | 'unavailable' | 'outcome_unknown' | 'invalid'>;
   /** Authenticated transport for the invocation's exact Home. */
   request(input: Readonly<{ method: 'GET' | 'POST' | 'PATCH' | 'DELETE'; path: string; body?: unknown;
-    expectedEffect?: 'qualified-connected-group-delete' }>): Promise<unknown>;
+    expectedEffect?: 'qualified-connected-group-delete' | 'qualified-connected-credential-create' }>): Promise<unknown>;
   /** One acknowledged catalog CAS, atomically retiring any changed predecessor default carriers. */
   mutatePurposeBindings(mutate: ConnectedAccountPurposeMutationIntentV1): Promise<void>;
   resolveAgent(agentId: string, machineId?: string): Promise<AgentDefaultChoiceAgent | null>;
@@ -155,6 +177,101 @@ export async function executeConnectedServiceConfigurationActionV1(
   }
   try {
   switch (actionId) {
+    case 'connectedServices.accounts.credentials.save': {
+      const args = inputs[actionId].parse(input);
+      if (!host.configurationCatalog || !host.sealAccountCredential) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
+      const mode = await host.configurationCatalog.resolveMode({ kind: 'service', service: args.account.service, modeId: args.modeId });
+      host.assertCurrent();
+      if (!isAccountDirectConnectedAccountModeV1(mode)) return { ok: false, errorCode: 'connected_account_direct_save_unsupported', error: 'connected_account_direct_save_unsupported' };
+      if (!areConnectedAccountManualFieldsValidV1(mode, args.fields, args.selectedSecrets)) return { ok: false, errorCode: 'connected_account_manual_fields_invalid', error: 'connected_account_manual_fields_invalid' };
+      const fieldKeys = mode.accountDirectSave === true ? null : mode.accountDirectSave.fieldKeys;
+      const secretKeys = listAccountDirectSecretCredentialKeysV1(mode);
+      const entered = Object.entries(args.fields).map(([fieldId, value]) => [fieldKeys?.[fieldId] ?? fieldId, value] as const);
+      const selected = Object.entries(args.selectedSecrets ?? {}).map(([fieldId, selection]) => {
+        const resource = parseSavedSecretRefV1(selection.ref);
+        if (resource.kind !== 'shared_resource') throw new Error('connected_account_manual_fields_invalid');
+        return { key: fieldKeys?.[fieldId] ?? fieldId, ...selection, resourceId: resource.resourceId };
+      });
+      // A declared secret field is one Saved Secret resource; the credential keeps its reference only.
+      const createResourceId = host.createSavedSecretResourceId;
+      const promote = host.promoteAccountCredentialSecrets;
+      let heldRefs: Readonly<Record<string, string>> = {};
+      if (args.expectedCredentialRevision !== undefined && entered.some(([key]) => secretKeys.has(key))) {
+        if (!host.readAccountCredential || !host.openAccountCredential) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
+        const held = await host.readAccountCredential(args.account);
+        host.assertCurrent();
+        if (!held || !sameQualifiedConnectedAccountRef(held.ref, args.account) || held.authenticationModeId !== mode.id
+          || held.revisionSemantics !== 'revisioned' || held.credentialRevision !== args.expectedCredentialRevision
+          || held.configurationRevision !== null) return { ok: false, errorCode: 'connected_account_credential_changed', error: 'connected_account_credential_changed' };
+        heldRefs = parseQualifiedConnectedAccountCredentialPlaintextV1({ ref: args.account, authenticationModeId: mode.id,
+          plaintext: await host.openAccountCredential(held.content), metadata: held.metadata }).secretRefs ?? {};
+      }
+      const enteredSecrets = entered.filter(([key]) => secretKeys.has(key)).map(([key, value]) => {
+        const field = mode.fields.find(candidate => candidate.id === secretKeys.get(key));
+        const title = typeof field?.title === 'string' ? field.title : field?.title?.fallback;
+        const heldRef = heldRefs[key];
+        const resource = heldRef ? parseSavedSecretRefV1(heldRef) : null;
+        if (resource && resource.kind !== 'shared_resource') throw new Error('connected_account_credential_secret_unavailable');
+        if (!resource && !createResourceId) throw new Error('unsupported_action');
+        return { key, held: resource !== null, resourceId: resource?.resourceId ?? createResourceId!(), kind: 'apiKey' as const, value,
+          displayName: (args.displayName ?? title ?? key).slice(0, 100) };
+      });
+      const secrets = enteredSecrets.filter(secret => !secret.held);
+      const rotations = enteredSecrets.filter(secret => secret.held);
+      if ((secrets.length && !promote) || (rotations.length && !host.rotateAccountCredentialSecrets)) {
+        return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
+      }
+      const references = [...selected.map(secret => [secret.key, secret.ref] as const),
+        ...enteredSecrets.map(secret => [secret.key, formatSharedSavedSecretRefV1(secret.resourceId)] as const)];
+      const savedSecretResourceIds = [...new Set([...selected, ...enteredSecrets].map(secret => secret.resourceId))];
+      const selectedRevisions = selected.length ? { savedSecretRevisions: selected.map(secret => ({ resourceId: secret.resourceId,
+        expectedRevision: secret.resourceRevision })) } : {};
+      const payload = QualifiedConnectedAccountCredentialPayloadV1Schema.parse({ v: 1,
+        values: Object.fromEntries(entered.filter(([key]) => !secretKeys.has(key))),
+        ...(references.length ? { secretRefs: Object.fromEntries(references) } : {}) });
+      const metadata = { scopes: [], ...(args.displayName ? { displayName: args.displayName } : {}) };
+      const content = await host.sealAccountCredential(projectQualifiedConnectedAccountCredentialPlaintextV1({ ref: args.account,
+        authenticationModeId: mode.id, payload, metadata, now: Date.now() }));
+      host.assertCurrent();
+      // An edit replaces the exact current credential; an Account-direct mode has no configuration sidecar.
+      if (args.expectedCredentialRevision !== undefined && !references.length) {
+        return { ok: false, errorCode: 'connected_account_direct_save_unsupported', error: 'connected_account_direct_save_unsupported' };
+      }
+      const body = args.expectedCredentialRevision === undefined
+        ? QualifiedConnectedAccountCredentialCreateV4Schema.parse({ ref: args.account, authenticationModeId: mode.id,
+          expectedCredentialRevision: null, content, directExportContract: mode.directExport?.contractVersion ?? null,
+          metadata, ...selectedRevisions, ...(references.length ? { savedSecretResourceIds } : {}) })
+        : QualifiedConnectedAccountCredentialMutationV4Schema.parse({ ref: args.account, authenticationModeId: mode.id,
+          expectedCredentialRevision: args.expectedCredentialRevision, expectedConfigurationRevision: null, content,
+          directExportContract: mode.directExport?.contractVersion ?? null, metadata,
+          ...selectedRevisions, savedSecretResourceIds });
+      if (rotations.length && host.rotateAccountCredentialSecrets) {
+        const outcome = await host.rotateAccountCredentialSecrets({ secrets: rotations.map(({ resourceId, value }) => ({ resourceId, value })) });
+        if (outcome !== 'applied') {
+          const code = outcome === 'conflict' ? 'connected_account_credential_changed'
+            : outcome === 'outcome_unknown' ? 'outcome_unknown' : 'connected_account_credential_persistence_unavailable';
+          return { ok: false, errorCode: code, error: code };
+        }
+      }
+      if (secrets.length && promote) {
+        const outcome = await promote({ credential: body,
+          secrets: secrets.map(({ resourceId, displayName, kind, value }) => ({ resourceId, displayName, kind, value })) });
+        if (outcome !== 'applied') {
+          const code = outcome === 'conflict' ? 'connected_account_credential_changed'
+            : outcome === 'outcome_unknown' ? 'outcome_unknown' : 'connected_account_credential_persistence_unavailable';
+          return { ok: false, errorCode: code, error: code };
+        }
+        return outputs[actionId].parse({ applied: true, account: args.account });
+      }
+      const acknowledgement = await host.request({ method: 'POST', path: '/v4/connect/qualified/credential', body,
+        expectedEffect: 'qualified-connected-credential-create' });
+      if (!QualifiedConnectedAccountCredentialMutationSuccessV4Schema.safeParse(acknowledgement).success) {
+        return { ok: false, errorCode: 'outcome_unknown', error: 'outcome_unknown' };
+      }
+      // A validated content-free durable ACK is a receipt for the captured
+      // Account even if the caller's intent/lifetime ends immediately after it.
+      return outputs[actionId].parse({ applied: true, account: args.account });
+    }
     case 'connectedServices.accounts.list': {
       const args = inputs[actionId].parse(input);
       const raw = await host.request({ method: 'GET', path: '/v1/account/profile' });
@@ -554,7 +671,8 @@ export async function executeConnectedServiceConfigurationActionV1(
   host.assertCurrent();
   return { applied: true };
   } catch (error) {
-    if (error instanceof Error && 'code' in error && error.code === 'qualified_connected_accounts_inconsistent_peer') {
+    if (error instanceof Error && 'code' in error && typeof error.code === 'string'
+      && (actionId === 'connectedServices.accounts.credentials.save' || error.code === 'qualified_connected_accounts_inconsistent_peer')) {
       return { ok: false, errorCode: error.code, error: error.code };
     }
     throw error;

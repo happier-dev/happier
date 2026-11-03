@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, randomBytes } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { executeConnectedServiceConfigurationActionV1, prepareConnectedServiceRevokeInputV1, type ConnectedServiceConfigurationActionHostV1 } from '@happier-dev/protocol/connect/execute-configuration-action';
 import { buildRecoveryCreditConsumeIdempotencyKey } from '@happier-dev/protocol/connect/recoveryCreditConsumeIdempotencyKey';
@@ -28,8 +28,14 @@ import type { createCliConnectedAccountCatalogStore } from '@/settings/connected
 import type { readActiveConnectedAccountCatalog } from '@/settings/connectedAccounts/hydrateConnectedAccountCatalog';
 import type { commitActiveConnectedAccountCatalog, getActiveAccountSettingsSnapshotLifetimeToken } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import type { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
-import type { resolveCliAccountStorageContext } from '@/api/client/accountKvJsonTransport';
+import { resolveCliAccountStorageContext } from '@/api/client/accountKvJsonTransport';
 import type { readAccountSettingsV2Raw } from '@/settings/accountSettings/updateAccountSettingsV2WithRetry';
+
+import { openQualifiedConnectedAccountContentEnvelope, sealQualifiedConnectedAccountContentEnvelope } from '@happier-dev/protocol/connect/qualifiedConnectedAccountContentEnvelope';
+
+import { encodeQualifiedConnectedAccountV4StructuredQueryValue } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4QueryCodec';
+
+import { QualifiedConnectedAccountCredentialSnapshotV4Schema, QualifiedConnectedAccountRefSchema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 
 export function createCliConnectedServiceAction(params: Readonly<{
   credentials: StoredCredentials;
@@ -37,6 +43,7 @@ export function createCliConnectedServiceAction(params: Readonly<{
   serverId?: string;
   operationContext?: SavedSecretOperationContextV1;
   isCredentialCurrent?: () => boolean | Promise<boolean>;
+  readHomeDomainAction?(): ActionExecutorDeps['homeDomainAction'];
   resolveHeaders(context: ActionExecutorContext, actionId: string, request: Readonly<{ method: string; path: string; body?: unknown }>): Readonly<Record<string, string>> | null;
   callMachineAction(input: Readonly<{ machineId: string; serverId?: string; method: string; request: unknown; signal?: AbortSignal;
     authority?: ActionExecutorContext['authority']; authorization?: ActionExecutorContext['rpcSessionAuthorization'];
@@ -71,7 +78,63 @@ export function createCliConnectedServiceAction(params: Readonly<{
         }
         signal?.throwIfAborted();
       };
+      const resolveCredentialStorage = async () => {
+        await assertReadCurrent();
+        const headers = authorizeRequest({ method: 'GET', path: '/v1/account/encryption/currentness' });
+        if (!headers) throw Object.assign(new Error('action_authorization_unavailable'), { code: 'action_authorization_unavailable' });
+        const current = await resolveCliAccountStorageContext({ credentials: params.credentials, serverBaseUrl: serverHttpBaseUrl,
+          authorizationHeaders: headers, ...(signal ? { signal } : {}), usage: 'fresh-authority' });
+        await assertReadCurrent();
+        return current;
+      };
       const host: ConnectedServiceConfigurationActionHostV1 = {
+      readAccountCredential: async ref => {
+        await assertReadCurrent();
+        const encoded = encodeURIComponent(encodeQualifiedConnectedAccountV4StructuredQueryValue(QualifiedConnectedAccountRefSchema, ref));
+        const credential = QualifiedConnectedAccountCredentialSnapshotV4Schema.parse(await host.request({ method: 'GET',
+          path: `/v4/connect/qualified/credential?ref=${encoded}` }));
+        await assertReadCurrent();
+        return credential;
+      },
+      openAccountCredential: async envelope => {
+        const current = await resolveCredentialStorage();
+        return current.mode === 'plain'
+          ? openQualifiedConnectedAccountContentEnvelope({ kind: 'credential', accountMode: 'plain', envelope })
+          : openQualifiedConnectedAccountContentEnvelope({ kind: 'credential', accountMode: 'e2ee', envelope, material: current.material });
+      },
+      sealAccountCredential: async payload => {
+        const current = await resolveCredentialStorage();
+        return current.mode === 'plain'
+          ? sealQualifiedConnectedAccountContentEnvelope({ kind: 'credential', accountMode: 'plain', payload, randomBytes })
+          : sealQualifiedConnectedAccountContentEnvelope({ kind: 'credential', accountMode: 'e2ee', payload, material: current.material, randomBytes });
+      },
+      createSavedSecretResourceId: randomUUID,
+      rotateAccountCredentialSecrets: async ({ secrets }) => {
+        const home = params.readHomeDomainAction?.();
+        if (!home) return 'unavailable';
+        const { updateOwnedSavedSecretResourceForOperation } = await import('@/settings/secrets/personalSavedSecretActionHost');
+        for (const secret of secrets) await updateOwnedSavedSecretResourceForOperation({ credentials: params.credentials,
+          resourceId: secret.resourceId, nextValue: secret.value, serverHttpBaseUrl, signal,
+          ...(params.operationContext ? { operationContext: params.operationContext } : {}),
+          ...(params.isCredentialCurrent ? { isCredentialCurrent: params.isCredentialCurrent } : {}),
+          executeMutation: input => home({ actionId: 'secrets.shared.update', input, context, signal }) });
+        return 'applied';
+      },
+      // The Saved Secret owner's one transaction: the key resources and the credential that references them.
+      promoteAccountCredentialSecrets: async ({ secrets, credential }) => {
+        const current = await resolveCredentialStorage();
+        const { promoteConnectedAccountCredentialSecrets } = await import('@/settings/secrets/promoteConnectedAccountCredentialSecrets');
+        const result = await runWithServerHttpBaseUrl(serverHttpBaseUrl, () => promoteConnectedAccountCredentialSecrets({
+          credentials: params.credentials, accountMode: current.mode, secrets, credential,
+          ...(params.operationContext ? { operationContext: params.operationContext } : {}), ...(signal ? { signal } : {}),
+          authorizeRequest: request => {
+            const headers = params.resolveHeaders(context, 'secrets.shared.promote', request);
+            // Authority that retired while authorizing never sends the write.
+            return params.isCredentialCurrent?.() === false ? null : headers;
+          } }));
+        if (result.status === 'unavailable') await assertReadCurrent();
+        return result.status;
+      },
       readSetupCatalog: async () => {
         await assertReadCurrent();
         const [{ readCurrentContributionRegistry }, { projectConnectedAccountDescriptors }, { listProviderGatewayContributionsV1 }] = await Promise.all([
@@ -156,6 +219,7 @@ export function createCliConnectedServiceAction(params: Readonly<{
         if (!headers) throw Object.assign(new Error('action_authorization_unavailable'), { code: 'action_authorization_unavailable' });
         signal?.throwIfAborted();
         const [{ resolveConnectedServicesServerApiTimeoutMs }, { classifyActionTransportFailure }] = await Promise.all([import("@/api/client/connectedServicesServerApiTimeout"), import("@/api/client/classifyServerEndpointError")]);
+        if (actionId === 'connectedServices.accounts.credentials.save') await assertReadCurrent();
         const response = await axios.request<unknown>({
           url: `${serverHttpBaseUrl}${request.path}`,
           method: request.method, headers: { ...headers,
