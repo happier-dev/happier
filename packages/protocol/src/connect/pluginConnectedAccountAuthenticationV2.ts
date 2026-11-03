@@ -189,6 +189,18 @@ export const PluginConnectedAccountAuthenticationModeV2Schema =
       title: z.optional(PluginLocalizedStringV2Schema),
       outcomeReconciliation: z.literal('none'),
       fields: PluginConnectedAccountAuthenticationFieldsV2Schema,
+      setup: z.optional(z.strictObject({
+        url: ConnectedAccountBillingUrlSchema,
+        checklist: z.array(PluginLocalizedStringV2Schema),
+        /** What the credential must allow, per feature: a list to pick from, not more steps. */
+        permissions: z.optional(z.array(z.strictObject({
+          feature: PluginLocalizedStringV2Schema,
+          items: z.array(PluginLocalizedStringV2Schema).check(z.minLength(1)),
+        }))),
+        createKeyTitle: z.optional(PluginLocalizedStringV2Schema),
+        billingNote: z.optional(PluginLocalizedStringV2Schema),
+        shapeHint: z.optional(PluginLocalizedStringV2Schema),
+      })),
       configuration: z.optional(PluginConnectedAccountConfigurationV2Schema),
       directExport: z.optional(PluginConnectedAccountDirectExportV2Schema),
       /** Verified manual input fields staged under these exact credential keys. */

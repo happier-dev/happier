@@ -1,6 +1,39 @@
 import { describe, expect, it } from 'vitest';
 
 import { PluginConnectedAccountAuthenticationModeV2Schema, PluginConnectedAccountConfigurationFieldV2Schema, PluginConnectedAccountDescriptorContributionV2Schema } from './pluginConnectedAccountAuthenticationV2.js';
+import { ConnectedAccountUiProjectionEntryV1Schema, projectConnectedAccountDescriptorV1 } from './connectedAccountUiProjectionV1.js';
+
+it('preserves mode-owned manual setup navigation and checklist through the real UI projection', () => {
+  const setup = { url: 'https://provider.example/account/tokens', checklist: [
+    'Name the token Happier.',
+    { key: 'token.scope', fallback: 'Select the project that this account may deploy.' },
+  ], createKeyTitle: 'Create a token', billingNote: 'API usage is billed separately.',
+  shapeHint: { key: 'token.shape', fallback: 'This looks like a provider token.' } };
+  const descriptor = PluginConnectedAccountDescriptorContributionV2Schema.parse({
+    id: 'deploy', title: 'Deployment account', authentication: { defaultModeId: 'token', modes: [{
+      id: 'token', kind: 'manual', outcomeReconciliation: 'none', setup,
+      fields: [{ id: 'token', title: 'Token', secret: true, schema: { type: 'string', minLength: 1 } }],
+    }] },
+  });
+  const projection = ConnectedAccountUiProjectionEntryV1Schema.parse(projectConnectedAccountDescriptorV1({
+    descriptor, serviceId: 'deploy', pluginId: 'acme.deployment', provenance: 'external', sourceKind: 'installed',
+    availability: { state: 'available', reason: 'resolved' }, diagnostics: [],
+  }));
+  expect(projection.authentication.modes[0]).toMatchObject({ setup });
+});
+
+it('refuses unsafe manual setup destinations and undeclared setup authority', () => {
+  const mode = { id: 'token', kind: 'manual', outcomeReconciliation: 'none', fields: [] };
+  for (const url of ['javascript:alert(1)', 'http://provider.example/tokens', 'https://user:secret@provider.example/tokens']) {
+    expect(PluginConnectedAccountAuthenticationModeV2Schema.safeParse({
+      ...mode, setup: { url, checklist: ['Select only the required scope.'] },
+    }).success).toBe(false);
+  }
+  expect(PluginConnectedAccountAuthenticationModeV2Schema.safeParse({ ...mode, setup: {
+    url: 'https://provider.example/tokens', checklist: ['Select only the required scope.'], credentialScope: '*',
+  } }).success).toBe(false);
+});
+
 
 it('refuses authorization-code descriptors that omit their callback URL', () => {
   const mode = { id: 'oauth', kind: 'oauthAuthorizationCode', pkce: 'required', outcomeReconciliation: 'none' };
