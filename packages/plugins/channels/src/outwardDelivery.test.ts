@@ -21,6 +21,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { CHANNEL_DELIVERIES_COLLECTION } from './collections.js';
 import { startConversationDeliveryAttempt } from './deliveryCustody.js';
+import { createConversationSessionProjectionFrontierRow } from './sessionProjection.js';
 import { collectionMigrations } from './manifest.js';
 import {
   acceptConversationOutwardDeliveryReady,
@@ -1325,6 +1326,9 @@ describe('Channels control-response outward custody', () => {
         linkPreviewPolicy: 'suppress',
       },
     }, { expectedRevision: 'absent' });
+    const frontier = await state.put(createConversationSessionProjectionFrontierRow({
+      bindingId: 'binding-1', targetSessionId: 'session-1', transcriptCursor: null, lastScannedSeq: 0, revision: 1, now: 0,
+    }), { expectedRevision: 'absent' });
     const store = new MemoryDeliveryStore();
     const executeAdmittedTargetedOperationWithExecutionOrigin = vi.fn(async (
       _operation: unknown,
@@ -1346,6 +1350,7 @@ describe('Channels control-response outward custody', () => {
         connectionId: 'connection-1',
         target: { sessionId: 'session-1', deliveryMode: 'mirrorSession' },
       },
+      frontierRowRevision: frontier.revision,
       source: {
         kind: 'sessionProjection',
         sessionId: 'session-1',

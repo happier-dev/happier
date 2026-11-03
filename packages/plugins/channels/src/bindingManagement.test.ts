@@ -51,6 +51,26 @@ const routerTarget = {
 } as const;
 
 describe('thread router management', () => {
+  it('preserves the retryable Channels cancellation error when a thread binding batch completes after abort', async () => {
+    const collection = createCollection([connectionRow(), bindingRow(routerTarget, 5, { enabled: true })]);
+    const controller = new AbortController();
+    const batch = collection.batch.bind(collection);
+    // Persistent storage can finish its admitted mutation as cancellation arrives.
+    vi.spyOn(collection, 'batch').mockImplementationOnce(async (operations) => {
+      const result = await batch(operations);
+      controller.abort();
+      return result;
+    });
+    const execute = vi.fn(async () => ({ ok: true, projection: 'externalShareableV1', sessionId: 'session-1', scannedThroughSeq: 0, hasMore: false, items: [] }));
+    await expect(management.createConversationThreadBindingForInvocation({
+      routerBindingId: 'binding-1', expectedRouterRevision: 5, expectedConnectionRevision: 4,
+      endpoint: { kind: 'thread', audience: 'shared', id: 'cancelled-topic', parentId: 'chat-1' },
+      sessionId: 'session-1', allowedPrincipalIds: ['person-1'], policy: sessionTarget.policy,
+    }, { ...context(collection, execute), signal: controller.signal })).rejects.toMatchObject({
+      code: 'channels_connection_create_cancelled', retryable: true,
+    });
+  });
+
   it('creates and updates a multi-query router through the contributed Actions with provider-verified identities', async () => {
     const executionOrigin = { serverIdentityId: 'srv_account_one', materializationRef: materialization };
     const collection = createCollection([connectionRow({ transportOrigin: { serverIdentityId: executionOrigin.serverIdentityId, machineId: materialization.machineId } })]);

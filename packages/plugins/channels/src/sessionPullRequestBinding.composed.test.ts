@@ -13,8 +13,12 @@ import {
 
 import { GITHUB_PLUGIN } from '../../scm-github/src/manifest.js';
 import { CHANNELS_PLUGIN, CHANNELS_PROVIDER_POINT_REF, PLUGIN_MANIFEST } from './manifest.js';
-import { CHANNEL_STATE_COLLECTION, CHANNEL_STATE_FIELD, CHANNEL_STATE_FIXED_ROW_ID, CHANNEL_STATE_RECORD_KIND } from './collections.js';
+import { CHANNEL_DELIVERIES_COLLECTION, CHANNEL_STATE_COLLECTION, CHANNEL_STATE_FIELD, CHANNEL_STATE_FIXED_ROW_ID, CHANNEL_STATE_RECORD_KIND } from './collections.js';
 import { MemoryCollection } from './testkit/memoryCollection.js';
+import { createConversationSessionProjectionFrontierRowId } from './sessionProjection.js';
+import { readConversationBindingUpdateRow } from './accountLocalBindingPolicy.js';
+import { createConversationOutwardDeliveryCollectionStore } from './outwardDelivery.js';
+import { startConversationDeliveryAttempt } from './deliveryCustody.js';
 import { channelsOperationOnlyTargetedContributionsFixture } from './testkit/operationOnlyTargetedContributionsFixture.js';
 
 describe('registered Session PR URL attach', () => {
@@ -49,6 +53,7 @@ describe('registered Session PR URL attach', () => {
       } as unknown as PluginServices['connectedAccounts'] },
     });
     const state = new MemoryCollection<Record<string, JsonValue>>();
+    const deliveries = new MemoryCollection<Record<string, JsonValue>>();
     await state.put({ id: CHANNEL_STATE_FIXED_ROW_ID.connectionIdentityKey,
       [CHANNEL_STATE_FIELD.recordKind]: CHANNEL_STATE_RECORD_KIND.connectionIdentityKey, v: 1,
       payload: { connectionIdentityKey: 'A'.repeat(43) } }, { expectedRevision: 'absent' });
@@ -126,6 +131,7 @@ describe('registered Session PR URL attach', () => {
         machineId: currentMachineId, materializationId: 'channels-native-core' }),
       services: { logger: { debug() {}, info() {}, warn: warnings, error() {}, diagnostic() {} },
       storage: { account: { collection(definition: { id: string }) {
+        if (definition.id === CHANNEL_DELIVERIES_COLLECTION.id) return deliveries;
         if (definition.id !== CHANNEL_STATE_COLLECTION.id) throw new Error('Unexpected Collection');
         return state;
       } } } as unknown as PluginServices['storage'],
@@ -391,6 +397,24 @@ describe('registered Session PR URL attach', () => {
       }, { surface: 'mcp', services })).rejects.toMatchObject({ code: 'channels_pr_link_conflict' });
       expect(await core.invokeAction('session-pull-request-binding-v1', { kind: 'list', sessionId: 'session-1' },
         { surface: 'mcp', services })).toMatchObject({ kind: 'links', pullRequestLinks: [{ number: 14 }, { number: 15 }] });
+      const heldLink = remaining.find(link => link.pullRequest.number === 15);
+      if (!heldLink) throw new Error('Missing PR 15 relationship');
+      const heldBindingRow = await state.get(heldLink.bindingId);
+      if (!heldBindingRow) throw new Error('Missing binding before delivery admission');
+      const heldBinding = readConversationBindingUpdateRow({ row: heldBindingRow, bindingId: heldLink.bindingId }).binding;
+      const deliveryStore = createConversationOutwardDeliveryCollectionStore({
+        stateCollection: state, deliveriesCollection: deliveries, signal: new AbortController().signal,
+      });
+      const heldDelivery = await deliveryStore.ensure({ connectionId: heldBinding.connectionId, bindingId: heldBinding.id,
+        routeAuthority: { connectionAuthorityEpoch: 1, bindingRevision: heldBindingRow.revision, bindingAuthorityEpoch: heldBinding.authorityEpoch },
+        source: { kind: 'sessionProjection', sessionId: 'session-1', semanticItemId: 'in-flight-before-unlink' },
+        endpoint: heldBinding.endpoint, content: { text: 'Already admitted response' }, deliveryKey: 'in-flight-before-unlink', linkPreviewPolicy: 'suppress',
+      });
+      if (heldDelivery.kind !== 'created') throw new Error('Expected admitted delivery custody');
+      const attempt = startConversationDeliveryAttempt({ custody: heldDelivery.record.custody, attemptId: 'held-at-unlink', startedAt: Date.now() });
+      if (attempt.kind !== 'started') throw new Error('Expected an in-flight delivery');
+      expect(await deliveryStore.compareAndSwap({ custodyId: heldDelivery.record.custodyId,
+        expectedRevision: heldDelivery.record.revision, custody: attempt.custody })).toMatchObject({ kind: 'updated' });
       expect(await core.invokeAction('session-pull-request-binding-v1', { kind: 'unlink', sessionId: 'session-1',
         bindings: operands }, { surface: 'mcp', services })).toEqual({ kind: 'removed' });
       expect(await core.invokeAction('session-pull-request-binding-v1', { kind: 'list', sessionId: 'session-1' },
@@ -404,6 +428,43 @@ describe('registered Session PR URL attach', () => {
       expect(await core.invokeAction('session-pull-request-binding-v1', { kind: 'unlink', sessionId: 'session-1',
         bindingId: result.bindingId, expectedRevision: current.revision }, { surface: 'mcp', services })).toEqual({ kind: 'removed' });
       expect(peerCompletions).toHaveLength(beforeUnlink);
+      const heldDeletedBinding = await state.get(heldBinding.id);
+      const heldCustodyRow = await deliveries.get(heldDelivery.record.custodyId);
+      await expect(core.invokeAction('session-pull-request-binding-v1', {
+        ...input, pullRequestUrl: 'https://github.com/acme/widgets/pull/15', credentialRef: rejoinCredential,
+      }, { surface: 'mcp', services })).rejects.toMatchObject({ code: 'channels_binding_create_conflict' });
+      expect(await state.get(heldBinding.id)).toEqual(heldDeletedBinding);
+      expect(await deliveries.get(heldDelivery.record.custodyId)).toEqual(heldCustodyRow);
+      const pending = bulkRelations.links.find(link => link.pullRequest.number === 14);
+      if (!pending) throw new Error('Missing PR 14 relationship');
+      expect((await state.get(pending.bindingId))?.value.payload).toMatchObject({ deletionState: 'finalizingDelete', authorityEpoch: 2 });
+      const pendingRelink = { ...input, pullRequestUrl: 'https://github.com/acme/widgets/pull/14', credentialRef: rejoinCredential };
+      const reattachedPending = SessionPullRequestBindingResultV1Schema.parse(await core.invokeAction('session-pull-request-binding-v1', pendingRelink,
+        { surface: 'mcp', services }));
+      expect(reattachedPending).toMatchObject({ kind: 'attached', bindingId: pending.bindingId });
+      expect(await core.invokeAction('session-pull-request-binding-v1', pendingRelink, { surface: 'mcp', services })).toEqual(reattachedPending);
+      expect((await state.get(pending.bindingId))?.value.payload).toMatchObject({ deletionState: 'none', enabled: false });
+      const finalized = bulkRelations.links.find(link => link.pullRequest.number === 13);
+      if (!finalized) throw new Error('Missing PR 13 relationship');
+      // Model the Data boundary after the incumbent finalizer has tombstoned
+      // both owned identities. Reads hide tombstones; CAS still observes them.
+      for (const rowId of [finalized.bindingId, createConversationSessionProjectionFrontierRowId(finalized.bindingId)]) {
+        const row = await state.get(rowId);
+        if (!row) throw new Error('Missing finalizing relationship artifact');
+        await state.delete(rowId, { expectedRevision: row.revision });
+      }
+      const relink = { ...input, pullRequestUrl: 'https://github.com/acme/widgets/pull/13', credentialRef: rejoinCredential };
+      const reattached = SessionPullRequestBindingResultV1Schema.parse(await core.invokeAction('session-pull-request-binding-v1', relink,
+        { surface: 'mcp', services }));
+      expect(reattached).toMatchObject({ kind: 'attached', bindingId: finalized.bindingId });
+      expect(await core.invokeAction('session-pull-request-binding-v1', relink, { surface: 'mcp', services })).toEqual(reattached);
+      const relinked = SessionPullRequestBindingResultV1Schema.parse(await core.invokeAction('session-pull-request-binding-v1',
+        { kind: 'list', sessionId: 'session-1' }, { surface: 'mcp', services }));
+      expect(relinked).toMatchObject({ kind: 'links' });
+      if (relinked.kind !== 'links') throw new Error('Missing relinked relationships');
+      expect(relinked.pullRequestLinks.map(link => link.number).sort((a, b) => a - b)).toEqual([13, 14]);
+      expect(await core.invokeAction('session-pull-request-binding-v1', { kind: 'list', sessionId: 'session-2' },
+        { surface: 'mcp', services })).toMatchObject({ kind: 'links', pullRequestLinks: [{ number: 12 }] });
     } finally { await core.dispose(); await completion.dispose(); await peer.dispose(); await provider.dispose(); }
   });
 });

@@ -28,6 +28,7 @@ import type {
   ConversationSessionProjectionBinding,
   ConversationSessionProjectionSource,
 } from './sessionProjection.js';
+import { createConversationSessionProjectionFrontierRowId } from './sessionProjection.js';
 import {
   type ChannelStateCollection,
   type StoredCollectionRow,
@@ -398,6 +399,7 @@ export async function deliverConversationSessionProjectionOutwardDelivery(input:
   actions: ActionsService;
   store: ConversationOutwardDeliveryStore;
   binding: ConversationSessionProjectionBinding;
+  frontierRowRevision: number;
   source: ConversationSessionProjectionSource;
   content: string;
   replyContext?: ConversationDeliveryReplyContextV1;
@@ -435,7 +437,6 @@ export async function deliverConversationSessionProjectionOutwardDelivery(input:
   if (binding === null
     || !target.success
     || target.data.kind !== 'session'
-    || binding.revision !== input.binding.revision
     || binding.connectionId !== input.binding.connectionId
     || target.data.sessionId !== input.binding.target.sessionId
     || target.data.sessionId !== input.source.sessionId
@@ -464,6 +465,19 @@ export async function deliverConversationSessionProjectionOutwardDelivery(input:
   });
   if (connection === null) {
     return { kind: 'notAttempted', reason: 'connectionCorrupt' };
+  }
+  // Content reads may outlive unlink and reattach of this deterministic ID.
+  // The existing frontier revision admits this page without rejecting harmless
+  // binding edits. Work admitted here may finish across a later unlink.
+  try {
+    const frontier = await input.stateCollection.get(createConversationSessionProjectionFrontierRowId(input.binding.bindingId), {
+      signal: input.signal,
+    });
+    if (frontier === null || frontier.revision !== input.frontierRowRevision) {
+      return { kind: 'notAttempted', reason: 'custodyChangedBeforeAttempt' };
+    }
+  } catch {
+    return { kind: 'notAttempted', reason: input.signal.aborted ? 'cancelled' : 'custodyUnavailable' };
   }
   const provisional: ConversationOutwardDeliveryObligation = {
     connectionId: binding.connectionId,

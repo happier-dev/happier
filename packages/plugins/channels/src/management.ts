@@ -10,6 +10,7 @@ import {
 import { pluginJsonValuesEqual } from '@happier-dev/plugin-sdk/protocol';
 import { SessionAcceptedWorkspaceV1Schema, SessionIdSchema } from '@happier-dev/plugin-sdk/sessions';
 import { normalizeScmHostingRepositoryIdentity, sameScmHostingRepositoryIdentity } from '@happier-dev/plugin-sdk/scm';
+import { persistConversationBindingCreation } from './bindingCreation.js';
 import { readSessionPullRequestBindingRows, sessionPullRequestBindingSelection } from './sessionPullRequestBindings.js';
 import { parseSessionPullRequestUrl, sessionPullRequestUrl, type SessionPullRequestProvider } from './sessionPullRequestProvider.js';
 import type { PluginAccountStorageScope, PluginAccountStorageConsumerContext } from '@happier-dev/plugin-sdk/storage';
@@ -4286,8 +4287,8 @@ function finalizingBindingDeleteIsAuthorized(current: ConversationBindingUpdateR
 
 /**
  * Binding deletion is a direct authority cut. The retained finalizing row is
- * the sole recovery fact while incumbent ingress and outward custody finish;
- * it does not create another queue, cursor, or finalizer wake.
+ * the sole recovery fact while incumbent ingress and outward custody finish.
+ * Cleanup only mutates Account data; the background caller owns placement.
  */
 async function finalizeConversationBindingDelete(input: Readonly<{
   bindingId: string;
@@ -4315,8 +4316,6 @@ async function finalizeConversationBindingDelete(input: Readonly<{
     connectionId: current.binding.connectionId,
   });
   if (connection.lifecycle.deletionState !== 'none') return;
-  if (!await hasCurrentConversationExecutionPlacement(input.context, connection.transportOrigin)) return;
-
   const custody = await settleConversationOutwardDeliveriesForBindingDeletion({
     stateCollection: collection,
     deliveriesCollection: requireChannelsAccountStorage(input.context).collection(CHANNEL_DELIVERIES_COLLECTION),
@@ -4498,6 +4497,7 @@ export async function finalizeConversationConnectionDeletesForInvocation(
       try {
         const current = readConversationBindingUpdateRow({ row, bindingId });
         if (!finalizingBindingDeleteIsAuthorized(current)) continue;
+        if (!await isConversationConnectionPlacedForInvocation(context, current.binding.connectionId)) continue;
         await finalizeConversationBindingDelete({ bindingId, context });
       } catch (error) {
         // Retain the canonical rows untouched; the next existing wake re-reads
@@ -4596,31 +4596,24 @@ export async function createConversationThreadBindingForInvocation(input: Readon
     operation: 'channels_binding_create',
   });
   const frontier = await createSessionProjectionFrontierForBinding({ bindingId, target: candidate.binding.target, context });
-  const expectedRevisions = new Map<string, number | 'absent'>([[bindingId, 'absent']]);
   const frontierId = createConversationSessionProjectionFrontierRowId(bindingId);
-  if (frontier !== null) expectedRevisions.set(frontierId, 'absent');
-  for (;;) {
-    assertNotAborted(context.signal);
-    const result = await collection.batch([
+  const result = await persistConversationBindingCreation({
+    collection,
+    guards: [
       { kind: 'assert', rowId: router.connectionId, expectedRevision: input.expectedConnectionRevision },
       { kind: 'assert', rowId: router.id, expectedRevision: input.expectedRouterRevision },
-      { kind: 'put', value: candidateRow, expectedRevision: expectedRevisions.get(bindingId)! },
-      ...(frontier === null ? [] : [{ kind: 'put' as const, value: frontier, expectedRevision: expectedRevisions.get(frontierId)! }]),
-    ], { signal: context.signal });
-    assertNotAborted(context.signal);
-    if (result.status !== 'conflict') {
-      const revision = result.results.find((entry) => entry.rowId === bindingId && !entry.deleted)?.revision;
-      if (revision === undefined) throw pluginError('channels_thread_binding_result_invalid', 'The thread binding batch omitted its retained row result.', true);
-      return { kind: 'created', binding: candidate.binding, revision };
-    }
-    if (result.conflicts.some((entry) => entry.rowId === router.id || entry.rowId === router.connectionId)) return { kind: 'stale' };
-    const retained = await rejoin();
-    if (retained !== null) return retained;
-    // Collection get hides tombstones. Its exact CAS conflict publishes the
-    // revision needed to resurrect this same binding and frontier identities.
-    if (result.conflicts.length === 0 || result.conflicts.some((entry) => !entry.deleted || entry.revision === null || !expectedRevisions.has(entry.rowId))) return { kind: 'stale' };
-    for (const entry of result.conflicts) if (entry.revision !== null) expectedRevisions.set(entry.rowId, entry.revision);
+    ],
+    rows: [{ rowId: bindingId, value: candidateRow }, ...(frontier === null ? [] : [{ rowId: frontierId, value: frontier }])],
+    signal: context.signal,
+    assertNotAborted: () => assertNotAborted(context.signal),
+  });
+  if (result.status !== 'conflict') {
+    const revision = result.results.find((entry) => entry.rowId === bindingId && !entry.deleted)?.revision;
+    if (revision === undefined) throw pluginError('channels_thread_binding_result_invalid', 'The thread binding batch omitted its retained row result.', true);
+    return { kind: 'created', binding: candidate.binding, revision };
   }
+  if (result.conflicts.some((entry) => entry.rowId === router.id || entry.rowId === router.connectionId)) return { kind: 'stale' };
+  return await rejoin() ?? { kind: 'stale' };
 }
 
 /** Creates one binding only after the target owner has verified its current Automation version. */
@@ -4661,8 +4654,22 @@ async function createConversationBindingWithAudience(
   const newBindingId = scopedBindingIdentity === undefined ? createBindingId() : `binding-pr-${encodeUnpaddedBase64Url(new Uint8Array(
     await crypto.subtle.digest('SHA-256', new TextEncoder().encode(scopedBindingIdentity)),
   ))}`;
+  let resolvedTarget: ConversationBindingTargetV1 | undefined;
   if (scopedIdentity !== undefined) {
-    const retained = await collection.get(newBindingId, { signal: context.signal });
+    let retained = await collection.get(newBindingId, { signal: context.signal });
+    if (retained !== null) {
+      const current = readConversationBindingUpdateRow({ row: retained, bindingId: newBindingId });
+      if (sameConversationBindingTarget(current.binding.target, createInput.target)
+        && finalizingBindingDeleteIsAuthorized(current)) {
+        const target = await resolveBindingTargetForPersistence(createInput.target, context, allowedPrincipalIds);
+        if (target.kind === 'notVerified') return target;
+        resolvedTarget = target;
+        // Explicit reattachment may finish Account-only cleanup on another
+        // Machine. Old custody still decides whether deletion can complete.
+        await finalizeConversationBindingDelete({ bindingId: newBindingId, context });
+        retained = await collection.get(newBindingId, { signal: context.signal });
+      }
+    }
     if (retained !== null) {
       const current = readConversationBindingUpdateRow({ row: retained, bindingId: newBindingId });
       const oldScope = current.binding.target.kind === 'automation' ? current.binding.target.scopedTrigger : undefined;
@@ -4683,7 +4690,7 @@ async function createConversationBindingWithAudience(
           if (saved === null) throw pluginError('channels_binding_create_conflict', 'The updated PR binding became unavailable.', true);
           return { kind: 'created', binding: readConversationBindingUpdateRow({ row: saved, bindingId: newBindingId }).binding };
         }
-        const target = await resolveBindingTargetForPersistence(createInput.target, context);
+        const target = resolvedTarget ?? await resolveBindingTargetForPersistence(createInput.target, context);
         if (target.kind === 'notVerified') return target;
         const currentness = await rereadBindingResolutionAfterProviderEffect({ collection, connectionId: createInput.connectionId, expectedConnectionRevision: createInput.expectedConnectionRevision, context });
         if (currentness.kind !== 'current') return currentness;
@@ -4718,7 +4725,7 @@ async function createConversationBindingWithAudience(
   let connectionRowForPersistence: StateRow;
   let projectionFrontier: Awaited<ReturnType<typeof createSessionProjectionFrontierForBinding>> = null;
   if (createInput.target.kind === 'automation') {
-    const target = await resolveBindingTargetForPersistence(createInput.target, context, allowedPrincipalIds);
+    const target = resolvedTarget ?? await resolveBindingTargetForPersistence(createInput.target, context, allowedPrincipalIds);
     if (target.kind === 'notVerified') return target;
     // The Automation verifier is an external boundary. Re-read connection
     // authority and resolve the current stable provider before persistence.
@@ -4732,7 +4739,7 @@ async function createConversationBindingWithAudience(
     connectionRowForPersistence = finalCurrent.row;
     candidate = createCandidate(target);
   } else {
-    const target = await resolveBindingTargetForPersistence(createInput.target, context, allowedPrincipalIds);
+    const target = resolvedTarget ?? await resolveBindingTargetForPersistence(createInput.target, context, allowedPrincipalIds);
     if (target.kind === 'notVerified') return target;
     candidate = createCandidate(target);
     projectionFrontier = await createSessionProjectionFrontierForBinding({
@@ -4750,8 +4757,9 @@ async function createConversationBindingWithAudience(
     connectionRowForPersistence = finalCurrent.row;
   }
   assertNewConversationBindingCanPersist(candidate.binding);
-  const result = await collection.batch([
-    candidate.binding.enabled
+  const result = await persistConversationBindingCreation({
+    collection,
+    guards: [candidate.binding.enabled
       ? {
         kind: 'put' as const,
         value: connectionRowForPersistence.value,
@@ -4761,13 +4769,12 @@ async function createConversationBindingWithAudience(
         kind: 'assert' as const,
         rowId: createInput.connectionId,
         expectedRevision: connectionRowForPersistence.revision,
-      },
-    { kind: 'put', value: candidate.row, expectedRevision: 'absent' },
-    ...(projectionFrontier === null
-      ? []
-      : [{ kind: 'put' as const, value: projectionFrontier, expectedRevision: 'absent' as const }]),
-  ], { signal: context.signal });
-  assertNotAborted(context.signal);
+      }],
+    rows: [{ rowId: newBindingId, value: candidate.row },
+      ...(projectionFrontier === null ? [] : [{ rowId: createConversationSessionProjectionFrontierRowId(newBindingId), value: projectionFrontier }])],
+    signal: context.signal,
+    assertNotAborted: () => assertNotAborted(context.signal),
+  });
   if (result.status === 'conflict') {
     if (scopedIdentity !== undefined) {
       const retained = await collection.get(newBindingId, { signal: context.signal });

@@ -778,7 +778,7 @@ export async function runConversationOutwardDeliveryCycle(
           bindingId, skippedAssistantItem,
           outcome: { code: 'channels_projection_repliesOnlyInputNotConsumed', retryable: false, informational: true },
         }),
-        deliver: async ({ binding, item, source }) => {
+        deliver: async ({ binding, frontierRowRevision, item, source }) => {
           // Transcript reads can outlive a placement change. Recheck before
           // this callback can materialize or claim the final's custody.
           if (!await isConversationConnectionPlacedForInvocation(context, binding.connectionId)) {
@@ -799,6 +799,7 @@ export async function runConversationOutwardDeliveryCycle(
             actions: context.services.actions,
             store: deliveryStore,
             binding,
+            frontierRowRevision,
             source,
             content: item.text,
             ...(replyContext === undefined ? {} : { replyContext }),

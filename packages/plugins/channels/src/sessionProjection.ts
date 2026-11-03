@@ -647,6 +647,7 @@ export async function projectConversationSessionTranscriptPage(input: Readonly<{
   now?: () => number;
   deliver: (input: Readonly<{
     binding: ConversationSessionProjectionBinding;
+    frontierRowRevision: number;
     item: ExternalShareableTranscriptItem;
     source: ConversationSessionProjectionSource;
   }>) => Promise<ConversationOutwardDeliveryResult>;
@@ -754,6 +755,7 @@ export async function projectConversationSessionTranscriptPage(input: Readonly<{
 
     const delivery = await input.deliver({
       binding,
+      frontierRowRevision,
       item,
       source: {
         kind: 'sessionProjection',

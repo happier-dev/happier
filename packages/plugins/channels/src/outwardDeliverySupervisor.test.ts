@@ -30,7 +30,7 @@ import {
   createConversationOutwardDeliverySupervisor,
   runConversationOutwardDeliveryCycle,
 } from './outwardDeliverySupervisor.js';
-import { finalizeConversationConnectionDeletesForInvocation } from './management.js';
+import { deleteConversationBindingForInvocation, finalizeConversationConnectionDeletesForInvocation } from './management.js';
 import { startConversationForInvocation } from './conversationStart.js';
 import { isChannelStateJsonRecord } from './accountLocalBindingPolicy.js';
 import { resolveConversationDeliveryForInvocation } from './management.js';
@@ -663,6 +663,52 @@ function permissionWaitOutwardObligation(): ConversationOutwardDeliveryObligatio
 }
 
 describe('Channels outward-delivery supervisor', () => {
+  it.each(['relink', 'presentation edit'] as const)('admits a captured Session page only from its original frontier after %s during the transcript read', async change => {
+    const state = new MemoryCollection();
+    const deliveries = new MemoryCollection();
+    await seedProjectionState(state);
+    let changed = false;
+    const execute = vi.fn(async (action: string, input: unknown) => {
+      if (action === 'session.permission.remote.pending.list') return emptyPendingPermissionPage();
+      if (!changed) {
+        changed = true;
+        if (change === 'relink') {
+          await deleteConversationBindingForInvocation({ bindingId: 'binding-1', expectedRevision: 1 }, context as never);
+          await finalizeConversationConnectionDeletesForInvocation(context);
+          const binding = state.rows.get('binding-1');
+          const frontierId = createConversationSessionProjectionFrontierRowId('binding-1');
+          const frontier = state.rows.get(frontierId);
+          if (binding?.deleted !== true || frontier?.deleted !== true) throw new Error('Expected finalized binding artifacts.');
+          // Data retains both tombstone revisions when the same binding is reattached.
+          await state.batch([
+            { kind: 'put', expectedRevision: binding.revision, value: {
+              ...bindingRow(), payload: { ...bindingRow().payload, authorityEpoch: 1 },
+            } },
+            { kind: 'put', expectedRevision: frontier.revision, value: createConversationSessionProjectionFrontierRow({
+              bindingId: 'binding-1', targetSessionId: 'session-1', transcriptCursor: '1', lastScannedSeq: 1, revision: 1, now: 100,
+            }) },
+          ]);
+        } else {
+          await state.put({ ...bindingRow(), payload: { ...bindingRow().payload, linkPreviewPolicy: 'providerDefault' } }, { expectedRevision: 1 });
+        }
+      }
+      const caughtUp = isChannelStateJsonRecord(input) && input.cursor === '1';
+      return { ok: true, projection: 'externalShareableV1', sessionId: 'session-1', scannedThroughSeq: 1, nextCursor: '1', hasMore: false,
+        items: caughtUp ? [] : [{ kind: 'assistantText', sessionId: 'session-1', seq: 1, itemId: 'captured-before-change', turnId: 'turn-1',
+          final: 'completed', text: 'Captured before binding change', consumedInputs: [] }] };
+    });
+    const deliver = vi.fn(async () => ({ result: { kind: 'delivered', providerMessageIds: ['captured-page'] }, executionOrigin: providerTransportOrigin }));
+    const context = backgroundContext({ state, deliveries, execute, executeAdmittedTargetedOperationWithExecutionOrigin: deliver });
+    await runConversationOutwardDeliveryCycle({ context, now: () => 100 });
+    expect(deliver).toHaveBeenCalledTimes(change === 'relink' ? 0 : 1);
+    expect(deliveries.rows.size).toBe(change === 'relink' ? 0 : 1);
+    // A harmless edit may lose the progress CAS; its next wake rejoins custody
+    // and advances the preserved frontier without another provider delivery.
+    await runConversationOutwardDeliveryCycle({ context, now: () => 101 });
+    expect(deliver).toHaveBeenCalledTimes(change === 'relink' ? 0 : 1);
+    expect(state.rows.get(createConversationSessionProjectionFrontierRowId('binding-1'))?.value.payload).toMatchObject({ lastScannedSeq: 1 });
+  });
+
   it('leaves a final unclaimed when the connection moves during the transcript read', async () => {
     const state = new MemoryCollection();
     const deliveries = new MemoryCollection();
