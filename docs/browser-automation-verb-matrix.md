@@ -27,6 +27,11 @@ The shared preset catalog is exported by `browser/control/v1`; native views retu
 typed `unsupported_command` result. These are development-source contracts, not physical-device
 or Safari certification.
 
+In unreleased 0.3 source, managed-browser viewport and DPR controls use the same controlling
+viewer and control epoch as human input. The admitted viewer sizes the existing page with CDP;
+unchanged geometry sends no additional CDP command. Other viewers consume that geometry and
+fit the same picture rather than applying their own device emulation.
+
 An approved first `browser.view.open` on a Machine retains the original command while managed
 Chromium is installed. Concurrent requests share the existing provisioner. Installation is
 followed by the canonical route refresh, then the original dispatch reads that refreshed control

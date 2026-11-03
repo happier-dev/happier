@@ -1,7 +1,7 @@
 import { BROWSER_AUTOMATION_MAX_ACTION_TIMEOUT_MS } from '@happier-dev/protocol/browser/automation/v1';
-import { BrowserEventBatchV1Schema } from '@happier-dev/protocol/browser/events/v1';
+import { BrowserEventBatchV1Schema, type BrowserEventBatchV1 } from '@happier-dev/protocol/browser/events/v1';
 import { browserViewKey } from '@happier-dev/protocol/browser/view/key';
-import type { BrowserEventV1, MachineLiveStreamControlSidebandV1 } from '@happier-dev/protocol';
+import type { BrowserEditableTargetV1, BrowserEventV1, MachineLiveStreamControlSidebandV1 } from '@happier-dev/protocol';
 import type { BrowserAutomationDaemonService } from '../automation/service';
 import type { BrowserSidecarContextCaptureSurface } from '../sidecar/controlAdapter';
 import type { MachineLiveStreamCaptureRegistry } from '../../peer/mediation/stream/captureRegistry';
@@ -20,6 +20,7 @@ export function registerBrowserLiveCapture(input: Readonly<{
     const registered = new Set<string>();
     function register(identity: BrowserCaptureView): void {
         const view = { browserSessionId: identity.browserSessionId, viewId: identity.viewId };
+        const viewportOwner = input.contextCapture.resolveViewportOwner?.(view);
         if (!input.contextCapture.resolvePageHandle(view)?.sessionId || !input.contextCapture.subscribeCdpEvents) return;
         const sourceId = browserViewKey(view);
         const adapter: MachineLiveStreamCaptureAdapter = {
@@ -32,9 +33,10 @@ export function registerBrowserLiveCapture(input: Readonly<{
                 let stopped = false;
                 let failInput: (reasonCode: string) => void = () => undefined;
                 let inputPending = Promise.resolve();
+                let emitEditableTarget: (target: BrowserEditableTargetV1) => void = () => {};
                 // Reuse the existing codec normalization/credit admission/terminal receipt owner.
                 const capture = createSimulatorFrameProducerCaptureAdapter({ sourceId, sourceCodecs: ['image.mjpeg'], producer: {
-                    async start({ emitFrame, fail, reportInputFailure }) {
+                    async start({ emitFrame, fail, reportInputFailure, getPayloadByteLimit }) {
                         failInput = reportInputFailure;
                         const emitLatest = () => {
                             if (latest && !paused && !stopped && canObserve()) emitFrame({ codecId: 'image.mjpeg', payload: latest.dataBase64,
@@ -47,10 +49,19 @@ export function registerBrowserLiveCapture(input: Readonly<{
                         if (!subscription) throw { reasonCode: 'capture_source_unavailable' };
                         // Metadata uses the same encrypted frame transport, scope and lifetime as
                         // the watched view. The controller and engine remain the event producers.
-                        const emitEvent = (event?: BrowserEventV1) => {
-                            if (stopped || !canObserve() || event && (event.browserSessionId !== view.browserSessionId
-                                || !('viewId' in event) || (event.viewId !== view.viewId
-                                    && !(event.kind === 'viewOpened' && event.openerViewId === view.viewId)))) return;
+                        const emitMetadata = (batch: Omit<BrowserEventBatchV1, 'v'>, timestampMs = Date.now(), payloadByteLimit?: number) => {
+                            if (stopped || !canObserve()) return;
+                            const payload = Buffer.from(JSON.stringify(BrowserEventBatchV1Schema.parse({ v: 1, ...batch })), 'utf8');
+                            const limit = payloadByteLimit ?? getPayloadByteLimit({ codecId: 'image.mjpeg', payloadKind: 'metadata', timestampMs });
+                            if (limit !== undefined && payload.byteLength > limit) { fail('max_frame_bytes_exceeded'); return; }
+                            emitFrame({ codecId: 'image.mjpeg', payloadKind: 'metadata', timestampMs,
+                                payload: payload.toString('base64') });
+                        };
+                        const viewerInput = (controlEpoch: number) => humanViewer ? {
+                            controlling: input.automation()?.isViewerControlling({ ...view, viewerId: startInput.streamId }) === true,
+                            controlEpoch,
+                        } : undefined;
+                        const emitSnapshot = () => {
                             const occurredAt = Date.now();
                             const controller = input.automation()?.getStatus(view);
                             const navigation = input.contextCapture.getNavigationState?.(view);
@@ -60,18 +71,37 @@ export function registerBrowserLiveCapture(input: Readonly<{
                             if (controller) events.push({ kind: 'controllerChanged', ...view, state: controller,
                                 eventId: `controller-snapshot:${startInput.streamId}:${occurredAt}`, occurredAt,
                                 navigationGeneration: navigation?.navigationGeneration ?? 0 });
-                            if (event) events.push(event);
-                            emitFrame({ codecId: 'image.mjpeg', payloadKind: 'metadata', timestampMs: occurredAt,
-                                payload: Buffer.from(JSON.stringify(BrowserEventBatchV1Schema.parse({ v: 1, events })), 'utf8').toString('base64') });
+                            const viewport = viewportOwner?.getViewport(view);
+                            emitMetadata({ events,
+                                ...(viewport ? { viewport } : {}), ...(controller ? { viewerInput: viewerInput(controller.controlEpoch) } : {}) });
                         };
-                        const unsubscribeEngine = input.contextCapture.subscribeBrowserEvents?.(emitEvent);
-                        const unsubscribeController = input.automation()?.subscribeBrowserEvents(emitEvent);
-                        emitEvent();
+                        const emitEvent = (event: BrowserEventV1) => {
+                            if (event.browserSessionId !== view.browserSessionId
+                                || !('viewId' in event) || (event.viewId !== view.viewId
+                                    && !(event.kind === 'viewOpened' && event.openerViewId === view.viewId))) return;
+                            // Human capture keeps the private navigation projection during a hold;
+                            // the engine's public event remains redacted for other consumers.
+                            const navigation = humanViewer && event.kind === 'navigationStateChanged'
+                                ? input.contextCapture.getNavigationState?.(view) : undefined;
+                            emitMetadata({ events: [navigation ? { ...event, ...navigation } : event],
+                                ...(event.kind === 'controllerChanged' ? { viewerInput: viewerInput(event.state.controlEpoch) } : {}) });
+                        };
+                        emitEditableTarget = target => { if (humanViewer) emitMetadata({ events: [], editableTarget: target }); };
+                        const unsubscribeEngine = input.contextCapture.subscribeBrowserEvents?.(event => emitEvent(event));
+                        const unsubscribeController = input.automation()?.subscribeBrowserEvents(event => emitEvent(event));
+                        const unsubscribeViewport = viewportOwner?.subscribe(changed => {
+                            if (browserViewKey(changed) === sourceId) emitMetadata({ events: [], viewport: viewportOwner.getViewport(view) });
+                        });
+                        emitSnapshot();
                         return {
-                            stop: async () => { stopped = true; unsubscribeEngine?.(); unsubscribeController?.(); await subscription.stop(); },
+                            stop: async () => {
+                                stopped = true; unsubscribeEngine?.(); unsubscribeController?.(); unsubscribeViewport?.();
+                                input.automation()?.releaseViewerInput({ ...view, viewerId: startInput.streamId });
+                                await subscription.stop();
+                            },
                             pause: () => { paused = true; return { ok: true }; },
-                            resume: () => { paused = false; emitEvent(); emitLatest(); return { ok: true }; },
-                            requestKeyframe: () => { emitEvent(); emitLatest(); return { ok: true }; },
+                            resume: () => { paused = false; emitSnapshot(); emitLatest(); return { ok: true }; },
+                            requestKeyframe: () => { emitSnapshot(); emitLatest(); return { ok: true }; },
                         };
                     },
                 } });
@@ -82,11 +112,17 @@ export function registerBrowserLiveCapture(input: Readonly<{
                         if (control.sourceId !== sourceId || control.streamId !== startInput.streamId) return { ok: false, reasonCode: 'invalid_control' };
                         if (stopped) return { ok: false, reasonCode: 'capture_stopped' };
                         const action = inputAction(control, latest);
-                        if (!action) return result.session.applySidebandControl?.(control) ?? { ok: false, reasonCode: 'input_not_supported' };
+                        const viewEvent = control.kind === 'browser_input'
+                            && (control.event.kind === 'viewport' || control.event.kind === 'editableProbe') ? control.event : null;
+                        if (!action && !viewEvent) return result.session.applySidebandControl?.(control) ?? { ok: false, reasonCode: 'input_not_supported' };
+                        if (viewEvent && !viewportOwner) return { ok: false, reasonCode: 'input_not_supported' };
                         if (!humanViewer) return { ok: false, reasonCode: 'input_not_supported' };
                         const automation = input.automation();
                         if (!automation) return { ok: false, reasonCode: 'input_not_supported' };
                         if (!input.contextCapture.resolvePageHandle(view)) return { ok: false, reasonCode: 'capture_source_unavailable' };
+                        const admission = automation.claimViewerInput({ ...view, viewerId: startInput.streamId,
+                            ...(control.kind === 'browser_input' ? { controlEpoch: control.controlEpoch } : {}) });
+                        if (!admission.ok) return admission;
                         // Input acceptance is not a claim of execution. Failures become the existing
                         // typed nonterminal receipt; the automation owner remains the custody authority.
                         const takeover = automation.getStatus(view).controller === 'human'
@@ -99,6 +135,16 @@ export function registerBrowserLiveCapture(input: Readonly<{
                                 failInput('human_input_interruption_uncertain');
                                 return;
                             }
+                            if (viewEvent && viewportOwner) {
+                                const applied = await automation.getInputControl(view).execute({ requestedBy: 'human',
+                                    effect: async signal => {
+                                        if (viewEvent.kind === 'viewport') await viewportOwner.setViewport(view, viewEvent, { signal });
+                                        else emitEditableTarget(await viewportOwner.probeEditableAtPoint(view, viewEvent, { signal }));
+                                    }, classifyCompletion: () => 'known' });
+                                if (!applied.ok || applied.completion === 'unknown') failInput('human_input_failed');
+                                return;
+                            }
+                            if (!action) return;
                             const outcome = await automation.execute({ v: 1, ...view, automationRequestId: control.eventId,
                                 requestedBy: 'user', requesterRef: { kind: 'streamViewer', id: startInput.streamId },
                                 navigationGeneration: input.contextCapture.getNavigationState?.(view)?.navigationGeneration ?? 0,

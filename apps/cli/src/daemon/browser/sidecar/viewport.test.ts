@@ -1,6 +1,21 @@
-import { describe, expect, it } from 'vitest';
+// @vitest-environment jsdom
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
 import { createBrowserViewportOwner } from './viewport';
 import type { BrowserSidecarCdpControlTransport, BrowserSidecarViewLifecycleSubscriber } from './controlAdapter';
+
+// jsdom is the browser boundary; the CLI program intentionally has no ambient DOM globals.
+const page = globalThis as unknown as {
+    document: {
+        body: { replaceChildren(): void; innerHTML: string };
+        querySelector(selector: string): unknown;
+        elementFromPoint: unknown;
+    };
+    innerWidth: number;
+    innerHeight: number;
+};
+
+afterEach(() => { page.document.body.replaceChildren(); vi.restoreAllMocks(); });
 
 describe('managed browser viewport owner', () => {
     it('reapplies the current preset after a failed transition changed part of the browser policy', async () => {
@@ -92,4 +107,28 @@ describe('managed browser viewport owner', () => {
         } finally { owner.dispose(); }
     });
 
+    it.each([
+        ['email', '<input type="email" value="private@example.test">', { editable: true, inputMode: 'email', multiline: false, secret: false }],
+        ['password', '<input type="password" value="do-not-read">', { editable: true, inputMode: 'text', multiline: false, secret: true }],
+        ['textarea', '<textarea inputmode="numeric">private draft</textarea>', { editable: true, inputMode: 'numeric', multiline: true, secret: false }],
+        ['readonly', '<input readonly value="private">', { editable: false }],
+        ['disabled', '<fieldset disabled><input></fieldset>', { editable: false }],
+        ['checkbox', '<input type="checkbox">', { editable: false }],
+        ['button', '<button>Submit</button>', { editable: false }],
+    ])('probes %s without returning field content', async (_name, html, expected) => {
+        page.document.body.innerHTML = html;
+        const element = page.document.querySelector('input,textarea,button');
+        Object.defineProperty(page.document, 'elementFromPoint', { configurable: true, value: vi.fn(() => element) });
+        const owner = createBrowserViewportOwner({ resolvePageHandle: () => ({ targetId: 'target', sessionId: 'session' }),
+            transport: { dispatchPageCommand: async command => {
+                // CDP is the boundary; execute its real page expression against DOM elements.
+                const expression = command.params?.expression;
+                expect(typeof expression).toBe('string');
+                return { result: { value: new Function(`return ${expression}`)() } };
+            } } });
+        try {
+            expect(await owner.probeEditableAtPoint({ browserSessionId: 'browser', viewId: 'view' }, { x: 0.5, y: 0.25 })).toEqual(expected);
+            expect(page.document.elementFromPoint).toHaveBeenCalledWith(page.innerWidth * 0.5, page.innerHeight * 0.25);
+        } finally { owner.dispose(); }
+    });
 });

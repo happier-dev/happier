@@ -51,6 +51,55 @@ function request(
 }
 
 describe('browser automation daemon service', () => {
+  it.each(['disconnect', 'handBack', 'close', 'dispose'] as const)('releases the held physical pointer on viewer %s', async boundary => {
+    let pointerHeld = true;
+    const service = createBrowserAutomationDaemonService({ adapter: {
+      ...readOnlyAdapter(),
+      // Physical input is an external CDP boundary; custody and lifecycle stay real.
+      releaseInput: async () => { pointerHeld = false; },
+    } });
+    try {
+      await service.recordHumanInput({ ...view, authority: 'present_user' });
+      expect(service.claimViewerInput({ ...view, viewerId: 'viewer' })).toEqual({ ok: true });
+      if (boundary === 'disconnect') service.releaseViewerInput({ ...view, viewerId: 'viewer' });
+      else if (boundary === 'handBack') await service.handBack({ ...view, authority: 'present_user' });
+      else if (boundary === 'close') service.closeView(view);
+      else service.dispose();
+      await Promise.resolve();
+      expect(pointerHeld).toBe(false);
+    } finally { service.dispose(); }
+  });
+
+  it('keeps human control until the physical pointer release settles before hand back', async () => {
+    let finishRelease: () => void = () => undefined;
+    const release = new Promise<void>(resolve => { finishRelease = resolve; });
+    const service = createBrowserAutomationDaemonService({ adapter: { ...readOnlyAdapter(), releaseInput: () => release } });
+    try {
+      await service.recordHumanInput({ ...view, authority: 'present_user' });
+      expect(service.claimViewerInput({ ...view, viewerId: 'viewer' })).toEqual({ ok: true });
+      const yielding = service.handBack({ ...view, authority: 'present_user' });
+      expect(service.getStatus(view).controller).toBe('human');
+      expect(service.isViewerControlling({ ...view, viewerId: 'viewer' })).toBe(false);
+      finishRelease();
+      expect(await yielding).toEqual({ ok: true });
+      expect(service.getStatus(view).controller).toBe('none');
+    } finally { finishRelease(); service.dispose(); }
+  });
+
+  it('retains human control when the physical pointer release is unknown so hand back can be retried', async () => {
+    let releaseFails = true;
+    const service = createBrowserAutomationDaemonService({ adapter: { ...readOnlyAdapter(), releaseInput: async () => {
+      if (releaseFails) throw new Error('CDP acknowledgement lost');
+    } } });
+    try {
+      await service.recordHumanInput({ ...view, authority: 'present_user' });
+      expect(await service.handBack({ ...view, authority: 'present_user' })).toEqual({ ok: false });
+      expect(service.getStatus(view).controller).toBe('human');
+      releaseFails = false;
+      expect(await service.handBack({ ...view, authority: 'present_user' })).toEqual({ ok: true });
+    } finally { service.dispose(); }
+  });
+
   it('publishes uncertainty recovery only after a successful fresh observation without replaying the interrupted input', async () => {
     let finishClick: () => void = () => undefined;
     const click = new Promise<void>(resolve => { finishClick = resolve; });

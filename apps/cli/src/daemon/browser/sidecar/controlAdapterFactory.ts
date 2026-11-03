@@ -69,6 +69,7 @@ export function createBrowserSidecarCdpControlAdapterFactory(input: Readonly<{
             // Same live transport + view bindings power the BRW-11 context producer AND the offline
             // diagnostics lane; no second transport is opened and the binding map is never duplicated.
             contextCapture: {
+                resolveViewportOwner: view => adapter.ownsView(view) ? adapter.viewportOwner : undefined,
                 transport: connected.transport,
                 resolvePageHandle: (view) => adapter.resolvePageHandle(view),
                 // The diagnostics ring is fed from the SAME live CDP connection (event stream) +

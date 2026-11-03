@@ -40,6 +40,8 @@ export type BrowserAutomationAdapterExecutionContext = Readonly<{
 
 export type BrowserAutomationAdapter = Readonly<{
   adapterKind: BrowserSemanticAdapterKindV1;
+  /** Release physical viewer input when its existing custody owner closes or yields control. */
+  releaseInput?(view: Readonly<{ browserSessionId: string; viewId: string }>): Promise<void>;
   /**
    * The action kinds this adapter (i.e. this host/engine version) can actually perform. When
    * present, the daemon service

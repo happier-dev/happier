@@ -1,4 +1,4 @@
-import { type BrowserViewportV1 } from '@happier-dev/protocol';
+import { BrowserEditableTargetV1Schema, type BrowserEditableTargetV1, type BrowserInputEventV1, type BrowserViewportV1 } from '@happier-dev/protocol';
 import { browserViewKey } from '@happier-dev/protocol/browser/view/key';
 import { BROWSER_VIEWPORT_PRESETS, type BrowserViewportEmulationV1 } from '@happier-dev/protocol/browser/control/v1';
 
@@ -6,12 +6,14 @@ import type { BrowserSidecarCdpCommandScope, BrowserSidecarContextCaptureSurface
 
 type View = Readonly<{ browserSessionId: string; viewId: string }>;
 type Viewport = BrowserViewportV1;
+type Point = Pick<Extract<BrowserInputEventV1, { kind: 'editableProbe' }>, 'x' | 'y'>;
 
 export type BrowserViewportOwner = Readonly<{
     setViewport(view: View, viewport: Viewport, scope?: BrowserSidecarCdpCommandScope): Promise<void>;
     setEmulation(view: View, emulation: BrowserViewportEmulationV1, scope?: BrowserSidecarCdpCommandScope): Promise<void>;
     getViewport(view: View): Viewport | undefined;
     subscribe(listener: (view: View) => void): () => void;
+    probeEditableAtPoint(view: View, point: Point, scope?: BrowserSidecarCdpCommandScope): Promise<BrowserEditableTargetV1>;
     dispose(): void;
 }>;
 
@@ -94,6 +96,36 @@ export function createBrowserViewportOwner(context: BrowserSidecarContextCapture
                 for (const listener of listeners) listener(view);
             }
             emulations.set(key, emulation);
+        },
+        async probeEditableAtPoint(view, point, scope) {
+            const handle = context.resolvePageHandle(view);
+            if (!handle) throw new Error('capture_source_unavailable');
+            const response = await context.transport.dispatchPageCommand({ ...handle, ...scope,
+                method: 'Runtime.evaluate', params: { returnByValue: true, expression: `(() => {
+                    let el = document.elementFromPoint(${JSON.stringify(point.x)} * innerWidth, ${JSON.stringify(point.y)} * innerHeight);
+                    while (el && el.shadowRoot && el.shadowRoot.elementFromPoint) {
+                        const inner = el.shadowRoot.elementFromPoint(${JSON.stringify(point.x)} * innerWidth, ${JSON.stringify(point.y)} * innerHeight);
+                        if (!inner || inner === el) break;
+                        el = inner;
+                    }
+                    if (!el) return { editable: false };
+                    const input = el instanceof HTMLInputElement;
+                    const textarea = el instanceof HTMLTextAreaElement;
+                    if (el.matches(':disabled') || el.readOnly) return { editable: false };
+                    if (!textarea && !el.isContentEditable && !(input && ['text', 'search', 'tel', 'url', 'email', 'password', 'number'].includes(el.type))) {
+                        return { editable: false };
+                    }
+                    const mode = el.inputMode;
+                    const inputMode = ['none', 'text', 'tel', 'url', 'email', 'numeric', 'decimal', 'search'].includes(mode) ? mode
+                        : input && ['tel', 'url', 'email', 'search'].includes(el.type) ? el.type
+                        : input && el.type === 'number' ? 'decimal' : 'text';
+                    const security = getComputedStyle(el).getPropertyValue('-webkit-text-security');
+                    return { editable: true, inputMode, multiline: textarea || !!el.isContentEditable,
+                        secret: input && el.type === 'password' || !!security && security !== 'none' };
+                })()` } });
+            const value = response && typeof response === 'object' && 'result' in response ? response.result : undefined;
+            const result = value && typeof value === 'object' && 'value' in value ? value.value : undefined;
+            return BrowserEditableTargetV1Schema.parse(result);
         },
         dispose() { unsubscribe?.(); applied.clear(); viewers.clear(); emulations.clear(); chromeVersions.clear(); listeners.clear(); },
     };

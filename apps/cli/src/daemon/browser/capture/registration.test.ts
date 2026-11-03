@@ -1,3 +1,9 @@
+import { FeaturesResponseSchema } from '@happier-dev/protocol';
+import { createBrowserDaemonRuntimeActionExecutor } from '../actions/runtimeActionExecutor';
+import { createBrowserDaemonFeatureGate } from '../featureGate';
+import { createBrowserDaemonControlRoutes } from '../control/routes';
+import { createBrowserDaemonControlBroker } from '../control/broker';
+import { MachineLiveStreamStartRequestV1Schema } from '@happier-dev/protocol/machines/peer/mediation/stream/v1';
 import { describe, expect, it, vi } from 'vitest';
 import type { MachineLiveStreamRelayEnvelopeV1 } from '@happier-dev/protocol';
 import { browserViewKey } from '@happier-dev/protocol/browser/view/key';
@@ -19,6 +25,124 @@ import type { RpcHandler, RpcHandlerContext } from '@/api/rpc/types';
 import { createBrowserAutomationOwnerRegistry } from '../automation/owners';
 
 describe('browser live capture', () => {
+    it('lets the controlling viewer resize once per geometry change and returns value-free keyboard hints', async () => {
+        const listeners = new Set<BrowserSidecarCdpEventSubscriber>();
+        const commands: Array<{ method: string; params?: Record<string, unknown> }> = [];
+        const transport = {
+            openPage: async () => ({ targetId: 'page', sessionId: 'cdp-page' }),
+            dispatchPageCommand: async (command: (typeof commands)[number]) => {
+                commands.push(command);
+                if (command.params?.expression === 'navigator.userAgent') return { result: { value: 'Mozilla/5.0 Chrome/142.0.7444.0 Safari/537.36' } };
+                if (command.method === 'Runtime.evaluate') return { result: { value: {
+                    editable: true, inputMode: 'email', multiline: false, secret: false,
+                } } };
+                return {};
+            },
+            dispatchBrowserCommand: async () => ({ success: true }),
+            subscribeCdpEvents: (listener: BrowserSidecarCdpEventSubscriber) => {
+                listeners.add(listener); return () => { listeners.delete(listener); };
+            },
+        };
+        const view = { browserSessionId: 'browser', viewId: 'view' };
+        const adapter = createBrowserSidecarCdpControlAdapter({ browserSessionId: 'browser', sidecarId: 'sidecar', transport });
+        const contextCapture = { resolveViewportOwner: () => adapter.viewportOwner, transport, resolvePageHandle: adapter.resolvePageHandle,
+            getNavigationState: adapter.getNavigationState, subscribeBrowserEvents: adapter.subscribeBrowserEvents,
+            subscribeCdpEvents: transport.subscribeCdpEvents, subscribeViewLifecycle: adapter.subscribeViewLifecycle };
+        const automation = createBrowserAutomationDaemonService({ adapter: createBrowserAutomationCdpAdapter({
+            transport: createControlAdapterAutomationTransport({ adapter, contextCapture }),
+        }) });
+        const producer = createBrowserCdpScreencastProducer({ contextCapture });
+        const registry = createMachineLiveStreamCaptureRegistry();
+        const registration = registerBrowserLiveCapture({ registry, contextCapture, producer, automation: () => automation });
+        const frames: Array<{ streamId: string; payloadBase64: string; payloadKind?: string }> = [];
+        const sourceId = browserViewKey(view);
+        try {
+            await adapter.dispatchCommand({ kind: 'openView', commandId: 'open', focus: true, ...view, platform: 'web',
+                target: { kind: 'externalUrl', targetId: 'external', url: 'https://example.test/' } });
+            const source = registry.resolve({ sourceId, streamFamily: 'browser.streamed' });
+            expect(source.ok).toBe(true);
+            if (!source.ok) return;
+            const start = async (streamId: string, callerAuthority: 'present_user' | 'account_automation') => {
+                const startRequest = MachineLiveStreamStartRequestV1Schema.parse({ v: 1, streamId, sourceId,
+                    streamFamily: 'browser.streamed', sourceMachineId: 'machine', targetMachineId: 'viewer', routeKind: 'loopback_direct' });
+                const result = await source.source.adapter.start({ streamId, callerAuthority, startRequest,
+                    streamFamily: 'browser.streamed', sourceMachineId: 'machine', targetMachineId: 'viewer', caps: {},
+                    startedAtMs: Date.now(), expiresAtMs: Date.now() + 60_000, nowMs: Date.now,
+                    offerFrame: frame => { frames.push(frame); return { ok: true }; },
+                    applyControl: () => ({ ok: true }), emitReceipt: () => {} });
+                expect(result.ok).toBe(true);
+                if (!result.ok) throw new Error('fixture capture failed');
+                return result.session;
+            };
+            const controller = await start('controller', 'present_user');
+            const observer = await start('observer', 'present_user');
+            const agent = await start('agent', 'account_automation');
+            const send = (session: typeof controller, streamId: string, event: unknown, eventId: string) => {
+                const parsed = MachineLiveStreamDecodedEnvelopeV1Schema.safeParse({ v: 1, sourceMachineId: 'machine', targetMachineId: 'viewer',
+                    message: { kind: 'sideband_control', control: { v: 1, streamId, sourceId, eventId, kind: 'browser_input',
+                        controlEpoch: automation.getStatus(view).controlEpoch, event } } });
+                expect(parsed.success).toBe(true);
+                if (!parsed.success || parsed.data.message.kind !== 'sideband_control') throw new Error('viewport control rejected');
+                return session.applySidebandControl?.(parsed.data.message.control);
+            };
+            const viewport = { kind: 'viewport', target: 'page', width: 390, height: 844, deviceScaleFactor: 3, sequence: 1 };
+            expect(send(controller, 'controller', viewport, 'size-1')).toEqual({ ok: true });
+            await vi.waitFor(() => expect(commands.filter(c => c.method === 'Emulation.setDeviceMetricsOverride')).toHaveLength(1));
+            expect(send(controller, 'controller', { ...viewport, sequence: 2 }, 'same')).toEqual({ ok: true });
+            expect(send(observer, 'observer', { ...viewport, width: 1440 }, 'observer-size')).toEqual({ ok: false, reasonCode: 'viewer_not_controlling' });
+            expect(send(agent, 'agent', viewport, 'agent-size')).toEqual({ ok: false, reasonCode: 'input_not_supported' });
+            expect(send(controller, 'controller', { ...viewport, height: 400, sequence: 3 }, 'size-2')).toEqual({ ok: true });
+            expect(send(controller, 'controller', { kind: 'editableProbe', target: 'page', x: 0.5, y: 0.25, sequence: 4 }, 'probe')).toEqual({ ok: true });
+            await vi.waitFor(() => expect(commands.filter(c => c.method === 'Runtime.evaluate')).toHaveLength(1));
+            expect(commands.filter(c => c.method === 'Emulation.setDeviceMetricsOverride').map(c => c.params)).toEqual([
+                { width: 390, height: 844, deviceScaleFactor: 3, mobile: false },
+                { width: 390, height: 400, deviceScaleFactor: 3, mobile: false },
+            ]);
+            await vi.waitFor(() => {
+                const metadata = frames.filter(frame => frame.payloadKind === 'metadata').map(frame => ({ streamId: frame.streamId,
+                    batch: BrowserEventBatchV1Schema.parse(JSON.parse(Buffer.from(frame.payloadBase64, 'base64').toString('utf8'))) }));
+                expect(metadata).toContainEqual(expect.objectContaining({ streamId: 'controller', batch: expect.objectContaining({
+                    editableTarget: { editable: true, inputMode: 'email', multiline: false, secret: false },
+                }) }));
+                expect(metadata.filter(frame => frame.streamId !== 'controller').every(frame => !('editableTarget' in frame.batch))).toBe(true);
+                expect(metadata.filter(frame => frame.batch.viewerInput?.controlling).every(frame => frame.batch.events.some(event =>
+                    event.kind === 'controllerChanged' && event.state.controller === 'human'))).toBe(true);
+            });
+            const broker = createBrowserDaemonControlBroker();
+            broker.registerAdapter(adapter);
+            const routes = createBrowserDaemonControlRoutes({ broker, automation: () => automation });
+            const featureGate = createBrowserDaemonFeatureGate({ env: { NODE_ENV: 'test' }, resolveServerFeaturesSnapshot: () => ({ status: 'ready',
+                features: FeaturesResponseSchema.parse({ features: { browser: { enabled: true,
+                    viewTargets: { enabled: true }, internal: { enabled: true }, sidecar: { enabled: true } } } }),
+            }) });
+            await featureGate.refresh();
+            const execute = createBrowserDaemonRuntimeActionExecutor({ control: routes, featureGate });
+            const setEmulation = (emulation: { kind: 'preset'; presetId: 'phone' } | { kind: 'fitViewer' }) => execute({
+                actionId: 'browser.view.setViewport', context: { authority: 'present_user' },
+                input: { kind: 'setViewport', commandId: `emulate-${emulation.kind}`, ...view, emulation },
+            });
+            expect(await setEmulation({ kind: 'preset', presetId: 'phone' })).toMatchObject({ status: 'dispatched' });
+            const count = commands.filter(command => command.method === 'Emulation.setDeviceMetricsOverride').length;
+            expect(send(controller, 'controller', { ...viewport, width: 800, height: 600, sequence: 5 }, 'resize-preset')).toEqual({ ok: true });
+            // A preset retains the same public geometry, so that fact cannot acknowledge the
+            // queued resize. Observe a subsequent page probe before issuing another Action.
+            expect(send(controller, 'controller', { kind: 'editableProbe', target: 'page', x: 0.5, y: 0.25, sequence: 6 }, 'preset-probe')).toEqual({ ok: true });
+            await vi.waitFor(() => expect(commands.filter(command => command.method === 'Runtime.evaluate')).toHaveLength(3));
+            await vi.waitFor(() => expect(adapter.viewportOwner.getViewport(view)).toMatchObject({ width: 412, height: 839,
+                deviceScaleFactor: 2.625, emulation: { kind: 'preset', presetId: 'phone' } }));
+            expect(commands.filter(command => command.method === 'Emulation.setDeviceMetricsOverride')).toHaveLength(count);
+            const metadata = frames.filter(frame => frame.payloadKind === 'metadata').map(frame => ({ streamId: frame.streamId,
+                batch: BrowserEventBatchV1Schema.parse(JSON.parse(Buffer.from(frame.payloadBase64, 'base64').toString('utf8'))) }));
+            for (const streamId of ['controller', 'observer', 'agent']) expect(metadata).toContainEqual(expect.objectContaining({ streamId,
+                batch: expect.objectContaining({ viewport: expect.objectContaining({ width: 412, height: 839,
+                    emulation: { kind: 'preset', presetId: 'phone' } }) }) }));
+            expect(await setEmulation({ kind: 'fitViewer' })).toMatchObject({ status: 'dispatched' });
+            expect(adapter.viewportOwner.getViewport(view)).toMatchObject({ width: 800, height: 600, deviceScaleFactor: 3,
+                emulation: { kind: 'fitViewer' } });
+            await controller.stop(); await observer.stop(); await agent.stop();
+        } finally { registration.dispose(); await producer.dispose(); automation.dispose(); adapter.dispose(); }
+    });
+
     it('holds the triggering and subsequent human sideband after uncertain takeover until fresh observation', async () => {
         const listeners = new Set<BrowserSidecarCdpEventSubscriber>();
         const view = { browserSessionId: 'browser', viewId: 'view' };

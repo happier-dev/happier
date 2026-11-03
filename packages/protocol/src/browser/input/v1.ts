@@ -67,5 +67,29 @@ export const BrowserInputEventV1Schema = z.discriminatedUnion('kind', [
   BrowserKeyInputEventV1Schema,
   BrowserPointerInputEventV1Schema,
   BrowserTextInputEventV1Schema,
+  z.extend(z.omit(BrowserViewportV1Schema, { emulation: true }), {
+    kind: z.literal('viewport'),
+    target: BrowserInputTargetV1Schema,
+    sequence: z.number().check(z.int(), z.nonnegative()),
+  }),
+  z.strictObject({
+    kind: z.literal('editableProbe'),
+    target: BrowserInputTargetV1Schema,
+    x: z.number().check(z.minimum(0), z.maximum(1)),
+    y: z.number().check(z.minimum(0), z.maximum(1)),
+    sequence: z.number().check(z.int(), z.nonnegative()),
+  }),
 ]);
 export type BrowserInputEventV1 = z.infer<typeof BrowserInputEventV1Schema>;
+
+/** Keyboard hints only. Field values, names and labels never cross this boundary. */
+export const BrowserEditableTargetV1Schema = z.discriminatedUnion('editable', [
+  z.strictObject({ editable: z.literal(false) }),
+  z.strictObject({
+    editable: z.literal(true),
+    inputMode: z.enum(['text', 'none', 'tel', 'url', 'email', 'numeric', 'decimal', 'search']),
+    multiline: z.boolean(),
+    secret: z.boolean(),
+  }),
+]);
+export type BrowserEditableTargetV1 = z.infer<typeof BrowserEditableTargetV1Schema>;

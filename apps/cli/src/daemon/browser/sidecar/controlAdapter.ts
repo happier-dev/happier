@@ -98,6 +98,7 @@ export type BrowserSidecarResourceTarget = Readonly<{
  * fail-closed (the unavailable source).
  */
 export type BrowserSidecarContextCaptureSurface = Readonly<{
+    resolveViewportOwner?(view: Readonly<{ browserSessionId: string; viewId: string }>): BrowserViewportOwner | undefined;
     /** Private actual-launch fact for the exact live owned view, never caller metadata. */
     resolveNativeObservation?(view: Readonly<{ browserSessionId: string; viewId: string }>): 'not_observable' | undefined;
     transport: Pick<BrowserSidecarCdpControlTransport, 'dispatchPageCommand'>;

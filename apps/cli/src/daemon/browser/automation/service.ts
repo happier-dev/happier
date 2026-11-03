@@ -12,6 +12,7 @@ import type { SecretFillSettlementV1 } from '@happier-dev/protocol/computer/v1';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
 import type { SurfaceInputAdmissionFailure, SurfaceInputControl, SurfaceInputExecutionResult } from '../../surfaces/inputControl';
 import { classifyBrowserCommandCompletion } from '../control/types';
+import { logger } from '@/ui/logger';
 import {
   createBrowserAutomationOwnerRegistry,
   type BrowserAutomationOwnerRegistry,
@@ -75,9 +76,12 @@ export type BrowserAutomationDaemonService = Readonly<{
     input: BrowserAutomationViewRef & BrowserControllerAuthority,
   ): Promise<BrowserAutomationCancelResult>;
   recordHumanInput(input: BrowserAutomationViewRef & BrowserControllerAuthority): Promise<BrowserAutomationCancelResult>;
+  claimViewerInput(input: BrowserAutomationViewRef & Readonly<{ viewerId: string; controlEpoch?: number }>): Readonly<{ ok: true } | { ok: false; reasonCode: 'stale_control' | 'viewer_not_controlling' }>;
+  releaseViewerInput(input: BrowserAutomationViewRef & Readonly<{ viewerId: string }>): void;
+  isViewerControlling(input: BrowserAutomationViewRef & Readonly<{ viewerId: string }>): boolean;
   /** Control commands share the drain; only page-changing commands take input ownership. */
   executeControlCommand(view: BrowserAutomationViewRef & BrowserCommandV1, authority: 'present_user' | 'account_automation', dispatch: () => Promise<BrowserCommandDispatchResultV1>): Promise<SurfaceInputExecutionResult<BrowserCommandDispatchResultV1>>;
-  handBack(input: BrowserAutomationViewRef & BrowserControllerAuthority): Readonly<{ ok: boolean }>;
+  handBack(input: BrowserAutomationViewRef & BrowserControllerAuthority): Promise<Readonly<{ ok: boolean }>>;
   getStatus(view: BrowserAutomationViewRef): BrowserAutomationControllerStateV1;
   getTimeline(view: BrowserAutomationViewRef): BrowserAutomationTimelineV1;
   closeView(view: BrowserAutomationViewRef): void;
@@ -93,6 +97,7 @@ export type BrowserAutomationDaemonService = Readonly<{
 }>;
 
 type ViewRuntime = {
+  view: BrowserAutomationViewRef;
   navigationGeneration: number;
   timeline: BrowserAutomationTimelineEntryV1[];
   inputControl: SurfaceInputControl;
@@ -103,6 +108,7 @@ type ViewRuntime = {
   activeActionKind: BrowserAutomationActionKindV1 | null;
   activeTarget: BrowserActiveTargetV1 | null;
   confidentialPreparationActive: boolean;
+  humanViewerId: string | null;
 };
 
 export function createBrowserAutomationDaemonService(input: Readonly<{
@@ -139,6 +145,7 @@ export function createBrowserAutomationDaemonService(input: Readonly<{
     const existing = runtimes.get(key);
     if (existing) return existing;
     const created: ViewRuntime = {
+      view: { browserSessionId: view.browserSessionId, viewId: view.viewId },
       navigationGeneration: 0,
       timeline: [],
       inputControl: owners.getInputControl(view),
@@ -148,6 +155,7 @@ export function createBrowserAutomationDaemonService(input: Readonly<{
       activeActionKind: null,
       activeTarget: null,
       confidentialPreparationActive: false,
+      humanViewerId: null,
     };
     runtimes.set(key, created);
     return created;
@@ -167,10 +175,26 @@ export function createBrowserAutomationDaemonService(input: Readonly<{
       ...(runtime.activeTarget ? { activeTarget: runtime.activeTarget } : {}) };
   }
 
+  async function releasePhysicalInput(view: BrowserAutomationViewRef, runtime: ViewRuntime, drain: Promise<unknown>): Promise<boolean> {
+    await drain;
+    const releaseInput = input.adapter.releaseInput;
+    if (!releaseInput) return true;
+    try {
+      await runtime.inputControl.drainWhile(() => releaseInput(view));
+      return true;
+    } catch {
+      // No page content or native error payload belongs in this lifecycle warning.
+      logger.warn('[browserAutomation] Viewer pointer release was not acknowledged; retry hand back.');
+      return false;
+    }
+  }
+
   function closeView(view: BrowserAutomationViewRef, sourceDestroyed = false): void {
     const key = browserViewKey(view);
     const runtime = runtimes.get(key);
+    const drain = runtime?.inputControl.takeOver('view_closed');
     owners.closeView(view, { sourceDestroyed });
+    if (runtime && drain) void releasePhysicalInput(view, runtime, drain);
     if (!runtime?.activeAutomationRequestId) runtimes.delete(key);
   }
 
@@ -484,8 +508,37 @@ export function createBrowserAutomationDaemonService(input: Readonly<{
     },
     cancelActive: recordHumanInput,
     recordHumanInput,
-    handBack(view) {
+    claimViewerInput(view) {
       const runtime = runtimeFor(view);
+      if (view.controlEpoch !== undefined && view.controlEpoch !== runtime.inputControl.getStatus().controlEpoch) {
+        return { ok: false, reasonCode: 'stale_control' };
+      }
+      if (runtime.humanViewerId !== null && runtime.humanViewerId !== view.viewerId) {
+        return { ok: false, reasonCode: 'viewer_not_controlling' };
+      }
+      if (runtime.humanViewerId !== view.viewerId) {
+        runtime.humanViewerId = view.viewerId;
+        emitController(view);
+      }
+      return { ok: true };
+    },
+    isViewerControlling(view) {
+      const runtime = runtimes.get(browserViewKey(view));
+      return runtime?.humanViewerId === view.viewerId && controllerState(view, runtime).controller === 'human';
+    },
+    releaseViewerInput(view) {
+      const runtime = runtimes.get(browserViewKey(view));
+      if (runtime?.humanViewerId === view.viewerId) {
+        runtime.humanViewerId = null;
+        void releasePhysicalInput(view, runtime, runtime.inputControl.takeOver('owner_disconnected'));
+        emitController(view);
+      }
+    },
+    async handBack(view) {
+      const runtime = runtimeFor(view);
+      // Retire the viewer before draining, so no new held input can overtake its release.
+      runtime.humanViewerId = null;
+      if (!await releasePhysicalInput(view, runtime, runtime.inputControl.takeOver())) return { ok: false };
       if (!runtime.inputControl.handBack()) return { ok: false };
       emitController(view);
       return { ok: true };
@@ -497,7 +550,9 @@ export function createBrowserAutomationDaemonService(input: Readonly<{
     closeView,
     dispose() {
       unsubscribeViewLifecycle?.();
-      for (const runtime of runtimes.values()) { void runtime.inputControl.close('owner_disconnected'); }
+      for (const runtime of runtimes.values()) {
+        void releasePhysicalInput(runtime.view, runtime, runtime.inputControl.close('owner_disconnected'));
+      }
       eventListeners.clear();
     },
     getRuntimeStats: () => ({ runtimeCount: runtimes.size }),

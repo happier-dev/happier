@@ -104,7 +104,7 @@ export function createBrowserDaemonControlRoutes(input: Readonly<{
             ...(context.authority === 'present_user' ? { authority: 'present_user' as const }
               : { authority: 'account_automation' as const, bypassApprovals: true as const }) };
           if (command.data.kind === 'takeControl') await automation.recordHumanInput(authority);
-          else if (!automation.handBack(authority).ok) return fail('adapter_unavailable', 'The interrupted browser action is still settling.');
+          else if (!(await automation.handBack(authority)).ok) return fail('adapter_unavailable', 'Browser input is still settling. Retry hand back.');
           return BrowserCommandDispatchResultV1Schema.parse({ v: 1, commandId: command.data.commandId,
             status: 'dispatched', adapterKind: view.adapterKind, events });
         } finally { unsubscribe(); }
