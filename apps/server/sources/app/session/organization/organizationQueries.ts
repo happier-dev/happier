@@ -25,6 +25,27 @@ export type SessionFolderAssignmentRecord = Readonly<{
     folderId: string;
 }>;
 
+/** Listing has already admitted these Sessions in this read snapshot. */
+export async function fetchSessionTagAssignmentsForAdmittedSessionsInTx(
+    reader: Pick<Tx, 'sessionTagAssignment'>,
+    accountId: string,
+    sessionIds: readonly string[],
+): Promise<ReadonlyMap<string, readonly string[]>> {
+    if (sessionIds.length === 0) return new Map();
+    const assignments = await reader.sessionTagAssignment.findMany({
+        where: { accountId, sessionId: { in: [...sessionIds] } },
+        orderBy: [{ sessionId: 'asc' }, { tagId: 'asc' }],
+        select: { sessionId: true, tagId: true },
+    });
+    const result = new Map<string, string[]>();
+    for (const assignment of assignments) {
+        const tags = result.get(assignment.sessionId) ?? [];
+        tags.push(assignment.tagId);
+        result.set(assignment.sessionId, tags);
+    }
+    return result;
+}
+
 /** List membership and personal order stay here; listing supplies its admitted corpus. */
 export async function fetchSessionOrganizationPinnedSessionIds(
     accountId: string,

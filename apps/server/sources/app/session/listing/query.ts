@@ -93,6 +93,14 @@ export function createFilteredSessionListWhere(params: Readonly<{
         params.scopeWhere,
         params.audienceWhere,
         createSessionViewerTagWhere({ accountId: params.accountId, tagIds: query.tagIds }),
+        // Null keys precede accepted identity publication. Keep them for the
+        // client's canonical Workspace resolver, not a second SQL identity rule.
+        query.projectKeys && (query.projectKeys.include.length || query.projectKeys.exclude.length)
+            ? { OR: [{ projectKey: null }, { projectKey: {
+                ...(query.projectKeys.include.length ? { in: [...query.projectKeys.include] } : {}),
+                ...(query.projectKeys.exclude.length ? { notIn: [...query.projectKeys.exclude] } : {}),
+            } }] }
+            : undefined,
         query.folderIds?.length
             ? {
                 sessionFolderAssignments: {

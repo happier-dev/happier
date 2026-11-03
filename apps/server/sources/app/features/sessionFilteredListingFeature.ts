@@ -9,6 +9,8 @@ export function resolveSessionFilteredListingFeature(env: NodeJS.ProcessEnv): Fe
                 enabled: true,
                 filteredListing: {
                     enabled: readSessionFilteredListingFeatureEnv(env).filteredListingEnabled,
+                    projectSelectorVersion: 1,
+                    membershipSelectorVersion: 1,
                 },
             },
         },

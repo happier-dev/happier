@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { encodeV2SessionListCursorV1, encodeV2SessionListCursorV2 } from '../control/contract.js';
 import { SessionListQueryV1Schema, SessionListUnavailableQueryV1Schema } from '../../index.js';
 import { buildSessionListServerQueryV1 } from './query.js';
+import { SessionListQueryResponseV1Schema } from './response.js';
 
 const query = {
   v: 1,
@@ -16,6 +17,29 @@ const query = {
 } as const;
 
 describe('SessionListQueryV1', () => {
+  it('retains truthful partial smart-membership coverage alongside manual pages', () => {
+    const response = { sessions: [], nextCursor: null, hasNext: false, attentionNextCursor: null, attentionHasNext: false,
+      membershipUnavailableReason: 'following' };
+    expect(SessionListQueryResponseV1Schema.parse(response)).toHaveProperty('membershipUnavailableReason', 'following');
+    expect(SessionListQueryResponseV1Schema.safeParse({ ...response, membershipUnavailableReason: 'invented' }).success).toBe(false);
+  });
+  it('admits a closed smart-or-manual branch independently from fixed outer selectors', () => {
+    const value = { ...query, audiences: [{ kind: 'team', teamId: 'fixed' }], membership: {
+      mode: 'filter_or_manual', tagIds: [' z ', 'a'], filter: { scope: 'all_accessible', attention: 'any', audiences: [], tagIds: ['smart'] },
+    } };
+    expect(SessionListQueryV1Schema.parse(value)).toMatchObject({ audiences: [{ kind: 'team', teamId: 'fixed' }], membership: { tagIds: ['a', 'z'] } });
+    expect(SessionListQueryV1Schema.safeParse({ ...value, membership: { ...value.membership, filter: { ...value.membership.filter, storage: 'archived' } } }).success).toBe(false);
+    expect(SessionListQueryV1Schema.parse({ ...query, membership: { mode: 'manual_only', tagIds: [] } })).toHaveProperty('membership.mode', 'manual_only');
+  });
+  it('admits and normalizes Home-local accepted Project selections without changing an omitted selector', () => {
+    expect(SessionListQueryV1Schema.parse({ ...query, projectKeys: { include: [' z ', 'a'], exclude: ['other'] } }))
+      .toMatchObject({ projectKeys: { include: ['a', 'z'], exclude: ['other'] } });
+    expect(SessionListQueryV1Schema.parse(query)).not.toHaveProperty('projectKeys');
+    for (const projectKeys of [
+      { include: [' '], exclude: [] }, { include: ['a', ' a '], exclude: [] },
+      { include: [], exclude: ['a', ' a '] }, { include: [], exclude: [], serverId: 'foreign' },
+    ]) expect(SessionListQueryV1Schema.safeParse({ ...query, projectKeys }).success).toBe(false);
+  });
   it('sends Bot-filter candidate queries without the client-only facet to supported older strict servers', () => {
     expect(buildSessionListServerQueryV1({ ...query, bot: 'bot' })).toEqual(query);
     expect(buildSessionListServerQueryV1(query)).toBe(query);

@@ -5,6 +5,7 @@ import { SessionEffectiveAccessV1Schema } from '../access/sessionEffectiveAccess
 import { V2SessionRecordSchema, V2SessionListRowSchema } from '../control/contract.js';
 import { SessionListMetadataUpgradeRequiredCountSchema } from '../control/listResult.js';
 import { SessionViewerProjectionV1Schema } from '../personal/viewer.js';
+import { SessionListUnavailableQueryV1Schema } from './query.js';
 
 export { SessionListMetadataUpgradeRequiredCountSchema } from '../control/listResult.js';
 
@@ -57,6 +58,7 @@ export const SessionListQueryResponseV1Schema = lazyZodSchema(() => z.strictObje
   attentionNextCursor: z.nullable(z.string()),
   attentionHasNext: z.boolean(),
   metadataUpgradeRequiredCount: z.optional(SessionListMetadataUpgradeRequiredCountSchema),
+  membershipUnavailableReason: z.optional(SessionListUnavailableQueryV1Schema.shape.reason),
 }));
 
 export type SessionListQueryResponseV1 = Readonly<z.infer<typeof SessionListQueryResponseV1Schema>>;

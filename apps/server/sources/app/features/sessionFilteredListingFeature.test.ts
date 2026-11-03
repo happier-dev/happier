@@ -11,6 +11,7 @@ describe('sessions.filteredListing server feature', () => {
             serverFeatureRegistry,
         );
         expect(readServerEnabledBit(payload, 'sessions.filteredListing')).toBe(true);
+        expect(payload.features.sessions.filteredListing).toMatchObject({ projectSelectorVersion: 1, membershipSelectorVersion: 1 });
     });
 
     it('honors the operator opt-out', () => {

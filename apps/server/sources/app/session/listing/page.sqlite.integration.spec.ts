@@ -1,5 +1,6 @@
 import { verifySparseSessionListing } from "./sparseListing.test-support";
 import { verifyFolderSessionListing } from "./folderListing.test-support";
+import { verifySessionSpaceMembershipListing } from "./spaceMembership.test-support";
 import { randomUUID } from "node:crypto";
 import { cpus } from "node:os";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
@@ -60,6 +61,8 @@ describe("Session listing predicate composition (SQLite)", () => {
     }, 180_000);
     afterAll(async () => { await harness?.close(); });
     afterEach(() => vi.unstubAllEnvs());
+
+    it('unions saved Space membership before pagination and preserves manual members through smart misses', verifySessionSpaceMembershipListing);
 
     it('lists document revisions without selecting or disclosing full documents', async () => {
         const owner = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: 'plain' } });

@@ -9,7 +9,7 @@ import { db } from "@/storage/db";
 import type { Tx } from "@/storage/inTx";
 import { readSnapshotWithCurrentAdmission } from "@/storage/readSnapshotWithCurrentAdmission";
 import { readmitSessionRowsInTx } from "@/app/session/access/sessionReadAdmission";
-import { fetchSessionOrganizationPinnedSessionIds } from "@/app/session/organization/organizationQueries";
+import { fetchSessionOrganizationPinnedSessionIds, fetchSessionTagAssignmentsForAdmittedSessionsInTx } from "@/app/session/organization/organizationQueries";
 import { buildSessionAccessWhere, createApplicableAudienceWhere, resolveEffectiveSessionAccessWhere } from "@/app/session/access/sessionAccessWhere";
 import { isServerFeatureEnabledForHome } from "@/app/features/catalog/serverFeatureGate";
 import { isSessionCollaborationEnabled } from "@/app/session/access/sessionAccess";
@@ -209,7 +209,9 @@ async function listSessionRuntimeManagedSubtree(params: Readonly<{
     if (!principal || principal.accountId !== params.userId || query.underSessionId !== principal.sessionId
         || query.scope !== 'all_accessible' || query.attention !== 'any'
         || query.audiences.length || query.tagIds.length || query.folderIds?.length
-        || query.coordinator !== undefined || query.includeAttention === true || query.attentionCursor !== undefined
+        || query.projectKeys?.include.length || query.projectKeys?.exclude.length
+        || query.coordinator !== undefined || query.membership !== undefined
+        || query.includeAttention === true || query.attentionCursor !== undefined
         || !query.includeInactive) throw new SessionListCredentialScopeDeniedError();
     const readIds = async (tx: Tx) => {
         const ids = await readSessionManagedSubtreeSessionIdsInTx(tx, {
@@ -440,11 +442,15 @@ async function listFilteredSessionsForAccount(params: Readonly<{
 }>): Promise<SessionListQueryResponseV1 | null> {
     const { query } = params.source;
     // Decided before the listing transaction opens, on the Home-effective configuration.
-    if (query.scope === "following" && !await isServerFeatureEnabledForHome("sessions.following")) {
+    const membershipFilter = query.membership?.mode === 'filter_or_manual' ? query.membership.filter : undefined;
+    const followingAvailable = (query.scope === 'following' || membershipFilter?.scope === 'following')
+        ? await isServerFeatureEnabledForHome('sessions.following') : true;
+    const collaborationAvailable = isSessionCollaborationEnabled();
+    if (query.scope === "following" && !followingAvailable) {
         throw new SessionListUnavailableQueryError("following");
     }
     if (query.audiences.some((audience) => audience.kind !== "outside_teams")
-        && !isSessionCollaborationEnabled()) {
+        && !collaborationAvailable) {
         throw new SessionListUnavailableQueryError("audience");
     }
 
@@ -516,15 +522,76 @@ async function listFilteredSessionsForAccount(params: Readonly<{
             const selected = new Set<string>();
             for (const row of projected) {
                 const coordinator = deriveSessionCoordinatorV1(row);
-                if (coordinator === undefined) throw new SessionListUnavailableQueryError('coordinator');
-                if (coordinator) selected.add(row.id);
+                // Private rule membership can be unavailable on a shared row.
+                // Only proven matches enter this filter; other rows must not
+                // withdraw independently admitted coordinators from the page.
+                if (coordinator === true) selected.add(row.id);
             }
             return rows.filter(row => selected.has(row.id));
         };
-        const rowAdmission: SessionListRowAdmission | undefined = query.coordinator === undefined ? attentionRowAdmission
+        const outerRowAdmission: SessionListRowAdmission | undefined = query.coordinator === undefined ? attentionRowAdmission
             : async rows => admitCoordinators(attentionRowAdmission ? await attentionRowAdmission(rows) : rows);
-        const admitAttentionCandidates: SessionListRowAdmission = query.coordinator === undefined ? admitAttentionRows
+        const outerAttentionAdmission: SessionListRowAdmission = query.coordinator === undefined ? admitAttentionRows
             : async rows => admitCoordinators(await admitAttentionRows(rows));
+        let membershipUnavailableReason: SessionListUnavailableQueryError['reason'] | undefined;
+        let smartWhere: Prisma.SessionWhereInput = { id: { in: [] } };
+        if (membershipFilter) {
+            if (membershipFilter.scope === 'following' && !followingAvailable) {
+                membershipUnavailableReason = 'following';
+            } else if (membershipFilter.audiences.some(audience => audience.kind !== 'outside_teams') && !collaborationAvailable) {
+                membershipUnavailableReason = 'audience';
+            } else {
+                let smartScopeWhere: Prisma.SessionWhereInput | undefined;
+                try {
+                    smartScopeWhere = await createSessionListScopeWhere({ tx, accountId: params.userId, scope: membershipFilter.scope });
+                } catch {
+                    membershipUnavailableReason = 'scope';
+                }
+                if (smartScopeWhere) {
+                    const smartAudienceWhere = await createApplicableAudienceWhere({
+                        tx, accountId: params.userId, audiences: membershipFilter.audiences,
+                        authentication: params.authentication,
+                        collectiveAccessSnapshot: accessResolution.collectiveAccessSnapshot,
+                    });
+                    const smartSubtreeWhere: Prisma.SessionWhereInput = membershipFilter.underSessionId
+                        ? { id: { in: await readSessionManagedSubtreeSessionIdsInTx(tx, {
+                            accountId: params.userId, rootSessionId: membershipFilter.underSessionId,
+                            authentication: params.authentication,
+                            collectiveAccessSnapshot: accessResolution.collectiveAccessSnapshot,
+                        }) } } : {};
+                    smartWhere = conjoinSessionListWhereInputs(createFilteredSessionListWhere({
+                        accountId: params.userId,
+                        query: { v: 1, storage: query.storage, includeInactive: true, ...membershipFilter },
+                        accessWhere: {}, scopeWhere: smartScopeWhere, audienceWhere: smartAudienceWhere,
+                        attentionWhere: attentionQuery.candidateWhere,
+                    }), smartSubtreeWhere);
+                }
+            }
+        }
+        const membership = query.membership;
+        const membershipWhere: Prisma.SessionWhereInput | undefined = membership ? { OR: [
+            smartWhere,
+            membership.tagIds.length ? createSessionViewerTagWhere({ accountId: params.userId, tagIds: membership.tagIds })
+                : { id: { in: [] } },
+        ] } : undefined;
+        const admitMembershipRows: SessionListRowAdmission | undefined = membership && membershipFilter
+            && !membershipUnavailableReason && (membershipFilter.attention === 'needs_my_attention' || membershipFilter.coordinator)
+            ? async rows => {
+                const tags = await fetchSessionTagAssignmentsForAdmittedSessionsInTx(tx, params.userId, rows.map(row => row.id));
+                const manualIds = new Set(rows.filter(row => tags.get(row.id)?.some(tag => membership.tagIds.includes(tag))).map(row => row.id));
+                let smartRows = rows.filter(row => !manualIds.has(row.id));
+                if (membershipFilter.attention === 'needs_my_attention') smartRows = [...await admitAttentionRows(smartRows)];
+                if (membershipFilter.coordinator) smartRows = [...await admitCoordinators(smartRows)];
+                const admittedIds = new Set(smartRows.map(row => row.id));
+                return rows.filter(row => manualIds.has(row.id) || admittedIds.has(row.id));
+            } : undefined;
+        const rowAdmission: SessionListRowAdmission | undefined = admitMembershipRows
+            ? async rows => {
+                const admitted = await admitMembershipRows(rows);
+                return outerRowAdmission ? await outerRowAdmission(admitted) : admitted;
+            } : outerRowAdmission;
+        const admitAttentionCandidates: SessionListRowAdmission = admitMembershipRows
+            ? async rows => outerAttentionAdmission(await admitMembershipRows(rows)) : outerAttentionAdmission;
         const baseWhere = createFilteredSessionListWhere({
             accountId: params.userId,
             query,
@@ -544,7 +611,7 @@ async function listFilteredSessionsForAccount(params: Readonly<{
         const readSource: SessionListReadSource = {
             kind: "effective",
             reader: tx,
-            baseWhere: conjoinSessionListWhereInputs(baseWhere, subtreeWhere, params.rowRepresentabilityWhere),
+            baseWhere: conjoinSessionListWhereInputs(baseWhere, membershipWhere, subtreeWhere, params.rowRepresentabilityWhere),
             accessMode: "effective_access_v1",
             qualifiedTeamIds: accessResolution.qualifiedTeamIds,
             collectiveAccessSnapshot: accessResolution.collectiveAccessSnapshot,
@@ -569,8 +636,11 @@ async function listFilteredSessionsForAccount(params: Readonly<{
             rowRepresentabilityWhere: params.rowRepresentabilityWhere,
             timing: params.timing,
         });
-        return page && SessionListQueryResponseV1Schema.parse({
-            sessions: await projectSessionManagerForRowsInTx(tx, {
+        if (!page) return null;
+        const tagAssignments = membership
+            ? await fetchSessionTagAssignmentsForAdmittedSessionsInTx(tx, params.userId, page.sessions.map(row => row.id))
+            : undefined;
+        const sessions = await projectSessionManagerForRowsInTx(tx, {
                 accountId: params.userId,
                 authentication: params.authentication,
                 sessions: page.sessions,
@@ -579,7 +649,12 @@ async function listFilteredSessionsForAccount(params: Readonly<{
                 nowMs: now,
                 ruleReceiverCounts,
                 captureContributions: rows => { contributions = rows; },
-            }),
+            });
+        return SessionListQueryResponseV1Schema.parse({
+            sessions: tagAssignments ? sessions.map(session => ({ ...session,
+                viewer: { ...session.viewer, tagIds: tagAssignments.get(session.id) ?? [] },
+            })) : sessions,
+            ...(membershipUnavailableReason ? { membershipUnavailableReason } : {}),
             nextCursor: page.nextCursor ?? null,
             hasNext: page.hasNext ?? false,
             attentionNextCursor: page.attentionNextCursor ?? null,
