@@ -1,5 +1,6 @@
 import { createPluginOpenAutomationEventHandler } from './pluginOpenAutomationEventHostApi';
 import { executePreparedPluginSurfaceAction, type PluginSurfaceSpokenActionRequest } from './pluginSurfaceActionPreparation';
+import { readActionSecretInputAdmission } from '@happier-dev/protocol/actions/actionInputHintsRuntime';
 import { projectedActionToDefinition } from '@/components/appShell/currentUiContext/contributedActionDefinition';
 import { PluginJsonValueV2Schema } from '@happier-dev/protocol/plugins/contributions/jsonSchema';
 import { getActionSpec, isPluginActionCallerPolicySatisfied, PluginInvocableActionIdSchema } from '@happier-dev/protocol/actions/actionSpecs';
@@ -1914,6 +1915,12 @@ async function executeContributedAction(
     // Connected-Account reconstruction that a daemon Action must satisfy.
     const settlement = settleSelectedTargetedOperation(input, identity, caller);
     if (!settlement.ok) return settlement;
+    // Missing confidential operands enter the existing request producer before
+    // either placement's executable schema can reject the value-free input.
+    if (readActionSecretInputAdmission(projectedAction, settlement.input).missingPaths.length > 0) {
+        return prepareContributedActionInvocation(input, identity, projectedAction, settlement.input,
+            await contributedInvocationAuthority(input));
+    }
     let clientPreparation: PreparedClientContributedAction | undefined;
     let normalizedInput = settlement.input;
     let daemonPreparedInput: Readonly<{ input: unknown }> | undefined;

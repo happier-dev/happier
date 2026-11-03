@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
+import { projectedActionToDefinition } from '@/components/appShell/currentUiContext/contributedActionDefinition';
 import {
     type ActionSessionTargetDeclarationV1} from '@happier-dev/protocol/actions/sessionTargetV1';
 import {
@@ -415,6 +416,7 @@ function createClientActionActivation(input: Readonly<{
     accountManifest?: typeof authoredAccountManifest;
     accountAvailability?: { when: { fact: 'session.exists'; operator: 'equals'; value: boolean } };
     sessionTarget?: ActionSessionTargetDeclarationV1;
+    inputHints?: PluginProjectedActionV2['inputHints'];
 }>) {
     const pluginId = input.authoredAccount ? authoredAccountManifest.id : input.pluginId ?? CALLER_PLUGIN_ID;
     const pluginVersion = input.authoredAccount ? authoredAccountManifest.version : '1.2.3';
@@ -465,6 +467,7 @@ function createClientActionActivation(input: Readonly<{
     } : undefined);
     const projectedAction = Object.freeze({
         ...action,
+        ...(input.inputHints ? { inputHints: input.inputHints } : {}),
         occurrenceId: input.occurrenceId ?? `occurrence-${pluginId}`,
         authorization: {
             ...CLIENT_ACTION_AUTHORIZATION,
@@ -5191,6 +5194,73 @@ describe('client Action Session-open continuation', () => {
 });
 
 describe('client Action declared SessionTarget admission', () => {
+    it.each(['global daemon', 'Session daemon', 'global client', 'global account'] as const)(
+        'creates a private-input request before executable validation for a confidential %s Action', async placement => {
+        const sessionScoped = placement === 'Session daemon';
+        const inputSchema = { type: 'object', properties: { token: { type: 'string' },
+            ...(sessionScoped ? { sessionId: { type: 'string' } } : {}) },
+            required: ['token', ...(sessionScoped ? ['sessionId'] : [])], additionalProperties: false };
+        const accountLifetime = clientAccountLifetime();
+        const activation = createClientActionActivation({ accountLifetime,
+            accountPlacement: placement === 'global account', dangerLevel: 'writesRemote', inputSchema,
+            inputHints: { fields: [{ path: 'token', title: 'Token', widget: 'secret', required: true }] },
+            ...(sessionScoped ? { sessionTarget: { field: 'sessionId', cardinality: 'one' } } : {}),
+        });
+        const action = placement.endsWith('daemon')
+            ? { ...activation.action, execution: { target: 'daemon' as const } } : activation.action;
+        const identity = { pluginId: action.pluginId, localId: action.id };
+        let mountServerId = 'server-client-action';
+        const requests: ApprovalRequest[] = [];
+        const executor = createActionExecutor(createActionExecutorBoundaryFixture({
+            listContributedActionDefinitions: () => [projectedActionToDefinition(action, activation.projection)],
+            approvalsCreate: async ({ request }) => {
+                requests.push(ApprovalRequestV2Schema.parse(request));
+                return { artifactId: 'confidential-input-request' };
+            },
+            resolveSessionReference: async ({ sessionId }) => ({ kind: 'unique', address: {
+                serverId: 'server-client-action', sessionId: sessionId! } }),
+        }));
+        nestedActionConfirmation.onShow = approve => approve();
+        try {
+            const outcome = await dispatchPluginSurfaceAction({ action: identity,
+                input: sessionScoped ? { sessionId: 'selected-session' } : {},
+                invocationSurface: 'ui', pluginUiProjection: activation.projection,
+                clientAction: {},
+                ...(placement === 'global daemon' ? {
+                    callerPluginId: CALLER_PLUGIN_ID, callerContributionLocalId: 'inspector-app',
+                    callerBinding: mountedCallerBinding({ machineId: CLIENT_ACTION_ORIGIN.materializationRef.machineId }),
+                    callerSourceCustody: TARGET_SOURCE_CUSTODY,
+                } : {}),
+                resolveContributedAction: resolveExactClientAction(action),
+                contributedAction: { serverId: mountServerId, machineId: CLIENT_ACTION_ORIGIN.materializationRef.machineId,
+                    // The daemon transport is the system boundary. Its real schema parser
+                    // reproduces the registry's refusal before any plugin effect can run.
+                    execute: async (_machineId, options) => {
+                        const { createPluginActionInvocation } = await import('@happier-dev/protocol/plugins/actions/invocation');
+                        const invocation = createPluginActionInvocation({ ...identity, inputSchema,
+                            occurrenceSignal: new AbortController().signal, isCurrent: () => true });
+                        const prepared = invocation.prepare(options.input);
+                        if (prepared.kind !== 'settled') throw new Error('Private input must be requested before dispatch');
+                        return { supported: true, result: prepared.result };
+                    } },
+                hostAction: { execute: Object.assign(executor.execute, { prepare: executor.prepare }), context: {
+                    serverId: mountServerId, runtimeAccountId: 'test-account',
+                    authority: 'present_user' as const,
+                    defaultSessionMachineId: CLIENT_ACTION_ORIGIN.materializationRef.machineId,
+                    actionRequestId: 'confidential-input-request', actionCaller: { kind: 'host' },
+                } },
+            });
+            expect(outcome).toEqual({ ok: true, result: { kind: 'approval_request_created',
+                artifactId: 'confidential-input-request', actionId: 'action.invoke' } });
+            expect(requests).toHaveLength(1);
+            expect(requests[0]).toMatchObject({ status: 'open', actionId: 'action.invoke',
+                executionOriginV1: { authority: 'present_user' },
+                actionArgs: { action: identity, input: sessionScoped ? { sessionId: 'selected-session' } : {} },
+                preview: { confidentialInputs: { kind: 'action_inputs', paths: ['input.token'] } } });
+            expect(requests[0]!.actionArgs).not.toHaveProperty('input.token');
+        } finally { nestedActionConfirmation.onShow = null; await activation.composition.unload(); accountLifetime.retire(); }
+    });
+
     it.each(['ui', 'agent', 'mcp', 'workers', 'foreignHome', 'presenter', 'retired', 'readRelations'] as const)(
         'admits the real Channels daemon Session operand before confirmation and serialized dispatch (%s)', async mode => {
         const { PLUGIN_MANIFEST } = await import('../../../../../../packages/plugins/channels/src/manifest');
