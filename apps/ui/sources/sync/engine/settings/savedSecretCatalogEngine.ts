@@ -188,6 +188,16 @@ export function observeSavedSecretCatalog(scope: ServerAccountScope, options?: R
     };
 }
 
+/** Initial material consumers join the existing producer; metadata-only reads need an upgrade. */
+export async function awaitSavedSecretCatalogMaterial(scope: ServerAccountScope): Promise<void> {
+    const upgrade = !materialDemand.has(targetFor(scope).key)
+        && getSavedSecretCatalogSnapshot(scope)?.includesMaterial === false;
+    const releaseMaterial = retainMaterialDemand(scope);
+    try {
+        await (upgrade ? loader.invalidate(targetFor(scope)) : loader.refresh(targetFor(scope)));
+    } finally { releaseMaterial(); }
+}
+
 export async function refreshSavedSecretCatalog(scope: ServerAccountScope, options?: Readonly<{ includeMaterial?: boolean }>): Promise<void> {
     // Mutation completions also use this entry point. A read begun before the
     // write must not satisfy their reload; the loader owns the trailing reread.

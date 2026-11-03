@@ -35,6 +35,9 @@ import {
   createAccountVoiceOperationService as createQualifiedAccountVoiceOperationService,
 } from './accountVoiceOperationService';
 import { createVoiceClientRawCredentialAccess } from './rawCredentialClient';
+import { sealSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
+import { SavedSecretResourceMaterialsResponseV1Schema } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
+import { refreshSavedSecretCatalog } from '@/sync/engine/settings/savedSecretCatalogEngine';
 
 const contribution = Object.freeze({
   pluginId: 'happier.voice.openai',
@@ -665,6 +668,39 @@ describe('account Voice operation service', () => {
     expect(lease.isCurrent()).toBe(true);
     publish('second-account');
     expect(lease.isCurrent()).toBe(false);
+  });
+
+  it.each(['ready', 'absent', 'failed'] as const)('awaits the first Saved Secret material resolution before credential admission (%s)', async outcome => {
+    const ref = 'happier:shared-secret:v1:first-call';
+    accountFixture.state = { ...accountFixture.state, settings: { ...createSettings(ref, 1), secrets: [] } };
+    const readStarted = createDeferred<void>();
+    const read = createDeferred<Response>();
+    catalogBoundary.readMaterials.mockImplementationOnce(() => { readStarted.resolve(); return read.promise; });
+    const catalogRead = refreshSavedSecretCatalog(accountScope).catch(() => undefined);
+    await readStarted.promise;
+    expect(resolveSavedSecretReference(accountScope, [], ref).status).toBe('temporarily_unavailable');
+    const service = createAccountVoiceOperationService({ providerId: 'happier.voice.openai/realtime-openai',
+      recipientContract, signal: new AbortController().signal, isCurrent: () => true });
+    let settled = false;
+    const admission = service.inspectAvailability().then(() => ({ ok: true as const }), error => ({ ok: false as const, error }))
+      .finally(() => { settled = true; });
+    await Promise.race([readStarted.promise, admission]);
+    const pendingBeforeRead = !settled;
+    const entry = { ref, source: 'shared_resource', relationship: 'owner', name: 'Voice', kind: 'apiKey',
+      encryptionMode: 'plain', owner: null, accessSources: [{ kind: 'account' }], audience: null, ownerAccountId: null,
+      revision: 1, materialStatus: 'ready', capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true } };
+    read.resolve(outcome === 'failed' ? Response.json({}, { status: 503 }) : Response.json(SavedSecretResourceMaterialsResponseV1Schema.parse({ resources: outcome === 'absent' ? [] : [{
+      resourceId: 'first-call', encryptionMode: 'plain', entry,
+      storedContent: sealSavedSecretResourceStoredContentV1({ resourceId: 'first-call', mode: 'plain',
+        content: { v: 1, name: 'Voice', kind: 'apiKey', value: 'fixture-key' } }),
+      recipientEnvelope: null,
+    }] })));
+    const result = await admission;
+    await catalogRead;
+    if (outcome === 'ready') expect(result).toEqual({ ok: true });
+    else expect(result).toMatchObject({ ok: false, error: { code: outcome === 'absent' ? 'credential_unavailable' : 'service_temporarily_unavailable' } });
+    expect(pendingBeforeRead).toBe(true);
+    expect(catalogBoundary.readMaterials).toHaveBeenCalledTimes(1);
   });
 
   it('uses a shared-only catalog ref and fails closed once that scoped material is stale', async () => {

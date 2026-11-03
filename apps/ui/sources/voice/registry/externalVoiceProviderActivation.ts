@@ -3,7 +3,7 @@ import type {
   BundledRealtimeProviderRuntimeHost,
 } from './bundledConversationRuntimeContract';
 import { fireAndForget } from '@/utils/system/fireAndForget';
-import { buildQualifiedPluginContributionKey, createPluginContributionIdentity } from '@happier-dev/protocol/plugins/contribution-identity';
+import { buildQualifiedPluginContributionKey, createPluginContributionIdentity, parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { ConnectedServiceBindingsV2IngressSchema } from '@happier-dev/protocol/connect/connected-service-bindings';
 import { deriveVoiceCredentialBindingIdentityV1, VoiceProviderContributionSchema, type VoiceProviderContribution } from '@happier-dev/protocol/plugins/contributions/voice';
 import { readVoiceProviderCredentialRemediationCode } from '@happier-dev/protocol/voice/providerOperations';
@@ -64,6 +64,7 @@ import {
 import {
   createAccountVoiceCredentialAuthorityLease,
   createAccountVoiceOperationService,
+  awaitAccountVoiceCredentialResolution,
 } from '@/voice/credentials/accountVoiceOperationService';
 import { subscribeBundledConversationRuntimeGeneration } from './bundledConversationRuntimeGeneration';
 import { createBundledRealtimeProviderRuntime, readRequestedTargetSessionAddress } from './createBundledRealtimeProviderRuntime';
@@ -654,6 +655,14 @@ export function createExternalProtocol(
         callerSignal: prepareInput.signal,
         async run(signal) {
           if (!snapshot.isCurrent()) return { kind: 'declined' as const, code: 'voice_account_operation_cancelled' };
+          const contribution = parseQualifiedPluginContributionKey(providerId);
+          const credential = contribution && deriveVoiceCredentialBindingIdentityV1({ pluginId: contribution.pluginId, contribution: declaration });
+          // Mediated operations await resolution at their service admission.
+          // Raw clients capture authority synchronously, before the leaf runs.
+          if (credential && createInvocationRawCredentials) {
+            await awaitAccountVoiceCredentialResolution({ ...credential, signal, isCurrent: snapshot.isCurrent,
+              machineId: resolveVoiceExecutionMachineId() });
+          }
           let attemptPolicy = attemptPreparationByAttemptId.get(prepareInput.attemptId)?.policy;
           if (declaration.execution?.kind !== 'experimental_agent_session_realtime' && !attemptPolicy) {
             const voice = voiceSettingsParse(readVoiceSettingsInput(host.getSettings()));

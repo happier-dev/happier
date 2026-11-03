@@ -1,5 +1,5 @@
 import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
-import { waitForTestEvent } from '@/dev/testkit';
+import { createDeferred, waitForTestEvent } from '@/dev/testkit';
 import { createPlainMachineReadHttpResponseFixture } from '@/dev/testkit/fixtures/machineFixtures';
 
 const network = await installSessionOpsNetworkBoundary();
@@ -582,6 +582,38 @@ describe('external Voice provider host composition', () => {
       code: 'plugin_voice_credential_access_unavailable',
     });
     expect(clientInvoke).not.toHaveBeenCalled();
+  });
+
+  it('waits for cold credential source resolution before invoking the provider or capturing raw access', async () => {
+    const { resetConnectedAccountCatalogSnapshotsForTests } = await import('@/sync/store/settings/connectedAccountCatalogSnapshot');
+    resetConnectedAccountCatalogSnapshotsForTests();
+    const started = createDeferred<void>();
+    const release = createDeferred<void>();
+    const handle = preparationPurposes.handle.bind(preparationPurposes);
+    const boundary = vi.spyOn(preparationPurposes, 'handle').mockImplementation(async (...args) => {
+      started.resolve();
+      await release.promise;
+      return await handle(...args);
+    });
+    onTestFinished(() => { release.resolve(); boundary.mockRestore(); });
+    let rawCaptured = false;
+    const protocol = createExternalProtocol(createHostFixture({ transcriptEvents: [], lifecycleEvents: [] }),
+      providerId, 'web', declaration, {
+        async prepare() { return { kind: 'prepared' as const, session: { config: {}, safeMetadata: null } }; },
+        decodeControl: () => [], encodeTurnControl: () => null,
+      }, undefined, undefined, () => { rawCaptured = true; return null; });
+    let settled = false;
+    const admission = protocol.prepare({ controlSessionId: 'cold-credential', attemptId: 1, reason: 'initial',
+      request: {}, signal: new AbortController().signal }).then(value => ({ value }), error => ({ error }))
+      .finally(() => { settled = true; });
+    await Promise.race([started.promise, admission]);
+    const capturedBeforeResolution = rawCaptured;
+    const settledBeforeResolution = settled;
+    release.resolve();
+    expect(await admission).toMatchObject({ value: { kind: 'prepared' } });
+    expect(settledBeforeResolution).toBe(false);
+    expect(capturedBeforeResolution).toBe(false);
+    expect(rawCaptured).toBe(true);
   });
 
   it('retires retained prepare and connection raw credentials when each host leaf returns', async () => {

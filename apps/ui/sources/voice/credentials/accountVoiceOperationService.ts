@@ -15,7 +15,9 @@ import { areAccountSettingsScopesEqual } from '@/sync/domains/settings/scope/acc
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { sync } from '@/sync/sync';
 import { getConnectedAccountCatalogValue } from '@/sync/store/settings/connectedAccountCatalogSnapshot';
-import { refreshSavedSecretCatalog } from '@/sync/engine/settings/savedSecretCatalogEngine';
+import { awaitSavedSecretCatalogMaterial, refreshSavedSecretCatalog } from '@/sync/engine/settings/savedSecretCatalogEngine';
+import { refreshConnectedAccountCatalog } from '@/sync/engine/settings/connectedAccountCatalogEngine';
+import { createAbortRacer } from '@/voice/agent/voiceAgentAbort';
 import {
   resolveSavedSecretReference,
   type SavedSecretReferenceResolution,
@@ -156,6 +158,56 @@ type AccountCredentialAuthorityLease = Readonly<{
   resolution: AccountCredentialAuthorityResolution;
   isCurrent(): boolean;
 }>;
+
+/** Join the catalog producers before capturing an invocation's credential authority. */
+export async function awaitAccountVoiceCredentialResolution(input: Readonly<{
+  contribution: PluginContributionIdentityV1;
+  credentialSlotId: string;
+  purpose: QualifiedConnectedAccountPurposeV1;
+  machineId?: string | null;
+  signal: AbortSignal;
+  isCurrent(): boolean;
+}>): Promise<void> {
+  const scope = storage.getState().settingsScope;
+  const lifetime = captureActiveServerAccountScopeLifetime();
+  const assertCurrent = () => {
+    if (input.signal.aborted || !input.isCurrent() || (lifetime && !lifetime.isCurrent())
+      || !areAccountSettingsScopesEqual(scope, storage.getState().settingsScope)) {
+      throw operationError('voice_account_operation_cancelled');
+    }
+  };
+  const race = createAbortRacer(input.signal);
+  assertCurrent();
+  if (!scope) throw operationError(CREDENTIAL_SNAPSHOT_INDETERMINATE_CODE);
+  try {
+    const purposes = getConnectedAccountCatalogValue(scope, 'purposes');
+    if (purposes?.status !== 'ready' || purposes.stale) {
+      await race.race(refreshConnectedAccountCatalog(scope, 'purposes'));
+    }
+    assertCurrent();
+    const state = storage.getState();
+    const currentPurposes = getConnectedAccountCatalogValue(scope, 'purposes');
+    const source = resolveAccountVoiceCredentialSourceSelection({
+      settings: state.settings, contribution: input.contribution,
+      credentialSlotId: input.credentialSlotId, purpose: input.purpose,
+      machineId: input.machineId ?? null,
+      connectedPurposes: currentPurposes?.status === 'ready' && !currentPurposes.stale ? currentPurposes.value : null,
+    });
+    if (source.selection.kind === 'savedSecret') {
+      const reference = resolveAccountVoiceCredential(state.settings, input.contribution, input.credentialSlotId, input.machineId ?? null);
+      if (reference && resolveSavedSecretReference(scope, state.settings.secrets, reference.secretId).status === 'temporarily_unavailable') {
+        await race.race(awaitSavedSecretCatalogMaterial(scope));
+        assertCurrent();
+        if (resolveSavedSecretReference(scope, storage.getState().settings.secrets, reference.secretId).status === 'temporarily_unavailable') {
+          throw operationError(CREDENTIAL_SNAPSHOT_INDETERMINATE_CODE);
+        }
+      }
+    }
+  } catch {
+    assertCurrent();
+    throw operationError(CREDENTIAL_SNAPSHOT_INDETERMINATE_CODE);
+  }
+}
 
 function captureAccountCredentialAuthority(
   contribution: PluginContributionIdentityV1,
@@ -435,6 +487,26 @@ export function createAccountVoiceOperationService(input: Readonly<{
   const isAuthorityCurrent = (
     operationAuthority: AccountOperationCredentialAuthority,
   ): boolean => operationAuthority.lease.isCurrent();
+  const needsResolution = [...operationAuthorities.values()].some(({ resolution }) =>
+    resolution.state !== 'resolved' || resolution.authority.savedSecret?.status === 'temporarily_unavailable');
+  const admissionLifetime = captureActiveServerAccountScopeLifetime();
+  let readiness: Promise<void> | undefined;
+  const ensureAuthorityReady = async () => {
+    if (!needsResolution) return;
+    readiness ??= awaitAccountVoiceCredentialResolution({
+      contribution: input.contribution, credentialSlotId, purpose: credentialBindingPurpose,
+      signal: input.signal, isCurrent: () => input.isCurrent() && (admissionLifetime?.isCurrent() ?? true),
+    }).then(() => {
+      for (const operation of recipientContract.operations) {
+        const lease = createAccountCredentialAuthorityLease({
+          contribution: input.contribution, providerId: input.providerId, credentialSlotId,
+          purpose: credentialBindingPurpose, machineId: null, isCurrent: input.isCurrent,
+        });
+        operationAuthorities.set(operation.id, { resolution: lease.resolution, lease });
+      }
+    });
+    await readiness;
+  };
   const inspectOperationAvailability = async (
     operationId: string,
     operationAuthority: AccountOperationCredentialAuthority,
@@ -491,6 +563,7 @@ export function createAccountVoiceOperationService(input: Readonly<{
     return authorization;
   };
   const inspectAvailability = async (): Promise<void> => {
+    await ensureAuthorityReady();
     for (const [operationId, operationAuthority] of operationAuthorities) {
       await inspectOperationAvailability(operationId, operationAuthority);
     }
@@ -517,6 +590,7 @@ export function createAccountVoiceOperationService(input: Readonly<{
           throw operationError('voice_account_operation_unauthorized');
         }
         const operation = materialized.operation;
+        await ensureAuthorityReady();
         const operationAuthority = operationAuthorities.get(operation.id);
         if (!operationAuthority) {
           throw operationError('voice_account_operation_unauthorized');
