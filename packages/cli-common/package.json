@@ -480,6 +480,12 @@
       "import": "./dist/plugins/registration/index.js",
       "default": "./dist/plugins/registration/index.js"
     },
+    "./plugins/registration/actionInputParser": {
+      "happier-source": "./src/plugins/registration/actionInputParser.ts",
+      "types": "./dist/plugins/registration/actionInputParser.d.ts",
+      "import": "./dist/plugins/registration/actionInputParser.js",
+      "default": "./dist/plugins/registration/actionInputParser.js"
+    },
     "./plugins/http": {
       "happier-source": "./src/plugins/http/index.ts",
       "types": "./dist/plugins/http/index.d.ts",

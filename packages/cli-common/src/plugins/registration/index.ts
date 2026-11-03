@@ -1,3 +1,4 @@
+export * from './actionInputParser.js';
 
 
 export type { PluginRuntimeRegistration } from './scope.js';

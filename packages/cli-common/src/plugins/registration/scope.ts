@@ -1,8 +1,9 @@
-import type { Disposable } from './contracts.js';
+import type { Disposable, JsonValue } from './contracts.js';
 import type { PluginContributionRegistrationRight } from '@happier-dev/protocol';
 import { PluginContributionLocalIdSchema } from '@happier-dev/protocol/plugins/contribution-identity';
 import { normalizeWorkItemsRuntime } from './staticRegistrationSnapshots.js';
 import { snapshotConnectedAccountRuntime } from './connectedAccountSnapshots.js';
+import { withPluginActionReadObserver } from './actionInputParser.js';
 
 export type PluginRegistrationFamily = (typeof REGISTRATION_FAMILY)[keyof typeof REGISTRATION_FAMILY];
 export type PluginRuntimeRegistration = Readonly<{ family: PluginRegistrationFamily; localId: string; value: unknown }>;
@@ -293,10 +294,32 @@ export function createPluginRegistrationScope(
     }
 
     const daemonActions = Object.freeze({
-        register(id: string, handler: unknown) { return register(REGISTRATION_FAMILY.actions, id, handler); },
+        register<I extends JsonValue = JsonValue, O extends JsonValue | void = JsonValue | void>(
+            id: string,
+            handler: Parameters<typeof withPluginActionReadObserver<I, O, never>>[0],
+            options?: Readonly<{ observeRead?: import('./contracts.js').PluginActionReadObserver<I, never> }>,
+        ) {
+            return register(REGISTRATION_FAMILY.actions, id, options?.observeRead
+                ? withPluginActionReadObserver(handler, options.observeRead) : handler);
+        },
     });
-    const clientActions = daemonActions;
-    const accountActions = daemonActions;
+    const clientActions = Object.freeze({
+        register<I extends JsonValue = JsonValue, O extends JsonValue | void = JsonValue | void>(
+            id: string,
+            handler: Parameters<typeof withPluginActionReadObserver<I, O, never>>[0],
+        ) {
+            return register(REGISTRATION_FAMILY.actions, id, handler);
+        },
+    });
+    const accountActions = Object.freeze({
+        register<I extends JsonValue = JsonValue, O extends JsonValue | void = JsonValue | void>(
+            id: string, handler: Parameters<typeof withPluginActionReadObserver<I, O, never>>[0],
+            options?: Readonly<{ observeRead?: import('./contracts.js').PluginActionReadObserver<I, never> }>,
+        ) {
+            return register(REGISTRATION_FAMILY.actions, id, options?.observeRead
+                ? withPluginActionReadObserver(handler, options.observeRead) : handler);
+        },
+    });
     const hooks = Object.freeze({
         register(id: string, handler: unknown) { return register(REGISTRATION_FAMILY.hooks, id, handler); },
     });
