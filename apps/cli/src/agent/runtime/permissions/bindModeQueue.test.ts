@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { Metadata, PermissionMode, UserMessage } from '@/api/types';
 import { registerPermissionModeMessageQueueBinding } from './bindModeQueue';
 import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
+import { createManualCompactionQueue } from '@/agent/runtime/queueSpecialCommands';
 import type {
   PermissionModeQueuedPrompt,
   PermissionModeQueuedPromptMode,
@@ -26,6 +27,49 @@ source_kind="legacyUnknown"
 </happier_input_context>`;
 
 describe('registerPermissionModeMessageQueueBinding', () => {
+  describe.each([
+    { kind: 'structured', meta: { happierStructuredInputV1: { v: 1,
+      skillMentions: [{ name: 'review', path: '/skills/review/SKILL.md' }] } } },
+    { kind: 'attachment', meta: { happier: { kind: 'attachments.v1', payload: { attachments: [
+      { id: 'report', name: 'report.txt', path: '.happier/uploads/messages/input/report.txt', sizeBytes: 42 },
+    ] } } } },
+  ])('manual compaction with $kind input', ({ meta }) => {
+    it.each(['queued', 'running', 'unsupported'] as const)('enforces %s admission and retains ordinary input separately', async state => {
+      const queue = new MessageQueue2<PermissionModeQueuedPromptMode, PermissionModeQueuedPrompt>(() => 'mode', {
+        batcher: combinePermissionModeQueuedPrompts,
+      });
+      const manualCompaction = createManualCompactionQueue({ queue,
+        readText: (message: PermissionModeQueuedPrompt) => message.text,
+        isAvailable: () => state !== 'unsupported',
+      });
+      manualCompaction.setRunning(state === 'running');
+      const harness = createSessionHarness();
+      registerPermissionModeMessageQueueBinding({ session: harness.session, queue, manualCompaction,
+        getCurrentPermissionMode: () => 'default', setCurrentPermissionMode() {} });
+      harness.emit({ role: 'user', localId: 'before', content: { type: 'text', text: 'Before' }, meta: {} });
+      if (state === 'queued') {
+        harness.emit({ role: 'user', localId: 'compact', content: { type: 'text', text: '/compact retain decisions' }, meta });
+      }
+      harness.emit({ role: 'user', localId: 'rejected-compact', content: { type: 'text', text: '/compact retain decisions' }, meta });
+      harness.emit({ role: 'user', localId: 'after', content: { type: 'text', text: 'After' }, meta: {} });
+
+      expect(queue.queue.map(item => item.message.localId)).toEqual(state === 'queued'
+        ? ['before', 'compact', 'after'] : ['before', 'after']);
+      if (state === 'queued') {
+        expect((await queue.waitForMessagesAndGetAsString())?.message.text).toBe('Before');
+        expect((await queue.waitForMessagesAndGetAsString())?.message).toMatchObject({
+          localId: 'compact', text: '/compact retain decisions',
+          ...('happierStructuredInputV1' in meta ? { structuredInput: meta.happierStructuredInputV1 }
+            : { attachments: meta.happier.payload.attachments }),
+        });
+        expect((await queue.waitForMessagesAndGetAsString())?.message.text).toBe('After');
+      } else {
+        expect((await queue.waitForMessagesAndGetAsString())?.message.localIds).toEqual(['before', 'after']);
+      }
+      expect(queue.size()).toBe(0);
+    });
+  });
+
   it('keeps non-image upload metadata isolated through queue admission and final projection', async () => {
     const queue = new MessageQueue2<PermissionModeQueuedPromptMode, PermissionModeQueuedPrompt>(() => 'mode', {
       batcher: combinePermissionModeQueuedPrompts,

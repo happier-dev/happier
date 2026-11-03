@@ -462,7 +462,7 @@ export function registerPermissionModeMessageQueueBinding(opts: {
     }
 
     const enqueuePrompt = (): void => {
-      if (!structuredInput && !attachments.length && parseSpecialCommand(text).type === 'compact' && opts.manualCompaction) {
+      if (parseSpecialCommand(text).type === 'compact' && opts.manualCompaction) {
         const result = opts.manualCompaction.enqueue(queuedPrompt, queueMode);
         if (result.status !== 'admitted') {
           observeLocalSpecialCommandSettlement({ session, message: queuedPrompt, outcome: {
