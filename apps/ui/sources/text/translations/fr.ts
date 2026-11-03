@@ -11491,6 +11491,13 @@ encryptedUnavailable: "Détails chiffrés indisponibles",
       flowMessages: ({ messagesIn, messagesOut }: { messagesIn: string; messagesOut: string }) => `Messages ${messagesIn}/${messagesOut}`,
     },
     host: {
+    devtools: {
+      unavailable: {
+        title: "Cette page ne peut pas encore signaler de diagnostic",
+        reason: "Les pages ouvertes dans le navigateur de l’agent ou un aperçu local se signalent ici au chargement. Une page affichée directement ne peut rien signaler.",
+        directPage: "Cette page est affichée directement et ne peut donc pas signaler de diagnostic. Ouvrez-la dans le navigateur de l’agent pour l’inspecter.",
+      },
+    },
       title: 'Diagnostics du navigateur',
       eventCount: ({ count }: { count: string }) => `${count} événements de diagnostic`,
       untrustedNotice: 'Les diagnostics injectés sont altérables par la page et de moindre fidélité.',

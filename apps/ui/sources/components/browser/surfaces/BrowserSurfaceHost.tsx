@@ -68,7 +68,6 @@ import {
     type PluginUiPolicyEvaluationContext,
 } from '@/sync/domains/plugins/ui/policy';
 import type { BrowserLaunchpadRow } from '@/sync/domains/browser/targets';
-import { selectBrowserDiagnosticsEventCount } from '@/sync/domains/browser/diagnostics';
 import type { SimulatorPreviewSurfaceRuntime } from '@/sync/domains/devices/simulator/useSimulatorPreviewRuntime';
 import type {
     BrowserPresentationSlotState,
@@ -218,22 +217,6 @@ function createPresentationSlot(props: Readonly<{
         active: props.active === true,
         measuredRect: props.measuredRect ?? null,
     };
-}
-
-function hasRenderableBrowserDiagnostics(
-    diagnostics: React.ComponentProps<typeof BrowserShell>['browserDiagnostics'] | null | undefined,
-    focusedView: BrowserControlViewState | null | undefined,
-): boolean {
-    if (!diagnostics || !focusedView) {
-        return false;
-    }
-    if (diagnostics.bridge) {
-        return true;
-    }
-    return diagnostics.hasRenderableDiagnostics ?? selectBrowserDiagnosticsEventCount(diagnostics.state, {
-        browserSessionId: focusedView.browserSessionId,
-        viewId: focusedView.viewId,
-    }) > 0;
 }
 
 export function BrowserSurfaceHost(props: Readonly<{
@@ -449,9 +432,6 @@ export function BrowserSurfaceHost(props: Readonly<{
             && browserActionAccountLifetime?.isCurrent() === true
             && (!presenceServerId || areServerProfileIdentifiersEquivalent(presenceServerId, browserActionAccountLifetime.scope.serverId)),
     });
-    const renderableLiveBrowserDiagnostics = hasRenderableBrowserDiagnostics(liveBrowserDiagnostics, focusedView)
-        ? liveBrowserDiagnostics
-        : null;
     // B-RC7 (dark-model wiring): construct the in-app automation control service for this host and
     // thread it as the `browserAutomation` product model — the single owner the in-iframe automation
     // owner (`WebIframeEngine`) registers against and the runtime action path resolves through.
@@ -470,7 +450,7 @@ export function BrowserSurfaceHost(props: Readonly<{
         : null), [presenceServerId, presenceSessionId]);
     const mergedProductModels = mergeBrowserSurfaceProductModels(props.productModels, {
         browserContext: props.browserContext,
-        browserDiagnostics: props.browserDiagnostics ?? renderableLiveBrowserDiagnostics,
+        browserDiagnostics: props.browserDiagnostics ?? liveBrowserDiagnostics,
         browserAutomation: baseBrowserAutomation,
         browserRecording: props.browserRecording,
         browserProfile: props.browserProfile,

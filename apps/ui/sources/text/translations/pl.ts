@@ -11482,6 +11482,13 @@ encryptedUnavailable: "Zaszyfrowane dane niedostępne",
       flowMessages: ({ messagesIn, messagesOut }: { messagesIn: string; messagesOut: string }) => `Wiadomości ${messagesIn}/${messagesOut}`,
     },
     host: {
+    devtools: {
+      unavailable: {
+        title: "Ta strona nie może jeszcze zgłaszać diagnostyki",
+        reason: "Strony otwarte w przeglądarce agenta lub w lokalnym podglądzie zgłaszają się tu podczas ładowania. Strona wyświetlona bezpośrednio nie może niczego zgłosić.",
+        directPage: "Ta strona jest wyświetlana bezpośrednio, więc nie może zgłaszać diagnostyki. Otwórz ją w przeglądarce agenta, aby ją zbadać.",
+      },
+    },
       title: 'Diagnostyka przeglądarki',
       eventCount: ({ count }: { count: string }) => `${count} zdarzeń diagnostycznych`,
       untrustedNotice: 'Diagnostyka wstrzyknięta może zostać zmieniona przez stronę i ma niższą wierność.',

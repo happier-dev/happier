@@ -11948,6 +11948,13 @@ localTailscale: {
       flowMessages: ({ messagesIn, messagesOut }: { messagesIn: string; messagesOut: string }) => `メッセージ ${messagesIn}/${messagesOut}`,
     },
     host: {
+    devtools: {
+      unavailable: {
+        title: "このページはまだ診断を報告できません",
+        reason: "エージェントのブラウザーやローカルプレビューで開いたページは、読み込み時にここへ報告します。直接表示したページは何も報告できません。",
+        directPage: "このページは直接表示されているため、診断を報告できません。調べるにはエージェントのブラウザーで開いてください。",
+      },
+    },
       title: 'ブラウザー診断',
       eventCount: ({ count }: { count: string }) => `${count} 件の診断イベント`,
       untrustedNotice: '注入された診断はページ側で改ざん可能で、低い忠実度です。',

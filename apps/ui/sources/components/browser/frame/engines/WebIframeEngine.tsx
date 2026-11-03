@@ -219,7 +219,7 @@ function WebIframeGuest(props: WebIframeEngineProps): React.ReactElement {
         const sourceOrigin = normalizePostMessageOrigin(diagnostics?.sourceOrigin);
         const parentOrigin = normalizePostMessageOrigin(diagnostics?.webPostMessageTargetOrigin);
         const sandbox = props.sandbox.split(/\s+/);
-        if (!navigationUrl || !diagnostics || props.automation?.adapterKind !== 'localPreview'
+        if (!navigationUrl || !diagnostics || props.localPreview !== true
             || !sourceOrigin || !parentOrigin || sourceOrigin === parentOrigin
             || !sandbox.includes('allow-scripts') || !sandbox.includes('allow-same-origin')) return null;
         try {
@@ -236,7 +236,7 @@ function WebIframeGuest(props: WebIframeEngineProps): React.ReactElement {
             if (!config) return null;
             return { url: buildCooperativeCollectorNavigationUrl(url.href, config), config, sourceOrigin };
         } catch { return null; }
-    }, [navigationUrl, props.sandbox, props.automation?.adapterKind, collectorScript, props.diagnostics?.sourceOrigin]);
+    }, [navigationUrl, props.sandbox, props.localPreview, collectorScript, props.diagnostics?.sourceOrigin]);
 
     const previewProbeUrl = React.useMemo(() => {
         const href = cooperativeNavigation?.url ?? (props.localPreview ? navigationUrl : undefined);
@@ -260,6 +260,7 @@ function WebIframeGuest(props: WebIframeEngineProps): React.ReactElement {
         cooperativeDocumentRetiredRef.current = false;
         setCooperativeReadyUrl(null);
         setPreviewRefusal(null);
+        diagnosticsRef.current?.onAvailability?.({ status: 'pending' });
     }, [navigationKey, navigationUrl, props.html, cooperativeNavigation?.url, reloadCommandId]);
 
     React.useLayoutEffect(() => {
@@ -274,6 +275,7 @@ function WebIframeGuest(props: WebIframeEngineProps): React.ReactElement {
             } else if (isCooperativeCollectorMessage(message, 'browser.collector.retire', cooperativeNavigation.config)) {
                 cooperativeDocumentRetiredRef.current = true;
                 setCooperativeReadyUrl(null);
+                diagnosticsRef.current?.onAvailability?.({ status: 'unavailable', reasonCode: 'collector_unavailable' });
             }
         };
         window.addEventListener('message', listener);
@@ -342,7 +344,10 @@ function WebIframeGuest(props: WebIframeEngineProps): React.ReactElement {
         // With script-src 'none' the guest cannot report its own refusal. The same authorized
         // proxy returns its CSP decision or typed transport refusal without exposing page content.
         const rejectUnavailable = () => {
-            if (!controller.signal.aborted) automationRef.current?.onRegistrationRejected?.('runtime_unavailable');
+            if (!controller.signal.aborted) {
+                automationRef.current?.onRegistrationRejected?.('runtime_unavailable');
+                diagnosticsRef.current?.onAvailability?.({ status: 'unavailable', reasonCode: 'collector_unavailable' });
+            }
         };
         void fetch(url.href, { credentials: 'include', signal: controller.signal }).then(async (response) => {
             if (new URL(response.url).origin !== url.origin) { rejectUnavailable(); return; }
@@ -358,6 +363,7 @@ function WebIframeGuest(props: WebIframeEngineProps): React.ReactElement {
             if (!controller.signal.aborted && result && typeof result === 'object' && 'state' in result
                 && result.state === 'collector_blocked_by_csp') {
                 automationRef.current?.onRegistrationRejected?.('collector_blocked_by_csp');
+                diagnosticsRef.current?.onAvailability?.({ status: 'unavailable', reasonCode: 'collector_blocked_by_csp' });
             } else if (!controller.signal.aborted && result && typeof result === 'object' && 'state' in result
                 && result.state === 'runtime_unavailable') {
                 rejectUnavailable();
@@ -375,6 +381,7 @@ function WebIframeGuest(props: WebIframeEngineProps): React.ReactElement {
 
         if (!webPostMessageTargetOrigin) {
             diagnostics.onRejectedMessage?.('unsupported_web_post_message');
+            diagnostics.onAvailability?.({ status: 'unavailable', reasonCode: 'collector_unavailable' });
             return;
         }
 
@@ -460,6 +467,7 @@ function WebIframeGuest(props: WebIframeEngineProps): React.ReactElement {
         const automation = automationRef.current;
         if (!diagnostics || !collectorScript) {
             automation?.onRegistrationRejected?.('runtime_unavailable');
+            diagnostics?.onAvailability?.({ status: 'unavailable', reasonCode: 'collector_unavailable' });
             return;
         }
         const sourceOrigin = normalizePostMessageOrigin(diagnostics.sourceOrigin);
@@ -469,6 +477,7 @@ function WebIframeGuest(props: WebIframeEngineProps): React.ReactElement {
         const sandboxTokens = props.sandbox.split(/\s+/);
         if (!sourceOrigin || !targetWindow || !sandboxTokens.includes('allow-scripts') || !sandboxTokens.includes('allow-same-origin')) {
             automation?.onRegistrationRejected?.('cross_origin_frame_unavailable');
+            diagnostics.onAvailability?.({ status: 'unavailable', reasonCode: 'cross_origin_frame_unavailable' });
             return;
         }
         let targetDocument: Document | undefined;
@@ -479,6 +488,7 @@ function WebIframeGuest(props: WebIframeEngineProps): React.ReactElement {
             previousRuntime = Reflect.get(targetWindow, '__happierBrowserRuntime');
         } catch {
             automation?.onRegistrationRejected?.('cross_origin_frame_unavailable');
+            diagnostics.onAvailability?.({ status: 'unavailable', reasonCode: 'cross_origin_frame_unavailable' });
             return;
         }
         let runtime: unknown;
@@ -494,6 +504,7 @@ function WebIframeGuest(props: WebIframeEngineProps): React.ReactElement {
             runtime = Reflect.get(targetWindow, '__happierBrowserRuntime');
         } catch {
             automation?.onRegistrationRejected?.('runtime_unavailable');
+            diagnostics.onAvailability?.({ status: 'unavailable', reasonCode: 'collector_unavailable' });
             return;
         }
         if (!cooperative && (!runtime || runtime === previousRuntime || typeof runtime !== 'object'
@@ -505,8 +516,10 @@ function WebIframeGuest(props: WebIframeEngineProps): React.ReactElement {
             || !('automation' in runtime.modules) || !runtime.modules.automation || typeof runtime.modules.automation !== 'object'
             || !('execute' in runtime.modules.automation) || typeof runtime.modules.automation.execute !== 'function')) {
             automation?.onRegistrationRejected?.('runtime_unavailable');
+            diagnostics.onAvailability?.({ status: 'unavailable', reasonCode: 'collector_unavailable' });
             return;
         }
+        diagnostics.onAvailability?.({ status: 'available' });
         const teardownRuntime = runtime && typeof runtime === 'object' && 'teardown' in runtime && typeof runtime.teardown === 'function' ? runtime.teardown : null;
         const retireRuntime = () => {
             try {
@@ -618,6 +631,7 @@ function WebIframeGuest(props: WebIframeEngineProps): React.ReactElement {
         const sourceOrigin = normalizePostMessageOrigin(diagnostics.sourceOrigin);
         if (!sourceOrigin) {
             diagnostics.onRejectedMessage?.('unsupported_web_post_message');
+            diagnostics.onAvailability?.({ status: 'unavailable', reasonCode: 'collector_unavailable' });
             return;
         }
 
@@ -644,6 +658,7 @@ function WebIframeGuest(props: WebIframeEngineProps): React.ReactElement {
         const sourceOrigin = normalizePostMessageOrigin(diagnostics.sourceOrigin);
         if (!sourceOrigin) {
             diagnostics.onRejectedMessage?.('unsupported_web_post_message');
+            diagnostics.onAvailability?.({ status: 'unavailable', reasonCode: 'collector_unavailable' });
             return;
         }
 
@@ -839,6 +854,7 @@ function WebIframeGuest(props: WebIframeEngineProps): React.ReactElement {
         if (cooperativeNavigation && hasLoadedCurrentNavigationRef.current) {
             cooperativeDocumentRetiredRef.current = true;
             setCooperativeReadyUrl(null);
+            diagnosticsRef.current?.onAvailability?.({ status: 'unavailable', reasonCode: 'collector_unavailable' });
         }
         if (props.revokeOnUnexpectedNavigation && hasLoadedCurrentNavigationRef.current) {
             bridgeDocumentRetiredRef.current = true;

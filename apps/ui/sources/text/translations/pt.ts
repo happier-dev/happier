@@ -11771,6 +11771,13 @@ encryptedUnavailable: "Detalhes encriptados indisponíveis",
       flowMessages: ({ messagesIn, messagesOut }: { messagesIn: string; messagesOut: string }) => `Mensagens ${messagesIn}/${messagesOut}`,
     },
     host: {
+    devtools: {
+      unavailable: {
+        title: "Esta página ainda não pode informar diagnósticos",
+        reason: "Páginas abertas no navegador do agente ou numa pré-visualização local aparecem aqui ao carregar. Uma página mostrada diretamente não pode informar nada.",
+        directPage: "Esta página é mostrada diretamente, então não pode informar diagnósticos. Abra-a no navegador do agente para inspecioná-la.",
+      },
+    },
       title: 'Diagnóstico do navegador',
       eventCount: ({ count }: { count: string }) => `${count} eventos de diagnóstico`,
       untrustedNotice: 'Diagnósticos injetados podem ser alterados pela página e têm menor fidelidade.',

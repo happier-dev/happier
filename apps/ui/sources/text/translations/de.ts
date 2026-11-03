@@ -11491,6 +11491,13 @@ encryptedUnavailable: "Verschlüsselte Details nicht verfügbar",
             flowMessages: ({ messagesIn, messagesOut }: { messagesIn: string; messagesOut: string }) => `Nachrichten ${messagesIn}/${messagesOut}`,
         },
         host: {
+    devtools: {
+      unavailable: {
+        title: "Diese Seite kann noch keine Diagnose melden",
+        reason: "Seiten im Browser des Agenten oder in einer lokalen Vorschau melden sich hier beim Laden. Eine direkt angezeigte Seite kann nichts melden.",
+        directPage: "Diese Seite wird direkt angezeigt und kann daher keine Diagnose melden. Öffne sie im Browser des Agenten, um sie zu untersuchen.",
+      },
+    },
             title: 'Browser-Diagnose',
             eventCount: ({ count }: { count: string }) => `${count} Diagnose-Ereignisse`,
             untrustedNotice: 'Eingespielte Diagnose lässt sich von der Seite manipulieren und ist ungenauer.',

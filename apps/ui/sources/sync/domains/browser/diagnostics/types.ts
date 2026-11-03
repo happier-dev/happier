@@ -92,6 +92,7 @@ export type BrowserViewDiagnosticsProjection = Readonly<{
     eventCount: number;
     families: readonly BrowserDiagnosticFamilyProjection[];
     events: readonly BrowserDiagnosticEventProjection[];
+    reasonCode?: string;
 }>;
 
 export type BrowserPreviewProxyFlowProjection = Readonly<{

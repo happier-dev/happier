@@ -34,6 +34,8 @@ export function useBrowserToolbarOverflowItems(input: Readonly<{
     onDiscardRecording?: () => void;
     /** Present when the active page has an address the user's own browser can open. */
     onOpenInYourBrowser?: (() => void) | null;
+    /** Idle Diagnostics live here rather than as a bar under the page (lab Q). */
+    onOpenDiagnostics?: (() => void) | null;
     desktopNativeDevtoolsAvailable: boolean;
     onOpenDesktopDevtools: () => void;
     plugins: BrowserPluginActions;
@@ -47,6 +49,7 @@ export function useBrowserToolbarOverflowItems(input: Readonly<{
         onStartRecording,
         onDiscardRecording,
         onOpenInYourBrowser,
+        onOpenDiagnostics,
         desktopNativeDevtoolsAvailable,
         onOpenDesktopDevtools,
         pluginActionsEnabled,
@@ -99,6 +102,14 @@ export function useBrowserToolbarOverflowItems(input: Readonly<{
                 onPress: onOpenInYourBrowser,
             });
         }
+        if (onOpenDiagnostics) {
+            items.push({
+                id: 'open-diagnostics',
+                iconName: 'bug',
+                label: t('browserShell.devtools.title'),
+                onPress: onOpenDiagnostics,
+            });
+        }
         if (desktopNativeDevtoolsAvailable) {
             items.push({
                 id: 'open-devtools',
@@ -137,6 +148,7 @@ export function useBrowserToolbarOverflowItems(input: Readonly<{
         onStartRecording,
         onDiscardRecording,
         onOpenInYourBrowser,
+        onOpenDiagnostics,
         desktopNativeDevtoolsAvailable,
         onOpenDesktopDevtools,
         pluginActionsEnabled,

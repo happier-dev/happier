@@ -93,6 +93,24 @@ function diagnosticBatch(overrides: Record<string, unknown> = {}): Record<string
 }
 
 describe('WebIframeEngine diagnostics wiring', () => {
+it('admits a diagnostics-only relay collector from its exact-source ready handshake', async () => {
+        const host = installTestWindow();
+        const frame = { postMessage: vi.fn() };
+        const availability = vi.fn();
+        const identity = { browserSessionId: 'bs', viewId: 'diagnostics-only', navigationGeneration: 1,
+            collectorId: 'collector', nonce: 'nonce' };
+        const screen = await renderScreen(<WebIframeEngine title="Preview" url="https://preview.example.test/"
+            localPreview sandbox="allow-scripts allow-same-origin" testID="diagnostics-only"
+            diagnostics={{ ...identity, collectorVersion: '1.0.0', sourceOrigin: 'https://preview.example.test',
+                webPostMessageTargetOrigin: 'https://app.example.test', onEvents: vi.fn(), onAvailability: availability }}
+        />, { createNodeMock: node => node.type === 'iframe' ? { contentWindow: frame } : null });
+        expect(new URL(screen.findByType('iframe').props.src).searchParams.has('__happierCollector')).toBe(true);
+        await act(async () => dispatchMessage(host, { origin: 'https://preview.example.test', source: frame as unknown as WindowProxy,
+            data: JSON.stringify({ v: 1, kind: 'browser.collector.ready', ...identity }) }));
+        expect(availability).toHaveBeenLastCalledWith({ status: 'available' });
+        await screen.unmount();
+    });
+
     it('binds later preview documents to their own embedding pane even when both panes share an origin', async () => {
         const host = installTestWindow();
         const frames: Array<EventTarget & { postMessage: (data: string) => void }> = [];

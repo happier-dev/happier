@@ -624,6 +624,37 @@ afterEach(async () => {
 });
 
 describe('BrowserSurfaceHost', () => {
+it('explains a refused iframe collector in Diagnostics while keeping its engine bridge attached', async () => {
+        vi.stubGlobal('crypto', { randomUUID: () => 'collector-token' });
+        const browser = await installBrowserRuntimeForTests({ url: 'https://app.happier.test/' });
+        const portal = installReactDomPortalBoundaryForTests();
+        const frame = { postMessage: vi.fn() };
+        Object.defineProperty(frame, 'document', { get: () => { throw new DOMException('Cross origin', 'SecurityError'); } });
+        const initialBrowserState = openBrowserTarget(createBrowserViewState(), {
+            kind: 'externalUrl', targetId: 'external', url: 'https://external.example.test/',
+        }, { platform: 'web', currentUrl: 'https://external.example.test/' });
+        const screen = await renderScreen(<BrowserSurfaceHost browserSessionId="browser_session_default" platform="web"
+            initialBrowserState={initialBrowserState}
+            policy={{ browserEnabled: true, viewTargetsEnabled: true, diagnosticsEnabled: true, contextEnabled: false }}
+            testID="iframe-diagnostics" />, { createNodeMock: node => node.type === 'iframe' ? { contentWindow: frame } : null });
+        try {
+            const { BrowserShell } = await import('@/components/browser/BrowserShell');
+            expect(screen.findByType(BrowserShell).props.browserDiagnostics?.bridge).toBeTruthy();
+            await act(async () => screen.findByType('iframe').props.onLoad());
+            expect(screen.findByType(BrowserShell).props.browserDiagnostics).toMatchObject({
+                bridge: expect.any(Object),
+                diagnosticsAvailability: { status: 'unavailable', reasonCode: 'cross_origin_frame_unavailable' },
+            });
+            await screen.pressByTestIdAsync('iframe-diagnostics-overflow');
+            await screen.pressByTestIdAsync('iframe-diagnostics-overflow-item-open-diagnostics');
+            expect(screen.getTextContent()).toContain('browserDiagnostics.host.devtools.unavailable.directPage');
+        } finally {
+            await screen.unmount();
+            portal.restore();
+            browser.restore();
+        }
+    });
+
     it('persists the relay document title and location without admission or reloading the frame, and restores after remount', async () => {
         const { createBrowserViewDetailsSurfaceRenderer } = await import('./browserDetailsSurfaceRenderer');
         const { createBrowserViewDetailsTab } = await import('./browserSurfaceDetailsTabModel');

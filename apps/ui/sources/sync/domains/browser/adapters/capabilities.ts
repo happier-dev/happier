@@ -35,6 +35,29 @@ type BrowserAutomationDisabledReasonCode =
     | 'desktop_webview_automation_unavailable'
     | 'hosted_plugin_automation_policy_unavailable';
 
+/** The mounted engine owns collector availability after observing the actual document. */
+export type BrowserDiagnosticsAvailability =
+    | Readonly<{ status: 'pending' }>
+    | Readonly<{ status: 'available' }>
+    | Readonly<{ status: 'unavailable'; reasonCode:
+        | 'adapter_unavailable'
+        | 'cross_origin_frame_unavailable'
+        | 'collector_unavailable'
+        | 'collector_blocked_by_csp' }>;
+
+/** Structural collector transport; actual document access is admitted by the mounted bridge. */
+export function resolveBrowserInjectedDiagnosticsTransport(input: Readonly<{
+    adapterKind: BrowserSemanticAdapterKindV1;
+    engineKind: BrowserRenderEngineKindV1;
+}>): 'page' | 'desktop' | null {
+    if (input.adapterKind === 'externalUrl' && input.engineKind === 'desktopWebView') return 'desktop';
+    const supportedAdapter = input.adapterKind === 'localPreview'
+        || input.adapterKind === 'hostedPlugin'
+        || input.adapterKind === 'externalUrl';
+    return supportedAdapter && (input.engineKind === 'nativeWebView' || input.engineKind === 'webIframe')
+        ? 'page' : null;
+}
+
 function disabledAutomationAction(
     reasonCode: BrowserAutomationDisabledReasonCode,
 ): BrowserAutomationActionCapabilityV1 {

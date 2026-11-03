@@ -13531,6 +13531,13 @@ const enBrowserDiagnostics = {
     }) => `Messages ${messagesIn}/${messagesOut}`,
   },
   host: {
+    devtools: {
+      unavailable: {
+        title: "This page can’t report diagnostics yet",
+        reason: "Pages open in the agent’s browser or a local preview report here as they load. A page shown directly can’t report anything.",
+        directPage: "This page is shown directly, so it can’t report diagnostics. Open it in the agent’s browser to inspect it.",
+      },
+    },
     title: 'Browser diagnostics',
     eventCount: ({ count }: { count: string }) => `${count} diagnostic events`,
     untrustedNotice:

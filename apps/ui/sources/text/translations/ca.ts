@@ -10791,6 +10791,13 @@ encryptedUnavailable: "Detalls xifrats no disponibles",
             flowMessages: ({ messagesIn, messagesOut }: { messagesIn: string; messagesOut: string }) => `Missatges ${messagesIn}/${messagesOut}`,
         },
         host: {
+    devtools: {
+      unavailable: {
+        title: "Aquesta pàgina encara no pot informar de diagnòstics",
+        reason: "Les pàgines obertes al navegador de l’agent o en una previsualització local hi informen mentre es carreguen. Una pàgina mostrada directament no pot informar de res.",
+        directPage: "Aquesta pàgina es mostra directament, així que no pot informar de diagnòstics. Obre-la al navegador de l’agent per inspeccionar-la.",
+      },
+    },
             title: 'Diagnòstics del navegador',
             eventCount: ({ count }: { count: string }) => `${count} esdeveniments de diagnòstic`,
             untrustedNotice: 'Els diagnòstics injectats poden ser alterats per la pàgina i tenen menor fidelitat.',

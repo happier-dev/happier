@@ -11,6 +11,7 @@ import type {
 } from '@happier-dev/protocol';
 import type { BrowserAutomationControlService } from '@/sync/domains/browser/automation';
 import type { BrowserPreviewRefusalReasonCode } from '@/sync/domains/browser/adapters/targets/localPreview';
+import type { BrowserDiagnosticsAvailability } from '@/sync/domains/browser/adapters/capabilities';
 
 export type BrowserDiagnosticsMessageRejectionReason =
     | 'collector_mismatch'
@@ -45,6 +46,7 @@ export type BrowserDiagnosticsEngineBridgeConfig = Readonly<{
     releaseObjectGroupRequest?: BrowserDiagnosticsReleaseObjectGroupRequestV1;
     elementPickerRequest?: BrowserDiagnosticsElementPickerRequestV1;
     onCollectorScriptReady?: (script: string) => void;
+    onAvailability?: (availability: BrowserDiagnosticsAvailability) => void;
     onEvents: (events: readonly BrowserDiagnosticEventV1[]) => void;
     onEvalResult?: (result: BrowserDiagnosticsEvalResultV1) => void;
     onPropertiesResult?: (result: BrowserDiagnosticsGetPropertiesResultV1) => void;

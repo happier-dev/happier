@@ -11284,6 +11284,13 @@ export const zhHans: TranslationStructure = {
       flowMessages: ({ messagesIn, messagesOut }: { messagesIn: string; messagesOut: string }) => `消息 ${messagesIn}/${messagesOut}`,
     },
     host: {
+    devtools: {
+      unavailable: {
+        title: "此页面暂时无法报告诊断",
+        reason: "在代理浏览器或本地预览中打开的页面会在加载时在此报告。直接显示的页面无法报告任何内容。",
+        directPage: "此页面是直接显示的，因此无法报告诊断。在代理浏览器中打开即可检查。",
+      },
+    },
       title: '浏览器诊断',
       eventCount: ({ count }: { count: string }) => `${count} 个诊断事件`,
       untrustedNotice: '注入诊断可能被页面篡改，保真度较低。',

@@ -196,6 +196,26 @@ function createDaemonDiagnosticsSnapshot(
     };
 }
 
+it('offers iframe diagnostics independently of automation and exposes the collector result for this document only', async () => {
+    stubCryptoRandomUuid();
+    const view: BrowserControlViewState = { ...createLocalPreviewView({ adapterKind: 'externalUrl' }),
+        target: { kind: 'externalUrl', targetId: 'external', url: 'https://preview.happier.test/' } };
+    const hook = await renderHook(({ currentView }) => useBrowserDiagnosticsRuntime({
+        view: currentView, enabled: true, parentOrigin: 'https://app.happier.test',
+    }), { initialProps: { currentView: view } });
+    const bridge = hook.getCurrent()?.bridge;
+    expect(bridge).toBeTruthy();
+    expect(hook.getCurrent()?.diagnosticsAvailability).toEqual({ status: 'pending' });
+    await act(async () => bridge?.onAvailability?.({ status: 'unavailable', reasonCode: 'cross_origin_frame_unavailable' }));
+    expect(hook.getCurrent()?.diagnosticsAvailability).toEqual({ status: 'unavailable', reasonCode: 'cross_origin_frame_unavailable' });
+    await hook.rerender({ currentView: { ...view, navigationGeneration: view.navigationGeneration + 1 } });
+    expect(hook.getCurrent()?.diagnosticsAvailability).toEqual({ status: 'pending' });
+    await act(async () => bridge?.onAvailability?.({ status: 'available' }));
+    expect(hook.getCurrent()?.diagnosticsAvailability).toEqual({ status: 'pending' });
+    await act(async () => hook.getCurrent()?.bridge?.onAvailability?.({ status: 'available' }));
+    expect(hook.getCurrent()?.diagnosticsAvailability).toEqual({ status: 'available' });
+});
+
 describe('useBrowserDiagnosticsRuntime', () => {
     it('retains an Ask-first console invocation until approval and receives the actual mounted engine result', async () => {
         stubCryptoRandomUuid();

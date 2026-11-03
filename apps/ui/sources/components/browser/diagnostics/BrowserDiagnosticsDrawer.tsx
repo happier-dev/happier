@@ -28,6 +28,7 @@ import { t } from '@/text';
 
 import { BROWSER_DRAWER_MAX_HEIGHT_FRACTION } from '../browserChromeDensity';
 import { BrowserDiagnosticsPanel } from './BrowserDiagnosticsPanel';
+import type { BrowserDiagnosticsAvailability } from '@/sync/domains/browser/adapters/capabilities';
 import { Icon } from '@/components/ui/icons/Icon';
 import type {
     BrowserDiagnosticsInteractionControls,
@@ -233,6 +234,7 @@ function BrowserDiagnosticsDrawerBody(props: Readonly<{
     diagnostics: BrowserDiagnosticsPanelProjection;
     state?: BrowserDiagnosticsUiStore;
     eventSource?: DiagnosticsEventSource;
+    diagnosticsAvailability?: BrowserDiagnosticsAvailability;
     daemonSnapshot?: UseBrowserDiagnosticsDaemonSnapshotInput;
     section: SectionKey | null;
     interaction?: BrowserDiagnosticsInteractionControls;
@@ -246,13 +248,16 @@ function BrowserDiagnosticsDrawerBody(props: Readonly<{
         : null, [props.eventSource, props.state, viewKey]);
     const view = React.useSyncExternalStore(props.eventSource?.subscribe ?? noSubscribe, readView, readView);
     const diagnostics = React.useMemo(() => {
-        const projection = props.diagnostics.sourceKind === 'browserDiagnostics' && (props.eventSource || props.state)
+        const storedProjection = props.diagnostics.sourceKind === 'browserDiagnostics' && (props.eventSource || props.state)
             ? selectBrowserDiagnosticsForView({ viewsByKey: view && viewKey ? { [viewKey]: view } : {} }, props.diagnostics)
             : props.diagnostics;
+        const projection = storedProjection.sourceKind === 'browserDiagnostics' && props.diagnosticsAvailability?.status === 'unavailable'
+            ? { ...storedProjection, status: 'unavailable' as const, reasonCode: props.diagnosticsAvailability.reasonCode }
+            : storedProjection;
         return projection.sourceKind === 'browserDiagnostics' && props.section && props.section !== PREVIEW_PROXY_SECTION
             ? projectionForSection(projection, props.section)
             : projection;
-    }, [props.diagnostics, props.eventSource, props.state, props.section, view, viewKey]);
+    }, [props.diagnostics, props.eventSource, props.state, props.section, props.diagnosticsAvailability, view, viewKey]);
     return <BrowserDiagnosticsPanel diagnostics={diagnostics} interaction={props.interaction}
         interactionSurface={props.interactionSurface} testID={props.testID} />;
 }
@@ -261,6 +266,7 @@ export function BrowserDiagnosticsDrawer(props: Readonly<{
     diagnostics: BrowserDiagnosticsPanelProjection;
     state?: BrowserDiagnosticsUiStore;
     eventSource?: DiagnosticsEventSource;
+    diagnosticsAvailability?: BrowserDiagnosticsAvailability;
     daemonSnapshot?: UseBrowserDiagnosticsDaemonSnapshotInput;
     /**
      * A second diagnostics source (the preview proxy). Rendered as an extra SECTION of this drawer,
@@ -535,6 +541,7 @@ export function BrowserDiagnosticsDrawer(props: Readonly<{
                             diagnostics={bodyDiagnostics}
                             state={showingSupplemental ? undefined : props.state}
                             eventSource={showingSupplemental ? undefined : props.eventSource}
+                            diagnosticsAvailability={showingSupplemental ? undefined : props.diagnosticsAvailability}
                             daemonSnapshot={props.daemonSnapshot}
                             section={activeSection}
                             interaction={bodyInteraction}

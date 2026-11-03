@@ -11872,6 +11872,13 @@ encryptedUnavailable: "Dettagli crittografati non disponibili",
       flowMessages: ({ messagesIn, messagesOut }: { messagesIn: string; messagesOut: string }) => `Messaggi ${messagesIn}/${messagesOut}`,
     },
     host: {
+    devtools: {
+      unavailable: {
+        title: "Questa pagina non può ancora segnalare diagnostica",
+        reason: "Le pagine aperte nel browser dell’agente o in un’anteprima locale si segnalano qui mentre si caricano. Una pagina mostrata direttamente non può segnalare nulla.",
+        directPage: "Questa pagina è mostrata direttamente, quindi non può segnalare diagnostica. Aprila nel browser dell’agente per esaminarla.",
+      },
+    },
       title: 'Diagnostica browser',
       eventCount: ({ count }: { count: string }) => `${count} eventi diagnostici`,
       untrustedNotice: 'La diagnostica iniettata puo essere alterata dalla pagina e ha fedelta inferiore.',

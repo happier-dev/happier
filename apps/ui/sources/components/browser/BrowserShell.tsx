@@ -74,6 +74,7 @@ import { useBrowserKeyboardShortcuts } from './useBrowserKeyboardShortcuts';
 import { BrowserLoadProgressBar } from './BrowserLoadProgressBar';
 import {
     BrowserDiagnosticsDrawer,
+    type BrowserDiagnosticsDrawerHandle,
     type BrowserDiagnosticsInteractionControls,
     type BrowserDiagnosticsRuntimeProjection,
 } from './diagnostics';
@@ -517,6 +518,10 @@ export function BrowserShell(props: Readonly<{
         ? () => { void props.onOpenInSystemBrowser?.({ browserSessionId: activeView.browserSessionId, viewId: activeView.viewId }); }
         : null), [openableUrl, activeView?.browserSessionId, activeView?.viewId, props.onOpenInSystemBrowser]);
 
+    const diagnosticsDrawerRef = React.useRef<BrowserDiagnosticsDrawerHandle>(null);
+    const openDiagnostics = React.useMemo(() => (activeDiagnostics || props.supplementalDiagnostics
+        ? () => diagnosticsDrawerRef.current?.open()
+        : null), [activeDiagnostics, props.supplementalDiagnostics]);
     const overflowItems = useBrowserToolbarOverflowItems({
         activeView,
         annotation: props.browserContext ? annotation : null,
@@ -524,6 +529,7 @@ export function BrowserShell(props: Readonly<{
         onStartRecording: recordingModel?.onStartRecording ? startRecording : undefined,
         onDiscardRecording: recordingModel?.onCancelRecording ? discardRecording : undefined,
         onOpenInYourBrowser: openInYourBrowser,
+        onOpenDiagnostics: openDiagnostics,
         desktopNativeDevtoolsAvailable,
         onOpenDesktopDevtools: openDesktopDevtools,
         plugins,
@@ -853,10 +859,12 @@ export function BrowserShell(props: Readonly<{
                     diagnostics={activeDiagnostics ?? props.supplementalDiagnostics!}
                     state={browserDiagnostics?.eventSource ? undefined : browserDiagnostics?.state}
                     eventSource={browserDiagnostics?.eventSource}
+                    diagnosticsAvailability={browserDiagnostics?.diagnosticsAvailability}
                     daemonSnapshot={browserDiagnostics?.daemonSnapshot}
                     supplemental={activeDiagnostics ? props.supplementalDiagnostics : null}
                     interaction={browserDiagnostics?.interaction}
                     surfaceHeightPx={chromeDensity.containerHeightPx ?? undefined}
+                    handleRef={diagnosticsDrawerRef}
                     testID={`${testID}-diagnostics`}
                 />
             ) : null}

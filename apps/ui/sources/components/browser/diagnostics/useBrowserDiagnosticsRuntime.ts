@@ -12,6 +12,7 @@ import type {
     BrowserDiagnosticsReleaseObjectGroupResultV1,
 } from '@happier-dev/protocol';
 import type { BrowserControlViewState } from '@/sync/domains/browser/control';
+import { resolveBrowserInjectedDiagnosticsTransport, type BrowserDiagnosticsAvailability } from '@/sync/domains/browser/adapters/capabilities';
 import type {
     BrowserDiagnosticsEvalConsoleControls,
     BrowserDiagnosticsEvalConsoleEntry,
@@ -21,7 +22,6 @@ import {
     advanceBrowserDiagnosticsGeneration,
     applyBrowserDiagnosticEvents,
     createBrowserDiagnosticsUiStore,
-    selectBrowserDiagnosticsEventCount,
     resolveBrowserDiagnosticsSnapshotMachineId,
     type BrowserDiagnosticsSnapshotClient,
     type BrowserDiagnosticsUiStore,
@@ -37,6 +37,9 @@ import { BrowserDiagnosticsEvalRequestV1Schema, BrowserDiagnosticsGetPropertiesR
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 const DEFAULT_COLLECTOR_VERSION = '1.0.0';
+const PENDING_DIAGNOSTICS: BrowserDiagnosticsAvailability = { status: 'pending' };
+const AVAILABLE_DIAGNOSTICS: BrowserDiagnosticsAvailability = { status: 'available' };
+const UNAVAILABLE_DIAGNOSTICS: BrowserDiagnosticsAvailability = { status: 'unavailable', reasonCode: 'adapter_unavailable' };
 
 type BrowserDiagnosticsBridgeBaseConfig = Omit<
     BrowserDiagnosticsEngineBridgeConfig,
@@ -48,6 +51,7 @@ type BrowserDiagnosticsBridgeBaseConfig = Omit<
     | 'onPropertiesResult'
     | 'onReleaseObjectGroupResult'
     | 'onElementPickerResult'
+    | 'onAvailability'
 >;
 
 type BrowserDiagnosticsPendingRequests = Readonly<{
@@ -96,7 +100,7 @@ export type BrowserDiagnosticsReleaseObjectGroupCommandInput = Readonly<{
 export type BrowserDiagnosticsRuntimeProjection = Readonly<{
     state: BrowserDiagnosticsUiStore;
     eventSource?: Pick<StoreApi<BrowserDiagnosticsUiStore>, 'getState' | 'subscribe'>;
-    hasRenderableDiagnostics?: boolean;
+    diagnosticsAvailability?: BrowserDiagnosticsAvailability;
     /** The open drawer acquires this source; collectors continue independently while it is closed. */
     daemonSnapshot?: UseBrowserDiagnosticsDaemonSnapshotInput;
     bridge?: BrowserDiagnosticsEngineBridgeConfig | null;
@@ -168,13 +172,9 @@ function defaultParentOrigin(): string | null {
     return normalizeHttpOrigin(window.location?.origin);
 }
 
-function canAttachInjectedDiagnostics(view: BrowserControlViewState, includeWebCollector = false): boolean {
-    const supportedAdapter = view.adapterKind === 'localPreview'
-        || view.adapterKind === 'hostedPlugin'
-        || view.adapterKind === 'externalUrl';
+function canAttachInjectedDiagnostics(view: BrowserControlViewState): boolean {
     // The iframe engine verifies actual document access and collector installation before admission.
-    return supportedAdapter && (view.engineKind === 'nativeWebView'
-        || (includeWebCollector && view.engineKind === 'webIframe'));
+    return resolveBrowserInjectedDiagnosticsTransport(view) === 'page';
 }
 
 /**
@@ -187,7 +187,7 @@ function canAttachInjectedDiagnostics(view: BrowserControlViewState, includeWebC
  * command scripts into the page).
  */
 function canAttachDesktopInjectedDiagnostics(view: BrowserControlViewState): boolean {
-    return view.engineKind === 'desktopWebView' && view.adapterKind === 'externalUrl';
+    return resolveBrowserInjectedDiagnosticsTransport(view) === 'desktop';
 }
 
 function defaultObjectGroupId(view: BrowserControlViewState): string {
@@ -262,7 +262,7 @@ export function useBrowserDiagnosticsRuntime(
         if (browserSessionId === undefined || viewId === undefined || navigationGeneration === undefined) return;
         eventSource.setState((current) => advanceBrowserDiagnosticsGeneration(current, { browserSessionId, viewId, navigationGeneration }), true);
     }, [eventSource, browserSessionId, viewId, navigationGeneration]);
-    const injected = !!input.view && canAttachInjectedDiagnostics(input.view, input.automationEnabled === true);
+    const injected = !!input.view && canAttachInjectedDiagnostics(input.view);
     const desktopInjected = !!input.view && !injected && canAttachDesktopInjectedDiagnostics(input.view);
     const requiresOriginHandshake = input.view?.engineKind === 'webIframe';
     const sourceOrigin = normalizeHttpOrigin(input.view?.securityOrigin) ?? normalizeHttpOrigin(input.view?.currentUrl);
@@ -319,6 +319,28 @@ export function useBrowserDiagnosticsRuntime(
         onEvents,
     ]);
 
+    const [collectorAvailability, setCollectorAvailability] = React.useState<Readonly<{
+        collectorId: string;
+        availability: BrowserDiagnosticsAvailability;
+    }> | null>(null);
+    const currentCollectorId = React.useRef(bridgeBase?.collectorId);
+    currentCollectorId.current = bridgeBase?.collectorId;
+    const onAvailability = React.useCallback((availability: BrowserDiagnosticsAvailability) => {
+        const collectorId = bridgeBase?.collectorId;
+        if (!collectorId || currentCollectorId.current !== collectorId) return;
+        setCollectorAvailability(current => {
+            if (current?.collectorId === collectorId && current.availability.status === availability.status
+                && (current.availability.status !== 'unavailable' || availability.status !== 'unavailable'
+                    || current.availability.reasonCode === availability.reasonCode)) return current;
+            return { collectorId, availability };
+        });
+    }, [bridgeBase?.collectorId]);
+    const diagnosticsAvailability = bridgeBase
+        ? requiresOriginHandshake
+            ? collectorAvailability?.collectorId === bridgeBase.collectorId ? collectorAvailability.availability : PENDING_DIAGNOSTICS
+            : AVAILABLE_DIAGNOSTICS
+        : daemonSnapshot ? AVAILABLE_DIAGNOSTICS : UNAVAILABLE_DIAGNOSTICS;
+
     // Interactive diagnostics (eval / element-picker) push command scripts INTO the page. Native
     // WebView injected surfaces deliver them through their bridge; the desktop engine evals them via
     // the host `desktop_browser_eval_script` command (results return over the same ipc/drain channel).
@@ -326,8 +348,8 @@ export function useBrowserDiagnosticsRuntime(
     // existing automation opt-in, keep iframe interaction unavailable rather than inventing a bridge.
     const interactionSupported = input.enabled === true
         && !!input.view
-        && (canAttachInjectedDiagnostics(input.view, input.automationEnabled === true)
-            || canAttachDesktopInjectedDiagnostics(input.view));
+        && (canAttachInjectedDiagnostics(input.view) || canAttachDesktopInjectedDiagnostics(input.view))
+        && diagnosticsAvailability.status !== 'unavailable';
 
     const currentRef = React.useRef({ input, interactionEnabled, bridgeBase, interactionSupported });
     currentRef.current = { input, interactionEnabled, bridgeBase, interactionSupported };
@@ -602,6 +624,7 @@ export function useBrowserDiagnosticsRuntime(
         if (!bridgeBase) return null;
         return {
             ...bridgeBase,
+            onAvailability,
             ...pendingRequests,
             onEvalResult: handleEvalResult,
             onPropertiesResult: handlePropertiesResult,
@@ -610,6 +633,7 @@ export function useBrowserDiagnosticsRuntime(
         };
     }, [
         bridgeBase,
+        onAvailability,
         handleElementPickerResult,
         handleEvalResult,
         handlePropertiesResult,
@@ -622,7 +646,7 @@ export function useBrowserDiagnosticsRuntime(
             return {
                 state: 'unavailable',
                 ownerOnly: true,
-                unavailableReasonCode: input.view && canAttachInjectedDiagnostics(input.view, input.automationEnabled === true)
+                unavailableReasonCode: input.view && canAttachInjectedDiagnostics(input.view)
                     ? 'collector_unavailable'
                     : 'adapter_unavailable',
                 pickerState: 'unavailable',
@@ -684,17 +708,12 @@ export function useBrowserDiagnosticsRuntime(
         unavailable,
     ]);
 
-    const hasDaemonSnapshotSource = daemonSnapshot !== undefined;
-    const readAvailability = React.useCallback(() => hasDaemonSnapshotSource || !!bridge || !!(browserSessionId && viewId
-        && selectBrowserDiagnosticsEventCount(eventSource.getState(), { browserSessionId, viewId })),
-    [hasDaemonSnapshotSource, bridge, browserSessionId, eventSource, viewId]);
-    const hasRenderableDiagnostics = React.useSyncExternalStore(eventSource.subscribe, readAvailability, readAvailability);
     return React.useMemo(() => {
         if ((input.enabled !== true && input.automationEnabled !== true) || !input.view) return null;
         return {
             get state() { return eventSource.getState(); },
             eventSource,
-            hasRenderableDiagnostics,
+            diagnosticsAvailability,
             daemonSnapshot,
             bridge,
             interaction,
@@ -703,6 +722,6 @@ export function useBrowserDiagnosticsRuntime(
             requestGetProperties,
             requestReleaseObjectGroup,
         };
-    }, [input.enabled, input.automationEnabled, input.view, eventSource, hasRenderableDiagnostics, daemonSnapshot, bridge, interaction,
+    }, [input.enabled, input.automationEnabled, input.view, eventSource, diagnosticsAvailability, daemonSnapshot, bridge, interaction,
         requestEval, requestGetProperties, requestReleaseObjectGroup, bridgeBase, interactionSupported, diagnostics]);
 }

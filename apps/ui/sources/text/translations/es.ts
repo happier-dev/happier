@@ -11653,6 +11653,13 @@ encryptedUnavailable: "Detalles cifrados no disponibles",
       flowMessages: ({ messagesIn, messagesOut }: { messagesIn: string; messagesOut: string }) => `Mensajes ${messagesIn}/${messagesOut}`,
     },
     host: {
+    devtools: {
+      unavailable: {
+        title: "Esta página aún no puede informar diagnósticos",
+        reason: "Las páginas abiertas en el navegador del agente o en una vista previa local informan aquí al cargar. Una página mostrada directamente no puede informar nada.",
+        directPage: "Esta página se muestra directamente, así que no puede informar diagnósticos. Ábrela en el navegador del agente para inspeccionarla.",
+      },
+    },
       title: 'Diagnósticos del navegador',
       eventCount: ({ count }: { count: string }) => `${count} eventos de diagnóstico`,
       untrustedNotice: 'Los diagnósticos inyectados pueden ser manipulados por la página y tienen menor fidelidad.',

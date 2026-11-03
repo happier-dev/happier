@@ -9484,6 +9484,13 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             flowMessages: ({ messagesIn, messagesOut }: { messagesIn: string; messagesOut: string }) => `訊息 ${messagesIn}/${messagesOut}`,
         },
         host: {
+    devtools: {
+      unavailable: {
+        title: "此頁面暫時無法回報診斷",
+        reason: "在代理瀏覽器或本機預覽中開啟的頁面會在載入時於此回報。直接顯示的頁面無法回報任何內容。",
+        directPage: "此頁面是直接顯示的，因此無法回報診斷。在代理瀏覽器中開啟即可檢查。",
+      },
+    },
             title: '瀏覽器診斷',
             eventCount: ({ count }: { count: string }) => `${count} 個診斷事件`,
             untrustedNotice: '注入診斷可能被頁面竄改，保真度較低。',

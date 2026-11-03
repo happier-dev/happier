@@ -235,11 +235,14 @@ function BrowserHostDiagnosticsPanel(props: Readonly<{
     if (props.diagnostics.status === 'unavailable') {
         return (
             <View style={stylesheet.header}>
-                <Text testID={`${props.testID}-status`} style={stylesheet.flowTitle}>
-                    {t('browserDiagnostics.host.eventsEmpty')}
+                <Text testID={`${props.testID}-status`} style={stylesheet.title}>
+                    {t('browserDiagnostics.host.devtools.unavailable.title')}
                 </Text>
                 <Text testID={`${props.testID}-unavailable-reason`} style={stylesheet.subtitle}>
-                    {t('browserDiagnostics.host.unavailableReason')}
+                    {props.diagnostics.reasonCode === 'unsupported_engine' || props.diagnostics.reasonCode === 'engine_unsupported'
+                        || props.diagnostics.reasonCode === 'cross_origin_frame_unavailable'
+                        ? t('browserDiagnostics.host.devtools.unavailable.directPage')
+                        : t('browserDiagnostics.host.devtools.unavailable.reason')}
                 </Text>
             </View>
         );

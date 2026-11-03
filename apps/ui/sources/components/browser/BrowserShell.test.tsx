@@ -2021,6 +2021,23 @@ describe('BrowserShell', () => {
     ).toBeTruthy();
   });
 
+it('keeps iframe Diagnostics reachable and explains the reported cross-origin refusal', async () => {
+    const { BrowserShell } = await import('./BrowserShell');
+    const state = await createShellState();
+    const screen = await renderScreen(<BrowserShell browserSessionId="browser_session_1" platform="web"
+      state={state} onCommand={vi.fn()} browserDiagnostics={{
+        state: createBrowserDiagnosticsUiStore(),
+        diagnosticsAvailability: { status: 'unavailable', reasonCode: 'cross_origin_frame_unavailable' },
+        requestEval: () => false, requestGetProperties: () => false, requestReleaseObjectGroup: () => false,
+      }} testID="browser-shell" />);
+
+    await screen.pressByTestIdAsync('browser-shell-overflow');
+    await screen.pressByTestIdAsync('browser-shell-overflow-item-open-diagnostics');
+    expect(screen.getTextContent()).toContain('browserDiagnostics.host.devtools.unavailable.directPage');
+    expect(screen.findByTestId('browser-shell-diagnostics-body-family-console')).toBeNull();
+    expect(testState.fetchBrowserDiagnosticsSnapshotViaMachineRpc).not.toHaveBeenCalled();
+  });
+
   it('fails closed for browser diagnostics when no explicit diagnostics state is provided', async () => {
     const { BrowserShell } = await import('./BrowserShell');
     const state = await createShellState();
