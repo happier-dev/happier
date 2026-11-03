@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import test from 'node:test';
+import YAML from 'yaml';
 
 const repoRoot = new URL('../..', import.meta.url).pathname;
 
@@ -14,5 +15,11 @@ test('manual tests dispatch can run an exact bounded UI E2E spec selection', asy
   assert.match(reusable, /UI_E2E_SPECS:\s*\$\{\{\s*inputs\.ui_e2e_specs\s*\}\}/, 'the UI E2E job should receive the selection only as environment data');
   assert.match(reusable, /packages\/tests\/suites\/ui-e2e\/\*\.spec\.ts/, 'targeted specs should be restricted to the canonical UI E2E directory');
   assert.match(reusable, /yarn -s test:e2e:ui -- "\$\{specs\[@\]\}"/, 'validated specs should be passed as a quoted argument array');
-  assert.match(reusable, /name:\s*ui-e2e-playwright-artifacts[\s\S]*?compression-level:\s*0/, 'failure artifacts should skip recompressing browser media');
+  const mediaUploads = YAML.parse(reusable).jobs['ui-e2e'].steps.filter((step) =>
+    step.uses?.startsWith('actions/upload-artifact@') && step.with.name.includes('ui-e2e-playwright-artifacts'),
+  );
+  assert.ok(mediaUploads.length > 0, 'UI E2E failures should retain browser media');
+  for (const upload of mediaUploads) {
+    assert.equal(upload.with['compression-level'], 0, 'failure artifacts should skip recompressing browser media');
+  }
 });
