@@ -1817,8 +1817,8 @@ describe('daemon contribution registry projection (wire)', () => {
       installedPackagesById: {},
       agentsById: {},
       actionsById: {},
-      toolsById: {},
-      commandsById: {},
+
+
       resourcesById: {},
       settingsById: {},
       familiesById: {},
@@ -2075,8 +2075,8 @@ describe('daemon contribution registry projection (wire)', () => {
           },
         },
         actionsById: {},
-        toolsById: {},
-        commandsById: {},
+
+
         resourcesById: {},
         diagnostics: [],
       },
@@ -2344,23 +2344,6 @@ describe('daemon contribution registry projection (wire)', () => {
           available: true,
         },
       },
-      toolsById: {
-        'acme.plugin.search': {
-          id: 'acme.plugin.search',
-          pluginId: 'acme.plugin',
-          title: 'Search Acme',
-          exposesToAgent: true,
-        },
-      },
-      commandsById: {
-        'acme.plugin.reload': {
-          id: 'acme.plugin.reload',
-          pluginId: 'acme.plugin',
-          title: 'Reload Acme',
-          surfaces: ['agentSlash'],
-          tokens: ['acme-reload'],
-        },
-      },
       resourcesById: {
         'acme.plugin.prompt': {
           id: 'acme.plugin.prompt',
@@ -2391,6 +2374,8 @@ describe('daemon contribution registry projection (wire)', () => {
 
     expect(parsed.generation).toBe(7);
     expect(parsed.actionsById['acme.plugin.refresh']?.available).toBe(true);
+    expect(parsed).not.toHaveProperty('toolsById');
+    expect(parsed).not.toHaveProperty('commandsById');
     expect(parsed).not.toHaveProperty('hooksById');
     expect(PluginProjectionV2Schema.safeParse({
       v: 2,

@@ -1657,8 +1657,8 @@ describe('machine contribution registry projection ops', () => {
                 },
                 agentsById: {},
                 actionsById: {},
-                toolsById: {},
-                commandsById: {},
+
+
                 resourcesById: {},
                 diagnostics: [],
             },

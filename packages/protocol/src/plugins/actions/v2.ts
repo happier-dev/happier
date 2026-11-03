@@ -1,3 +1,4 @@
+import { ActionToolExposureSchema } from '../../actions/metadata.js';
 import { maxCodeUnits } from '../../strings/maxCodeUnits.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod/mini';
@@ -502,6 +503,15 @@ export function normalizePluginActionSlashV2(
   return slash ? { tokens: [...slash.tokens] } : null;
 }
 
+const PluginActionToolV2Schema = lazyZodSchema(() => z.strictObject({
+  name: z.string().check(z.trim(), z.minLength(1)),
+  title: z.optional(PluginLocalizedStringV2Schema),
+  description: z.optional(PluginLocalizedStringV2Schema),
+  examples: z.optional(PluginActionDefinitionExamplesV1Schema),
+  promptSnippet: PluginOptionalStringSchema,
+  promptGuidelines: z.optional(z.array(z.string().check(z.trim(), z.minLength(1)))),
+}));
+
 const PluginActionCliV2Schema = lazyZodSchema(() => z.strictObject({
   path: z.array(z.string().check(z.trim(), z.minLength(1))).check(z.minLength(1)),
   aliases: z.optional(z.array(z.array(z.string().check(z.trim(), z.minLength(1))).check(z.minLength(1)))),
@@ -525,7 +535,9 @@ readOnly: z.optional(z.union([z.boolean(), InputPredicateSchema])),
   sessionTarget: z.optional(ActionSessionTargetDeclarationV1Schema),
   placementBindings: z.optional(PluginActionPlacementBindingsV2Schema),
   slash: z.optional(PluginActionSlashV2Schema),
+  tool: z.optional(PluginActionToolV2Schema),
   cli: z.optional(PluginActionCliV2Schema),
+  toolExposure: z.optional(ActionToolExposureSchema),
   inputSchema: z.optional(PluginJsonSchemaV2Schema),
   contextualDefaults: z.optional(ActionContextualDefaultsSchema),
   inputHints: z.optional(PluginActionInputHintsV2Schema),

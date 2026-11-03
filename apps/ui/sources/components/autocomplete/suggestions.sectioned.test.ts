@@ -128,8 +128,8 @@ function composerReferenceProjection(entries: readonly Readonly<{
         installedPackagesById: {},
         agentsById: {},
         actionsById: {},
-        toolsById: {},
-        commandsById: {},
+
+
         resourcesById: {},
         settingsById: {},
         familiesById: {},

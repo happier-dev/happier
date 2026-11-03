@@ -114,8 +114,8 @@ const accountSettingsWrites: AccountSettingsV2UpdateRequest[] = [];
 let accountSettingsHttp: ReturnType<typeof createAccountSettingsHttpBoundary>;
 let accountSettingsPost: ((input: AccountSettingsV2UpdateRequest, next: () => Promise<HomeDomainAnswer>) => Promise<HomeDomainAnswer>) | null = null;
 let persistedAccountSettings: Readonly<Record<string, unknown>> = {};
-let daemonProjection = PluginProjectionV2Schema.parse({ v: 2, generation: 1, agentsById: {}, actionsById: {}, toolsById: {},
-    commandsById: {}, resourcesById: {}, settingsById: {}, installedPackagesById: {}, diagnostics: [] });
+let daemonProjection = PluginProjectionV2Schema.parse({ v: 2, generation: 1, agentsById: {}, actionsById: {},
+     resourcesById: {}, settingsById: {}, installedPackagesById: {}, diagnostics: [] });
 
 async function publishSettingsDeclaration(projection: PluginProjectionEntry | null) {
     if (!projection) return;

@@ -1505,7 +1505,7 @@ function buildSelectedProjection(
         projection: buildPluginSettingsProjectionV2({ registry: lease.registry, generation: inputs.generation }) };
     if (inputs.selection === 'agents') return { protocolVersion: 1, projection: {
         v: 2, generation: inputs.generation, agentsById: buildAgentsById(lease.registry, inputs.generation),
-        installedPackagesById: {}, actionsById: {}, toolsById: {}, commandsById: {}, resourcesById: {},
+        installedPackagesById: {}, actionsById: {},   resourcesById: {},
         settingsById: {}, familiesById: {}, diagnostics: [],
     } };
     if (inputs.selection === 'connectedAccountAdmission') return { protocolVersion: 1,
@@ -1712,8 +1712,8 @@ async function describeProjection(
                     agentsById: {},
                     installedPackagesById: {},
                     actionsById: {},
-                    toolsById: {},
-                    commandsById: {},
+
+
                     resourcesById: {},
                     settingsById: {},
                     diagnostics: [],

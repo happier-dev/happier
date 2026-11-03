@@ -5880,6 +5880,43 @@ export type PluginActionContributionV2 = {
     slash?: {
         tokens: string[];
     } | undefined;
+    tool?: undefined | {
+        name: string;
+        title?: string | undefined | {
+            key: string;
+            fallback: string;
+            params?: Record<string, number | string> | undefined;
+        };
+        description?: string | undefined | {
+            key: string;
+            fallback: string;
+            params?: Record<string, number | string> | undefined;
+        };
+        examples?: undefined | {
+            voice?: undefined | {
+                argsExample?: string | undefined;
+            };
+            mcp?: undefined | {
+                argsExample?: string | undefined;
+            };
+            sdk?: undefined | {
+                codeExample?: string | undefined;
+            };
+        };
+        promptSnippet?: string | undefined;
+        promptGuidelines?: string[] | undefined;
+    };
+    cli?: undefined | {
+        path: string[];
+        aliases?: string[][] | undefined;
+        visibility?: 'advanced' | 'default' | undefined;
+        tmux?: 'forbidden' | 'inherit' | 'required' | undefined;
+    };
+    toolExposure?: undefined | {
+        agent?: 'direct' | 'discoverable_only' | undefined;
+        mcp?: 'direct' | 'discoverable_only' | undefined;
+        cli?: 'direct' | 'discoverable_only' | undefined;
+    };
     inputSchema?: PluginJsonSchemaV2 | undefined;
     contextualDefaults?: {
         sessionId?: 'current_session' | undefined;

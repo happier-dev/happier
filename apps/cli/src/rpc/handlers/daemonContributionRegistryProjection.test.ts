@@ -5031,57 +5031,6 @@ describe('daemon contribution registry projection rpc handler', () => {
                         },
                     },
                 ],
-                tools: [
-                    {
-                        provenance: 'external',
-                        source: { kind: 'path' },
-                        pluginId: 'runtime.plugin',
-                        manifestPath: '/plugins/runtime/plugin.json',
-                        daemonEntryPath: '/plugins/runtime/daemon.mjs',
-                        sourceSpec: {
-                            kind: 'path',
-                            locator: '/plugins/runtime',
-                            trustPolicy: 'local_trusted',
-                            installPolicy: 'link',
-                        },
-                        definition: {
-                            kindVersion: 1,
-                            id: 'runtime-tool-search',
-                            name: 'runtime_search',
-                            title: 'Runtime Search',
-                            description: 'Search runtime resources',
-                            safety: 'safe',
-                            surfaces: ['mcp', 'agent'],
-                            action: 'runtime-tool-search',
-                            actionId: 'runtime-tool-search',
-                        },
-                    },
-                ],
-                commands: [
-                    {
-                        provenance: 'external',
-                        source: { kind: 'path' },
-                        pluginId: 'runtime.plugin',
-                        manifestPath: '/plugins/runtime/plugin.json',
-                        daemonEntryPath: '/plugins/runtime/daemon.mjs',
-                        sourceSpec: {
-                            kind: 'path',
-                            locator: '/plugins/runtime',
-                            trustPolicy: 'local_trusted',
-                            installPolicy: 'link',
-                        },
-                        definition: {
-                            kindVersion: 1,
-                            id: 'runtime-command-reload',
-                            title: 'Reload Runtime Plugin',
-                            description: 'Reload the runtime plugin',
-                            path: ['runtime-reload'],
-                            action: 'runtime-command-reload',
-                            tmux: 'required',
-                            actionId: 'runtime-command-reload',
-                        },
-                    },
-                ],
             })),
             pluginDiagnosticsByPluginId: Object.freeze({
                 'runtime.plugin': Object.freeze([
@@ -5126,18 +5075,6 @@ describe('daemon contribution registry projection rpc handler', () => {
                 resourcesById: expect.objectContaining({
                     'runtime.plugin/runtime-prompt': expect.objectContaining({
                         path: 'resources/runtime.md',
-                    }),
-                }),
-                toolsById: expect.objectContaining({
-                    'runtime.plugin/runtime-tool-search': expect.objectContaining({
-                        title: 'Runtime Search',
-                        exposesToAgent: true,
-                    }),
-                }),
-                commandsById: expect.objectContaining({
-                    'runtime.plugin/runtime-command-reload': expect.objectContaining({
-                        title: 'Reload Runtime Plugin',
-                        tokens: ['runtime-reload'],
                     }),
                 }),
             }),

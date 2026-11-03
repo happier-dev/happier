@@ -77,8 +77,8 @@ describe('plugin surface execution requirement', () => {
             sourceRef: { machineId, pluginId, sourceCustody } });
         const project = (occurrenceId: string, generation: number, phase: 'current' | 'establishing' | 'unavailable' = 'current',
             unavailableReasonCode?: string) => {
-            const model = normalizePluginUiProjection({ v: 2, generation, agentsById: {}, actionsById: {}, toolsById: {},
-                commandsById: {}, resourcesById: {}, settingsById: {}, diagnostics: [],
+            const model = normalizePluginUiProjection({ v: 2, generation, agentsById: {}, actionsById: {},
+                 resourcesById: {}, settingsById: {}, diagnostics: [],
                 installedPackagesById: { [pluginId]: { id: pluginId, displayName: 'Source surface', version: '1.0.0',
                     enabled: true, source: { kind: 'localPath', locator: 'surface-source-root' }, occurrenceId, sourceCustody, executionOrigin,
                     declaresContributionPoints: true,

@@ -443,8 +443,8 @@ function projection(entriesById: Record<string, unknown>): PluginProjectionV2 {
         installedPackagesById: {},
         agentsById: {},
         actionsById: {},
-        toolsById: {},
-        commandsById: {},
+
+
         resourcesById: {},
         settingsById: {},
         familiesById: {
@@ -801,8 +801,8 @@ function pluginUiProjectionWithAppTab(input: Readonly<{
         installedPackagesById: {},
         agentsById: {},
         actionsById: {},
-        toolsById: {},
-        commandsById: {},
+
+
         resourcesById: {},
         settingsById: {},
         familiesById: {
@@ -1456,8 +1456,8 @@ describe('AppShellPluginUiProjectionProvider', () => {
                 installedPackagesById: {},
                 agentsById: {},
                 actionsById: {},
-                toolsById: {},
-                commandsById: {},
+
+
                 resourcesById: {},
                 settingsById: {},
                 familiesById: {},
@@ -1582,8 +1582,8 @@ describe('AppShellPluginUiProjectionProvider', () => {
                     installedPackagesById: {},
                     agentsById: {},
                     actionsById: {},
-                    toolsById: {},
-                    commandsById: {},
+
+
                     resourcesById: {},
                     settingsById: {},
                     familiesById: {},
@@ -2073,8 +2073,8 @@ describe('AppShellPluginUiProjectionProvider', () => {
             } } : {},
             agentsById: {},
             actionsById: {},
-            toolsById: {},
-            commandsById: {},
+
+
             resourcesById: {},
             settingsById: {},
             familiesById: {
@@ -3055,8 +3055,8 @@ describe('AppShellPluginUiProjectionProvider', () => {
                     installedPackagesById: {},
                     agentsById: {},
                     actionsById: {},
-                    toolsById: {},
-                    commandsById: {},
+
+
                     resourcesById: {},
                     settingsById: {},
                     familiesById: {},

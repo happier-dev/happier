@@ -198,7 +198,7 @@ const reviewAgentProjection = PluginProjectionV2Schema.parse({ v: 2, generation:
             return [declaration.contributionKey, { id: declaration.contributionKey, pluginId: identity.pluginId,
                 definition: declaration.definition, provenance: declaration.provenance, sourceKind: 'bundled' }];
         }),
-    ) } }, toolsById: {}, commandsById: {}, resourcesById: {}, settingsById: {}, diagnostics: [] });
+    ) } },   resourcesById: {}, settingsById: {}, diagnostics: [] });
 function reviewAgentReadiness() { return Object.fromEntries(['claude', 'codex'].map(agentId => [`cli.${agentId}`, {
     ok: true, checkedAt: Date.now(), data: MachineAgentInventoryItemSchema.parse({ agentId, title: agentId, installed: true,
         version: '1', latestVersion: null, update: { supported: false, command: null },

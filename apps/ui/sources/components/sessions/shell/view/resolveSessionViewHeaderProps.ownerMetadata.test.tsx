@@ -56,8 +56,8 @@ function createPluginHeaderProjection() {
                 available: true,
             },
         },
-        toolsById: {},
-        commandsById: {},
+
+
         resourcesById: {},
         settingsById: {},
         familiesById: {
@@ -137,8 +137,8 @@ function createManyPluginHeaderProjection(actionCount: number) {
         installedPackagesById: {},
         agentsById: {},
         actionsById,
-        toolsById: {},
-        commandsById: {},
+
+
         resourcesById: {},
         settingsById: {},
         familiesById: {

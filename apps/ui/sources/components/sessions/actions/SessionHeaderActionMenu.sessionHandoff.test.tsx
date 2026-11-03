@@ -1302,8 +1302,8 @@ describe('SessionHeaderActionMenu handoff', () => {
           available: true,
         },
       },
-      toolsById: {},
-      commandsById: {},
+
+
       resourcesById: {},
       settingsById: {},
       familiesById: {
@@ -1424,8 +1424,8 @@ describe('SessionHeaderActionMenu handoff', () => {
       installedPackagesById: {},
       agentsById: {},
       actionsById: {},
-      toolsById: {},
-      commandsById: {},
+
+
       resourcesById: {},
       settingsById: {},
       familiesById: {

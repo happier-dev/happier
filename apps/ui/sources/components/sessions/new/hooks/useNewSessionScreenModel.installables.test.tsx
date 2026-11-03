@@ -644,7 +644,7 @@ describe('useNewSessionScreenModel (installables)', () => {
                 })) ?? [],
                 capabilities: { surfaces: [], sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } },
             }])),
-            actionsById: {}, familiesById: {}, toolsById: {}, commandsById: {}, resourcesById: {}, settingsById: {}, diagnostics: [],
+            actionsById: {}, familiesById: {},   resourcesById: {}, settingsById: {}, diagnostics: [],
         });
         network.setRpcResponder(async ({ method, payload }) => {
             if (method === RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT) {

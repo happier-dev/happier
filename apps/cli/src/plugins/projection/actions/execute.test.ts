@@ -16,9 +16,7 @@ import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportD
 import type {
   ResolvedActionContribution,
   ResolvedActionDefinition,
-  ResolvedCommandContribution,
   ResolvedContributionRegistry,
-  ResolvedToolContribution,
 } from '@/plugins/projection/registry/types';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { createTargetActionHostBindingResolver } from '@/plugins/runtime/hostAccess/resolve';
@@ -187,14 +185,8 @@ async function writeActionDaemon(rootDir: string): Promise<string> {
 
 function createRegistry(
   action: ResolvedActionContribution,
-  options: Readonly<{
-    commands?: readonly ResolvedCommandContribution[];
-    tools?: readonly ResolvedToolContribution[];
-  }> = {},
 ): ResolvedContributionRegistry {
-  const commands = options.commands ?? [];
-  const tools = options.tools ?? [];
-  return createResolvedContributionRegistry({ actions: [action], commands, tools });
+  return createResolvedContributionRegistry({ actions: [action] });
 }
 
 function createAction(
@@ -252,70 +244,21 @@ function createAction(
   };
 }
 
-function createCommandContribution(
-  action: ResolvedActionContribution,
-  commandId: string,
-): ResolvedCommandContribution {
-  return {
-    provenance: action.provenance,
-    source: action.source,
-    pluginId: action.pluginId,
-    manifestPath: action.manifestPath,
-    daemonEntryPath: action.daemonEntryPath,
-    sourceSpec: action.sourceSpec,
-    definition: {
-      kindVersion: 1,
-      id: commandId,
-      title: 'Acme',
-      path: ['acme'],
-      action: action.definition.id,
-      actionId: buildQualifiedPluginContributionKey({ pluginId: action.pluginId ?? '', localId: action.definition.id }),
-    },
-  };
-}
 
-function createToolContribution(
-  action: ResolvedActionContribution,
-  toolId: string,
-): ResolvedToolContribution {
-  return {
-    provenance: action.provenance,
-    source: action.source,
-    pluginId: action.pluginId,
-    manifestPath: action.manifestPath,
-    daemonEntryPath: action.daemonEntryPath,
-    sourceSpec: action.sourceSpec,
-    definition: {
-      kindVersion: 1,
-      id: toolId,
-      name: toolId,
-      title: 'Acme Tool',
-      description: 'Runs Acme through a tool contribution',
-      safety: action.definition.safety,
-      surfaces: ['cli', 'mcp', 'agent'],
-      action: action.definition.id,
-      actionId: buildQualifiedPluginContributionKey({ pluginId: action.pluginId ?? '', localId: action.definition.id }),
-    },
-  };
-}
 
 async function createExecutableRegistry(params: Readonly<{
   action: ResolvedActionContribution;
-  commands?: readonly ResolvedCommandContribution[];
-  tools?: readonly ResolvedToolContribution[];
   targetActionInvocations?: ReturnType<typeof createTargetActionInvocationRegistry>;
   readPluginOccurrenceId?: ResolvedExecutablePluginRuntimeRegistry['readPluginOccurrenceId'];
   resolveCurrentPluginExecutionOrigin?: ResolvedExecutablePluginRuntimeRegistry['resolveCurrentPluginExecutionOrigin'];
   resolveCurrentPluginApprovalReplayPlacement?: ResolvedExecutablePluginRuntimeRegistry['resolveCurrentPluginApprovalReplayPlacement'];
   activateContributionsOnDemand: ResolvedExecutablePluginRuntimeRegistry['activateContributionsOnDemand'];
 }>): Promise<ResolvedExecutablePluginRuntimeRegistry> {
-  const contributes = createRegistry(params.action, {
-    commands: params.commands,
-    tools: params.tools,
-  });
+  const contributes = createRegistry(params.action);
 
   return {
         ...await resolveExecutablePluginRuntimeRegistry({ contributes: contributes, pluginIds: [] }),
+    contributes: contributes,
     generation: 7,
     ...(params.targetActionInvocations ? { targetActionInvocations: params.targetActionInvocations } : {}),
     readPluginOccurrenceId: params.readPluginOccurrenceId ?? readFixtureOccurrenceId,
@@ -2214,8 +2157,10 @@ describe('executeContributedAction', () => {
     });
   });
 
-  it('activates the executable action registration behind a command contribution', async () => {
-    const action = createAction('/unused/daemon.mjs', 'start');
+  it('activates an Action with CLI and tool presentation through its Action registration', async () => {
+    const source = createAction('/unused/daemon.mjs', 'start');
+    const action = { ...source, definition: { ...source.definition,
+      cli: { path: ['acme'] }, tool: { name: 'acme_start' } } };
     const activationDemands: unknown[] = [];
     let targetActions: TargetActionInvocationRegistration[] = [];
     const targetActionInvocations = createTargetActionInvocationRegistry({
@@ -2225,7 +2170,6 @@ describe('executeContributedAction', () => {
     });
     const registry = (await createExecutableRegistry({
       action,
-      commands: [createCommandContribution(action, 'command/start')],
       targetActionInvocations,
       activateContributionsOnDemand: async (demands) => {
         activationDemands.push(...demands);
@@ -2273,64 +2217,6 @@ describe('executeContributedAction', () => {
     });
   });
 
-  it('activates the executable action registration behind a tool contribution', async () => {
-    const action = createAction('/unused/daemon.mjs', 'inspect');
-    const activationDemands: unknown[] = [];
-    let targetActions: TargetActionInvocationRegistration[] = [];
-    const targetActionInvocations = createTargetActionInvocationRegistry({
-      actions: targetActions,
-      expectedActions: [{ pluginId: 'acme.action.plugin', localId: action.definition.id }],
-      readActions: () => targetActions,
-    });
-    const registry = (await createExecutableRegistry({
-      action,
-      tools: [createToolContribution(action, 'tool/inspect')],
-      targetActionInvocations,
-      activateContributionsOnDemand: async (demands) => {
-        activationDemands.push(...demands);
-        targetActions = [createTargetActionRegistration({
-          action,
-          handler: async (input, context) => ({
-            actionId: buildQualifiedPluginContributionKey({ pluginId: action.pluginId ?? '', localId: action.definition.id }),
-            input,
-            pluginId: context.plugin.id,
-            surface: context.surface ?? 'cli',
-          }),
-        })];
-        targetActionInvocations.refresh();
-        return [{ pluginId: action.pluginId ?? '', diagnostics: [] }];
-      },
-    }));
-
-    const result = await executeContributedAction({
-      runtimeRegistry: registry,
-      actionId: buildQualifiedPluginContributionKey({ pluginId: action.pluginId ?? '', localId: action.definition.id }),
-      input: { scope: 'tool' },
-      context: {
-        surface: 'cli',
-      },
-    });
-
-    expect(activationDemands).toEqual([{
-      pluginId: 'acme.action.plugin',
-      family: 'actions',
-      localId: 'inspect',
-    }]);
-    expect(result).toEqual({
-      matched: true,
-      result: {
-        ok: true,
-        result: {
-          actionId: 'acme.action.plugin/inspect',
-          input: {
-            scope: 'tool',
-          },
-          pluginId: 'acme.action.plugin',
-          surface: 'cli',
-        },
-      },
-    });
-  });
 
   it('returns activation diagnostics before invoking an action handler when lazy activation fails', async () => {
     const action = createAction('/unused/daemon.mjs', 'action/fail');

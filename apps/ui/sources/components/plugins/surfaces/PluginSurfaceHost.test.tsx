@@ -652,8 +652,8 @@ describe('external targeted source products through the bound surface host', () 
             installedPackagesById: {},
             agentsById: {},
             actionsById: {},
-            toolsById: {},
-            commandsById: {},
+
+
             resourcesById: {},
             settingsById: {},
             familiesById: {},
@@ -2435,8 +2435,8 @@ function primeExactTargetedContributions(input: Readonly<{
             installedPackagesById: {},
             agentsById: {},
             actionsById: input.actionsById ?? {},
-            toolsById: {},
-            commandsById: {},
+
+
             resourcesById: input.resourcesById ?? {},
             settingsById: {},
             familiesById: {},
@@ -2693,7 +2693,7 @@ async function serveDeclarativeDaemonSettings(input: Readonly<{
         scope: 'daemon', target: { kind: 'plugin' }, fields: input.fields });
     const settings = projectPluginSettingsContributionV2({ pluginId: input.pluginId, definition });
     const projection = PluginProjectionV2Schema.parse({ v: 2, generation: 1, agentsById: {}, actionsById: input.actionsById ?? {},
-        toolsById: {}, commandsById: {}, resourcesById: {}, familiesById: {}, diagnostics: [],
+          resourcesById: {}, familiesById: {}, diagnostics: [],
         settingsById: { [settings.id]: settings }, installedPackagesById: { [input.pluginId]: {
             id: input.pluginId, displayName: 'Declarative Settings', version: '1.0.0', enabled: true,
             source: { kind: 'localPath', locator: 'settings-fixture' }, occurrenceId: 'settings-fixture-occurrence',
@@ -7372,7 +7372,7 @@ describe('PluginSurfacePlacementHost', () => {
                         },
                     },
                 } },
-                agentsById: {}, actionsById: {}, toolsById: {}, commandsById: {}, resourcesById: {}, settingsById: {}, diagnostics: [],
+                agentsById: {}, actionsById: {},   resourcesById: {}, settingsById: {}, diagnostics: [],
                 familiesById: { pluginUi: { family: 'pluginUi', entriesById: {
                     [placement.id]: placement,
                     [`reactNativeBundle:${pluginId}:${contributionId}`]: {
@@ -9823,7 +9823,7 @@ describe('mounted plugin surface context (§3.2, §3.3, UI-D11/D12/D13)', () => 
         const sourceCustody = developmentSourceCustody('browser-empty-machine-delivery-test-root');
         const machineProjection = PluginProjectionV2Schema.parse({
             v: 2, generation: 77, installedPackagesById: {}, agentsById: {}, actionsById: {},
-            toolsById: {}, commandsById: {}, resourcesById: {}, settingsById: {}, familiesById: {}, diagnostics: [],
+              resourcesById: {}, settingsById: {}, familiesById: {}, diagnostics: [],
         });
         const pendingProjection = createDeferred<{ protocolVersion: 1; projection: PluginProjectionV2 }>();
         const describeStarted = createDeferred<void>();
@@ -10314,8 +10314,8 @@ describe('mounted plugin surface context (§3.2, §3.3, UI-D11/D12/D13)', () => 
                 installedPackagesById: {},
                 agentsById: {},
                 actionsById: {},
-                toolsById: {},
-                commandsById: {},
+
+
                 resourcesById: {},
                 settingsById: {},
                 familiesById: {},
@@ -11597,8 +11597,8 @@ describe('mounted plugin surface context (§3.2, §3.3, UI-D11/D12/D13)', () => 
             },
             agentsById: {},
             actionsById: {},
-            toolsById: {},
-            commandsById: {},
+
+
             resourcesById: {},
             settingsById: {},
             familiesById: {
@@ -11987,8 +11987,8 @@ describe('mounted plugin surface context (§3.2, §3.3, UI-D11/D12/D13)', () => 
                     installedPackagesById: {},
                     agentsById: {},
                     actionsById: {},
-                    toolsById: {},
-                    commandsById: {},
+
+
                     resourcesById: {},
                     settingsById: {},
                     familiesById: {},
@@ -13583,8 +13583,8 @@ describe('Composer physical surface mount', () => {
                 installedPackagesById: Object.freeze({}),
                 agentsById: Object.freeze({}),
                 actionsById: Object.freeze({}),
-                toolsById: Object.freeze({}),
-                commandsById: Object.freeze({}),
+
+
                 resourcesById: Object.freeze({}),
                 settingsById: Object.freeze({}),
                 familiesById: Object.freeze({}),
@@ -13723,8 +13723,8 @@ describe('Composer physical surface mount', () => {
             installedPackagesById: {},
             agentsById: {},
             actionsById: {},
-            toolsById: {},
-            commandsById: {},
+
+
             resourcesById: {},
             settingsById: {},
             familiesById: {},
@@ -14044,8 +14044,8 @@ describe('Composer physical surface mount', () => {
             installedPackagesById: Object.freeze({}),
             agentsById: Object.freeze({}),
             actionsById: Object.freeze({}),
-            toolsById: Object.freeze({}),
-            commandsById: Object.freeze({}),
+
+
             resourcesById: Object.freeze({}),
             settingsById: Object.freeze({}),
             familiesById: Object.freeze({}),
@@ -14177,8 +14177,8 @@ describe('Composer physical surface mount', () => {
             installedPackagesById: {},
             agentsById: {},
             actionsById: {},
-            toolsById: {},
-            commandsById: {},
+
+
             resourcesById: {},
             settingsById: {},
             familiesById: {},
@@ -14283,7 +14283,7 @@ describe('Composer physical surface mount', () => {
         const projection = withMountedTargetPackage(EMPTY_PLUGIN_UI_PROJECTION, targetFixture, { displayName: 'Inline', version: '1.0.0' });
         const rawProjection = PluginProjectionV2Schema.parse({
             v: 2, generation: 11, installedPackagesById: {}, agentsById: {}, actionsById: {},
-            toolsById: {}, commandsById: {}, resourcesById: {}, settingsById: {}, familiesById: {}, diagnostics: [],
+              resourcesById: {}, settingsById: {}, familiesById: {}, diagnostics: [],
         });
         const inputs = publishDaemonMergedProjectionInputs({ projection: rawProjection, composerSurfaceCatalog: [catalogEntry] });
         const screen = await renderScreen(surface === 'destination' ? <PluginSurfacePlacementHost
@@ -14420,8 +14420,8 @@ describe('Composer physical surface mount', () => {
             installedPackagesById: Object.freeze({}),
             agentsById: Object.freeze({}),
             actionsById: Object.freeze({}),
-            toolsById: Object.freeze({}),
-            commandsById: Object.freeze({}),
+
+
             resourcesById: Object.freeze({}),
             settingsById: Object.freeze({}),
             familiesById: Object.freeze({}),
@@ -15147,8 +15147,8 @@ describe('canonical action dispatch reaches every mounted placement (EU-2)', () 
             installedPackagesById: {},
             agentsById: {},
             actionsById: exactActionsById,
-            toolsById: {},
-            commandsById: {},
+
+
             resourcesById: {},
             settingsById: {},
             diagnostics: [],
@@ -15663,8 +15663,8 @@ describe('canonical action dispatch reaches every mounted placement (EU-2)', () 
             generation: 91,
             installedPackagesById: {},
             agentsById: {},
-            toolsById: {},
-            commandsById: {},
+
+
             resourcesById: {},
             settingsById: {},
             familiesById: {

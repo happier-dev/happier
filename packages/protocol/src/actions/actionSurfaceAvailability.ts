@@ -108,7 +108,7 @@ export function isActionToolExposureSurface(surface: keyof ActionSurfaces): surf
 }
 
 export function getDefaultActionToolExposureMode(
-  spec: ActionSpec,
+  spec: Readonly<{ id: string; toolExposure?: ActionSpec['toolExposure'] }>,
   surface: ActionToolExposureSurface,
 ): ActionToolExposureMode {
   const explicit = spec.toolExposure?.[surface];
@@ -120,7 +120,7 @@ export function getDefaultActionToolExposureMode(
 }
 
 function getSettingsOverride(
-  spec: ActionSpec,
+  spec: Readonly<{ id: string; toolExposure?: ActionSpec['toolExposure'] }>,
   surface: ActionToolExposureSurface,
   settings?: ActionsSettingsV1 | null,
 ): ActionToolExposureMode | null {
@@ -128,7 +128,7 @@ function getSettingsOverride(
 }
 
 export function resolveActionToolExposureModeForSurface(
-  spec: ActionSpec,
+  spec: Readonly<{ id: string; toolExposure?: ActionSpec['toolExposure'] }>,
   surface: ActionToolExposureSurface,
   settings?: ActionsSettingsV1 | null,
 ): ActionToolExposureMode {

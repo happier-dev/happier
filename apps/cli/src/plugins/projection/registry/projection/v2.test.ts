@@ -1737,8 +1737,6 @@ describe('buildPluginProjectionV2', () => {
         const registry = {
             agents: [],
                         actions: [],
-            tools: [],
-            commands: [],
             resources: [],
             activationTargets: [],
             hookRegistrations: [
@@ -1764,8 +1762,6 @@ describe('buildPluginProjectionV2', () => {
                 },
             ],
             actionsById: new Map(),
-            toolsById: new Map(),
-            commandsById: new Map(),
             resourcesById: new Map(),
                         catalogEntriesById: {},
             agentDefinitionsById: new Map(),

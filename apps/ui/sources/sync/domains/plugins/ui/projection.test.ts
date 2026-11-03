@@ -35,7 +35,7 @@ it('preserves external plugin skill declarations through the UI projection', () 
         pluginVersion: '1.0.0', occurrenceId: 'acme-skills-runtime', executionOrigin,
         definition: { id: 'check', directory: './resources/skills/check' } };
     const model = normalizePluginUiProjection(PluginProjectionV2Schema.parse({ v: 2, generation: 1,
-        agentsById: {}, actionsById: {}, toolsById: {}, commandsById: {}, resourcesById: {}, settingsById: {}, diagnostics: [],
+        agentsById: {}, actionsById: {},   resourcesById: {}, settingsById: {}, diagnostics: [],
         installedPackagesById: { [entry.pluginId]: { id: entry.pluginId, displayName: 'Acme Skills', version: '1.0.0', enabled: true,
             occurrenceId: entry.occurrenceId, executionOrigin,
             sourceCustody: { kind: 'development', registeredRootId: 'acme-skills-root' },
@@ -119,8 +119,8 @@ function parsePluginUiEntry(
         installedPackagesById: {},
         agentsById: {},
         actionsById: {},
-        toolsById: {},
-        commandsById: {},
+
+
         resourcesById: {},
         settingsById: {},
         familiesById: {
@@ -212,8 +212,8 @@ function createProjection(): PluginProjectionV2 {
                 available: true,
             },
         },
-        toolsById: {},
-        commandsById: {},
+
+
         resourcesById: {
             'acme.preview/status': {
                 id: 'status',

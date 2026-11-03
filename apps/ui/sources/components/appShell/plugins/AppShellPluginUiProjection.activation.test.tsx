@@ -187,7 +187,7 @@ async function mountClientExecutableFixture(options: { waitForAdmission?: boolea
         installedPackagesById: { [pluginId]: { id: pluginId, displayName: pluginId, version: '1.0.0', enabled: true,
             occurrenceId: origin.materializationRef.materializationId, executionOrigin: origin,
             source: { kind: 'registryPackage', locator: pluginId } } },
-        agentsById: {}, toolsById: {}, commandsById: {}, resourcesById: {}, settingsById: {}, diagnostics: [],
+        agentsById: {},   resourcesById: {}, settingsById: {}, diagnostics: [],
         actionsById: { [`${pluginId}/${actionId}`]: { ...projectedAction, pluginId, available: true,
             occurrenceId: origin.materializationRef.materializationId, executionOrigin: origin,
             authorization: { generation: { targetGeneration: origin.materializationRef.materializationId,

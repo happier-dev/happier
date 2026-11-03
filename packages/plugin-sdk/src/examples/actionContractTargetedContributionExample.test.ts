@@ -348,18 +348,11 @@ describe('cross-plugin contribution public authoring example', () => {
         expect(contributes).toBeDefined();
         if (!contributes) throw new Error('target_manifest_contributions_missing');
 
-        expect(contributes.commands).toEqual(expect.arrayContaining([
+        expect(contributes.actions).toEqual(expect.arrayContaining([
             expect.objectContaining({
-                id: 'send-document-review-ready-command',
-                path: ['document-review', 'notify-ready'],
-                action: 'send-document-review-ready',
-            }),
-        ]));
-        expect(contributes.tools).toEqual(expect.arrayContaining([
-            expect.objectContaining({
-                id: 'send-document-review-ready-tool',
-                name: 'document_review_notify_ready',
-                action: 'send-document-review-ready',
+                id: 'send-document-review-ready',
+                cli: { path: ['document-review', 'notify-ready'] },
+                tool: expect.objectContaining({ name: 'document_review_notify_ready' }),
             }),
         ]));
         expect(contributes.notifications).toEqual(expect.arrayContaining([

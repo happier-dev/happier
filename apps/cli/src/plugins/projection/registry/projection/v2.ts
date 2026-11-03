@@ -1,3 +1,4 @@
+import { backupDestinationsProjectionFamily } from '../backupDestinations';
 import { z } from 'zod/mini';
 import type {
     PluginContributionIntrospectionProjectionV1,
@@ -343,12 +344,8 @@ function collectPluginContributionMetadata(
     for (const action of registry.actions) {
         upsert(action);
     }
-    for (const tool of registry.tools ?? []) {
-        upsert(tool);
-    }
-    for (const command of registry.commands ?? []) {
-        upsert(command);
-    }
+
+
     for (const resource of registry.resources) {
         upsert(resource);
     }
@@ -774,6 +771,7 @@ function buildActionsById(
             ...(action.definition.icon ? { icon: action.definition.icon } : {}),
             scopes: resolveActionScopes(action),
             surfaces: resolveActionSurfaces(action.definition.surfaces),
+            ...(action.definition.toolExposure === undefined ? {} : { toolExposure: action.definition.toolExposure }),
             execution: execution.data,
             ...(action.definition.operation
                 ? { operation: action.definition.operation }
@@ -799,44 +797,9 @@ function buildActionsById(
     return actionsById;
 }
 
-function buildToolsById(
-    registry: ResolvedContributionRegistry,
-): PluginProjectionV2['toolsById'] {
-    const toolsById: PluginProjectionV2['toolsById'] = {};
-    for (const tool of registry.tools ?? []) {
-        if (!tool.pluginId) {
-            continue;
-        }
-        toolsById[qualifiedProjectionKey(tool.pluginId, tool.definition.id)] = {
-            id: tool.definition.id,
-            pluginId: tool.pluginId,
-            title: readLocalizedText(tool.definition.title) ?? tool.definition.id,
-            description: readLocalizedText(tool.definition.description),
-            exposesToAgent: tool.definition.surfaces.includes('mcp') || tool.definition.surfaces.includes('agent'),
-        };
-    }
-    return toolsById;
-}
 
-function buildCommandsById(
-    registry: ResolvedContributionRegistry,
-): PluginProjectionV2['commandsById'] {
-    const commandsById: PluginProjectionV2['commandsById'] = {};
-    for (const command of registry.commands ?? []) {
-        if (!command.pluginId) {
-            continue;
-        }
-        commandsById[qualifiedProjectionKey(command.pluginId, command.definition.id)] = {
-            id: command.definition.id,
-            pluginId: command.pluginId,
-            title: readLocalizedText(command.definition.title) ?? command.definition.id,
-            description: readLocalizedText(command.definition.description),
-            surfaces: ['cli'],
-            tokens: command.definition.path,
-        };
-    }
-    return commandsById;
-}
+
+
 
 export function buildResourcesById(
     registry: ResolvedContributionRegistry,
@@ -952,8 +915,8 @@ function createEmptyPluginProjectionV2(generation: number): PluginProjectionV2 {
         installedPackagesById: {},
         agentsById: {},
         actionsById: {},
-        toolsById: {},
-        commandsById: {},
+
+
         resourcesById: {},
         settingsById: {},
         familiesById: {},
@@ -1101,6 +1064,7 @@ export function buildPluginProjectionV2(params: Readonly<{
         inputTypesProjectionFamily,
         atmospherePicturesProjectionFamily,
         registrySourcesProjectionFamily,
+        backupDestinationsProjectionFamily,
         storeKindsProjectionFamily,
         languageServersProjectionFamily,
         skillsProjectionFamily,
@@ -1214,8 +1178,8 @@ export function buildPluginProjectionV2(params: Readonly<{
             params.pluginFinalPolicyCurrentRuntimesById,
             params.introspectionRuntimeSnapshot?.runtimeFactsByQualifiedId,
         ),
-        toolsById: buildToolsById(params.registry),
-        commandsById: buildCommandsById(params.registry),
+
+
         resourcesById: buildResourcesById(params.registry, purposeScopes, params.pluginExecutionOriginsByPluginId),
         settingsById: buildSettingsById(params.registry, diagnostics, installedPackages),
         familiesById,

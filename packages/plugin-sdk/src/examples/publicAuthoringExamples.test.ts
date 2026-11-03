@@ -4310,7 +4310,7 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
             expect(ingested.manifest.contributes.actions).toEqual([
                 expect.objectContaining({
                     id: 'review-summary',
-                    surfaces: ['cli', 'agent', 'ui'],
+                    surfaces: ['cli', 'agent', 'mcp', 'ui'],
                     scopes: ['global'],
                 }),
                 expect.objectContaining({
@@ -4373,13 +4373,10 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
                     maxBytes: 8192,
                 }),
             ]);
-            expect(ingested.manifest.contributes.tools).toContainEqual(expect.objectContaining({
-                id: 'review-summary-tool',
-                action: 'review-summary',
-            }));
-            expect(ingested.manifest.contributes.commands).toContainEqual(expect.objectContaining({
-                id: 'review-summary-command',
-                action: 'review-summary',
+            expect(ingested.manifest.contributes.actions).toContainEqual(expect.objectContaining({
+                id: 'review-summary',
+                tool: expect.objectContaining({ name: 'review_summary' }),
+                cli: expect.objectContaining({ path: ['review', 'summarize'] }),
             }));
         }
     });

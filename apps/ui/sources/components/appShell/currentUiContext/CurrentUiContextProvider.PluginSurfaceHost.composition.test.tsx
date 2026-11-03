@@ -654,8 +654,8 @@ beforeEach(async () => {
                 installedPackagesById: {},
                 agentsById: {},
                 actionsById: {},
-                toolsById: {},
-                commandsById: {},
+
+
                 resourcesById: {},
                 settingsById: {},
                 familiesById: {},

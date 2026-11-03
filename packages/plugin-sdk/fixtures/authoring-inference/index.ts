@@ -42,14 +42,13 @@ export const { manifest, activate } = definePlugin({
   actions: {
     echo: {
       title: 'Echo',
+      surfaces: ['cli'],
+      cli: { path: ['echo'] },
       execution: { target: 'daemon' },
       inputSchema,
       resultSchema,
       run: async (input) => ({ echoed: input.text }),
     },
-  },
-  commands: {
-    'echo-command': { title: 'Echo', path: ['echo'], action: 'echo' },
   },
   resources: {
     readme: { kind: 'asset', path: 'README.md', contentType: 'text/markdown' },

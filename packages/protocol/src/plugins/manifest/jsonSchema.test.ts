@@ -98,6 +98,37 @@ function manifestForDestinationBindingSlot(slot: typeof PLUGIN_UI_DESTINATION_BI
 }
 
 describe('createPluginManifestJsonSchemaV2', () => {
+  it('rejects the removed tools contribution family at canonical and generated boundaries', () => {
+    const invalidTool = {
+      ...validManifest,
+      contributes: {
+        tools: [{
+          id: 'connected-account-tool',
+          name: 'connected_account_tool',
+          title: 'Connected Account tool',
+          action: 'run',
+          inputHints: {
+            fields: [{
+              path: 'credentialRef',
+              title: { fallback: 'Account' },
+              widget: 'select',
+              connectedAccountOptions: true,
+            }],
+          },
+        }],
+      },
+    };
+
+    expect(PluginManifestV2Schema.safeParse(invalidTool).success).toBe(false);
+    expect(validateExternalManifest(invalidTool)).toBe(false);
+  });
+
+  it.each(['tools', 'commands'])('rejects the retired %s family even when empty at both authoring boundaries', (family) => {
+    const manifest = { ...validManifest, contributes: { [family]: [] } };
+    expect(PluginManifestV2Schema.safeParse(manifest).success).toBe(false);
+    expect(validateExternalManifest(manifest)).toBe(false);
+  });
+
   it('publishes the supplied current source producer through the canonical website writer', async () => {
     const publicDir = await mkdtemp(join(tmpdir(), 'happier-plugin-manifest-source-schema-'));
     try {
@@ -375,30 +406,7 @@ describe('createPluginManifestJsonSchemaV2', () => {
     expect(validateExternalManifest(invalid)).toBe(false);
   });
 
-  it('places the Connected Account marker only on contributed Actions', () => {
-    const invalidTool = {
-      ...validManifest,
-      contributes: {
-        tools: [{
-          id: 'connected-account-tool',
-          name: 'connected_account_tool',
-          title: 'Connected Account tool',
-          action: 'run',
-          inputHints: {
-            fields: [{
-              path: 'credentialRef',
-              title: { fallback: 'Account' },
-              widget: 'select',
-              connectedAccountOptions: true,
-            }],
-          },
-        }],
-      },
-    };
 
-    expect(PluginManifestV2Schema.safeParse(invalidTool).success).toBe(false);
-    expect(validateExternalManifest(invalidTool)).toBe(false);
-  });
 
   it('admits only direct V2 UI destinations at both the canonical and generated manifest boundaries', () => {
     const direct = {

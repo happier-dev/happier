@@ -199,8 +199,8 @@ describe('createBundledConversationRuntimes', () => {
     const project = (withdrawn: boolean) => normalizePluginUiProjection(
       PluginProjectionV2Schema.parse({
         v: 2, generation: withdrawn ? 32 : 31,
-        installedPackagesById: {}, agentsById: {}, actionsById: {}, toolsById: {},
-        commandsById: {}, resourcesById: {}, settingsById: {}, diagnostics: [],
+        installedPackagesById: {}, agentsById: {}, actionsById: {},
+         resourcesById: {}, settingsById: {}, diagnostics: [],
         familiesById: { voiceProviders: { family: 'voiceProviders', entriesById: withdrawn ? {} : Object.fromEntries(
           BUNDLED_FIRST_PARTY_VOICE_CONVERSATION_RUNTIME_ENTRIES.map(entry => [entry.providerId, {
             id: entry.providerId, pluginId: entry.pluginId, generation: 31,

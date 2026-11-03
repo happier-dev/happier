@@ -300,7 +300,7 @@ const projectionRequests = installSessionActionRpcBoundary(request => {
   const providerId = buildQualifiedPluginContributionKey({ pluginId: contribution.pluginId, localId: projectedDeclaration.id });
   return DaemonContributionRegistryProjectionDescribeResponseSchema.parse({ protocolVersion: 1,
     projection: PluginProjectionV2Schema.parse({ v: 2, generation: 1, installedPackagesById: {},
-      agentsById: {}, actionsById: {}, toolsById: {}, commandsById: {}, resourcesById: {}, settingsById: {},
+      agentsById: {}, actionsById: {},   resourcesById: {}, settingsById: {},
       familiesById: {
         connectedAccounts: { family: 'connectedAccounts', entriesById: Object.fromEntries(descriptorReplies.map(entry => [
           buildQualifiedPluginContributionKey({ pluginId: entry.pluginId!, localId: entry.id }), entry,

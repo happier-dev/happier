@@ -1,3 +1,5 @@
+import { buildPluginContributionRegistry } from '@/plugins/projection/registry/normalize/package';
+import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createPluginContributionIdentity } from '@happier-dev/protocol/plugins/contribution-identity';
 import type { PromptBlockV1 } from '@happier-dev/protocol';
@@ -20,6 +22,25 @@ import {
 } from './dispatchAgentTurnHooks';
 
 const actionRegistries: ReturnType<typeof createTargetActionInvocationRegistry>[] = [];
+function compositionToolAction(pluginId: string, title: string, promptSnippet: string) {
+  const prefix = pluginId.split('.')[0]!;
+  const manifest = normalizePluginManifestV2({
+    schemaVersion: 2, id: pluginId, version: '1.0.0', displayName: pluginId,
+    engines: { happier: '^1.0.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.mjs' },
+    contributes: { actions: [{
+      id: `${prefix}-action`, title, scopes: ['global'], surfaces: ['agent'],
+      dangerLevel: 'safe', execution: { target: 'daemon' }, toolExposure: { agent: 'direct' },
+      tool: { name: `${prefix}_tool`, promptSnippet },
+    }] },
+  });
+  const action = buildPluginContributionRegistry({ loadedPlugins: [{
+    pluginId, manifest, pluginRootPath: '/plugins/' + pluginId, manifestPath: '/plugins/' + pluginId + '/plugin.json',
+    daemonEntryPath: '/plugins/' + pluginId + '/daemon.mjs', devDaemonEntryPath: null,
+    sourceSpec: { kind: 'path', locator: '/plugins/' + pluginId, trustPolicy: 'local_trusted', installPolicy: 'link' },
+  }] }).actions[0]!;
+  return { ...action, provenance: 'external' as const, source: { kind: 'path' as const } };
+}
+
 function compositionActionRegistry(pluginIds: readonly string[]) {
   const authorizationFacts = (occurrenceId: string) => ({
     generation: { targetGeneration: occurrenceId, desiredGeneration: occurrenceId, appliedGeneration: occurrenceId },
@@ -123,7 +144,7 @@ function createInstructionOnlyCompositionRuntimeRegistry(
     ]),
     contributes: {
       agents: [],
-      tools: [],
+      actions: [],
       promptAssets: [],
       actionsById: new Map(),
     },
@@ -183,11 +204,11 @@ describe('agent turn hook dispatch bridge', () => {
       localId: 'resolve-composition',
     });
     const companionHandler = vi.fn(async () => ({
-      enabledToolIds: ['companion-tool'],
+      enabledToolIds: ['companion-action'],
       additionalInstructions: 'Use the bounded review context for this turn.',
     }));
     const hostileHandler = vi.fn(async () => ({
-      enabledToolIds: ['companion-tool'],
+      enabledToolIds: ['companion-action'],
     }));
     const runtimeRegistry = {
       hookHandlersByHookId: new Map<string, readonly ResolvedPluginHookHandler[]>([
@@ -235,43 +256,10 @@ describe('agent turn hook dispatch bridge', () => {
           pluginId: 'companion.plugin',
           definition: { id: 'claude' },
         }],
-        tools: [
-          {
-            pluginId: 'companion.plugin',
-            provenance: 'external' as const,
-            definition: {
-              id: 'companion-tool',
-              name: 'companion_tool',
-              title: 'Companion tool',
-              surfaces: ['agent'],
-              actionId: 'companion.plugin/companion-action',
-              promptSnippet: 'Use the companion tool when the review needs context.',
-            },
-          },
-          {
-            pluginId: 'hostile.plugin',
-            provenance: 'external' as const,
-            definition: {
-              id: 'hostile-tool',
-              name: 'hostile_tool',
-              title: 'Hostile tool',
-              surfaces: ['agent'],
-              actionId: 'hostile.plugin/hostile-action',
-              promptSnippet: 'This must not become enabled by a foreign result.',
-            },
-          },
-          {
-            pluginId: 'failing.plugin',
-            provenance: 'external' as const,
-            definition: {
-              id: 'failing-tool',
-              name: 'failing_tool',
-              title: 'Failing tool',
-              surfaces: ['agent'],
-              actionId: 'failing.plugin/failing-action',
-              promptSnippet: 'This handler fails before selection.',
-            },
-          },
+        actions: [
+          compositionToolAction('companion.plugin', 'Companion tool', 'Use the companion tool when the review needs context.'),
+          compositionToolAction('hostile.plugin', 'Hostile tool', 'This must not become enabled by a foreign result.'),
+          compositionToolAction('failing.plugin', 'Failing tool', 'This handler fails before selection.'),
         ],
         promptAssets: [
           {
@@ -334,22 +322,22 @@ describe('agent turn hook dispatch bridge', () => {
     expect(companionHandler).toHaveBeenCalledWith(expect.objectContaining({
       eventId: 'agent.composition.resolve',
       payload: expect.objectContaining({
-        declaredToolIds: ['companion-tool'],
+        declaredToolIds: ['companion-action'],
         declaredPromptAssetIds: ['companion-context'],
       }),
     }), expect.objectContaining({ signal: expect.any(AbortSignal) }));
     expect(hostileHandler).toHaveBeenCalledWith(expect.objectContaining({
       payload: expect.objectContaining({
-        declaredToolIds: ['hostile-tool'],
+        declaredToolIds: ['hostile-action'],
         declaredPromptAssetIds: [],
       }),
     }), expect.anything());
     expect(composition.managedPluginIds).toEqual(['companion.plugin']);
     expect(composition.selectedTools).toEqual([
-      { pluginId: 'companion.plugin', localId: 'companion-tool' },
+      { pluginId: 'companion.plugin', localId: 'companion-action' },
     ]);
     expect(composition.toolPromptContributions).toEqual([
-      expect.objectContaining({ pluginId: 'companion.plugin', id: 'companion-tool' }),
+      expect.objectContaining({ pluginId: 'companion.plugin', id: 'companion-action' }),
     ]);
     expect(composition.promptAssetBlocks).toEqual([
       expect.objectContaining({ id: 'plugin_prompt_asset.companion.plugin/companion-context' }),
@@ -373,17 +361,17 @@ describe('agent turn hook dispatch bridge', () => {
 
     expect(companionHandler).toHaveBeenLastCalledWith(expect.objectContaining({
       payload: expect.objectContaining({
-        declaredToolIds: ['companion-tool'],
+        declaredToolIds: ['companion-action'],
         declaredPromptAssetIds: [],
       }),
     }), expect.objectContaining({ signal: expect.any(AbortSignal) }));
     expect(nativeMcpComposition.selectedTools).toEqual([
-      { pluginId: 'companion.plugin', localId: 'companion-tool' },
+      { pluginId: 'companion.plugin', localId: 'companion-action' },
     ]);
     expect(nativeMcpComposition.selectedToolBindings).toEqual([
       expect.objectContaining({
         tool: expect.objectContaining({
-          toolId: 'companion.plugin/companion-tool',
+          toolId: 'companion.plugin/companion-action',
           name: 'companion_tool',
         }),
         expectedContributorOccurrenceId: 'occurrence-companion.plugin',
@@ -391,11 +379,11 @@ describe('agent turn hook dispatch bridge', () => {
     ]);
     const selectedBinding = nativeMcpComposition.selectedToolBindings[0];
     if (!selectedBinding) throw new Error('missing_selected_tool_binding');
-    runtimeRegistry.contributes.tools[0]!.definition.name = 'mutated_after_turn_admission';
+    runtimeRegistry.contributes.actions[0]!.admittedTarget.declaration.tool!.name = 'mutated_after_turn_admission';
     expect(selectedBinding.tool.name).toBe('companion_tool');
     expect(Object.isFrozen(selectedBinding.tool)).toBe(true);
     expect(nativeMcpComposition.toolPromptContributions).toEqual([
-      expect.objectContaining({ pluginId: 'companion.plugin', id: 'companion-tool' }),
+      expect.objectContaining({ pluginId: 'companion.plugin', id: 'companion-action' }),
     ]);
   });
 
@@ -415,7 +403,7 @@ describe('agent turn hook dispatch bridge', () => {
       const fastHandler = vi.fn(async () => {
         started.push('fast');
         return {
-          enabledToolIds: ['fast-tool'],
+          enabledToolIds: ['fast-action'],
           additionalInstructions: 'Fast plugin context remains available.',
         };
       });
@@ -461,31 +449,9 @@ describe('agent turn hook dispatch bridge', () => {
             pluginId: 'fast.plugin',
             definition: { id: 'review-agent' },
           }],
-          tools: [
-            {
-              pluginId: 'fast.plugin',
-              provenance: 'external' as const,
-              definition: {
-                id: 'fast-tool',
-                name: 'fast_tool',
-                title: 'Fast tool',
-                surfaces: ['agent'],
-                actionId: 'fast.plugin/fast-action',
-                promptSnippet: 'Fast tool prompt.',
-              },
-            },
-            {
-              pluginId: 'slow.plugin',
-              provenance: 'external' as const,
-              definition: {
-                id: 'slow-tool',
-                name: 'slow_tool',
-                title: 'Slow tool',
-                surfaces: ['agent'],
-                actionId: 'slow.plugin/slow-action',
-                promptSnippet: 'Slow tool prompt.',
-              },
-            },
+          actions: [
+            compositionToolAction('fast.plugin', 'Fast tool', 'Fast tool prompt.'),
+            compositionToolAction('slow.plugin', 'Slow tool', 'Slow tool prompt.'),
           ],
           promptAssets: [],
           actionsById: new Map([
@@ -523,10 +489,10 @@ describe('agent turn hook dispatch bridge', () => {
       await vi.advanceTimersByTimeAsync(1_000);
       await expect(resolutionPromise).resolves.toEqual(expect.objectContaining({
         managedPluginIds: ['fast.plugin'],
-        selectedTools: [{ pluginId: 'fast.plugin', localId: 'fast-tool' }],
+        selectedTools: [{ pluginId: 'fast.plugin', localId: 'fast-action' }],
         toolPromptContributions: [expect.objectContaining({
           pluginId: 'fast.plugin',
-          id: 'fast-tool',
+          id: 'fast-action',
         })],
         additionalInstructions: [{
           pluginId: 'fast.plugin',

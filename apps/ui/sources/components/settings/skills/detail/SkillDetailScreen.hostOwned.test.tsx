@@ -181,8 +181,8 @@ async function pluginSkillHome(origin: string, skill: Partial<SkillListItemV1> =
       },
       agentsById: {},
       actionsById: {},
-      toolsById: {},
-      commandsById: {},
+
+
       resourcesById: {},
       settingsById: {},
       diagnostics: [],

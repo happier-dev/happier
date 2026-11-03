@@ -79,8 +79,8 @@ function createProjection(): PluginProjectionV2 {
                 available: true,
             },
         },
-        toolsById: {},
-        commandsById: {},
+
+
         resourcesById: {},
         settingsById: {},
         familiesById: {

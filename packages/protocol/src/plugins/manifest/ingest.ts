@@ -24,7 +24,7 @@ import {
 import { createPluginEventAutomationSetupResultV1JsonSchema } from '../../automations/automationEventSetupResultV1.js';
 import { normalizeStrictJsonValue } from '../../json/strictJsonValue.js';
 import type { core } from 'zod/mini';
-import { skipInvalidPluginContributions } from './contributionAdmission.js';
+import { dropEmptyRetiredContributionFamilies, skipInvalidPluginContributions } from './contributionAdmission.js';
 
 export type PluginManifestIngestionDiagnostic = Readonly<{
   code:
@@ -1052,7 +1052,7 @@ export function admitDecodedPluginManifestV2(input: unknown, options: PluginMani
     };
   }
   const skipped: PluginManifestIngestionDiagnostic[] = [];
-  let candidate = input;
+  let candidate = options.mode === 'load' ? dropEmptyRetiredContributionFamilies(input) : input;
   // Each retry removes at least one declaration. Settle dependency chains
   // iteratively rather than growing the JavaScript call stack with the graph.
   while (true) {

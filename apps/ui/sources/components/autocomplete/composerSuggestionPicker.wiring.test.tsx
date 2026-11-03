@@ -104,8 +104,8 @@ function composerReferenceHost(triggers: ComposerSuggestionTrigger[] = ['@']): C
         installedPackagesById: {},
         agentsById: {},
         actionsById: {},
-        toolsById: {},
-        commandsById: {},
+
+
         resourcesById: {},
         settingsById: {},
         familiesById: {},

@@ -129,7 +129,7 @@ function pluginSettingsProjection(): PluginUiProjectionModel {
     if (!binding) throw new Error('Settings page fixture needs a normalized binding');
     return normalizePluginUiProjection(PluginProjectionV2Schema.parse({
         v: 2, generation: 0, installedPackagesById: {}, agentsById: {}, actionsById: {},
-        toolsById: {}, commandsById: {}, resourcesById: {}, settingsById: {}, diagnostics: [],
+          resourcesById: {}, settingsById: {}, diagnostics: [],
         familiesById: { pluginUi: { family: 'pluginUi', entriesById: {
             'settingsGroup:examples.descriptor-only:descriptor-preferences': {
                 id: 'settingsGroup:examples.descriptor-only:descriptor-preferences',

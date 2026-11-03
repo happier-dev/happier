@@ -164,14 +164,7 @@ function readPluginActionCatalog(entry: PluginCatalogEntry): readonly PluginActi
     description: typeof action.description === 'string' ? action.description : null,
     surfaces: [...action.surfaces],
   }));
-  const tools = manifest.contributes.tools.map((tool) => ({
-    actionId: tool.id,
-    kind: 'tool' as const,
-    title: typeof tool.title === 'string' ? tool.title : tool.title.fallback,
-    description: typeof tool.description === 'string' ? tool.description : null,
-    surfaces: [...tool.surfaces],
-  }));
-  return Object.freeze([...actions, ...tools].sort((left, right) => (
+  return Object.freeze(actions.sort((left, right) => (
     left.actionId.localeCompare(right.actionId)
   )));
 }

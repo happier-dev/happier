@@ -232,8 +232,8 @@ it('retains an external archive renderer only from its exact reported installati
     }), occurrenceId: 'external:1', executionOrigin: origin };
     const runtimeFor = (entry: typeof bundle) => {
         const projection = normalizePluginUiProjection(PluginProjectionV2Schema.parse({
-        v: 2, generation: 1, installedPackagesById: {}, agentsById: {}, actionsById: {}, toolsById: {},
-        commandsById: {}, resourcesById: {}, settingsById: {}, diagnostics: [],
+        v: 2, generation: 1, installedPackagesById: {}, agentsById: {}, actionsById: {},
+         resourcesById: {}, settingsById: {}, diagnostics: [],
         familiesById: { pluginUi: { family: 'pluginUi', entriesById: {
             ...Object.fromEntries(Object.entries(declarations).map(([id, declaration]) => [id, {
                 ...declaration, occurrenceId: 'external:1', executionOrigin: origin,
@@ -939,8 +939,8 @@ function machineProjection(input: Readonly<{
         installedPackagesById: input.installedPackagesById ?? {},
         agentsById: {},
         actionsById: input.actionsById ?? {},
-        toolsById: {},
-        commandsById: {},
+
+
         resourcesById: input.resourcesById ?? {},
         settingsById: {},
         familiesById: {
@@ -1144,7 +1144,7 @@ function composerMember(machineId: string, label = 'Inspect'): PluginUiProjectio
         installedPackagesById: { [pluginId]: { id: pluginId, displayName: 'Inspector', version: '1.0.0',
             enabled: true, occurrenceId, source: { kind: 'bundled', locator: pluginId },
             executionOrigin: selectedOrigin(pluginId, machineId) } },
-        agentsById: {}, actionsById: {}, toolsById: {}, commandsById: {}, resourcesById: {}, settingsById: {}, diagnostics: [],
+        agentsById: {}, actionsById: {},   resourcesById: {}, settingsById: {}, diagnostics: [],
         familiesById: {
             composerControls: { family: 'composerControls', entriesById: {
                 [`${pluginId}/inspect`]: { id: `${pluginId}/inspect`, pluginId,
@@ -1197,7 +1197,7 @@ describe('unionPluginUiProjections', () => {
         const strictMember = (machineId: string, entry: object) => {
             const output = PluginProjectionV2Schema.parse({
                 v: 2, generation: 4, installedPackagesById: {}, agentsById: {}, actionsById: {},
-                toolsById: {}, commandsById: {}, resourcesById: {}, settingsById: {},
+                  resourcesById: {}, settingsById: {},
                 familiesById: { pluginUi: { family: 'pluginUi', entriesById: { page: entry } } },
                 diagnostics: [],
             });

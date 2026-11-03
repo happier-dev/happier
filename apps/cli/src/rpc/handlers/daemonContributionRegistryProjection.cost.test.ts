@@ -196,7 +196,7 @@ describe('bundled daemon contribution describe cost', () => {
                 reactNativeHostRuntimeIdentity: { platform: 'ios', channel: 'internal', appVersion: '99.0.0' },
             })).toBe(settingsResponse);
             expect(settings.projection).toMatchObject({ installedPackagesById: {}, agentsById: {}, actionsById: {},
-                toolsById: {}, commandsById: {}, resourcesById: {}, familiesById: {}, diagnostics: [] });
+                  resourcesById: {}, familiesById: {}, diagnostics: [] });
             expect(settings.automationEligibleEvents).toBeUndefined();
             expect(settings.composerSurfaceCatalog).toBeUndefined();
             expect({ serverFeatureReads, installedPackageReads, executionOriginContextReads }).toEqual({
@@ -205,7 +205,7 @@ describe('bundled daemon contribution describe cost', () => {
             const initialAdmission = DaemonContributionRegistryProjectionDescribeResponseSchema.parse(await handler({
                 machineId: 'test-machine', locale: 'fr-FR', selection: 'connectedAccountAdmission',
             }));
-            expect(initialAdmission.projection).toMatchObject({ agentsById: {}, toolsById: {}, commandsById: {}, settingsById: {}, diagnostics: [] });
+            expect(initialAdmission.projection).toMatchObject({ agentsById: {},   settingsById: {}, diagnostics: [] });
             expect(initialAdmission.automationEligibleEvents).toBeUndefined();
             expect(initialAdmission.composerSurfaceCatalog).toBeUndefined();
             expect(serverFeatureReads).toBe(0);

@@ -101,8 +101,8 @@ describe('getInstallablesRegistryEntries', () => {
                 installedPackagesById: {},
                 agentsById: {},
                 actionsById: {},
-                toolsById: {},
-                commandsById: {},
+
+
                 resourcesById: {},
                 settingsById: {},
                 diagnostics: [],

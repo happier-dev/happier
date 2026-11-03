@@ -1,3 +1,4 @@
+import { ActionToolExposureSchema } from '../actions/metadata.js';
 import { DeploymentTargetContributionV1Schema } from '../plugins/contributions/deploymentTargets.js';
 import { PluginStoreKindContributionV1Schema } from '../plugins/contributions/storeKinds.js';
 import { HealthCheckKindContributionV1Schema } from '../plugins/contributions/healthCheckKinds.js';
@@ -1333,6 +1334,7 @@ export const PluginProjectedActionV2Schema = lazyZodSchema(() => (<T extends z.Z
   icon: zMini.optional(PluginActionIconV2Schema),
   scopes: z.array(PluginActionScopeV2Schema).check(z.minLength(1)),
   surfaces: z.array(PluginActionSurfaceV2Schema).check(z.minLength(1)),
+  toolExposure: zMini.optional(ActionToolExposureSchema),
   execution: PluginActionExecutionV2Schema,
   operation: zMini.optional(ActionOperationDeclarationV1Schema),
   // The Action projection retains the producer-owned exact origin used by
@@ -3001,8 +3003,8 @@ export const PluginProjectionV2Schema: z.ZodMiniObject<{
   installedPackagesById: z.ZodMiniDefault<z.ZodMiniRecord<z.ZodMiniString<string>, typeof PluginProjectionInstalledPackageV2Schema>>;
   agentsById: z.ZodMiniDefault<z.ZodMiniRecord<z.ZodMiniString<string>, typeof PluginProjectedAgentV2Schema>>;
   actionsById: z.ZodMiniDefault<z.ZodMiniRecord<z.ZodMiniString<string>, typeof PluginProjectedActionV2Schema>>;
-  toolsById: z.ZodMiniDefault<z.ZodMiniRecord<z.ZodMiniString<string>, typeof PluginProjectedToolV2Schema>>;
-  commandsById: z.ZodMiniDefault<z.ZodMiniRecord<z.ZodMiniString<string>, typeof PluginProjectedCommandV2Schema>>;
+
+
   resourcesById: z.ZodMiniDefault<z.ZodMiniRecord<z.ZodMiniString<string>, typeof PluginProjectedResourceV2Schema>>;
   settingsById: z.ZodMiniDefault<z.ZodMiniRecord<z.ZodMiniString<string>, typeof PluginProjectedSettingsV2Schema>>;
   familiesById: typeof PluginProjectedFamiliesByIdV2Schema;
@@ -3014,8 +3016,8 @@ export const PluginProjectionV2Schema: z.ZodMiniObject<{
   installedPackagesById: z._default(z.record(z.string(), PluginProjectionInstalledPackageV2Schema), {}),
   agentsById: z._default(z.record(z.string(), PluginProjectedAgentV2Schema), {}),
   actionsById: z._default(z.record(z.string(), PluginProjectedActionV2Schema), {}),
-  toolsById: z._default(z.record(z.string(), PluginProjectedToolV2Schema), {}),
-  commandsById: z._default(z.record(z.string(), PluginProjectedCommandV2Schema), {}),
+
+
   resourcesById: z._default(z.record(z.string(), PluginProjectedResourceV2Schema), {}),
   settingsById: z._default(z.record(z.string(), PluginProjectedSettingsV2Schema), {}),
   familiesById: PluginProjectedFamiliesByIdV2Schema,

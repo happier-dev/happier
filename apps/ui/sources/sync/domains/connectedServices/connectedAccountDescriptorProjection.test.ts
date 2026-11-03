@@ -51,8 +51,8 @@ function projection(entries: Record<string, Readonly<{ id: string }> & Record<st
     installedPackagesById: {},
     agentsById: {},
     actionsById: {},
-    toolsById: {},
-    commandsById: {},
+
+
     resourcesById: {},
     settingsById: {},
     familiesById: {

@@ -72,8 +72,8 @@ function createProjectedHeaderAction(params?: Readonly<{
             },
             ...(params?.extraActions ?? {}),
         },
-        toolsById: {},
-        commandsById: {},
+
+
         resourcesById: {},
         settingsById: {},
         familiesById: {
@@ -593,8 +593,8 @@ function createOrderedHeaderActions(): PluginProjectionV2 {
             'acme.plugin/zzz-first': action('zzz-first'),
             'acme.plugin/mmm-second': action('mmm-second'),
         },
-        toolsById: {},
-        commandsById: {},
+
+
         resourcesById: {},
         settingsById: {},
         familiesById: {

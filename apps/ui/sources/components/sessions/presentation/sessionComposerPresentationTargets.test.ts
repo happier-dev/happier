@@ -442,7 +442,7 @@ describe('composer presentation targets', () => {
             text: 'Investigate this', selection: { start: 12, end: 12 }, capabilities: { text: true, references: true, attachments: true, submit: true } }));
         cleanups.push(registerComposerPresentationTarget(document.readCurrent().ref, { ...document, readScope: () => scope, readAttachmentComposition: () => composition }));
         const source = { id: `${pluginId}/entry-reference`, pluginId, pluginVersion: '0.0.0', occurrenceId, definition: contributes.dragSources[0]! };
-        const projection: PluginProjectionV2 = { v: 2, generation: 1, installedPackagesById: {}, agentsById: {}, actionsById: {}, toolsById: {}, commandsById: {},
+        const projection: PluginProjectionV2 = { v: 2, generation: 1, installedPackagesById: {}, agentsById: {}, actionsById: {},
             resourcesById: {}, settingsById: {}, diagnostics: [], familiesById: { dragSources: { family: 'dragSources', entriesById: { [source.id]: source } } } };
         const reference = { entryRef: { source: { pluginId: 'happier.example.source', localId: 'example-forge' }, kindId: 'pull-request', collisionScope: 'example/repository', entryId: '42' },
             sourceInstance: { source: { pluginId: 'happier.example.source', localId: 'example-forge' }, sourceInstanceId: '11111111-1111-4111-8111-111111111111' },
@@ -846,7 +846,7 @@ describe('composer presentation targets', () => {
         const target = createDocumentTarget(createSnapshot({ text: 'Review', selection: { start: 1, end: 3 } }));
         cleanups.push(registerComposerPresentationTarget(target.readCurrent().ref, target));
         const projection: PluginProjectionV2 = { v: 2, generation: 1,
-            installedPackagesById: {}, agentsById: {}, actionsById: {}, toolsById: {}, commandsById: {},
+            installedPackagesById: {}, agentsById: {}, actionsById: {},
             resourcesById: {}, settingsById: {}, familiesById: {}, diagnostics: [],
             contributionIntrospection: { version: 1, generation: 1, diagnostics: [], contributions: [{
                 version: 1, occurrenceId: 'live', contribution: { kind: 'localId', pluginId: 'acme.issues',

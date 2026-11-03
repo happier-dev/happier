@@ -33,8 +33,8 @@ export const PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE = {
     },
     actionsById: {},
     familiesById: {},
-    toolsById: {},
-    commandsById: {},
+
+
     resourcesById: {},
     settingsById: {},
     diagnostics: [

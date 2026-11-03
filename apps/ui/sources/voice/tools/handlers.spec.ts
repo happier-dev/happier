@@ -139,7 +139,7 @@ async function mountCurrentUiContext(wireResult: Readonly<Record<string, boolean
         id: 'refresh-issues', pluginId: 'acme.triage', occurrenceId: 'voice-tools-current-ui', title: 'Refresh issues',
         executionOrigin,
         scopes: ['global'], surfaces: ['voice'], execution: { target: 'daemon' }, dangerLevel: 'safe', available: true,
-      }) }, toolsById: {}, commandsById: {}, resourcesById: {}, settingsById: {}, familiesById: {}, diagnostics: [] });
+      }) },   resourcesById: {}, settingsById: {}, familiesById: {}, diagnostics: [] });
   const previous = daemonRpc.getMockImplementation();
   daemonRpc.mockImplementation(async request => {
     if (request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) return { protocolVersion: 1, projection };

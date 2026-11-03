@@ -449,8 +449,8 @@ describe('daemon contribution registry projection adapters', () => {
                 },
             },
             familiesById: {},
-            toolsById: {},
-            commandsById: {},
+
+
             resourcesById: {
                 'acme.review.prompt': {
                     id: 'acme.review.prompt',
@@ -659,8 +659,8 @@ describe('daemon contribution registry projection adapters', () => {
             } as unknown as PluginProjectionV2['agentsById'],
             actionsById: {},
             familiesById: {},
-            toolsById: {},
-            commandsById: {},
+
+
             resourcesById: {},
             settingsById: {},
             diagnostics: [],
@@ -692,8 +692,8 @@ describe('daemon contribution registry projection adapters', () => {
                 voiceProviders: { family: 'voiceProviders', entriesById: { el: { id: 'el', pluginId: 'happier.elevenlabs' } } },
                 providers: { family: 'providers', entriesById: { claudeModels: { id: 'claudeModels', pluginId: 'happier.claude' } } },
             } as unknown as PluginProjectionV2['familiesById'],
-            toolsById: {},
-            commandsById: {},
+
+
             resourcesById: {},
             settingsById: {},
             diagnostics: [],
@@ -738,8 +738,8 @@ describe('daemon contribution registry projection adapters', () => {
             agentsById: {},
             actionsById: {},
             familiesById: {},
-            toolsById: {},
-            commandsById: {},
+
+
             resourcesById: {},
             settingsById: {},
             diagnostics: [{

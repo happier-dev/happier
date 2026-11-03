@@ -94,8 +94,8 @@ describe('answering-client plugin origin preferences', () => {
         const binding = normalizePluginUiDestinationBindingV1({ pluginId, destinationId: 'home', rendererId: 'home',
             container: 'appPage', target: { kind: 'app' } });
         if (!binding) throw new Error('Destination fixture missing');
-        const model = normalizePluginUiProjection({ v: 2, generation: 1, agentsById: {}, actionsById: {}, toolsById: {},
-            commandsById: {}, resourcesById: {}, settingsById: {}, diagnostics: [], installedPackagesById: {
+        const model = normalizePluginUiProjection({ v: 2, generation: 1, agentsById: {}, actionsById: {},
+             resourcesById: {}, settingsById: {}, diagnostics: [], installedPackagesById: {
                 [pluginId]: { id: pluginId, displayName: 'Source', version: '1.0.0', enabled: true,
                     source: { kind: 'localPath', locator: 'root' }, occurrenceId: 'occurrence',
                     executionOrigin: origin,

@@ -173,7 +173,7 @@ describe('agent install job owner', () => {
         storage.setState({ machineListByServerId: { [server.id]: [machine] } });
         const projection: PluginProjectionV2 = { v: 2, generation: 1, installedPackagesById: {}, agentsById: {
             codex: { id: 'codex', title: 'Codex', providerOwnedEnvironmentKeys: [], capabilities: { surfaces: [], sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } } },
-        }, actionsById: {}, familiesById: {}, toolsById: {}, commandsById: {}, resourcesById: {}, settingsById: {}, diagnostics: [] };
+        }, actionsById: {}, familiesById: {},   resourcesById: {}, settingsById: {}, diagnostics: [] };
         let currentAccount = 'account-a';
         const pending = createDeferred<unknown>();
         const detect = (version: string) => ({ protocolVersion: 1, results: { 'cli.codex': { ok: true, checkedAt: 24, data: {
@@ -216,7 +216,7 @@ describe('agent install job owner', () => {
         storage.setState({ machineListByServerId: { [server.id]: [machine] } });
         const projection: PluginProjectionV2 = { v: 2, generation: 1, installedPackagesById: {}, agentsById: {
             codex: { id: 'codex', title: 'Codex', providerOwnedEnvironmentKeys: [], capabilities: { surfaces: [], sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } } },
-        }, actionsById: {}, familiesById: {}, toolsById: {}, commandsById: {}, resourcesById: {}, settingsById: {}, diagnostics: [] };
+        }, actionsById: {}, familiesById: {},   resourcesById: {}, settingsById: {}, diagnostics: [] };
         const key = serverAccountScopedResourceKey(target, 'machine-agents', target.machineId);
         boundary.rpc.mockImplementation(async ({ method }: { method: string }) => {
             if (method.endsWith('.list')) return { ok: true, jobs: [wireJob('codex', 'completed-job')] };

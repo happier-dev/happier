@@ -879,7 +879,8 @@ describe('createActionToolExecutorBridge', () => {
   it('applies the same declared contextual defaults to trusted plugin actions', async () => {
     const calls: unknown[] = [];
     const pluginToolCatalog: readonly ProjectedPluginToolCatalogEntry[] = [{
-      toolId: 'acme.memory/search-tool',
+      toolId: 'acme.memory/search',
+      toolExposure: { agent: 'direct' },
       actionId: 'acme.memory/actions/search',
       name: 'acme_memory_search',
       title: 'Search Acme memory',
@@ -1085,6 +1086,18 @@ describe('createActionToolExecutorBridge', () => {
             trustPolicy: 'local_trusted',
             installPolicy: 'link',
           },
+          admittedTarget: {
+            declaration: {
+              id: 'review-start', title: 'Acme Review Start',
+              description: 'Start a plugin-defined review workflow',
+              scopes: ['global'], surfaces: ['agent', 'mcp', 'cli'],
+              dangerLevel: 'safe', execution: { target: 'daemon' },
+              inputSchema: { type: 'object', properties: {}, additionalProperties: true },
+              tool: { name: 'acme_review_start' },
+              toolExposure: { cli: 'direct' },
+            },
+            hostAccessRequests: [], historyGapSources: [], surfaces: ['agent', 'mcp', 'cli'],
+          },
           definition: {
             kindVersion: 1,
             id: 'review-start',
@@ -1112,44 +1125,8 @@ describe('createActionToolExecutorBridge', () => {
               properties: {},
               additionalProperties: true,
             },
-            execution: {
-              routing: 'plugin',
-              handler: {
-                target: 'plugin',
-                exportName: 'startReview',
-              },
-            },
-          },
-        },
-      ],
-      tools: [
-        {
-          provenance: 'external',
-          source: { kind: 'path' },
-          pluginId: 'acme.review.plugin',
-          manifestPath: '/plugins/acme/review/.happier-plugin/plugin.json',
-          daemonEntryPath: '/plugins/acme/review/daemon.mjs',
-          sourceSpec: {
-            kind: 'path',
-            locator: '/plugins/acme/review',
-            trustPolicy: 'local_trusted',
-            installPolicy: 'link',
-          },
-          definition: {
-            kindVersion: 1,
-            id: 'review-tool',
-            name: 'acme_review_start',
-            title: 'Acme Review Start',
-            description: 'Start a plugin-defined review workflow',
-            safety: 'safe',
-            surfaces: ['cli'],
-            inputSchema: {
-              type: 'object',
-              properties: {},
-              additionalProperties: true,
-            },
-            action: 'review-start',
-            actionId: 'acme.review.plugin/review-start',
+            scopes: ['global'],
+            execution: { target: 'daemon' },
           },
         },
       ],
@@ -1187,7 +1164,8 @@ describe('createActionToolExecutorBridge', () => {
   it('carries an admitted plugin generation through direct action execution', async () => {
     const calls: Array<{ actionId: string; context: unknown }> = [];
     const pluginToolCatalog: readonly ProjectedPluginToolCatalogEntry[] = [{
-      toolId: 'acme.composition/review-tool',
+      toolId: 'acme.composition/review-start',
+      toolExposure: { agent: 'direct' },
       actionId: 'acme.composition/actions/review-start',
       name: 'acme_composition_review_start',
       title: 'Acme composition review',

@@ -1644,10 +1644,6 @@ function mergeActivatedContributes(
     );
     const baseActionIds = new Set(base.actions.map(contributionKey));
     const activatedActions = activated.actions.filter((action) => !baseActionIds.has(contributionKey(action)));
-    const baseToolIds = new Set((base.tools ?? []).map(contributionKey));
-    const activatedTools = activated.tools.filter((tool) => !baseToolIds.has(contributionKey(tool)));
-    const baseCommandIds = new Set((base.commands ?? []).map(contributionKey));
-    const activatedCommands = activated.commands.filter((command) => !baseCommandIds.has(contributionKey(command)));
     const providerRuntimeRegistrations = activated.targetRegistrations.filter((entry) => (
         entry.registration.family === 'providers'
         && activated.isPluginOccurrenceCurrent(entry.pluginId, entry.occurrenceId)
@@ -1678,8 +1674,6 @@ function mergeActivatedContributes(
 
     if (
         activatedActions.length === 0
-        && activatedTools.length === 0
-        && activatedCommands.length === 0
         && providerRuntimeRegistrations.length === 0
         && !registeredAgentRuntimeCatalogHooksProjected
     ) {
@@ -1694,14 +1688,6 @@ function mergeActivatedContributes(
         actions: Object.freeze([
             ...base.actions,
             ...activatedActions,
-        ]),
-        tools: Object.freeze([
-            ...(base.tools ?? []),
-            ...activatedTools,
-        ]),
-        commands: Object.freeze([
-            ...(base.commands ?? []),
-            ...activatedCommands,
         ]),
         agents: registeredAgentRuntimeCatalogHooksProjected
             ? Object.freeze(agents)

@@ -75,8 +75,8 @@ function buildAcmeProjectionInputs(params: Readonly<{
 }>): Record<string, unknown> {
     const projection = PluginProjectionV2Schema.parse({
         v: 2, generation: params.generation,
-        installedPackagesById: {}, actionsById: {}, familiesById: {}, toolsById: {},
-        commandsById: {}, resourcesById: {}, settingsById: {}, diagnostics: [],
+        installedPackagesById: {}, actionsById: {}, familiesById: {},
+         resourcesById: {}, settingsById: {}, diagnostics: [],
         agentsById: params.hasAgent === false ? {} : { [ACME_AGENT_ID]: {
             id: ACME_AGENT_ID, title: params.title,
             capabilities: { surfaces: [], sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } },

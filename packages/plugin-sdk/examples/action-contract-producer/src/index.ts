@@ -228,6 +228,9 @@ const plugin = definePlugin({
     'inspect-document-review-services': {
       title: 'Inspect document review services',
       description: 'Checks the declared document review services without retaining plugin-local data.',
+      tool: { name: 'document_review_inspect_services' },
+      toolExposure: { agent: 'direct', mcp: 'direct' },
+      cli: { path: ['document-review', 'inspect-services'] },
       surfaces: ['cli', 'mcp', 'agent', 'plugin'],
       execution: { target: 'daemon' },
       dangerLevel: 'writesLocal',
@@ -519,6 +522,12 @@ const plugin = definePlugin({
     },
     'send-document-review-ready': {
       title: 'Send document review notification',
+      tool: {
+        name: 'document_review_notify_ready',
+        description: 'Delivers a review-ready notification through the configured channel.',
+      },
+      cli: { path: ['document-review', 'notify-ready'] },
+      toolExposure: { agent: 'direct', mcp: 'direct' },
       surfaces: ['cli', 'mcp', 'agent', 'plugin'],
       execution: { target: 'daemon' },
       run: async (_input, context) => context.services.notifications.send({
@@ -530,6 +539,13 @@ const plugin = definePlugin({
     'rotate-document-review-webhook-token': {
       title: 'Rotate the document review webhook token',
       description: 'Stores or revokes the plugin-owned webhook credential without returning its value.',
+      tool: {
+        name: 'document_review_rotate_webhook_token',
+        title: 'Rotate document review webhook token',
+        description: 'Stores or revokes the document review webhook credential without returning its value.',
+      },
+      cli: { path: ['document-review', 'rotate-webhook-token'] },
+      toolExposure: { agent: 'direct', mcp: 'direct' },
       surfaces: ['cli', 'mcp', 'agent', 'plugin'],
       execution: { target: 'daemon' },
       inputHints: { fields: [{ path: 'token', title: 'Webhook token', widget: 'secret' }] },
@@ -582,6 +598,12 @@ const plugin = definePlugin({
     'forward-to-session-run': {
       title: 'Forward to Session execution run',
       description: 'Sends one trusted plugin message to a Session-owned execution run through the canonical Session handle, preserving the same recipient and attachment capabilities as built-ins.',
+      tool: {
+        name: 'document_review_forward_to_run',
+        description: 'Sends one trusted message to a Session-owned execution run with the same recipient and attachment capabilities as built-ins.',
+      },
+      cli: { path: ['document-review', 'forward-to-run'] },
+      toolExposure: { agent: 'direct', mcp: 'direct' },
       surfaces: ['cli', 'mcp', 'agent', 'plugin'],
       execution: { target: 'daemon' },
       dangerLevel: 'safe',
@@ -668,58 +690,6 @@ const plugin = definePlugin({
         target: { kind: 'plugin', event: documentReviewServicesEventRef },
       },
       handler: async () => undefined,
-    },
-  },
-  commands: {
-    'send-document-review-ready-command': {
-      title: 'Send document review notification',
-      path: ['document-review', 'notify-ready'],
-      action: 'send-document-review-ready',
-    },
-    'inspect-document-review-services-command': {
-      title: 'Inspect document review services',
-      path: ['document-review', 'inspect-services'],
-      action: 'inspect-document-review-services',
-    },
-    'rotate-document-review-webhook-token-command': {
-      title: 'Rotate document review webhook token',
-      path: ['document-review', 'rotate-webhook-token'],
-      action: 'rotate-document-review-webhook-token',
-    },
-    'forward-to-session-run-command': {
-      title: 'Forward to Session execution run',
-      path: ['document-review', 'forward-to-run'],
-      action: 'forward-to-session-run',
-    },
-  },
-  tools: {
-    'send-document-review-ready-tool': {
-      name: 'document_review_notify_ready',
-      title: 'Send document review notification',
-      description: 'Delivers a review-ready notification through the configured channel.',
-      surfaces: ['agent', 'mcp'],
-      action: 'send-document-review-ready',
-    },
-    'inspect-document-review-services-tool': {
-      name: 'document_review_inspect_services',
-      title: 'Inspect document review services',
-      description: 'Checks the declared document review services without retaining plugin-local data.',
-      surfaces: ['agent', 'mcp'],
-      action: 'inspect-document-review-services',
-    },
-    'rotate-document-review-webhook-token-tool': {
-      name: 'document_review_rotate_webhook_token',
-      title: 'Rotate document review webhook token',
-      description: 'Stores or revokes the document review webhook credential without returning its value.',
-      surfaces: ['agent', 'mcp'],
-      action: 'rotate-document-review-webhook-token',
-    },
-    'forward-to-session-run-tool': {
-      name: 'document_review_forward_to_run',
-      title: 'Forward to Session execution run',
-      description: 'Sends one trusted message to a Session-owned execution run with the same recipient and attachment capabilities as built-ins.',
-      surfaces: ['agent', 'mcp'],
-      action: 'forward-to-session-run',
     },
   },
   notifications: {

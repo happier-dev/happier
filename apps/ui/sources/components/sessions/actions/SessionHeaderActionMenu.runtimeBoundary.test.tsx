@@ -64,7 +64,7 @@ function createProjection() {
                 dangerLevel: 'safe', available: true,
             },
         },
-        toolsById: {}, commandsById: {}, resourcesById: {}, settingsById: {},
+          resourcesById: {}, settingsById: {},
         familiesById: {
             pluginUi: {
                 family: 'pluginUi',

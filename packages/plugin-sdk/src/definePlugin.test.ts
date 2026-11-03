@@ -1,3 +1,6 @@
+import { createPluginRegistrationScope } from './registration/scope.js';
+import { readPluginActionInputParser, readPluginActionResultParser } from '@happier-dev/cli-common/plugins/registration/actionInputParser';
+import { normalizePluginAccountCollectionMigrationRuntimeProjection as normalizePluginAccountCollectionMigrationRuntimeProjectionFromAuthoringProjections } from '@happier-dev/cli-common/plugins/registration/authoringProjections';
 import { createTestResourceInvocationContext } from '@happier-dev/plugin-sdk/testing';
 import { normalizePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import { describe, expect, expectTypeOf, it, vi } from 'vitest';
@@ -33,10 +36,7 @@ import {
     normalizePluginAccountCollectionMigrationRuntimeProjection,
     projectPluginAccountCollectionDeclaration,
 } from './definePlugin.js';
-import {
-    normalizePluginAccountCollectionMigrationRuntimeProjection as normalizePluginAccountCollectionMigrationRuntimeProjectionFromHostRegistration,
-    projectPluginAccountCollectionDeclaration as projectPluginAccountCollectionDeclarationFromHostRegistration,
-} from './host/registration/index.js';
+
 import type {
     DefinePluginInput,
     ComposerControlAuthorInteraction,
@@ -108,11 +108,8 @@ import type {
 } from './storage/database.js';
 import type { AgentExternalSessionsContribution } from './externalSessions.js';
 import type { ManagedProviderRuntime } from './providers/index.js';
-import {
-    readPluginActionInputParser,
-    readPluginActionResultParser,
-} from './host/registration/actionInputParser.js';
-import { createPluginRegistrationScope } from './host/registration/index.js';
+
+
 import type { VoiceProvidersRegistrationApi } from './voice/projections.js';
 import type { SpeechProviderRuntime, VoiceSpeechSynthesizeRequest } from './voice/speech.js';
 
@@ -850,20 +847,18 @@ describe('definePlugin', () => {
             withoutRuntimeAdapter,
         )).toThrow(/missing adapters: actions/iu);
 
-        // `resources` used to be the descriptor-only example here. EU-4b gave
-        // its dynamic arm a runtime producer, so it is now a genuine adapter
-        // family; `commands` is the current runtime-free family.
+        // Roles are cold descriptors with no runtime adapter.
         const withDescriptorAdapter = {
             ...DEFINE_PLUGIN_FAMILY_POLICY_V2,
-            commands: {
-                ...policyRecord.commands,
+            roles: {
+                ...policyRecord.roles,
                 classification: 'adapter' as const,
             },
         };
         expect(() => assertDefinePluginCatalogFamilyPolicyClosure(
             sourcePluginContributionCatalog,
             withDescriptorAdapter,
-        )).toThrow(/extra adapters: commands/iu);
+        )).toThrow(/extra adapters: roles/iu);
 
         const withoutNestedAdapter = {
             ...DEFINE_PLUGIN_FAMILY_POLICY_V2,
@@ -1733,17 +1728,12 @@ describe('definePlugin', () => {
             ],
         });
         expect(staticTasksDeclaration).not.toHaveProperty('migrations.0.migrate');
-        expect(readFileSync(new URL('./host/registration/index.public.ts', import.meta.url), 'utf8')).toContain(
-            "export { projectPluginAccountCollectionDeclaration } from '../../definePlugin.js';",
-        );
-        expect(projectPluginAccountCollectionDeclarationFromHostRegistration)
-            .toBe(projectPluginAccountCollectionDeclaration);
         expect(plugin.collectionMigrations).toEqual({ tasks: migrations });
         const publicRootProjection: PluginAccountCollectionMigrationRuntimeProjectionFromPublicRoot =
             plugin.collectionMigrations;
-        expect(normalizePluginAccountCollectionMigrationRuntimeProjectionFromHostRegistration)
+        expect(normalizePluginAccountCollectionMigrationRuntimeProjectionFromAuthoringProjections)
             .toBe(normalizePluginAccountCollectionMigrationRuntimeProjection);
-        expect(normalizePluginAccountCollectionMigrationRuntimeProjectionFromHostRegistration(
+        expect(normalizePluginAccountCollectionMigrationRuntimeProjectionFromAuthoringProjections(
             publicRootProjection,
             declarations,
         )).toEqual(plugin.collectionMigrations);
@@ -2427,17 +2417,19 @@ describe('definePlugin', () => {
     it.each([
         ['raw contributes', { contributes: {} }, /raw contributes|host-generated projection output/iu],
         ['unknown field', { surprise: true }, /unknown.*surprise|surprise.*unknown/iu],
+        ['retired commands family', { commands: {} }, /commands/iu],
+        ['retired tools family', { tools: {} }, /tools/iu],
     ] as const)('fails closed for cast/runtime %s input', (_label, extra, expected) => {
         expect(() => definePlugin({
             id: 'example.invalid-runtime-key',
             version: '0.1.0',
             ...extra,
-        } as unknown as Parameters<typeof definePlugin>[0])).toThrow(expected);
+        } as unknown as Parameters<typeof definePlugin>[0]).manifest).toThrow(expected);
     });
 
     it.each([
-        ['descriptor family array', { commands: [] }, /'commands'/u],
-        ['descriptor family null', { tools: null }, /'tools'/u],
+        ['descriptor family array', { roles: [] }, /'roles'/u],
+        ['descriptor family null', { roles: null }, /'roles'/u],
         ['descriptor family scalar', { resources: 'packaged' }, /'resources'/u],
         ['contribution points scalar', { contributionPoints: 7 }, /'contributionPoints'/u],
         ['targeted contributions array', { contributesTo: [] }, /'contributesTo'/u],
@@ -2454,7 +2446,7 @@ describe('definePlugin', () => {
                 id: 'example.malformed-family-container',
                 version: '0.1.0',
                 ...extra,
-            } as unknown as Parameters<typeof definePlugin>[0]);
+            } as unknown as Parameters<typeof definePlugin>[0]).manifest;
             expect(define).toThrow(TypeError);
             expect(define).toThrow(expected);
         },
@@ -2465,16 +2457,16 @@ describe('definePlugin', () => {
             id: 'example.omitted-family',
             version: '0.1.0',
         }).manifest.contributes as Readonly<Record<string, unknown>>;
-        expect(omitted).not.toHaveProperty('commands');
+        expect(omitted).not.toHaveProperty('roles');
         expect(omitted).not.toHaveProperty('targetedPluginContributions');
 
         const declaredEmpty = definePlugin({
             id: 'example.empty-family',
             version: '0.1.0',
-            commands: {},
+            roles: {},
             contributesTo: {},
         }).manifest.contributes as Readonly<Record<string, unknown>>;
-        expect(declaredEmpty.commands).toEqual([]);
+        expect(declaredEmpty.roles).toEqual([]);
         expect(declaredEmpty.targetedPluginContributions).toEqual([]);
     });
 
@@ -3058,15 +3050,9 @@ describe('definePlugin', () => {
             actions: {
                 inspect: {
                     title: 'Inspect',
+                    cli: { path: ['inspect'] },
                     execution: { target: 'daemon' },
                     run: async () => undefined,
-                },
-            },
-            commands: {
-                'inspect-command': {
-                    title: 'Inspect',
-                    path: ['inspect'],
-                    action: 'inspect',
                 },
             },
             resources: {
@@ -3158,12 +3144,9 @@ describe('definePlugin', () => {
             },
         });
 
-        expect(plugin.manifest.contributes.commands ?? []).toContainEqual({
-            id: 'inspect-command',
-            title: 'Inspect',
-            path: ['inspect'],
-            action: 'inspect',
-        });
+        expect(plugin.manifest.contributes.actions).toContainEqual(expect.objectContaining({
+            id: 'inspect', cli: { path: ['inspect'] },
+        }));
         expect(plugin.manifest.contributes.resources ?? []).toContainEqual({
             id: 'readme',
             kind: 'asset',

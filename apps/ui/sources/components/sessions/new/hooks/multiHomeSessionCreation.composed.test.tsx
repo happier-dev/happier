@@ -166,7 +166,7 @@ vi.mock('socket.io-client', async () => {
                                         ? { pluginId: identity.pluginId, localId: declaration.service } : declaration.service })),
                                 capabilities: { surfaces: [], sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } },
                             }])),
-                            actionsById: {}, familiesById: {}, toolsById: {}, commandsById: {}, resourcesById: {}, settingsById: {}, diagnostics: [],
+                            actionsById: {}, familiesById: {},   resourcesById: {}, settingsById: {}, diagnostics: [],
                         }) } };
                     }
                     if (payload.method.endsWith(`:${RPC_METHODS.CAPABILITIES_DETECT}`)) {

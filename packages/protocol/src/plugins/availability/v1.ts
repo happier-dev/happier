@@ -1,3 +1,14 @@
+export {
+  PluginMachineMaterializationSnapshotV1LoadSchema,
+  PluginMachineMaterializationV1LoadSchema,
+  PluginReleaseFactsV1LoadSchema,
+} from './load.js';
+import {
+  PluginMachineMaterializationSnapshotV1LoadSchema,
+  PluginMachineMaterializationV1LoadSchema,
+  PluginReleaseFactsV1LoadSchema,
+} from './load.js';
+import { createStoredReadSchema, defineStoredReadProjection } from '../../json/storedReadSchema.js';
 import * as zMini from 'zod/mini';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod/mini';
@@ -457,7 +468,7 @@ export const PluginAccountAvailabilityIntentReadResponseV1Schema = lazyZodSchema
   availabilityCursor: MachineMaterializationRevisionSchema,
   hostingCapability: PluginUiArtifactHostingCapabilityV1Schema,
   intent: z.nullable(PluginAccountPluginIntentV1Schema),
-  release: z.nullable(PluginReleaseFactsV1Schema),
+  release: z.nullable(PluginReleaseFactsV1LoadSchema),
   uiArtifacts: z.readonly(z.array(PluginAccountPluginUiArtifactLinkV1Schema)),
   packageAssets: z.readonly(z.array(PluginAccountPluginPackageAssetLinkV1Schema)),
   managedResources: z.optional(z.readonly(z.array(ManagedResourceDependencyV1Schema))),
@@ -522,12 +533,14 @@ export type PluginAccountAvailabilityIntentsListResponseV1 =
  * remains a separate owner, while the cursor tells consumers whether the
  * Account Availability projection advanced around the read.
  */
-export const PluginAccountAvailabilityReleaseReadResponseV1Schema = lazyZodSchema(() => z.strictObject({
+export const PluginAccountAvailabilityReleaseReadResponseV1Schema: z.ZodMiniType<PluginAccountAvailabilityReleaseReadResponseV1> = lazyZodSchema(() => z.strictObject({
   availabilityCursor: MachineMaterializationRevisionSchema,
-  facts: PluginReleaseFactsV1Schema,
+  facts: PluginReleaseFactsV1LoadSchema,
 }));
-export type PluginAccountAvailabilityReleaseReadResponseV1 =
-  z.infer<typeof PluginAccountAvailabilityReleaseReadResponseV1Schema>;
+export type PluginAccountAvailabilityReleaseReadResponseV1 = {
+  availabilityCursor: number;
+  facts: PluginReleaseFactsV1;
+};
 
 export type PluginAccountAvailabilityMaterializationsReadResponseV1 = Readonly<{
   availabilityCursor: number;
@@ -537,11 +550,11 @@ export type PluginAccountAvailabilityMaterializationsReadResponseV1 = Readonly<{
 }>;
 export const PluginAccountAvailabilityMaterializationsReadResponseV1Schema: z.ZodMiniType<PluginAccountAvailabilityMaterializationsReadResponseV1> = lazyZodSchema(() => z.strictObject({
   availabilityCursor: MachineMaterializationRevisionSchema,
-  snapshots: z.readonly(z.array(PluginMachineMaterializationSnapshotV1Schema)),
+  snapshots: z.readonly(z.array(PluginMachineMaterializationSnapshotV1LoadSchema)),
   /** Omitted machine rows are unknown if any complete machine snapshot could not be read. */
   inventoryComplete: z.optional(z.boolean()),
   /** Immutable facts for reported portable coordinates, independent of enabled selection intent. */
-  releases: z.optional(z.readonly(z.array(PluginReleaseFactsV1Schema))),
+  releases: z.optional(z.readonly(z.array(PluginReleaseFactsV1LoadSchema))),
 }));
 
 function normalizePluginMachineMaterializationV1(
@@ -579,3 +592,7 @@ export function isPluginMachineMaterializationOnServerIdentityV1(
   const parsed = ServerIdentityIdSchema.safeParse(serverIdentityId);
   return parsed.success && materialization.serverIdentityId === parsed.data;
 }
+
+defineStoredReadProjection(PluginReleaseFactsV1Schema, () => createStoredReadSchema(PluginReleaseFactsV1LoadSchema));
+defineStoredReadProjection(PluginMachineMaterializationV1Schema, () => createStoredReadSchema(PluginMachineMaterializationV1LoadSchema));
+defineStoredReadProjection(PluginMachineMaterializationSnapshotV1Schema, () => createStoredReadSchema(PluginMachineMaterializationSnapshotV1LoadSchema));

@@ -111,7 +111,7 @@ describe('Plugin Settings through the default Account Action host', () => {
         const definition = PluginSettingsContributionV2Schema.parse({ id: 'preferences', title: 'Preferences', scope: 'account',
             target: { kind: 'plugin' }, fields: [{ id: 'enabled', title: 'Enabled', schema: { type: 'boolean' } }] });
         const projectedSettings = projectPluginSettingsContributionV2({ pluginId, definition });
-        let projection = PluginProjectionV2Schema.parse({ v: 2, generation: 1, agentsById: {}, actionsById: {}, toolsById: {}, commandsById: {}, resourcesById: {},
+        let projection = PluginProjectionV2Schema.parse({ v: 2, generation: 1, agentsById: {}, actionsById: {},   resourcesById: {},
             settingsById: { [projectedSettings.id]: projectedSettings }, diagnostics: [], installedPackagesById: {
                 [pluginId]: { id: pluginId, displayName: 'Source Settings', version: '1.0.0', enabled: true,
                     source: { kind: 'localPath', locator: 'source-root' }, occurrenceId: 'source-occurrence',

@@ -138,8 +138,8 @@ export function publishDaemonMergedProjectionInputs(params: Readonly<{
         installedPackagesById: publishProjectionFields(params.projection.installedPackagesById, prior?.projection.installedPackagesById),
         agentsById: publishProjectionFields(params.projection.agentsById, prior?.projection.agentsById),
         actionsById: publishProjectionFields(params.projection.actionsById, prior?.projection.actionsById),
-        toolsById: publishProjectionFields(params.projection.toolsById, prior?.projection.toolsById),
-        commandsById: publishProjectionFields(params.projection.commandsById, prior?.projection.commandsById),
+
+
         resourcesById: publishProjectionFields(params.projection.resourcesById, prior?.projection.resourcesById),
         settingsById: publishProjectionFields(params.projection.settingsById, prior?.projection.settingsById),
         familiesById,

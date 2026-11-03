@@ -239,7 +239,7 @@ const runtime = installSessionPaneRuntimeTestHarness({
                             codex: { id: 'codex', identity: { pluginId: 'happier.agent.codex', localId: 'codex' }, isBuiltIn: true,
                                 connectedAccounts: [{ purpose: 'primary', service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' } }] },
                         },
-                        installedPackagesById: {}, actionsById: {}, toolsById: {}, commandsById: {},
+                        installedPackagesById: {}, actionsById: {},
                         resourcesById: {}, settingsById: {}, familiesById: {}, diagnostics: [],
                     }),
                 } };

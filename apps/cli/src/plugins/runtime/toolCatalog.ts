@@ -2,16 +2,12 @@ import type {
   ActionContextualDefaults,
   ActionInputHints,
   PluginJsonSchemaV2,
-  PluginToolContributionV2,
+  PluginActionContributionV2,
 } from '@happier-dev/protocol';
-import { normalizePluginActionInputHintsV2 } from '@happier-dev/protocol/plugins/actions/v2';
 import { formatQualifiedPluginActionId, parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
-import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugins/contributions/public-types';
+import { readResolvedActionContribution } from '@/plugins/projection/registry/actions';
 
-import {
-  evaluateContributionAvailability,
-  resolveInvocationContributionPolicyFacts,
-} from './policy/evaluate';
 import type { ResolvedExecutablePluginRuntimeRegistry } from './resolveExecutablePluginRuntimeRegistry';
 
 type PluginToolCatalogRuntimeRegistry = Pick<
@@ -27,13 +23,14 @@ export type ProjectedPluginToolCatalogEntry = Readonly<{
   description: string;
   inputSchema: PluginJsonSchemaV2;
   contextualDefaults?: ActionContextualDefaults;
-  outputSchema?: NonNullable<PluginToolContributionV2['outputSchema']>;
+  outputSchema?: NonNullable<PluginActionContributionV2['resultSchema']>;
   inputHints?: ActionInputHints;
-  safety?: NonNullable<PluginToolContributionV2['safety']>;
-  examples?: NonNullable<PluginToolContributionV2['examples']>;
-  promptSnippet?: NonNullable<PluginToolContributionV2['promptSnippet']>;
+  safety?: 'safe' | 'danger';
+  examples?: NonNullable<NonNullable<PluginActionContributionV2['tool']>['examples']>;
+  promptSnippet?: NonNullable<NonNullable<PluginActionContributionV2['tool']>['promptSnippet']>;
   promptGuidelines?: readonly string[];
-  availability?: NonNullable<PluginToolContributionV2['availability']>;
+  availability?: NonNullable<PluginActionContributionV2['availability']>;
+  toolExposure?: PluginActionContributionV2['toolExposure'];
   surfaces: readonly ('agent' | 'mcp' | 'cli')[];
   /**
    * Ephemeral admission fence. The executable catalog projection never
@@ -46,13 +43,12 @@ export type ProjectedPluginToolCatalogEntry = Readonly<{
 function readLocalizedText(
   value: string | Readonly<{ fallback: string }> | null | undefined,
 ): string | null {
-  const text = typeof value === 'string' ? value : value?.fallback;
-  const normalized = text?.trim() ?? '';
+  const normalized = resolvePluginLocalizedStringV2Text(value).trim();
   return normalized.length > 0 ? normalized : null;
 }
 
 /**
- * Serializes the current executable registry's normalized tool declarations.
+ * Projects optional named-tool presentation from the current Actions.
  * The runtime registry remains the sole currentness, policy, and action owner;
  * this is a read-only transport/presentation view.
  */
@@ -60,45 +56,41 @@ export function projectExecutablePluginToolCatalog(
   runtimeRegistry: PluginToolCatalogRuntimeRegistry,
 ): readonly ProjectedPluginToolCatalogEntry[] {
   const projected: ProjectedPluginToolCatalogEntry[] = [];
-  for (const tool of runtimeRegistry.contributes.tools ?? []) {
-    if (!tool.pluginId) continue;
-    const action = runtimeRegistry.contributes.actionsById?.get(tool.definition.actionId);
-    if (!action?.pluginId || !action.identity) continue;
+  for (const action of runtimeRegistry.contributes.actions) {
+    const declaration = action.admittedTarget?.declaration;
+    const tool = declaration?.tool;
+    if (!action.pluginId || !action.identity || !declaration || !tool) continue;
+    const surfaces = declaration.surfaces.filter((surface) => surface === 'agent' || surface === 'mcp' || surface === 'cli');
+    if (surfaces.length === 0) continue;
     const policy = runtimeRegistry.targetActionInvocations?.evaluateCatalogPolicy(
       action.pluginId,
       action.definition.id,
     );
     if (policy?.outcome !== 'visible') continue;
-    const toolAvailability = evaluateContributionAvailability({
-      availability: tool.definition.availability,
-      facts: resolveInvocationContributionPolicyFacts(),
-    });
-    if (toolAvailability.outcome !== 'visible') continue;
-    const name = tool.definition.name.trim();
-    const title = readLocalizedText(tool.definition.title);
+    const name = tool.name.trim();
+    const title = readLocalizedText(tool.title) ?? action.definition.title;
     if (!name || !title) continue;
     projected.push(Object.freeze({
-      toolId: `${tool.pluginId}/${tool.definition.id}`,
+      toolId: `${action.pluginId}/${action.definition.id}`,
       actionId: formatQualifiedPluginActionId(action.identity),
       name,
       title,
-      description: readLocalizedText(tool.definition.description) ?? title,
-      inputSchema: tool.definition.inputSchema ?? {},
+      description: readLocalizedText(tool.description) ?? action.definition.description ?? title,
+      inputSchema: declaration.inputSchema ?? {},
       ...(action.definition.contextualDefaults === undefined
         ? {}
         : { contextualDefaults: action.definition.contextualDefaults }),
-      ...(tool.definition.outputSchema === undefined ? {} : { outputSchema: tool.definition.outputSchema }),
-      ...(tool.definition.inputHints === undefined
-        ? {}
-        : { inputHints: normalizePluginActionInputHintsV2(tool.definition.inputHints) }),
-      safety: tool.definition.safety,
-      ...(tool.definition.examples === undefined ? {} : { examples: tool.definition.examples }),
-      ...(tool.definition.promptSnippet === undefined ? {} : { promptSnippet: tool.definition.promptSnippet }),
-      ...(tool.definition.promptGuidelines === undefined ? {} : {
-        promptGuidelines: Object.freeze([...tool.definition.promptGuidelines]),
+      ...(declaration.resultSchema === undefined ? {} : { outputSchema: declaration.resultSchema }),
+      ...(action.definition.inputHints ? { inputHints: action.definition.inputHints } : {}),
+      safety: action.definition.safety,
+      ...(tool.examples === undefined ? {} : { examples: tool.examples }),
+      ...(tool.promptSnippet === undefined ? {} : { promptSnippet: tool.promptSnippet }),
+      ...(tool.promptGuidelines === undefined ? {} : {
+        promptGuidelines: Object.freeze([...tool.promptGuidelines]),
       }),
-      ...(tool.definition.availability === undefined ? {} : { availability: tool.definition.availability }),
-      surfaces: Object.freeze([...tool.definition.surfaces]),
+      ...(declaration.availability === undefined ? {} : { availability: declaration.availability }),
+      ...(declaration.toolExposure === undefined ? {} : { toolExposure: declaration.toolExposure }),
+      surfaces: Object.freeze(surfaces),
     }));
   }
   return Object.freeze(projected.sort((left, right) => (
@@ -117,10 +109,9 @@ export function projectOccurrenceBoundExecutablePluginToolCatalog(
 ): readonly ProjectedPluginToolCatalogEntry[] {
   return Object.freeze(projectExecutablePluginToolCatalog(runtimeRegistry).flatMap((tool) => {
     const identity = parseQualifiedPluginActionId(tool.actionId);
-    const actionPluginId = runtimeRegistry.contributes.actionsById
-      ?.get(identity ? buildQualifiedPluginContributionKey(identity) : '')
-      ?.pluginId
-      ?.trim();
+    const actionPluginId = identity
+      ? readResolvedActionContribution(runtimeRegistry.contributes, identity)?.pluginId?.trim()
+      : undefined;
     const occurrenceId = actionPluginId
       ? runtimeRegistry.readPluginOccurrenceId?.(actionPluginId)?.trim()
       : undefined;

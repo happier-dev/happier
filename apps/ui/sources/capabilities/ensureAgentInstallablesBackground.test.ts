@@ -37,8 +37,8 @@ const codexAcpPluginProjection = {
     installedPackagesById: {},
     agentsById: {},
     actionsById: {},
-    toolsById: {},
-    commandsById: {},
+
+
     resourcesById: {},
     settingsById: {},
     diagnostics: [],

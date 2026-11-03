@@ -329,7 +329,7 @@ describe('mounted plugin UI linked-Session state (r0.42)', () => {
                     title: 'Acme Agent', channel: 'plugin', isBuiltIn: false,
                     catalogAgentId: 'codex', iconAgentId: 'codex', providerOwnedEnvironmentKeys: [],
                 } },
-                actionsById: {}, toolsById: {}, commandsById: {}, resourcesById: {}, settingsById: {}, familiesById: {}, diagnostics: [],
+                actionsById: {},   resourcesById: {}, settingsById: {}, familiesById: {}, diagnostics: [],
             },
         });
         const mounted = mountSurface();

@@ -23,6 +23,70 @@ const localized = { key: 'plugin.title', fallback: 'Title' };
 const daemonExecution = { target: 'daemon' } as const;
 
 describe('plugin executable contribution target grammar', () => {
+  it('keeps Action invocation surfaces explicit and resolves the execution realm', () => {
+    const daemonVoiceAction = {
+      id: 'start-voice-note',
+      title: localized,
+      scopes: ['session'],
+      surfaces: ['voice'],
+      execution: { target: 'daemon' },
+      dangerLevel: 'safe' as const,
+    };
+
+    expect(PluginActionContributionV2Schema.parse(daemonVoiceAction)).toMatchObject({
+      surfaces: ['voice'],
+      execution: { target: 'daemon' },
+    });
+    const { execution: _absent, ...withoutExecution } = daemonVoiceAction;
+    expect(PluginActionContributionV2Schema.safeParse(withoutExecution).success).toBe(false);
+    expect(PluginActionContributionV2Schema.safeParse({
+      ...daemonVoiceAction,
+      execution: undefined,
+    }).success).toBe(false);
+    expect(PluginActionContributionV2Schema.safeParse({
+      ...daemonVoiceAction,
+      execution: { target: 'host' },
+    }).success).toBe(false);
+    expect(PluginActionContributionV2Schema.safeParse({
+      ...daemonVoiceAction,
+      execution: { target: 'daemon', client: { artifactId: 'a', exportName: 'a' } },
+    }).success).toBe(false);
+  });
+
+  it('keeps named-tool presentation and CLI metadata closed on the Action', () => {
+    const action = { id: 'run', title: localized, scopes: ['global'], surfaces: ['agent', 'mcp', 'cli'],
+      execution: daemonExecution, dangerLevel: 'safe' };
+    expect(PluginActionContributionV2Schema.safeParse({ ...action, tool: {
+      name: 'run', examples: { mcp: { argsExample: '{}', extra: true } },
+    } }).success).toBe(false);
+    for (const cli of [{ path: [] }, { path: ['run'], visibility: 'internal' }, { path: ['run'], aliases: [[]] }]) {
+      expect(PluginActionContributionV2Schema.safeParse({ ...action, cli }).success).toBe(false);
+    }
+  });
+
+  it('declares named tools and CLI paths on the Action without a second schema or policy', () => {
+    const action = {
+      id: 'save-note', title: localized, scopes: ['global'], surfaces: ['agent', 'mcp', 'cli'],
+      execution: daemonExecution, dangerLevel: 'safe',
+      inputSchema: { type: 'object', properties: { note: { type: 'string' } }, required: ['note'] },
+      tool: { name: 'notes_add', description: 'Save a note' },
+      toolExposure: { mcp: 'direct' },
+      cli: { path: ['notes', 'add'], aliases: [['note', 'save']], visibility: 'advanced', tmux: 'inherit' },
+    };
+    expect(PluginActionContributionV2Schema.safeParse(action).success).toBe(true);
+    for (const tool of [
+      { ...action.tool, inputSchema: { type: 'object' } },
+      { ...action.tool, availability: { when: { fact: 'plugin.enabled', operator: 'equals', value: false } } },
+      { ...action.tool, safety: 'safe' },
+    ]) expect(PluginActionContributionV2Schema.safeParse({ ...action, tool }).success).toBe(false);
+    expect(PluginActionContributionV2Schema.safeParse({ ...action,
+      cli: { ...action.cli, arguments: { type: 'object' } },
+    }).success).toBe(false);
+    expect(PluginActionContributionV2Schema.safeParse({ ...action,
+      tool: { ...action.tool, toolExposure: { mcp: 'direct' } },
+    }).success).toBe(false);
+  });
+
   it('carries explicit confirmation facts through the closed plugin declaration', () => {
     const action = {
       id: 'delete', title: localized, scopes: ['session'], surfaces: ['agent'],
@@ -133,49 +197,9 @@ describe('plugin executable contribution target grammar', () => {
     }).success).toBe(false);
   });
 
-  it('keeps Tool input hints structurally static-only', () => {
-    expectTypeOf<NonNullable<PluginToolContributionV2['inputHints']>['fields'][number]>()
-      .not.toHaveProperty('optionsSourceId');
-    expectTypeOf<NonNullable<PluginToolContributionV2['inputHints']>['fields'][number]>()
-      .not.toHaveProperty('connectedAccountOptions');
-  });
 
-  it('keeps Action invocation surfaces independent from Tool surfaces and resolves the execution realm', () => {
-    const daemonVoiceAction = {
-      id: 'start-voice-note',
-      title: localized,
-      scopes: ['session'],
-      surfaces: ['voice'],
-      execution: { target: 'daemon' },
-      dangerLevel: 'safe' as const,
-    };
 
-    expect(PluginActionContributionV2Schema.parse(daemonVoiceAction)).toMatchObject({
-      surfaces: ['voice'],
-      execution: { target: 'daemon' },
-    });
-    const { execution: _absent, ...withoutExecution } = daemonVoiceAction;
-    expect(PluginActionContributionV2Schema.safeParse(withoutExecution).success).toBe(false);
-    expect(PluginActionContributionV2Schema.safeParse({
-      ...daemonVoiceAction,
-      execution: undefined,
-    }).success).toBe(false);
-    expect(PluginActionContributionV2Schema.safeParse({
-      ...daemonVoiceAction,
-      execution: { target: 'host' },
-    }).success).toBe(false);
-    expect(PluginActionContributionV2Schema.safeParse({
-      ...daemonVoiceAction,
-      execution: { target: 'daemon', client: { artifactId: 'a', exportName: 'a' } },
-    }).success).toBe(false);
-    expect(PluginToolContributionV2Schema.safeParse({
-      id: 'voice-tool',
-      name: 'Voice tool',
-      title: localized,
-      action: 'start-voice-note',
-      surfaces: ['voice'],
-    }).success).toBe(false);
-  });
+
 
   it('accepts only a fully declared client Action execution target', () => {
     const clientAction = {
@@ -954,129 +978,7 @@ describe('plugin executable contribution target grammar', () => {
     }).success).toBe(true);
   });
 
-  it('accepts structured tool authoring fields and rejects open legacy shapes', () => {
-    expect(PluginToolContributionV2Schema.parse({
-      id: 'summarize-tool',
-      name: 'summarize',
-      title: localized,
-      action: { pluginId: 'com.acme.other', localId: 'summarize' },
-      compatibility: { minimumVersion: 2, streaming: true },
-      examples: { voice: { argsExample: '{"scope":"session"}' } },
-      inputHints: {
-        title: localized,
-        fields: [{
-          path: 'scope',
-          title: 'Scope',
-          widget: 'select',
-          options: [{ value: 'session', label: 'Session' }],
-        }],
-      },
-    })).toMatchObject({ name: 'summarize' });
 
-    expect(PluginToolContributionV2Schema.safeParse({
-      id: 'ui-tool',
-      name: 'ui_tool',
-      title: 'UI tool',
-      surfaces: ['ui'],
-      action: 'run',
-    }).success).toBe(false);
 
-    expect(PluginToolContributionV2Schema.safeParse({
-      id: 'duplicate-tool-input',
-      name: 'duplicate_tool_input',
-      title: 'Duplicate tool input',
-      action: 'run',
-      inputHints: {
-        fields: [{
-          path: 'scope',
-          title: localized,
-          widget: 'select',
-          options: [{ value: 'session', label: localized }],
-        }, {
-          path: 'scope',
-          title: localized,
-          widget: 'select',
-          options: [{ value: 'project', label: localized }],
-        }],
-      },
-    }).success).toBe(false);
-    expect(PluginToolContributionV2Schema.safeParse({
-      id: 'plugin-tool',
-      name: 'plugin_tool',
-      title: 'Plugin tool',
-      surfaces: ['plugin'],
-      action: 'run',
-    }).success).toBe(false);
-    expect(PluginToolContributionV2Schema.safeParse({
-      id: 'connected-account-tool',
-      name: 'connected_account_tool',
-      title: 'Connected Account tool',
-      action: 'run',
-      inputHints: {
-        fields: [{
-          path: 'credentialRef',
-          title: localized,
-          widget: 'select',
-          connectedAccountOptions: true,
-        }],
-      },
-    }).success).toBe(false);
 
-    expect(PluginToolContributionV2Schema.safeParse({
-      id: 'bad-tool',
-      name: 'bad',
-      title: 'Bad',
-      action: 'run',
-      compatibility: ['v2'],
-    }).success).toBe(false);
-    expect(PluginToolContributionV2Schema.safeParse({
-      id: 'bad-example',
-      name: 'bad_example',
-      title: 'Bad',
-      action: 'run',
-      examples: { voice: { argsExample: '{}', extra: true } },
-    }).success).toBe(false);
-
-    for (const nonObjectSchema of [
-      { type: 'string' as const },
-      { type: 'array' as const, items: { type: 'string' as const } },
-    ]) {
-      expect(PluginToolContributionV2Schema.safeParse({
-        id: 'non-object-input',
-        name: 'non_object_input',
-        title: 'Non-object input',
-        action: 'run',
-        inputSchema: nonObjectSchema,
-      }).success).toBe(false);
-      expect(PluginToolContributionV2Schema.safeParse({
-        id: 'non-object-output',
-        name: 'non_object_output',
-        title: 'Non-object output',
-        action: 'run',
-        outputSchema: nonObjectSchema,
-      }).success).toBe(false);
-    }
-  });
-
-  it('keeps commands strict and limited to public visibility values', () => {
-    expect(PluginCommandContributionV2Schema.parse({
-      id: 'summarize-command',
-      title: localized,
-      path: ['summarize'],
-      action: 'summarize',
-      visibility: 'advanced',
-      arguments: { type: 'object' },
-      availability: { when: { fact: 'host.feature', operator: 'enabled', value: 'summary' } },
-    })).toMatchObject({ visibility: 'advanced' });
-
-    for (const extra of [{ visibility: 'internal' }, { command: 'bad' }]) {
-      expect(PluginCommandContributionV2Schema.safeParse({
-        id: 'bad-command',
-        title: 'Bad',
-        path: ['bad'],
-        action: 'bad',
-        ...extra,
-      }).success).toBe(false);
-    }
-  });
 });

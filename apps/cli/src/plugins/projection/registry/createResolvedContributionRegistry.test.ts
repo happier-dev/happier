@@ -839,73 +839,7 @@ describe('getResolvedContributionRegistry', () => {
     })).toThrow("Duplicate action contribution 'acme.plugin/review-start'");
   });
 
-  it('indexes tool, command, and lifecycle-handler definitions alongside action contributes', () => {
-    const registry = createResolvedContributionRegistry({
-      agents: Object.freeze([
-        {
-          id: 'acme.provider',
-          provenance: 'external',
-          source: { kind: 'path' },
-          definition: {
-            kindVersion: 1,
-            id: 'acme.provider',
-            ownedBackendIds: Object.freeze([]),
-          },
-        },
-      ]),
-            actions: Object.freeze([]),
-      tools: Object.freeze([
-        {
-          provenance: 'external',
-          source: { kind: 'path' },
-          pluginId: 'acme.plugin',
-          manifestPath: '/plugins/acme/plugin.json',
-          daemonEntryPath: '/plugins/acme/daemon.mjs',
-          definition: {
-            kindVersion: 1,
-            id: 'tool',
-            name: 'acme_tool',
-            title: 'Acme Tool',
-            description: 'Runs the Acme tool',
-            safety: 'safe',
-            surfaces: ['cli', 'mcp'],
-            inputSchema: {},
-            action: 'tool',
-            actionId: 'tool',
-          },
-        },
-      ]),
-      commands: Object.freeze([
-        {
-          provenance: 'external',
-          source: { kind: 'path' },
-          pluginId: 'acme.plugin',
-          manifestPath: '/plugins/acme/plugin.json',
-          daemonEntryPath: '/plugins/acme/daemon.mjs',
-          definition: {
-            kindVersion: 1,
-            id: 'command',
-            title: 'Acme review',
-            description: 'Run the Acme review command',
-            path: ['acme-review'],
-            action: 'command',
-            tmux: 'forbidden',
-            actionId: 'command',
-          },
-        },
-      ]),
-    });
 
-    expect(registry.tools?.map((tool) => tool.definition.id)).toEqual(['tool']);
-    expect(registry.commands?.map((command) => command.definition.id)).toEqual(['command']);
-    expect(registry.toolsById?.get('acme.plugin/tool')).toMatchObject({
-      pluginId: 'acme.plugin',
-    });
-    expect(registry.commandsById?.get('acme.plugin/command')).toMatchObject({
-      pluginId: 'acme.plugin',
-    });
-    expect(registry).not.toHaveProperty('generationId');
-  });
 
   it('does not admit the retired static hook-registration input', () => {
     const validHook: ResolvedActivatedHookRegistration = {

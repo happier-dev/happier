@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 
 import type {
   ResolvedActionContribution,
-  ResolvedCommandContribution,
   ResolvedContributionRegistry,
 } from '@/plugins/projection/registry/types';
 
@@ -11,13 +10,20 @@ import {
   resolvePluginCommandCompletionCandidates,
 } from './pluginCommandFields';
 import { resolvePluginCommandProjection } from './pluginCommandProjection';
+import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import { buildPluginContributionRegistry } from '@/plugins/projection/registry/normalize/package';
+import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
+
+type CliPresentationFixture = Pick<ResolvedActionContribution, 'provenance' | 'source' | 'pluginId' | 'manifestPath' | 'sourceSpec'> & Readonly<{
+  definition: Readonly<{ kindVersion: 1; id: string; title: string; path: string[]; action: string; actionId: string }>;
+}>;
 
 function commandContribution(params: Readonly<{
   pluginId: string;
   id: string;
   path: readonly string[];
   actionId: string;
-}>): ResolvedCommandContribution {
+}>): CliPresentationFixture {
   return {
     provenance: 'external',
     source: { kind: 'path' },
@@ -37,7 +43,7 @@ function commandContribution(params: Readonly<{
       action: params.actionId.split('/').at(-1)!,
       actionId: params.actionId,
     },
-  } as ResolvedCommandContribution;
+  };
 }
 
 function actionContribution(params: Readonly<{
@@ -65,27 +71,30 @@ function actionContribution(params: Readonly<{
 }
 
 function registry(params: Readonly<{
-  commands: readonly ResolvedCommandContribution[];
+  commands: readonly CliPresentationFixture[];
   actions: readonly ResolvedActionContribution[];
 }>): ResolvedContributionRegistry {
-  return {
-    uiViewsV2: [],
-    uiRenderersV2: [],
-    uiTranslationsV2: [],
-    agents: [],
-    actions: params.actions,
-    tools: [],
-    commands: params.commands,
-    resources: [],
-    activationTargets: [],
-    actionsById: new Map(),
-    toolsById: new Map(),
-    commandsById: new Map(params.commands.map((entry) => [`${entry.pluginId}/${entry.definition.id}`, entry])),
-    resourcesById: new Map(),
-    catalogEntriesById: {},
-    agentDefinitionsById: new Map(),
-    pluginDiagnosticsByPluginId: {},
-  } as unknown as ResolvedContributionRegistry;
+  const actions = params.commands.flatMap((command) => {
+    const pluginId = command.pluginId!;
+    const input = params.actions.find(action => `${action.pluginId}/${action.definition.id}` === command.definition.actionId)?.definition;
+    const manifest = normalizePluginManifestV2({
+      schemaVersion: 2, id: pluginId, version: '1.0.0', displayName: pluginId,
+      engines: { happier: '^1.0.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.mjs' },
+      contributes: { actions: [{
+        id: command.definition.actionId.split('/').at(-1)!, title: command.definition.title,
+        scopes: ['global'], surfaces: ['cli'], execution: { target: 'daemon' }, dangerLevel: 'safe',
+        cli: { path: command.definition.path },
+        ...(input?.inputSchema ? { inputSchema: input.inputSchema } : {}),
+        ...(input?.inputHints ? { inputHints: input.inputHints } : {}),
+      }] },
+    });
+    return buildPluginContributionRegistry({ loadedPlugins: [{
+      pluginId, manifest, pluginRootPath: '/plugins/' + pluginId, manifestPath: '/plugins/' + pluginId + '/plugin.json',
+      daemonEntryPath: '/plugins/' + pluginId + '/daemon.mjs', devDaemonEntryPath: null,
+      sourceSpec: { kind: 'path', locator: '/plugins/' + pluginId, trustPolicy: 'local_trusted', installPolicy: 'link' },
+    }] }).actions.map(action => ({ ...action, provenance: command.provenance, source: command.source }));
+  });
+  return createResolvedContributionRegistry({ actions });
 }
 
 const NOTES_ADD = commandContribution({
@@ -141,7 +150,7 @@ describe('plugin command fields from the canonical contributed Action definition
       ...commandWithoutSourceSpec,
       provenance: 'first_party' as const,
       source: { kind: 'bundled' as const },
-    } satisfies ResolvedCommandContribution;
+    } satisfies CliPresentationFixture;
     const bundledRegistry = registry({ commands: [bundledCommand], actions: [bundledAction] });
 
     const external = resolvePluginCommandActionInputContract({

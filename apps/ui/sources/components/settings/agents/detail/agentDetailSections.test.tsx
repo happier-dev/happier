@@ -45,7 +45,7 @@ it('offers retry after a cold inventory projection failure and recovers to the d
         agentsById: { review: { id: 'review', title: 'Review', capabilities: {
             surfaces: [], sessions: { open: ['create'], delivery: ['newTurn'], cancel: true },
         } } },
-        actionsById: {}, toolsById: {}, commandsById: {}, resourcesById: {}, settingsById: {}, familiesById: {}, diagnostics: [],
+        actionsById: {},   resourcesById: {}, settingsById: {}, familiesById: {}, diagnostics: [],
     });
     network.setRpcResponder(async ({ method, targetId }) => {
         if (method.includes('contributionRegistryProjection.describe')) {
@@ -99,7 +99,7 @@ it('shows each machine’s Install, Update, Remove and Sign in and opens that ma
         agentsById: { review: { id: 'review', title: 'Review', capabilities: {
             surfaces: [], sessions: { open: ['create'], delivery: ['newTurn'], cancel: true },
         } } },
-        actionsById: {}, toolsById: {}, commandsById: {}, resourcesById: {},
+        actionsById: {},   resourcesById: {},
         settingsById: {}, familiesById: {}, diagnostics: [],
     });
     network.setRpcResponder(async ({ method, targetId }) => {

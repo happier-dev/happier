@@ -58,6 +58,21 @@ function contributionPath(path: Path): Path | null {
  * withdraws failed declarations without mutating the caller's value.
  * Any plugin-wide diagnostic is fatal, even alongside skippable diagnostics.
  */
+export function dropEmptyRetiredContributionFamilies(input: unknown): unknown {
+  const contributes = readAtPath(input, ['contributes']);
+  if (!contributes || typeof contributes !== 'object' || Array.isArray(contributes)) return input;
+  // Stored Account records and installed packages predating the Action-owned
+  // tool/CLI cut carry empty defaults. Remove this compatibility arm once every
+  // stored/installed manifest is rewritten or the minimum supported host advances.
+  // Nonempty/malformed families still use ordinary reported contribution withdrawal.
+  let admitted = input;
+  for (const family of ['tools', 'commands']) {
+    const value = readAtPath(contributes, [family]);
+    if (Array.isArray(value) && value.length === 0) admitted = withoutAtPath(admitted, ['contributes', family]);
+  }
+  return admitted;
+}
+
 export function skipInvalidPluginContributions(
   input: unknown,
   diagnostics: readonly PluginManifestIngestionDiagnostic[],

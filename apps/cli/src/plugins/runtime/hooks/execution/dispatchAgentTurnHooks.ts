@@ -305,27 +305,34 @@ export async function resolvePluginToolPromptContributions(
 export function resolvePluginToolPromptContributionsThroughRuntimeRegistry(
   runtimeRegistry: HookRuntimeRegistry & Readonly<{
     contributes: Readonly<{
-      tools?: readonly Readonly<{
+      actions?: readonly Readonly<{
         pluginId?: string;
-        definition: Readonly<{
+        admittedTarget?: Readonly<{ declaration: Readonly<{
           id: string;
-          name?: string | null;
           title: string | Readonly<{ fallback: string }>;
-          promptSnippet?: string | null;
-          promptGuidelines?: readonly string[] | null;
-        }>;
+          surfaces: readonly string[];
+          tool?: Readonly<{
+            name: string;
+            title?: string | Readonly<{ fallback: string }>;
+            promptSnippet?: string;
+            promptGuidelines?: readonly string[];
+          }>;
+        }> }>;
       }>[];
     }>;
   }>,
   options?: Readonly<{ excludePluginIds?: readonly string[] }>,
 ): readonly ToolPromptContribution[] {
   const excludedPluginIds = new Set(options?.excludePluginIds ?? []);
-  return Object.freeze((runtimeRegistry.contributes.tools ?? [])
-    .flatMap((tool) => {
-      const pluginId = readOptionalString(tool.pluginId);
-      const definition = tool.definition;
+  return Object.freeze((runtimeRegistry.contributes.actions ?? [])
+    .flatMap((action) => {
+      const pluginId = readOptionalString(action.pluginId);
+      const declaration = action.admittedTarget?.declaration;
+      const definition = declaration?.tool;
       if (
         !pluginId
+        || !declaration
+        || !definition
         || excludedPluginIds.has(pluginId)
         || (!definition.promptSnippet && (definition.promptGuidelines?.length ?? 0) === 0)
       ) {
@@ -333,9 +340,9 @@ export function resolvePluginToolPromptContributionsThroughRuntimeRegistry(
       }
       return [Object.freeze({
         pluginId,
-        id: definition.id,
+        id: declaration.id,
         name: definition.name,
-        title: readLocalizedString(definition.title),
+        title: readLocalizedString(definition.title ?? declaration.title),
         promptSnippet: definition.promptSnippet ?? null,
         promptGuidelines: definition.promptGuidelines ?? null,
       })];
@@ -377,11 +384,10 @@ function resolveAvailableAgentToolIds(params: Readonly<{
       .filter((tool) => tool.surfaces.includes('agent'))
       .map((tool) => tool.toolId),
   );
-  return Object.freeze((params.runtimeRegistry.contributes.tools ?? []).flatMap((tool) => (
-    tool.pluginId === params.pluginId
-    && tool.definition.surfaces.includes('agent')
-    && availableToolIds.has(`${params.pluginId}/${tool.definition.id}`)
-      ? [tool.definition.id]
+  return Object.freeze(params.runtimeRegistry.contributes.actions.flatMap((action) => (
+    action.pluginId === params.pluginId
+    && availableToolIds.has(`${params.pluginId}/${action.definition.id}`)
+      ? [action.definition.id]
       : []
   )).slice(0, 128));
 }

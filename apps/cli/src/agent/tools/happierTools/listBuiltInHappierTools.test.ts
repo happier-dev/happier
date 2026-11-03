@@ -61,6 +61,25 @@ function createRegistryWithPluginTool(params?: Readonly<{
           trustPolicy: params?.trustPolicy ?? 'local_trusted',
           installPolicy: 'link',
         },
+        admittedTarget: {
+          declaration: {
+            id: 'review-start',
+            title: 'Acme Review Start',
+            description: 'Start a plugin-defined review workflow',
+            scopes: ['global'],
+            surfaces: ['agent', 'mcp', 'cli'],
+            execution: { target: 'daemon' },
+            dangerLevel: 'safe',
+            toolExposure: { agent: 'direct', mcp: 'direct', cli: 'direct' },
+            inputSchema: { type: 'object', properties: {}, additionalProperties: true },
+            ...(params?.toolName === null ? {} : {
+              tool: { name: params?.toolName ?? 'acme_review_start' },
+            }),
+          },
+          hostAccessRequests: [],
+          historyGapSources: [],
+          surfaces: ['agent', 'mcp', 'cli'],
+        },
         definition: {
           kindVersion: 1,
           id: 'review-start',
@@ -88,47 +107,11 @@ function createRegistryWithPluginTool(params?: Readonly<{
             properties: {},
             additionalProperties: true,
           },
-          execution: {
-            routing: 'plugin',
-            handler: {
-              target: 'plugin',
-              exportName: 'startReview',
-            },
-          },
+          scopes: ['global'],
+          execution: { target: 'daemon' },
         },
       },
     ],
-    tools: params?.toolName === null
-      ? []
-      : [{
-          provenance,
-          source: { kind: 'path' },
-          pluginId: 'acme.review.plugin',
-          manifestPath: '/plugins/acme/review/.happier-plugin/plugin.json',
-          daemonEntryPath: '/plugins/acme/review/daemon.mjs',
-          sourceSpec: {
-            kind: 'path',
-            locator: '/plugins/acme/review',
-            trustPolicy: params?.trustPolicy ?? 'local_trusted',
-            installPolicy: 'link',
-          },
-          definition: {
-            kindVersion: 1,
-            id: 'review-tool',
-            name: params?.toolName ?? 'acme_review_start',
-            title: 'Acme Review Start',
-            description: 'Start a plugin-defined review workflow',
-            safety: 'safe',
-            surfaces: ['agent', 'mcp', 'cli'],
-            inputSchema: {
-              type: 'object',
-              properties: {},
-              additionalProperties: true,
-            },
-            action: 'review-start',
-            actionId: 'acme.review.plugin/review-start',
-          },
-        }],
   });
 }
 
@@ -514,7 +497,6 @@ describe('listBuiltInHappierTools', () => {
     activeRuntimeRegistryState.registry = createResolvedContributionRegistry({
       agents: [],
             actions: [],
-      tools: [],
     });
     expect(listBuiltInHappierTools({ surface: 'cli' }).map((tool) => tool.name))
       .not.toContain('acme_retired_tool');

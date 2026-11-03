@@ -950,8 +950,8 @@ export function normalizePluginInstalledUiDeclarations(
 ): PluginUiProjectionModel {
     return normalizePluginUiProjection({
         v: 2, generation: null,
-        installedPackagesById: installedPackage ? { [installedPackage.id]: installedPackage } : {}, agentsById: {}, actionsById: {}, toolsById: {},
-        commandsById: {}, resourcesById: {}, settingsById: {},
+        installedPackagesById: installedPackage ? { [installedPackage.id]: installedPackage } : {}, agentsById: {}, actionsById: {},
+         resourcesById: {}, settingsById: {},
         familiesById: { pluginUi: { family: 'pluginUi', entriesById }, ...(registrySources ? { registrySources: {
             family: 'registrySources' as const, entriesById: Object.fromEntries(registrySources.map(entry => [entry.id, entry])),
         } } : {}), ...(skills ? { skills: {

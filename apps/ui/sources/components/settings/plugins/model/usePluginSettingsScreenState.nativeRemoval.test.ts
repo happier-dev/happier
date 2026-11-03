@@ -103,8 +103,8 @@ async function renderRemovalOwner(
         };
         if (request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) return {
             protocolVersion: 1,
-            projection: { v: 2, generation: 1, installedPackagesById: {}, agentsById: {}, actionsById: {}, toolsById: {},
-                commandsById: {}, resourcesById: {}, settingsById: {}, familiesById: {}, diagnostics: [] },
+            projection: { v: 2, generation: 1, installedPackagesById: {}, agentsById: {}, actionsById: {},
+                 resourcesById: {}, settingsById: {}, familiesById: {}, diagnostics: [] },
         };
         if (request.method === RPC_METHODS.CAPABILITIES_INVOKE) {
             const payload = request.payload as CapabilitiesInvokeRequest;

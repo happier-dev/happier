@@ -18,7 +18,7 @@ describe('machineRpcWithPeerMediationRoute', () => {
         const signature = Buffer.from(new Uint8Array(64).fill(2)).toString('base64url');
         const projection = { protocolVersion: 1, projection: {
             v: 2, generation: 1, familiesById: {}, agentsById: {}, installedPackagesById: {},
-            actionsById: {}, toolsById: {}, commandsById: {}, resourcesById: {}, settingsById: {}, diagnostics: [],
+            actionsById: {},   resourcesById: {}, settingsById: {}, diagnostics: [],
         } };
         // Endpoint discovery and HTTP are network boundaries. The method policy and client stay real.
         const resolveDirectRoute = vi.fn(async () => ({ kind: 'selected' as const, receipt: 'peer.route.selected' as const,

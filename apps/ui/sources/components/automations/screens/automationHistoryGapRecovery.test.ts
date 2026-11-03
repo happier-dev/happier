@@ -295,8 +295,8 @@ function projectionResponse(
                     available: true,
                 },
             },
-            toolsById: {},
-            commandsById: {},
+
+
             resourcesById: {},
             settingsById: {},
             familiesById: {},

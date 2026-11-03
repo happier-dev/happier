@@ -49,8 +49,8 @@ import type {
   PluginEventContributionV1,
   PluginSourceSpecV1,
   PluginContributionIdentityV1,
-  PluginToolContributionV2,
-  PluginCommandContributionV2,
+
+
   ProviderContributionV1,
   PluginAgentCliMetadata,
   PluginUiRendererV2,
@@ -413,39 +413,15 @@ export type ResolvedActionDefinition =
     (LegacyResolvedActionDefinition | ResolvedContributedActionDefinition)
     & Readonly<Pick<PluginActionContributionV2, 'connectedAccountPurposeBindings'>>;
 
-export type ResolvedToolDefinition = Readonly<PluginToolContributionV2 & {
-    kindVersion: 1;
-    actionId: string;
-}>;
 
-export type ResolvedToolContribution = Readonly<{
-    provenance: ResolvedContributionProvenance;
-    source: ResolvedContributionSource;
-    pluginId?: string;
-    manifestPath?: string;
-    daemonEntryPath?: string | null;
-    devDaemonEntryPath?: string | null;
-    sourceSpec?: PluginSourceSpecV1;
-    definition: ResolvedToolDefinition;
-}>;
 
-export type ResolvedCommandVisibility = 'default' | 'advanced' | 'internal';
 
-export type ResolvedCommandDefinition = Readonly<PluginCommandContributionV2 & {
-    kindVersion: 1;
-    actionId: string;
-}>;
 
-export type ResolvedCommandContribution = Readonly<{
-    provenance: ResolvedContributionProvenance;
-    source: ResolvedContributionSource;
-    pluginId?: string;
-    manifestPath?: string;
-    daemonEntryPath?: string | null;
-    devDaemonEntryPath?: string | null;
-    sourceSpec?: PluginSourceSpecV1;
-    definition: ResolvedCommandDefinition;
-}>;
+
+
+
+
+
 
 export type ResolvedResourceDefinition = Readonly<{
     kindVersion: 1;
@@ -863,8 +839,8 @@ export type ResolvedContributionInputs = Readonly<{
     occurrenceIdsByPluginId?: Readonly<Record<string, PluginRuntimeOccurrenceId>>;
     pluginDiagnosticsByPluginId?: Readonly<Record<string, readonly PluginCompatibilityDiagnostic[]>>;
 
-tools?: readonly ResolvedToolContribution[];
-commands?: readonly ResolvedCommandContribution[];
+
+
 }>;
 
 export type ResolvedContributionRegistry = Readonly<{
@@ -972,10 +948,10 @@ export type ResolvedContributionRegistry = Readonly<{
     accessProvidersByContributionKey?: ReadonlyMap<string, ResolvedAccessProviderContribution>;
     pluginDiagnosticsByPluginId: Readonly<Record<string, readonly PluginCompatibilityDiagnostic[]>>;
 
-tools?: readonly ResolvedToolContribution[];
-commands?: readonly ResolvedCommandContribution[];
-toolsById?: ReadonlyMap<string, ResolvedToolContribution>;
-commandsById?: ReadonlyMap<string, ResolvedCommandContribution>;
+
+
+
+
 }>;
 
 export type ResolvedDeploymentTargetContribution = ResolvedTargetUiContribution<import('@happier-dev/protocol').DeploymentTargetContributionV1>;

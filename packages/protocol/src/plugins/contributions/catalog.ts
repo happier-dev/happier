@@ -218,14 +218,16 @@ secretSources: { identityField: 'id', disposition: 'retained', activationDemand:
   machineRecipes: { identityField: 'id', disposition: 'retained', activationDemand: 'none', projectionFamily: 'machineRecipes', allowedRuntimeRegistration: null, consumer: 'machine-recipe-catalog', platforms: ALL_PLATFORMS },
   machineSetupPresets: { identityField: 'id', disposition: 'retained', activationDemand: 'none', projectionFamily: 'machineSetupPresets', allowedRuntimeRegistration: null, consumer: 'machine-recipe-catalog', platforms: ALL_PLATFORMS },
   actions: { identityField: 'id', disposition: 'reshaped', activationDemand: 'registration', projectionFamily: null, allowedRuntimeRegistration: 'actions', registrationHost: 'discriminated', consumer: 'action-dispatch', platforms: ALL_PLATFORMS },
-  commands: { identityField: 'id', disposition: 'reshaped', activationDemand: 'none', projectionFamily: null, allowedRuntimeRegistration: null, consumer: 'cli-commands', platforms: CLI_PLATFORMS },
-  tools: { identityField: 'id', disposition: 'reshaped', activationDemand: 'none', projectionFamily: null, allowedRuntimeRegistration: null, consumer: 'agent-tools', platforms: CLI_PLATFORMS },
+
+
   resources: { identityField: 'id', disposition: 'reshaped', activationDemand: 'conditional', projectionFamily: null, allowedRuntimeRegistration: 'resources', registrationHost: 'discriminated', consumer: 'resource-service', platforms: ALL_PLATFORMS },
   inputTypes: { identityField: 'id', disposition: 'retained', activationDemand: 'none', projectionFamily: 'inputTypes', allowedRuntimeRegistration: null, consumer: 'input-fields', platforms: ALL_PLATFORMS },
   atmospherePictures: { identityField: 'id', disposition: 'retained', activationDemand: 'none', projectionFamily: 'atmospherePictures', allowedRuntimeRegistration: null, consumer: 'atmosphere-picture-catalog', platforms: ALL_PLATFORMS },
   registrySources: { identityField: 'id', disposition: 'retained', activationDemand: 'none', projectionFamily: 'registrySources', allowedRuntimeRegistration: null, consumer: 'registry-source-list', platforms: ALL_PLATFORMS },
+  backupDestinations: { identityField: 'id', disposition: 'retained', activationDemand: 'none', projectionFamily: 'backupDestinations', allowedRuntimeRegistration: null, consumer: 'backup-destination-catalog', platforms: ALL_PLATFORMS },
   languageServers: { identityField: 'id', disposition: 'retained', activationDemand: 'none', projectionFamily: 'languageServers', allowedRuntimeRegistration: null, consumer: 'language-server-host', platforms: CLI_PLATFORMS },
   skills: { identityField: 'id', disposition: 'retained', activationDemand: 'none', projectionFamily: 'skills', allowedRuntimeRegistration: null, consumer: 'skill-library', platforms: ALL_PLATFORMS },
+  botTemplates: { identityField: 'id', disposition: 'retained', activationDemand: 'none', projectionFamily: 'botTemplates', allowedRuntimeRegistration: null, consumer: 'bot-template-preview', platforms: ALL_PLATFORMS },
   dragSources: { identityField: 'id', disposition: 'retained', activationDemand: 'registration', projectionFamily: 'dragSources', allowedRuntimeRegistration: 'dragSources', registrationHost: 'client', consumer: 'entity-drag-drop', platforms: ALL_PLATFORMS },
   workItems: { identityField: 'id', disposition: 'retained', activationDemand: 'registration', projectionFamily: 'workItems', allowedRuntimeRegistration: 'workItems', registrationHost: 'client', consumer: 'work-board', platforms: ALL_PLATFORMS },
   dropTargets: { identityField: 'id', disposition: 'retained', activationDemand: 'registration', projectionFamily: 'dropTargets', allowedRuntimeRegistration: 'dropTargets', registrationHost: 'client', consumer: 'entity-drag-drop', platforms: ALL_PLATFORMS },
@@ -338,6 +340,13 @@ function extractNestedReferences(family: string, value: Readonly<Record<string, 
       reference: artifact.artifactId,
       path: ['execution', execution.target, 'artifactId'],
     }];
+  }
+  if (family === 'backupDestinations') {
+    const actions = value.actions as Readonly<Record<string, unknown>>;
+    return ['test', 'open'].map(role => ({
+      targetFamily: 'actions', reference: actions[role], path: ['actions', role],
+      allowQualifiedSamePlugin: true,
+    }));
   }
   if (family === 'machineProvisioners') {
     return readMachineProvisionerActionRolesV1(value as MachineProvisionerContributionV1).map(binding => ({

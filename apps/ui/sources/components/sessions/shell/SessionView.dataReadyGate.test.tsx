@@ -942,8 +942,8 @@ describe('SessionView (data ready gating)', () => {
                     installedPackagesById: {},
                     agentsById: {},
                     actionsById: {},
-                    toolsById: {},
-                    commandsById: {},
+
+
                     resourcesById: {},
                     settingsById: {},
                     familiesById: {
@@ -1086,8 +1086,8 @@ describe('SessionView (data ready gating)', () => {
                     installedPackagesById: {},
                     agentsById: {},
                     actionsById: { 'acme.compose/refresh-context': projectedAction },
-                    toolsById: {},
-                    commandsById: {},
+
+
                     resourcesById: {},
                     settingsById: {},
                     familiesById: {},
@@ -1200,8 +1200,8 @@ describe('SessionView (data ready gating)', () => {
                     installedPackagesById: {},
                     agentsById: {},
                     actionsById: { 'acme.compose/refresh-context': projectedAction },
-                    toolsById: {},
-                    commandsById: {},
+
+
                     resourcesById: {},
                     settingsById: {},
                     familiesById: {},
@@ -1414,8 +1414,8 @@ describe('SessionView (data ready gating)', () => {
                     installedPackagesById: {},
                     agentsById: {},
                     actionsById: {},
-                    toolsById: {},
-                    commandsById: {},
+
+
                     resourcesById: {},
                     settingsById: {},
                     familiesById: {
@@ -1578,8 +1578,8 @@ describe('SessionView (data ready gating)', () => {
                     installedPackagesById: {},
                     agentsById: {},
                     actionsById: {},
-                    toolsById: {},
-                    commandsById: {},
+
+
                     resourcesById: {},
                     settingsById: {},
                     familiesById: {

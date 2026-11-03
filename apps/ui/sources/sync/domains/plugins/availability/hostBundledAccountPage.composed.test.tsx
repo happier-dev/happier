@@ -440,7 +440,7 @@ it.each([
         authorization: { generation: { targetGeneration: 'provider-current', desiredGeneration: 'provider-current', appliedGeneration: 'provider-current' },
             resourceSelections: [], scopedGrants: [], serviceAvailability: [], operatingSystemAuthorization: [] } });
     const pluginProjectionV2 = { v: 2 as const, generation: 1, installedPackagesById: {}, agentsById: {},
-        actionsById: { 'acme.provider-source/list': provider }, toolsById: {}, commandsById: {}, resourcesById: {}, settingsById: {}, diagnostics: [], familiesById: {} };
+        actionsById: { 'acme.provider-source/list': provider },   resourcesById: {}, settingsById: {}, diagnostics: [], familiesById: {} };
     const { publishDaemonMergedProjectionInputs } = await import('@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters');
     const { createInstalledPluginUiProjectionPublication } = await import('@/sync/domains/plugins/ui/projectionUnion');
     const { createPluginActionInputSelectionFactsPublication } = await import('@/components/plugins/surfaces/pluginActionInputSelectionFacts');
@@ -896,7 +896,7 @@ it('keeps the Account page usable when its optional contribution points belong t
     const executionOrigin = { serverIdentityId: 'srv_bundled_account_page',
         sourceRef: { machineId, pluginId: 'happier.fixture', sourceCustody } };
     const runtime = normalizePluginUiProjection({ v: 2, generation: 1, agentsById: {}, actionsById: {},
-        toolsById: {}, commandsById: {}, resourcesById: {}, settingsById: {}, diagnostics: [],
+          resourcesById: {}, settingsById: {}, diagnostics: [],
         installedPackagesById: { 'happier.fixture': { id: 'happier.fixture', displayName: 'Fixture', version: '1.0.0',
             enabled: true, source: { kind: 'localPath', locator: 'fixture-source' }, occurrenceId: 'fixture-occurrence',
             sourceCustody, executionOrigin,

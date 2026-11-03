@@ -438,8 +438,8 @@ function buildCollidingInstalledAgentProjection(): PluginProjectionV2 {
             },
         },
         actionsById: {},
-        toolsById: {},
-        commandsById: {},
+
+
         resourcesById: {},
         settingsById: {},
         familiesById: {},

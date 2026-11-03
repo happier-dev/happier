@@ -173,8 +173,8 @@ function projection(input: Readonly<{
         ? Object.freeze({})
         : Object.freeze(Object.fromEntries(Object.entries(normalizePluginUiProjection(PluginProjectionV2Schema.parse({
             v: 2, generation: input.generation,
-            installedPackagesById: {}, agentsById: {}, actionsById: {}, toolsById: {},
-            commandsById: {}, resourcesById: {}, settingsById: {}, diagnostics: [],
+            installedPackagesById: {}, agentsById: {}, actionsById: {},
+             resourcesById: {}, settingsById: {}, diagnostics: [],
             familiesById: { voiceProviders: { family: 'voiceProviders', entriesById: {
               [`${pluginId}/${voice.id}`]: {
                 id: `${pluginId}/${voice.id}`,

@@ -12,11 +12,9 @@ import { derivePluginDaemonContributionRegistrationRights } from '@happier-dev/p
 import type { PluginCompatibilityDiagnostic } from '../../validation/diagnostics/types';
 import type {
     ResolvedContributionRegistry,
-    ResolvedCommandContribution,
     ResolvedActionContribution,
     ResolvedContributionProvenance,
     ResolvedContributionSource,
-    ResolvedToolContribution,
 } from '../../projection/registry/types';
 
 import type { ContributionRuntimeRegistration } from '../api/registrationRightsHost';
@@ -161,8 +159,6 @@ export type ActivatedPluginRuntimeRegistry = ActivatedHandlerRegistry & Readonly
     runtimeCapabilitiesByPluginId: ReadonlyMap<string, ReadonlySet<string>>;
     eventDeclarationsByPluginId: ReadonlyMap<string, readonly ParsedPluginEventContributionV1[]>;
     actions: readonly ResolvedActionContribution[];
-    tools: readonly ResolvedToolContribution[];
-    commands: readonly ResolvedCommandContribution[];
     pluginDiagnosticsByPluginId: Readonly<Record<string, readonly PluginCompatibilityDiagnostic[]>>;
     activatedPluginIds: ReadonlySet<string>;
     failedActivationPluginIds: ReadonlySet<string>;
@@ -919,8 +915,6 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
         Object.freeze([...entry.declaredEventDeclarations]),
     ]));
     const actions: ResolvedActionContribution[] = [];
-    const tools: ResolvedToolContribution[] = [];
-    const commands: ResolvedCommandContribution[] = [];
     const failedActivationPluginIds = new Set(
         targetActivationFacts.flatMap((fact) => fact.status === 'unavailable' ? [fact.pluginId] : []),
     );
@@ -1074,8 +1068,6 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
         mergeMapEntries(runtimeCapabilitiesByPluginId, registry.runtimeCapabilitiesByPluginId);
         mergeMapEntries(eventDeclarationsByPluginId, registry.eventDeclarationsByPluginId);
         actions.push(...registry.actions);
-        tools.push(...registry.tools);
-        commands.push(...registry.commands);
         mergeDiagnosticsFromRegistry(registry, pluginId);
         if (activated) {
             activatedPluginIds.add(pluginId);
@@ -1104,8 +1096,6 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
         mergeMapEntries(runtimeCapabilitiesByPluginId, registry.runtimeCapabilitiesByPluginId);
         mergeMapEntries(eventDeclarationsByPluginId, registry.eventDeclarationsByPluginId);
         actions.push(...registry.actions);
-        tools.push(...registry.tools);
-        commands.push(...registry.commands);
         for (const pluginId of Object.keys(registry.pluginDiagnosticsByPluginId)) {
             mergeDiagnosticsFromRegistry(registry, pluginId);
         }
@@ -1384,8 +1374,6 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
         runtimeCapabilitiesByPluginId,
         eventDeclarationsByPluginId,
         actions,
-        tools,
-        commands,
         hookHandlersByHookId,
         pluginDiagnosticsByPluginId: diagnosticsByPluginId,
         get activatedPluginIds() {

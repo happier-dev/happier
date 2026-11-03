@@ -89,8 +89,8 @@ describe('machine managed installables projection', () => {
             installedPackagesById: {},
             agentsById: {},
             actionsById: {},
-            toolsById: {},
-            commandsById: {},
+
+
             resourcesById: {},
             settingsById: {},
             diagnostics: [],

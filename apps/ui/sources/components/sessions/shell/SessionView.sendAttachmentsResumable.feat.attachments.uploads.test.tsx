@@ -300,8 +300,8 @@ function setCurrentComposerAttachmentProjection(input: Readonly<{
                 installedPackagesById: {},
                 agentsById: attachmentAgentInventory.projection.agentsById,
                 actionsById: {},
-                toolsById: {},
-                commandsById: {},
+
+
                 resourcesById: {},
                 settingsById: {},
                 familiesById: {

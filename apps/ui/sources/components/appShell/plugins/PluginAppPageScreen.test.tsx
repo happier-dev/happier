@@ -491,8 +491,8 @@ function daemonProjection(input: Readonly<{
                 available: true,
             },
         },
-        toolsById: {},
-        commandsById: {},
+
+
         resourcesById: {},
         settingsById: {},
         familiesById: { pluginUi: { family: 'pluginUi', entriesById: entries } },

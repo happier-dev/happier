@@ -82,8 +82,8 @@ describe('plugin surface placement selectors', () => {
             installedPackagesById: {},
             agentsById: {},
             actionsById: {},
-            toolsById: {},
-            commandsById: {},
+
+
             resourcesById: {},
             settingsById: {},
             familiesById: {
@@ -124,8 +124,8 @@ describe('plugin surface placement selectors', () => {
             installedPackagesById: {},
             agentsById: {},
             actionsById: {},
-            toolsById: {},
-            commandsById: {},
+
+
             resourcesById: {},
             settingsById: {},
             familiesById: {

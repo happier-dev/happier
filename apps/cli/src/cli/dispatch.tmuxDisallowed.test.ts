@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 
 import { captureConsoleJsonOutput } from '@/testkit/logger/captureOutput';
-import type { ResolvedCommandContribution, ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
+import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
+import { buildPluginContributionRegistry } from '@/plugins/projection/registry/normalize/package';
+import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
 import { CliApiTokenChildContinuationError } from '@/auth/cliApiToken';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 
@@ -23,17 +25,18 @@ import { dispatchCli } from './dispatch';
 import { synchronizePluginCommandContributions } from './commandRegistry';
 
 function pluginCommands(tmux: 'inherit' | 'required' | 'forbidden'): ResolvedContributionRegistry {
-  const command: ResolvedCommandContribution = {
-    provenance: 'external', source: { kind: 'path' }, pluginId: 'acme.notes',
+  const plugin = {
+    pluginId: 'acme.notes', pluginRootPath: '/plugins/acme.notes', daemonEntryPath: '/plugins/acme.notes/daemon.mjs', devDaemonEntryPath: null,
     manifestPath: '/plugins/acme.notes/plugin.json', sourceSpec: { kind: 'path', locator: '/plugins/acme.notes', trustPolicy: 'local_trusted', installPolicy: 'link' },
-    definition: { kindVersion: 1, id: 'watch', title: 'Watch', path: ['notes', 'watch'], action: 'run', actionId: 'acme.notes/run', tmux },
+    manifest: normalizePluginManifestV2({ schemaVersion: 2, id: 'acme.notes', version: '1.0.0', displayName: 'Notes',
+      engines: { happier: '^1.0.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.mjs' },
+      contributes: { actions: [{ id: 'watch', title: 'Watch', scopes: ['global'], surfaces: ['cli'],
+        dangerLevel: 'safe', execution: { target: 'daemon' }, cli: { path: ['notes', 'watch'], tmux } }] },
+    }),
   };
-  return {
-    ...createResolvedContributionRegistry({}),
-    uiViewsV2: [], uiRenderersV2: [], uiTranslationsV2: [], agents: [],     actions: [], tools: [], commands: [command], resources: [], activationTargets: [],
-    actionsById: new Map(), toolsById: new Map(), commandsById: new Map([['acme.notes/watch', command]]), resourcesById: new Map(),
-    catalogEntriesById: {}, agentDefinitionsById: new Map(),     pluginDiagnosticsByPluginId: {},
-  };
+  return createResolvedContributionRegistry({ actions: buildPluginContributionRegistry({ loadedPlugins: [{
+    ...plugin, sourceSpec: { kind: 'path', locator: '/plugins/acme.notes', trustPolicy: 'local_trusted', installPolicy: 'link' },
+  }] }).actions.map(action => ({ ...action, provenance: 'external', source: { kind: 'path' } })) });
 }
 
 describe('dispatchCli --tmux disallowed controller commands', () => {

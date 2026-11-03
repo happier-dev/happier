@@ -28,7 +28,7 @@ it('activates genuine auxiliary Agent defaults through the current reader and pu
         agentsById: { codex: { id: 'codex', title: 'Codex', identity,
             connectedAccounts: [{ purpose: 'primary', service, credentialKinds: ['oauth'] }],
             capabilities: { surfaces: [], sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } } } },
-        actionsById: {}, familiesById: {}, toolsById: {}, commandsById: {}, resourcesById: {}, settingsById: {}, diagnostics: [] });
+        actionsById: {}, familiesById: {},   resourcesById: {}, settingsById: {}, diagnostics: [] });
     const http = createHomeHubArtifactHttpBoundary(accountId);
     const history = createDeferred<void>();
     let historyReads = 0;

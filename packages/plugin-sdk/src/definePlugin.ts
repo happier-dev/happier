@@ -107,7 +107,8 @@ import {
     type PluginLocalizedStringV2,
     type PluginLanguageServerContributionV1,
     type PluginSkillContributionV1,
-} from './manifest.js';
+
+    type PluginBotTemplateContributionV1,} from './manifest.js';
 import {
     projectUiSurfaceDefinitions,
     type UiAuthoringInput,
@@ -233,7 +234,10 @@ type ActionContribution = Readonly<{
     operation?: ActionOperationDeclarationV1;
     placementBindings?: readonly PluginActionPlacement[];
     slash?: Readonly<{ tokens: readonly string[] }>;
-    inputSchema?: PluginJsonSchema;
+    tool?: ReadonlyAuthorDeclaration<NonNullable<PublicActionContribution['tool']>>;
+cli?: ReadonlyAuthorDeclaration<NonNullable<PublicActionContribution['cli']>>;
+toolExposure?: NonNullable<PublicActionContribution['toolExposure']>;
+inputSchema?: PluginJsonSchema;
     inputHints?: PluginActionInputHints;
     connectedAccountPurposeBindings?: readonly Readonly<{
         path: string;
@@ -286,7 +290,10 @@ export type PluginActionDeclaration = Readonly<{
     description?: PluginLocalizedStringV2;
     icon?: string;
     slash?: Readonly<{ tokens: readonly string[] }>;
-    inputSchema?: PluginJsonSchema | ProtocolComposableSchema<unknown, JsonValue>;
+    tool?: ReadonlyAuthorDeclaration<NonNullable<PublicActionContribution['tool']>>;
+cli?: ReadonlyAuthorDeclaration<NonNullable<PublicActionContribution['cli']>>;
+toolExposure?: NonNullable<PublicActionContribution['toolExposure']>;
+inputSchema?: PluginJsonSchema | ProtocolComposableSchema<unknown, JsonValue>;
     inputHints?: NonNullable<PublicActionContribution['inputHints']>;
     sessionTarget?: NonNullable<PublicActionContribution['sessionTarget']>;
     connectedAccountPurposeBindings?: readonly Readonly<{
@@ -845,14 +852,8 @@ export type DefinePluginInput<
     & Readonly<{
         id: TPluginId;
         contributes?: never;
-        commands?: Readonly<Record<
-            PluginContributionLocalId,
-            Omit<NonNullable<NonNullable<PluginManifest['contributes']>['commands']>[number], 'id'>
-        >>;
-        tools?: Readonly<Record<
-            PluginContributionLocalId,
-            Omit<NonNullable<NonNullable<PluginManifest['contributes']>['tools']>[number], 'id'>
-        >>;
+
+
         resources?: Readonly<Record<PluginContributionLocalId, PluginResourceDefinition>>;
         transcriptActivities?: Readonly<Record<
             PluginContributionLocalId,
@@ -915,7 +916,8 @@ export type DefinePluginInput<
             PluginContributionLocalId,
             Omit<NonNullable<NonNullable<PluginManifest['contributes']>['registrySources']>[number], 'id'>
         >>;
-        skills?: Readonly<Record<PluginContributionLocalId, Omit<PluginSkillContributionV1, 'id'>>>;
+        botTemplates?: Readonly<Record<PluginContributionLocalId, Omit<PluginBotTemplateContributionV1, 'id'>>>;
+skills?: Readonly<Record<PluginContributionLocalId, Omit<PluginSkillContributionV1, 'id'>>>;
         dragSources?: Readonly<Record<PluginContributionLocalId, Omit<NonNullable<NonNullable<PluginManifest['contributes']>['dragSources']>[number], 'id'>>>;
         workItems?: Readonly<{ 'work-items'?: Omit<NonNullable<NonNullable<PluginManifest['contributes']>['workItems']>[number], 'id'> }>;
         dropTargets?: Readonly<Record<PluginContributionLocalId, Omit<NonNullable<NonNullable<PluginManifest['contributes']>['dropTargets']>[number], 'id'>>>;
@@ -933,7 +935,8 @@ export type DefinePluginInput<
         >>;
         machineProvisioners?: Readonly<Record<PluginContributionLocalId, MachineProvisionerAuthorDefinitionV1>>;
         accessProviders?: Readonly<Record<PluginContributionLocalId, AccessProviderAuthorDefinitionV1>>;
-        deploymentTargets?: Readonly<Record<PluginContributionLocalId, import('./deploymentTargets.js').DeploymentTargetAuthorDefinitionV1>>;
+        backupDestinations?: Readonly<Record<PluginContributionLocalId, Omit<import('./backupDestinations.js').BackupDestinationContributionV1, 'id'>>>;
+deploymentTargets?: Readonly<Record<PluginContributionLocalId, import('./deploymentTargets.js').DeploymentTargetAuthorDefinitionV1>>;
         healthCheckKinds?: Readonly<Record<PluginContributionLocalId, Omit<import('./healthCheckKinds.js').HealthCheckKindContributionV1, 'id'>>>;
         storeKinds?: Readonly<Record<PluginContributionLocalId, Omit<import('./storeKinds.js').StoreKindContributionV1, 'id'>>>;
         machineRecipes?: Readonly<Record<PluginContributionLocalId, ReadonlyAuthorDeclaration<Omit<MachineRecipeV1, 'id'>>>>;
@@ -2479,8 +2482,8 @@ const COMPOSER_ADAPTER: DefinePluginFamilyAdapter = Object.freeze({
     },
 });
 
-const COMMANDS_ADAPTER = descriptorFamilyAdapter('commands');
-const TOOLS_ADAPTER = descriptorFamilyAdapter('tools');
+
+
 const TRANSCRIPT_ACTIVITIES_ADAPTER = descriptorFamilyAdapter('transcriptActivities');
 const SESSION_INFO_SECTIONS_ADAPTER = descriptorFamilyAdapter('sessionInfoSections');
 const SESSION_HEADER_ACTIONS_ADAPTER = descriptorFamilyAdapter('sessionHeaderActions');
@@ -2494,11 +2497,15 @@ const WORKFLOWS_ADAPTER = descriptorFamilyAdapter('workflows');
 const INPUT_TYPES_ADAPTER = descriptorFamilyAdapter('inputTypes');
 const ATMOSPHERE_PICTURES_ADAPTER = descriptorFamilyAdapter('atmospherePictures');
 const REGISTRY_SOURCES_ADAPTER = descriptorFamilyAdapter('registrySources');
+const BACKUP_DESTINATIONS_ADAPTER = descriptorFamilyAdapter('backupDestinations');
+
 const DEPLOYMENT_TARGETS_ADAPTER = descriptorFamilyAdapter('deploymentTargets');
 const HEALTH_CHECK_KINDS_ADAPTER = descriptorFamilyAdapter('healthCheckKinds');
 const STORE_KINDS_ADAPTER = descriptorFamilyAdapter('storeKinds');
 const MACHINE_RECIPES_ADAPTER = descriptorFamilyAdapter('machineRecipes');
 const MACHINE_SETUP_PRESETS_ADAPTER = descriptorFamilyAdapter('machineSetupPresets');
+const BOT_TEMPLATES_ADAPTER = descriptorFamilyAdapter('botTemplates');
+
 const SKILLS_ADAPTER = descriptorFamilyAdapter('skills');
 const DRAG_SOURCES_ADAPTER = descriptorFamilyAdapter('dragSources');
 const WORK_ITEMS_ADAPTER = descriptorFamilyAdapter('workItems');
@@ -2687,8 +2694,8 @@ export const DEFINE_PLUGIN_FAMILY_POLICY_V2 = Object.freeze({
     composerAttachments: { classification: 'adapter', authorKey: 'composer', inputShape: 'structured', adapter: COMPOSER_ADAPTER },
     composerControls: { classification: 'descriptor-only', authorKey: 'composer', inputShape: 'structured', adapter: COMPOSER_ADAPTER },
     composerRegions: { classification: 'descriptor-only', authorKey: 'composer', inputShape: 'structured', adapter: COMPOSER_ADAPTER },
-    commands: { classification: 'descriptor-only', authorKey: 'commands', inputShape: 'descriptor', adapter: COMMANDS_ADAPTER },
-    tools: { classification: 'descriptor-only', authorKey: 'tools', inputShape: 'descriptor', adapter: TOOLS_ADAPTER },
+
+
     resources: { classification: 'adapter', authorKey: 'resources', inputShape: 'descriptor', adapter: RESOURCES_ADAPTER },
     transcriptActivities: { classification: 'descriptor-only', authorKey: 'transcriptActivities', inputShape: 'descriptor', adapter: TRANSCRIPT_ACTIVITIES_ADAPTER },
     sessionInfoSections: { classification: 'descriptor-only', authorKey: 'sessionInfoSections', inputShape: 'descriptor', adapter: SESSION_INFO_SECTIONS_ADAPTER },
@@ -2703,11 +2710,13 @@ export const DEFINE_PLUGIN_FAMILY_POLICY_V2 = Object.freeze({
     inputTypes: { classification: 'descriptor-only', authorKey: 'inputTypes', inputShape: 'descriptor', adapter: INPUT_TYPES_ADAPTER },
     atmospherePictures: { classification: 'descriptor-only', authorKey: 'atmospherePictures', inputShape: 'descriptor', adapter: ATMOSPHERE_PICTURES_ADAPTER },
     registrySources: { classification: 'descriptor-only', authorKey: 'registrySources', inputShape: 'descriptor', adapter: REGISTRY_SOURCES_ADAPTER },
+    backupDestinations: { classification: 'descriptor-only', authorKey: 'backupDestinations', inputShape: 'descriptor', adapter: BACKUP_DESTINATIONS_ADAPTER },
     deploymentTargets: { classification: 'descriptor-only', authorKey: 'deploymentTargets', inputShape: 'descriptor', adapter: DEPLOYMENT_TARGETS_ADAPTER },
     healthCheckKinds: { classification: 'descriptor-only', authorKey: 'healthCheckKinds', inputShape: 'descriptor', adapter: HEALTH_CHECK_KINDS_ADAPTER },
     storeKinds: { classification: 'descriptor-only', authorKey: 'storeKinds', inputShape: 'descriptor', adapter: STORE_KINDS_ADAPTER },
     machineRecipes: { classification: 'descriptor-only', authorKey: 'machineRecipes', inputShape: 'descriptor', adapter: MACHINE_RECIPES_ADAPTER },
     machineSetupPresets: { classification: 'descriptor-only', authorKey: 'machineSetupPresets', inputShape: 'descriptor', adapter: MACHINE_SETUP_PRESETS_ADAPTER },
+    botTemplates: { classification: 'descriptor-only', authorKey: 'botTemplates', inputShape: 'descriptor', adapter: BOT_TEMPLATES_ADAPTER },
     skills: { classification: 'descriptor-only', authorKey: 'skills', inputShape: 'descriptor', adapter: SKILLS_ADAPTER },
     dragSources: { classification: 'adapter', authorKey: 'dragSources', inputShape: 'descriptor', adapter: DRAG_SOURCES_ADAPTER },
     workItems: { classification: 'adapter', authorKey: 'workItems', inputShape: 'descriptor', adapter: WORK_ITEMS_ADAPTER },

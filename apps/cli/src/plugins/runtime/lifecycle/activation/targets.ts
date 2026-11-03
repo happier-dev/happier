@@ -125,12 +125,8 @@ export function collectActivationTargets(contributes: ResolvedContributionRegist
     for (const action of contributes.actions) {
         addActivationTarget(targets, action);
     }
-    for (const tool of contributes.tools ?? []) {
-        addActivationTarget(targets, tool);
-    }
-    for (const command of contributes.commands ?? []) {
-        addActivationTarget(targets, command);
-    }
+
+
     return Object.freeze([...targets.values()]);
 }
 

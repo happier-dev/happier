@@ -73,8 +73,8 @@ function projectionWithExternalAgent(): PluginProjectionV2 {
             },
         },
         actionsById: {},
-        toolsById: {},
-        commandsById: {},
+
+
         resourcesById: {},
         settingsById: {},
         familiesById: {},

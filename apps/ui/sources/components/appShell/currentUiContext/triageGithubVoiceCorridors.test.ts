@@ -237,8 +237,8 @@ function createTriageVoiceProjection(serverId: string) {
     actionsById: {
       [TRIAGE_ACTION_ID]: projectedAction,
     },
-    toolsById: {},
-    commandsById: {},
+
+
     resourcesById: {},
     settingsById: {},
     familiesById: {},

@@ -257,8 +257,8 @@ function projectConversationVoiceEntries(input: Readonly<{
 }>): PluginUiProjectionModel['voiceProvidersById'] {
   const projection = normalizePluginUiProjection(PluginProjectionV2Schema.parse({
     v: 2, generation: input.generation,
-    installedPackagesById: {}, agentsById: {}, actionsById: {}, toolsById: {},
-    commandsById: {}, resourcesById: {}, settingsById: {}, diagnostics: [],
+    installedPackagesById: {}, agentsById: {}, actionsById: {},
+     resourcesById: {}, settingsById: {}, diagnostics: [],
     familiesById: { voiceProviders: { family: 'voiceProviders', entriesById: Object.fromEntries(
       input.declarations.map(definition => {
         const id = `${input.pluginId}/${definition.id}`;
@@ -481,8 +481,8 @@ describe('projected external Voice provider activation', () => {
       installedPackagesById: {},
       agentsById: {},
       actionsById: {},
-      toolsById: {},
-      commandsById: {},
+
+
       resourcesById: {},
       settingsById: {},
       familiesById: {
@@ -787,8 +787,8 @@ describe('projected external Voice provider activation', () => {
       installedPackagesById: {},
       agentsById: {},
       actionsById: {},
-      toolsById: {},
-      commandsById: {},
+
+
       resourcesById: {},
       settingsById: {},
       familiesById: {
@@ -1284,8 +1284,8 @@ describe('projected external Voice provider activation', () => {
           executionOrigin: origin,
           available: true,
         },
-      }, toolsById: {},
-      commandsById: {}, resourcesById: {}, settingsById: {},
+      },
+       resourcesById: {}, settingsById: {},
       familiesById: {
         voiceProviders: {
           family: 'voiceProviders',

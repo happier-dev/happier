@@ -72,8 +72,8 @@ const projection = {
         },
     },
     actionsById: {},
-    toolsById: {},
-    commandsById: {},
+
+
     resourcesById: {},
     settingsById: {},
     familiesById: {},

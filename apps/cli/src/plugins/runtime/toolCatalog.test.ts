@@ -1,140 +1,94 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import { createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
+import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
+import { createHappierToolInventory } from '@/agent/tools/happierTools/listBuiltInHappierTools';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol';
+import { resolveDiscoveredPluginActionAvailability } from '@/agent/tools/happierTools/actionToolCatalog';
+import { projectExecutablePluginToolCatalog, projectOccurrenceBoundExecutablePluginToolCatalog } from './toolCatalog';
 
-import {
-  projectExecutablePluginToolCatalog,
-  projectOccurrenceBoundExecutablePluginToolCatalog,
-} from './toolCatalog';
+const pluginId = 'acme.review.plugin';
+const inputSchema = { type: 'object', properties: { scope: { type: 'string' } }, required: ['scope'], additionalProperties: false };
+const resultSchema = { type: 'object', properties: { completed: { type: 'boolean' } }, required: ['completed'], additionalProperties: false };
 
-function createRegistry(
-  outcome: 'visible' | 'denied',
-  toolAvailability: Readonly<Record<string, unknown>> = {
-    when: { fact: 'plugin.enabled', operator: 'equals', value: true },
-  },
-  provenance: 'external' | 'first_party' = 'external',
-) {
-  const action = {
-    provenance,
-    pluginId: 'acme.review.plugin',
-    identity: { pluginId: 'acme.review.plugin', localId: 'review-start' },
-    definition: {
-      id: 'review-start',
-    },
-  };
-  return {
-    contributes: {
-      tools: [{
-        provenance,
-        pluginId: 'acme.review.plugin',
-        definition: {
-          id: 'review-tool',
-          actionId: 'acme.review.plugin/review-start',
-          name: 'acme_review_start',
-          title: { key: 'review.start', fallback: 'Acme Review Start' },
-          description: { key: 'review.description', fallback: 'Start a review' },
-          inputSchema: { type: 'object', additionalProperties: false },
-          outputSchema: {
-            type: 'object',
-            properties: { completed: { type: 'boolean' } },
-            required: ['completed'],
-            additionalProperties: false,
-          },
-          inputHints: {
-            fields: [{
-              path: 'scope',
-              title: { fallback: 'Scope' },
-              widget: 'select',
-              options: [{ value: 'diff', label: { fallback: 'Diff' } }],
-            }],
-          },
-          safety: 'danger',
-          examples: { mcp: { argsExample: '{"scope":"diff"}' } },
-          promptSnippet: 'Start an Acme review when the user asks for review.',
-          promptGuidelines: ['Choose the narrowest applicable scope.'],
-          availability: toolAvailability,
-          surfaces: ['agent', 'mcp', 'cli'],
-        },
-      }],
-      actionsById: new Map([['acme.review.plugin/review-start', action]]),
-    },
-    targetActionInvocations: {
-      evaluateCatalogPolicy: vi.fn(() => (
-        outcome === 'visible'
-          ? { outcome: 'visible' as const }
-          : { outcome: 'denied' as const }
-      )),
-    },
-  } as never;
+async function createFixture(visible = true) {
+  return createAuthoredAdmittedPluginRuntimeFixture({ plugins: [{
+    manifest: createPluginManifestV2Fixture({ id: pluginId, contributes: { actions: [{
+      id: 'review-start', title: { key: 'review.start', fallback: '{name} Review Start', params: { name: 'Acme' } },
+      description: 'Review changes', scopes: ['global'], surfaces: ['agent', 'mcp', 'cli'],
+      execution: { target: 'daemon' }, dangerLevel: 'safe', inputSchema, resultSchema,
+      inputHints: { fields: [{ path: 'scope', title: 'Scope', widget: 'text' }] },
+      tool: { name: 'acme_review_start', title: { key: 'review.tool.title', fallback: 'Review {scope}', params: { scope: 'changes' } }, description: 'Start a review',
+        examples: { mcp: { argsExample: '{"scope":"diff"}' } },
+        promptSnippet: 'Start a review when asked.', promptGuidelines: ['Choose the narrowest scope.'] },
+      availability: { when: { fact: 'plugin.enabled', operator: 'equals', value: visible } },
+    }] } }),
+    files: { 'daemon.mjs': 'export function activate(api) { api.actions.register("review-start", async () => ({ completed: true })); }' },
+  }] });
 }
 
-describe('projectExecutablePluginToolCatalog', () => {
-  it('serializes the normalized external tool declaration targeting a visible current action', () => {
-    const registry = createRegistry('visible');
-
-    expect(projectExecutablePluginToolCatalog(registry)).toEqual([{
-      toolId: 'acme.review.plugin/review-tool',
-      actionId: 'acme.review.plugin/actions/review-start',
-      name: 'acme_review_start',
-      title: 'Acme Review Start',
-      description: 'Start a review',
-      inputSchema: { type: 'object', additionalProperties: false },
-      outputSchema: {
-        type: 'object',
-        properties: { completed: { type: 'boolean' } },
-        required: ['completed'],
-        additionalProperties: false,
-      },
-      inputHints: {
-        fields: [{
-          path: 'scope',
-          title: 'Scope',
-          widget: 'select',
-          options: [{ value: 'diff', label: 'Diff' }],
-        }],
-      },
-      safety: 'danger',
-      examples: { mcp: { argsExample: '{"scope":"diff"}' } },
-      promptSnippet: 'Start an Acme review when the user asks for review.',
-      promptGuidelines: ['Choose the narrowest applicable scope.'],
-      availability: { when: { fact: 'plugin.enabled', operator: 'equals', value: true } },
-      surfaces: ['agent', 'mcp', 'cli'],
-    }]);
+describe('Action-owned executable tool catalog', () => {
+  it('uses the canonical discoverable default and per-Action exposure override', () => {
+    const request = { actionId: `${pluginId}/actions/review-start`, surface: 'mcp' as const,
+      surfaces: { agent: true, mcp: true, cli: true, ui: false, voice: false, rpc: false, api: true, plugin: false } };
+    expect(resolveDiscoveredPluginActionAvailability(request)).toMatchObject({ available: true,
+      defaultToolExposureMode: 'discoverable_only', effectiveToolExposureMode: 'discoverable_only' });
+    expect(resolveDiscoveredPluginActionAvailability({ ...request, actionsSettings: ActionsSettingsV1Schema.parse({ v: 1,
+      actions: { [request.actionId]: { toolExposureModes: { mcp: 'direct' } } } }) })).toMatchObject({
+        available: true, defaultToolExposureMode: 'discoverable_only', effectiveToolExposureMode: 'direct' });
+  });
+  it('lists one named agent and MCP tool from the Action schema and presentation', async () => {
+    const fixture = await createFixture();
+    try {
+      expect(fixture.registry.contributes.actions.find(action => action.pluginId === pluginId
+        && action.definition.id === 'review-start')?.definition.title).toBe('Acme Review Start');
+      const catalog = projectExecutablePluginToolCatalog(fixture.registry);
+      expect(catalog).toEqual([expect.objectContaining({
+        toolId: `${pluginId}/review-start`, actionId: `${pluginId}/actions/review-start`,
+        name: 'acme_review_start', title: 'Review changes', description: 'Start a review',
+        inputSchema, outputSchema: resultSchema, safety: 'safe',
+        inputHints: { fields: [{ path: 'scope', title: 'Scope', widget: 'text' }] },
+        promptSnippet: 'Start a review when asked.', promptGuidelines: ['Choose the narrowest scope.'],
+        surfaces: ['agent', 'mcp', 'cli'],
+      })]);
+      const cliInventory = createHappierToolInventory({ surface: 'cli', registry: fixture.registry.contributes,
+        pluginToolCatalog: catalog, isActionEnabled: () => true, actionsSettings: null });
+      expect(cliInventory.tools.filter(tool => tool.name === 'acme_review_start')).toEqual([
+        expect.objectContaining({ inputSchema, outputSchema: resultSchema, actionId: `${pluginId}/actions/review-start` }),
+      ]);
+      for (const surface of ['agent', 'mcp'] as const) {
+        const discoverable = resolveDiscoveredPluginActionAvailability({ actionId: `${pluginId}/actions/review-start`, surface,
+          surfaces: { agent: true, mcp: true, cli: true, ui: false, voice: false, rpc: false, api: true, plugin: false } });
+        expect(discoverable).toMatchObject({ available: true, defaultToolExposureMode: 'discoverable_only' });
+        const defaults = createHappierToolInventory({ surface, registry: fixture.registry.contributes,
+          pluginToolCatalog: catalog, isActionEnabled: () => true, actionsSettings: null });
+        expect(defaults.tools.some(tool => tool.name === 'acme_review_start')).toBe(false);
+        const inventory = createHappierToolInventory({ surface, registry: fixture.registry.contributes,
+          pluginToolCatalog: catalog, isActionEnabled: () => true, actionsSettings: ActionsSettingsV1Schema.parse({ v: 1,
+            actions: { [`${pluginId}/actions/review-start`]: { toolExposureModes: { [surface]: 'direct' } } } }) });
+        expect(inventory.tools.filter(tool => tool.name === 'acme_review_start')).toEqual([
+          expect.objectContaining({ inputSchema, outputSchema: resultSchema, actionId: `${pluginId}/actions/review-start` }),
+        ]);
+      }
+    } finally { await fixture.dispose(); }
   });
 
-  it('does not publish a tool whose target action policy is not visible', () => {
-    expect(projectExecutablePluginToolCatalog(createRegistry('denied'))).toEqual([]);
+  it('uses the Action availability policy for every named-tool surface', async () => {
+    const fixture = await createFixture(false);
+    try {
+      const invocations = fixture.registry.targetActionInvocations;
+      if (!invocations) throw new Error('Expected the admitted Action invocation owner');
+      expect(invocations.evaluateCatalogPolicy(pluginId, 'review-start').outcome).not.toBe('visible');
+      expect(projectExecutablePluginToolCatalog(fixture.registry)).toEqual([]);
+    } finally { await fixture.dispose(); }
   });
 
-  it('projects a bundled declaration through the same current action and policy admission', () => {
-    const availability = {
-      when: { fact: 'plugin.enabled', operator: 'equals', value: true },
-    };
-    expect(projectExecutablePluginToolCatalog(createRegistry('visible', availability, 'first_party')))
-      .toEqual(projectExecutablePluginToolCatalog(createRegistry('visible', availability)));
-    expect(projectExecutablePluginToolCatalog(createRegistry('denied', availability, 'first_party'))).toEqual([]);
-  });
-
-  it('does not publish a tool whose own availability policy is not visible', () => {
-    expect(projectExecutablePluginToolCatalog(createRegistry('visible', {
-      when: { fact: 'plugin.enabled', operator: 'equals', value: false },
-    }))).toEqual([]);
-  });
-
-  it('binds transport-facing tools to the exact contributor occurrence and drops unbound entries', () => {
-    const registry = createRegistry('visible') as {
-      readPluginOccurrenceId?: (pluginId: string) => string | null;
-    };
-    registry.readPluginOccurrenceId = (pluginId) => (
-      pluginId === 'acme.review.plugin' ? 'occurrence-7' : null
-    );
-
-    expect(projectOccurrenceBoundExecutablePluginToolCatalog(registry as never)).toEqual([
-      expect.objectContaining({
-        toolId: 'acme.review.plugin/review-tool',
-        expectedContributorOccurrenceId: 'occurrence-7',
-      }),
-    ]);
-
-    registry.readPluginOccurrenceId = () => null;
-    expect(projectOccurrenceBoundExecutablePluginToolCatalog(registry as never)).toEqual([]);
+  it('binds the tool to the same Action contributor occurrence', async () => {
+    const fixture = await createFixture();
+    try {
+      expect(projectOccurrenceBoundExecutablePluginToolCatalog(fixture.registry)).toEqual([
+        expect.objectContaining({ toolId: `${pluginId}/review-start`,
+          expectedContributorOccurrenceId: fixture.registry.readPluginOccurrenceId?.(pluginId) }),
+      ]);
+    } finally { await fixture.dispose(); }
   });
 });

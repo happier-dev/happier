@@ -1,7 +1,7 @@
 import { isActionDirectToolExposedOn } from '@happier-dev/protocol/actions/actionToolExposure';
 import { isActionEnabledByActionsSettings } from '@happier-dev/protocol/actions/actionSettings';
 import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
-import { resolveActionSurfaceAvailability } from '@happier-dev/protocol/actions/actionSurfaceAvailability';
+import { getDefaultActionToolExposureMode, resolveActionSurfaceAvailability, resolveActionToolExposureModeForSurface } from '@happier-dev/protocol/actions/actionSurfaceAvailability';
 import { listActionSpecs } from '@happier-dev/protocol/actions/actionSpecs';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import type { ActionId, ActionSurfaceAvailability, ActionSurfaces, ActionsSettingsV1 } from '@happier-dev/protocol';
@@ -39,6 +39,7 @@ type ActionToolEntry = Readonly<{
   promptSnippet?: string;
   promptGuidelines?: readonly string[];
   availability?: unknown;
+  toolExposure?: ProjectedPluginToolCatalogEntry['toolExposure'];
   provenance: ResolvedContributionProvenance;
 }>;
 
@@ -141,6 +142,7 @@ function toPluginToolEntry(tool: ProjectedPluginToolCatalogEntry): ActionToolEnt
     ...(tool.promptSnippet === undefined ? {} : { promptSnippet: tool.promptSnippet }),
     ...(tool.promptGuidelines === undefined ? {} : { promptGuidelines: tool.promptGuidelines }),
     ...(tool.availability === undefined ? {} : { availability: tool.availability }),
+    ...(tool.toolExposure === undefined ? {} : { toolExposure: tool.toolExposure }),
     provenance: 'external',
   };
 }
@@ -201,14 +203,15 @@ function resolvePluginActionSettings(
   actionId: string,
   surface: HappierBuiltInToolSurface,
   settings: ActionsSettingsV1 | null | undefined,
+  toolExposure?: ProjectedPluginToolCatalogEntry['toolExposure'],
 ): Readonly<{
   enabled: boolean;
   settingsState: ActionToolCatalogAvailability['settingsState'];
+  defaultToolExposureMode: 'direct' | 'discoverable_only';
   effectiveToolExposureMode: 'direct' | 'discoverable_only';
 }> {
   const identity = parseQualifiedPluginActionId(actionId);
   const settingsActionId = identity ? formatQualifiedPluginActionId(identity) : null;
-  const override = settingsActionId ? settings?.actions[settingsActionId] : undefined;
   const enabled = settingsActionId !== null && (
     !settings
     || isActionEnabledByActionsSettings(settingsActionId, settings, { surface })
@@ -222,7 +225,8 @@ function resolvePluginActionSettings(
         : settingsActionId && isApprovalRequiredByActionsSettings(settingsActionId, settings, { surface })
           ? 'approval_required'
           : 'enabled',
-    effectiveToolExposureMode: override?.toolExposureModes?.[surface] ?? 'direct',
+    defaultToolExposureMode: getDefaultActionToolExposureMode({ id: actionId, toolExposure }, surface),
+    effectiveToolExposureMode: resolveActionToolExposureModeForSurface({ id: actionId, toolExposure }, surface, settings),
   };
 }
 
@@ -233,6 +237,7 @@ export function resolveDiscoveredPluginActionAvailability(params: Readonly<{
   surface: HappierBuiltInToolSurface;
   actionsSettings?: ActionsSettingsV1 | null;
   provenance?: ResolvedContributionProvenance;
+  toolExposure?: ProjectedPluginToolCatalogEntry['toolExposure'];
 }>): ActionToolCatalogAvailability {
   const { actionId, surface } = params;
   const availableSurfaces = getActionAvailableSurfaces(params.surfaces);
@@ -240,20 +245,20 @@ export function resolveDiscoveredPluginActionAvailability(params: Readonly<{
   if (params.surfaces[surface] !== true) return {
     available: false, reason: 'unsupported_surface', actionId, surface, availableSurfaces, provenance,
   };
-  const settings = resolvePluginActionSettings(actionId, surface, params.actionsSettings);
+  const settings = resolvePluginActionSettings(actionId, surface, params.actionsSettings, params.toolExposure);
   return {
     available: settings.enabled,
     reason: settings.enabled ? 'available' : 'disabled_by_settings',
     actionId, surface, availableSurfaces, provenance,
     settingsState: settings.settingsState,
-    defaultToolExposureMode: 'direct',
+    defaultToolExposureMode: settings.defaultToolExposureMode,
     effectiveToolExposureMode: settings.effectiveToolExposureMode,
   };
 }
 
 export function resolveActionToolCatalogAvailability(params: Readonly<{
   actionId: ActionId | string;
-  /** Select the declared binding when one Action contributes several tools. */
+  /** Select the Action's optional named-tool presentation. */
   toolName?: string;
   surface?: HappierBuiltInToolSurface;
   isActionEnabled?: ActionEnabledPredicate;
@@ -290,6 +295,7 @@ export function resolveActionToolCatalogAvailability(params: Readonly<{
     return resolveDiscoveredPluginActionAvailability({
       actionId, surface, actionsSettings: params.actionsSettings,
       surfaces: { ...projectedTool.surfaces, ui: false, voice: false, rpc: false, api: false, plugin: false },
+      toolExposure: projectedTool.toolExposure,
     });
   }
 
@@ -338,6 +344,7 @@ export function resolveActionToolCatalogAvailability(params: Readonly<{
   const availability = resolveDiscoveredPluginActionAvailability({
     actionId, surface, actionsSettings: params.actionsSettings,
     surfaces: pluginAction.definition.surfaces, provenance: pluginAction.provenance,
+    toolExposure: pluginAction.definition.toolExposure,
   });
   if (!availability.available) return availability;
   if (params.requireToolBinding && !getActionToolEntryById(actionId, {
@@ -345,13 +352,12 @@ export function resolveActionToolCatalogAvailability(params: Readonly<{
     pluginToolCatalog: params.pluginToolCatalog,
   }, catalog)) {
     return {
+      ...availability,
       available: false,
       reason: 'missing_tool_binding',
       actionId,
       surface,
       availableSurfaces,
-      defaultToolExposureMode: 'direct',
-      effectiveToolExposureMode: 'direct',
       provenance: pluginAction.provenance,
     };
   }

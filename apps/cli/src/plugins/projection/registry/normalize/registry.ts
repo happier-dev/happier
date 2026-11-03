@@ -3,7 +3,7 @@ import { resolvePluginContributionHostAccessRequestsV2 } from '@happier-dev/prot
 import type { ResolvedActionAdmittedTarget } from '../types';
 import type { PluginWorkItemsContributionV1 } from '@happier-dev/protocol/plugins/contributions/workItems';
 import { projectTargetedContributionActionDefinition } from '@happier-dev/plugin-sdk/host/registration';
-import { toCommandDefinition } from './commandDefinition';
+
 import { projectPluginActionInputDefinition, projectPluginActionLocalizedPresentation } from './actionInput';
 import { admitPluginContributionGraph, type AdmittedPluginContributionGraph } from './admission';
 import { readPluginSemanticContributions, type PluginContributionCanonicalizer } from './semantic';
@@ -16,7 +16,7 @@ import type {
   PluginBrowserTargetContributionV1,
   PluginActionContributionV2,
   PluginAccountCollectionContributionV1,
-  PluginCommandContributionV2,
+
   PluginExecutionRunProfileContributionV2,
   PluginRoleDeclarationV1,
   PluginWorkflowContributionV1,
@@ -46,7 +46,7 @@ import type {
   ScmHostingProviderContribution,
   PluginConnectedAccountDescriptorContributionV2,
   PluginSourceSpecV1,
-  PluginToolContributionV2,
+
   PluginUiRendererV2,
   PluginUiTranslationBundleV2,
   PluginUiViewV2,
@@ -83,12 +83,12 @@ import type {
 import type { LoadedPlugin } from '@/plugins/discovery/load/installed';
 import { resolvePluginResourcePath } from '../../resources/package/resolve';
 import type {
-  ResolvedCommandDefinition,
+
   ResolvedActionDefinition,
   ResolvedActionLocalizedPresentation,
   ResolvedEventDefinition,
   ResolvedResourceDefinition,
-  ResolvedToolDefinition,
+
   ResolvedRoleContribution,
   PluginLocaleScopedIdentity,
 } from '../types';
@@ -169,8 +169,8 @@ export type PluginContributionRegistry = Readonly<{
   agents: readonly PluginOwnedContribution<PluginAgentContributionV2>[];
   providers: readonly PluginOwnedContribution<ProviderContributionV1>[];
   actions: readonly PluginOwnedActionContribution[];
-  tools: readonly PluginOwnedContribution<ResolvedToolDefinition>[];
-  commands: readonly PluginOwnedContribution<ResolvedCommandDefinition>[];
+
+
   hooks: readonly PluginOwnedContribution<PluginHookContributionV2>[];
   resources: readonly PluginOwnedContribution<ResolvedResourceDefinition>[];
   promptAssets: readonly PluginOwnedContribution<PluginPromptAssetContributionV1>[];
@@ -189,7 +189,8 @@ export type PluginContributionRegistry = Readonly<{
   workflows: readonly PluginOwnedContribution<PluginWorkflowContributionV1>[];
   inputTypes: readonly PluginOwnedContribution<PluginInputTypeContributionV1>[];
   atmospherePictures: readonly PluginOwnedContribution<PluginAtmospherePictureContributionV1>[];
-  registrySources: readonly PluginOwnedContribution<PluginRegistrySourceContributionV1>[];
+  backupDestinations: readonly PluginOwnedContribution<import('@happier-dev/protocol').BackupDestinationContributionV1>[];
+registrySources: readonly PluginOwnedContribution<PluginRegistrySourceContributionV1>[];
   storeKinds: readonly PluginOwnedContribution<import('@happier-dev/protocol').PluginStoreKindContributionV1>[];
   languageServers: readonly PluginOwnedContribution<PluginLanguageServerContributionV1>[];
   skills: readonly PluginOwnedContribution<PluginSkillContributionV1>[];
@@ -285,8 +286,9 @@ function toActionDefinition(definition: PluginActionContributionV2): ResolvedAct
     safety,
     placements: [],
     slash: normalizePluginActionSlashV2(definition.slash),
-    bindings: null,
-    examples: null,
+    bindings: definition.tool ? { mcpToolName: definition.tool.name } : null,
+    examples: definition.tool?.examples ?? null,
+    ...(definition.toolExposure === undefined ? {} : { toolExposure: definition.toolExposure }),
     execution: definition.execution,
     surfaces: {
       ui: definition.surfaces.includes('ui'),
@@ -342,13 +344,7 @@ function toActionLocalizedPresentation(
   });
 }
 
-function toToolDefinition(pluginId: string, definition: PluginToolContributionV2): ResolvedToolDefinition {
-  return Object.freeze({
-    ...definition,
-    kindVersion: 1,
-    actionId: resolveReferenceKey(pluginId, definition.action),
-  });
-}
+
 
 function toResourceDefinition(definition: PluginResourceContributionV2): ResolvedResourceDefinition {
   if (isDynamicPluginResourceContributionV2(definition)) {
@@ -408,8 +404,8 @@ export function projectPluginContributionRegistry(params: Readonly<{
   const agents: PluginOwnedContribution<PluginAgentContributionV2>[] = [];
   const providers: PluginOwnedContribution<ProviderContributionV1>[] = [];
   const actions: PluginOwnedActionContribution[] = [];
-  const tools: PluginOwnedContribution<ResolvedToolDefinition>[] = [];
-  const commands: PluginOwnedContribution<ResolvedCommandDefinition>[] = [];
+
+
   const hooks: PluginOwnedContribution<PluginHookContributionV2>[] = [];
   const resources: PluginOwnedContribution<ResolvedResourceDefinition>[] = [];
   const promptAssets: PluginOwnedContribution<PluginPromptAssetContributionV1>[] = [];
@@ -428,6 +424,7 @@ export function projectPluginContributionRegistry(params: Readonly<{
   const workflows: PluginOwnedContribution<PluginWorkflowContributionV1>[] = [];
   const inputTypes: PluginOwnedContribution<PluginInputTypeContributionV1>[] = [];
   const atmospherePictures: PluginOwnedContribution<PluginAtmospherePictureContributionV1>[] = [];
+  const backupDestinations: PluginOwnedContribution<import('@happier-dev/protocol').BackupDestinationContributionV1>[] = [];
   const registrySources: PluginOwnedContribution<PluginRegistrySourceContributionV1>[] = [];
   const storeKinds: PluginOwnedContribution<import('@happier-dev/protocol').PluginStoreKindContributionV1>[] = [];
   const languageServers: PluginOwnedContribution<PluginLanguageServerContributionV1>[] = [];
@@ -736,31 +733,9 @@ export function projectPluginContributionRegistry(params: Readonly<{
       });
     }
 
-    for (const definition of readSemanticDefinitions<PluginToolContributionV2>('tools')) {
-      tools.push({
-        pluginId: plugin.pluginId,
-        identity: createPluginContributionIdentity({ pluginId: plugin.pluginId, localId: definition.id }),
-        pluginRootPath: plugin.pluginRootPath,
-        manifestPath: plugin.manifestPath,
-        daemonEntryPath: plugin.daemonEntryPath,
-        devDaemonEntryPath: plugin.devDaemonEntryPath,
-        sourceSpec: plugin.sourceSpec,
-        definition: toToolDefinition(plugin.pluginId, definition),
-      });
-    }
 
-    for (const definition of readSemanticDefinitions<PluginCommandContributionV2>('commands')) {
-      commands.push({
-        pluginId: plugin.pluginId,
-        identity: createPluginContributionIdentity({ pluginId: plugin.pluginId, localId: definition.id }),
-        pluginRootPath: plugin.pluginRootPath,
-        manifestPath: plugin.manifestPath,
-        daemonEntryPath: plugin.daemonEntryPath,
-        devDaemonEntryPath: plugin.devDaemonEntryPath,
-        sourceSpec: plugin.sourceSpec,
-        definition: toCommandDefinition(plugin.pluginId, definition),
-      });
-    }
+
+
 
     for (const definition of readSemanticDefinitions<PluginHookContributionV2>('hooks')) {
       hooks.push({
@@ -1101,6 +1076,15 @@ export function projectPluginContributionRegistry(params: Readonly<{
         sourceSpec: plugin.sourceSpec, definition,
       });
     }
+    for (const definition of readSemanticDefinitions<import('@happier-dev/protocol').BackupDestinationContributionV1>('backupDestinations')) {
+      backupDestinations.push({
+        pluginId: plugin.pluginId, pluginVersion: plugin.manifest.version,
+        identity: createPluginContributionIdentity({ pluginId: plugin.pluginId, localId: definition.id }),
+        pluginRootPath: plugin.pluginRootPath, manifestPath: plugin.manifestPath,
+        daemonEntryPath: plugin.daemonEntryPath, devDaemonEntryPath: plugin.devDaemonEntryPath,
+        sourceSpec: plugin.sourceSpec, definition,
+      });
+    }
     for (const definition of readSemanticDefinitions<import('@happier-dev/protocol').PluginStoreKindContributionV1>('storeKinds')) {
       storeKinds.push({
         pluginId: plugin.pluginId, pluginVersion: plugin.manifest.version,
@@ -1238,8 +1222,8 @@ export function projectPluginContributionRegistry(params: Readonly<{
     agents: Object.freeze(agents),
     providers: Object.freeze(providers),
     actions: Object.freeze(actions),
-    tools: Object.freeze(tools),
-    commands: Object.freeze(commands),
+
+
     hooks: Object.freeze(hooks),
     resources: Object.freeze(resources),
     promptAssets: Object.freeze(promptAssets),
@@ -1258,6 +1242,7 @@ export function projectPluginContributionRegistry(params: Readonly<{
     workflows: Object.freeze(workflows),
     inputTypes: Object.freeze(inputTypes),
     atmospherePictures: Object.freeze(atmospherePictures),
+    backupDestinations: Object.freeze(backupDestinations),
     registrySources: Object.freeze(registrySources),
     storeKinds: Object.freeze(storeKinds),
     languageServers: Object.freeze(languageServers),

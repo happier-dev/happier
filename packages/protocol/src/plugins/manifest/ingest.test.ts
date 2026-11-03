@@ -43,7 +43,23 @@ function manifest(overrides: Record<string, unknown> = {}): Record<string, unkno
   };
 }
 
-it('rejects an app page whose column renderer is undeclared', () => {
+it('normalizes named tools and CLI paths on the declared Action', () => {
+    const result = ingestPluginManifestV2(manifest({
+      contributes: {
+        actions: [{ id: 'summarize', title: 'Summarize', scopes: ['session'], surfaces: ['cli', 'agent', 'mcp'],
+          placementBindings: ['primary'], dangerLevel: 'safe', execution: { target: 'daemon' },
+          tool: { name: 'summarize' }, cli: { path: ['summarize'] } }],
+      },
+    }));
+
+    expect(result).toEqual({ ok: true, manifest: expect.any(Object) });
+  });
+
+
+
+
+
+  it('rejects an app page whose column renderer is undeclared', () => {
   const result = ingestPluginManifestV2(manifest({
     contributes: {
       ui: {
@@ -202,6 +218,69 @@ function automationEvent(overrides: Record<string, unknown> = {}): Record<string
     ...overrides,
   };
 }
+
+describe('strict author, tolerant load', () => {
+  const good = { id: 'healthy', title: 'Healthy', scopes: ['session'], surfaces: ['cli'],
+    execution: { target: 'daemon' }, placementBindings: ['primary'], dangerLevel: 'safe' };
+
+  it('loads stored empty retired families silently without admitting retired registrations', () => {
+    const input = manifest({ contributes: { actions: [good], tools: [], commands: [] } });
+    expect(ingestPluginManifestV2(input).ok).toBe(false);
+    const result = ingestPluginManifestV2(input, { mode: 'load' });
+    expect(result).toMatchObject({ ok: true, manifest: { contributes: { actions: [good] } } });
+    if (!result.ok) throw new Error('Stored manifest must be readable');
+    expect(result.diagnostics ?? []).toEqual([]);
+    expect(result.manifest.contributes).not.toHaveProperty('tools');
+    expect(result.manifest.contributes).not.toHaveProperty('commands');
+    expect(input.contributes).toMatchObject({ tools: [], commands: [] });
+  });
+
+  it('reports and skips nonempty or malformed retired families while retaining Actions', () => {
+    for (const retired of [[{ id: 'retired' }], null, {}]) {
+      const result = ingestPluginManifestV2(manifest({ contributes: {
+        actions: [good], tools: retired, commands: retired,
+      } }), { mode: 'load' });
+      expect(result).toMatchObject({ ok: true, manifest: { contributes: { actions: [good] } },
+        diagnostics: [
+          expect.objectContaining({ code: 'plugin_contribution_skipped', path: ['contributes', 'tools'] }),
+          expect.objectContaining({ code: 'plugin_contribution_skipped', path: ['contributes', 'commands'] }),
+        ] });
+      if (!result.ok) throw new Error('Healthy contributions must be admitted');
+      expect(result.manifest.contributes).not.toHaveProperty('tools');
+      expect(result.manifest.contributes).not.toHaveProperty('commands');
+    }
+  });
+
+  it('skips a bad contribution and its dependants while retaining healthy siblings', () => {
+    const input = manifest({ contributes: { actions: [good, { ...good, id: 'bad', dangerLevel: 'future' }],
+      resources: [{ id: 'broken', kind: 'config', source: 'dynamic', scope: 'future', contentType: 'application/json' }] } });
+    expect(ingestPluginManifestV2(input).ok).toBe(false);
+    const result = ingestPluginManifestV2(input, { mode: 'load' });
+    expect(result).toMatchObject({ ok: true, manifest: { contributes: { actions: [good], resources: [] } },
+      diagnostics: expect.arrayContaining([expect.objectContaining({ code: 'plugin_contribution_skipped' })]) });
+  });
+
+  it('skips whole contributions with unknown fields or kinds without opening the envelope', () => {
+    const input = manifest({ contributes: { actions: [good,
+      { ...good, id: 'unknown-field', futureRestriction: { enabled: true } },
+      { ...good, id: 'unknown-nested-field', execution: { target: 'daemon', futureRestriction: true } }],
+      futureFamily: [{ id: 'future' }], ui: { futureFamily: [] },
+      mcp: { servers: [{ id: 'mcp-healthy', title: 'MCP', kind: 'dynamic' }], futureFamily: [] } } });
+    expect(ingestPluginManifestV2(input).ok).toBe(false);
+    expect(ingestPluginManifestV2(input, { mode: 'load' })).toMatchObject({ ok: true,
+      manifest: { contributes: { actions: [good], mcp: { servers: [{ id: 'mcp-healthy' }] } } },
+      diagnostics: expect.arrayContaining([expect.objectContaining({ code: 'plugin_contribution_skipped' })]) });
+    expect(ingestPluginManifestV2({ ...input, futureEnvelope: true }, { mode: 'load' }).ok).toBe(false);
+    expect(ingestPluginManifestV2({ ...input, id: '' }, { mode: 'load' }).ok).toBe(false);
+  });
+
+  it('settles same-plugin reference invalidation at contribution granularity', () => {
+    const result = ingestPluginManifestV2(manifest({ contributes: { actions: [good],
+      ui: { views: [{ id: 'broken-view', container: 'appPage', target: { kind: 'app' }, renderer: 'missing' }] } } }), { mode: 'load' });
+    expect(result).toMatchObject({ ok: true, manifest: { contributes: { actions: [good], ui: { views: [] } } },
+      diagnostics: [expect.objectContaining({ code: 'plugin_contribution_skipped' })] });
+  });
+});
 
 describe('canonical plugin manifest ingestion', () => {
   it('keeps public semantic policy separate from broad internal manifest ingestion', () => {
@@ -1376,7 +1455,8 @@ describe('canonical plugin manifest ingestion', () => {
   it('rejects dangling and wrong-family references', () => {
     const result = ingestPluginManifestV2(manifest({
       contributes: {
-        tools: [{ id: 'tool', title: 'Tool', name: 'tool', action: 'missing' }],
+        browserTargets: [{ id: 'target', title: 'Target', url: 'https://example.test' }],
+        browserActions: [{ id: 'launch', title: 'Launch', action: 'missing', target: 'target' }],
       },
     }));
 
@@ -2140,17 +2220,7 @@ describe('canonical plugin manifest ingestion', () => {
     }
   });
 
-  it('normalizes tools and commands as references to one declared action', () => {
-    const result = ingestPluginManifestV2(manifest({
-      contributes: {
-        actions: [{ id: 'summarize', title: 'Summarize', scopes: ['session'], surfaces: ['cli'], placementBindings: ['primary'], dangerLevel: 'safe', execution: { target: 'daemon' } }],
-        tools: [{ id: 'summarize-tool', title: 'Summarize', name: 'summarize', action: 'summarize' }],
-        commands: [{ id: 'summarize-command', title: 'Summarize', path: ['summarize'], action: 'summarize' }],
-      },
-    }));
 
-    expect(result).toEqual({ ok: true, manifest: expect.any(Object) });
-  });
 
   it('resolves action hostAccess request ids against the manifest disclosure owner', () => {
     const allowed = ingestPluginManifestV2(manifest({
@@ -2254,19 +2324,7 @@ describe('canonical plugin manifest ingestion', () => {
     });
   });
 
-  it('rejects a tool action reference that resolves to the wrong family or is dangling', () => {
-    const result = ingestPluginManifestV2(manifest({
-      contributes: {
-        resources: [{ id: 'not-an-action', kind: 'asset', path: 'asset.txt', contentType: 'text/plain' }],
-        tools: [{ id: 'tool', title: 'Tool', name: 'tool', action: 'not-an-action' }],
-      },
-    }));
 
-    expect(result).toEqual({
-      ok: false,
-      diagnostics: [expect.objectContaining({ code: 'plugin_manifest_wrong_family_reference' })],
-    });
-  });
 
   it('resolves structured cross-plugin references against the complete manifest set', () => {
     const owner = ingestPluginManifestV2(manifest({
@@ -2274,8 +2332,11 @@ describe('canonical plugin manifest ingestion', () => {
       contributes: { actions: [{ id: 'run', title: 'Run', scopes: ['session'], surfaces: ['cli'], placementBindings: ['primary'], dangerLevel: 'safe', execution: { target: 'daemon' } }] },
     }));
     const consumer = ingestPluginManifestV2(manifest({
-      id: 'com.acme.tools',
-      contributes: { tools: [{ id: 'runner', name: 'runner', title: 'Runner', action: { pluginId: 'com.acme.actions', localId: 'run' } }] },
+      id: 'com.acme.browser',
+      contributes: {
+        browserTargets: [{ id: 'target', title: 'Target', url: 'https://example.test' }],
+        browserActions: [{ id: 'launch', title: 'Launch', action: { pluginId: 'com.acme.actions', localId: 'run' }, target: 'target' }],
+      },
     }));
     expect(owner.ok).toBe(true);
     expect(consumer.ok).toBe(true);

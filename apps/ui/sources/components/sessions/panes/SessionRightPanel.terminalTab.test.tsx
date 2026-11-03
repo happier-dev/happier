@@ -62,7 +62,7 @@ async function createRightSidebarProjection(pluginId: string, descriptorId: stri
     if (!binding) throw new Error('Expected admitted Session sidebar binding');
     return normalizePluginUiProjection(PluginProjectionV2Schema.parse({
         v: 2, generation: 4, installedPackagesById: {}, agentsById: {}, actionsById: {},
-        toolsById: {}, commandsById: {}, resourcesById: {}, settingsById: {},
+          resourcesById: {}, settingsById: {},
         familiesById: { pluginUi: { family: 'pluginUi', entriesById: {
             [descriptorId]: {
                 id: descriptorId, pluginId, occurrenceId: pluginId + '#1',

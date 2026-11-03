@@ -81,7 +81,7 @@ it.each([{ count: 1, delayed: false }, { count: 2, delayed: false }, { count: 1,
             // The page's exact caller read need not join a whole-Machine describe.
             await describeRead.promise;
             return { protocolVersion: 1, projection: PluginProjectionV2Schema.parse({ v: 2, generation: 1,
-                installedPackagesById: {}, agentsById: {}, actionsById: {}, toolsById: {}, commandsById: {},
+                installedPackagesById: {}, agentsById: {}, actionsById: {},
                 resourcesById: {}, settingsById: {}, familiesById: {}, diagnostics: [] }) };
         }
         if (request.method === RPC_METHODS.DAEMON_PLUGIN_UI_TARGETED_CONTRIBUTIONS_READ) {

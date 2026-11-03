@@ -1,3 +1,5 @@
+import { PluginBotTemplateContributionV1Schema } from '../plugins/contributions/botTemplates.js';
+import { createStoredReadSchema } from '../json/storedReadSchema.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod/mini';
 import semver from 'semver';
@@ -47,6 +49,7 @@ const ListingDisplayShapeV1 = {
 };
 const ListingSummaryShapeV1 = {
   contributions: z.array(OpaqueId),
+  botTemplates: z.optional(z.array(PluginBotTemplateContributionV1Schema)),
   requiredHostAccess: z.array(OpaqueId),
   optionalHostAccess: z.array(OpaqueId),
   executableRealms: z.array(z.enum(['daemon', 'client', 'hosted-web'])),
@@ -116,7 +119,7 @@ const MarketplaceNpmDiscoveryProjectionReaderV1Schema = lazyZodSchema(() => z.ob
   pluginId: asProtocolZod(PluginIdSchema),
   manifestDigest: ManifestDigest,
   display: z.object(ListingDisplayShapeV1),
-  summary: z.object(ListingSummaryShapeV1),
+  summary: createStoredReadSchema(MarketplaceIndexEntryV1Schema.shape.summary),
 }));
 
 export type MarketplaceNpmDiscoveryProjectionReadV1Result =
@@ -178,6 +181,7 @@ export function createMarketplaceNpmDiscoveryProjectionV1(input: Readonly<{
       contributions: Object.entries(manifest.contributes)
         .filter(([, declaration]) => containsContributions(declaration))
         .map(([family]) => family),
+      ...(manifest.contributes.botTemplates.length > 0 ? { botTemplates: manifest.contributes.botTemplates } : {}),
       requiredHostAccess: manifest.hostAccess.required.map((request) => request.id),
       optionalHostAccess: manifest.hostAccess.optional.map((request) => request.id),
       executableRealms: executableRealmOrder.filter((realm) => executableRealms.has(realm)),
@@ -266,7 +270,7 @@ export type MarketplaceIndexSourceSnapshotV1 = z.infer<typeof MarketplaceIndexSo
 const MarketplaceIndexSourceSnapshotReaderV1Schema = lazyZodSchema(() => z.safeExtend(MarketplaceIndexSourceSnapshotV1Schema, {
   entries: z.array(z.extend(MarketplaceIndexEntryV1Schema, {
     display: (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: undefined }) as z.ZodMiniObject<T['shape'], z.core.$strip>)(MarketplaceIndexEntryV1Schema.shape.display),
-    summary: (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: undefined }) as z.ZodMiniObject<T['shape'], z.core.$strip>)(MarketplaceIndexEntryV1Schema.shape.summary),
+    summary: createStoredReadSchema(MarketplaceIndexEntryV1Schema.shape.summary),
     links: (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: undefined }) as z.ZodMiniObject<T['shape'], z.core.$strip>)(MarketplaceIndexEntryV1Schema.shape.links),
   })),
 }));
@@ -476,3 +480,11 @@ export const MarketplaceIndexQueryResultV1Schema = lazyZodSchema(() => z.strictO
   diagnostics: z.array(MarketplaceDiagnosticV1Schema),
 }));
 export type MarketplaceIndexQueryResultV1 = z.infer<typeof MarketplaceIndexQueryResultV1Schema>;
+
+export function marketplaceNpmContributionKeywordV1(family: string): string {
+  return `happier-plugin-contribution-${family.toLowerCase()}`;
+}
+
+export function deriveMarketplaceNpmDiscoveryKeywordsV1(projection: MarketplaceNpmDiscoveryProjectionV1): readonly string[] {
+  return ['happier-plugin', ...projection.summary.contributions.map(marketplaceNpmContributionKeywordV1)];
+}

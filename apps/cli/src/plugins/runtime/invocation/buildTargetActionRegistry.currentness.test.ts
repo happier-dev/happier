@@ -154,8 +154,6 @@ function registry(params: Readonly<{
 }>): ResolvedContributionRegistry {
     return createResolvedContributionRegistry({
         actions: params.actions,
-        commands: [],
-        tools: [],
         resources: [],
         activationTargets: params.activationTargets,
     });

@@ -119,7 +119,7 @@ const reviewAgentProjection = PluginProjectionV2Schema.parse({ v: 2, generation:
     agentsById: { claude: { id: 'claude', title: 'Claude', identity: BUNDLED_AGENT_CONTRIBUTION_IDENTITIES.claude,
         providerRequirements: BUNDLED_CANONICAL_AGENT_DECLARATIONS.claude?.providerRequirements,
         capabilities: { surfaces: [], sessions: { open: ['create', 'resume'], delivery: ['newTurn'], cancel: true } },
-    } }, actionsById: {}, familiesById: {}, toolsById: {}, commandsById: {}, resourcesById: {}, settingsById: {}, diagnostics: [] });
+    } }, actionsById: {}, familiesById: {},   resourcesById: {}, settingsById: {}, diagnostics: [] });
 
 const supportedCapabilities = capabilityResponse({ secretReferenceOverlay: true, runScopedAgentBindings: true });
 

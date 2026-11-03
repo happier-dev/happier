@@ -52,7 +52,7 @@ let accountConnection: Awaited<ReturnType<typeof restoreServerAccountForTest>> |
 function describeAgent(agentId: string) {
   return DaemonContributionRegistryProjectionDescribeResponseSchema.parse({ protocolVersion: 1,
     projection: PluginProjectionV2Schema.parse({ v: 2, generation: 1,
-      installedPackagesById: {}, actionsById: {}, toolsById: {}, commandsById: {}, resourcesById: {}, settingsById: {}, familiesById: {}, diagnostics: [],
+      installedPackagesById: {}, actionsById: {},   resourcesById: {}, settingsById: {}, familiesById: {}, diagnostics: [],
       agentsById: { [agentId]: { id: agentId, identity: { pluginId: 'acme.voice', localId: 'agent' }, title: 'Acme Agent',
         connectedAccounts: [{ purpose: 'models', service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, credentialKinds: ['oauth'] }] } },
     }),

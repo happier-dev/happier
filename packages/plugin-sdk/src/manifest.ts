@@ -1,3 +1,4 @@
+import type { BackupDestinationContributionV1 } from './backupDestinations.js';
 import type { PluginSecretSourceContributionV1 } from '@happier-dev/protocol/plugins/contributions/public-types';
 import type { DeploymentTargetContributionV1 } from './deploymentTargets.js';
 import type { HealthCheckKindContributionV1 } from './healthCheckKinds.js';
@@ -90,6 +91,11 @@ export type PluginLanguageServerContributionV1 = Readonly<{
 }>;
 
 /** Read-only packaged skill; metadata is derived from its SKILL.md. */
+export type PluginBotTemplateContributionV1 = Readonly<{
+  id: PluginContributionLocalId;
+  path: string;
+}>;
+
 export type PluginSkillContributionV1 = Readonly<{
   id: PluginContributionLocalId;
   directory: string;
@@ -559,8 +565,6 @@ export interface PluginManifest {
   }>[];
   readonly contributes?: Readonly<{
     [TKey in
-      | 'commands'
-      | 'tools'
       | 'resources'
       | 'transcriptActivities'
       | 'sessionInfoSections'
@@ -594,7 +598,8 @@ export interface PluginManifest {
   } & {
     machineProvisioners?: readonly MachineProvisionerContributionV1[];
     accessProviders?: readonly AccessProviderContributionV1[];
-    deploymentTargets?: readonly DeploymentTargetContributionV1[];
+    backupDestinations?: readonly BackupDestinationContributionV1[];
+deploymentTargets?: readonly DeploymentTargetContributionV1[];
     healthCheckKinds?: readonly HealthCheckKindContributionV1[];
     storeKinds?: readonly StoreKindContributionV1[];
     machineRecipes?: readonly MachineRecipeV1[];
@@ -635,6 +640,9 @@ export interface PluginManifest {
     }> & Readonly<{
       inputSchema?: PluginJsonSchema | null;
       resultSchema?: PluginJsonSchema | null;
+      tool?: PluginActionDeclaration['tool'];
+      cli?: PluginActionDeclaration['cli'];
+      toolExposure?: PluginActionDeclaration['toolExposure'];
       readOnly?: PluginActionDeclaration['readOnly'];
       surfaces: readonly string[];
       confirmVerb?: PluginLocalizedStringV2;
@@ -646,7 +654,8 @@ export interface PluginManifest {
     atmospherePictures?: readonly PluginAtmospherePictureContributionV1[];
     registrySources?: readonly PluginRegistrySourceContributionV1[];
     languageServers?: readonly PluginLanguageServerContributionV1[];
-    skills?: readonly PluginSkillContributionV1[];
+    botTemplates?: readonly PluginBotTemplateContributionV1[];
+skills?: readonly PluginSkillContributionV1[];
     dragSources?: readonly PluginDragSourceContributionV1[];
     workItems?: readonly PluginWorkItemsContributionV1[];
     dropTargets?: readonly PluginDropTargetContributionV1[];
@@ -743,7 +752,8 @@ export interface PluginManifest {
 export type PluginContributes = Readonly<{
   machineProvisioners: readonly MachineProvisionerContributionV1[];
   accessProviders: readonly AccessProviderContributionV1[];
-  deploymentTargets: readonly DeploymentTargetContributionV1[];
+  backupDestinations: readonly BackupDestinationContributionV1[];
+deploymentTargets: readonly DeploymentTargetContributionV1[];
   healthCheckKinds: readonly HealthCheckKindContributionV1[];
   storeKinds: readonly StoreKindContributionV1[];
   machineRecipes: readonly MachineRecipeV1[];
@@ -759,14 +769,17 @@ export type PluginContributes = Readonly<{
     execution: PluginActionExecutionV2;
     inputSchema?: PluginJsonSchema;
     resultSchema?: PluginJsonSchema;
-    readOnly?: PluginActionDeclaration['readOnly'];
+    tool?: PluginActionDeclaration['tool'];
+      cli?: PluginActionDeclaration['cli'];
+      toolExposure?: PluginActionDeclaration['toolExposure'];
+      readOnly?: PluginActionDeclaration['readOnly'];
     surfaces: readonly string[];
     dangerLevel: string;
     confirmVerb?: PluginLocalizedStringV2;
     irreversible?: true;
   }>)[];
-  commands: NonNullable<NonNullable<PluginManifest['contributes']>['commands']>;
-  tools: NonNullable<NonNullable<PluginManifest['contributes']>['tools']>;
+
+
   resources: NonNullable<NonNullable<PluginManifest['contributes']>['resources']>;
   transcriptActivities: NonNullable<NonNullable<PluginManifest['contributes']>['transcriptActivities']>;
   sessionInfoSections: NonNullable<NonNullable<PluginManifest['contributes']>['sessionInfoSections']>;
@@ -780,7 +793,8 @@ export type PluginContributes = Readonly<{
   atmospherePictures: NonNullable<NonNullable<PluginManifest['contributes']>['atmospherePictures']>;
   registrySources: NonNullable<NonNullable<PluginManifest['contributes']>['registrySources']>;
   languageServers: NonNullable<NonNullable<PluginManifest['contributes']>['languageServers']>;
-  skills: NonNullable<NonNullable<PluginManifest['contributes']>['skills']>;
+  botTemplates: NonNullable<NonNullable<PluginManifest['contributes']>['botTemplates']>;
+skills: NonNullable<NonNullable<PluginManifest['contributes']>['skills']>;
   dragSources: NonNullable<NonNullable<PluginManifest['contributes']>['dragSources']>;
   workItems: NonNullable<NonNullable<PluginManifest['contributes']>['workItems']>;
   dropTargets: NonNullable<NonNullable<PluginManifest['contributes']>['dropTargets']>;

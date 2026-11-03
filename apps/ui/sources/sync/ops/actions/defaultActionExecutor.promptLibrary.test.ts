@@ -742,7 +742,7 @@ describe('createDefaultActionExecutor (prompt library routing)', () => {
         storage.setState({ machines: { [machine.id]: machine }, machineListByServerId: { [account.serverId]: [machine] } });
         const projection = normalizePluginUiProjection(PluginProjectionV2Schema.parse({ v: 2, generation: 1,
             installedPackagesById: { [pluginId]: { id: pluginId, displayName: 'Acme Skills', version: '1.0.0', enabled: true, occurrenceId: 'acme-runtime', executionOrigin: originFor(sourceMachineId), source: { kind: 'path', locator: '/plugins/acme' } } },
-            agentsById: {}, actionsById: {}, toolsById: {}, commandsById: {}, resourcesById: {}, settingsById: {}, diagnostics: [],
+            agentsById: {}, actionsById: {},   resourcesById: {}, settingsById: {}, diagnostics: [],
             familiesById: { skills: { family: 'skills', entriesById: Object.fromEntries(pluginSkills.map((skill, index) => {
                 const id = skill.skillId.slice('plugin:'.length);
                 return [id, { id, pluginId, pluginVersion: '1.0.0', occurrenceId: 'acme-runtime', executionOrigin: originFor(sourceMachineId), definition: { id: ['check', 'review'][index], directory: `./skills/${index}` } }];

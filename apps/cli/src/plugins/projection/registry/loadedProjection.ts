@@ -13,7 +13,6 @@ import type {
     ResolvedAccountCollectionContribution,
     ResolvedBrowserActionContribution,
     ResolvedBrowserTargetContribution,
-    ResolvedCommandContribution,
     ResolvedConnectedAccountDescriptorContribution,
     ResolvedContributionInputs,
     ResolvedPluginEnablement,
@@ -49,7 +48,6 @@ import type {
     ResolvedTranscriptActivityContribution,
     ResolvedSessionInfoSectionContribution,
     ResolvedSystemToolContribution,
-    ResolvedToolContribution,
     ResolvedUiRendererV2Contribution,
     ResolvedUiSettingsGroupV2Contribution,
     ResolvedUiSettingsPageV2Contribution,
@@ -89,19 +87,7 @@ type PluginResolvedActionContribution = ResolvedActionContribution & Readonly<{
     daemonEntryPath: string | null;
 }>;
 
-type PluginResolvedToolContribution = ResolvedToolContribution & Readonly<{
-    provenance: ResolvedContributionProvenance;
-    pluginId: string;
-    manifestPath: string;
-    daemonEntryPath: string | null;
-}>;
 
-type PluginResolvedCommandContribution = ResolvedCommandContribution & Readonly<{
-    provenance: ResolvedContributionProvenance;
-    pluginId: string;
-    manifestPath: string;
-    daemonEntryPath: string | null;
-}>;
 
 type PluginResolvedResourceContribution = ResolvedResourceContribution & Readonly<{
     provenance: ResolvedContributionProvenance;
@@ -280,8 +266,6 @@ export function projectLoadedPluginRegistry(
     const agentCandidates: ResolvedAgentContribution[] = [];
     const providerCandidates: PluginResolvedProviderContribution[] = [];
     const actionCandidates: PluginResolvedActionContribution[] = [];
-    const toolCandidates: PluginResolvedToolContribution[] = [];
-    const commandCandidates: PluginResolvedCommandContribution[] = [];
     const resourceCandidates: PluginResolvedResourceContribution[] = [];
     const promptAssetCandidates: PluginResolvedPromptAssetContribution[] = [];
     const sessionHeaderActionCandidates: PluginResolvedSessionHeaderActionContribution[] = [];
@@ -572,31 +556,7 @@ export function projectLoadedPluginRegistry(
         });
     }
 
-    for (const contribution of pluginRegistry.tools) {
-        toolCandidates.push({
-            provenance: params.provenance,
-            source: { kind: contribution.sourceSpec.kind },
-            pluginId: contribution.pluginId,
-            manifestPath: contribution.manifestPath,
-            daemonEntryPath: contribution.daemonEntryPath,
-            devDaemonEntryPath: contribution.devDaemonEntryPath,
-            sourceSpec: contribution.sourceSpec,
-            definition: contribution.definition,
-        });
-    }
 
-    for (const contribution of pluginRegistry.commands) {
-        commandCandidates.push({
-            provenance: params.provenance,
-            source: { kind: contribution.sourceSpec.kind },
-            pluginId: contribution.pluginId,
-            manifestPath: contribution.manifestPath,
-            daemonEntryPath: contribution.daemonEntryPath,
-            devDaemonEntryPath: contribution.devDaemonEntryPath,
-            sourceSpec: contribution.sourceSpec,
-            definition: contribution.definition,
-        });
-    }
 
     for (const contribution of pluginRegistry.resources) {
         resourceCandidates.push({
@@ -1023,8 +983,6 @@ export function projectLoadedPluginRegistry(
         agents: Object.freeze(agents),
         providers: Object.freeze(providerCandidates),
         actions: Object.freeze(actionCandidates),
-        tools: Object.freeze(toolCandidates),
-        commands: Object.freeze(commandCandidates),
         resources: Object.freeze(resourceCandidates),
         promptAssets: Object.freeze(promptAssetCandidates),
         sessionHeaderActions: Object.freeze(sessionHeaderActionCandidates),

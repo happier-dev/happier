@@ -153,8 +153,8 @@ function currentParticipantDaemonProjection(entriesById: Readonly<Record<string,
         installedPackagesById: {},
         agentsById: {},
         actionsById: {},
-        toolsById: {},
-        commandsById: {},
+
+
         resourcesById: {},
         settingsById: {},
         familiesById: {

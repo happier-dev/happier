@@ -269,8 +269,8 @@ function projectionInputs(
                     available: true,
                 },
             },
-            toolsById: {},
-            commandsById: {},
+
+
             resourcesById: {},
             settingsById: {},
             familiesById: {},

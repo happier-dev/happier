@@ -12,7 +12,7 @@ import type {
     ResolvedAccountCollectionContribution,
     ResolvedBrowserActionContribution,
     ResolvedBrowserTargetContribution,
-    ResolvedCommandContribution,
+
     ResolvedConnectedAccountDescriptorContribution,
     ResolvedContributionInputs,
     ResolvedContributionRegistry,
@@ -39,7 +39,7 @@ import type {
     ResolvedTranscriptActivityContribution,
     ResolvedStructuredMessageContribution,
     ResolvedSystemToolContribution,
-    ResolvedToolContribution,
+
     ResolvedComposerReferenceContribution,
     ResolvedSearchProviderContribution,
     ResolvedComposerAttachmentContribution,
@@ -198,8 +198,8 @@ export function createResolvedContributionRegistry(inputs: ResolvedContributionI
     const agentDefinitionsById = new Map<string, ResolvedAgentContribution>();
     const standaloneCatalogEntries = Object.freeze([...(inputs.catalogEntries ?? [])]);
     const actions = Object.freeze([...(inputs.actions ?? [])].sort(compareActionContributes));
-    const tools = Object.freeze([...(inputs.tools ?? [])].sort(compareToolContributes));
-    const commands = Object.freeze([...(inputs.commands ?? [])].sort(compareCommandContributes));
+
+
     const resources = Object.freeze([...(inputs.resources ?? [])].sort(compareResourceContributes));
     const promptAssets = Object.freeze([...(inputs.promptAssets ?? [])].sort(comparePromptAssetContributes));
     const structuredMessages = Object.freeze([...(inputs.structuredMessages ?? [])].sort(compareStructuredMessageContributes));
@@ -290,8 +290,8 @@ export function createResolvedContributionRegistry(inputs: ResolvedContributionI
     }
     const activationTargets = Object.freeze([...(inputs.activationTargets ?? [])].sort(compareActivationTargets));
     const actionsById = new Map<string, ResolvedActionContribution>();
-    const toolsById = new Map<string, ResolvedToolContribution>();
-    const commandsById = new Map<string, ResolvedCommandContribution>();
+
+
     const resourcesById = new Map<string, ResolvedResourceContribution>();
     const promptAssetsById = new Map<string, ResolvedPromptAssetContribution>();
     const structuredMessagesById = new Map<string, ResolvedStructuredMessageContribution>();
@@ -342,21 +342,9 @@ export function createResolvedContributionRegistry(inputs: ResolvedContributionI
         actionsById.set(key, action);
     }
 
-    for (const tool of tools) {
-        const key = resolveContributionRegistryKey(tool);
-        if (toolsById.has(key)) {
-            throw new Error(`Duplicate tool contribution '${key}'`);
-        }
-        toolsById.set(key, tool);
-    }
 
-    for (const command of commands) {
-        const key = resolveContributionRegistryKey(command);
-        if (commandsById.has(key)) {
-            throw new Error(`Duplicate command contribution '${key}'`);
-        }
-        commandsById.set(key, command);
-    }
+
+
 
     for (const resource of resources) {
         const key = resolveContributionRegistryKey(resource);
@@ -515,8 +503,8 @@ export function createResolvedContributionRegistry(inputs: ResolvedContributionI
         agents: inputAgents,
         providers,
         actions,
-        tools,
-        commands,
+
+
         resources,
         promptAssets,
         structuredMessages,
@@ -568,8 +556,8 @@ export function createResolvedContributionRegistry(inputs: ResolvedContributionI
         immutableGenerationIdsByPluginId,
         occurrenceIdsByPluginId,
         actionsById: Object.freeze(actionsById),
-        toolsById: Object.freeze(toolsById),
-        commandsById: Object.freeze(commandsById),
+
+
         resourcesById: Object.freeze(resourcesById),
         promptAssetsById: Object.freeze(promptAssetsById),
         structuredMessagesById: Object.freeze(structuredMessagesById),
@@ -1021,8 +1009,8 @@ export function createMergedContributionRegistry(
         providers: Object.freeze([...(builtIn.providers ?? []), ...(plugin.providers ?? [])]),
         catalogEntries: Object.freeze([...(builtIn.catalogEntries ?? []), ...(plugin.catalogEntries ?? [])]),
         actions: Object.freeze([...(builtIn.actions ?? []), ...(plugin.actions ?? [])]),
-        tools: Object.freeze([...(builtIn.tools ?? []), ...(plugin.tools ?? [])]),
-        commands: Object.freeze([...(builtIn.commands ?? []), ...(plugin.commands ?? [])]),
+
+
         resources: Object.freeze([...(builtIn.resources ?? []), ...(plugin.resources ?? [])]),
         promptAssets: Object.freeze([...(builtIn.promptAssets ?? []), ...(plugin.promptAssets ?? [])]),
         uiViewsV2: Object.freeze([...(builtIn.uiViewsV2 ?? []), ...(plugin.uiViewsV2 ?? [])]),
@@ -1152,29 +1140,9 @@ function compareActionContributes(left: ResolvedActionContribution, right: Resol
     return (left.manifestPath ?? '').localeCompare(right.manifestPath ?? '');
 }
 
-function compareToolContributes(left: ResolvedToolContribution, right: ResolvedToolContribution): number {
-    if (left.definition.id !== right.definition.id) {
-        return left.definition.id.localeCompare(right.definition.id);
-    }
-    const leftPluginId = left.pluginId ?? '';
-    const rightPluginId = right.pluginId ?? '';
-    if (leftPluginId !== rightPluginId) {
-        return leftPluginId.localeCompare(rightPluginId);
-    }
-    return (left.manifestPath ?? '').localeCompare(right.manifestPath ?? '');
-}
 
-function compareCommandContributes(left: ResolvedCommandContribution, right: ResolvedCommandContribution): number {
-    if (left.definition.id !== right.definition.id) {
-        return left.definition.id.localeCompare(right.definition.id);
-    }
-    const leftPluginId = left.pluginId ?? '';
-    const rightPluginId = right.pluginId ?? '';
-    if (leftPluginId !== rightPluginId) {
-        return leftPluginId.localeCompare(rightPluginId);
-    }
-    return (left.manifestPath ?? '').localeCompare(right.manifestPath ?? '');
-}
+
+
 
 function compareResourceContributes(left: ResolvedResourceContribution, right: ResolvedResourceContribution): number {
     if (left.definition.id !== right.definition.id) {

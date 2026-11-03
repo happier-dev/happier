@@ -1143,8 +1143,8 @@ beforeEach(async () => {
             installedPackagesById: {},
             agentsById: {},
             actionsById: {},
-            toolsById: {},
-            commandsById: {},
+
+
             resourcesById: {},
             diagnostics: [],
         },
@@ -1421,8 +1421,8 @@ describe('PluginSettingsHomeScreen', () => {
                 },
                 agentsById: {},
                 actionsById: {},
-                toolsById: {},
-                commandsById: {},
+
+
                 resourcesById: {},
                 diagnostics: [createPluginDiagnosticRecord({
                     id: 'com.acme.installed-plugin:normalization:capability-missing:0',
@@ -2178,7 +2178,7 @@ describe('PluginSettingsHomeScreen', () => {
 
         machineContributionRegistryProjectionDescribeMock.mockResolvedValue({
             supported: true,
-            projection: { v: 2, generation: 1, installedPackagesById: {}, agentsById: {}, actionsById: {}, toolsById: {}, commandsById: {}, resourcesById: {}, settingsById: {}, familiesById: {}, diagnostics: [] },
+            projection: { v: 2, generation: 1, installedPackagesById: {}, agentsById: {}, actionsById: {},   resourcesById: {}, settingsById: {}, familiesById: {}, diagnostics: [] },
         });
         await act(async () => {
             screen.pressRow('settings.plugins.marketplace.readOnlySnapshot-retry');
@@ -2233,7 +2233,7 @@ describe('PluginSettingsHomeScreen', () => {
             }
             return {
                 supported: true,
-                projection: { v: 2, generation: 1, installedPackagesById: {}, agentsById: {}, actionsById: {}, toolsById: {}, commandsById: {}, resourcesById: {}, settingsById: {}, familiesById: {}, diagnostics: [] },
+                projection: { v: 2, generation: 1, installedPackagesById: {}, agentsById: {}, actionsById: {},   resourcesById: {}, settingsById: {}, familiesById: {}, diagnostics: [] },
             };
         });
 
@@ -2397,8 +2397,8 @@ describe('PluginSettingsHomeScreen', () => {
                 },
                 agentsById: {},
                 actionsById: {},
-                toolsById: {},
-                commandsById: {},
+
+
                 resourcesById: {},
                 diagnostics: [],
             },
@@ -2487,8 +2487,8 @@ describe('PluginSettingsHomeScreen', () => {
                         available: true,
                     },
                 },
-                toolsById: {},
-                commandsById: {},
+
+
                 resourcesById: {
                     'com.acme.installed-plugin.prompt': {
                         id: 'com.acme.installed-plugin.prompt',
@@ -3159,8 +3159,8 @@ describe('PluginSettingsHomeScreen', () => {
                 },
                 agentsById: {},
                 actionsById: {},
-                toolsById: {},
-                commandsById: {},
+
+
                 resourcesById: {},
                 settingsById: {
                     'acme.hooks.settings': {
@@ -3438,8 +3438,8 @@ describe('PluginSettingsHomeScreen', () => {
                 },
                 agentsById: {},
                 actionsById: {},
-                toolsById: {},
-                commandsById: {},
+
+
                 resourcesById: {},
                 diagnostics: [],
             },
@@ -3486,8 +3486,8 @@ describe('PluginSettingsHomeScreen', () => {
                 },
                 agentsById: {},
                 actionsById: {},
-                toolsById: {},
-                commandsById: {},
+
+
                 resourcesById: {},
                 diagnostics: [],
             },
@@ -3555,8 +3555,8 @@ describe('PluginSettingsHomeScreen', () => {
                         },
                         agentsById: {},
                         actionsById: {},
-                        toolsById: {},
-                        commandsById: {},
+
+
                         resourcesById: {},
                         diagnostics: [],
                     },
@@ -3769,8 +3769,8 @@ describe('PluginSettingsHomeScreen', () => {
                 }>>>;
                 agentsById: Record<string, never>;
                 actionsById: Record<string, never>;
-                toolsById: Record<string, never>;
-                commandsById: Record<string, never>;
+
+
                 resourcesById: Record<string, never>;
                 diagnostics: readonly [];
             }>;
@@ -3825,8 +3825,8 @@ describe('PluginSettingsHomeScreen', () => {
                 },
                 agentsById: {},
                 actionsById: {},
-                toolsById: {},
-                commandsById: {},
+
+
                 resourcesById: {},
                 diagnostics: [],
             },
@@ -3873,8 +3873,8 @@ describe('PluginSettingsHomeScreen', () => {
                 },
                 agentsById: {},
                 actionsById: {},
-                toolsById: {},
-                commandsById: {},
+
+
                 resourcesById: {},
                 diagnostics: [
                     createPluginDiagnosticRecord({
@@ -4047,8 +4047,8 @@ describe('PluginSettingsHomeScreen', () => {
                 },
                 agentsById: {},
                 actionsById: {},
-                toolsById: {},
-                commandsById: {},
+
+
                 resourcesById: {},
                 diagnostics: [],
             },

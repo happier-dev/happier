@@ -131,8 +131,8 @@ function channelsProjectionFromDaemonEntry(): PluginUiProjectionModel {
         installedPackagesById: {},
         agentsById: {},
         actionsById: {},
-        toolsById: {},
-        commandsById: {},
+
+
         resourcesById: {},
         settingsById: {},
         familiesById: {
