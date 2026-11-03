@@ -26,7 +26,8 @@ import { createGithubRepositoryProvisioningAdapter } from '../../../scm-github/s
 import { createGithubScmHostingProviderAdapter, githubHostingProviderAdapter, GITHUB_SCM_HOSTING_PROVIDER_ID } from '../../../scm-github/src/adapter.js';
 import { PLUGIN_MANIFEST as GITHUB_PLUGIN_MANIFEST } from '../../../scm-github/src/manifest.js';
 import { createScmHostingProviderRegistry } from '../../../../../apps/cli/src/scm/hostingProviders/registry';
-import { snapshotScmHostingProviderRuntime } from '../../../../plugin-sdk/src/host/registration/staticRegistrationSnapshots.js';
+import { createPluginTestkit, type PluginTestkitOptions, type PluginTestkitRegistrationByFamily } from '@happier-dev/plugin-sdk/testing';
+import { definePlugin } from '@happier-dev/plugin-sdk';
 import { PLUGIN_MANIFEST as AZURE_PLUGIN_MANIFEST } from '../../../scm-azure-devops/src/manifest.js';
 import { azureDevopsOperationsAdapter } from '../../../scm-azure-devops/src/operations/azureDevopsAdapter.js';
 import { PLUGIN_MANIFEST as BITBUCKET_PLUGIN_MANIFEST } from '../../../scm-bitbucket/src/manifest.js';
@@ -59,6 +60,26 @@ const context: ScmBackendContext = {
         mode: '.git',
     },
 };
+
+async function captureHostingProviderRuntime(
+    manifest: PluginTestkitOptions['manifest'],
+    localId: string,
+    runtime: PluginTestkitRegistrationByFamily['scmHostingProviders'],
+) {
+    const declaration = manifest.contributes?.scmHostingProviders?.find(provider => provider.id === localId);
+    if (!declaration) throw new Error('Hosting provider declaration missing');
+    // Capture the supplied real adapter through public authoring. The registry
+    // below still consumes the forge's complete, actual provider declaration.
+    const authored = definePlugin({ id: manifest.id, version: manifest.version, scmHostingProviders: {
+        [localId]: { declaration: { kind: declaration.kind, title: declaration.title, capabilities: declaration.capabilities }, runtime },
+    } });
+    const plugin = await createPluginTestkit({ manifest: authored.manifest, module: authored });
+    try {
+        const captured = plugin.registration('scmHostingProviders', localId);
+        if (!captured) throw new Error('Hosting provider registration missing');
+        return captured;
+    } finally { await plugin.dispose(); }
+}
 
 function git(cwd: string, args: readonly string[]): string {
     return execFileSync('git', [...args], {
@@ -233,7 +254,7 @@ describe('git hosting repository publish operation', { timeout: 20_000 }, () => 
             providers: [{ ...definition, pluginId: fixture.manifest.id,
                 displayName: typeof title === 'string' ? title : title.fallback }],
             runtimeRegistrations: [{ pluginId: fixture.manifest.id, occurrenceId: 'fixture', registration: {
-                id: declaration.id, ...snapshotScmHostingProviderRuntime({
+                id: declaration.id, ...await captureHostingProviderRuntime(fixture.manifest, declaration.id, {
                     adapter: { routing: fixture.adapter, repositoryPublishing: fixture.adapter },
                 }),
             } }],
@@ -291,7 +312,7 @@ describe('git hosting repository publish operation', { timeout: 20_000 }, () => 
             providers: [{ ...definition, pluginId: GITHUB_PLUGIN_MANIFEST.id,
                 displayName: typeof title === 'string' ? title : title.fallback }],
             runtimeRegistrations: [{ pluginId: GITHUB_PLUGIN_MANIFEST.id, occurrenceId: 'fixture',
-                registration: { id: declaration.id, ...snapshotScmHostingProviderRuntime({ adapter: { routing: githubHostingProviderAdapter,
+                registration: { id: declaration.id, ...await captureHostingProviderRuntime(GITHUB_PLUGIN_MANIFEST, declaration.id, { adapter: { routing: githubHostingProviderAdapter,
                     repositoryPublishing: createGithubRepositoryProvisioningAdapter({ restAdapter }) } }) } }],
             configuredDeploymentsByProviderId: new Map([[GITHUB_SCM_HOSTING_PROVIDER_ID,
                 { bases: ['https://ghe.example.com'], status: 'complete' }]]),
