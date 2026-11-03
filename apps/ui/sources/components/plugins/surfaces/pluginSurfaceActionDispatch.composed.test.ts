@@ -75,7 +75,9 @@ import { createActionOperationRunner } from '../../../../../cli/src/daemon/actio
 import { createActionOperationStore } from '../../../../../cli/src/daemon/actionOperations/actionOperationStore';
 import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { NotificationsNotifyMeResultV1Schema } from '@happier-dev/protocol/account/notifications/notifyMeV1';
-import { DocCollaborationActionOutputSchemasV1 } from '@happier-dev/protocol/artifacts/artifactCollaborationActionsV1';
+import { DOC_EDIT_PROPOSAL_HTTP_PATHS_V1, DocCollaborationActionOutputSchemasV1,
+    DocEditAcceptTransportInputV1Schema, DocEditDeclineTransportInputV1Schema,
+    DocEditDecisionResultV1Schema } from '@happier-dev/protocol/artifacts/artifactCollaborationActionsV1';
 import { captureDocPassageV1 } from '@happier-dev/protocol/artifacts/artifactPassageV1';
 import { DiscussionReadResultV1Schema } from '@happier-dev/protocol/discussions/actions';
 import { externalAuthoringPlugin, readExternalDoc, commentOnExternalDoc, proposeExternalDocEdit,
@@ -1460,9 +1462,13 @@ async function runMountedHomeApproval(custody: PluginSourceCustodyV1, retireBefo
             stored = ApprovalRequestV2Schema.parse(request);
             return { ok: true as const };
         },
-        isApprovalExecutionOriginCurrent: async ({ origin }) => origin.caller.kind === 'plugin'
-            && origin.caller.pluginId === CALLER_PLUGIN_ID
-            && pluginSourceCustodyV1Equal(origin.caller.sourceCustody, currentCustody),
+        isApprovalExecutionOriginCurrent: async ({ origin, reportStale }) => {
+            const current = origin.caller.kind === 'plugin'
+                && origin.caller.pluginId === CALLER_PLUGIN_ID
+                && pluginSourceCustodyV1Equal(origin.caller.sourceCustody, currentCustody);
+            if (!current) reportStale?.('origin_version');
+            return current;
+        },
     } satisfies Partial<ActionExecutorDeps>;
     // This boundary fixture intentionally omits unrelated Session/Agent ports; only the exercised external ports are supplied.
     const executor = createActionExecutor(deps as unknown as ActionExecutorDeps);
@@ -2967,14 +2973,15 @@ describe('plugin-surface action branch selection', () => {
 
     it('honors explicit Home approval over a plugin waiver and refuses retired source custody at replay', async () => {
         const result = await runMountedHomeApproval(TARGET_SOURCE_CUSTODY, true);
-        expect(result.decision).toMatchObject({ ok: true, result: {
-            status: 'failed', execution: { ok: false, errorCode: 'approval_stale' },
-        } });
+        expect(result.decision).toMatchObject({ ok: false, effectAttempted: false,
+            errorCode: 'approval_stale', details: { reason: 'origin_version' },
+        });
         expect(result.effects).toEqual([]);
         expect(result.stored()).toMatchObject({
-            status: 'failed', execution: { errorCode: 'approval_stale' },
+            status: 'approved',
             executionOriginV1: { caller: { sourceCustody: TARGET_SOURCE_CUSTODY } },
         });
+        expect(result.stored()?.execution).toBeUndefined();
     });
 
     it('routes a plugin-surfaced ActionSpec id to the host executor with the host-stamped caller', async () => {
@@ -4933,6 +4940,35 @@ describe('external author Doc collaboration through physical SDK carriers', () =
             ...(mode === 'e2ee' ? { credentials: { token: createAccountTokenForTests('alice', { currentAccount: true }),
                 secret: Buffer.from(new Uint8Array(32).fill(24)).toString('base64url') } } : {}) });
         const network = answerDiscussionThreadForTests(homes, serverId, { mode, loseCreate: false, loseFirstRejoin: false });
+        // Only the Home HTTP decision boundary is substituted. Proposal lookup,
+        // acceptance preparation, encryption and Action policy remain real.
+        for (const decision of ['accept', 'decline'] as const) {
+            homes.answer(serverId, `POST ${DOC_EDIT_PROPOSAL_HTTP_PATHS_V1[decision]}`, { select: input => {
+                const accepting = decision === 'accept' ? DocEditAcceptTransportInputV1Schema.parse(input) : null;
+                const request = accepting ?? DocEditDeclineTransportInputV1Schema.parse(input);
+                const message = network.messages.find(row => row.id === request.proposalRef.messageId
+                    && row.discussionId === request.proposalRef.discussion.discussionId);
+                if (!message?.docEditProposalDispositionV1) return { status: 404, body: { error: 'not_found' } };
+                if (message.docEditProposalDispositionV1.state === 'open') {
+                    const decidedBy = { accountId: 'alice', atMs: 20 };
+                    if (accepting) {
+                        expect(accepting.preparation).toBeDefined();
+                        const preparation = accepting.preparation!;
+                        const store = homes.artifacts(serverId);
+                        const artifact = store.read(preparation.doc.ref.artifactId)!;
+                        expect(preparation.doc.revision).toEqual({ headerVersion: artifact.headerVersion, bodyVersion: artifact.bodyVersion });
+                        // updateArtifactTx clears old revision provenance when
+                        // a body write supplies no replacement attribution.
+                        store.replaceStoredRow({ ...artifact, body: preparation.body, bodyVersion: artifact.bodyVersion! + 1,
+                            provenance: null, seq: artifact.seq + 1, updatedAt: artifact.updatedAt + 1 });
+                        message.docEditProposalDispositionV1 = { state: 'accepted', decidedBy,
+                            acceptedRevision: { headerVersion: artifact.headerVersion, bodyVersion: artifact.bodyVersion! + 1 } };
+                    } else message.docEditProposalDispositionV1 = { state: 'declined', decidedBy };
+                }
+                return { body: DocEditDecisionResultV1Schema.parse({ proposalRef: request.proposalRef,
+                    docEditProposalDispositionV1: message.docEditProposalDispositionV1 }) };
+            } });
+        }
         const [{ captureLazyActionAccountContext }, { createUiArtifactAction }, { executeDiscussionActionInAccountContext },
             { createFrontDoorActionExecute }] = await Promise.all([
             import('@/sync/ops/actions/actionAccountContext'), import('@/sync/ops/actions/artifactActionDeps'),
@@ -4990,13 +5026,25 @@ describe('external author Doc collaboration through physical SDK carriers', () =
                 expect(wire).not.toContain(proposalInput.after);
             }
             expect((await readExternalDoc(carrier.api, { ref }))).toEqual({ ...read, openCommentCount: 1 });
-            const beforeDecision = homes.requests.length;
             const proposalRef = proposal.message.messageRef;
-            for (const decide of [() => requestExternalDocAcceptance(carrier.api, { proposalRef, expectedRevision: created.revision }),
-                () => requestExternalDocDecline(carrier.api, { proposalRef })]) {
-                expect(await settleComposed(decide())).toMatchObject({ settled: 'rejected', diagnostics: ['present_user_required'] });
-            }
-            expect(homes.requests.slice(beforeDecision).some(request => request.path.includes('doc-edit-proposals'))).toBe(false);
+            expect(await requestExternalDocDecline(carrier.api, { proposalRef })).toMatchObject({
+                proposalRef, docEditProposalDispositionV1: { state: 'declined' },
+            });
+            expect(homes.artifacts(serverId).read(created.artifactId)?.bodyVersion).toBe(created.revision.bodyVersion);
+            const acceptedProposal = DocCollaborationActionOutputSchemasV1['doc.edit.propose'].parse(await proposeExternalDocEdit(carrier.api, {
+                ...proposalInput, localId: 'external-accepted-proposal',
+            }));
+            expect(await requestExternalDocAcceptance(carrier.api, {
+                proposalRef: acceptedProposal.message.messageRef, expectedRevision: created.revision,
+            })).toMatchObject({ proposalRef: acceptedProposal.message.messageRef,
+                docEditProposalDispositionV1: { state: 'accepted', acceptedRevision: {
+                    headerVersion: created.revision.headerVersion, bodyVersion: created.revision.bodyVersion + 1,
+                } },
+            });
+            expect(await account.readArtifact(created.artifactId)).toMatchObject({ isDecrypted: true,
+                body: source.replace(target.quote, proposalInput.after),
+                headerVersion: created.revision.headerVersion, bodyVersion: created.revision.bodyVersion + 1,
+            });
             const cancellation = new AbortController(); cancellation.abort();
             const beforeCancellation = homes.requests.length;
             expect(await settleComposed(commentOnExternalDoc(carrier.api, { target, localId: 'cancelled',
