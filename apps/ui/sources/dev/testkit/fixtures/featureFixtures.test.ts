@@ -1,10 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import { HomeConnectionDescriptorV1Schema } from '@happier-dev/protocol/auth/accountDirectory';
 import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
+import { readServerEnabledBit } from '@happier-dev/protocol/features/serverEnabledBit';
 
 import { createRootLayoutFeaturesResponse } from './featureFixtures';
 
 describe('root layout feature fixtures', () => {
+    it('advertises current Home deployment support and preserves explicit operator opt-out', () => {
+        expect(readServerEnabledBit(createRootLayoutFeaturesResponse(), 'deployments')).toBe(true);
+        expect(readServerEnabledBit(createRootLayoutFeaturesResponse({
+            features: { deployments: { enabled: false } },
+        }), 'deployments')).toBe(false);
+    });
+
     it('preserves the advertised Home descriptor for the strict features consumer', () => {
         const descriptor = HomeConnectionDescriptorV1Schema.parse({
             v: 1, homeServerIdentityId: 'srv_feature_fixture', canonicalServerUrl: 'http://127.0.0.1:43123', revision: 1,
