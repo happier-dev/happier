@@ -13,6 +13,7 @@ import { createSessionProviderInputConsumer } from './session/input/sessionProvi
 import { resolveEffectiveCodingPromptPlan } from '@/agent/prompting/coding/resolveEffectiveCodingPrompt';
 import type { PromptPlanComposition } from '@/agent/prompting/promptComposition';
 import { TranscriptRawAgentEventV1Schema } from '@happier-dev/protocol/sessions/messages/transcriptRawRecordV1';
+import { formatFileReviewNoteV1 } from '@happier-dev/protocol/messages/structured/fileReviewNoteV1';
 
 type PlanTurn = Readonly<{
   text: string;
@@ -140,9 +141,10 @@ async function dispatchPlans(turns: readonly PlanTurn[], nativePlans?: string[],
 
 describe('session prompt-plan re-delivery', () => {
   it('sends native control bytes unchanged and retains review notes for the following ordinary input', async () => {
+    const noteText = formatFileReviewNoteV1({ action: 'discard', paths: ['app.ts'] }, 'agent');
     expect(await dispatchPlans([{ text: '/native-command', plan: '' }, { text: 'Continue', plan: '' }],
       undefined, undefined, undefined, undefined, undefined, true))
-      .toEqual(['/native-command', 'Continue\n\nReview facts']);
+      .toEqual(['/native-command', `Continue\n\n<happier_review_note>${JSON.stringify({ text: noteText })}</happier_review_note>`]);
   });
   it('retains content-free facts at the real normal dispatch without claiming an unavailable native prefix', async () => {
     const retainedEvents: unknown[] = [];

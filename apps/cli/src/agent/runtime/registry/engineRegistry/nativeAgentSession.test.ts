@@ -20,7 +20,9 @@ import { createFxConfigOptionsFixture } from '@/agent/acp/testkit/fxConfigOption
 import { applyRegisteredSessionStateFieldMutationToMetadata } from '@/api/session/client/transport/mutations/applyRegisteredSessionStateFieldMutation';
 import { resolveAgentSessionMcpLaunchConfigs, toAgentSessionMcpLaunchConfigs } from './nativeAgentSession';
 import { buildCodexAppServerConfigOverrides } from '@happier-dev/plugins-codex/agent/runtime/appServer/config/overrides';
-import { createClaudeNativeSessionRuntimeFromOperations } from '../../../../../../../packages/plugins/claude/src/agent/runtime/nativeRuntime';
+import { createCodexAgentRuntime } from '../../../../../../../packages/plugins/codex/src/agent/runtime/engine';
+import { registerCodexAppServerInteractionHandlers as registerCodexInteractions } from '../../../../../../../packages/plugins/codex/src/agent/runtime/appServer/interactions';
+import { createClaudeAgentRuntime, createClaudeNativeSessionRuntimeFromOperations } from '../../../../../../../packages/plugins/claude/src/agent/runtime/nativeRuntime';
 import { createClaudeUnifiedTerminalTurnOperations } from '../../../../../../../packages/plugins/claude/src/agent/runtime/terminal/unified/turnOperations';
 import {
     createEventsFixture as createClaudeEventsFixture,
@@ -256,29 +258,6 @@ function isProtocolJsonObject(
     value: ProtocolJsonValue,
 ): value is Readonly<Record<string, ProtocolJsonValue>> {
     return value !== null && typeof value === 'object' && !Array.isArray(value);
-}
-
-async function loadRealAgentRuntimeFactory(
-    relativeRepoPath: string,
-    exportName: string,
-): Promise<AgentRuntimeFactory> {
-    const loader = createJiti(import.meta.url, {
-        fsCache: false,
-        moduleCache: true,
-        interopDefault: false,
-    });
-    const module = await loader.import(resolve(
-        dirname(fileURLToPath(import.meta.url)),
-        '../../../../../../../',
-        relativeRepoPath,
-    )) as Readonly<Record<string, unknown>>;
-    const factory = module[exportName];
-    if (typeof factory !== 'function') {
-        throw new Error(
-            `Real Agent runtime factory export '${exportName}' is unavailable`,
-        );
-    }
-    return factory as AgentRuntimeFactory;
 }
 
 async function loadRealPluginFunction<T>(
@@ -2624,8 +2603,8 @@ describe('native Agent session host adapter', () => {
 
         expect(events).toEqual([
             'request-auth',
-            'prepare-services',
             'create-runtime',
+            'prepare-services',
             'attest-open',
             'open',
             'attest-open',
@@ -2651,8 +2630,8 @@ describe('native Agent session host adapter', () => {
         });
         expect(events).toEqual([
             'request-auth',
-            'prepare-services',
             'create-runtime',
+            'prepare-services',
             'attest-open',
             'open',
             'attest-open',
@@ -3992,7 +3971,7 @@ describe('native Agent session host adapter', () => {
             },
             configuration: {
                 mode: { value: null, updatedAtMs: 0 },
-                model: { value: 'startup-native-model', updatedAtMs: 7 },
+                model: { value: 'startup-native-model', updatedAtMs: 7, selectionSource: 'explicit' },
                 permissionIntent: { value: 'default', updatedAtMs: 0 },
                 options: {},
             },
@@ -5706,10 +5685,7 @@ describe('native Agent session host adapter', () => {
     });
 
     it('suppresses native Goal capability after a real Codex ACP open so host Goal fallback remains available', async () => {
-        const factory = await loadRealAgentRuntimeFactory(
-            'packages/plugins/codex/src/agent/runtime/engine.ts', 'createCodexAgentRuntime',
-        );
-        const runtime = await factory({ plugin: { id: 'happier.agent.codex', version: '0.0.0' },
+        const runtime = await createCodexAgentRuntime({ plugin: { id: 'happier.agent.codex', version: '0.0.0' },
             agent: { id: 'codex' }, signal: new AbortController().signal });
         if (!runtime.sessions) throw new Error('Codex runtime opens Sessions');
         const sessions = runtime.sessions;
@@ -6981,7 +6957,7 @@ describe('native Agent session host adapter', () => {
 
         expect(updateConfiguration).toHaveBeenCalledWith({
             mode: { value: null, updatedAtMs: 0 },
-            model: { value: 'next-model', updatedAtMs: expect.any(Number) },
+            model: { value: 'next-model', updatedAtMs: expect.any(Number), selectionSource: 'inherited' },
             permissionIntent: { value: null, updatedAtMs: 0 },
             options: {},
             providerBinding,
@@ -7118,7 +7094,7 @@ describe('native Agent session host adapter', () => {
             },
             configuration: {
                 mode: { value: 'default', updatedAtMs: 101 },
-                model: { value: 'model-vb4', updatedAtMs: 102 },
+                model: { value: 'model-vb4', updatedAtMs: 102, selectionSource: 'explicit' },
                 permissionIntent: { value: 'safe-yolo', updatedAtMs: 103 },
                 options: {
                     allowIndexing: { value: true, updatedAtMs: 104 },
@@ -7163,7 +7139,7 @@ describe('native Agent session host adapter', () => {
         });
         expect(updateConfiguration).toHaveBeenCalledWith({
             mode: { value: 'plan', updatedAtMs: expect.any(Number) },
-            model: { value: 'model-vb4', updatedAtMs: 102 },
+            model: { value: 'model-vb4', updatedAtMs: 102, selectionSource: 'explicit' },
             permissionIntent: { value: 'safe-yolo', updatedAtMs: 103 },
             options: {
                 allowIndexing: { value: true, updatedAtMs: 104 },
@@ -7299,7 +7275,7 @@ describe('native Agent session host adapter', () => {
             kind: 'create',
             sessionId: 'session-provider-bound',
             configuration: expect.objectContaining({
-                model: { value: 'provider-model-exact', updatedAtMs: 102 },
+                model: { value: 'provider-model-exact', updatedAtMs: 102, selectionSource: 'explicit' },
             }),
             launchEnvironment: {
                 values: { ...resolveNativeAgentLaunchEnvironment({ processEnv: process.env }).values,
@@ -8088,7 +8064,7 @@ describe('native Agent session host adapter', () => {
             kind: 'resume',
             providerSessionId: 'provider-session-attached',
             configuration: expect.objectContaining({
-                model: { value: 'attached-provider-model', updatedAtMs: 57 },
+                model: { value: 'attached-provider-model', updatedAtMs: 57, selectionSource: 'explicit' },
             }),
             providerBinding: {
                 connectionId: 'pc_attached',
@@ -9076,11 +9052,6 @@ describe('native Agent session host adapter', () => {
                 },
             });
             const agentId = 'codex';
-            const createCodexAgentRuntime =
-                await loadRealAgentRuntimeFactory(
-                    'packages/plugins/codex/src/agent/runtime/engine.ts',
-                    'createCodexAgentRuntime',
-                );
             const externalContributions =
                 createExternalContributionFixtures(agentId);
             const contributions = {
@@ -9292,11 +9263,6 @@ describe('native Agent session host adapter', () => {
             async dispose() {},
         };
         const agentId = 'claude';
-        const createClaudeAgentRuntime =
-            await loadRealAgentRuntimeFactory(
-                'packages/plugins/claude/src/agent/runtime/nativeRuntime.ts',
-                'createClaudeAgentRuntime',
-            );
         const externalContributions =
             createExternalContributionFixtures(agentId);
         const contributions = {
@@ -9734,9 +9700,6 @@ describe('native Agent session host adapter', () => {
     });
 
     it('keeps detached native questions pending across turn completion and cancels them when the Session retires', async () => {
-        const registerCodexInteractions = await loadRealPluginFunction<
-            typeof import('../../../../../../../packages/plugins/codex/src/agent/runtime/appServer/interactions').registerCodexAppServerInteractionHandlers
-        >('packages/plugins/codex/src/agent/runtime/appServer/interactions.ts', 'registerCodexAppServerInteractionHandlers');
         let capturedContext: AgentSessionRuntimeContext | null = null;
         const listeners = new Set<(event: AgentSessionRuntimeEvent) => void>();
         const runtime: AgentRuntime = { sessions: { open: async (_request, context) => {
@@ -9787,6 +9750,7 @@ describe('native Agent session host adapter', () => {
         const handleAsyncQuestion = registerCodexInteractions({
             // Only app-server method registration crosses this native transport boundary.
             client: { registerRequestHandler: () => undefined, registerNotificationHandler: () => undefined,
+                onNativeEvent: () => () => undefined,
                 onExit: () => ({ dispose() {} }) } as never,
             ui: context.services.interactions,
             getThreadId: () => 'thread-1',
@@ -9907,7 +9871,7 @@ describe('native Agent session host adapter', () => {
             },
             configuration: {
                 mode: { value: null, updatedAtMs: 0 },
-                model: { value: null, updatedAtMs: 0 },
+                model: { value: null, updatedAtMs: 0, selectionSource: 'inherited' },
                 permissionIntent: { value: 'default', updatedAtMs: 0 },
                 options: {},
             },

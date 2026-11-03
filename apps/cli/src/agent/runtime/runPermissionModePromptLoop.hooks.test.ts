@@ -311,8 +311,9 @@ describe('context allowance deferral', () => {
 function createRealWakeFollowContext() {
   let authorized = true;
   const delivered = { transcriptSeq: 0, readyEventSeq: 0, agentStateVersion: 0, turn: null };
+  // Stalled Turns may wake without an original; terminal outcomes use admitted originals.
   const observed = { transcriptSeq: 1, readyEventSeq: 0, agentStateVersion: 0,
-    turn: { id: 'source-turn', status: 'failed' as const } };
+    turn: { id: 'source-turn', status: 'stalled' as const } };
   const observation = {
     sourceSessionId: 'source',
     destinationSessionId: 'session-local-special-command',
@@ -347,7 +348,7 @@ function createRealWakeFollowContext() {
         ok: true as const,
         sessionId: 'source',
         rawSession: createSessionRecordFixture({ id: 'source', encryptionMode: 'plain', metadata: '{}', seq: 1,
-          active: true, latestTurnId: 'source-turn', latestTurnStatus: 'failed' }),
+          active: false, latestTurnId: 'source-turn', latestTurnStatus: 'in_progress' }),
         accountEncryptionCurrentness: createAccountEncryptionCurrentnessFixture(),
         ctx: null,
         mode: 'plain' as const,

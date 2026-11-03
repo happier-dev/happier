@@ -487,12 +487,22 @@ describe('createNativeAgentSessionHostServiceOwners', () => {
                     capabilities: {},
                 }),
             };
-            expect(owners.features.isEnabled('automations')).toBe(true);
+            expect(owners.features.isEnabled('automations')).toBe(false);
 
             serverSnapshot = {
                 status: 'ready',
                 features: FeaturesResponseSchema.parse({
-                    features: { automations: { enabled: false } },
+                    features: { workflows: { enabled: true }, automations: { enabled: false } },
+                    capabilities: {},
+                }),
+            };
+            expect(owners.features.isEnabled('automations')).toBe(true);
+            expect(owners.features.isEnabled('workflows')).toBe(true);
+
+            serverSnapshot = {
+                status: 'ready',
+                features: FeaturesResponseSchema.parse({
+                    features: { workflows: { enabled: false }, automations: { enabled: true } },
                     capabilities: {},
                 }),
             };
