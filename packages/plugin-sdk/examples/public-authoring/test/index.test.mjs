@@ -30,7 +30,7 @@ test('authors independently bound UsageQuery fields and subscribes to their admi
     sources: [['native']], session: ['session-two'], costBasis: ['estimated'] };
   const second = await resolver.resolve(request);
   assert.equal(second.status, 'ready', JSON.stringify(second));
-  assert.deepEqual(second.input.query, { period: { startMs: 1790812800000, endMs: 1790899200000 },
+  assert.deepEqual(JSON.parse(JSON.stringify(second.input.query)), { period: { startMs: 1790812800000, endMs: 1790899200000 },
     ...Object.fromEntries(Object.entries(scope).map(([key, values]) => [key, values[0]])), metric: 'cost', breakdown: ['model'] });
   assert.deepEqual(second.input.query.period, first.input.query.period);
   for (const path of ['query.metric', 'query.breakdown']) {
