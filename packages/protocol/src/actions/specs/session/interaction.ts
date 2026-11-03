@@ -192,7 +192,7 @@ export function projectPluginSessionInteractionResponse(value: unknown): unknown
 
 export const SESSION_INTERACTION_ACTION_SPECS = Object.freeze([
   {
-    id: 'session.permission.respond', executionPlacement: 'session', approvalPolicy: { agentDefault: 'authority', requiredSurfaces: ['mcp'] }, approval: {result: 'optional',flow: 'deferred'},
+    id: 'session.permission.respond', executionPlacement: 'session', approvalPolicy: { agentDefault: 'authority', requiredSurfaces: ['mcp', 'plugin'] }, approval: {result: 'optional',flow: 'deferred'},
     prompting: { voiceHotPath: true },
     title: 'Respond to permission request',
     sideEffectClass: 'write',

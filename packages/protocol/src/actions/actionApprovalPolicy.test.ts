@@ -2729,9 +2729,9 @@ describe('isApprovalRequiredByActionsSettings', () => {
     ).toMatchObject({ required: false });
   });
 
-  it('requires agent and MCP permission-answer approval by default and honors explicit waivers', () => {
+  it('requires agent, MCP and plugin permission-answer approval by default and honors explicit waivers', () => {
     const actionId = 'session.permission.respond';
-    for (const surface of ['agent', 'mcp'] as const) {
+    for (const surface of ['agent', 'mcp', 'plugin'] as const) {
       const context = { surface, authority: 'account_automation' as const };
       expect(
         resolveActionApprovalRouting({

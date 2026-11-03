@@ -3045,25 +3045,63 @@ describe('createActionExecutor (session control)', () => {
     expect(sessionPermissionRemoteAction).not.toHaveBeenCalled();
   });
 
-  it.each(['api', 'plugin'] as const)(
-    'rejects %s automation from responding to session permissions',
-    async (surface) => {
+  it.each(['ask', 'allow', 'deny'] as const)(
+    'applies %s policy to plugin automation responding to Session permissions',
+    async mode => {
+      // Approved seven-rule model: a plugin gets an ordinary Ask default,
+      // which the person can waive or replace with Deny; never a human floor.
+      const actionId = 'session.permission.respond';
+      const responses: string[] = [];
+      const approvals: string[] = [];
+      const executor = createExecutor({
+        isActionApprovalRequired: undefined,
+        sessionPermissionRespond: async ({ sessionId }) => { responses.push(sessionId); return { ok: true }; },
+        approvalsCreate: async ({ request }) => { approvals.push(request.actionId); return { artifactId: 'permission-approval' }; },
+      });
+      const actionsSettings = normalizeActionsSettingsV1(mode === 'allow'
+        ? { v: 1, approvalWaivedSurfaces: { [actionId]: ['plugin'] } }
+        : mode === 'deny'
+          ? { v: 1, actions: { [actionId]: { disabledSurfaces: ['plugin'] } } }
+          : { v: 1 });
+      const result = await executor.execute(actionId, { sessionId: 's1', decision: 'allow' }, {
+        surface: 'plugin', authority: 'account_automation', serverId: 'home', actionsSettings,
+        actionRequestId: 'plugin-permission-response',
+        actionCaller: { kind: 'plugin', pluginId: 'acme.test', contributionLocalId: 'automation',
+          sourceCustody: { kind: 'managed', immutableGenerationId: 'automation-generation', installSource: 'npm' } },
+      });
+      if (mode === 'ask') {
+        expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: {
+          kind: 'approval_request_created', artifactId: 'permission-approval', actionId,
+        } });
+        expect(approvals).toEqual([actionId]);
+        expect(responses).toEqual([]);
+      } else if (mode === 'allow') {
+        expect(result).toEqual({ ok: true, result: { ok: true } });
+        expect(approvals).toEqual([]);
+        expect(responses).toEqual(['s1']);
+      } else {
+        expect(result).toMatchObject({ ok: false, errorCode: 'action_disabled' });
+        expect(approvals).toEqual([]);
+        expect(responses).toEqual([]);
+      }
+    },
+  );
+
+  it('rejects API automation from responding to session permissions even with approval waived', async () => {
       const sessionPermissionRespond = vi.fn(async () => ({ ok: true }));
-      const executor = createExecutor({ sessionPermissionRespond });
+      const executor = createExecutor({ sessionPermissionRespond, isActionApprovalRequired: undefined });
 
       const res = await executor.execute(
-        'session.permission.respond' as any,
+        'session.permission.respond',
         { sessionId: 's1', decision: 'allow' },
         {
-          surface,
+          surface: 'api',
           authority: 'account_automation',
           defaultSessionId: null,
-          ...(surface === 'api'
-            ? { actionCaller: { kind: 'host' } }
-            : surface === 'plugin'
-              ? { actionCaller: { kind: 'plugin', pluginId: 'acme.test' } }
-              : {}),
-        } as any,
+          actionCaller: { kind: 'host' },
+          actionsSettings: normalizeActionsSettingsV1({ v: 1,
+            approvalWaivedSurfaces: { 'session.permission.respond': ['api'] } }),
+        },
       );
 
       expect(res).toEqual({
@@ -3072,8 +3110,7 @@ describe('createActionExecutor (session control)', () => {
         error: 'present_user_required',
       });
       expect(sessionPermissionRespond).not.toHaveBeenCalled();
-    },
-  );
+  });
 
   it('rejects API automation from answering a present-user action request', async () => {
     const sessionUserActionAnswer = vi.fn(async () => ({ ok: true }));
