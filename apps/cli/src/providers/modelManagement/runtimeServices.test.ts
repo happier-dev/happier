@@ -25,7 +25,7 @@ import {
   ProviderConnectionsRowMutationV1Schema,
   type ProviderSettingsV1,
 } from '@happier-dev/protocol';
-import { TeamCredentialProviderModelCatalogEntryV1Schema, TeamCredentialSourceBindingV1Schema } from '@happier-dev/protocol/teams';
+import { TeamCredentialProviderModelCatalogEntryV1Schema, TeamCredentialResourceCatalogEntryV1Schema, TeamCredentialSourceBindingV1Schema } from '@happier-dev/protocol/teams';
 import { admitTeamCredentialSourceModelRowsV1 } from '@happier-dev/protocol/rpc/providers';
 import { createConnectedAccountPurposeBindingOwner } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
 import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
@@ -339,8 +339,11 @@ function providerSnapshot(
   };
 }
 
-async function registeredProviderProjectionFixture() {
-  const fixture = await createManagedRunLaunchFixture({ acceptedCredentialFormats: ['raw', 'bearer'] });
+async function registeredProviderProjectionFixture(
+  requiredCapabilities: NonNullable<Parameters<typeof createManagedRunLaunchFixture>[0]>['requiredCapabilities'] = { streaming: true },
+) {
+  const fixture = await createManagedRunLaunchFixture({ acceptedCredentialFormats: ['raw', 'bearer'],
+    requiredCapabilities });
   const credentials = { token: 'custodian-projection', encryption: null };
   let snapshotReads = 0;
   let leaseRequests = 0;
@@ -385,10 +388,16 @@ async function registeredProviderProjectionFixture() {
       streaming: 'supported', toolRoundTrips: 'supported', statefulResponses: 'supported', reasoningControls: 'supported' } },
       compatibilityOverrides: [{ agentTargetKey: fixture.agentTargetKey, protocol: 'openai-responses', status: 'verified',
         reason: 'Fixture endpoint contract', evidence: { sourceUrls: ['https://example.test'], verifiedAt: '2026-10-23' } }] },
-    confirmationSource: { connectionId: 'connected-source:recipient', catalogSourceKey: 's'.repeat(43) },
     sourceRevision: 'team-source', availability: 'available',
   });
-  return { ...fixture, services, rpc, request, carriers, admission, teamCredentialModel,
+  const teamCredentialResource = TeamCredentialResourceCatalogEntryV1Schema.parse({
+    id: 'resource', teamId: 'team', displayName: 'Team source', resourceRevision: 1,
+    readiness: { kind: 'available' }, recoveryAction: null, mayBroker: true, mayReceiveDirect: true,
+    directMaterialState: 'never_delivered', sessionUsePolicy: 'personal_allowed',
+    connectedServiceSelections: [], sourcePresentation: null, deliveryPolicy: { preferredAllowedModes: ['direct', 'brokered'] },
+    allowedRoutes: ['direct', 'brokered'], providerModels: [teamCredentialModel],
+  });
+  return { ...fixture, services, rpc, request, carriers, admission, teamCredentialModel, teamCredentialResource,
     costs: () => ({ snapshotReads, leaseRequests }), retireAmbientSnapshot: () => { snapshotAvailable = false; } };
 }
 
@@ -397,7 +406,7 @@ it.each(['machine', 'httpRoot', 'localRoot'] as const)(
     const fixture = await registeredProviderProjectionFixture();
     const http = vi.spyOn(axios, 'get').mockRejectedValue(new Error('No Home read for a foreign projection'));
     try {
-      for (const input of [fixture.request, { ...fixture.request, teamCredentialModel: fixture.teamCredentialModel,
+      for (const input of [fixture.request, { ...fixture.request, teamCredentialResources: [fixture.teamCredentialResource],
         sourceConnectionId: 'run-gateway' }]) {
         await expect(fixture.rpc.invokeLocal(RPC_METHODS.DAEMON_PROVIDERS_MODEL_PROJECTION, input, fixture.carriers[carrier]))
           .resolves.toMatchObject({ status: 'error', error: { code: 'provider_authorization_changed' } });
@@ -407,6 +416,51 @@ it.each(['machine', 'httpRoot', 'localRoot'] as const)(
     } finally { await fixture.cleanup(); }
   },
 );
+
+it('resolves an entire foreign Team picker batch once using custodian ordering and exact worker compatibility', async () => {
+  const fixture = await registeredProviderProjectionFixture();
+  const http = vi.spyOn(axios, 'get').mockRejectedValue(new Error('No Home or private catalog read for a worker batch'));
+  try {
+    fixture.retireAmbientSnapshot();
+    const brokered = fixture.teamCredentialModel;
+    const direct = { ...brokered, selection: { ...brokered.selection, deliveryMode: 'direct' as const } };
+    const resource = { ...fixture.teamCredentialResource, providerModels: [brokered, direct] };
+    await expect(fixture.rpc.invokeLocal(RPC_METHODS.DAEMON_PROVIDERS_MODEL_PROJECTION,
+      { ...fixture.request, teamCredentialResources: [resource] }, fixture.carriers.machine))
+      .resolves.toMatchObject({ status: 'success', groups: [], teamCredentialResources: [{
+        providerModels: [{ selection: { deliveryMode: 'direct' }, compatibility: { result: { status: 'verified' }, confirmed: true } }],
+      }] });
+    expect(fixture.costs()).toEqual({ snapshotReads: 0, leaseRequests: 1 });
+    expect(http).not.toHaveBeenCalled();
+  } finally { await fixture.cleanup(); }
+});
+
+it('qualifies Team model capabilities at the worker and retains hard refusal facts for the picker', async () => {
+  const fixture = await registeredProviderProjectionFixture({ streaming: true, toolRoundTrips: true });
+  try {
+    fixture.retireAmbientSnapshot();
+    for (const toolRoundTrips of ['unsupported', 'unknown', 'supported'] as const) {
+      const row = TeamCredentialProviderModelCatalogEntryV1Schema.parse({ ...fixture.teamCredentialModel,
+        descriptor: { id: 'image-or-chat-model', name: 'Model', capabilities: { toolRoundTrips } },
+        selection: { ...fixture.teamCredentialModel.selection, modelId: 'image-or-chat-model' } });
+      const result = await fixture.rpc.invokeLocal(RPC_METHODS.DAEMON_PROVIDERS_MODEL_PROJECTION,
+        { ...fixture.request, teamCredentialResources: [{ ...fixture.teamCredentialResource, providerModels: [row] }] }, fixture.carriers.machine);
+      expect(result).toMatchObject({ status: 'success', groups: [], teamCredentialResources: [{ providerModels: [{
+        compatibility: { result: { status: toolRoundTrips === 'unsupported' ? 'incompatible'
+          : toolRoundTrips === 'unknown' ? 'experimental' : 'verified' } },
+        availability: toolRoundTrips === 'unsupported' ? 'policy_denied' : 'available',
+        ...(toolRoundTrips === 'unsupported' ? { deliveryUnavailableReason: 'provider_incompatible_with_agent' } : {}),
+      }] }] });
+    }
+    const result = await fixture.rpc.invokeLocal(RPC_METHODS.DAEMON_PROVIDERS_MODEL_PROJECTION,
+      { ...fixture.request, teamCredentialResources: [{ ...fixture.teamCredentialResource,
+        providerModels: [{ ...fixture.teamCredentialModel, sourceFacts: undefined }],
+      }] }, fixture.carriers.machine);
+    expect(result).toMatchObject({ status: 'success', teamCredentialResources: [{ providerModels: [{
+      availability: 'policy_denied', deliveryUnavailableReason: 'provider_incompatible_with_agent',
+    }] }] });
+  } finally { await fixture.cleanup(); }
+});
 
 it('projects only the foreign Team model without custodian Account readiness and preserves owned reads', async () => {
   const fixture = await registeredProviderProjectionFixture();
@@ -420,9 +474,9 @@ it('projects only the foreign Team model without custodian Account readiness and
           reason: 'Fixture endpoint contract', evidence: { sourceUrls: ['https://example.test'], verifiedAt: '2026-10-23' },
         }] } });
       await expect(fixture.rpc.invokeLocal(RPC_METHODS.DAEMON_PROVIDERS_MODEL_PROJECTION,
-        { ...fixture.request, teamCredentialModel }, fixture.carriers.machine))
-        .resolves.toMatchObject({ status: 'success', groups: [{ connectionId: 'connected-source:recipient', rows: [{
-          ref: { modelId: 'team-model' }, compatibility: { result: { status }, confirmed: status === 'verified' },
+        { ...fixture.request, teamCredentialResources: [{ ...fixture.teamCredentialResource, providerModels: [teamCredentialModel] }] }, fixture.carriers.machine))
+        .resolves.toMatchObject({ status: 'success', groups: [], teamCredentialResources: [{ providerModels: [{
+          selection: { modelId: 'team-model' }, compatibility: { result: { status }, confirmed: true },
         }] }] });
     }
     expect(fixture.costs()).toEqual({ snapshotReads: 0, leaseRequests: 2 });

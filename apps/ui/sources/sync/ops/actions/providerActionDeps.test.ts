@@ -5,8 +5,8 @@ import { ProviderConnectionsCatalogV1Schema, ProviderConnectionsRowMutationV1Sch
 } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { AccountSettingsV2UpdateRequestSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
-import { createConfirmedTeamModelProjectionFixture, createProviderSettingsAccountHarness, createProviderSettingsHarness, installProviderSettingsRpcBoundary } from '@/dev/testkit/harness/providerSettingsHarness';
-import { TeamCredentialProviderModelCatalogEntryV1Schema } from '@happier-dev/protocol/teams';
+import { createExperimentalProviderModelProjectionFixture, createProviderModelProjectionFixture, createProviderSettingsAccountHarness, createProviderSettingsHarness, installProviderSettingsRpcBoundary } from '@/dev/testkit/harness/providerSettingsHarness';
+import { TeamCredentialResourceCatalogEntryV1Schema } from '@happier-dev/protocol/teams';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
@@ -72,7 +72,7 @@ describe('Provider Account source visibility Action', () => {
         if (!home?.token) throw new Error('Expected requester Home credentials');
         const agentTargetKey = 'agent:happier.agent.codex/codex';
         const currentSelection = { agentTargetKey, providerConnectionId: 'pc_a', modelId: 'model-a' };
-        const projected = createConfirmedTeamModelProjectionFixture({ agentTargetKey, modelId: 'requester-model' });
+        const projected = createExperimentalProviderModelProjectionFixture({ agentTargetKey, modelId: 'requester-model' });
         providerHarness.intercept(RPC_METHODS.DAEMON_PROVIDERS_MODEL_PROJECTION, () => {
             throw createProviderErrorV1('provider_authorization_changed', { machineId: machine.id });
         });
@@ -246,34 +246,42 @@ describe('Provider Account source visibility Action', () => {
     });
 
     it.each(['providers.models.projection', 'providers.models.refresh'] as const)(
-        'composes requester consent through the shared executor for %s', async actionId => {
+        'projects experimental Team models in one batch without consulting personal consent for %s', async actionId => {
             const machine = createMachineFixture({ id: 'machine-a', activeAt: Date.now() });
             const { serverId, accountId } = await account.restore({ catalog: catalogFixture(), machines: [machine],
                 waivedActions: ['providers.models.refresh'] });
             const agentTargetKey = 'agent:happier.agent.codex/codex';
-            const projection = createConfirmedTeamModelProjectionFixture({ agentTargetKey, modelId: 'model-a' });
-            const teamCredentialModel = TeamCredentialProviderModelCatalogEntryV1Schema.parse({
-                selection: { kind: 'team_credential_provider_model', resourceId: 'resource-a', teamId: 'team-a',
-                    expectedResourceRevision: 1, deliveryMode: 'brokered', agentTargetKey, modelId: 'model-a' },
-                descriptor: { id: 'model-a', name: 'Model A' },
-                application: { agentTargetKey, implementationIdentity: { pluginId: 'acme.gateway', localId: 'gateway' },
-                    endpointTemplateId: 'responses', protocol: 'openai-responses' },
-                confirmationSource: projection.groups[0]!.rows[0]!.confirmationSource,
-                sourceRevision: 'source-a', availability: 'available',
+            const experimental = createExperimentalProviderModelProjectionFixture({ agentTargetKey, modelId: 'model-a' });
+            const resource = TeamCredentialResourceCatalogEntryV1Schema.parse({
+                id: 'resource-a', teamId: 'team-a', displayName: 'Team gateway', resourceRevision: 1,
+                readiness: { kind: 'available' }, recoveryAction: null, mayBroker: true, mayReceiveDirect: false,
+                directMaterialState: 'never_delivered', sessionUsePolicy: 'personal_allowed', sourcePresentation: null,
+                providerModels: [{
+                    selection: { kind: 'team_credential_provider_model', resourceId: 'resource-a', teamId: 'team-a',
+                        expectedResourceRevision: 1, deliveryMode: 'brokered', agentTargetKey, modelId: 'model-a' },
+                    descriptor: { id: 'model-a', name: 'Model A' },
+                    application: { agentTargetKey, implementationIdentity: { pluginId: 'acme.gateway', localId: 'gateway' },
+                        endpointTemplateId: 'responses', protocol: 'openai-responses' },
+                    compatibility: experimental.groups[0]!.rows[0]!.compatibility,
+                    sourceRevision: 'source-a', availability: 'available',
+                }],
             });
+            const projection = createProviderModelProjectionFixture({ agentTargetKey, groups: [], teamCredentialResources: [resource] });
             providerHarness.setResponse(RPC_METHODS.DAEMON_PROVIDERS_MODEL_PROJECTION, projection);
             const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
             const executor = createDefaultActionExecutor();
-            const read = () => executor.execute(actionId, { machineId: machine.id, agentTargetKey, teamCredentialModel,
+            const read = () => executor.execute(actionId, { machineId: machine.id, agentTargetKey, teamCredentialResources: [resource],
                 ...(actionId === 'providers.models.refresh' ? { forceRefresh: true } : {}) },
                 { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, serverId, expectedAccountId: accountId });
+            const personalReads = account.home.requestsFor(PROVIDER_CONNECTIONS_ROWS_ROUTE_V1).length;
             expect(await read()).toMatchObject({ ok: true, result: {
-                status: 'success', groups: [{ rows: [{ compatibility: { confirmed: false } }] }],
+                status: 'success', teamCredentialResources: [{ providerModels: [{ compatibility: { confirmed: false } }] }],
             } });
             account.home.answer(serverId, `GET ${PROVIDER_CONNECTIONS_ROWS_ROUTE_V1}`, { body: { status: 'absent' } });
             expect(await read()).toMatchObject({ ok: true, result: {
-                status: 'error', error: { code: 'provider_settings_invalid' },
+                status: 'success', teamCredentialResources: [{ providerModels: [{ compatibility: { confirmed: false } }] }],
             } });
+            expect(account.home.requestsFor(PROVIDER_CONNECTIONS_ROWS_ROUTE_V1)).toHaveLength(personalReads);
         },
     );
 

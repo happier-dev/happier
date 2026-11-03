@@ -24,7 +24,6 @@ describe('Provider Settings Actions', () => {
   ] as const)('preserves a returned daemon %s through Provider Action dispatch', async (errorCode, providerCode) => {
     const executor = createActionExecutor({ providerActionExecute: createProviderActionExecuteV1({
       assertCurrent() {}, setDefault: async () => ({ status: 'applied' }),
-      readAccountCatalog: async () => { throw new Error('Unexpected Team catalog read'); },
       // The transport returns a daemon error inside a successful Home ACK.
       rpc: async () => ({ error: 'Daemon request failed', errorCode }),
     }) });
@@ -55,7 +54,6 @@ describe('Provider Settings Actions', () => {
       // Only Artifact persistence and daemon RPC are replaced; Provider result
       // parsing, approval transitions and observation projection remain real.
       providerActionExecute: createProviderActionExecuteV1({ assertCurrent() {},
-        readAccountCatalog: async () => { throw new Error('Unexpected Team catalog read'); },
         rpc: async () => ({ status: 'error', error }),
         setDefault: async () => ({ status: 'applied' }),
       }),
@@ -118,7 +116,6 @@ describe('Provider Settings Actions', () => {
           return { ok: true };
         },
         providerActionExecute: createProviderActionExecuteV1({ assertCurrent() {}, account,
-          readAccountCatalog: async () => ({ status: 'ready', revision: catalogRevision, catalog }),
           rpc: async () => { throw new Error('Account slot edits must not invoke a daemon'); },
           setDefault: async () => ({ status: 'applied' }),
         }),
@@ -167,7 +164,6 @@ describe('Provider Settings Actions', () => {
     });
     const executor = createActionExecutor({ providerActionExecute: createProviderActionExecuteV1({
       assertCurrent() {}, account,
-      readAccountCatalog: async () => { throw new Error('Unexpected Team catalog read'); },
       rpc: async () => { throw new Error('Account description must not read machine Provider state'); },
       setDefault: async () => ({ status: 'applied' }),
     }) });
@@ -223,7 +219,6 @@ describe('Provider Settings Actions', () => {
     const executor = createActionExecutor({
       isActionApprovalRequired: (id, ctx, input) => isApprovalRequiredByActionsSettings(id, settings, ctx, undefined, undefined, input),
       providerActionExecute: createProviderActionExecuteV1({ assertCurrent: () => {}, setDefault: async () => ({ status: 'applied' }),
-        readAccountCatalog: async () => { throw new Error('Unexpected Team catalog read'); },
         rpc: async ({ request }) => {
           // Only the daemon RPC transport is replaced; parsing, dispatch and outcome handling remain real.
           requests.push(request);
@@ -267,7 +262,6 @@ describe('Provider Settings Actions', () => {
     const { createActionExecutor } = await import('./actionExecutor.js');
     const executor = createActionExecutor({
       providerActionExecute: createProviderActionExecuteV1({ assertCurrent: () => {}, rpc: async () => { throw new Error('Default intent must not consult a daemon'); },
-        readAccountCatalog: async () => { throw new Error('Unexpected Team catalog read'); },
         setDefault: async input => { stored = applyProviderDefaultModelSelectionV1(stored, input); return { status: 'applied' }; },
       }),
     });
@@ -288,7 +282,6 @@ describe('Provider Settings Actions', () => {
       isActionApprovalRequired: (id, ctx, input) => isApprovalRequiredByActionsSettings(id, settings, ctx, undefined, undefined, input),
       providerActionExecute: createProviderActionExecuteV1({
         assertCurrent: () => { if (!current) throw Object.assign(new Error('scope-retired'), { code: 'scope-retired' }); },
-        readAccountCatalog: async () => { throw new Error('Unexpected Team catalog read'); },
         rpc: async () => { current = false; return reply; }, setDefault: async () => ({ status: 'applied' }),
       }),
     });

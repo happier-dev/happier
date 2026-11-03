@@ -12,16 +12,12 @@ import {
   areTeamResourceConnectedServiceSelectionsEqual,
   type TeamResourceConnectedServiceSelectionV2,
 } from '../../connect/connectedServiceBindings.js';
-import {
-  ProviderAgentTargetKeySchema,
-  ProviderModelIdSchema,
-} from '../../providers/ids.js';
 import { ProviderModelDescriptorV1Schema } from '../../models/descriptor.js';
 import { ProviderBrokerApplicationBindingV1Schema } from '../../providers/brokerRouteGrantV1.js';
 import { ProviderWireProtocolSchema } from '../../providers/capabilities/v1.js';
-import { ProviderModelBindingSourceV1Schema, ProviderModelConfirmationSourceV1Schema } from '../../providers/compatibility/sourceFacts.js';
-import { ProviderBindingCompatibilityV1Schema } from '../../providers/compatibility/v1.js';
-import { ProviderCompatibilityFingerprintV1Schema } from '../../providers/fingerprints.js';
+import { TeamCredentialProviderModelCatalogEntryV1Schema } from './providerModelCatalogV1.js';
+export { TeamCredentialProviderModelCatalogEntryV1Schema, TeamCredentialProviderModelSelectionV1Schema } from './providerModelCatalogV1.js';
+export type { TeamCredentialProviderModelCatalogEntryV1, TeamCredentialProviderModelSelectionV1 } from './providerModelCatalogV1.js';
 import { PluginContributionIdentityV1Schema } from '../../plugins/contributionIdentity.js';
 import {
   decodeTeamKeysetCursorV1,
@@ -506,47 +502,6 @@ export const TeamCredentialViewerCapabilitiesV1Schema = lazyZodSchema(() => z.st
   offerOwnCredential: z.boolean(),
 }));
 
-/** Least-privilege selection catalog. Source and administration authority never cross this seam. */
-export const TeamCredentialProviderModelSelectionV1Schema = lazyZodSchema(() => z.strictObject({
-  kind: z.literal('team_credential_provider_model'),
-  resourceId: z.string().check(z.minLength(1), z.maxLength(256)),
-  teamId: z.string().check(z.minLength(1)),
-  expectedResourceRevision: z.number().check(z.int(), z.nonnegative()),
-  agentTargetKey: ProviderAgentTargetKeySchema,
-  modelId: ProviderModelIdSchema,
-  deliveryMode: TeamCredentialRouteV1Schema,
-}));
-
-export const TeamCredentialProviderModelCatalogEntryV1Schema = lazyZodSchema(() => z.strictObject({
-  selection: TeamCredentialProviderModelSelectionV1Schema,
-  descriptor: ProviderModelDescriptorV1Schema,
-  /** Exact source-owned application capable of serving this model. */
-  application: ProviderBrokerApplicationBindingV1Schema,
-  sourceFacts: z.optional(ProviderModelBindingSourceV1Schema),
-  confirmationSource: z.optional(ProviderModelConfirmationSourceV1Schema),
-  /** Source-reported state is presentation only; the worker derives admission. */
-  compatibility: z.optional(z.strictObject({
-    result: ProviderBindingCompatibilityV1Schema,
-    compatibilityFingerprint: ProviderCompatibilityFingerprintV1Schema,
-    confirmed: z.boolean(),
-  })),
-  /** Opaque current source/catalog identity. It contains no source-private data. */
-  sourceRevision: z.string().check(z.minLength(1), z.maxLength(512)),
-  /** Opaque recipient-safe witness for current private direct material. */
-  direct: z.optional(z.nullable(z.strictObject({
-    sourceMemberKey: z.string().check(z.minLength(1), z.maxLength(512)),
-    sourceVersion: z.string().check(z.minLength(1), z.maxLength(512)),
-  }))),
-  availability: z.enum(['available', 'source_owner_required', 'resource_corrupt', 'policy_denied']),
-}).check(z.superRefine((value, context) => {
-  if (value.selection.modelId !== value.descriptor.id) {
-    context.addIssue({ code: 'custom', path: ['descriptor', 'id'], message: 'Descriptor must identify the selected canonical model' });
-  }
-  if (value.selection.agentTargetKey !== value.application.agentTargetKey) {
-    context.addIssue({ code: 'custom', path: ['application', 'agentTargetKey'], message: 'Application must target the selected Agent' });
-  }
-})));
-
 export const TeamCredentialDirectMaterialStateV1Schema = lazyZodSchema(() => z.enum([
   'never_delivered',
   'preparing',
@@ -713,10 +668,6 @@ export type TeamCredentialResourceSourcePresentationV1 = z.infer<
 >;
 export type TeamCredentialResourceRecoveryActionV1 = z.infer<typeof TeamCredentialResourceRecoveryActionV1Schema>;
 export type TeamCredentialDirectMaterialStateV1 = z.infer<typeof TeamCredentialDirectMaterialStateV1Schema>;
-export type TeamCredentialProviderModelSelectionV1 = z.infer<typeof TeamCredentialProviderModelSelectionV1Schema>;
-export type TeamCredentialProviderModelCatalogEntryV1 = z.infer<
-  typeof TeamCredentialProviderModelCatalogEntryV1Schema
->;
 export type TeamCredentialResourceCatalogEntryV1 = z.infer<typeof TeamCredentialResourceCatalogEntryV1Schema>;
 
 /** Exact resource/service identity, retaining unavailable owner facts when no choice can be offered. */

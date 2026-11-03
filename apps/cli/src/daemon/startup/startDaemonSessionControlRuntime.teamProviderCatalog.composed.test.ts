@@ -8,10 +8,8 @@ import { MACHINE_HTTP_LOCAL_CAPABILITY_HEADER } from '@happier-dev/iroh-native/n
 import { createProviderBrokerRouteGrantSigningInputV1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import { DIRECT_ROUTE_GRANT_TTL_MS } from '@happier-dev/protocol/machines/peer/mediation/directRouteGrantCachePolicyV1';
 import { afterEach, expect, it, onTestFailed, onTestFinished, vi } from 'vitest';
-import { DEFAULT_PROVIDER_SETTINGS_V1, ProviderConnectionIdSchema, splitProviderSettingsV1 } from '@happier-dev/protocol';
-import { ProviderModelBindingSourceV1Schema, ProviderModelConfirmationSourceV1Schema } from '@happier-dev/protocol/providers/binding-compatibility';
-import { setProviderExperimentalConfirmationV1 } from '@happier-dev/protocol/providers/settings/operationsV1';
-import { getProviderExperimentalConfirmationCatalogSourceKeyV1 } from '@happier-dev/protocol/providers/settings/v1';
+import { DEFAULT_PROVIDER_SETTINGS_V1, splitProviderSettingsV1 } from '@happier-dev/protocol';
+import { ProviderModelBindingSourceV1Schema } from '@happier-dev/protocol/providers/binding-compatibility';
 import type { TeamCredentialProviderModelCatalogEntryV1 } from '@happier-dev/protocol/teams';
 import type { startDaemonControlServer } from '@/daemon/controlServer';
 import { createInstalledProjectAgentDaemonFixture } from '@/daemon/testkit/installedProjectAgentDaemonFixture';
@@ -346,6 +344,8 @@ it.each(['ready', 'requester Home', 'admission refused', 'binding not current', 
   let model: TeamCredentialProviderModelCatalogEntryV1;
   let brokerOpens = 0;
   let catalogReads = 0;
+  let consentCatalogReads = 0;
+  const consentCatalogReadStacks: string[] = [];
   let refreshStream: (() => Promise<unknown>) | undefined;
   let nativeTunnelOpen: ReturnType<typeof createProviderBrokerMachineCarrierTunnelOpen> | undefined;
   let workerEndpoint: import('@happier-dev/protocol').IrohEndpointDescriptorV1 | undefined;
@@ -449,18 +449,13 @@ it.each(['ready', 'requester Home', 'admission refused', 'binding not current', 
     sourceFacts: ProviderModelBindingSourceV1Schema.parse({ endpoint: { id: 'responses', protocol: 'openai-responses',
       capabilities: { streaming: 'supported', toolRoundTrips: 'supported', statefulResponses: 'supported', reasoningControls: 'supported' } },
       compatibilityOverrides: [{ agentTargetKey, protocol: 'openai-responses', status: 'experimental', reason: 'Recipient-only consent' }] }),
-    confirmationSource: ProviderModelConfirmationSourceV1Schema.parse({ connectionId: 'connected-source:team-pool',
-      catalogSourceKey: getProviderExperimentalConfirmationCatalogSourceKeyV1({ connectionId: ProviderConnectionIdSchema.parse('connected-source:team-pool') }) }),
   };
   h.tracked.spawnOptions = { ...h.tracked.spawnOptions, teamCredentialBindings: [{ v: 1, slot: { kind: 'provider_model' },
     resourceId: 'resource', expectedResourceRevision: 2, teamId: 'team', deliveryMode: 'brokered' }],
     modelSelection: { v: 1, updatedAt: 1, ref: { agentTargetKey, providerConnectionId: null, modelId: model.descriptor.id } } };
   const compatibility = await resolveTeamCredentialModelCompatibility({ lease: h.plugin.lease, agentId: 'codex',
-    model: { ...model, deliveryMode: 'brokered' }, providerSettings: DEFAULT_PROVIDER_SETTINGS_V1 });
-  if (compatibility.result.status !== 'experimental' || !model.confirmationSource) throw new Error('Expected experimental Codex binding');
-  const confirmed = setProviderExperimentalConfirmationV1(DEFAULT_PROVIDER_SETTINGS_V1, { ...model.confirmationSource, agentTargetKey,
-    modelId: compatibility.result.confirmationScope.kind === 'model' ? model.descriptor.id : null,
-    compatibilityFingerprint: compatibility.compatibilityFingerprint, confirmedAt: 1 });
+    model: { ...model, deliveryMode: 'brokered' } });
+  expect(compatibility).toMatchObject({ result: { status: 'experimental' }, confirmed: true });
   const snapshot = h.requester.readAccountSettingsSnapshot();
   if (!snapshot) throw new Error('Missing recipient snapshot');
   const ambient = { ...snapshot, scopeKey: 'custodian-account', providerConnectionsCatalog: {
@@ -470,8 +465,10 @@ it.each(['ready', 'requester Home', 'admission refused', 'binding not current', 
   vi.mocked(axios.get).mockImplementation(async (url, options) => {
     const path = new URL(String(url)).pathname;
     if (path === '/v1/account/entity-rows/provider-connections') {
+      consentCatalogReads++;
+      consentCatalogReadStacks.push(new Error('Unexpected personal Provider catalog read for Team binding').stack ?? 'stack unavailable');
       expect(options?.headers?.Authorization).toBe(`Bearer ${h.requester.bootstrap.credentials.token}`);
-      return { status: 200, data: { status: 'present', revision: 2, content: { t: 'plain', v: splitProviderSettingsV1(confirmed).catalog } } };
+      return { status: 200, data: { status: 'present', revision: 2, content: { t: 'plain', v: splitProviderSettingsV1(DEFAULT_PROVIDER_SETTINGS_V1).catalog } } };
     }
     if (path === '/v2/account/settings/history') return { status: 200, data: { snapshots: [] } };
     const history = emptyAccountSettingsHistoryCaptureResponse(path);
@@ -757,7 +754,8 @@ it.each(['ready', 'requester Home', 'admission refused', 'binding not current', 
   expect(config.config[`model_providers.${config.modelProvider}`]).toMatchObject({
     env_http_headers: { 'x-happier-machine-local-capability': 'HAPPIER_CODEX_PROVIDER_API_KEY' },
   });
-  expect(h.requester.readAccountSettingsSnapshot()?.providerConnectionsCatalog).toMatchObject({ status: 'ready', revision: 2 });
+  expect(h.requester.readAccountSettingsSnapshot()?.providerConnectionsCatalog).toBeUndefined();
+  expect(consentCatalogReads, consentCatalogReadStacks.join('\n')).toBe(0);
   expect(getActiveAccountSettingsSnapshot()).toEqual(ambient);
   expect(brokerOpens).toBe(metadata === 'slow catalog' || metadata === 'slow refresh' ? 2 : 1);
   h.f.retire();

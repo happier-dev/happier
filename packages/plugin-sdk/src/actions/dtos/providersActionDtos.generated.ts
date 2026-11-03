@@ -285,162 +285,295 @@ export type ProvidersActionInputById = {
             groupId: string;
         } | undefined;
         sourceCatalog?: true | undefined;
-        teamCredentialModel?: {
-            selection: {
-                kind: 'team_credential_provider_model';
-                resourceId: string;
-                teamId: string;
-                expectedResourceRevision: number;
-                agentTargetKey: string;
-                modelId: string;
-                deliveryMode: 'brokered' | 'direct';
+        teamCredentialResources?: undefined | {
+            id: string;
+            teamId: string;
+            displayName: string;
+            resourceRevision: number;
+            readiness: {
+                kind: 'available';
+            } | {
+                kind: 'broker_unavailable';
+                reason?: 'application_unavailable' | 'catalog_empty' | 'incompatible' | 'model_unavailable' | 'not_granted' | 'projection_unavailable' | 'response_invalid' | undefined;
+            } | {
+                kind: 'limit_reached';
+                metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
+                resetsAtUtc: string;
+            } | {
+                kind: 'policy_denied';
+            } | {
+                kind: 'resource_corrupt';
+            } | {
+                kind: 'resource_unavailable';
+            } | {
+                kind: 'source_unavailable';
+                reason?: 'connected_service_credential_reconnect_required' | undefined;
+            } | {
+                kind: 'update_required';
             };
-            descriptor: {
-                id: string;
-                name: string;
-                costTier?: 'low' | 'standard' | 'premium' | undefined;
-                aliases?: string[] | undefined;
-                description?: string | undefined;
-                contextWindowTokens?: number | undefined;
-                inlineCompletion?: {
-                    operationId: string;
-                    tokenAccounting: 'utf8-bytes';
-                    promptOverheadTokens: number;
-                    outputTokens?: number | undefined;
-                    maxOutputTokens?: number | undefined;
-                    rawFimTemplate?: {
-                        prefix: string;
-                        suffix: string;
-                        middle: string;
-                    } | undefined;
-                } | undefined;
-                extendedContextModelId?: string | undefined;
-                modelOptions?: {
+            recoveryAction: 'choose_another_resource' | 'retry' | 'select_broker' | 'source_owner_action' | 'update_required' | null;
+            mayBroker: boolean;
+            mayReceiveDirect: boolean;
+            directMaterialState: 'current' | 'never_delivered' | 'preparing' | 'revoked' | 'stale';
+            sessionUsePolicy: 'personal_allowed' | 'team_context_required' | 'team_visibility_required' | null;
+            providerModels: {
+                selection: {
+                    kind: 'team_credential_provider_model';
+                    resourceId: string;
+                    teamId: string;
+                    expectedResourceRevision: number;
+                    agentTargetKey: string;
+                    modelId: string;
+                    deliveryMode: 'brokered' | 'direct' | 'vendor-native';
+                    nativeDelivery?: undefined | {
+                        managedId: string;
+                        controllerInstallationId: string;
+                        guestInstallationId: string;
+                        bindingKey: string;
+                        placeholderRef: string;
+                        sourceRevision: string;
+                        providerTicket: string;
+                    };
+                };
+                descriptor: {
                     id: string;
                     name: string;
-                    type: string;
-                    currentValue: string;
+                    costTier?: 'low' | 'premium' | 'standard' | undefined;
+                    aliases?: string[] | undefined;
                     description?: string | undefined;
-                    options?: {
-                        value: string;
+                    contextWindowTokens?: number | undefined;
+                    inlineCompletion?: undefined | {
+                        operationId: string;
+                        tokenAccounting: 'utf8-bytes';
+                        promptOverheadTokens: number;
+                        outputTokens?: number | undefined;
+                        maxOutputTokens?: number | undefined;
+                        rawFimTemplate?: undefined | {
+                            prefix: string;
+                            suffix: string;
+                            middle: string;
+                        };
+                    };
+                    nextEdit?: undefined | {
+                        operationId: string;
+                        tokenAccounting: 'utf8-bytes';
+                        promptOverheadTokens: number;
+                        outputTokens?: number | undefined;
+                        maxOutputTokens?: number | undefined;
+                    };
+                    extendedContextModelId?: string | undefined;
+                    modelOptions?: undefined | {
+                        id: string;
                         name: string;
+                        type: string;
+                        currentValue: string;
                         description?: string | undefined;
-                    }[] | undefined;
-                    overridesWhenOn?: {
-                        optionIds: string[];
-                        forcedValue?: string | undefined;
-                    } | undefined;
-                }[] | undefined;
-                capabilities?: {
-                    toolRoundTrips?: 'unknown' | 'supported' | 'unsupported' | undefined;
-                    reasoningControls?: 'unknown' | 'supported' | 'unsupported' | undefined;
-                    structuredOutput?: 'unknown' | 'supported' | 'unsupported' | undefined;
-                } | undefined;
-            };
-            application: {
-                agentTargetKey: string;
-                implementationIdentity: {
+                        options?: undefined | {
+                            value: string;
+                            name: string;
+                            description?: string | undefined;
+                        }[];
+                        overridesWhenOn?: undefined | {
+                            optionIds: string[];
+                            forcedValue?: string | undefined;
+                        };
+                    }[];
+                    capabilities?: undefined | {
+                        toolRoundTrips?: 'supported' | 'unknown' | 'unsupported' | undefined;
+                        reasoningControls?: 'supported' | 'unknown' | 'unsupported' | undefined;
+                        structuredOutput?: 'supported' | 'unknown' | 'unsupported' | undefined;
+                    };
+                };
+                application: {
+                    implementationIdentity: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    endpointTemplateId: string;
+                    protocol: string;
+                    agentTargetKey: string;
+                };
+                sourceRevision: string;
+                availability: 'available' | 'policy_denied' | 'resource_corrupt' | 'source_owner_required';
+                sourceFacts?: undefined | {
+                    endpoint: {
+                        id: string;
+                        protocol: string;
+                        capabilities: {
+                            streaming: 'supported' | 'unknown' | 'unsupported';
+                            toolRoundTrips: 'supported' | 'unknown' | 'unsupported';
+                            statefulResponses: 'supported' | 'unknown' | 'unsupported';
+                            reasoningControls: 'supported' | 'unknown' | 'unsupported';
+                        };
+                        modelIdPattern?: string | undefined;
+                    };
+                    credential?: undefined | {
+                        kind: 'apiKey';
+                        transports: {
+                            id: string;
+                            protocols: string[];
+                            uses: ('management' | 'probe' | 'runtime')[];
+                            destination: {
+                                kind: 'httpHeader';
+                                name: string;
+                                format: 'bearer' | 'raw' | {
+                                    template: string;
+                                };
+                            } | {
+                                kind: 'queryParam';
+                                name: string;
+                                format: 'bearer' | 'raw' | {
+                                    template: string;
+                                };
+                            };
+                            additionalCredentials?: undefined | {
+                                slotId: string;
+                                destination: {
+                                    kind: 'httpHeader';
+                                    name: string;
+                                    format: 'bearer' | 'raw' | {
+                                        template: string;
+                                    };
+                                } | {
+                                    kind: 'queryParam';
+                                    name: string;
+                                    format: 'bearer' | 'raw' | {
+                                        template: string;
+                                    };
+                                };
+                                label?: string | undefined | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                            }[];
+                        }[];
+                        slotId?: 'apiKey' | undefined;
+                        required?: boolean | undefined;
+                        keyUrl?: string | undefined;
+                        authorityDescription?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    };
+                    compatibilityOverrides?: undefined | {
+                        agentTargetKey: string;
+                        protocol: string;
+                        status: 'experimental' | 'incompatible' | 'verified';
+                        reason: string;
+                        evidence?: undefined | {
+                            sourceUrls: string[];
+                            verifiedAt: string;
+                            providerVersion?: string | undefined;
+                            agentVersion?: string | undefined;
+                            testIds?: string[] | undefined;
+                        };
+                    }[];
+                };
+                sources?: undefined | {
+                    manual: boolean;
+                    static: boolean;
+                    probe: boolean;
+                };
+                confidence?: 'account_unverified' | 'manual' | 'probe' | 'verified_static' | undefined;
+                compatibility?: undefined | {
+                    result: {
+                        status: 'experimental';
+                        selectedProtocol: string;
+                        reasons: ('adapter_contract_invalid' | 'agent_external_providers_unsupported' | 'capability_reasoningControls_unknown' | 'capability_reasoningControls_unsupported' | 'capability_statefulResponses_unknown' | 'capability_statefulResponses_unsupported' | 'capability_streaming_unknown' | 'capability_streaming_unsupported' | 'capability_toolRoundTrips_unknown' | 'capability_toolRoundTrips_unsupported' | 'compatibility_evidence_missing' | 'compatibility_override_experimental' | 'compatibility_override_incompatible' | 'credential_transport_unavailable' | 'model_capability_evidence_required' | 'model_capability_reasoningControls_unknown' | 'model_capability_reasoningControls_unsupported' | 'model_capability_toolRoundTrips_unknown' | 'model_capability_toolRoundTrips_unsupported' | 'model_required_for_capability_resolution' | 'no_auth_unsupported' | 'no_compatible_protocol' | 'optional_credential_no_auth_unsupported')[];
+                        confirmationScope: {
+                            kind: 'connection';
+                        } | {
+                            kind: 'model';
+                            modelId: string;
+                        };
+                        evidence?: undefined | {
+                            sourceUrls: string[];
+                            verifiedAt: string;
+                            providerVersion?: string | undefined;
+                            agentVersion?: string | undefined;
+                            testIds?: string[] | undefined;
+                        };
+                    } | {
+                        status: 'incompatible';
+                        reasons: ('adapter_contract_invalid' | 'agent_external_providers_unsupported' | 'capability_reasoningControls_unknown' | 'capability_reasoningControls_unsupported' | 'capability_statefulResponses_unknown' | 'capability_statefulResponses_unsupported' | 'capability_streaming_unknown' | 'capability_streaming_unsupported' | 'capability_toolRoundTrips_unknown' | 'capability_toolRoundTrips_unsupported' | 'compatibility_evidence_missing' | 'compatibility_override_experimental' | 'compatibility_override_incompatible' | 'credential_transport_unavailable' | 'model_capability_evidence_required' | 'model_capability_reasoningControls_unknown' | 'model_capability_reasoningControls_unsupported' | 'model_capability_toolRoundTrips_unknown' | 'model_capability_toolRoundTrips_unsupported' | 'model_required_for_capability_resolution' | 'no_auth_unsupported' | 'no_compatible_protocol' | 'optional_credential_no_auth_unsupported')[];
+                    } | {
+                        status: 'verified';
+                        selectedProtocol: string;
+                        evidence: {
+                            sourceUrls: string[];
+                            verifiedAt: string;
+                            providerVersion?: string | undefined;
+                            agentVersion?: string | undefined;
+                            testIds?: string[] | undefined;
+                        };
+                    };
+                    compatibilityFingerprint: string;
+                    confirmed: boolean;
+                };
+                nativeSource?: undefined | {
+                    providerTicket: string;
+                };
+                direct?: null | undefined | {
+                    sourceMemberKey: string;
+                    sourceVersion: string;
+                };
+                deliveryUnavailableReason?: 'agent_error' | 'agent_timeout' | 'agent_unavailable' | 'connected_service_credential_reconnect_required' | 'machine_offline' | 'model_not_granted' | 'permission_mode_not_granted' | 'provider_account_grant_stale' | 'provider_account_scope_required' | 'provider_agent_runtime_unsupported' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_catalog_unavailable' | 'provider_compatibility_unverified' | 'provider_connection_changed' | 'provider_connection_disabled' | 'provider_connection_invalid' | 'provider_connection_not_found' | 'provider_contribution_unavailable' | 'provider_credential_transport_unavailable' | 'provider_endpoint_auth_required' | 'provider_endpoint_rate_limited' | 'provider_endpoint_unauthorized' | 'provider_endpoint_unavailable' | 'provider_endpoint_unreachable' | 'provider_feature_disabled' | 'provider_incompatible_with_agent' | 'provider_machine_grant_stale' | 'provider_machine_unavailable' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_model_config_option_unsupported' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_not_enabled_on_machine' | 'provider_probe_authorization_invalid' | 'provider_probe_capacity_exhausted' | 'provider_probe_response_invalid' | 'provider_profile_migration_conflict' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_rpc_mutation_outcome_unknown' | 'provider_rpc_response_invalid' | 'provider_run_credential_selection_required' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_settings_invalid' | 'provider_settings_limit_exceeded' | 'provider_switch_unsupported' | undefined;
+            }[];
+            sourcePresentation: null | {
+                kind: 'connected_service';
+                service: {
+                    pluginId: 'happier';
+                    localId: 'mcp-sign-in';
+                } | {
                     pluginId: string;
                     localId: string;
                 };
-                endpointTemplateId: string;
-                protocol: string;
+            } | {
+                kind: 'provider';
+                provider: {
+                    identity: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    definitionRevision: 1;
+                };
             };
-            sourceRevision: string;
-            availability: 'available' | 'source_owner_required' | 'resource_corrupt' | 'policy_denied';
-            sourceFacts?: {
-                endpoint: {
-                    id: string;
-                    protocol: string;
-                    capabilities: {
-                        streaming: 'unknown' | 'supported' | 'unsupported';
-                        toolRoundTrips: 'unknown' | 'supported' | 'unsupported';
-                        statefulResponses: 'unknown' | 'supported' | 'unsupported';
-                        reasoningControls: 'unknown' | 'supported' | 'unsupported';
+            deliveryPolicy?: undefined | {
+                preferredAllowedModes: ('brokered' | 'direct' | 'vendor-native')[];
+            };
+            allowedRoutes?: ('brokered' | 'direct' | 'vendor-native')[] | undefined;
+            deliveryUnavailableReason?: 'agent_error' | 'agent_timeout' | 'agent_unavailable' | 'connected_service_credential_reconnect_required' | 'machine_offline' | 'model_not_granted' | 'permission_mode_not_granted' | 'provider_account_grant_stale' | 'provider_account_scope_required' | 'provider_agent_runtime_unsupported' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_catalog_unavailable' | 'provider_compatibility_unverified' | 'provider_connection_changed' | 'provider_connection_disabled' | 'provider_connection_invalid' | 'provider_connection_not_found' | 'provider_contribution_unavailable' | 'provider_credential_transport_unavailable' | 'provider_endpoint_auth_required' | 'provider_endpoint_rate_limited' | 'provider_endpoint_unauthorized' | 'provider_endpoint_unavailable' | 'provider_endpoint_unreachable' | 'provider_feature_disabled' | 'provider_incompatible_with_agent' | 'provider_machine_grant_stale' | 'provider_machine_unavailable' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_model_config_option_unsupported' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_not_enabled_on_machine' | 'provider_probe_authorization_invalid' | 'provider_probe_capacity_exhausted' | 'provider_probe_response_invalid' | 'provider_profile_migration_conflict' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_rpc_mutation_outcome_unknown' | 'provider_rpc_response_invalid' | 'provider_run_credential_selection_required' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_settings_invalid' | 'provider_settings_limit_exceeded' | 'provider_switch_unsupported' | undefined;
+            directDeliveryRecorded?: boolean | undefined;
+            connectedServiceSelections?: ({
+                source: 'team_resource';
+                resourceId: string;
+                deliveryMode: 'brokered';
+            } | {
+                source: 'team_resource';
+                resourceId: string;
+                deliveryMode: 'direct';
+                disclosedMember: {
+                    service: {
+                        pluginId: string;
+                        localId: string;
                     };
+                    accountId: string;
                 };
-                credential?: {
-                    kind: 'apiKey';
-                    transports: {
-                        id: string;
-                        protocols: string[];
-                        uses: ('probe' | 'runtime' | 'management')[];
-                        destination: {
-                            kind: 'httpHeader';
-                            name: string;
-                            format: 'raw' | 'bearer' | {
-                                template: string;
-                            };
-                        } | {
-                            kind: 'queryParam';
-                            name: string;
-                            format: 'raw' | 'bearer' | {
-                                template: string;
-                            };
-                        };
-                    }[];
-                    slotId?: 'apiKey' | undefined;
-                    required?: boolean | undefined;
-                    keyUrl?: string | undefined;
-                } | undefined;
-                compatibilityOverrides?: {
-                    agentTargetKey: string;
-                    protocol: string;
-                    status: 'verified' | 'experimental' | 'incompatible';
-                    reason: string;
-                    evidence?: {
-                        sourceUrls: string[];
-                        verifiedAt: string;
-                        providerVersion?: string | undefined;
-                        agentVersion?: string | undefined;
-                        testIds?: string[] | undefined;
-                    } | undefined;
-                }[] | undefined;
-            } | undefined;
-            confirmationSource?: {
-                connectionId: string;
-                catalogSourceKey: string;
-            } | undefined;
-            compatibility?: {
-                result: {
-                    status: 'verified';
-                    selectedProtocol: string;
-                    evidence: {
-                        sourceUrls: string[];
-                        verifiedAt: string;
-                        providerVersion?: string | undefined;
-                        agentVersion?: string | undefined;
-                        testIds?: string[] | undefined;
-                    };
-                } | {
-                    status: 'experimental';
-                    selectedProtocol: string;
-                    reasons: ('no_compatible_protocol' | 'no_auth_unsupported' | 'credential_transport_unavailable' | 'optional_credential_no_auth_unsupported' | 'capability_streaming_unsupported' | 'capability_streaming_unknown' | 'capability_toolRoundTrips_unsupported' | 'capability_toolRoundTrips_unknown' | 'capability_statefulResponses_unsupported' | 'capability_statefulResponses_unknown' | 'capability_reasoningControls_unsupported' | 'capability_reasoningControls_unknown' | 'model_required_for_capability_resolution' | 'model_capability_toolRoundTrips_unsupported' | 'model_capability_toolRoundTrips_unknown' | 'model_capability_reasoningControls_unsupported' | 'model_capability_reasoningControls_unknown' | 'compatibility_override_incompatible' | 'compatibility_override_experimental' | 'compatibility_evidence_missing' | 'model_capability_evidence_required' | 'agent_external_providers_unsupported' | 'adapter_contract_invalid')[];
-                    confirmationScope: {
-                        kind: 'connection';
-                    } | {
-                        kind: 'model';
-                        modelId: string;
-                    };
-                    evidence?: {
-                        sourceUrls: string[];
-                        verifiedAt: string;
-                        providerVersion?: string | undefined;
-                        agentVersion?: string | undefined;
-                        testIds?: string[] | undefined;
-                    } | undefined;
-                } | {
-                    status: 'incompatible';
-                    reasons: ('no_compatible_protocol' | 'no_auth_unsupported' | 'credential_transport_unavailable' | 'optional_credential_no_auth_unsupported' | 'capability_streaming_unsupported' | 'capability_streaming_unknown' | 'capability_toolRoundTrips_unsupported' | 'capability_toolRoundTrips_unknown' | 'capability_statefulResponses_unsupported' | 'capability_statefulResponses_unknown' | 'capability_reasoningControls_unsupported' | 'capability_reasoningControls_unknown' | 'model_required_for_capability_resolution' | 'model_capability_toolRoundTrips_unsupported' | 'model_capability_toolRoundTrips_unknown' | 'model_capability_reasoningControls_unsupported' | 'model_capability_reasoningControls_unknown' | 'compatibility_override_incompatible' | 'compatibility_override_experimental' | 'compatibility_evidence_missing' | 'model_capability_evidence_required' | 'agent_external_providers_unsupported' | 'adapter_contract_invalid')[];
-                };
-                compatibilityFingerprint: string;
-                confirmed: boolean;
-            } | undefined;
-            direct?: {
-                sourceMemberKey: string;
-                sourceVersion: string;
-            } | null | undefined;
-        } | undefined;
+            })[] | undefined;
+            usageCapabilities?: undefined | {
+                inferenceRequests: 'available' | 'unavailable';
+                totalTokens: 'available' | 'unavailable';
+                costUsd: 'available' | 'unavailable';
+                limitCoverage: 'brokered_only' | 'unavailable';
+            };
+            usageLimit?: null | undefined | {
+                metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
+                remaining: string;
+                resetsAtUtc: string;
+            };
+        }[];
         mode?: 'management' | 'picker' | undefined;
         sourceConnectionId?: string | undefined;
         favoriteSelections?: ({
@@ -504,162 +637,295 @@ export type ProvidersActionInputById = {
             groupId: string;
         } | undefined;
         sourceCatalog?: true | undefined;
-        teamCredentialModel?: {
-            selection: {
-                kind: 'team_credential_provider_model';
-                resourceId: string;
-                teamId: string;
-                expectedResourceRevision: number;
-                agentTargetKey: string;
-                modelId: string;
-                deliveryMode: 'brokered' | 'direct';
+        teamCredentialResources?: undefined | {
+            id: string;
+            teamId: string;
+            displayName: string;
+            resourceRevision: number;
+            readiness: {
+                kind: 'available';
+            } | {
+                kind: 'broker_unavailable';
+                reason?: 'application_unavailable' | 'catalog_empty' | 'incompatible' | 'model_unavailable' | 'not_granted' | 'projection_unavailable' | 'response_invalid' | undefined;
+            } | {
+                kind: 'limit_reached';
+                metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
+                resetsAtUtc: string;
+            } | {
+                kind: 'policy_denied';
+            } | {
+                kind: 'resource_corrupt';
+            } | {
+                kind: 'resource_unavailable';
+            } | {
+                kind: 'source_unavailable';
+                reason?: 'connected_service_credential_reconnect_required' | undefined;
+            } | {
+                kind: 'update_required';
             };
-            descriptor: {
-                id: string;
-                name: string;
-                costTier?: 'low' | 'standard' | 'premium' | undefined;
-                aliases?: string[] | undefined;
-                description?: string | undefined;
-                contextWindowTokens?: number | undefined;
-                inlineCompletion?: {
-                    operationId: string;
-                    tokenAccounting: 'utf8-bytes';
-                    promptOverheadTokens: number;
-                    outputTokens?: number | undefined;
-                    maxOutputTokens?: number | undefined;
-                    rawFimTemplate?: {
-                        prefix: string;
-                        suffix: string;
-                        middle: string;
-                    } | undefined;
-                } | undefined;
-                extendedContextModelId?: string | undefined;
-                modelOptions?: {
+            recoveryAction: 'choose_another_resource' | 'retry' | 'select_broker' | 'source_owner_action' | 'update_required' | null;
+            mayBroker: boolean;
+            mayReceiveDirect: boolean;
+            directMaterialState: 'current' | 'never_delivered' | 'preparing' | 'revoked' | 'stale';
+            sessionUsePolicy: 'personal_allowed' | 'team_context_required' | 'team_visibility_required' | null;
+            providerModels: {
+                selection: {
+                    kind: 'team_credential_provider_model';
+                    resourceId: string;
+                    teamId: string;
+                    expectedResourceRevision: number;
+                    agentTargetKey: string;
+                    modelId: string;
+                    deliveryMode: 'brokered' | 'direct' | 'vendor-native';
+                    nativeDelivery?: undefined | {
+                        managedId: string;
+                        controllerInstallationId: string;
+                        guestInstallationId: string;
+                        bindingKey: string;
+                        placeholderRef: string;
+                        sourceRevision: string;
+                        providerTicket: string;
+                    };
+                };
+                descriptor: {
                     id: string;
                     name: string;
-                    type: string;
-                    currentValue: string;
+                    costTier?: 'low' | 'premium' | 'standard' | undefined;
+                    aliases?: string[] | undefined;
                     description?: string | undefined;
-                    options?: {
-                        value: string;
+                    contextWindowTokens?: number | undefined;
+                    inlineCompletion?: undefined | {
+                        operationId: string;
+                        tokenAccounting: 'utf8-bytes';
+                        promptOverheadTokens: number;
+                        outputTokens?: number | undefined;
+                        maxOutputTokens?: number | undefined;
+                        rawFimTemplate?: undefined | {
+                            prefix: string;
+                            suffix: string;
+                            middle: string;
+                        };
+                    };
+                    nextEdit?: undefined | {
+                        operationId: string;
+                        tokenAccounting: 'utf8-bytes';
+                        promptOverheadTokens: number;
+                        outputTokens?: number | undefined;
+                        maxOutputTokens?: number | undefined;
+                    };
+                    extendedContextModelId?: string | undefined;
+                    modelOptions?: undefined | {
+                        id: string;
                         name: string;
+                        type: string;
+                        currentValue: string;
                         description?: string | undefined;
-                    }[] | undefined;
-                    overridesWhenOn?: {
-                        optionIds: string[];
-                        forcedValue?: string | undefined;
-                    } | undefined;
-                }[] | undefined;
-                capabilities?: {
-                    toolRoundTrips?: 'unknown' | 'supported' | 'unsupported' | undefined;
-                    reasoningControls?: 'unknown' | 'supported' | 'unsupported' | undefined;
-                    structuredOutput?: 'unknown' | 'supported' | 'unsupported' | undefined;
-                } | undefined;
-            };
-            application: {
-                agentTargetKey: string;
-                implementationIdentity: {
+                        options?: undefined | {
+                            value: string;
+                            name: string;
+                            description?: string | undefined;
+                        }[];
+                        overridesWhenOn?: undefined | {
+                            optionIds: string[];
+                            forcedValue?: string | undefined;
+                        };
+                    }[];
+                    capabilities?: undefined | {
+                        toolRoundTrips?: 'supported' | 'unknown' | 'unsupported' | undefined;
+                        reasoningControls?: 'supported' | 'unknown' | 'unsupported' | undefined;
+                        structuredOutput?: 'supported' | 'unknown' | 'unsupported' | undefined;
+                    };
+                };
+                application: {
+                    implementationIdentity: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    endpointTemplateId: string;
+                    protocol: string;
+                    agentTargetKey: string;
+                };
+                sourceRevision: string;
+                availability: 'available' | 'policy_denied' | 'resource_corrupt' | 'source_owner_required';
+                sourceFacts?: undefined | {
+                    endpoint: {
+                        id: string;
+                        protocol: string;
+                        capabilities: {
+                            streaming: 'supported' | 'unknown' | 'unsupported';
+                            toolRoundTrips: 'supported' | 'unknown' | 'unsupported';
+                            statefulResponses: 'supported' | 'unknown' | 'unsupported';
+                            reasoningControls: 'supported' | 'unknown' | 'unsupported';
+                        };
+                        modelIdPattern?: string | undefined;
+                    };
+                    credential?: undefined | {
+                        kind: 'apiKey';
+                        transports: {
+                            id: string;
+                            protocols: string[];
+                            uses: ('management' | 'probe' | 'runtime')[];
+                            destination: {
+                                kind: 'httpHeader';
+                                name: string;
+                                format: 'bearer' | 'raw' | {
+                                    template: string;
+                                };
+                            } | {
+                                kind: 'queryParam';
+                                name: string;
+                                format: 'bearer' | 'raw' | {
+                                    template: string;
+                                };
+                            };
+                            additionalCredentials?: undefined | {
+                                slotId: string;
+                                destination: {
+                                    kind: 'httpHeader';
+                                    name: string;
+                                    format: 'bearer' | 'raw' | {
+                                        template: string;
+                                    };
+                                } | {
+                                    kind: 'queryParam';
+                                    name: string;
+                                    format: 'bearer' | 'raw' | {
+                                        template: string;
+                                    };
+                                };
+                                label?: string | undefined | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                            }[];
+                        }[];
+                        slotId?: 'apiKey' | undefined;
+                        required?: boolean | undefined;
+                        keyUrl?: string | undefined;
+                        authorityDescription?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    };
+                    compatibilityOverrides?: undefined | {
+                        agentTargetKey: string;
+                        protocol: string;
+                        status: 'experimental' | 'incompatible' | 'verified';
+                        reason: string;
+                        evidence?: undefined | {
+                            sourceUrls: string[];
+                            verifiedAt: string;
+                            providerVersion?: string | undefined;
+                            agentVersion?: string | undefined;
+                            testIds?: string[] | undefined;
+                        };
+                    }[];
+                };
+                sources?: undefined | {
+                    manual: boolean;
+                    static: boolean;
+                    probe: boolean;
+                };
+                confidence?: 'account_unverified' | 'manual' | 'probe' | 'verified_static' | undefined;
+                compatibility?: undefined | {
+                    result: {
+                        status: 'experimental';
+                        selectedProtocol: string;
+                        reasons: ('adapter_contract_invalid' | 'agent_external_providers_unsupported' | 'capability_reasoningControls_unknown' | 'capability_reasoningControls_unsupported' | 'capability_statefulResponses_unknown' | 'capability_statefulResponses_unsupported' | 'capability_streaming_unknown' | 'capability_streaming_unsupported' | 'capability_toolRoundTrips_unknown' | 'capability_toolRoundTrips_unsupported' | 'compatibility_evidence_missing' | 'compatibility_override_experimental' | 'compatibility_override_incompatible' | 'credential_transport_unavailable' | 'model_capability_evidence_required' | 'model_capability_reasoningControls_unknown' | 'model_capability_reasoningControls_unsupported' | 'model_capability_toolRoundTrips_unknown' | 'model_capability_toolRoundTrips_unsupported' | 'model_required_for_capability_resolution' | 'no_auth_unsupported' | 'no_compatible_protocol' | 'optional_credential_no_auth_unsupported')[];
+                        confirmationScope: {
+                            kind: 'connection';
+                        } | {
+                            kind: 'model';
+                            modelId: string;
+                        };
+                        evidence?: undefined | {
+                            sourceUrls: string[];
+                            verifiedAt: string;
+                            providerVersion?: string | undefined;
+                            agentVersion?: string | undefined;
+                            testIds?: string[] | undefined;
+                        };
+                    } | {
+                        status: 'incompatible';
+                        reasons: ('adapter_contract_invalid' | 'agent_external_providers_unsupported' | 'capability_reasoningControls_unknown' | 'capability_reasoningControls_unsupported' | 'capability_statefulResponses_unknown' | 'capability_statefulResponses_unsupported' | 'capability_streaming_unknown' | 'capability_streaming_unsupported' | 'capability_toolRoundTrips_unknown' | 'capability_toolRoundTrips_unsupported' | 'compatibility_evidence_missing' | 'compatibility_override_experimental' | 'compatibility_override_incompatible' | 'credential_transport_unavailable' | 'model_capability_evidence_required' | 'model_capability_reasoningControls_unknown' | 'model_capability_reasoningControls_unsupported' | 'model_capability_toolRoundTrips_unknown' | 'model_capability_toolRoundTrips_unsupported' | 'model_required_for_capability_resolution' | 'no_auth_unsupported' | 'no_compatible_protocol' | 'optional_credential_no_auth_unsupported')[];
+                    } | {
+                        status: 'verified';
+                        selectedProtocol: string;
+                        evidence: {
+                            sourceUrls: string[];
+                            verifiedAt: string;
+                            providerVersion?: string | undefined;
+                            agentVersion?: string | undefined;
+                            testIds?: string[] | undefined;
+                        };
+                    };
+                    compatibilityFingerprint: string;
+                    confirmed: boolean;
+                };
+                nativeSource?: undefined | {
+                    providerTicket: string;
+                };
+                direct?: null | undefined | {
+                    sourceMemberKey: string;
+                    sourceVersion: string;
+                };
+                deliveryUnavailableReason?: 'agent_error' | 'agent_timeout' | 'agent_unavailable' | 'connected_service_credential_reconnect_required' | 'machine_offline' | 'model_not_granted' | 'permission_mode_not_granted' | 'provider_account_grant_stale' | 'provider_account_scope_required' | 'provider_agent_runtime_unsupported' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_catalog_unavailable' | 'provider_compatibility_unverified' | 'provider_connection_changed' | 'provider_connection_disabled' | 'provider_connection_invalid' | 'provider_connection_not_found' | 'provider_contribution_unavailable' | 'provider_credential_transport_unavailable' | 'provider_endpoint_auth_required' | 'provider_endpoint_rate_limited' | 'provider_endpoint_unauthorized' | 'provider_endpoint_unavailable' | 'provider_endpoint_unreachable' | 'provider_feature_disabled' | 'provider_incompatible_with_agent' | 'provider_machine_grant_stale' | 'provider_machine_unavailable' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_model_config_option_unsupported' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_not_enabled_on_machine' | 'provider_probe_authorization_invalid' | 'provider_probe_capacity_exhausted' | 'provider_probe_response_invalid' | 'provider_profile_migration_conflict' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_rpc_mutation_outcome_unknown' | 'provider_rpc_response_invalid' | 'provider_run_credential_selection_required' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_settings_invalid' | 'provider_settings_limit_exceeded' | 'provider_switch_unsupported' | undefined;
+            }[];
+            sourcePresentation: null | {
+                kind: 'connected_service';
+                service: {
+                    pluginId: 'happier';
+                    localId: 'mcp-sign-in';
+                } | {
                     pluginId: string;
                     localId: string;
                 };
-                endpointTemplateId: string;
-                protocol: string;
+            } | {
+                kind: 'provider';
+                provider: {
+                    identity: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    definitionRevision: 1;
+                };
             };
-            sourceRevision: string;
-            availability: 'available' | 'source_owner_required' | 'resource_corrupt' | 'policy_denied';
-            sourceFacts?: {
-                endpoint: {
-                    id: string;
-                    protocol: string;
-                    capabilities: {
-                        streaming: 'unknown' | 'supported' | 'unsupported';
-                        toolRoundTrips: 'unknown' | 'supported' | 'unsupported';
-                        statefulResponses: 'unknown' | 'supported' | 'unsupported';
-                        reasoningControls: 'unknown' | 'supported' | 'unsupported';
+            deliveryPolicy?: undefined | {
+                preferredAllowedModes: ('brokered' | 'direct' | 'vendor-native')[];
+            };
+            allowedRoutes?: ('brokered' | 'direct' | 'vendor-native')[] | undefined;
+            deliveryUnavailableReason?: 'agent_error' | 'agent_timeout' | 'agent_unavailable' | 'connected_service_credential_reconnect_required' | 'machine_offline' | 'model_not_granted' | 'permission_mode_not_granted' | 'provider_account_grant_stale' | 'provider_account_scope_required' | 'provider_agent_runtime_unsupported' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_catalog_unavailable' | 'provider_compatibility_unverified' | 'provider_connection_changed' | 'provider_connection_disabled' | 'provider_connection_invalid' | 'provider_connection_not_found' | 'provider_contribution_unavailable' | 'provider_credential_transport_unavailable' | 'provider_endpoint_auth_required' | 'provider_endpoint_rate_limited' | 'provider_endpoint_unauthorized' | 'provider_endpoint_unavailable' | 'provider_endpoint_unreachable' | 'provider_feature_disabled' | 'provider_incompatible_with_agent' | 'provider_machine_grant_stale' | 'provider_machine_unavailable' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_model_config_option_unsupported' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_not_enabled_on_machine' | 'provider_probe_authorization_invalid' | 'provider_probe_capacity_exhausted' | 'provider_probe_response_invalid' | 'provider_profile_migration_conflict' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_rpc_mutation_outcome_unknown' | 'provider_rpc_response_invalid' | 'provider_run_credential_selection_required' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_settings_invalid' | 'provider_settings_limit_exceeded' | 'provider_switch_unsupported' | undefined;
+            directDeliveryRecorded?: boolean | undefined;
+            connectedServiceSelections?: ({
+                source: 'team_resource';
+                resourceId: string;
+                deliveryMode: 'brokered';
+            } | {
+                source: 'team_resource';
+                resourceId: string;
+                deliveryMode: 'direct';
+                disclosedMember: {
+                    service: {
+                        pluginId: string;
+                        localId: string;
                     };
+                    accountId: string;
                 };
-                credential?: {
-                    kind: 'apiKey';
-                    transports: {
-                        id: string;
-                        protocols: string[];
-                        uses: ('probe' | 'runtime' | 'management')[];
-                        destination: {
-                            kind: 'httpHeader';
-                            name: string;
-                            format: 'raw' | 'bearer' | {
-                                template: string;
-                            };
-                        } | {
-                            kind: 'queryParam';
-                            name: string;
-                            format: 'raw' | 'bearer' | {
-                                template: string;
-                            };
-                        };
-                    }[];
-                    slotId?: 'apiKey' | undefined;
-                    required?: boolean | undefined;
-                    keyUrl?: string | undefined;
-                } | undefined;
-                compatibilityOverrides?: {
-                    agentTargetKey: string;
-                    protocol: string;
-                    status: 'verified' | 'experimental' | 'incompatible';
-                    reason: string;
-                    evidence?: {
-                        sourceUrls: string[];
-                        verifiedAt: string;
-                        providerVersion?: string | undefined;
-                        agentVersion?: string | undefined;
-                        testIds?: string[] | undefined;
-                    } | undefined;
-                }[] | undefined;
-            } | undefined;
-            confirmationSource?: {
-                connectionId: string;
-                catalogSourceKey: string;
-            } | undefined;
-            compatibility?: {
-                result: {
-                    status: 'verified';
-                    selectedProtocol: string;
-                    evidence: {
-                        sourceUrls: string[];
-                        verifiedAt: string;
-                        providerVersion?: string | undefined;
-                        agentVersion?: string | undefined;
-                        testIds?: string[] | undefined;
-                    };
-                } | {
-                    status: 'experimental';
-                    selectedProtocol: string;
-                    reasons: ('no_compatible_protocol' | 'no_auth_unsupported' | 'credential_transport_unavailable' | 'optional_credential_no_auth_unsupported' | 'capability_streaming_unsupported' | 'capability_streaming_unknown' | 'capability_toolRoundTrips_unsupported' | 'capability_toolRoundTrips_unknown' | 'capability_statefulResponses_unsupported' | 'capability_statefulResponses_unknown' | 'capability_reasoningControls_unsupported' | 'capability_reasoningControls_unknown' | 'model_required_for_capability_resolution' | 'model_capability_toolRoundTrips_unsupported' | 'model_capability_toolRoundTrips_unknown' | 'model_capability_reasoningControls_unsupported' | 'model_capability_reasoningControls_unknown' | 'compatibility_override_incompatible' | 'compatibility_override_experimental' | 'compatibility_evidence_missing' | 'model_capability_evidence_required' | 'agent_external_providers_unsupported' | 'adapter_contract_invalid')[];
-                    confirmationScope: {
-                        kind: 'connection';
-                    } | {
-                        kind: 'model';
-                        modelId: string;
-                    };
-                    evidence?: {
-                        sourceUrls: string[];
-                        verifiedAt: string;
-                        providerVersion?: string | undefined;
-                        agentVersion?: string | undefined;
-                        testIds?: string[] | undefined;
-                    } | undefined;
-                } | {
-                    status: 'incompatible';
-                    reasons: ('no_compatible_protocol' | 'no_auth_unsupported' | 'credential_transport_unavailable' | 'optional_credential_no_auth_unsupported' | 'capability_streaming_unsupported' | 'capability_streaming_unknown' | 'capability_toolRoundTrips_unsupported' | 'capability_toolRoundTrips_unknown' | 'capability_statefulResponses_unsupported' | 'capability_statefulResponses_unknown' | 'capability_reasoningControls_unsupported' | 'capability_reasoningControls_unknown' | 'model_required_for_capability_resolution' | 'model_capability_toolRoundTrips_unsupported' | 'model_capability_toolRoundTrips_unknown' | 'model_capability_reasoningControls_unsupported' | 'model_capability_reasoningControls_unknown' | 'compatibility_override_incompatible' | 'compatibility_override_experimental' | 'compatibility_evidence_missing' | 'model_capability_evidence_required' | 'agent_external_providers_unsupported' | 'adapter_contract_invalid')[];
-                };
-                compatibilityFingerprint: string;
-                confirmed: boolean;
-            } | undefined;
-            direct?: {
-                sourceMemberKey: string;
-                sourceVersion: string;
-            } | null | undefined;
-        } | undefined;
+            })[] | undefined;
+            usageCapabilities?: undefined | {
+                inferenceRequests: 'available' | 'unavailable';
+                totalTokens: 'available' | 'unavailable';
+                costUsd: 'available' | 'unavailable';
+                limitCoverage: 'brokered_only' | 'unavailable';
+            };
+            usageLimit?: null | undefined | {
+                metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
+                remaining: string;
+                resetsAtUtc: string;
+            };
+        }[];
         mode?: 'management' | 'picker' | undefined;
         sourceConnectionId?: string | undefined;
         favoriteSelections?: ({
@@ -3846,6 +4112,295 @@ export type ProvidersActionResultById = {
             sourceRevision?: string | undefined;
             modelLoadPreflightPolicy?: 'required' | 'advisory' | null | undefined;
         }[];
+        teamCredentialResources?: undefined | {
+            id: string;
+            teamId: string;
+            displayName: string;
+            resourceRevision: number;
+            readiness: {
+                kind: 'available';
+            } | {
+                kind: 'broker_unavailable';
+                reason?: 'application_unavailable' | 'catalog_empty' | 'incompatible' | 'model_unavailable' | 'not_granted' | 'projection_unavailable' | 'response_invalid' | undefined;
+            } | {
+                kind: 'limit_reached';
+                metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
+                resetsAtUtc: string;
+            } | {
+                kind: 'policy_denied';
+            } | {
+                kind: 'resource_corrupt';
+            } | {
+                kind: 'resource_unavailable';
+            } | {
+                kind: 'source_unavailable';
+                reason?: 'connected_service_credential_reconnect_required' | undefined;
+            } | {
+                kind: 'update_required';
+            };
+            recoveryAction: 'choose_another_resource' | 'retry' | 'select_broker' | 'source_owner_action' | 'update_required' | null;
+            mayBroker: boolean;
+            mayReceiveDirect: boolean;
+            directMaterialState: 'current' | 'never_delivered' | 'preparing' | 'revoked' | 'stale';
+            sessionUsePolicy: 'personal_allowed' | 'team_context_required' | 'team_visibility_required' | null;
+            providerModels: {
+                selection: {
+                    kind: 'team_credential_provider_model';
+                    resourceId: string;
+                    teamId: string;
+                    expectedResourceRevision: number;
+                    agentTargetKey: string;
+                    modelId: string;
+                    deliveryMode: 'brokered' | 'direct' | 'vendor-native';
+                    nativeDelivery?: undefined | {
+                        managedId: string;
+                        controllerInstallationId: string;
+                        guestInstallationId: string;
+                        bindingKey: string;
+                        placeholderRef: string;
+                        sourceRevision: string;
+                        providerTicket: string;
+                    };
+                };
+                descriptor: {
+                    id: string;
+                    name: string;
+                    costTier?: 'low' | 'premium' | 'standard' | undefined;
+                    aliases?: string[] | undefined;
+                    description?: string | undefined;
+                    contextWindowTokens?: number | undefined;
+                    inlineCompletion?: undefined | {
+                        operationId: string;
+                        tokenAccounting: 'utf8-bytes';
+                        promptOverheadTokens: number;
+                        outputTokens?: number | undefined;
+                        maxOutputTokens?: number | undefined;
+                        rawFimTemplate?: undefined | {
+                            prefix: string;
+                            suffix: string;
+                            middle: string;
+                        };
+                    };
+                    nextEdit?: undefined | {
+                        operationId: string;
+                        tokenAccounting: 'utf8-bytes';
+                        promptOverheadTokens: number;
+                        outputTokens?: number | undefined;
+                        maxOutputTokens?: number | undefined;
+                    };
+                    extendedContextModelId?: string | undefined;
+                    modelOptions?: undefined | {
+                        id: string;
+                        name: string;
+                        type: string;
+                        currentValue: string;
+                        description?: string | undefined;
+                        options?: undefined | {
+                            value: string;
+                            name: string;
+                            description?: string | undefined;
+                        }[];
+                        overridesWhenOn?: undefined | {
+                            optionIds: string[];
+                            forcedValue?: string | undefined;
+                        };
+                    }[];
+                    capabilities?: undefined | {
+                        toolRoundTrips?: 'supported' | 'unknown' | 'unsupported' | undefined;
+                        reasoningControls?: 'supported' | 'unknown' | 'unsupported' | undefined;
+                        structuredOutput?: 'supported' | 'unknown' | 'unsupported' | undefined;
+                    };
+                };
+                application: {
+                    implementationIdentity: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    endpointTemplateId: string;
+                    protocol: string;
+                    agentTargetKey: string;
+                };
+                sourceRevision: string;
+                availability: 'available' | 'policy_denied' | 'resource_corrupt' | 'source_owner_required';
+                sourceFacts?: undefined | {
+                    endpoint: {
+                        id: string;
+                        protocol: string;
+                        capabilities: {
+                            streaming: 'supported' | 'unknown' | 'unsupported';
+                            toolRoundTrips: 'supported' | 'unknown' | 'unsupported';
+                            statefulResponses: 'supported' | 'unknown' | 'unsupported';
+                            reasoningControls: 'supported' | 'unknown' | 'unsupported';
+                        };
+                        modelIdPattern?: string | undefined;
+                    };
+                    credential?: undefined | {
+                        kind: 'apiKey';
+                        slotId: 'apiKey';
+                        required: boolean;
+                        transports: {
+                            id: string;
+                            protocols: string[];
+                            uses: ('management' | 'probe' | 'runtime')[];
+                            destination: {
+                                kind: 'httpHeader';
+                                name: string;
+                                format: 'bearer' | 'raw' | {
+                                    template: string;
+                                };
+                            } | {
+                                kind: 'queryParam';
+                                name: string;
+                                format: 'bearer' | 'raw' | {
+                                    template: string;
+                                };
+                            };
+                            additionalCredentials?: undefined | {
+                                slotId: string;
+                                destination: {
+                                    kind: 'httpHeader';
+                                    name: string;
+                                    format: 'bearer' | 'raw' | {
+                                        template: string;
+                                    };
+                                } | {
+                                    kind: 'queryParam';
+                                    name: string;
+                                    format: 'bearer' | 'raw' | {
+                                        template: string;
+                                    };
+                                };
+                                label?: string | undefined | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                            }[];
+                        }[];
+                        keyUrl?: string | undefined;
+                        authorityDescription?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    };
+                    compatibilityOverrides?: undefined | {
+                        agentTargetKey: string;
+                        protocol: string;
+                        status: 'experimental' | 'incompatible' | 'verified';
+                        reason: string;
+                        evidence?: undefined | {
+                            sourceUrls: string[];
+                            verifiedAt: string;
+                            providerVersion?: string | undefined;
+                            agentVersion?: string | undefined;
+                            testIds?: string[] | undefined;
+                        };
+                    }[];
+                };
+                sources?: undefined | {
+                    manual: boolean;
+                    static: boolean;
+                    probe: boolean;
+                };
+                confidence?: 'account_unverified' | 'manual' | 'probe' | 'verified_static' | undefined;
+                compatibility?: undefined | {
+                    result: {
+                        status: 'experimental';
+                        selectedProtocol: string;
+                        reasons: ('adapter_contract_invalid' | 'agent_external_providers_unsupported' | 'capability_reasoningControls_unknown' | 'capability_reasoningControls_unsupported' | 'capability_statefulResponses_unknown' | 'capability_statefulResponses_unsupported' | 'capability_streaming_unknown' | 'capability_streaming_unsupported' | 'capability_toolRoundTrips_unknown' | 'capability_toolRoundTrips_unsupported' | 'compatibility_evidence_missing' | 'compatibility_override_experimental' | 'compatibility_override_incompatible' | 'credential_transport_unavailable' | 'model_capability_evidence_required' | 'model_capability_reasoningControls_unknown' | 'model_capability_reasoningControls_unsupported' | 'model_capability_toolRoundTrips_unknown' | 'model_capability_toolRoundTrips_unsupported' | 'model_required_for_capability_resolution' | 'no_auth_unsupported' | 'no_compatible_protocol' | 'optional_credential_no_auth_unsupported')[];
+                        confirmationScope: {
+                            kind: 'connection';
+                        } | {
+                            kind: 'model';
+                            modelId: string;
+                        };
+                        evidence?: undefined | {
+                            sourceUrls: string[];
+                            verifiedAt: string;
+                            providerVersion?: string | undefined;
+                            agentVersion?: string | undefined;
+                            testIds?: string[] | undefined;
+                        };
+                    } | {
+                        status: 'incompatible';
+                        reasons: ('adapter_contract_invalid' | 'agent_external_providers_unsupported' | 'capability_reasoningControls_unknown' | 'capability_reasoningControls_unsupported' | 'capability_statefulResponses_unknown' | 'capability_statefulResponses_unsupported' | 'capability_streaming_unknown' | 'capability_streaming_unsupported' | 'capability_toolRoundTrips_unknown' | 'capability_toolRoundTrips_unsupported' | 'compatibility_evidence_missing' | 'compatibility_override_experimental' | 'compatibility_override_incompatible' | 'credential_transport_unavailable' | 'model_capability_evidence_required' | 'model_capability_reasoningControls_unknown' | 'model_capability_reasoningControls_unsupported' | 'model_capability_toolRoundTrips_unknown' | 'model_capability_toolRoundTrips_unsupported' | 'model_required_for_capability_resolution' | 'no_auth_unsupported' | 'no_compatible_protocol' | 'optional_credential_no_auth_unsupported')[];
+                    } | {
+                        status: 'verified';
+                        selectedProtocol: string;
+                        evidence: {
+                            sourceUrls: string[];
+                            verifiedAt: string;
+                            providerVersion?: string | undefined;
+                            agentVersion?: string | undefined;
+                            testIds?: string[] | undefined;
+                        };
+                    };
+                    compatibilityFingerprint: string;
+                    confirmed: boolean;
+                };
+                nativeSource?: undefined | {
+                    providerTicket: string;
+                };
+                direct?: null | undefined | {
+                    sourceMemberKey: string;
+                    sourceVersion: string;
+                };
+                deliveryUnavailableReason?: 'agent_error' | 'agent_timeout' | 'agent_unavailable' | 'connected_service_credential_reconnect_required' | 'machine_offline' | 'model_not_granted' | 'permission_mode_not_granted' | 'provider_account_grant_stale' | 'provider_account_scope_required' | 'provider_agent_runtime_unsupported' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_catalog_unavailable' | 'provider_compatibility_unverified' | 'provider_connection_changed' | 'provider_connection_disabled' | 'provider_connection_invalid' | 'provider_connection_not_found' | 'provider_contribution_unavailable' | 'provider_credential_transport_unavailable' | 'provider_endpoint_auth_required' | 'provider_endpoint_rate_limited' | 'provider_endpoint_unauthorized' | 'provider_endpoint_unavailable' | 'provider_endpoint_unreachable' | 'provider_feature_disabled' | 'provider_incompatible_with_agent' | 'provider_machine_grant_stale' | 'provider_machine_unavailable' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_model_config_option_unsupported' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_not_enabled_on_machine' | 'provider_probe_authorization_invalid' | 'provider_probe_capacity_exhausted' | 'provider_probe_response_invalid' | 'provider_profile_migration_conflict' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_rpc_mutation_outcome_unknown' | 'provider_rpc_response_invalid' | 'provider_run_credential_selection_required' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_settings_invalid' | 'provider_settings_limit_exceeded' | 'provider_switch_unsupported' | undefined;
+            }[];
+            connectedServiceSelections: ({
+                source: 'team_resource';
+                resourceId: string;
+                deliveryMode: 'brokered';
+            } | {
+                source: 'team_resource';
+                resourceId: string;
+                deliveryMode: 'direct';
+                disclosedMember: {
+                    service: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    accountId: string;
+                };
+            })[];
+            sourcePresentation: null | {
+                kind: 'connected_service';
+                service: {
+                    pluginId: 'happier';
+                    localId: 'mcp-sign-in';
+                } | {
+                    pluginId: string;
+                    localId: string;
+                };
+            } | {
+                kind: 'provider';
+                provider: {
+                    identity: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    definitionRevision: 1;
+                };
+            };
+            deliveryPolicy?: undefined | {
+                preferredAllowedModes: ('brokered' | 'direct' | 'vendor-native')[];
+            };
+            allowedRoutes?: ('brokered' | 'direct' | 'vendor-native')[] | undefined;
+            deliveryUnavailableReason?: 'agent_error' | 'agent_timeout' | 'agent_unavailable' | 'connected_service_credential_reconnect_required' | 'machine_offline' | 'model_not_granted' | 'permission_mode_not_granted' | 'provider_account_grant_stale' | 'provider_account_scope_required' | 'provider_agent_runtime_unsupported' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_catalog_unavailable' | 'provider_compatibility_unverified' | 'provider_connection_changed' | 'provider_connection_disabled' | 'provider_connection_invalid' | 'provider_connection_not_found' | 'provider_contribution_unavailable' | 'provider_credential_transport_unavailable' | 'provider_endpoint_auth_required' | 'provider_endpoint_rate_limited' | 'provider_endpoint_unauthorized' | 'provider_endpoint_unavailable' | 'provider_endpoint_unreachable' | 'provider_feature_disabled' | 'provider_incompatible_with_agent' | 'provider_machine_grant_stale' | 'provider_machine_unavailable' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_model_config_option_unsupported' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_not_enabled_on_machine' | 'provider_probe_authorization_invalid' | 'provider_probe_capacity_exhausted' | 'provider_probe_response_invalid' | 'provider_profile_migration_conflict' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_rpc_mutation_outcome_unknown' | 'provider_rpc_response_invalid' | 'provider_run_credential_selection_required' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_settings_invalid' | 'provider_settings_limit_exceeded' | 'provider_switch_unsupported' | undefined;
+            directDeliveryRecorded?: boolean | undefined;
+            usageCapabilities?: undefined | {
+                inferenceRequests: 'available' | 'unavailable';
+                totalTokens: 'available' | 'unavailable';
+                costUsd: 'available' | 'unavailable';
+                limitCoverage: 'brokered_only' | 'unavailable';
+            };
+            usageLimit?: null | undefined | {
+                metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
+                remaining: string;
+                resetsAtUtc: string;
+            };
+        }[];
         hiddenSources?: {
             connectionId: string;
             providerName: string;
@@ -4253,6 +4808,295 @@ export type ProvidersActionResultById = {
             } | undefined;
             sourceRevision?: string | undefined;
             modelLoadPreflightPolicy?: 'required' | 'advisory' | null | undefined;
+        }[];
+        teamCredentialResources?: undefined | {
+            id: string;
+            teamId: string;
+            displayName: string;
+            resourceRevision: number;
+            readiness: {
+                kind: 'available';
+            } | {
+                kind: 'broker_unavailable';
+                reason?: 'application_unavailable' | 'catalog_empty' | 'incompatible' | 'model_unavailable' | 'not_granted' | 'projection_unavailable' | 'response_invalid' | undefined;
+            } | {
+                kind: 'limit_reached';
+                metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
+                resetsAtUtc: string;
+            } | {
+                kind: 'policy_denied';
+            } | {
+                kind: 'resource_corrupt';
+            } | {
+                kind: 'resource_unavailable';
+            } | {
+                kind: 'source_unavailable';
+                reason?: 'connected_service_credential_reconnect_required' | undefined;
+            } | {
+                kind: 'update_required';
+            };
+            recoveryAction: 'choose_another_resource' | 'retry' | 'select_broker' | 'source_owner_action' | 'update_required' | null;
+            mayBroker: boolean;
+            mayReceiveDirect: boolean;
+            directMaterialState: 'current' | 'never_delivered' | 'preparing' | 'revoked' | 'stale';
+            sessionUsePolicy: 'personal_allowed' | 'team_context_required' | 'team_visibility_required' | null;
+            providerModels: {
+                selection: {
+                    kind: 'team_credential_provider_model';
+                    resourceId: string;
+                    teamId: string;
+                    expectedResourceRevision: number;
+                    agentTargetKey: string;
+                    modelId: string;
+                    deliveryMode: 'brokered' | 'direct' | 'vendor-native';
+                    nativeDelivery?: undefined | {
+                        managedId: string;
+                        controllerInstallationId: string;
+                        guestInstallationId: string;
+                        bindingKey: string;
+                        placeholderRef: string;
+                        sourceRevision: string;
+                        providerTicket: string;
+                    };
+                };
+                descriptor: {
+                    id: string;
+                    name: string;
+                    costTier?: 'low' | 'premium' | 'standard' | undefined;
+                    aliases?: string[] | undefined;
+                    description?: string | undefined;
+                    contextWindowTokens?: number | undefined;
+                    inlineCompletion?: undefined | {
+                        operationId: string;
+                        tokenAccounting: 'utf8-bytes';
+                        promptOverheadTokens: number;
+                        outputTokens?: number | undefined;
+                        maxOutputTokens?: number | undefined;
+                        rawFimTemplate?: undefined | {
+                            prefix: string;
+                            suffix: string;
+                            middle: string;
+                        };
+                    };
+                    nextEdit?: undefined | {
+                        operationId: string;
+                        tokenAccounting: 'utf8-bytes';
+                        promptOverheadTokens: number;
+                        outputTokens?: number | undefined;
+                        maxOutputTokens?: number | undefined;
+                    };
+                    extendedContextModelId?: string | undefined;
+                    modelOptions?: undefined | {
+                        id: string;
+                        name: string;
+                        type: string;
+                        currentValue: string;
+                        description?: string | undefined;
+                        options?: undefined | {
+                            value: string;
+                            name: string;
+                            description?: string | undefined;
+                        }[];
+                        overridesWhenOn?: undefined | {
+                            optionIds: string[];
+                            forcedValue?: string | undefined;
+                        };
+                    }[];
+                    capabilities?: undefined | {
+                        toolRoundTrips?: 'supported' | 'unknown' | 'unsupported' | undefined;
+                        reasoningControls?: 'supported' | 'unknown' | 'unsupported' | undefined;
+                        structuredOutput?: 'supported' | 'unknown' | 'unsupported' | undefined;
+                    };
+                };
+                application: {
+                    implementationIdentity: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    endpointTemplateId: string;
+                    protocol: string;
+                    agentTargetKey: string;
+                };
+                sourceRevision: string;
+                availability: 'available' | 'policy_denied' | 'resource_corrupt' | 'source_owner_required';
+                sourceFacts?: undefined | {
+                    endpoint: {
+                        id: string;
+                        protocol: string;
+                        capabilities: {
+                            streaming: 'supported' | 'unknown' | 'unsupported';
+                            toolRoundTrips: 'supported' | 'unknown' | 'unsupported';
+                            statefulResponses: 'supported' | 'unknown' | 'unsupported';
+                            reasoningControls: 'supported' | 'unknown' | 'unsupported';
+                        };
+                        modelIdPattern?: string | undefined;
+                    };
+                    credential?: undefined | {
+                        kind: 'apiKey';
+                        slotId: 'apiKey';
+                        required: boolean;
+                        transports: {
+                            id: string;
+                            protocols: string[];
+                            uses: ('management' | 'probe' | 'runtime')[];
+                            destination: {
+                                kind: 'httpHeader';
+                                name: string;
+                                format: 'bearer' | 'raw' | {
+                                    template: string;
+                                };
+                            } | {
+                                kind: 'queryParam';
+                                name: string;
+                                format: 'bearer' | 'raw' | {
+                                    template: string;
+                                };
+                            };
+                            additionalCredentials?: undefined | {
+                                slotId: string;
+                                destination: {
+                                    kind: 'httpHeader';
+                                    name: string;
+                                    format: 'bearer' | 'raw' | {
+                                        template: string;
+                                    };
+                                } | {
+                                    kind: 'queryParam';
+                                    name: string;
+                                    format: 'bearer' | 'raw' | {
+                                        template: string;
+                                    };
+                                };
+                                label?: string | undefined | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                            }[];
+                        }[];
+                        keyUrl?: string | undefined;
+                        authorityDescription?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    };
+                    compatibilityOverrides?: undefined | {
+                        agentTargetKey: string;
+                        protocol: string;
+                        status: 'experimental' | 'incompatible' | 'verified';
+                        reason: string;
+                        evidence?: undefined | {
+                            sourceUrls: string[];
+                            verifiedAt: string;
+                            providerVersion?: string | undefined;
+                            agentVersion?: string | undefined;
+                            testIds?: string[] | undefined;
+                        };
+                    }[];
+                };
+                sources?: undefined | {
+                    manual: boolean;
+                    static: boolean;
+                    probe: boolean;
+                };
+                confidence?: 'account_unverified' | 'manual' | 'probe' | 'verified_static' | undefined;
+                compatibility?: undefined | {
+                    result: {
+                        status: 'experimental';
+                        selectedProtocol: string;
+                        reasons: ('adapter_contract_invalid' | 'agent_external_providers_unsupported' | 'capability_reasoningControls_unknown' | 'capability_reasoningControls_unsupported' | 'capability_statefulResponses_unknown' | 'capability_statefulResponses_unsupported' | 'capability_streaming_unknown' | 'capability_streaming_unsupported' | 'capability_toolRoundTrips_unknown' | 'capability_toolRoundTrips_unsupported' | 'compatibility_evidence_missing' | 'compatibility_override_experimental' | 'compatibility_override_incompatible' | 'credential_transport_unavailable' | 'model_capability_evidence_required' | 'model_capability_reasoningControls_unknown' | 'model_capability_reasoningControls_unsupported' | 'model_capability_toolRoundTrips_unknown' | 'model_capability_toolRoundTrips_unsupported' | 'model_required_for_capability_resolution' | 'no_auth_unsupported' | 'no_compatible_protocol' | 'optional_credential_no_auth_unsupported')[];
+                        confirmationScope: {
+                            kind: 'connection';
+                        } | {
+                            kind: 'model';
+                            modelId: string;
+                        };
+                        evidence?: undefined | {
+                            sourceUrls: string[];
+                            verifiedAt: string;
+                            providerVersion?: string | undefined;
+                            agentVersion?: string | undefined;
+                            testIds?: string[] | undefined;
+                        };
+                    } | {
+                        status: 'incompatible';
+                        reasons: ('adapter_contract_invalid' | 'agent_external_providers_unsupported' | 'capability_reasoningControls_unknown' | 'capability_reasoningControls_unsupported' | 'capability_statefulResponses_unknown' | 'capability_statefulResponses_unsupported' | 'capability_streaming_unknown' | 'capability_streaming_unsupported' | 'capability_toolRoundTrips_unknown' | 'capability_toolRoundTrips_unsupported' | 'compatibility_evidence_missing' | 'compatibility_override_experimental' | 'compatibility_override_incompatible' | 'credential_transport_unavailable' | 'model_capability_evidence_required' | 'model_capability_reasoningControls_unknown' | 'model_capability_reasoningControls_unsupported' | 'model_capability_toolRoundTrips_unknown' | 'model_capability_toolRoundTrips_unsupported' | 'model_required_for_capability_resolution' | 'no_auth_unsupported' | 'no_compatible_protocol' | 'optional_credential_no_auth_unsupported')[];
+                    } | {
+                        status: 'verified';
+                        selectedProtocol: string;
+                        evidence: {
+                            sourceUrls: string[];
+                            verifiedAt: string;
+                            providerVersion?: string | undefined;
+                            agentVersion?: string | undefined;
+                            testIds?: string[] | undefined;
+                        };
+                    };
+                    compatibilityFingerprint: string;
+                    confirmed: boolean;
+                };
+                nativeSource?: undefined | {
+                    providerTicket: string;
+                };
+                direct?: null | undefined | {
+                    sourceMemberKey: string;
+                    sourceVersion: string;
+                };
+                deliveryUnavailableReason?: 'agent_error' | 'agent_timeout' | 'agent_unavailable' | 'connected_service_credential_reconnect_required' | 'machine_offline' | 'model_not_granted' | 'permission_mode_not_granted' | 'provider_account_grant_stale' | 'provider_account_scope_required' | 'provider_agent_runtime_unsupported' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_catalog_unavailable' | 'provider_compatibility_unverified' | 'provider_connection_changed' | 'provider_connection_disabled' | 'provider_connection_invalid' | 'provider_connection_not_found' | 'provider_contribution_unavailable' | 'provider_credential_transport_unavailable' | 'provider_endpoint_auth_required' | 'provider_endpoint_rate_limited' | 'provider_endpoint_unauthorized' | 'provider_endpoint_unavailable' | 'provider_endpoint_unreachable' | 'provider_feature_disabled' | 'provider_incompatible_with_agent' | 'provider_machine_grant_stale' | 'provider_machine_unavailable' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_model_config_option_unsupported' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_not_enabled_on_machine' | 'provider_probe_authorization_invalid' | 'provider_probe_capacity_exhausted' | 'provider_probe_response_invalid' | 'provider_profile_migration_conflict' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_rpc_mutation_outcome_unknown' | 'provider_rpc_response_invalid' | 'provider_run_credential_selection_required' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_settings_invalid' | 'provider_settings_limit_exceeded' | 'provider_switch_unsupported' | undefined;
+            }[];
+            connectedServiceSelections: ({
+                source: 'team_resource';
+                resourceId: string;
+                deliveryMode: 'brokered';
+            } | {
+                source: 'team_resource';
+                resourceId: string;
+                deliveryMode: 'direct';
+                disclosedMember: {
+                    service: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    accountId: string;
+                };
+            })[];
+            sourcePresentation: null | {
+                kind: 'connected_service';
+                service: {
+                    pluginId: 'happier';
+                    localId: 'mcp-sign-in';
+                } | {
+                    pluginId: string;
+                    localId: string;
+                };
+            } | {
+                kind: 'provider';
+                provider: {
+                    identity: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    definitionRevision: 1;
+                };
+            };
+            deliveryPolicy?: undefined | {
+                preferredAllowedModes: ('brokered' | 'direct' | 'vendor-native')[];
+            };
+            allowedRoutes?: ('brokered' | 'direct' | 'vendor-native')[] | undefined;
+            deliveryUnavailableReason?: 'agent_error' | 'agent_timeout' | 'agent_unavailable' | 'connected_service_credential_reconnect_required' | 'machine_offline' | 'model_not_granted' | 'permission_mode_not_granted' | 'provider_account_grant_stale' | 'provider_account_scope_required' | 'provider_agent_runtime_unsupported' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_catalog_unavailable' | 'provider_compatibility_unverified' | 'provider_connection_changed' | 'provider_connection_disabled' | 'provider_connection_invalid' | 'provider_connection_not_found' | 'provider_contribution_unavailable' | 'provider_credential_transport_unavailable' | 'provider_endpoint_auth_required' | 'provider_endpoint_rate_limited' | 'provider_endpoint_unauthorized' | 'provider_endpoint_unavailable' | 'provider_endpoint_unreachable' | 'provider_feature_disabled' | 'provider_incompatible_with_agent' | 'provider_machine_grant_stale' | 'provider_machine_unavailable' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_model_config_option_unsupported' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_not_enabled_on_machine' | 'provider_probe_authorization_invalid' | 'provider_probe_capacity_exhausted' | 'provider_probe_response_invalid' | 'provider_profile_migration_conflict' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_rpc_mutation_outcome_unknown' | 'provider_rpc_response_invalid' | 'provider_run_credential_selection_required' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_settings_invalid' | 'provider_settings_limit_exceeded' | 'provider_switch_unsupported' | undefined;
+            directDeliveryRecorded?: boolean | undefined;
+            usageCapabilities?: undefined | {
+                inferenceRequests: 'available' | 'unavailable';
+                totalTokens: 'available' | 'unavailable';
+                costUsd: 'available' | 'unavailable';
+                limitCoverage: 'brokered_only' | 'unavailable';
+            };
+            usageLimit?: null | undefined | {
+                metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
+                remaining: string;
+                resetsAtUtc: string;
+            };
         }[];
         hiddenSources?: {
             connectionId: string;

@@ -1915,40 +1915,38 @@ export function useNewSessionScreenModel(input?: Readonly<{
             sessionModelSelectionKey(candidate.selection) === sessionModelSelectionKey(selectionOutcome.selection)
         ));
         if (!model) return;
-        await confirmExperimentalProviderModel.confirm({ kind: 'team-model', model }, () => {
-            if (!stillCurrent()) return;
-            if (selectedResource.sessionUsePolicy !== 'personal_allowed') {
-                accessDraftState.applyTeamCredentialPolicy(
-                    selectedResource.teamId,
-                    selectedResource.sessionUsePolicy === 'team_visibility_required',
-                );
-            }
-            setSelectedTeamCredentialModel(selectionOutcome.selection);
-            const previousOverrides = currentEngineSelectionRef.current.sessionConfigOptionOverrides;
-            const sourceOverrides = sanitizeNewSessionConfigOverridesForModelSelection({
-                providerId: selectionOutcome.selection.agentTargetKey,
-                configOptions: acpConfigOptions, modelOptions,
-                selectedModelId: selectionOutcome.selection.modelId,
-                selectedModelConfigOptions: model.descriptor.modelOptions ?? [],
-                selectedConfigOverrides: Object.fromEntries(Object.entries(previousOverrides?.overrides ?? {})
-                    .flatMap(([id, override]) => typeof override.value === 'string' ? [[id, override.value]] : [])),
-            });
-            const updatedAt = Date.now();
-            setSessionConfigOptionOverrides(Object.keys(sourceOverrides).length > 0 ? buildAcpConfigOptionOverridesV1({
-                updatedAt,
-                overrides: Object.fromEntries(Object.entries(sourceOverrides).map(([id, value]) => [id, { updatedAt, value }])),
-            }) : null);
-            setModelSelection({
-                v: 1,
-                updatedAt: Date.now(),
-                ref: {
-                    agentTargetKey: selectionOutcome.selection.agentTargetKey,
-                    providerConnectionId: null,
-                    modelId: selectionOutcome.selection.modelId,
-                },
-            });
+        if (!stillCurrent()) return;
+        if (selectedResource.sessionUsePolicy !== 'personal_allowed') {
+            accessDraftState.applyTeamCredentialPolicy(
+                selectedResource.teamId,
+                selectedResource.sessionUsePolicy === 'team_visibility_required',
+            );
+        }
+        setSelectedTeamCredentialModel(selectionOutcome.selection);
+        const previousOverrides = currentEngineSelectionRef.current.sessionConfigOptionOverrides;
+        const sourceOverrides = sanitizeNewSessionConfigOverridesForModelSelection({
+            providerId: selectionOutcome.selection.agentTargetKey,
+            configOptions: acpConfigOptions, modelOptions,
+            selectedModelId: selectionOutcome.selection.modelId,
+            selectedModelConfigOptions: model.descriptor.modelOptions ?? [],
+            selectedConfigOverrides: Object.fromEntries(Object.entries(previousOverrides?.overrides ?? {})
+                .flatMap(([id, override]) => typeof override.value === 'string' ? [[id, override.value]] : [])),
         });
-    }, [accessDraftState, acpConfigOptions, modelOptions, confirmExperimentalProviderModel, coordinateTeamCredentialSelection, currentEngineSelectionRef,
+        const updatedAt = Date.now();
+        setSessionConfigOptionOverrides(Object.keys(sourceOverrides).length > 0 ? buildAcpConfigOptionOverridesV1({
+            updatedAt,
+            overrides: Object.fromEntries(Object.entries(sourceOverrides).map(([id, value]) => [id, { updatedAt, value }])),
+        }) : null);
+        setModelSelection({
+            v: 1,
+            updatedAt: Date.now(),
+            ref: {
+                agentTargetKey: selectionOutcome.selection.agentTargetKey,
+                providerConnectionId: null,
+                modelId: selectionOutcome.selection.modelId,
+            },
+        });
+    }, [accessDraftState, acpConfigOptions, modelOptions, coordinateTeamCredentialSelection, currentEngineSelectionRef,
         setModelSelection, setSelectedTeamCredentialModel, setSessionConfigOptionOverrides, teamCredentialSelectionContextRef]);
 
     const selectCreationModel = React.useCallback<React.ComponentProps<typeof SessionModelPicker>['onSelect']>((ref) => {

@@ -26,10 +26,8 @@ import { createCurrentSessionPresentationHost } from '@/session/presentation/cur
 import { createManagedRunLaunchFixture } from '@/providers/lifecycle/managedRunLaunch.testkit';
 import { resolveHostSessionRuntimeFactoryResult } from '@/agent/runtime/session/loop/factoryResult';
 import type { HostSessionRuntimeHookRuntime } from '@/agent/runtime/session/loop/runHostSessionRuntime';
-import { DEFAULT_PROVIDER_SETTINGS_V1, ProviderConnectionIdSchema, ProviderSettingsV1Schema, splitProviderSettingsV1 } from '@happier-dev/protocol';
-import { ProviderModelBindingSourceV1Schema, ProviderModelConfirmationSourceV1Schema } from '@happier-dev/protocol/providers/binding-compatibility';
-import { setProviderExperimentalConfirmationV1 } from '@happier-dev/protocol/providers/settings/operationsV1';
-import { getProviderExperimentalConfirmationCatalogSourceKeyV1 } from '@happier-dev/protocol/providers/settings/v1';
+import { DEFAULT_PROVIDER_SETTINGS_V1, splitProviderSettingsV1 } from '@happier-dev/protocol';
+import { ProviderModelBindingSourceV1Schema } from '@happier-dev/protocol/providers/binding-compatibility';
 import { createInvocationSavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { getActiveAccountSettingsSnapshot, resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
@@ -155,7 +153,7 @@ describe('SessionHostBridge current custom Agent (integration)', () => {
     }
   });
 
-  it.each([false, true])('hydrates the recipient catalog before real Team native open and rechecks withdrawn consent (ambient ready=%s)', async ambientReady => {
+  it.each([false, true])('opens an experimental Team native model without recipient catalog hydration (ambient ready=%s)', async ambientReady => {
     const upstreamRequests: unknown[] = [];
     const upstream = createServer(async (request, response) => {
       if (request.method === 'GET' && request.url === PROVIDER_BROKER_PRIVATE_ENDPOINT_PATH) {
@@ -207,34 +205,31 @@ describe('SessionHostBridge current custom Agent (integration)', () => {
         sourceFacts: ProviderModelBindingSourceV1Schema.parse({ endpoint: { id: 'responses', protocol: 'openai-responses',
           capabilities: { streaming: 'supported', toolRoundTrips: 'supported', statefulResponses: 'supported', reasoningControls: 'supported' } },
           compatibilityOverrides: [{ agentTargetKey: fixture.agentTargetKey, protocol: 'openai-responses', status: 'experimental',
-            reason: 'Recipient confirmation required' }] }),
-        confirmationSource: ProviderModelConfirmationSourceV1Schema.parse({ connectionId: 'connected-source:team-pool',
-          catalogSourceKey: getProviderExperimentalConfirmationCatalogSourceKeyV1({ connectionId: ProviderConnectionIdSchema.parse('connected-source:team-pool') }) }),
+            reason: 'Experimental Agent pairing' }] }),
       };
-      let settings = ProviderSettingsV1Schema.parse(DEFAULT_PROVIDER_SETTINGS_V1);
       const compatibility = await resolveTeamCredentialModelCompatibility({ lease: fixture.lease, agentId: fixture.agentId,
-        model: { ...model, deliveryMode: 'brokered' }, providerSettings: settings });
-      if (compatibility.result.status !== 'experimental') throw new Error('Expected experimental worker binding');
-      settings = setProviderExperimentalConfirmationV1(settings, { ...model.confirmationSource,
-        agentTargetKey: fixture.agentTargetKey, modelId: compatibility.result.confirmationScope.kind === 'model' ? model.descriptor.id : null,
-        compatibilityFingerprint: compatibility.compatibilityFingerprint, confirmedAt: 1 });
+        model: { ...model, deliveryMode: 'brokered' } });
+      expect(compatibility).toMatchObject({ result: { status: 'experimental' }, confirmed: true });
       // Only the authenticated Home HTTP boundary is substituted. Catalog loading,
-      // own-Account custody, confirmation matching and materialization stay real.
+      // own-Account custody and materialization stay real.
+      let providerCatalogReads = 0;
       vi.spyOn(axios, 'get').mockImplementation(async (url, options) => {
         expect(new URL(String(url)).origin).toBe(account.serverHttpBaseUrl);
         expect(options?.headers?.Authorization).toBe(`Bearer ${recipient.token}`);
         const path = new URL(String(url)).pathname;
         if (path === '/v1/account/encryption/currentness') return { status: 200, data: {
           mode: 'plain', version: 1, settingsVersion: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
-        if (path === '/v1/account/entity-rows/provider-connections') return { status: 200, data: {
-          status: 'present', revision: 2, content: { t: 'plain', v: splitProviderSettingsV1(settings).catalog } } };
+        if (path === '/v1/account/entity-rows/provider-connections') {
+          providerCatalogReads++;
+          return { status: 200, data: { status: 'present', revision: 2,
+            content: { t: 'plain', v: splitProviderSettingsV1(DEFAULT_PROVIDER_SETTINGS_V1).catalog } } };
+        }
         if (path === '/v2/account/settings') return { status: 200, data: { content: { t: 'plain', v: {} }, version: 1 } };
         if (path === '/v2/account/settings/history') return { status: 200, data: { snapshots: [] } };
         const history = emptyAccountSettingsHistoryCaptureResponse(path);
         if (history) return history;
         throw new Error(`Unexpected Home read: ${path}`);
       });
-      let withdrawConsentDuringTunnel = false;
       const prepareTeamCredentialProviderBinding = async (input: Readonly<{ signal: AbortSignal }>) => {
         const opened = await openSessionTeamCredentialProviderBinding({
           sessionId: 'recipient-team-session', machineId: 'worker', agentId: fixture.agentId,
@@ -242,7 +237,6 @@ describe('SessionHostBridge current custom Agent (integration)', () => {
           binding: { v: 1, slot: { kind: 'provider_model' }, resourceId: 'resource-1', expectedResourceRevision: 3,
             deliveryMode: 'brokered', teamId: 'team-1' },
           lease: fixture.lease, materializationBaseDir: join(fixture.happyHomeDir, 'materialized'), signal: input.signal,
-          providerSettingsOperationContext: account,
           readCatalog: async () => [model],
           openBroker: async request => ({ ok: true, target: { custodianAccountId: 'custodian', brokerMachineId: 'broker',
             endpointId: 'b'.repeat(64), endpointRevision: 1, endpoint: { endpointId: 'b'.repeat(64) } },
@@ -254,8 +248,6 @@ describe('SessionHostBridge current custom Agent (integration)', () => {
               consumer: request.consumer, application: request.application },
               signature: { alg: 'Ed25519', keyId: 'home', valueBase64Url: 'A'.repeat(86) } } }),
           openTunnel: async () => {
-            if (withdrawConsentDuringTunnel) expect(await account.commitProviderConnectionsCatalog({ expectedSettingsVersion: 1,
-              catalog: { status: 'ready', revision: 3, catalog: splitProviderSettingsV1(DEFAULT_PROVIDER_SETTINGS_V1).catalog } })).toBe(true);
             return { localPort: address.port, localCapability: 'synthetic-consumer-token', observedPath: 'direct',
               retire: async () => undefined, close: async () => undefined };
           },
@@ -284,13 +276,9 @@ describe('SessionHostBridge current custom Agent (integration)', () => {
       disposeRuntime = operations.resetOrDisposeRuntime;
       await operations.sendTurnPrompt('recipient catalog admitted', { turnId: 'recipient-turn', localId: 'recipient-input', userMessageSeq: 1 });
       expect(upstreamRequests).toEqual([{ model: model.descriptor.id, input: 'recipient catalog admitted' }]);
-      expect(account.readSnapshot()?.providerConnectionsCatalog).toMatchObject({ status: 'ready', revision: 2 });
+      expect(account.readSnapshot()?.providerConnectionsCatalog).toBeUndefined();
+      expect(providerCatalogReads).toBe(0);
       expect(getActiveAccountSettingsSnapshot()).toEqual(ambient);
-      withdrawConsentDuringTunnel = true;
-      await expect(prepareTeamCredentialProviderBinding({ signal: new AbortController().signal }))
-        .rejects.toMatchObject({ code: 'provider_compatibility_unverified' });
-      await expect(prepareTeamCredentialProviderBinding({ signal: new AbortController().signal }))
-        .rejects.toMatchObject({ code: 'provider_compatibility_unverified' });
       expect(upstreamRequests).toHaveLength(1);
     } finally {
       await disposeRuntime?.();

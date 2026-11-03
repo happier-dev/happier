@@ -544,6 +544,9 @@ describe('TeamCredentialResourcePageV1Schema', () => {
       sourceMemberKey: model.direct.sourceMemberKey,
       sourceVersion: model.direct.sourceVersion,
     });
+    const catalog = { ...model, confidence: 'account_unverified',
+      sources: { manual: false, static: true, probe: false } };
+    expect(TeamCredentialProviderModelCatalogEntryV1Schema.parse(catalog)).toMatchObject(catalog);
     for (const privateField of [
       'custodianAccountId', 'source', 'brokerMachineId', 'audience', 'revision',
       'quota', 'encryptedMaterial', 'endpoint', 'normalizedUrl', 'publicHeaders',

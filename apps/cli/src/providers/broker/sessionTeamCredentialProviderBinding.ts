@@ -8,6 +8,8 @@ import type { AgentSessionProviderBinding } from '@happier-dev/plugin-sdk/agents
 import type {
   SessionTeamCredentialBindingIntentV1,
   TeamCredentialProviderModelCatalogEntryV1,
+  TeamCredentialResourceCatalogEntryV1,
+  TeamCredentialRouteV1,
 } from '@happier-dev/protocol/teams';
 import { TeamCredentialDirectMaterialPayloadV1Schema } from '@happier-dev/protocol/teams/credentials/directMaterialV1';
 
@@ -23,6 +25,9 @@ import { MACHINE_HTTP_LOCAL_CAPABILITY_HEADER } from '@happier-dev/iroh-native/n
 import { PROVIDER_BROKER_MODEL_ID_HEADER, teamCredentialBrokerLocalCredentialTransport } from './providerBrokerPrivateProtocol';
 import { createProviderBrokerEndpointDiscovery } from './providerBrokerEndpointDiscovery';
 import { assertTeamCredentialModelAdmission, type TeamCredentialModelCompatibilityInput } from './teamCredentialModelCompatibility';
+import { resolveTeamCredentialModelCompatibility } from './teamCredentialModelCompatibility';
+import { ProviderErrorCodeV1Schema, type ProviderErrorCodeV1 } from '@happier-dev/protocol/providers/errors';
+import { readTeamCredentialLaunchReadinessRefusal } from '@/session/services/sessionTeamCredentialReadiness';
 import type { SavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
 import { SessionTeamCredentialLaunchUnavailableError } from '@/session/services/sessionTeamCredentialLaunch';
 
@@ -51,7 +56,6 @@ export type ExactSessionTeamCredentialProviderSelection = Readonly<{
   application: ProviderBrokerApplicationBindingV1;
   sourceRevision: string;
   sourceFacts?: TeamCredentialModelCompatibilityInput['sourceFacts'];
-  confirmationSource?: TeamCredentialModelCompatibilityInput['confirmationSource'];
 }>;
 
 type SessionTeamCredentialProviderBindingOpenDependencies = Readonly<{
@@ -79,6 +83,66 @@ type ProviderTeamDirectOpen = NonNullable<
 export type SessionTeamCredentialDirectOpen = (
   input: Parameters<ProviderTeamDirectOpen>[0] & Readonly<{ consumer: ProviderBrokerConsumerV1 }>,
 ) => ReturnType<ProviderTeamDirectOpen>;
+
+/** One automatic route decision for presentation and fresh launch admission.
+ * Home supplies effective allowance; the exact worker supplies compatibility.
+ * Neither caller-authored facts nor this projection authorize installation. */
+export function selectSessionTeamCredentialProviderModel(input: Readonly<{
+  resource: TeamCredentialResourceCatalogEntryV1;
+  agentTargetKey: string;
+  modelId: string;
+  applications?: readonly ProviderBrokerApplicationBindingV1[];
+}>): TeamCredentialProviderModelCatalogEntryV1 | null {
+  const { resource } = input;
+  // Older producers retain the incumbent implicit broker route, never a new
+  // Direct fallback or native permission. Explicit legacy routes stay exact.
+  const order: readonly TeamCredentialRouteV1[] = resource.deliveryPolicy?.preferredAllowedModes ?? ['brokered'];
+  const allowed: readonly TeamCredentialRouteV1[] = resource.allowedRoutes ?? ['brokered', 'direct'];
+  for (const mode of order) {
+    if (!allowed.includes(mode) || readTeamCredentialLaunchReadinessRefusal(resource, mode)) continue;
+    const row = resource.providerModels.find(candidate => (
+      candidate.selection.deliveryMode === mode
+      && candidate.selection.resourceId === resource.id
+      && candidate.selection.teamId === resource.teamId
+      && candidate.selection.expectedResourceRevision === resource.resourceRevision
+      && candidate.selection.agentTargetKey === input.agentTargetKey
+      && candidate.selection.modelId === input.modelId
+      && candidate.availability === 'available'
+      && (!input.applications || input.applications.some(application => isSameTeamCredentialBrokerApplication(application, candidate.application)))
+      && (candidate.compatibility?.result.status !== 'incompatible')
+      && (mode !== 'vendor-native' || Boolean(resource.deliveryPolicy && resource.allowedRoutes && candidate.nativeSource && candidate.compatibility))
+    ));
+    if (row) return row;
+  }
+  return null;
+}
+
+/** Value-free worker projection. This never reads a personal Provider catalog,
+ * probes a source or performs delivery; Home still validates launch authority. */
+export async function qualifySessionTeamCredentialProviderModels(input: Readonly<{
+  resource: TeamCredentialResourceCatalogEntryV1;
+  lease: PluginRuntimeRegistryLease;
+  agentId: string;
+  signal?: AbortSignal;
+}>): Promise<TeamCredentialResourceCatalogEntryV1> {
+  const providerModels = await Promise.all(input.resource.providerModels.map(async model => {
+    input.signal?.throwIfAborted();
+    const { compatibility: _sourceCompatibility, ...sourceModel } = model;
+    try {
+      const compatibility = await resolveTeamCredentialModelCompatibility({ model: { ...sourceModel,
+        deliveryMode: model.selection.deliveryMode }, lease: input.lease, agentId: input.agentId, signal: input.signal });
+      const reason: ProviderErrorCodeV1 | null = compatibility.result.status === 'incompatible' ? 'provider_incompatible_with_agent' : null;
+      return { ...sourceModel, compatibility, ...(reason ? { availability: 'policy_denied' as const,
+        deliveryUnavailableReason: reason } : {}) };
+    } catch (error) {
+      input.signal?.throwIfAborted();
+      const code = ProviderErrorCodeV1Schema.safeParse(error && typeof error === 'object' ? Reflect.get(error, 'code') : null);
+      return { ...sourceModel, availability: 'policy_denied' as const,
+        deliveryUnavailableReason: code.success ? code.data : 'provider_catalog_unavailable' as const };
+    }
+  }));
+  return { ...input.resource, providerModels };
+}
 
 function resolveProviderBrokerConsumer(input: Readonly<{
   sessionId?: string;
@@ -154,8 +218,7 @@ export async function openExactSessionTeamCredentialProviderBinding(
   assertExactSelectionIsCoherent(input);
   const selection = input.selection;
   const assertAdmission = () => assertTeamCredentialModelAdmission({ lease: input.lease, agentId: input.agentId,
-    model: { ...selection, deliveryMode: 'brokered' }, signal: input.signal,
-    providerSettingsOperationContext: input.providerSettingsOperationContext });
+    model: { ...selection, deliveryMode: 'brokered' }, signal: input.signal });
   await assertAdmission();
   const consumer = resolveProviderBrokerConsumer(input);
   const materializationScopeId = consumer.kind === 'execution_run'
@@ -373,8 +436,7 @@ export async function openSessionTeamCredentialProviderBinding(input: Readonly<{
   ));
   if (!row) throw new SessionTeamCredentialLaunchUnavailableError();
   await assertTeamCredentialModelAdmission({ lease: input.lease, agentId: input.agentId,
-    model: { ...row, deliveryMode: row.selection.deliveryMode }, signal: input.signal,
-    providerSettingsOperationContext: input.providerSettingsOperationContext });
+    model: { ...row, deliveryMode: row.selection.deliveryMode }, signal: input.signal });
 
   if (input.binding.deliveryMode === 'direct') {
     if (!row.direct) {
@@ -436,8 +498,7 @@ export async function openSessionTeamCredentialProviderBinding(input: Readonly<{
     ));
     if (!current) throw new Error('team_credential_provider_selection_changed');
     await assertTeamCredentialModelAdmission({ lease: input.lease, agentId: input.agentId,
-      model: { ...current, deliveryMode: current.selection.deliveryMode }, signal: input.signal,
-      providerSettingsOperationContext: input.providerSettingsOperationContext });
+      model: { ...current, deliveryMode: current.selection.deliveryMode }, signal: input.signal });
 
     const bindingKey = `team_resource:${row.selection.resourceId}:revision:${row.selection.expectedResourceRevision}:route:direct`;
     const prepared = prepareLeasedAgentProviderBinding({
@@ -526,7 +587,6 @@ export async function openSessionTeamCredentialProviderBinding(input: Readonly<{
       application: row.application,
       sourceRevision: row.sourceRevision,
       sourceFacts: row.sourceFacts,
-      confirmationSource: row.confirmationSource,
     },
     lease: input.lease,
     materializationBaseDir: input.materializationBaseDir,
@@ -550,8 +610,7 @@ export async function openSessionTeamCredentialProviderBinding(input: Readonly<{
       ));
       if (!current) throw new Error('team_credential_provider_selection_changed');
       await assertTeamCredentialModelAdmission({ lease: input.lease, agentId: input.agentId,
-        model: { ...current, deliveryMode: current.selection.deliveryMode }, signal,
-        providerSettingsOperationContext: input.providerSettingsOperationContext });
+        model: { ...current, deliveryMode: current.selection.deliveryMode }, signal });
     },
   });
 }

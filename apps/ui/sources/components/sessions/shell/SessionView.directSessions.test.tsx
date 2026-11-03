@@ -1029,10 +1029,13 @@ describe('SessionView (direct sessions)', () => {
       }),
     })[0];
     if (!application) throw new Error('Expected an admitted managed Responses application');
+    const { projectProviderModelSourceStateV1 } = await import('@happier-dev/protocol/providers/binding-compatibility');
     const model = {
       selection, descriptor: { id: selection.modelId, name: 'Team model' },
       application,
-      confirmationSource: { connectionId: 'connected-source:recipient', catalogSourceKey: 's'.repeat(43) },
+      compatibility: projectProviderModelSourceStateV1({ endpoint: { id: application.endpointTemplateId,
+        protocol: application.protocol, capabilities: { streaming: 'unknown', toolRoundTrips: 'unknown',
+          statefulResponses: 'unknown', reasoningControls: 'unknown' } } }, { id: selection.modelId, name: 'Team model' }),
       sourceRevision: 'source-1', availability: 'available',
     };
     const resource = TeamCredentialResourceCatalogEntryV1Schema.parse({
@@ -1058,25 +1061,11 @@ describe('SessionView (direct sessions)', () => {
     } });
     providerModelProjectionState.value.data = createProviderModelProjectionFixture({
       agentTargetKey: selection.agentTargetKey,
-      groups: [createProviderModelProjectionGroupFixture({ connectionId: model.confirmationSource.connectionId,
-        connectionRevision: 0, rows: [{
-          ref: { agentTargetKey: selection.agentTargetKey,
-            providerConnectionId: model.confirmationSource.connectionId, modelId: selection.modelId },
-          descriptor: model.descriptor, confirmationSource: model.confirmationSource,
-          sources: { manual: false, static: false, probe: false }, confidence: 'account_unverified',
-          compatibility: { result: { status: 'experimental', reasons: ['compatibility_evidence_missing'],
-            selectedProtocol: 'openai-responses', confirmationScope: { kind: 'model', modelId: selection.modelId } },
-            compatibilityFingerprint: 'compatibility:v1:worker', confirmed: true },
-          endpointHealth: 'not_checked', catalog: { stale: false }, loadState: 'unknown', visibility: 'visible',
-        }] })],
+      groups: [], teamCredentialResources: [resource],
     });
-    // The worker supplies compatibility facts; the recipient Account owns consent.
+    // D23: the worker's experimental Team row does not require personal consent.
     installProviderConnectionsCatalogHttpBoundary({ home: homes, serverId: canonicalDraftScope.serverId,
-      catalog: ProviderConnectionsCatalogV1Schema.parse({ ...DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1,
-        experimentalBindingConfirmations: [{ v: 1, ...model.confirmationSource,
-          agentTargetKey: selection.agentTargetKey, modelId: selection.modelId,
-          compatibilityFingerprint: 'compatibility:v1:worker', confirmedAt: 1 }],
-      }),
+      catalog: ProviderConnectionsCatalogV1Schema.parse(DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1),
     });
     const { getServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
     await getServerFeaturesSnapshot({ serverId: canonicalDraftScope.serverId, force: true });

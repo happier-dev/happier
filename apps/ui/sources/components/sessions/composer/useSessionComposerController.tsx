@@ -4195,62 +4195,52 @@ export function useSessionComposerController({
                 && resourceHasAvailableTeamCredentialProviderModel(resource, teamCredentialModel)
             )));
         if (!stillCurrent) return;
-        const model = selectedResource?.providerModels.find(candidate => (
-            sessionModelSelectionKey(candidate.selection) === sessionModelSelectionKey(selectionOutcome.selection)
-        ));
-        if (!model) return;
-        await confirmExperimentalProviderModel.confirm({ kind: 'team-model', model }, async () => {
-            if (!teamCredentialSelectionCatalogRef.current.currentResourceKeys.has(resourceKey)
-                || !teamCredentialSelectionCatalogRef.current.resources.some(resource => (
-                    resourceHasAvailableTeamCredentialProviderModel(resource, selectionOutcome.selection)
-                ))) return;
-            try {
-                const result = await actionExecutor.execute('session.model.set', {
-                    sessionId,
-                    teamCredentialModel: selectionOutcome.selection,
-                    ...(selectedResource?.sessionUsePolicy === 'team_visibility_required'
-                        ? { teamVisibilityGrantConsent: { teamId: teamCredentialModel.teamId } }
-                        : {}),
-                }, {
-                    surface: 'ui',
-                    defaultSessionId: sessionId,
-                    serverId: sessionRouteServerId,
-                });
-                if (result.ok) {
-                    setModelTransitionActionRequired(null);
-                    return;
-                }
-                const details = result.details && typeof result.details === 'object'
-                    ? result.details as Record<string, unknown>
-                    : null;
-                if (details?.status === 'restart_required') {
-                    // The Home committed this Team selection; only the process that
-                    // is already running has not adopted it. That is the same fact
-                    // a personal Provider transition reports, so it reaches the same
-                    // explicit restart affordance instead of silently restarting
-                    // somebody's running session or being reported as a failure.
-                    setModelTransitionActionRequired({
-                        status: 'restart_required',
-                        requestedSelection: selectionOutcome.selection,
-                        intentBaselineUpdatedAt: providerModelSelectionIntent?.updatedAt ?? 0,
-                    });
-                    return;
-                }
+        try {
+            const result = await actionExecutor.execute('session.model.set', {
+                sessionId,
+                teamCredentialModel: selectionOutcome.selection,
+                ...(selectedResource?.sessionUsePolicy === 'team_visibility_required'
+                    ? { teamVisibilityGrantConsent: { teamId: teamCredentialModel.teamId } }
+                    : {}),
+            }, {
+                surface: 'ui',
+                defaultSessionId: sessionId,
+                serverId: sessionRouteServerId,
+            });
+            if (result.ok) {
                 setModelTransitionActionRequired(null);
-                if (details?.status === 'team_resource_active_transition_unsupported') {
-                    // Nothing was saved: the session started running between the
-                    // read and the write. Saying the connection is unavailable would
-                    // describe a different, unrecoverable problem.
-                    Modal.alert(t('common.error'), t('teams.credentials.selection.activeTransitionUnsupported'));
-                    return;
-                }
-                Modal.alert(t('common.error'), t('settingsProviders.models.connectionUnavailable'));
-            } catch {
-                setModelTransitionActionRequired(null);
-                Modal.alert(t('common.error'), t('settingsProviders.models.connectionUnavailable'));
+                return;
             }
-        });
-    }, [actionExecutor, canSelectModel, confirmExperimentalProviderModel, coordinateTeamCredentialSelection, providerModelSelectionIntent?.updatedAt, sessionId, sessionRouteServerId, teamCredentialCatalog, teamCredentialResourcesEnabled]);
+            const details = result.details && typeof result.details === 'object'
+                ? result.details as Record<string, unknown>
+                : null;
+            if (details?.status === 'restart_required') {
+                // The Home committed this Team selection; only the process that
+                // is already running has not adopted it. That is the same fact
+                // a personal Provider transition reports, so it reaches the same
+                // explicit restart affordance instead of silently restarting
+                // somebody's running session or being reported as a failure.
+                setModelTransitionActionRequired({
+                    status: 'restart_required',
+                    requestedSelection: selectionOutcome.selection,
+                    intentBaselineUpdatedAt: providerModelSelectionIntent?.updatedAt ?? 0,
+                });
+                return;
+            }
+            setModelTransitionActionRequired(null);
+            if (details?.status === 'team_resource_active_transition_unsupported') {
+                // Nothing was saved: the session started running between the
+                // read and the write. Saying the connection is unavailable would
+                // describe a different, unrecoverable problem.
+                Modal.alert(t('common.error'), t('teams.credentials.selection.activeTransitionUnsupported'));
+                return;
+            }
+            Modal.alert(t('common.error'), t('settingsProviders.models.connectionUnavailable'));
+        } catch {
+            setModelTransitionActionRequired(null);
+            Modal.alert(t('common.error'), t('settingsProviders.models.connectionUnavailable'));
+        }
+    }, [actionExecutor, canSelectModel, coordinateTeamCredentialSelection, providerModelSelectionIntent?.updatedAt, sessionId, sessionRouteServerId, teamCredentialCatalog, teamCredentialResourcesEnabled]);
 
     // Function to update a native model mode (only for agents that expose model selection in the UI).
     const updateModelMode = React.useCallback((mode: ModelMode) => {

@@ -101,6 +101,23 @@ function response(fingerprint: typeof source.connectionSecurityFingerprint = sou
 }
 
 describe("projectTeamCredentialProviderModels", () => {
+    it("preserves source catalog uncertainty independently of route availability", () => {
+        const observed = response();
+        Object.assign(observed.groups[0]!.rows[0]!, { confidence: 'account_unverified',
+            confirmationSource: { connectionId: source.connectionId, catalogSourceKey: 's'.repeat(43) } });
+        const projected = projectTeamCredentialProviderModels({
+            response: observed, resourceId: 'resource-1', teamId: 'team-1', resourceRevision: 7,
+            agentTargetKey: application.agentTargetKey, application, source,
+            allowedModelIds: null, deliveryMode: 'brokered',
+        });
+        expect(projected).toMatchObject({ status: 'success', models: [{
+            confidence: 'account_unverified', sources: { manual: false, static: true, probe: false },
+            availability: 'available',
+        }] });
+        expect(projected.models[0]).not.toHaveProperty('confirmationSource');
+        expect(projected.models[0]).not.toHaveProperty('experimentalBindingConfirmations');
+    });
+
     it("keeps a malformed or denied source projection distinct from a current empty catalog", () => {
         const input = {
             resourceId: "resource-1", teamId: "team-1", resourceRevision: 7,

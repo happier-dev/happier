@@ -52,7 +52,7 @@ describe('shared Provider Account Action producer', () => {
     const executor = createActionExecutor({ providerActionExecute: createProviderActionExecuteV1({
       assertCurrent() {}, async rpc() { throw new Error('Account manual models must not use machine RPC'); },
       async setDefault() { throw new Error('Manual models must not change defaults'); },
-      async readAccountCatalog() { throw new Error('Account writer owns this mutation'); }, account: row.execute,
+      account: row.execute,
     }) });
     const created = await executor.execute('providers.connections.create_custom', {
       action: 'createCustom', connectionId: 'pc_effort', template: customTemplate, savedSecretId: null,
@@ -82,7 +82,6 @@ describe('shared Provider Account Action producer', () => {
     const executor = createActionExecutor({ providerActionExecute: createProviderActionExecuteV1({
       assertCurrent() {}, async rpc() { throw new Error('gateway_choice_must_not_execute'); },
       async setDefault() { throw new Error('gateway_choice_must_not_write'); },
-      async readAccountCatalog() { throw new Error('gateway_choice_must_not_read_connections'); },
       account: row.execute,
     }) });
     const request = parseProviderActionRequestV1('providers.gateways.choose', {});

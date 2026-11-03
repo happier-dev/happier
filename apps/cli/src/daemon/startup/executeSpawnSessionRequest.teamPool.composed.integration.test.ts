@@ -10,8 +10,6 @@ import tweetnacl from 'tweetnacl';
 import { MACHINE_HTTP_LOCAL_CAPABILITY_HEADER } from '@happier-dev/iroh-native/node';
 import { AccountSettingsSchema, DEFAULT_PROVIDER_SETTINGS_V1,
   ProviderSettingsV1Schema, splitProviderSettingsV1 } from '@happier-dev/protocol';
-import { createAccountProviderActionExecuteV1 } from '@happier-dev/protocol/providers/connections/accountProviderActionV1';
-import { parseProviderActionRequestV1 } from '@happier-dev/protocol/providers/providerActionsV1';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { AccountProfileResponseSchema } from '@happier-dev/protocol/account/profile';
@@ -380,19 +378,14 @@ describe('Team Pool Session launch through Action/CLI and an external Agent', ()
           featureGate: { isEnabled: () => true }, getAccountSettingsSnapshot: () => recipientSnapshot,
           acquireRuntimeLease: async () => ({ ...worker.lease, release: async () => {} }), modelSettingsMutation: unavailable });
         const local = await recipientRuntime.projectModels({ machineId: worker.machineId, agentTargetKey: worker.agentTargetKey,
-          teamCredentialModel: offered, refreshPolicy: 'current_only' });
-        expect(local).toMatchObject({ status: 'success', groups: [{ rows: [{ compatibility: { confirmed: false } }] }] });
+          teamCredentialResources: resources, refreshPolicy: 'current_only' });
+        expect(local).toMatchObject({ status: 'success', groups: [] });
         if (local.status !== 'success') throw new Error('Worker compatibility unavailable');
-        const compatibility = local.groups[0]!.rows[0]!.compatibility;
-        expect(compatibility.result, JSON.stringify(compatibility.result)).toMatchObject({ status: 'experimental' });
-        if (compatibility.result.status !== 'experimental') throw new Error('Expected recipient consent');
-        const confirm = createAccountProviderActionExecuteV1({ assertCurrent() {}, now: () => 2,
-          readDefinitions: async () => [], readCatalog: async () => recipientSnapshot.providerConnectionsCatalog,
-          writeCatalog: async write => { recipientSnapshot.providerConnectionsCatalog = { status: 'ready', revision: write.expectedRevision + 1, catalog: write.catalog }; return { status: 'updated' }; } });
-        expect(await confirm(parseProviderActionRequestV1('providers.models.experimental.confirm', { action: 'confirmExperimental',
-          ...offered.confirmationSource, expectedConnectionRevision: 0, agentTargetKey: worker.agentTargetKey,
-          modelId: compatibility.result.confirmationScope.kind === 'model' ? 'gpt-5.5' : null,
-          compatibilityFingerprint: compatibility.compatibilityFingerprint }), {})).toMatchObject({ ok: true });
+        const qualified = local.teamCredentialResources?.flatMap(row => row.providerModels)
+          .find(row => row.selection.modelId === offered.descriptor.id);
+        expect(qualified).toMatchObject({ compatibility: { result: { status: 'experimental' }, confirmed: true } });
+        // D23: launch the Team route without creating a recipient confirmation.
+        expect(recipientSnapshot.providerConnectionsCatalog.catalog.experimentalBindingConfirmations).toEqual([]);
         setActiveAccountSettingsSnapshot(recipientSnapshot);
         const api = await ApiClient.create(credentials);
         api.setLocalMachineId(worker.machineId);

@@ -8,9 +8,6 @@ import { PROVIDER_ACTION_OUTPUT_SCHEMAS_V1, resolveProviderActionOwnerV1, type P
 import type { ProviderActionIdV1 } from './providerActionIdsV1.js';
 import type { ProviderDefaultModelSelectionMutationV1 } from './selection/v1.js';
 import type { AccountSettingsMutationResult } from '../account/settings/accountSettingMutationV1.js';
-import type { ProviderConnectionsCatalogSnapshotV1 } from './connections/connectionRowsV1.js';
-import type { DaemonProviderModelProjectionResponseV1 } from '../rpc/providers.js';
-import { projectAccountProviderModelConfirmationsV1 } from './catalog/accountModelProjectionV1.js';
 
 type AccountActionId = 'providers.defaults.set' | 'providers.models.source_visibility.set' | 'providers.gateways.choose';
 type RpcActionId = Exclude<ProviderActionIdV1, AccountActionId>;
@@ -90,7 +87,6 @@ export function createProviderActionExecuteV1(host: Readonly<{
   rpc(input: Readonly<{ machineId: string; method: string; request: ProviderActionRequestV1; context: ActionExecutorContext;
     operationTimeoutMs?: null }>): Promise<unknown>;
   setDefault(input: ProviderDefaultModelSelectionMutationV1, context: ActionExecutorContext): Promise<Pick<AccountSettingsMutationResult, 'status'>>;
-  readAccountCatalog(context: ActionExecutorContext): Promise<ProviderConnectionsCatalogSnapshotV1>;
   account?(request: ProviderActionRequestV1, context: ActionExecutorContext): Promise<ActionExecuteResult>;
 }>): NonNullable<ActionExecutorDeps['providerActionExecute']> {
   return async (request, context): Promise<ActionExecuteResult> => {
@@ -151,20 +147,6 @@ export function createProviderActionExecuteV1(host: Readonly<{
     }
     // Mutation ACKs survive post-commit Account retirement; reads never disclose stale content.
     if (!mutation) host.assertCurrent(context);
-    if ((request.actionId === 'providers.models.projection' || request.actionId === 'providers.models.refresh')
-      && request.input.teamCredentialModel) {
-      // Both Action ids select the projection schema at the RPC ingress above.
-      const projection = parsed.data as DaemonProviderModelProjectionResponseV1;
-      if (projection.status === 'success') {
-        // The worker supplies adapter facts; only the requesting Account can
-        // supply consent, identically for UI, CLI and MCP Action callers.
-        const catalog = await host.readAccountCatalog(context);
-        host.assertCurrent(context);
-        return { ok: true, result: catalog.status === 'ready'
-          ? projectAccountProviderModelConfirmationsV1({ projection, catalog: catalog.catalog })
-          : { status: 'error', error: createProviderErrorV1('provider_settings_invalid') } };
-      }
-    }
     return { ok: true, result: parsed.data };
   };
 }

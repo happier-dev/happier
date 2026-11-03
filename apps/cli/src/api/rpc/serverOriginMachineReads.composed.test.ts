@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Server } from 'socket.io';
 import { AccountSettingsSchema, DEFAULT_PROVIDER_SETTINGS_V1, ProviderSettingsV1Schema, splitProviderSettingsV1 } from '@happier-dev/protocol';
-import { TeamCredentialSourceBindingV1Schema } from '@happier-dev/protocol/teams';
+import { TeamCredentialResourceCatalogEntryV1Schema, TeamCredentialSourceBindingV1Schema } from '@happier-dev/protocol/teams';
 import { createAccountProviderActionExecuteV1 } from '@happier-dev/protocol/providers/connections/accountProviderActionV1';
 import { parseProviderActionRequestV1 } from '@happier-dev/protocol/providers/providerActionsV1';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
@@ -192,7 +192,14 @@ describe('server-origin Machine reads across the E2EE RPC seam', () => {
                 modelSettingsMutation: unused,
             });
             const workerRequest = { machineId: worker.machineId, agentTargetKey: worker.agentTargetKey,
-                teamCredentialModel: teamModel, refreshPolicy: 'current_only' as const };
+                teamCredentialResources: [TeamCredentialResourceCatalogEntryV1Schema.parse({
+                    id: 'resource-1', teamId: 'team-1', displayName: 'Team source', resourceRevision: 1,
+                    readiness: { kind: 'available' }, recoveryAction: null, mayBroker: true, mayReceiveDirect: false,
+                    directMaterialState: 'never_delivered', sessionUsePolicy: 'personal_allowed',
+                    connectedServiceSelections: [], sourcePresentation: null,
+                    deliveryPolicy: { preferredAllowedModes: ['brokered'] }, allowedRoutes: ['brokered'],
+                    providerModels: [teamModel],
+                })], refreshPolicy: 'current_only' as const };
             const manager = new RpcHandlerManager({ scopePrefix: worker.machineId, localMachineId: worker.machineId,
                 encryptionKey: new Uint8Array(32).fill(43), encryptionVariant: 'dataKey', logger: () => {} });
             registerMachineProviderRpcHandlers({ rpcHandlerManager: manager, machineId: worker.machineId,
@@ -202,8 +209,7 @@ describe('server-origin Machine reads across the E2EE RPC seam', () => {
             // Only Home HTTP and Socket delivery are substituted. B's captured
             // Account Action and C's registered worker projector are both real.
             const emptyCatalog = splitProviderSettingsV1(ProviderSettingsV1Schema.parse(DEFAULT_PROVIDER_SETTINGS_V1)).catalog;
-            const { serverId } = await recipientAccount.restore({ accountId: 'requester-B', catalog: emptyCatalog,
-                waivedActions: ['providers.models.experimental.confirm'] });
+            const { serverId } = await recipientAccount.restore({ accountId: 'requester-B', catalog: emptyCatalog });
             const recipientRow = installProviderConnectionsCatalogHttpBoundary({ home: recipientAccount.home, serverId, catalog: emptyCatalog });
             // CLI/MCP use their real Account catalog transport, independently
             // of the UI adapter, against the same B-owned persisted row.
@@ -211,8 +217,8 @@ describe('server-origin Machine reads across the E2EE RPC seam', () => {
             const serverHttpBaseUrl = 'https://requester-b.invalid';
             const operationContext = createInvocationSavedSecretOperationContextV1({ credentials, serverHttpBaseUrl,
                 snapshot: { ...worker.snapshot, scopeKey: resolveAccountSettingsScopeKey(credentials) }, isCurrent: async () => true });
-            let cliCatalog = () => recipientRow.catalog;
-            vi.spyOn(axios, 'get').mockImplementation(async (url, options) => {
+            const cliCatalog = () => recipientRow.catalog;
+            const accountReads = vi.spyOn(axios, 'get').mockImplementation(async (url, options) => {
                 expect(new URL(String(url)).origin).toBe(serverHttpBaseUrl);
                 expect(options?.headers).toMatchObject({ Authorization: 'Bearer requester-B' });
                 const path = new URL(String(url)).pathname;
@@ -236,45 +242,26 @@ describe('server-origin Machine reads across the E2EE RPC seam', () => {
                 expect(request.accountId).toBe('requester-B');
                 return manager.invokeLocal(request.method, request.payload);
             });
-            const { describeProviderModels, mutateProviderModelSettings } = await import('../../../../ui/sources/providers/actions/client');
+            const { describeProviderModels } = await import('../../../../ui/sources/providers/actions/client');
             const read = () => describeProviderModels({ ...workerRequest, serverId });
             const before = await read();
-            expect(before, JSON.stringify(before)).toMatchObject({ status: 'success', groups: [{ rows: [{
-                ref: { modelId: teamModel.descriptor.id }, compatibility: { result: { status: 'experimental' }, confirmed: false },
+            expect(before, JSON.stringify(before)).toMatchObject({ status: 'success', groups: [], teamCredentialResources: [{ providerModels: [{
+                selection: { modelId: teamModel.descriptor.id }, compatibility: { result: { status: 'experimental' }, confirmed: true },
             }] }] });
             if (before.status !== 'success') throw new Error('Expected worker admission projection');
-            const compatibility = before.groups[0]!.rows[0]!.compatibility;
-            if (compatibility.result.status !== 'experimental') throw new Error('Expected actual worker compatibility');
-            expect(await mutateProviderModelSettings({ serverId, request: {
-                action: 'confirmExperimental', ...teamModel.confirmationSource, expectedConnectionRevision: 0,
-                agentTargetKey: worker.agentTargetKey, modelId: compatibility.result.confirmationScope.kind === 'model' ? teamModel.descriptor.id : null,
-                compatibilityFingerprint: compatibility.compatibilityFingerprint,
-            } })).toMatchObject({ status: 'success' });
-            expect(recipientRow.catalog.experimentalBindingConfirmations).toHaveLength(1);
+            // D23: the worker qualifies Team models without reading or writing either Account's consent.
+            expect(recipientRow.catalog.experimentalBindingConfirmations).toEqual([]);
             expect(custodianSnapshot.providerConnectionsCatalog?.catalog.experimentalBindingConfirmations ?? []).toEqual([]);
-            expect(await read()).toMatchObject({ status: 'success', groups: [{ rows: [{
-                ref: { modelId: teamModel.descriptor.id }, compatibility: { confirmed: true },
-            }] }] });
             for (const surface of ['cli', 'mcp'] as const) {
                 for (const actionId of ['providers.models.projection', 'providers.models.refresh'] as const) {
                     const projected = await readCli(surface, actionId);
                     expect(projected, JSON.stringify(projected)).toMatchObject({ ok: true, result: {
-                        status: 'success', groups: [{ rows: [{ compatibility: { confirmed: true } }] }],
+                        status: 'success', groups: [], teamCredentialResources: [{ providerModels: [{ compatibility: { confirmed: true } }] }],
                     } });
                 }
             }
-            // C's confirmation alone must not authorize B, even when the worker
-            // itself returns confirmed. This also detects dropped Account composition.
-            custodianSnapshot.providerConnectionsCatalog = { status: 'ready', revision: 1, catalog: recipientRow.catalog };
-            installProviderConnectionsCatalogHttpBoundary({ home: recipientAccount.home, serverId, catalog: emptyCatalog });
-            cliCatalog = () => emptyCatalog;
-            expect(await recipientRuntime.projectModels(workerRequest)).toMatchObject({ status: 'success', groups: [{ rows: [{ compatibility: { confirmed: true } }] }] });
-            expect(await read()).toMatchObject({ status: 'success', groups: [{ rows: [{ compatibility: { confirmed: false } }] }] });
-            for (const surface of ['cli', 'mcp'] as const) {
-                expect(await readCli(surface, 'providers.models.projection')).toMatchObject({ ok: true, result: {
-                    status: 'success', groups: [{ rows: [{ compatibility: { confirmed: false } }] }],
-                } });
-            }
+            expect(recipientRow.catalog.experimentalBindingConfirmations).toEqual([]);
+            expect(accountReads).not.toHaveBeenCalled();
             return;
             }
             // A saved Provider source must also describe its catalog without
@@ -326,7 +313,7 @@ describe('server-origin Machine reads across the E2EE RPC seam', () => {
     it('preserves source catalog and compatibility facts for an external Agent installed only on the worker', () => verifyWorkerOnlySource('connected_source'));
     it('preserves saved Provider source facts for an external Agent installed only on the worker', () => verifyWorkerOnlySource('saved_provider'));
 
-    const verifyConnectedSource = async (scenario: 'admit' | 'admit_pool' | 'recipient_confirmation' | 'account' | 'pool' | 'installed' | 'saved_gateway' | 'revoked' | 'removed' | 'different_service' | 'no_selection') => {
+    const verifyConnectedSource = async (scenario: 'admit' | 'admit_pool' | 'account' | 'pool' | 'installed' | 'saved_gateway' | 'revoked' | 'removed' | 'different_service' | 'no_selection') => {
         const home = await mkdtemp(join(tmpdir(), 'connected-codex-eligibility-'));
         try {
             // OPS8/OPS9's source picker selects this qualified Connected Account.
@@ -400,7 +387,7 @@ describe('server-origin Machine reads across the E2EE RPC seam', () => {
                 modelSettingsMutation: unused,
             });
             const agentTargetKey = `agent:${codexManifest.id}/${agent.id}`;
-            if (scenario === 'admit' || scenario === 'admit_pool' || scenario === 'recipient_confirmation') {
+            if (scenario === 'admit' || scenario === 'admit_pool') {
                 const before = await runtime.projectModels({ machineId, agentTargetKey,
                     connectedAccountTarget: source.target, refreshPolicy: 'current_only', mode: 'management' });
                 if (before.status !== 'success') throw new Error('Expected source catalog before confirmation');
@@ -413,10 +400,7 @@ describe('server-origin Machine reads across the E2EE RPC seam', () => {
                 })).resolves.toMatchObject({ status: 'success' });
                 // The Account-row transport is in-memory; the actual Action parser,
                 // confirmation semantics, strict catalog and CAS writer stay real.
-                const confirmationSnapshot = scenario === 'recipient_confirmation'
-                    ? { ...snapshot, scopeKey: 'recipient-account',
-                        providerConnectionsCatalog: structuredClone(snapshot.providerConnectionsCatalog) }
-                    : snapshot;
+                const confirmationSnapshot = snapshot;
                 const confirm = createAccountProviderActionExecuteV1({ assertCurrent() {}, now: () => 2,
                     readCatalog: async () => confirmationSnapshot.providerConnectionsCatalog,
                     readDefinitions: async () => [],
@@ -434,10 +418,6 @@ describe('server-origin Machine reads across the E2EE RPC seam', () => {
                     compatibilityFingerprint: row.compatibility.compatibilityFingerprint,
                 }), {})).toMatchObject({ ok: true, result: { status: 'success' } });
                 expect(snapshot.providerConnectionsCatalog.catalog.connections).toEqual([]);
-                if (scenario === 'recipient_confirmation') {
-                    expect(snapshot.providerConnectionsCatalog.catalog.experimentalBindingConfirmations).toEqual([]);
-                    expect(confirmationSnapshot.providerConnectionsCatalog.catalog.experimentalBindingConfirmations).toHaveLength(1);
-                }
             }
             const daemon = createDaemon();
             registerMachineProviderRpcHandlers({ rpcHandlerManager: daemon.manager, machineId,
@@ -463,7 +443,7 @@ describe('server-origin Machine reads across the E2EE RPC seam', () => {
                 return;
             }
             expect(projection).toMatchObject({ status: 'success', agentTargetKey });
-            if (scenario !== 'admit' && scenario !== 'admit_pool' && scenario !== 'recipient_confirmation') {
+            if (scenario !== 'admit' && scenario !== 'admit_pool') {
                 if (projection.status !== 'success') throw new Error('Expected source model projection');
                 if (scenario === 'account' || scenario === 'pool' || scenario === 'installed' || scenario === 'saved_gateway') {
                     expect(projection.groups.length).toBeGreaterThan(0);
@@ -534,7 +514,6 @@ describe('server-origin Machine reads across the E2EE RPC seam', () => {
 
     it('admits a connected Codex source through the real model projector without a saved Provider connection', () => verifyConnectedSource('admit'));
     it('admits a confirmed connected Codex Pool through the same real projector', () => verifyConnectedSource('admit_pool'));
-    it('admits a Team source after the recipient confirms in their own private Account', () => verifyConnectedSource('recipient_confirmation'));
     it.each(['account', 'pool', 'installed', 'saved_gateway', 'revoked', 'removed', 'different_service', 'no_selection'] as const)(
         'projects only the current source-qualified SDK catalog, preserving experimental confirmation: %s', verifyConnectedSource,
     );

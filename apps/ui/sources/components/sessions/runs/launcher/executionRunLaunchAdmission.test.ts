@@ -6,7 +6,8 @@ import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/
 import { FeatureGatesSchema } from '@happier-dev/protocol/features/payload/featureGatesSchema';
 import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 import { TEAM_CREDENTIAL_RESOURCE_DISCOVERY_PATH_V1, TeamCredentialProviderModelSelectionV1Schema, TeamCredentialResourceCatalogEntryV1Schema, TeamCredentialResourceDiscoverInputV1Schema } from '@happier-dev/protocol/teams';
-import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { RPC_METHODS, SESSION_RPC_METHODS, DaemonProviderModelProjectionRequestV1Schema } from '@happier-dev/protocol/rpc';
+import { projectProviderModelSourceStateV1 } from '@happier-dev/protocol/providers/binding-compatibility';
 import { PluginProjectionV2Schema } from '@happier-dev/protocol';
 import { MachineAgentInventoryItemSchema } from '@happier-dev/protocol/capabilities';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
@@ -33,7 +34,7 @@ import { BUNDLED_CANONICAL_AGENT_DECLARATIONS } from '@/agents/registry/generate
 import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
 import type { RuntimeFetch } from '@/utils/system/runtimeFetch';
 import { createAccountTokenForTests, createHomeGovernanceHarness } from '@/dev/testkit/harness/homeGovernanceHarness';
-import { createConfirmedTeamModelProjectionFixture } from '@/dev/testkit/harness/providerSettingsHarness';
+import { createProviderModelProjectionFixture } from '@/dev/testkit/harness/providerSettingsHarness';
 import { getServerProfileById, resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
 import { resetTeamsDirectoryEngineForTests } from '@/sync/engine/teams/teamsDirectoryEngine';
@@ -488,18 +489,16 @@ describe('real execution Run launch admission', () => {
                 application: { agentTargetKey: teamModel.agentTargetKey,
                     implementationIdentity: { pluginId: 'happier.provider.openai', localId: 'openai' },
                     endpointTemplateId: 'responses', protocol: 'openai-responses' },
+                compatibility: projectProviderModelSourceStateV1({ endpoint: { id: 'responses', protocol: 'openai-responses',
+                    capabilities: { streaming: 'unknown', toolRoundTrips: 'unknown', statefulResponses: 'unknown', reasoningControls: 'unknown' } } },
+                    { id: teamModel.modelId, name: 'Shared review model' }),
                 sourceRevision: 'source-1', availability: 'available' }],
             sourcePresentation: { kind: 'provider', provider: {
                 identity: { pluginId: 'happier.provider.openai', localId: 'openai' }, definitionRevision: 1 } },
         });
         const httpRequests: { path: string; authorization: string | null }[] = [];
-        // Worker compatibility does not grant experimental consent. Serve the recipient's
-        // existing consent through the real Account catalog reader, just as the UI does.
-        const providerCatalog = ProviderConnectionsCatalogV1Schema.parse({ ...DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1,
-            experimentalBindingConfirmations: [{ v: 1, connectionId: 'connected-source:recipient', catalogSourceKey: 's'.repeat(43),
-                agentTargetKey: teamModel.agentTargetKey, modelId: teamModel.modelId,
-                compatibilityFingerprint: 'compatibility:v1:worker', confirmedAt: 1 }],
-        });
+        // D23: neither the recipient nor the custodian has experimental consent stored.
+        const providerCatalog = ProviderConnectionsCatalogV1Schema.parse(DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1);
         // Actual Home feature, directory and catalog HTTP responses. Exact
         // Account authorization, parsing, snapshot loading and picker policy stay real.
         installLaunchHomeHttpBoundary(async (url, init) => {
@@ -538,9 +537,10 @@ describe('real execution Run launch admission', () => {
         const readiness = createDeferred<unknown>();
         boundary.rpc.mockImplementation(async (request) => {
             if (request.method === RPC_METHODS.CAPABILITIES_DETECT) return supportedCapabilities;
-            // The worker projects compatibility; the real Action reads recipient consent from the Account row above.
-            if (request.method === RPC_METHODS.DAEMON_PROVIDERS_MODEL_PROJECTION) return createConfirmedTeamModelProjectionFixture({
-                agentTargetKey: teamModel.agentTargetKey, modelId: teamModel.modelId, modelName: 'Shared review model' });
+            if (request.method === RPC_METHODS.DAEMON_PROVIDERS_MODEL_PROJECTION) return createProviderModelProjectionFixture({
+                agentTargetKey: teamModel.agentTargetKey, groups: [],
+                teamCredentialResources: DaemonProviderModelProjectionRequestV1Schema.parse(request.payload).teamCredentialResources ?? [],
+            });
             if (request.method === RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE) {
                 const payload = request.payload as { spawnNonce?: string };
                 return { type: 'success', sessionIdStatus: 'pending', spawnNonce: payload.spawnNonce };

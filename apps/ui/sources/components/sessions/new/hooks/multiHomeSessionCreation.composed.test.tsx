@@ -20,7 +20,7 @@ import { PluginProjectionV2Schema } from '@happier-dev/protocol';
 import { BUNDLED_AGENT_CONTRIBUTION_IDENTITIES } from '@happier-dev/agents/agent-ids';
 import type { HomeViewStateV1, ServerProfile } from '@/sync/domains/server/serverProfiles';
 import type { Machine } from '@/sync/domains/state/storageTypes';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { RPC_METHODS, DaemonProviderModelProjectionRequestV1Schema } from '@happier-dev/protocol/rpc';
 
 installTokenStorageWebPlatformMocks();
 
@@ -37,8 +37,6 @@ const socketBoundary = vi.hoisted(() => ({
     fetches: vi.fn(),
     result: null as SessionSpawnNewResultV1 | null,
     providerProjection: null as import('@happier-dev/protocol/rpc').DaemonProviderModelProjectionResponseV1 | null,
-    teamModelProjectionGate: null as Promise<void> | null,
-    teamModelProjectionRequested: false,
     nativeSignInStatus: 'signedIn' as 'signedIn' | 'signedOut',
     controls: new Map<string, Readonly<{ disconnect: () => void; reconnect: () => void }>>(),
 }));
@@ -148,11 +146,10 @@ vi.mock('socket.io-client', async () => {
                         return { ok: true, result: createExistingSessionDirectoryPreflightResult(payload.params) };
                     }
                     if (payload.method.endsWith(`:${RPC_METHODS.DAEMON_PROVIDERS_MODEL_PROJECTION}`) && socketBoundary.providerProjection) {
-                        if (typeof payload.params === 'object' && payload.params !== null && 'teamCredentialModel' in payload.params) {
-                            socketBoundary.teamModelProjectionRequested = true;
-                            await socketBoundary.teamModelProjectionGate;
-                        }
-                        return { ok: true, result: socketBoundary.providerProjection };
+                        const request = DaemonProviderModelProjectionRequestV1Schema.parse(payload.params);
+                        return { ok: true, result: socketBoundary.providerProjection.status === 'success' && request.teamCredentialResources
+                            ? { ...socketBoundary.providerProjection, teamCredentialResources: request.teamCredentialResources }
+                            : socketBoundary.providerProjection };
                     }
                     if (payload.method.includes('contributionRegistryProjection.describe')) {
                         const { BUNDLED_CANONICAL_AGENT_DECLARATIONS } = await import('@/agents/registry/generatedBundledPluginEntries');
@@ -290,8 +287,6 @@ describe('multi-Home Session creation composition', () => {
         machineHttpSnapshots.clear();
         socketBoundary.result = null;
         socketBoundary.providerProjection = null;
-        socketBoundary.teamModelProjectionGate = null;
-        socketBoundary.teamModelProjectionRequested = false;
         socketBoundary.nativeSignInStatus = 'signedIn';
         routeBoundary.replace.mockClear();
         routeBoundary.push.mockClear();
@@ -1542,7 +1537,7 @@ describe('multi-Home Session creation composition', () => {
         const { PROVIDER_CONNECTIONS_ROWS_ROUTE_V1, ProviderConnectionsRowReadResponseV1Schema, splitProviderSettingsV1 }
             = await import('@happier-dev/protocol/providers/connections/connectionRowsV1');
         const { DEFAULT_PROVIDER_SETTINGS_V1 } = await import('@happier-dev/protocol/providers/settings/v1');
-        const { setProviderExperimentalConfirmationV1 } = await import('@happier-dev/protocol/providers/settings/operationsV1');
+        const { projectProviderModelSourceStateV1 } = await import('@happier-dev/protocol/providers/binding-compatibility');
         const { TeamsPageV1Schema, TeamCredentialResourceEntitledPageV1Schema, TeamCredentialResourceDiscoveryPageV1Schema,
             TEAM_CREDENTIAL_RESOURCE_DISCOVERY_PATH_V1, TEAM_DIRECTORY_PAGE_LIMIT_DEFAULT_V1,
             NO_TEAM_CAPABILITIES_V1, resolveTeamAdmissionProjectionV1 } = await import('@happier-dev/protocol/teams');
@@ -1587,24 +1582,19 @@ describe('multi-Home Session creation composition', () => {
                     type: 'select', currentValue: 'high', options: [{ value: 'low', name: 'Low' }, { value: 'high', name: 'High' }] }] } : {}) },
                 application: { agentTargetKey: 'agent:happier.agent.codex/codex',
                     implementationIdentity: { pluginId: 'happier.provider.openai', localId: 'openai' }, endpointTemplateId: 'responses', protocol: 'openai_responses' },
+                compatibility: projectProviderModelSourceStateV1({ endpoint: { id: 'responses', protocol: 'openai-responses',
+                    capabilities: { streaming: 'unknown', toolRoundTrips: 'unknown', statefulResponses: 'unknown', reasoningControls: 'unknown' } } },
+                    { id: 'gpt-5', name: 'GPT-5' }),
                 sourceRevision: 'runner-source-7', availability: 'available' }], sourcePresentation: { kind: 'provider',
                 provider: { identity: { pluginId: 'happier.provider.openai', localId: 'openai' }, definitionRevision: 1 } } }] });
         if (sourceCase) {
-            const { createConfirmedTeamModelProjectionFixture } = await import('@/dev/testkit/harness/providerSettingsHarness');
-            socketBoundary.providerProjection = createConfirmedTeamModelProjectionFixture({
-                agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'gpt-5', modelName: 'GPT-5',
+            const { createProviderModelProjectionFixture } = await import('@/dev/testkit/harness/providerSettingsHarness');
+            socketBoundary.providerProjection = createProviderModelProjectionFixture({
+                agentTargetKey: 'agent:happier.agent.codex/codex', groups: [],
             });
         }
-        const workerRow = socketBoundary.providerProjection?.status === 'success'
-            ? socketBoundary.providerProjection.groups[0]?.rows[0] : undefined;
-        // Consent is owned by the recipient's Account catalog, not the
-        // worker's confirmed bit. Keep that genuine HTTP boundary current.
-        const providerCatalog = splitProviderSettingsV1(workerRow?.confirmationSource
-            ? setProviderExperimentalConfirmationV1(DEFAULT_PROVIDER_SETTINGS_V1, {
-                ...workerRow.confirmationSource, agentTargetKey: workerRow.ref.agentTargetKey,
-                modelId: workerRow.ref.modelId,
-                compatibilityFingerprint: workerRow.compatibility.compatibilityFingerprint, confirmedAt: 1,
-            }) : DEFAULT_PROVIDER_SETTINGS_V1).catalog;
+        // D23: a Team choice never needs either member's experimental consent.
+        const providerCatalog = splitProviderSettingsV1(DEFAULT_PROVIDER_SETTINGS_V1).catalog;
         const publication = RunnerArtifactAvailabilityProjectionV1Schema.parse({ status: 'available', artifacts: [{
             identity: { product: 'happier-runner', version: '0.3.0', target: 'linux-x64', sha256: 'a'.repeat(64) }, channel: 'stable',
             url: 'https://runner-publication.test/happier-runner-v0.3.0-linux-x64.zip',
@@ -1709,10 +1699,8 @@ describe('multi-Home Session creation composition', () => {
             // choice. Reopen its retained choice through the ordinary draft
             // reader; worker-backed source selection is covered below.
             if (journey === 'refresh-selection' || journey === 'run-refresh-selection') {
-                const worker = createDeferred<void>();
                 const catalog = createDeferred<void>();
-                releaseSelectionGates = () => { catalogRefreshGate = null; worker.resolve(); catalog.resolve(); };
-                socketBoundary.teamModelProjectionGate = worker.promise;
+                releaseSelectionGates = () => { catalogRefreshGate = null; catalog.resolve(); };
                 const model = hook.getCurrent();
                 if (model.variant !== 'wizard') throw new Error('Expected the production model selector');
                 expect(model.wizardProps.agent.currentTeamCredentialResourceKeys?.has('runner-team:runner-resource')).toBe(true);
@@ -1732,7 +1720,7 @@ describe('multi-Home Session creation composition', () => {
                         selecting = Promise.resolve((run?.getCurrent().pickerProps.onSelectTeamCredentialModel
                             ?? model.wizardProps.agent.onSelectTeamCredentialModel)(entitled.resources[0]!.providerModels[0]!.selection));
                     });
-                    await vi.waitFor(() => expect(socketBoundary.teamModelProjectionRequested).toBe(true));
+                    await act(async () => { await selecting; });
                     catalogRefreshGate = catalog.promise;
                     if (run) {
                         const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
@@ -1751,7 +1739,6 @@ describe('multi-Home Session creation composition', () => {
                     const refreshing = hook.getCurrent();
                     if (refreshing.variant !== 'wizard') throw new Error('Expected the production model selector');
                     expect(refreshing.wizardProps.agent.currentTeamCredentialResourceKeys?.has('runner-team:runner-resource')).toBe(true);
-                    await act(async () => { worker.resolve(); await selecting; });
                     const selected = hook.getCurrent();
                     if (selected.variant !== 'wizard') throw new Error('Expected the production model selector');
                     expect(run ? run.getCurrent().selected : selected.wizardProps.agent.selectedTeamCredentialModel)

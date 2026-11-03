@@ -1,4 +1,5 @@
 import { ProviderConnectionIdSchema } from '@happier-dev/protocol/providers/ids';
+import type { TeamCredentialResourceCatalogEntryV1 } from '@happier-dev/protocol/teams';
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import {
     DaemonProviderConnectionViewV1Schema,
@@ -257,20 +258,21 @@ export function createProviderModelProjectionGroupFixture(
 export function createProviderModelProjectionFixture(input: Readonly<{
     agentTargetKey?: string;
     groups?: readonly DaemonProviderModelProjectionGroupV1[];
+    teamCredentialResources?: readonly TeamCredentialResourceCatalogEntryV1[];
 }> = {}): Extract<DaemonProviderModelProjectionResponseV1, { status: 'success' }> {
     return DaemonProviderModelProjectionResponseV1Schema.parse({
         status: 'success',
         agentTargetKey: input.agentTargetKey ?? 'backend:codex',
         groups: input.groups ?? [createProviderModelProjectionGroupFixture()],
         currentSelectionRecovery: null,
+        ...(input.teamCredentialResources ? { teamCredentialResources: input.teamCredentialResources } : {}),
     }) as Extract<DaemonProviderModelProjectionResponseV1, { status: 'success' }>;
 }
 
 /**
- * The selected worker's answer for a Team provider model whose recipient consent the worker already
- * holds: the projection a Team model selection reads before it commits (`useConfirmExperimentalProviderModel`).
+ * An experimental personal source projected by the selected worker, before any Account confirmation.
  */
-export function createConfirmedTeamModelProjectionFixture(input: Readonly<{
+export function createExperimentalProviderModelProjectionFixture(input: Readonly<{
     agentTargetKey: string;
     modelId: string;
     modelName?: string;
@@ -286,7 +288,7 @@ export function createConfirmedTeamModelProjectionFixture(input: Readonly<{
                 sources: { manual: false, static: false, probe: false }, confidence: 'account_unverified',
                 compatibility: { result: { status: 'experimental', reasons: ['compatibility_evidence_missing'],
                     selectedProtocol: 'openai-responses', confirmationScope: { kind: 'model', modelId: input.modelId } },
-                    compatibilityFingerprint: 'compatibility:v1:worker', confirmed: true },
+                    compatibilityFingerprint: 'compatibility:v1:worker', confirmed: false },
                 endpointHealth: 'not_checked', catalog: { stale: false }, loadState: 'unknown', visibility: 'visible',
             }] })] });
 }

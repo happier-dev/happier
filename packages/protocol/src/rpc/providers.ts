@@ -66,7 +66,7 @@ import { PluginLocalizedStringV2Schema } from '../plugins/contributions/publicTy
 import { asProtocolZod } from "../plugins/actions/internalProtocolZodAdapter.js";
 import { TeamCredentialSourceBindingV1Schema } from '../teams/credentials/sourceBindingV1.js';
 import { TeamCredentialResourceTestApplicationRequestV1Schema } from '../teams/credentials/externalProviderApiV1.js';
-import { TeamCredentialProviderModelCatalogEntryV1Schema } from '../teams/credentials/resourceV1.js';
+import { TeamCredentialResourceCatalogEntryV1Schema } from '../teams/credentials/resourceV1.js';
 import { ProviderModelBindingSourceV1Schema, ProviderModelConfirmationSourceV1Schema, ProviderModelConfirmationSourceKeyV1Schema } from '../providers/compatibility/sourceFacts.js';
 
 const ProviderRpcIdentityV1Schema = lazyZodSchema(() => z.strictObject({
@@ -699,8 +699,8 @@ export const DaemonProviderModelProjectionRequestV1Schema = lazyZodSchema(() => 
   connectedAccountTarget: z.optional(QualifiedConnectedAccountPurposeBindingTargetV1Schema),
   /** Team source facts do not require the recipient Agent on this Machine. */
   sourceCatalog: z.optional(z.literal(true)),
-  /** Recipient-side projection: compatibility is recomputed by this Machine. */
-  teamCredentialModel: z.optional(TeamCredentialProviderModelCatalogEntryV1Schema),
+  /** Recipient presentation batch. These rows never authorize installation. */
+  teamCredentialResources: z.optional(z.array(TeamCredentialResourceCatalogEntryV1Schema)),
   mode: z.optional(z.enum(['picker', 'management'])),
   /** Presentation scope; selecting a source alone never mutates session intent. */
   sourceConnectionId: z.optional(ProviderConnectionIdSchema),
@@ -712,9 +712,9 @@ export const DaemonProviderModelProjectionRequestV1Schema = lazyZodSchema(() => 
   forceRefresh: z.optional(z.literal(true)),
   currentSelection: z.optional(ProviderBoundModelRefSchema),
 }).check(z.superRefine((value, ctx) => {
-  if (value.teamCredentialModel && (value.teamCredentialModel.selection.agentTargetKey !== value.agentTargetKey
-    || value.providerConnection || value.connectedAccountTarget || value.sourceCatalog)) {
-    ctx.addIssue({ code: 'custom', path: ['teamCredentialModel'], message: 'Recipient model projection requires one matching Team model source' });
+  if (value.teamCredentialResources && (value.providerConnection
+    || value.connectedAccountTarget || value.sourceCatalog)) {
+    ctx.addIssue({ code: 'custom', path: ['teamCredentialResources'], message: 'Recipient delivery projection cannot select a private source' });
   }
   if (value.currentSelection && value.currentSelection.agentTargetKey !== value.agentTargetKey) {
     ctx.addIssue({ code: 'custom', path: ['currentSelection', 'agentTargetKey'], message: 'Current selection belongs to another agent target' });
@@ -1040,6 +1040,8 @@ export const DaemonProviderModelProjectionResponseV1Schema = lazyZodSchema(() =>
     status: z.literal('success'),
     agentTargetKey: BackendTargetKeyV2Schema,
     groups: z.array(DaemonProviderModelProjectionGroupV1Schema),
+    /** Exact-Machine automatic delivery presentation from the Provider owner. */
+    teamCredentialResources: z.optional(z.array(TeamCredentialResourceCatalogEntryV1Schema)),
     /** Additive presentation fact; older readers ignore it, older daemons omit it. */
     hiddenSources: z.optional(z.array(DaemonProviderModelProjectionHiddenSourceV1Schema)),
     currentSelectionRecovery: z.optional(z.nullable(DaemonProviderCurrentSelectionRecoveryV1Schema)),

@@ -98,7 +98,7 @@ import {
   resolveTeamCredentialResourceTestCandidate,
 } from '@/providers/broker/resourceTestCandidate';
 import { projectConnectedAccountCatalog, readConnectedAccountCatalogSources, type ResolveManagedProviderPurposeBindingIntentSelection } from './connectedAccountCatalog';
-import { resolveTeamCredentialModelCompatibility } from '@/providers/broker/teamCredentialModelCompatibility';
+import { qualifySessionTeamCredentialProviderModels, selectSessionTeamCredentialProviderModel } from '@/providers/broker/sessionTeamCredentialProviderBinding';
 import { readProviderConnectionSourceCatalog, projectProviderConnectionSourceCatalog } from './providerConnectionSourceCatalog';
 import type { AccountScopedProviderReadInput } from './remoteProjection';
 
@@ -367,7 +367,7 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
     // Shared workers supply Agent compatibility, never their custodian's
     // private Provider catalog. Source selectors must not reach an earlier
     // catalog branch or silently fall back to ambient Account authority.
-    if (foreignRequester && (!request.teamCredentialModel || request.providerConnection || request.connectedAccountTarget
+    if (foreignRequester && (!request.teamCredentialResources || request.providerConnection || request.connectedAccountTarget
       || request.sourceCatalog || request.sourceConnectionId || request.application || request.includeDirectMaterialization)) {
       return { status: 'error', error: createProviderErrorV1('provider_authorization_changed', { machineId: request.machineId }) };
     }
@@ -418,7 +418,7 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
       if (!await isAccountCurrent()) {
         return { status: 'error', error: createProviderErrorV1('provider_authorization_changed', { machineId: request.machineId }) };
       }
-      if (!foreignRequester && !sourceProjection) snapshot = await awaitWithinProviderOperation(observeSnapshot
+      if (!foreignRequester && !sourceProjection && !request.teamCredentialResources) snapshot = await awaitWithinProviderOperation(observeSnapshot
         ? observeSnapshot(operationLifetime.signal) : readAdmittedSnapshot(accountContext, operationLifetime.signal), operationLifetime);
     } catch (error) {
       if (error instanceof ProviderOperationAbandonedError) {
@@ -426,7 +426,7 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
       }
       throw error;
     }
-    if (!snapshot && !foreignRequester && !sourceProjection) {
+    if (!snapshot && !foreignRequester && !sourceProjection && !request.teamCredentialResources) {
       return { status: 'error', error: createProviderErrorV1('provider_settings_invalid', { machineId: request.machineId }) };
     }
     const pendingLease = input.acquireRuntimeLease
@@ -512,31 +512,31 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
         throw error;
       }
       const adapter = agentId ? readLeasedAgentProviderBindingAdapter({ lease, agentId }) : null;
+      if (request.teamCredentialResources) {
+        const resources = await Promise.all(request.teamCredentialResources.map(async resource => {
+          const qualified = await qualifySessionTeamCredentialProviderModels({ resource,
+            lease, agentId: agentId!, signal: operationLifetime.signal });
+          const byModel = new Map<string, typeof qualified.providerModels>();
+          for (const model of qualified.providerModels) {
+            if (model.selection.agentTargetKey !== request.agentTargetKey) continue;
+            const rows = byModel.get(model.selection.modelId) ?? [];
+            rows.push(model);
+            byModel.set(model.selection.modelId, rows);
+          }
+          return { ...qualified, providerModels: [...byModel].map(([modelId, rows]) =>
+            selectSessionTeamCredentialProviderModel({ resource: { ...qualified, providerModels: rows }, agentTargetKey: request.agentTargetKey, modelId })
+              ?? { ...rows[0]!, availability: 'policy_denied' as const,
+                deliveryUnavailableReason: rows[0]!.deliveryUnavailableReason ?? 'provider_catalog_unavailable' as const }) };
+        }));
+        return DaemonProviderModelProjectionResponseV1Schema.parse({ status: 'success', agentTargetKey: request.agentTargetKey,
+          groups: [], teamCredentialResources: resources });
+      }
       if (!adapter && !sourceProjection) return { status: 'success', agentTargetKey: request.agentTargetKey, groups: [] };
       const registry = resolveProviderContributionRegistryView(
         lease.registry.contributes,
         lease.registry.generation,
         lease.registry.readPluginOccurrenceId,
       );
-      if (request.teamCredentialModel && adapter) {
-        const model = request.teamCredentialModel;
-        const confirmationSource = model.confirmationSource;
-        if (!confirmationSource || model.availability !== 'available') return { status: 'error', error: createProviderErrorV1('provider_catalog_unavailable') };
-        const compatibility = await resolveTeamCredentialModelCompatibility({ model: { ...model, deliveryMode: model.selection.deliveryMode },
-          lease, agentId: agentId!, providerSettings: snapshot ? readProviderSettingsForCli(snapshot).settings : DEFAULT_PROVIDER_SETTINGS_V1 });
-        return DaemonProviderModelProjectionResponseV1Schema.parse({ status: 'success', agentTargetKey: request.agentTargetKey,
-          groups: [{ connectionId: confirmationSource.connectionId, providerName: model.application.implementationIdentity.localId,
-            connectionName: model.selection.resourceId, connectionRole: 'named', connectionDisplayNameMode: 'custom',
-            connectionRevision: 0, sourceRevision: model.sourceRevision, modelLoadAction: 'descriptor_absent',
-            authorization: { authorized: true }, manualModelPolicy: 'catalog-only',
-            supportsFreeformModelIds: adapter.support.supportsFreeformModelIds,
-            suppressedConnectedServiceIds: adapter.support.authIsolation.suppressConnectedServiceIds,
-            rows: [{ ref: { agentTargetKey: request.agentTargetKey, providerConnectionId: confirmationSource.connectionId, modelId: model.descriptor.id },
-              descriptor: projectProviderModelReasoningForAgent(model.descriptor, adapter.support), application: model.application, sourceFacts: model.sourceFacts, confirmationSource,
-              sources: { manual: false, static: false, probe: false }, confidence: 'account_unverified', compatibility,
-              endpointHealth: 'not_checked', catalog: { stale: false }, loadState: 'unknown', visibility: 'visible' }],
-          }], currentSelectionRecovery: null });
-      }
       // A Connected Account/Pool catalog belongs to its declared upstream
       // purpose, independently of any saved Gateway configuration. Taking this
       // branch before connection resolution prevents a second competing

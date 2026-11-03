@@ -25,7 +25,7 @@ export function createUiProviderActionExecuteV1(account: LazyActionAccountContex
       // Personal discovery on a granted worker needs the requester's Account
       // custody. Own workers and Team compatibility retain their raw RPC path.
       if ((request.actionId === 'providers.models.projection' || request.actionId === 'providers.models.refresh')
-        && !request.input.teamCredentialModel && !context.externalActionCredential
+        && request.input.teamCredentialResources === undefined && !context.externalActionCredential
         && !context.externalActionExecutionAuthorization && !context.rpcSessionAuthorization) {
         if (!context.actionRequestId) throw createRpcCallError({ error: 'admission_unavailable', errorCode: 'admission_unavailable' });
         const execution = await executeOriginalAccountMachineAction({ account, machineId,
@@ -54,8 +54,6 @@ export function createUiProviderActionExecuteV1(account: LazyActionAccountContex
         onDispatched: () => { context.signal?.throwIfAborted(); account.assertCurrent(); options?.onRpcDispatched?.(); },
       });
     }),
-    readAccountCatalog: context => withActionAccountRequestSignal(account, context.signal,
-      signal => readProviderCatalogForMutationInContext(account, signal)),
     setDefault: (input, context) => account.mutateRawSettings(raw => applyProviderDefaultModelSelectionV1(raw, input),
       { signal: context.signal, observeOutcome: true }),
     account: (request, context) => {

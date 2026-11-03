@@ -171,9 +171,10 @@ export function projectTeamCredentialProviderModels(input: Readonly<{
                     deliveryMode: input.deliveryMode,
                 },
                 descriptor: row.descriptor,
+                sources: row.sources,
+                confidence: row.confidence,
                 application: row.application,
                 ...(row.sourceFacts ? { sourceFacts: row.sourceFacts } : {}),
-                ...(row.confirmationSource ? { confirmationSource: row.confirmationSource } : {}),
                 compatibility: { ...row.compatibility, confirmed: false },
                 sourceRevision,
                 direct: input.deliveryMode === 'direct'

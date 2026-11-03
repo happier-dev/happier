@@ -121,7 +121,6 @@ describe('registerExternalActionRpcHandler', () => {
         if (!transition.ok) return transition;
         approval = next; return { ok: true }; },
       providerActionExecute: createProviderActionExecuteV1({ assertCurrent() {}, account,
-        readAccountCatalog: async () => ({ status: 'ready', revision: catalogRevision, catalog }),
         rpc: async () => { throw new Error('Consent is Account-owned; hub RPC must not execute it'); },
         setDefault: async () => ({ status: 'applied' }) }),
     });

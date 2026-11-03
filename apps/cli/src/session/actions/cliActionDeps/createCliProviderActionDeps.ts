@@ -8,7 +8,6 @@ import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accou
 import type { SavedSecretOperationContextV1 } from '@/settings/secrets/hydrateSavedSecretCatalog';
 import { setDefaultProviderModelSelection } from '@/providers/connections/service/settings';
 import { createCliAccountProviderActionExecuteV1 } from '@/providers/connections/accountActions';
-import { createCliProviderConnectionsStore, createCliProviderConnectionsStoreForOperation } from '@/providers/settings/catalogStore';
 import type { DaemonProviderModelProjectionRequestV1, DaemonProviderModelProjectionResponseV1 } from '@happier-dev/protocol/rpc/providers';
 import { prepareProviderConnectionsCatalogForCli } from '@/providers/settings/hydrate';
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
@@ -38,7 +37,7 @@ export function createCliProviderActionExecuteV1(params: Readonly<{
     rpc: async ({ machineId, method, request, context, operationTimeoutMs }) => {
       if (params.operationContext && params.projectModelsForAccount
         && (request.actionId === 'providers.models.projection' || request.actionId === 'providers.models.refresh')
-        && !request.input.teamCredentialModel) {
+        && request.input.teamCredentialResources === undefined) {
         const catalog = await prepareProviderConnectionsCatalogForCli({ expectedScopeKey: scopeKey,
           operationContext: params.operationContext, signal: context.signal });
         if (catalog.status !== 'ready') return { status: 'error', error: createProviderErrorV1('provider_catalog_unavailable', { machineId }) };
@@ -53,13 +52,6 @@ export function createCliProviderActionExecuteV1(params: Readonly<{
       });
     },
     setDefault: async (input, context) => setDefaultProviderModelSelection({ credentials: params.credentials, ...input, signal: context.signal }),
-    readAccountCatalog: async context => {
-      const store = params.operationContext
-        ? createCliProviderConnectionsStoreForOperation({ operationContext: params.operationContext, signal: context.signal })
-        : createCliProviderConnectionsStore({ credentials: params.credentials, signal: context.signal,
-          isCredentialCurrent: params.isCredentialCurrent });
-      return store.readCatalogForMutation();
-    },
     account: createCliAccountProviderActionExecuteV1(params),
   });
   return (request, context) => runWithServerHttpBaseUrl(params.serverHttpBaseUrl, async () => {

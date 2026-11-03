@@ -1,6 +1,5 @@
 import * as React from 'react';
-import { createProviderErrorV1, type ProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
-import type { TeamCredentialProviderModelCatalogEntryV1 } from '@happier-dev/protocol/teams';
+import type { ProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 
 import type {
     SessionModelPickerExperimentalConfirmation,
@@ -12,11 +11,6 @@ import { providerErrorRequestsRetry } from '@/providers/connection/recovery';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
-type ConfirmationRequest = SessionModelPickerExperimentalConfirmation | Readonly<{
-    kind: 'team-model';
-    model: TeamCredentialProviderModelCatalogEntryV1;
-}>;
-
 export function useConfirmExperimentalProviderModel(input: Readonly<{
     enabled: boolean;
     machineId: string | null;
@@ -24,9 +18,9 @@ export function useConfirmExperimentalProviderModel(input: Readonly<{
     agentTargetKey: string | null;
     refresh: () => Promise<unknown>;
 }>): Omit<SessionModelPickerExperimentalConfirmationController, 'confirm'> & Readonly<{
-    confirm: (request: ConfirmationRequest, commitSelection: () => void) => Promise<boolean>;
+    confirm: (request: SessionModelPickerExperimentalConfirmation, commitSelection: () => void) => Promise<boolean>;
 }> {
-    const { describeProviderModels, mutateProviderModelSettings, pendingApproval } = useProviderActionClient(input.serverId);
+    const { mutateProviderModelSettings, pendingApproval } = useProviderActionClient(input.serverId);
     const accountLifetime = captureActiveServerAccountScopeLifetime();
     const scopeKey = JSON.stringify([
         input.enabled,
@@ -44,7 +38,7 @@ export function useConfirmExperimentalProviderModel(input: Readonly<{
         | Readonly<{
             error: ProviderErrorV1;
             retryAttempt: Readonly<{
-                confirmation: ConfirmationRequest;
+                confirmation: SessionModelPickerExperimentalConfirmation;
                 commitSelection: () => void;
             }>;
         }>
@@ -84,7 +78,7 @@ export function useConfirmExperimentalProviderModel(input: Readonly<{
     const persist = React.useCallback(async (
         confirmation: SessionModelPickerExperimentalConfirmation,
         commitSelection: () => void,
-        retryAttempt: Readonly<{ confirmation: ConfirmationRequest; commitSelection: () => void }> = { confirmation, commitSelection },
+        retryAttempt: Readonly<{ confirmation: SessionModelPickerExperimentalConfirmation; commitSelection: () => void }> = { confirmation, commitSelection },
     ): Promise<boolean> => {
         if (
             !input.enabled
@@ -161,71 +155,17 @@ export function useConfirmExperimentalProviderModel(input: Readonly<{
     }, []);
 
     const confirm = React.useCallback(async (
-        confirmation: ConfirmationRequest,
+        confirmation: SessionModelPickerExperimentalConfirmation,
         commitSelection: () => void,
     ): Promise<boolean> => {
-        const agentTargetKey = confirmation.kind === 'team-model' ? confirmation.model.selection.agentTargetKey : confirmation.agentTargetKey;
-        if (!input.enabled || !input.agentTargetKey || agentTargetKey !== input.agentTargetKey || !isCurrentScope()) return false;
-        const modelName = confirmation.kind === 'team-model'
-            ? confirmation.model.descriptor.name || confirmation.model.selection.modelId
-            : confirmation.modelName;
-        return await runPending({ modelName }, async () => {
+        if (!input.enabled || !input.agentTargetKey || confirmation.agentTargetKey !== input.agentTargetKey || !isCurrentScope()) return false;
+        return await runPending(confirmation, async () => {
             setFailure(null);
-            // The Action's configurable approval default owns Ask first. A
-            // second modal would ignore a waiver and ask twice otherwise.
-            if (confirmation.kind === 'confirm-experimental') return await persist(confirmation, commitSelection);
-            const machineId = input.machineId;
-            if (!machineId) {
-                setFailure({ error: createProviderErrorV1('provider_machine_unavailable') });
-                return false;
-            }
-            const fail = (error: ProviderErrorV1) => setFailure(providerErrorRequestsRetry(error)
-                ? { error, retryAttempt: { confirmation, commitSelection } } : { error });
-            try {
-                // Home rows offer source facts. Only the selected worker's
-                // admitted adapter can decide compatibility and recipient consent.
-                const read = async () => {
-                    const result = await describeProviderModels({ serverId: input.serverId, machineId,
-                        agentTargetKey, teamCredentialModel: confirmation.model, refreshPolicy: 'current_only',
-                    }, { signal: invocationLifetime.controller.signal });
-                    if (!isCurrentScope()) return null;
-                    if (result.status === 'error') { fail(result.error); return null; }
-                    const entry = result.groups.flatMap(group => group.rows.map(row => ({ group, row }))).find(({ row }) => (
-                        row.ref.agentTargetKey === agentTargetKey && row.ref.modelId === confirmation.model.selection.modelId
-                    ));
-                    if (!entry?.row.confirmationSource) { fail(createProviderErrorV1('provider_catalog_unavailable')); return null; }
-                    if (!entry.group.authorization.authorized) { fail(entry.group.authorization.error); return null; }
-                    if (entry.row.compatibility.result.status === 'incompatible') {
-                        fail(createProviderErrorV1('provider_incompatible_with_agent')); return null;
-                    }
-                    return { ...entry, confirmationSource: entry.row.confirmationSource };
-                };
-                let entry = await read();
-                if (!entry) return false;
-                const { row } = entry;
-                if (row.compatibility.result.status === 'experimental' && !row.compatibility.confirmed) {
-                    const saved = await persist({ kind: 'confirm-experimental', ...entry.confirmationSource,
-                        expectedConnectionRevision: entry.group.connectionRevision, agentTargetKey,
-                        modelId: row.compatibility.result.confirmationScope.kind === 'model' ? row.ref.modelId : null,
-                        compatibilityFingerprint: row.compatibility.compatibilityFingerprint,
-                        providerName: entry.group.providerName, modelName: row.descriptor.name || row.ref.modelId,
-                    }, () => {}, { confirmation, commitSelection });
-                    if (!saved || !isCurrentScope()) return false;
-                    entry = await read();
-                    if (!entry) return false;
-                    if (entry.row.compatibility.result.status === 'experimental' && !entry.row.compatibility.confirmed) {
-                        fail(createProviderErrorV1('provider_compatibility_unverified')); return false;
-                    }
-                }
-                await commitSelection();
-                return true;
-            } catch (caught) {
-                if (isCurrentScope()) fail(providerErrorFromRpcFailure(caught, { machineId }));
-                return false;
-            }
+            // Selection starts the intent; the shared Action executor owns its
+            // in-flow confirmation, waivers and explicit Ask continuation.
+            return await persist(confirmation, commitSelection);
         });
-    }, [describeProviderModels, input.agentTargetKey, input.enabled, input.machineId, input.serverId,
-        invocationLifetime, isCurrentScope, persist, runPending]);
+    }, [input.agentTargetKey, input.enabled, isCurrentScope, persist, runPending]);
     const retry = React.useCallback(async (): Promise<boolean> => {
         if (!input.enabled || !failure?.retryAttempt) return false;
         return await confirm(failure.retryAttempt.confirmation, failure.retryAttempt.commitSelection);

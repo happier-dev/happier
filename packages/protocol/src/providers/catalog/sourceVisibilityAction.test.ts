@@ -20,7 +20,6 @@ describe('source visibility Account Action', () => {
       assertCurrent: () => {},
       rpc: async () => { throw new Error('Account data must not reach machine RPC'); },
       setDefault: async () => ({ status: 'unchanged' }),
-      readAccountCatalog: async () => ({ status: 'unavailable', reason: 'authority-not-confirmed' }),
     });
     expect(await execute(request, {})).toEqual({ ok: false,
       errorCode: 'provider_account_action_unavailable', error: 'provider_account_action_unavailable' });
