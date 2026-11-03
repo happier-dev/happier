@@ -1,3 +1,4 @@
+import type { z } from 'zod/mini';
 import {
   AgentSessionRuntimeEventSchema,
   type AgentSessionRuntimeEvent,
@@ -89,12 +90,7 @@ type HostEventDeliveryScopeByIdV1 = {
 }>;
 
 export type HostEventTargetV1<Id extends HostEventIdV1 = HostEventIdV1> =
-  Id extends HostEventIdV1
-    ? Readonly<{
-      eventId: Id;
-      scope: HostEventScopeByIdV1[Id];
-    }>
-    : never;
+  Readonly<z.infer<typeof HostEventTargetV1Schema>> & Readonly<{ eventId: Id }>;
 
 export type HostEventEnvelopeV1<Id extends HostEventIdV1 = HostEventIdV1> =
   Id extends HostEventIdV1

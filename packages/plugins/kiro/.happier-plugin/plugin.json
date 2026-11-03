@@ -1,5 +1,6 @@
 {
   "contributes": {
+    "accessProviders": [],
     "accountCollections": [],
     "actions": [],
     "agents": [
@@ -40,6 +41,9 @@
               ]
             }
           },
+          "surfaces": [
+            "externalSessions"
+          ],
           "tools": {
             "delivery": "native_mcp"
           }
@@ -108,6 +112,53 @@
             "kind": "stdio"
           }
         },
+        "surfaces": {
+          "externalSession": {
+            "externalLinkedTakeover": {
+              "writerSafety": "unsupported"
+            },
+            "sources": [
+              {
+                "contentSearch": true,
+                "instances": [
+                  {
+                    "constants": {},
+                    "kind": "default"
+                  }
+                ],
+                "key": {
+                  "segments": [
+                    {
+                      "kind": "literal",
+                      "value": "kiroChatStore"
+                    },
+                    {
+                      "field": "kiroHome",
+                      "kind": "field"
+                    }
+                  ]
+                },
+                "schema": {
+                  "fields": [
+                    {
+                      "kind": "literal",
+                      "name": "kind",
+                      "value": "kiroChatStore"
+                    },
+                    {
+                      "kind": "string",
+                      "max": 10000,
+                      "min": 1,
+                      "name": "kiroHome",
+                      "nullish": true
+                    }
+                  ]
+                },
+                "sourceKind": "kiroChatStore"
+              }
+            ]
+          }
+        },
         "title": "Kiro"
       }
     ],
@@ -123,13 +174,18 @@
     "composerRegions": [],
     "connectedAccountDescriptors": [],
     "daemonDatabases": [],
+    "deploymentTargets": [],
     "dragSources": [],
     "dropTargets": [],
     "events": [],
     "executionRunProfiles": [],
+    "healthCheckKinds": [],
     "hooks": [],
     "inputTypes": [],
+    "languageServers": [],
     "machineProvisioners": [],
+    "machineRecipes": [],
+    "machineSetupPresets": [],
     "managedDependencies": [],
     "mcp": {
       "discoverySources": [],
@@ -149,6 +205,7 @@
     "scmBackends": [],
     "scmHostingProviders": [],
     "searchProviders": [],
+    "secretSources": [],
     "sessionHeaderActions": [],
     "sessionInfoSections": [],
     "settings": [
@@ -206,9 +263,6 @@
     "workflows": []
   },
   "displayName": "Kiro",
-  "engines": {
-    "happier": "^0.0.0"
-  },
   "entrypoints": {
     "daemon": "./.happier-plugin/daemon.js"
   },
@@ -224,6 +278,21 @@
             {
               "id": "kiro-cli",
               "kind": "systemTool"
+            }
+          ]
+        }
+      },
+      {
+        "capability": "filesystem",
+        "id": "kiro-native-history",
+        "reason": "Read the admitted Kiro native v1 chat history.",
+        "scope": {
+          "access": [
+            "read"
+          ],
+          "locations": [
+            {
+              "root": "workspace"
             }
           ]
         }

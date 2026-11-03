@@ -5,24 +5,6 @@ import type { JsonValue } from '../../identity.js';
 import type { SessionTargetV1 } from './pluginActionDtoSupport.generated.js';
 
 export type SessionTargetingActionInputById = {
-    readonly "session.targets.resolve": {
-        target: SessionTargetV1<true>;
-        actionId: string;
-    };
-    readonly "session.target.primary.set": {
-        serverId: string;
-        sessionId: string;
-    } | {
-        sessionId: null;
-    };
-    readonly "session.target.tracked.set": {
-        sessionAddresses: {
-            serverId: string;
-            sessionId: string;
-        }[];
-    } | {
-        sessionIds: string[];
-    };
     readonly "session.list": {
         project?: {
             serverId: string;
@@ -79,87 +61,26 @@ export type SessionTargetingActionInputById = {
         includeAssistant?: boolean | undefined;
         maxCharsPerMessage?: number | null | undefined;
     };
+    readonly "session.target.primary.set": {
+        serverId: string;
+        sessionId: string;
+    } | {
+        sessionId: null;
+    };
+    readonly "session.target.tracked.set": {
+        sessionAddresses: {
+            serverId: string;
+            sessionId: string;
+        }[];
+    } | {
+        sessionIds: string[];
+    };
+    readonly "session.targets.resolve": {
+        target: SessionTargetV1<true>;
+        actionId: string;
+    };
 };
 export type SessionTargetingActionResultById = {
-    readonly "session.targets.resolve": {
-        coverage: 'complete' | 'unavailable';
-        addresses: {
-            serverId: string;
-            sessionId: string;
-        }[];
-        error: string | null;
-        cause?: string | undefined;
-    };
-    readonly "session.target.primary.set": JsonValue;
-    readonly "session.target.tracked.set": {
-        sessionIds: string[];
-        sessionAddresses: {
-            serverId: string;
-            sessionId: string;
-        }[];
-        sessions: {
-            address: {
-                serverId: string;
-                sessionId: string;
-            };
-            id: string;
-            serverId: string;
-            title?: string | undefined;
-            locationLabel?: string | undefined;
-            serverName?: string | undefined;
-        }[];
-        ok: true;
-        status: 'ok';
-    } | {
-        sessionIds: string[];
-        sessionAddresses: {
-            serverId: string;
-            sessionId: string;
-        }[];
-        sessions: {
-            address: {
-                serverId: string;
-                sessionId: string;
-            };
-            id: string;
-            serverId: string;
-            title?: string | undefined;
-            locationLabel?: string | undefined;
-            serverName?: string | undefined;
-        }[];
-        ok: false;
-        status: 'partial';
-        error: {
-            code: 'session_follow_partial';
-            message: string;
-            operation: 'include' | 'exclude';
-            address: {
-                serverId: string;
-                sessionId: string;
-            };
-            reason: 'unavailable' | 'invalid_parameters' | 'feature_unavailable' | 'session_not_found' | 'source_not_found' | 'source_unavailable' | 'account_inactive' | 'session_archived';
-        };
-    } | {
-        ok: false;
-        status: 'unavailable' | 'not_found' | 'ambiguous' | 'incomplete';
-        error: {
-            code: 'session_not_found' | 'session_ambiguous' | 'session_lookup_incomplete' | 'session_follow_unavailable';
-            message: string;
-            sessionTitle?: string | undefined;
-            sessionId?: string | undefined;
-            candidates?: {
-                address: {
-                    serverId: string;
-                    sessionId: string;
-                };
-                id: string;
-                serverId: string;
-                title?: string | undefined;
-                locationLabel?: string | undefined;
-                serverName?: string | undefined;
-            }[] | undefined;
-        };
-    };
     readonly "session.list": {
         view: 'awareness';
         projectionVersion: 1;
@@ -174,7 +95,7 @@ export type SessionTargetingActionResultById = {
                 reasons: ('archived' | 'ready' | 'failed' | 'working' | 'permission_required' | 'action_required' | 'usage_limited' | 'pending_input' | 'blocked_input' | 'resuming' | 'background_activity' | 'runtime_offline' | 'runtime_stale' | 'runtime_unservable' | 'content_locked')[];
             };
             encryption: 'unknown' | 'ready' | 'plain' | 'preparing' | 'repair_needed' | 'locked' | 'access_pending' | 'setup_required' | 'content_unavailable';
-            availability: 'complete' | 'partial' | 'locked';
+            availability: 'complete' | 'locked' | 'partial';
             origin?: {
                 kind: 'discussion' | 'none' | 'session' | 'execution_run' | 'run_step';
                 runId?: string | undefined;
@@ -190,7 +111,7 @@ export type SessionTargetingActionResultById = {
                 title: string;
                 itemId?: string | undefined;
                 kind?: 'goal' | 'task' | 'todo' | undefined;
-                status?: 'unknown' | 'active' | 'complete' | 'cancelled' | 'pending' | 'paused' | 'blocked' | undefined;
+                status?: 'unknown' | 'active' | 'cancelled' | 'pending' | 'paused' | 'blocked' | 'complete' | undefined;
                 activeWorkflowRunCount?: number | undefined;
             } | undefined;
             lineage?: {
@@ -556,7 +477,7 @@ export type SessionTargetingActionResultById = {
             reasons: ('archived' | 'ready' | 'failed' | 'working' | 'permission_required' | 'action_required' | 'usage_limited' | 'pending_input' | 'blocked_input' | 'resuming' | 'background_activity' | 'runtime_offline' | 'runtime_stale' | 'runtime_unservable' | 'content_locked')[];
         };
         encryption: 'unknown' | 'ready' | 'plain' | 'preparing' | 'repair_needed' | 'locked' | 'access_pending' | 'setup_required' | 'content_unavailable';
-        availability: 'complete' | 'partial' | 'locked';
+        availability: 'complete' | 'locked' | 'partial';
         origin?: {
             kind: 'discussion' | 'none' | 'session' | 'execution_run' | 'run_step';
             runId?: string | undefined;
@@ -572,7 +493,7 @@ export type SessionTargetingActionResultById = {
             title: string;
             itemId?: string | undefined;
             kind?: 'goal' | 'task' | 'todo' | undefined;
-            status?: 'unknown' | 'active' | 'complete' | 'cancelled' | 'pending' | 'paused' | 'blocked' | undefined;
+            status?: 'unknown' | 'active' | 'cancelled' | 'pending' | 'paused' | 'blocked' | 'complete' | undefined;
             activeWorkflowRunCount?: number | undefined;
         } | undefined;
         lineage?: {
@@ -628,4 +549,83 @@ export type SessionTargetingActionResultById = {
         pendingUserActionRequestCount: number;
     };
     readonly "session.messages.recent.get": JsonValue;
+    readonly "session.target.primary.set": JsonValue;
+    readonly "session.target.tracked.set": {
+        sessionIds: string[];
+        sessionAddresses: {
+            serverId: string;
+            sessionId: string;
+        }[];
+        sessions: {
+            address: {
+                serverId: string;
+                sessionId: string;
+            };
+            id: string;
+            serverId: string;
+            title?: string | undefined;
+            locationLabel?: string | undefined;
+            serverName?: string | undefined;
+        }[];
+        ok: true;
+        status: 'ok';
+    } | {
+        sessionIds: string[];
+        sessionAddresses: {
+            serverId: string;
+            sessionId: string;
+        }[];
+        sessions: {
+            address: {
+                serverId: string;
+                sessionId: string;
+            };
+            id: string;
+            serverId: string;
+            title?: string | undefined;
+            locationLabel?: string | undefined;
+            serverName?: string | undefined;
+        }[];
+        ok: false;
+        status: 'partial';
+        error: {
+            code: 'session_follow_partial';
+            message: string;
+            operation: 'include' | 'exclude';
+            address: {
+                serverId: string;
+                sessionId: string;
+            };
+            reason: 'invalid_parameters' | 'feature_unavailable' | 'session_not_found' | 'source_not_found' | 'source_unavailable' | 'account_inactive' | 'session_archived' | 'unavailable';
+        };
+    } | {
+        ok: false;
+        status: 'unavailable' | 'not_found' | 'ambiguous' | 'incomplete';
+        error: {
+            code: 'session_not_found' | 'session_ambiguous' | 'session_lookup_incomplete' | 'session_follow_unavailable';
+            message: string;
+            sessionTitle?: string | undefined;
+            sessionId?: string | undefined;
+            candidates?: {
+                address: {
+                    serverId: string;
+                    sessionId: string;
+                };
+                id: string;
+                serverId: string;
+                title?: string | undefined;
+                locationLabel?: string | undefined;
+                serverName?: string | undefined;
+            }[] | undefined;
+        };
+    };
+    readonly "session.targets.resolve": {
+        coverage: 'complete' | 'unavailable';
+        addresses: {
+            serverId: string;
+            sessionId: string;
+        }[];
+        error: string | null;
+        cause?: string | undefined;
+    };
 };

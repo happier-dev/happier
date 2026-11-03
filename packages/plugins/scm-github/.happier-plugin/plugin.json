@@ -4,6 +4,7 @@
     "monochrome": true
   },
   "contributes": {
+    "accessProviders": [],
     "accountCollections": [
       {
         "id": "automation-event-checkpoints-v1",
@@ -5363,6 +5364,28 @@
                     {
                       "additionalProperties": false,
                       "properties": {
+                        "baseOid": {
+                          "pattern": "^[a-f0-9]{40}(?:[a-f0-9]{24})?$",
+                          "type": "string"
+                        },
+                        "headOid": {
+                          "pattern": "^[a-f0-9]{40}(?:[a-f0-9]{24})?$",
+                          "type": "string"
+                        },
+                        "kind": {
+                          "const": "revisionRange"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "baseOid",
+                        "headOid"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
                         "kind": {
                           "const": "pullRequest"
                         },
@@ -5414,6 +5437,10 @@
                                     "localId"
                                   ],
                                   "type": "object"
+                                },
+                                "clientId": {
+                                  "minLength": 1,
+                                  "type": "string"
                                 },
                                 "input": {},
                                 "messageActionReference": {
@@ -9392,6 +9419,68 @@
                   ],
                   "type": "object"
                 },
+                "mergeSettings": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "merge": {
+                      "anyOf": [
+                        {
+                          "anyOf": [
+                            {
+                              "const": true
+                            },
+                            {
+                              "const": false
+                            }
+                          ]
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "rebase": {
+                      "anyOf": [
+                        {
+                          "anyOf": [
+                            {
+                              "const": true
+                            },
+                            {
+                              "const": false
+                            }
+                          ]
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "squash": {
+                      "anyOf": [
+                        {
+                          "anyOf": [
+                            {
+                              "const": true
+                            },
+                            {
+                              "const": false
+                            }
+                          ]
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "merge",
+                    "squash",
+                    "rebase"
+                  ],
+                  "type": "object"
+                },
                 "operations": {
                   "additionalProperties": false,
                   "properties": {
@@ -10760,6 +10849,34 @@
                   },
                   "type": "array"
                 },
+                "mergeable": {
+                  "anyOf": [
+                    {
+                      "anyOf": [
+                        {
+                          "const": true
+                        },
+                        {
+                          "const": false
+                        }
+                      ]
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "mergeableState": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
                 "merged": {
                   "anyOf": [
                     {
@@ -10826,6 +10943,86 @@
                     ]
                   },
                   "type": "array"
+                },
+                "requiredChecks": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "failingCount": {
+                      "anyOf": [
+                        {
+                          "maximum": 9007199254740991,
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "pendingCount": {
+                      "anyOf": [
+                        {
+                          "maximum": 9007199254740991,
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "state": {
+                      "anyOf": [
+                        {
+                          "const": "passed"
+                        },
+                        {
+                          "const": "failed"
+                        },
+                        {
+                          "const": "pending"
+                        },
+                        {
+                          "const": "neutral"
+                        },
+                        {
+                          "const": "none"
+                        },
+                        {
+                          "const": "unknown"
+                        },
+                        {
+                          "const": "superseded"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "state",
+                    "failingCount",
+                    "pendingCount"
+                  ],
+                  "type": "object"
+                },
+                "reviewDecision": {
+                  "anyOf": [
+                    {
+                      "anyOf": [
+                        {
+                          "const": "approved"
+                        },
+                        {
+                          "const": "changes-requested"
+                        },
+                        {
+                          "const": "review-required"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 },
                 "state": {
                   "minLength": 1,
@@ -11576,6 +11773,10 @@
               "const": true
             },
             "continuation": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "filePath": {
               "minLength": 1,
               "type": "string"
             },
@@ -80429,6 +80630,53 @@
                       "maxLength": 256,
                       "minLength": 1,
                       "type": "string"
+                    },
+                    "steps": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "copyableValues": {
+                            "items": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "label": {
+                                  "maxLength": 256,
+                                  "minLength": 1,
+                                  "type": "string"
+                                },
+                                "value": {
+                                  "minLength": 1,
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "label",
+                                "value"
+                              ],
+                              "type": "object"
+                            },
+                            "minItems": 1,
+                            "type": "array"
+                          },
+                          "externalUrl": {
+                            "minLength": 1,
+                            "pattern": "^https://[^\\s]+$",
+                            "type": "string",
+                            "x-happier-max-utf8-bytes": 2048
+                          },
+                          "title": {
+                            "maxLength": 256,
+                            "minLength": 1,
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "title"
+                        ],
+                        "type": "object"
+                      },
+                      "minItems": 1,
+                      "type": "array"
                     }
                   },
                   "required": [
@@ -86930,6 +87178,7 @@
       }
     ],
     "daemonDatabases": [],
+    "deploymentTargets": [],
     "dragSources": [],
     "dropTargets": [],
     "events": [
@@ -88601,10 +88850,13 @@
       }
     ],
     "executionRunProfiles": [],
+    "healthCheckKinds": [],
     "hooks": [],
     "inputTypes": [],
     "languageServers": [],
     "machineProvisioners": [],
+    "machineRecipes": [],
+    "machineSetupPresets": [],
     "managedDependencies": [],
     "mcp": {
       "discoverySources": [],
@@ -88646,6 +88898,7 @@
       }
     ],
     "searchProviders": [],
+    "secretSources": [],
     "sessionHeaderActions": [],
     "sessionInfoSections": [],
     "settings": [],
@@ -88669,7 +88922,8 @@
                 },
                 {
                   "id": "files",
-                  "kind": "shared"
+                  "kind": "shared",
+                  "summaryFact": "github/changed-files"
                 },
                 {
                   "id": "checks",
@@ -88782,6 +89036,10 @@
         }
       },
       {
+        "descriptor": {
+          "displayName": "GitHub",
+          "v": 1
+        },
         "id": "github-repository",
         "operations": {
           "connectionTest": "github/inspect-connection",
@@ -88948,6 +89206,7 @@
             "plugins.github.ui.checkConclusion.failure": "Failed",
             "plugins.github.ui.checkConclusion.skipped": "Skipped",
             "plugins.github.ui.checkConclusion.success": "Succeeded",
+            "plugins.github.ui.checkNoSummary": "GitHub has no summary for this check. Its full log is on GitHub.",
             "plugins.github.ui.checkRuns": "Check runs",
             "plugins.github.ui.checkStatus.completed": "Completed",
             "plugins.github.ui.checkStatus.in_progress": "In progress",
@@ -88957,6 +89216,7 @@
             "plugins.github.ui.checkStatus.waiting": "Waiting",
             "plugins.github.ui.checkSuiteIncomplete": "This check suite is larger than GitHub will list",
             "plugins.github.ui.checkSuiteIncomplete.description": "The rows below are real, but they are not the whole suite.",
+            "plugins.github.ui.checkSummaryTruncated": "This summary is shortened. The rest is on GitHub.",
             "plugins.github.ui.checkSurfaceUnavailable": "One check surface could not be read",
             "plugins.github.ui.checksFailing": "Failing",
             "plugins.github.ui.checksLabel": "Checks GitHub reports for this pull request",
@@ -89021,6 +89281,9 @@
             "plugins.github.ui.field.repository": "Repository",
             "plugins.github.ui.field.review_decision": "Review",
             "plugins.github.ui.field.updated": "Updated",
+            "plugins.github.ui.fileDiffLabel": "Changes in this file",
+            "plugins.github.ui.fileDiffNone": "GitHub has no diff for this file.",
+            "plugins.github.ui.fileDiffTruncated": "GitHub shortened this diff. The rest is on GitHub.",
             "plugins.github.ui.fileDiffUnavailable": "diff unavailable for this file",
             "plugins.github.ui.fileStatus.modified": "Modified",
             "plugins.github.ui.fileStatus.renamed": "Renamed",
@@ -89127,6 +89390,7 @@
             "plugins.github.ui.noFiles.description": "GitHub reports that this pull request changes no files.",
             "plugins.github.ui.noSessions": "No linked sessions",
             "plugins.github.ui.noSessions.description": "Sessions started from this issue will be listed here.",
+            "plugins.github.ui.openCheckOnGithub": "Open on GitHub",
             "plugins.github.ui.openOnGithub": "Open {item} on GitHub",
             "plugins.github.ui.openResults": "Open results for {item}",
             "plugins.github.ui.openSession": "Open {session}",
@@ -89146,6 +89410,7 @@
             "plugins.github.ui.readingChecks": "Reading the checks from GitHub",
             "plugins.github.ui.readingConversation": "Reading this conversation from GitHub",
             "plugins.github.ui.readingFeedback": "Reading the feedback on this pull request from GitHub",
+            "plugins.github.ui.readingFileDiff": "Reading this file's diff from GitHub…",
             "plugins.github.ui.readingFiles": "Reading the changed files from GitHub",
             "plugins.github.ui.readingTimeline": "Reading this timeline from GitHub",
             "plugins.github.ui.rereadChecks": "Re-read the checks from GitHub",
@@ -89243,6 +89508,8 @@
             "plugins.triage.detailStory.runningSoFar.many": "{count} running so far",
             "plugins.triage.detailStory.runningSoFar.one": "{count} running so far",
             "plugins.triage.detailStory.runningSoFar.other": "{count} running so far",
+            "plugins.triage.detailStory.showLess": "Show less",
+            "plugins.triage.detailStory.showMore": "Show more",
             "plugins.triage.detailStory.smallerFiles.few": "{count} smaller files",
             "plugins.triage.detailStory.smallerFiles.many": "{count} smaller files",
             "plugins.triage.detailStory.smallerFiles.one": "{count} smaller file",
@@ -89404,6 +89671,7 @@
             "plugins.github.ui.checkConclusion.failure": "Неуспешно",
             "plugins.github.ui.checkConclusion.skipped": "Пропущено",
             "plugins.github.ui.checkConclusion.success": "Успешно",
+            "plugins.github.ui.checkNoSummary": "У GitHub нет сводки по этой проверке. Полный журнал — на GitHub.",
             "plugins.github.ui.checkRuns": "Запуски проверок",
             "plugins.github.ui.checkStatus.completed": "Завершено",
             "plugins.github.ui.checkStatus.in_progress": "Выполняется",
@@ -89413,6 +89681,7 @@
             "plugins.github.ui.checkStatus.waiting": "Ожидание",
             "plugins.github.ui.checkSuiteIncomplete": "Эта проверочная подсистема больше, чем GitHub будет перечислять",
             "plugins.github.ui.checkSuiteIncomplete.description": "Следующие строки являются реальными, но они не составляют весь набор.",
+            "plugins.github.ui.checkSummaryTruncated": "Сводка сокращена. Остальное — на GitHub.",
             "plugins.github.ui.checkSurfaceUnavailable": "Одно поверхность проверок не может быть прочитана",
             "plugins.github.ui.checksFailing": "Провалено",
             "plugins.github.ui.checksLabel": "Проверки, сообщаемые GitHub для этого запроса на слияние",
@@ -89477,6 +89746,9 @@
             "plugins.github.ui.field.repository": "Репозиторий",
             "plugins.github.ui.field.review_decision": "Рецензия",
             "plugins.github.ui.field.updated": "Обновлено",
+            "plugins.github.ui.fileDiffLabel": "Изменения в этом файле",
+            "plugins.github.ui.fileDiffNone": "У GitHub нет diff для этого файла.",
+            "plugins.github.ui.fileDiffTruncated": "GitHub сократил этот diff. Остальное — на GitHub.",
             "plugins.github.ui.fileDiffUnavailable": "различия для этого файла недоступны",
             "plugins.github.ui.fileStatus.modified": "Изменён",
             "plugins.github.ui.fileStatus.renamed": "Переименован",
@@ -89583,6 +89855,7 @@
             "plugins.github.ui.noFiles.description": "GitHub сообщает, что этот запрос на слияние не изменяет никаких файлов.",
             "plugins.github.ui.noSessions": "Нет связанных сессий",
             "plugins.github.ui.noSessions.description": "Сессии, запущенные из этой задачи, будут перечислены здесь.",
+            "plugins.github.ui.openCheckOnGithub": "Открыть на GitHub",
             "plugins.github.ui.openOnGithub": "Открыть {item} на GitHub",
             "plugins.github.ui.openResults": "Открыть результаты для {item}",
             "plugins.github.ui.openSession": "Открыть {session}",
@@ -89602,6 +89875,7 @@
             "plugins.github.ui.readingChecks": "Чтение проверок из GitHub",
             "plugins.github.ui.readingConversation": "Чтение этой беседы из GitHub",
             "plugins.github.ui.readingFeedback": "Чтение отзывов об этом пул-реквесте из GitHub",
+            "plugins.github.ui.readingFileDiff": "Читаем diff этого файла из GitHub…",
             "plugins.github.ui.readingFiles": "Чтение измененных файлов из GitHub",
             "plugins.github.ui.readingTimeline": "Чтение этой линейки времени из GitHub",
             "plugins.github.ui.rereadChecks": "Повторно прочитать проверки из GitHub",
@@ -89699,6 +89973,8 @@
             "plugins.triage.detailStory.runningSoFar.many": "Пока выполняется: {count}",
             "plugins.triage.detailStory.runningSoFar.one": "Пока выполняется: {count}",
             "plugins.triage.detailStory.runningSoFar.other": "Пока выполняется: {count}",
+            "plugins.triage.detailStory.showLess": "Показать меньше",
+            "plugins.triage.detailStory.showMore": "Показать больше",
             "plugins.triage.detailStory.smallerFiles.few": "ещё {count} файла поменьше",
             "plugins.triage.detailStory.smallerFiles.many": "ещё {count} файлов поменьше",
             "plugins.triage.detailStory.smallerFiles.one": "ещё {count} файл поменьше",
@@ -89860,6 +90136,7 @@
             "plugins.github.ui.checkConclusion.failure": "Niepowodzenie",
             "plugins.github.ui.checkConclusion.skipped": "Pominięto",
             "plugins.github.ui.checkConclusion.success": "Powodzenie",
+            "plugins.github.ui.checkNoSummary": "GitHub nie ma podsumowania tego sprawdzianu. Pełny log jest na GitHub.",
             "plugins.github.ui.checkRuns": "Uruchomienia sprawdzianów",
             "plugins.github.ui.checkStatus.completed": "Ukończono",
             "plugins.github.ui.checkStatus.in_progress": "W toku",
@@ -89869,6 +90146,7 @@
             "plugins.github.ui.checkStatus.waiting": "Oczekiwanie",
             "plugins.github.ui.checkSuiteIncomplete": "Ta suita sprawdzania jest większa niż GitHub będzie ją wyświetlać",
             "plugins.github.ui.checkSuiteIncomplete.description": "Wiersze poniżej są rzeczywiste, ale nie są one calej suitki.",
+            "plugins.github.ui.checkSummaryTruncated": "To podsumowanie jest skrócone. Resztę znajdziesz na GitHub.",
             "plugins.github.ui.checkSurfaceUnavailable": "Jedna powierzchnia sprawdzania nie mogła być odczytana",
             "plugins.github.ui.checksFailing": "Nieudane",
             "plugins.github.ui.checksLabel": "Sprawdzanie raportów GitHub dla tego pull requesta",
@@ -89933,6 +90211,9 @@
             "plugins.github.ui.field.repository": "Repozytorium",
             "plugins.github.ui.field.review_decision": "Recenzja",
             "plugins.github.ui.field.updated": "Zaktualizowano",
+            "plugins.github.ui.fileDiffLabel": "Zmiany w tym pliku",
+            "plugins.github.ui.fileDiffNone": "GitHub nie ma diffu dla tego pliku.",
+            "plugins.github.ui.fileDiffTruncated": "GitHub skrócił ten diff. Resztę znajdziesz na GitHub.",
             "plugins.github.ui.fileDiffUnavailable": "różnica dla tego pliku jest niedostępna",
             "plugins.github.ui.fileStatus.modified": "Zmodyfikowano",
             "plugins.github.ui.fileStatus.renamed": "Zmieniono nazwę",
@@ -90039,6 +90320,7 @@
             "plugins.github.ui.noFiles.description": "GitHub informuje, że ten pull request nie zmienia żadnych plików.",
             "plugins.github.ui.noSessions": "Brak powiązanych sesji",
             "plugins.github.ui.noSessions.description": "Sesje rozpoczęte z tego problemu zostaną wyświetlone tutaj.",
+            "plugins.github.ui.openCheckOnGithub": "Otwórz na GitHub",
             "plugins.github.ui.openOnGithub": "Otwórz {item} w GitHub",
             "plugins.github.ui.openResults": "Otwórz wyniki dla {item}",
             "plugins.github.ui.openSession": "Otwórz {session}",
@@ -90058,6 +90340,7 @@
             "plugins.github.ui.readingChecks": "Odczytywanie sprawdzania z GitHub",
             "plugins.github.ui.readingConversation": "Odczytywanie tej rozmowy z GitHub",
             "plugins.github.ui.readingFeedback": "Wczytywanie opinii o tym pull requeście z GitHub",
+            "plugins.github.ui.readingFileDiff": "Wczytywanie diffu tego pliku z GitHub…",
             "plugins.github.ui.readingFiles": "Odczytywanie zmienionych plików z GitHub",
             "plugins.github.ui.readingTimeline": "Odczytywanie tego historii z GitHub",
             "plugins.github.ui.rereadChecks": "Ponownie wczytaj sprawdziany z GitHub",
@@ -90155,6 +90438,8 @@
             "plugins.triage.detailStory.runningSoFar.many": "Dotąd w toku: {count}",
             "plugins.triage.detailStory.runningSoFar.one": "Dotąd w toku: {count}",
             "plugins.triage.detailStory.runningSoFar.other": "Dotąd w toku: {count}",
+            "plugins.triage.detailStory.showLess": "Pokaż mniej",
+            "plugins.triage.detailStory.showMore": "Pokaż więcej",
             "plugins.triage.detailStory.smallerFiles.few": "{count} mniejsze pliki",
             "plugins.triage.detailStory.smallerFiles.many": "{count} mniejszych plików",
             "plugins.triage.detailStory.smallerFiles.one": "{count} mniejszy plik",
@@ -90316,6 +90601,7 @@
             "plugins.github.ui.checkConclusion.failure": "Fallida",
             "plugins.github.ui.checkConclusion.skipped": "Omitida",
             "plugins.github.ui.checkConclusion.success": "Correcta",
+            "plugins.github.ui.checkNoSummary": "GitHub no tiene resumen de este control. El registro completo está en GitHub.",
             "plugins.github.ui.checkRuns": "Ejecuciones de comprobación",
             "plugins.github.ui.checkStatus.completed": "Completada",
             "plugins.github.ui.checkStatus.in_progress": "En curso",
@@ -90325,6 +90611,7 @@
             "plugins.github.ui.checkStatus.waiting": "En espera",
             "plugins.github.ui.checkSuiteIncomplete": "Esta suite de verificación es más grande que lo que GitHub mostrará",
             "plugins.github.ui.checkSuiteIncomplete.description": "Las filas debajo son reales, pero no son la totalidad de la suite.",
+            "plugins.github.ui.checkSummaryTruncated": "Este resumen está acortado. El resto está en GitHub.",
             "plugins.github.ui.checkSurfaceUnavailable": "Una superficie de inspección no pudo ser leída",
             "plugins.github.ui.checksFailing": "Fallidas",
             "plugins.github.ui.checksLabel": "Comprobando el informe de GitHub sobre este pull request",
@@ -90389,6 +90676,9 @@
             "plugins.github.ui.field.repository": "Repositorio",
             "plugins.github.ui.field.review_decision": "Revisión",
             "plugins.github.ui.field.updated": "Actualizado",
+            "plugins.github.ui.fileDiffLabel": "Cambios en este archivo",
+            "plugins.github.ui.fileDiffNone": "GitHub no tiene diff para este archivo.",
+            "plugins.github.ui.fileDiffTruncated": "GitHub acortó este diff. El resto está en GitHub.",
             "plugins.github.ui.fileDiffUnavailable": "diff no disponible para este archivo",
             "plugins.github.ui.fileStatus.modified": "Modificado",
             "plugins.github.ui.fileStatus.renamed": "Renombrado",
@@ -90495,6 +90785,7 @@
             "plugins.github.ui.noFiles.description": "GitHub informa que este pull request no cambia ninguno de los archivos.",
             "plugins.github.ui.noSessions": "Sin sesiones vinculadas",
             "plugins.github.ui.noSessions.description": "Las sesiones iniciadas desde este problema se mostrarán aquí.",
+            "plugins.github.ui.openCheckOnGithub": "Abrir en GitHub",
             "plugins.github.ui.openOnGithub": "Abrir {item} en GitHub",
             "plugins.github.ui.openResults": "Abrir los resultados de {item}",
             "plugins.github.ui.openSession": "Abrir {session}",
@@ -90514,6 +90805,7 @@
             "plugins.github.ui.readingChecks": "Leyendo las verificaciones de GitHub",
             "plugins.github.ui.readingConversation": "Leyendo esta conversación de GitHub",
             "plugins.github.ui.readingFeedback": "Leyendo los comentarios sobre esta solicitud de incorporación desde GitHub",
+            "plugins.github.ui.readingFileDiff": "Leyendo el diff de este archivo desde GitHub…",
             "plugins.github.ui.readingFiles": "Leyendo los archivos cambiados de GitHub",
             "plugins.github.ui.readingTimeline": "Leyendo este timeline de GitHub",
             "plugins.github.ui.rereadChecks": "Vuelve a leer los controles de GitHub",
@@ -90611,6 +90903,8 @@
             "plugins.triage.detailStory.runningSoFar.many": "{count} en curso por ahora",
             "plugins.triage.detailStory.runningSoFar.one": "{count} en curso por ahora",
             "plugins.triage.detailStory.runningSoFar.other": "{count} en curso por ahora",
+            "plugins.triage.detailStory.showLess": "Mostrar menos",
+            "plugins.triage.detailStory.showMore": "Mostrar más",
             "plugins.triage.detailStory.smallerFiles.few": "{count} archivos más pequeños",
             "plugins.triage.detailStory.smallerFiles.many": "{count} archivos más pequeños",
             "plugins.triage.detailStory.smallerFiles.one": "{count} archivo más pequeño",
@@ -90772,6 +91066,7 @@
             "plugins.github.ui.checkConclusion.failure": "Échec",
             "plugins.github.ui.checkConclusion.skipped": "Ignoré",
             "plugins.github.ui.checkConclusion.success": "Réussi",
+            "plugins.github.ui.checkNoSummary": "GitHub n’a pas de résumé pour ce contrôle. Le journal complet est sur GitHub.",
             "plugins.github.ui.checkRuns": "Exécutions de vérification",
             "plugins.github.ui.checkStatus.completed": "Terminé",
             "plugins.github.ui.checkStatus.in_progress": "En cours",
@@ -90781,6 +91076,7 @@
             "plugins.github.ui.checkStatus.waiting": "En attente",
             "plugins.github.ui.checkSuiteIncomplete": "Cette suite de vérifications est plus grande que GitHub ne la liste",
             "plugins.github.ui.checkSuiteIncomplete.description": "Les lignes suivantes sont réelles, mais elles ne forment pas toute la suite",
+            "plugins.github.ui.checkSummaryTruncated": "Ce résumé est abrégé. La suite est sur GitHub.",
             "plugins.github.ui.checkSurfaceUnavailable": "Une surface de vérification ne peut pas être lue",
             "plugins.github.ui.checksFailing": "En échec",
             "plugins.github.ui.checksLabel": "Vérifications GitHub signalées pour cette demande de fusion",
@@ -90845,6 +91141,9 @@
             "plugins.github.ui.field.repository": "Dépôt",
             "plugins.github.ui.field.review_decision": "Relecture",
             "plugins.github.ui.field.updated": "Mis à jour",
+            "plugins.github.ui.fileDiffLabel": "Modifications de ce fichier",
+            "plugins.github.ui.fileDiffNone": "GitHub n’a pas de diff pour ce fichier.",
+            "plugins.github.ui.fileDiffTruncated": "GitHub a abrégé ce diff. La suite est sur GitHub.",
             "plugins.github.ui.fileDiffUnavailable": "diff indisponible pour ce fichier",
             "plugins.github.ui.fileStatus.modified": "Modifié",
             "plugins.github.ui.fileStatus.renamed": "Renommé",
@@ -90951,6 +91250,7 @@
             "plugins.github.ui.noFiles.description": "GitHub indique que cette demande de fusion ne modifie aucun fichier",
             "plugins.github.ui.noSessions": "Aucune session liée",
             "plugins.github.ui.noSessions.description": "Les sessions démarrées à partir de ce problème seront listées ici",
+            "plugins.github.ui.openCheckOnGithub": "Ouvrir sur GitHub",
             "plugins.github.ui.openOnGithub": "Ouvrir {item} sur GitHub",
             "plugins.github.ui.openResults": "Ouvrir les résultats de {item}",
             "plugins.github.ui.openSession": "Ouvrir {session}",
@@ -90970,6 +91270,7 @@
             "plugins.github.ui.readingChecks": "Lecture des vérifications depuis GitHub",
             "plugins.github.ui.readingConversation": "Lecture de cette conversation depuis GitHub",
             "plugins.github.ui.readingFeedback": "Lecture des retours sur cette pull request depuis GitHub",
+            "plugins.github.ui.readingFileDiff": "Lecture du diff de ce fichier depuis GitHub…",
             "plugins.github.ui.readingFiles": "Lecture des fichiers modifiés depuis GitHub",
             "plugins.github.ui.readingTimeline": "Lecture de cette chronologie depuis GitHub",
             "plugins.github.ui.rereadChecks": "Renvoie les contrôles depuis GitHub",
@@ -91067,6 +91368,8 @@
             "plugins.triage.detailStory.runningSoFar.many": "{count} en cours pour l’instant",
             "plugins.triage.detailStory.runningSoFar.one": "{count} en cours pour l’instant",
             "plugins.triage.detailStory.runningSoFar.other": "{count} en cours pour l’instant",
+            "plugins.triage.detailStory.showLess": "Afficher moins",
+            "plugins.triage.detailStory.showMore": "Afficher plus",
             "plugins.triage.detailStory.smallerFiles.few": "{count} fichiers plus petits",
             "plugins.triage.detailStory.smallerFiles.many": "{count} fichiers plus petits",
             "plugins.triage.detailStory.smallerFiles.one": "{count} fichier plus petit",
@@ -91228,6 +91531,7 @@
             "plugins.github.ui.checkConclusion.failure": "Non riuscito",
             "plugins.github.ui.checkConclusion.skipped": "Ignorato",
             "plugins.github.ui.checkConclusion.success": "Riuscito",
+            "plugins.github.ui.checkNoSummary": "GitHub non ha un riepilogo per questo controllo. Il log completo è su GitHub.",
             "plugins.github.ui.checkRuns": "Esecuzioni dei controlli",
             "plugins.github.ui.checkStatus.completed": "Completato",
             "plugins.github.ui.checkStatus.in_progress": "In corso",
@@ -91237,6 +91541,7 @@
             "plugins.github.ui.checkStatus.waiting": "In attesa",
             "plugins.github.ui.checkSuiteIncomplete": "Questa suite di controlli è più grande di quanto GitHub elencerà",
             "plugins.github.ui.checkSuiteIncomplete.description": "Le righe seguenti sono vere, ma non costituiscono l'intera suite.",
+            "plugins.github.ui.checkSummaryTruncated": "Questo riepilogo è abbreviato. Il resto è su GitHub.",
             "plugins.github.ui.checkSurfaceUnavailable": "Non è stato possibile leggere una superficie di controllo",
             "plugins.github.ui.checksFailing": "Falliti",
             "plugins.github.ui.checksLabel": "Controlli segnalati da GitHub per questo pull request",
@@ -91301,6 +91606,9 @@
             "plugins.github.ui.field.repository": "Repository",
             "plugins.github.ui.field.review_decision": "Revisione",
             "plugins.github.ui.field.updated": "Aggiornato",
+            "plugins.github.ui.fileDiffLabel": "Modifiche in questo file",
+            "plugins.github.ui.fileDiffNone": "GitHub non ha un diff per questo file.",
+            "plugins.github.ui.fileDiffTruncated": "GitHub ha abbreviato questo diff. Il resto è su GitHub.",
             "plugins.github.ui.fileDiffUnavailable": "diff non disponibile per questo file",
             "plugins.github.ui.fileStatus.modified": "Modificato",
             "plugins.github.ui.fileStatus.renamed": "Rinominato",
@@ -91407,6 +91715,7 @@
             "plugins.github.ui.noFiles.description": "GitHub segnala che questo pull request non modifica alcun file.",
             "plugins.github.ui.noSessions": "Nessuna sessione collegata",
             "plugins.github.ui.noSessions.description": "Le sessioni iniziate da questo problema saranno elencate qui.",
+            "plugins.github.ui.openCheckOnGithub": "Apri su GitHub",
             "plugins.github.ui.openOnGithub": "Apri {item} su GitHub",
             "plugins.github.ui.openResults": "Apri i risultati di {item}",
             "plugins.github.ui.openSession": "Apri {session}",
@@ -91426,6 +91735,7 @@
             "plugins.github.ui.readingChecks": "Sto leggendo i controlli da GitHub",
             "plugins.github.ui.readingConversation": "Sto leggendo questa conversazione da GitHub",
             "plugins.github.ui.readingFeedback": "Lettura dei riscontri su questa pull request da GitHub",
+            "plugins.github.ui.readingFileDiff": "Lettura del diff di questo file da GitHub…",
             "plugins.github.ui.readingFiles": "Sto leggendo i file modificati da GitHub",
             "plugins.github.ui.readingTimeline": "Sto leggendo questo timeline da GitHub",
             "plugins.github.ui.rereadChecks": "Ricarica i controlli da GitHub",
@@ -91523,6 +91833,8 @@
             "plugins.triage.detailStory.runningSoFar.many": "{count} in corso finora",
             "plugins.triage.detailStory.runningSoFar.one": "{count} in corso finora",
             "plugins.triage.detailStory.runningSoFar.other": "{count} in corso finora",
+            "plugins.triage.detailStory.showLess": "Mostra meno",
+            "plugins.triage.detailStory.showMore": "Mostra altro",
             "plugins.triage.detailStory.smallerFiles.few": "{count} file più piccoli",
             "plugins.triage.detailStory.smallerFiles.many": "{count} file più piccoli",
             "plugins.triage.detailStory.smallerFiles.one": "{count} file più piccolo",
@@ -91684,6 +91996,7 @@
             "plugins.github.ui.checkConclusion.failure": "Falhou",
             "plugins.github.ui.checkConclusion.skipped": "Ignorado",
             "plugins.github.ui.checkConclusion.success": "Com êxito",
+            "plugins.github.ui.checkNoSummary": "O GitHub não tem resumo para esta verificação. O log completo está no GitHub.",
             "plugins.github.ui.checkRuns": "Execuções de verificação",
             "plugins.github.ui.checkStatus.completed": "Concluído",
             "plugins.github.ui.checkStatus.in_progress": "Em curso",
@@ -91693,6 +92006,7 @@
             "plugins.github.ui.checkStatus.waiting": "Em espera",
             "plugins.github.ui.checkSuiteIncomplete": "Esta unidade de verificação é maior do que o GitHub exibirá",
             "plugins.github.ui.checkSuiteIncomplete.description": "As linhas abaixo são reais, mas não compõem toda a suíte.",
+            "plugins.github.ui.checkSummaryTruncated": "Este resumo está encurtado. O resto está no GitHub.",
             "plugins.github.ui.checkSurfaceUnavailable": "Uma superfície de verificação não pode ser lida",
             "plugins.github.ui.checksFailing": "Falhadas",
             "plugins.github.ui.checksLabel": "Verificações relatadas pelo GitHub nesta solicitação de pull",
@@ -91757,6 +92071,9 @@
             "plugins.github.ui.field.repository": "Repositório",
             "plugins.github.ui.field.review_decision": "Revisão",
             "plugins.github.ui.field.updated": "Atualizado",
+            "plugins.github.ui.fileDiffLabel": "Alterações neste arquivo",
+            "plugins.github.ui.fileDiffNone": "O GitHub não tem diff para este arquivo.",
+            "plugins.github.ui.fileDiffTruncated": "O GitHub encurtou este diff. O resto está no GitHub.",
             "plugins.github.ui.fileDiffUnavailable": "diff indisponível para este ficheiro",
             "plugins.github.ui.fileStatus.modified": "Modificado",
             "plugins.github.ui.fileStatus.renamed": "Renomeado",
@@ -91863,6 +92180,7 @@
             "plugins.github.ui.noFiles.description": "O GitHub relata que esta solicitação de pull não altera nenhum arquivo.",
             "plugins.github.ui.noSessions": "Nenhuma sessão vinculada",
             "plugins.github.ui.noSessions.description": "As sessões iniciadas nesta questão serão listadas aqui.",
+            "plugins.github.ui.openCheckOnGithub": "Abrir no GitHub",
             "plugins.github.ui.openOnGithub": "Abrir {item} no GitHub",
             "plugins.github.ui.openResults": "Abrir os resultados de {item}",
             "plugins.github.ui.openSession": "Abrir {session}",
@@ -91882,6 +92200,7 @@
             "plugins.github.ui.readingChecks": "Lendo as verificações do GitHub",
             "plugins.github.ui.readingConversation": "Lendo esta conversa do GitHub",
             "plugins.github.ui.readingFeedback": "A ler os comentários sobre este pull request no GitHub",
+            "plugins.github.ui.readingFileDiff": "Lendo o diff deste arquivo no GitHub…",
             "plugins.github.ui.readingFiles": "Lendo os arquivos alterados do GitHub",
             "plugins.github.ui.readingTimeline": "Lendo esta linha do tempo do GitHub",
             "plugins.github.ui.rereadChecks": "Volte a ler as verificações no GitHub",
@@ -91979,6 +92298,8 @@
             "plugins.triage.detailStory.runningSoFar.many": "{count} em andamento até agora",
             "plugins.triage.detailStory.runningSoFar.one": "{count} em andamento até agora",
             "plugins.triage.detailStory.runningSoFar.other": "{count} em andamento até agora",
+            "plugins.triage.detailStory.showLess": "Mostrar menos",
+            "plugins.triage.detailStory.showMore": "Mostrar mais",
             "plugins.triage.detailStory.smallerFiles.few": "{count} arquivos menores",
             "plugins.triage.detailStory.smallerFiles.many": "{count} arquivos menores",
             "plugins.triage.detailStory.smallerFiles.one": "{count} arquivo menor",
@@ -92140,6 +92461,7 @@
             "plugins.github.ui.checkConclusion.failure": "Ha fallat",
             "plugins.github.ui.checkConclusion.skipped": "Omès",
             "plugins.github.ui.checkConclusion.success": "Correcte",
+            "plugins.github.ui.checkNoSummary": "GitHub no té resum d’aquesta comprovació. El registre complet és a GitHub.",
             "plugins.github.ui.checkRuns": "Execucions de comprovació",
             "plugins.github.ui.checkStatus.completed": "Completat",
             "plugins.github.ui.checkStatus.in_progress": "En curs",
@@ -92149,6 +92471,7 @@
             "plugins.github.ui.checkStatus.waiting": "En espera",
             "plugins.github.ui.checkSuiteIncomplete": "Aquesta suite de comprovacions és més gran que GitHub la mostrarà",
             "plugins.github.ui.checkSuiteIncomplete.description": "Les línies de sota són reals, però no són tota la suite.",
+            "plugins.github.ui.checkSummaryTruncated": "Aquest resum està escurçat. La resta és a GitHub.",
             "plugins.github.ui.checkSurfaceUnavailable": "No s'ha pogut llegir una superfície de comprovació",
             "plugins.github.ui.checksFailing": "Fallides",
             "plugins.github.ui.checksLabel": "Comprovant les comprovacions que GitHub informa per aquesta petició de pujada",
@@ -92213,6 +92536,9 @@
             "plugins.github.ui.field.repository": "Repositori",
             "plugins.github.ui.field.review_decision": "Revisió",
             "plugins.github.ui.field.updated": "Actualitzat",
+            "plugins.github.ui.fileDiffLabel": "Canvis en aquest fitxer",
+            "plugins.github.ui.fileDiffNone": "GitHub no té diff per a aquest fitxer.",
+            "plugins.github.ui.fileDiffTruncated": "GitHub ha escurçat aquest diff. La resta és a GitHub.",
             "plugins.github.ui.fileDiffUnavailable": "diff no disponible per a aquest fitxer",
             "plugins.github.ui.fileStatus.modified": "Modificat",
             "plugins.github.ui.fileStatus.renamed": "Canviat de nom",
@@ -92319,6 +92645,7 @@
             "plugins.github.ui.noFiles.description": "GitHub informa que aquesta petició de pujada no modifica cap fitxer.",
             "plugins.github.ui.noSessions": "No hi ha sessions vinculades",
             "plugins.github.ui.noSessions.description": "Les sessions que s'han iniciat a partir d'aquesta incidència apareceran aquí.",
+            "plugins.github.ui.openCheckOnGithub": "Obre a GitHub",
             "plugins.github.ui.openOnGithub": "Obre {item} a GitHub",
             "plugins.github.ui.openResults": "Obre els resultats de {item}",
             "plugins.github.ui.openSession": "Obre {session}",
@@ -92338,6 +92665,7 @@
             "plugins.github.ui.readingChecks": "Llegint les comprovacions des de GitHub",
             "plugins.github.ui.readingConversation": "Llegint aquesta conversa des de GitHub",
             "plugins.github.ui.readingFeedback": "S’estan llegint els comentaris d’aquesta pull request des de GitHub",
+            "plugins.github.ui.readingFileDiff": "Llegint el diff d’aquest fitxer de GitHub…",
             "plugins.github.ui.readingFiles": "Llegint els fitxers modificats des de GitHub",
             "plugins.github.ui.readingTimeline": "Llegint aquesta línia de temps des de GitHub",
             "plugins.github.ui.rereadChecks": "Rerebuda les comprovacions des de GitHub",
@@ -92435,6 +92763,8 @@
             "plugins.triage.detailStory.runningSoFar.many": "{count} en curs de moment",
             "plugins.triage.detailStory.runningSoFar.one": "{count} en curs de moment",
             "plugins.triage.detailStory.runningSoFar.other": "{count} en curs de moment",
+            "plugins.triage.detailStory.showLess": "Mostra’n menys",
+            "plugins.triage.detailStory.showMore": "Mostra’n més",
             "plugins.triage.detailStory.smallerFiles.few": "{count} fitxers més petits",
             "plugins.triage.detailStory.smallerFiles.many": "{count} fitxers més petits",
             "plugins.triage.detailStory.smallerFiles.one": "{count} fitxer més petit",
@@ -92596,6 +92926,7 @@
             "plugins.github.ui.checkConclusion.failure": "失败",
             "plugins.github.ui.checkConclusion.skipped": "已跳过",
             "plugins.github.ui.checkConclusion.success": "成功",
+            "plugins.github.ui.checkNoSummary": "GitHub 没有此检查的摘要。完整日志在 GitHub 上。",
             "plugins.github.ui.checkRuns": "检查运行",
             "plugins.github.ui.checkStatus.completed": "已完成",
             "plugins.github.ui.checkStatus.in_progress": "进行中",
@@ -92605,6 +92936,7 @@
             "plugins.github.ui.checkStatus.waiting": "等待中",
             "plugins.github.ui.checkSuiteIncomplete": "这个检查套件比 GitHub 将列出的更大",
             "plugins.github.ui.checkSuiteIncomplete.description": "下面的行是真实的，但它们不是整个套件。",
+            "plugins.github.ui.checkSummaryTruncated": "此摘要已缩短。其余内容在 GitHub 上。",
             "plugins.github.ui.checkSurfaceUnavailable": "无法读取一个检查表面",
             "plugins.github.ui.checksFailing": "失败",
             "plugins.github.ui.checksLabel": "从 GitHub 报告的这个 pull request 的检查",
@@ -92669,6 +93001,9 @@
             "plugins.github.ui.field.repository": "仓库",
             "plugins.github.ui.field.review_decision": "审阅",
             "plugins.github.ui.field.updated": "更新时间",
+            "plugins.github.ui.fileDiffLabel": "此文件的更改",
+            "plugins.github.ui.fileDiffNone": "GitHub 没有此文件的差异。",
+            "plugins.github.ui.fileDiffTruncated": "GitHub 缩短了此差异。其余内容在 GitHub 上。",
             "plugins.github.ui.fileDiffUnavailable": "此文件没有可用的差异",
             "plugins.github.ui.fileStatus.modified": "已修改",
             "plugins.github.ui.fileStatus.renamed": "已重命名",
@@ -92775,6 +93110,7 @@
             "plugins.github.ui.noFiles.description": "GitHub 报告这个 pull request 没有更改任何文件。",
             "plugins.github.ui.noSessions": "没有关联的会话",
             "plugins.github.ui.noSessions.description": "从这个 issue 启动的会话将在这里列出。",
+            "plugins.github.ui.openCheckOnGithub": "在 GitHub 上打开",
             "plugins.github.ui.openOnGithub": "在 GitHub 上打开 {item}",
             "plugins.github.ui.openResults": "打开 {item} 的结果",
             "plugins.github.ui.openSession": "打开 {session}",
@@ -92794,6 +93130,7 @@
             "plugins.github.ui.readingChecks": "从 GitHub 读取检查",
             "plugins.github.ui.readingConversation": "从 GitHub 读取此对话",
             "plugins.github.ui.readingFeedback": "正在从 GitHub 读取此拉取请求的反馈",
+            "plugins.github.ui.readingFileDiff": "正在从 GitHub 读取此文件的差异…",
             "plugins.github.ui.readingFiles": "从 GitHub 读取更改的文件",
             "plugins.github.ui.readingTimeline": "从 GitHub 读取此时间线",
             "plugins.github.ui.rereadChecks": "从 GitHub 重新读取检查",
@@ -92891,6 +93228,8 @@
             "plugins.triage.detailStory.runningSoFar.many": "目前 {count} 项进行中",
             "plugins.triage.detailStory.runningSoFar.one": "目前 {count} 项进行中",
             "plugins.triage.detailStory.runningSoFar.other": "目前 {count} 项进行中",
+            "plugins.triage.detailStory.showLess": "收起",
+            "plugins.triage.detailStory.showMore": "显示更多",
             "plugins.triage.detailStory.smallerFiles.few": "另有 {count} 个较小的文件",
             "plugins.triage.detailStory.smallerFiles.many": "另有 {count} 个较小的文件",
             "plugins.triage.detailStory.smallerFiles.one": "另有 {count} 个较小的文件",
@@ -93052,6 +93391,7 @@
             "plugins.github.ui.checkConclusion.failure": "失敗",
             "plugins.github.ui.checkConclusion.skipped": "已略過",
             "plugins.github.ui.checkConclusion.success": "成功",
+            "plugins.github.ui.checkNoSummary": "GitHub 沒有此檢查的摘要。完整日誌在 GitHub 上。",
             "plugins.github.ui.checkRuns": "檢查執行",
             "plugins.github.ui.checkStatus.completed": "已完成",
             "plugins.github.ui.checkStatus.in_progress": "進行中",
@@ -93061,6 +93401,7 @@
             "plugins.github.ui.checkStatus.waiting": "等待中",
             "plugins.github.ui.checkSuiteIncomplete": "這個檢查套件比 GitHub 會列出的還大",
             "plugins.github.ui.checkSuiteIncomplete.description": "下方的行是真實的，但不是整個套件。",
+            "plugins.github.ui.checkSummaryTruncated": "此摘要已縮短。其餘內容在 GitHub 上。",
             "plugins.github.ui.checkSurfaceUnavailable": "無法讀取一個檢查介面",
             "plugins.github.ui.checksFailing": "失敗",
             "plugins.github.ui.checksLabel": "從 GitHub 讀取這個 PR 的檢查結果",
@@ -93125,6 +93466,9 @@
             "plugins.github.ui.field.repository": "儲存庫",
             "plugins.github.ui.field.review_decision": "審閱",
             "plugins.github.ui.field.updated": "更新時間",
+            "plugins.github.ui.fileDiffLabel": "此檔案的變更",
+            "plugins.github.ui.fileDiffNone": "GitHub 沒有此檔案的差異。",
+            "plugins.github.ui.fileDiffTruncated": "GitHub 縮短了此差異。其餘內容在 GitHub 上。",
             "plugins.github.ui.fileDiffUnavailable": "此檔案沒有可用的差異",
             "plugins.github.ui.fileStatus.modified": "已修改",
             "plugins.github.ui.fileStatus.renamed": "已重新命名",
@@ -93231,6 +93575,7 @@
             "plugins.github.ui.noFiles.description": "GitHub 報告這個 PR 無變更的檔案。",
             "plugins.github.ui.noSessions": "沒有連結的會話",
             "plugins.github.ui.noSessions.description": "從這個問題開始的會話將會列在這裡。",
+            "plugins.github.ui.openCheckOnGithub": "在 GitHub 上開啟",
             "plugins.github.ui.openOnGithub": "在 GitHub 上開啟 {item}",
             "plugins.github.ui.openResults": "開啟 {item} 的結果",
             "plugins.github.ui.openSession": "開啟 {session}",
@@ -93250,6 +93595,7 @@
             "plugins.github.ui.readingChecks": "從 GitHub 讀取檢查結果",
             "plugins.github.ui.readingConversation": "從 GitHub 讀取這個對話",
             "plugins.github.ui.readingFeedback": "正在從 GitHub 讀取此拉取請求的回饋",
+            "plugins.github.ui.readingFileDiff": "正在從 GitHub 讀取此檔案的差異…",
             "plugins.github.ui.readingFiles": "從 GitHub 讀取這個 PR 變更的檔案",
             "plugins.github.ui.readingTimeline": "從 GitHub 讀取這個時間軸",
             "plugins.github.ui.rereadChecks": "從 GitHub 重新讀取檢查",
@@ -93347,6 +93693,8 @@
             "plugins.triage.detailStory.runningSoFar.many": "目前 {count} 項進行中",
             "plugins.triage.detailStory.runningSoFar.one": "目前 {count} 項進行中",
             "plugins.triage.detailStory.runningSoFar.other": "目前 {count} 項進行中",
+            "plugins.triage.detailStory.showLess": "收合",
+            "plugins.triage.detailStory.showMore": "顯示更多",
             "plugins.triage.detailStory.smallerFiles.few": "另有 {count} 個較小的檔案",
             "plugins.triage.detailStory.smallerFiles.many": "另有 {count} 個較小的檔案",
             "plugins.triage.detailStory.smallerFiles.one": "另有 {count} 個較小的檔案",
@@ -93508,6 +93856,7 @@
             "plugins.github.ui.checkConclusion.failure": "失敗",
             "plugins.github.ui.checkConclusion.skipped": "スキップ済み",
             "plugins.github.ui.checkConclusion.success": "成功",
+            "plugins.github.ui.checkNoSummary": "このチェックの概要は GitHub にありません。完全なログは GitHub にあります。",
             "plugins.github.ui.checkRuns": "チェック実行",
             "plugins.github.ui.checkStatus.completed": "完了",
             "plugins.github.ui.checkStatus.in_progress": "進行中",
@@ -93517,6 +93866,7 @@
             "plugins.github.ui.checkStatus.waiting": "待機中",
             "plugins.github.ui.checkSuiteIncomplete": "このチェックスイートは GitHub が表示する範囲を超えています",
             "plugins.github.ui.checkSuiteIncomplete.description": "以下の行は実際ですが、それらは一連のスイート全体ではありません。",
+            "plugins.github.ui.checkSummaryTruncated": "この概要は短縮されています。続きは GitHub にあります。",
             "plugins.github.ui.checkSurfaceUnavailable": "1つのチェック表面を読み取ることができません",
             "plugins.github.ui.checksFailing": "失敗",
             "plugins.github.ui.checksLabel": "GitHub がこの pull request の結果を報告します",
@@ -93581,6 +93931,9 @@
             "plugins.github.ui.field.repository": "リポジトリ",
             "plugins.github.ui.field.review_decision": "レビュー",
             "plugins.github.ui.field.updated": "更新",
+            "plugins.github.ui.fileDiffLabel": "このファイルの変更",
+            "plugins.github.ui.fileDiffNone": "GitHub にこのファイルの差分はありません。",
+            "plugins.github.ui.fileDiffTruncated": "GitHub がこの差分を短縮しました。続きは GitHub にあります。",
             "plugins.github.ui.fileDiffUnavailable": "このファイルの差分は利用できません",
             "plugins.github.ui.fileStatus.modified": "変更済み",
             "plugins.github.ui.fileStatus.renamed": "名前変更済み",
@@ -93687,6 +94040,7 @@
             "plugins.github.ui.noFiles.description": "GitHub はこの pull request がファイルを変更していないと報告しています。",
             "plugins.github.ui.noSessions": "関連セッションなし",
             "plugins.github.ui.noSessions.description": "この issue から始まったセッションはここにリストされます。",
+            "plugins.github.ui.openCheckOnGithub": "GitHub で開く",
             "plugins.github.ui.openOnGithub": "GitHub で {item} を開く",
             "plugins.github.ui.openResults": "{item} の結果を開く",
             "plugins.github.ui.openSession": "{session} を開く",
@@ -93706,6 +94060,7 @@
             "plugins.github.ui.readingChecks": "GitHub からチェックを読み取ります",
             "plugins.github.ui.readingConversation": "GitHub からこの会話を読み取ります",
             "plugins.github.ui.readingFeedback": "GitHub からこのプルリクエストのフィードバックを読み込んでいます",
+            "plugins.github.ui.readingFileDiff": "GitHub からこのファイルの差分を読み込んでいます…",
             "plugins.github.ui.readingFiles": "GitHub から変更されたファイルを読み取ります",
             "plugins.github.ui.readingTimeline": "GitHub からこのタイムラインを読み取ります",
             "plugins.github.ui.rereadChecks": "GitHub のチェックを再読み取る",
@@ -93803,6 +94158,8 @@
             "plugins.triage.detailStory.runningSoFar.many": "現時点で {count} 件実行中",
             "plugins.triage.detailStory.runningSoFar.one": "現時点で {count} 件実行中",
             "plugins.triage.detailStory.runningSoFar.other": "現時点で {count} 件実行中",
+            "plugins.triage.detailStory.showLess": "表示を減らす",
+            "plugins.triage.detailStory.showMore": "さらに表示",
             "plugins.triage.detailStory.smallerFiles.few": "ほか {count} 個の小さなファイル",
             "plugins.triage.detailStory.smallerFiles.many": "ほか {count} 個の小さなファイル",
             "plugins.triage.detailStory.smallerFiles.one": "ほか {count} 個の小さなファイル",
@@ -93964,6 +94321,7 @@
             "plugins.github.ui.checkConclusion.failure": "Fehlgeschlagen",
             "plugins.github.ui.checkConclusion.skipped": "Übersprungen",
             "plugins.github.ui.checkConclusion.success": "Erfolgreich",
+            "plugins.github.ui.checkNoSummary": "GitHub hat keine Zusammenfassung für diese Prüfung. Das vollständige Protokoll ist auf GitHub.",
             "plugins.github.ui.checkRuns": "Check-Runs",
             "plugins.github.ui.checkStatus.completed": "Abgeschlossen",
             "plugins.github.ui.checkStatus.in_progress": "In Bearbeitung",
@@ -93973,6 +94331,7 @@
             "plugins.github.ui.checkStatus.waiting": "Wartet",
             "plugins.github.ui.checkSuiteIncomplete": "Diese Prüfungssuite ist größer als die von GitHub angezeigte Liste",
             "plugins.github.ui.checkSuiteIncomplete.description": "Die folgenden Zeilen sind echt, bilden aber nicht die gesamte Suite ab.",
+            "plugins.github.ui.checkSummaryTruncated": "Diese Zusammenfassung ist gekürzt. Der Rest ist auf GitHub.",
             "plugins.github.ui.checkSurfaceUnavailable": "Eine Prüfungsquelle konnte nicht gelesen werden",
             "plugins.github.ui.checksFailing": "Fehlgeschlagen",
             "plugins.github.ui.checksLabel": "Von GitHub gemeldete Prüfungen für diesen Pull Request",
@@ -94037,6 +94396,9 @@
             "plugins.github.ui.field.repository": "Repository",
             "plugins.github.ui.field.review_decision": "Review",
             "plugins.github.ui.field.updated": "Aktualisiert",
+            "plugins.github.ui.fileDiffLabel": "Änderungen in dieser Datei",
+            "plugins.github.ui.fileDiffNone": "GitHub hat keinen Diff für diese Datei.",
+            "plugins.github.ui.fileDiffTruncated": "GitHub hat diesen Diff gekürzt. Der Rest ist auf GitHub.",
             "plugins.github.ui.fileDiffUnavailable": "Diff für diese Datei nicht verfügbar",
             "plugins.github.ui.fileStatus.modified": "Geändert",
             "plugins.github.ui.fileStatus.renamed": "Umbenannt",
@@ -94143,6 +94505,7 @@
             "plugins.github.ui.noFiles.description": "Laut GitHub ändert dieser Pull Request keine Dateien.",
             "plugins.github.ui.noSessions": "Keine verknüpften Sessions",
             "plugins.github.ui.noSessions.description": "Von diesem Issue gestartete Sessions werden hier aufgeführt.",
+            "plugins.github.ui.openCheckOnGithub": "Auf GitHub öffnen",
             "plugins.github.ui.openOnGithub": "{item} auf GitHub öffnen",
             "plugins.github.ui.openResults": "Ergebnisse für {item} öffnen",
             "plugins.github.ui.openSession": "{session} öffnen",
@@ -94162,6 +94525,7 @@
             "plugins.github.ui.readingChecks": "Prüfungen werden von GitHub gelesen",
             "plugins.github.ui.readingConversation": "Unterhaltung wird von GitHub gelesen",
             "plugins.github.ui.readingFeedback": "Feedback zu diesem Pull Request wird von GitHub gelesen",
+            "plugins.github.ui.readingFileDiff": "Diff dieser Datei wird von GitHub gelesen…",
             "plugins.github.ui.readingFiles": "Geänderte Dateien werden von GitHub gelesen",
             "plugins.github.ui.readingTimeline": "Chronik wird von GitHub gelesen",
             "plugins.github.ui.rereadChecks": "Prüfungen erneut von GitHub lesen",
@@ -94259,6 +94623,8 @@
             "plugins.triage.detailStory.runningSoFar.many": "bisher {count} laufen",
             "plugins.triage.detailStory.runningSoFar.one": "bisher {count} läuft",
             "plugins.triage.detailStory.runningSoFar.other": "bisher {count} laufen",
+            "plugins.triage.detailStory.showLess": "Weniger anzeigen",
+            "plugins.triage.detailStory.showMore": "Mehr anzeigen",
             "plugins.triage.detailStory.smallerFiles.few": "{count} kleinere Dateien",
             "plugins.triage.detailStory.smallerFiles.many": "{count} kleinere Dateien",
             "plugins.triage.detailStory.smallerFiles.one": "{count} kleinere Datei",

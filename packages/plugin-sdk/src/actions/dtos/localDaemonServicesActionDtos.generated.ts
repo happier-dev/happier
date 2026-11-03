@@ -4,13 +4,6 @@
 import type { SystemTaskJsonValue } from './pluginActionDtoSupport.generated.js';
 
 export type LocalDaemonServicesActionInputById = {
-readonly "machines.services.detail": {
-        serviceId: string;
-        serverId: string;
-        machineId: string;
-        expectedGeneration?: string | undefined;
-    };
-
     readonly "machines.local.service.status": {
         serverId: string;
     };
@@ -33,111 +26,77 @@ readonly "machines.services.detail": {
     readonly "machines.local.service.disconnect": {
         serverId: string;
     };
+    readonly "machines.services.exec": {
+        target: {
+            kind: 'current';
+            serviceId: string;
+            expectedGeneration: string;
+        };
+        mode: 'exec' | 'run';
+        serverId: string;
+        machineId: string;
+        argv: string[];
+    } | {
+        target: {
+            kind: 'candidate';
+            deploymentId: string;
+            service: string;
+        };
+        mode: 'run';
+        serverId: string;
+        machineId: string;
+        argv: string[];
+    };
+    readonly "machines.services.list": {
+        serverId: string;
+        machineId: string;
+        environmentId?: string | undefined;
+    };
+    readonly "machines.services.discovery": {
+        serverId: string;
+        machineId: string;
+        adapter?: {
+            pluginId: string;
+            localId: string;
+        } | undefined;
+    };
+    readonly "machines.services.detail": {
+        serviceId: string;
+        serverId: string;
+        machineId: string;
+        expectedGeneration?: string | undefined;
+    };
+    readonly "machines.services.watch": {
+        candidateId: string;
+        expectedRevision: string;
+        lifecyclePurpose: 'development' | 'deployment' | 'infrastructure';
+        serverId: string;
+        machineId: string;
+    };
+    readonly "machines.services.unwatch": {
+        watchId: string;
+        expectedRevision: string;
+        serverId: string;
+        machineId: string;
+    };
+    readonly "machines.services.control": {
+        serviceId: string;
+        expectedGeneration: string;
+        operation: 'start' | 'stop' | 'restart';
+        serverId: string;
+        machineId: string;
+    };
+    readonly "machines.services.logs.read": {
+        serverId: string;
+        machineId: string;
+        serviceId: string;
+        cursor?: {
+            sourceRevision: string;
+            token: string;
+        } | undefined;
+    };
 };
 export type LocalDaemonServicesActionResultById = {
-readonly "machines.services.detail": {
-        kind: 'service';
-        service: {
-            serviceId: string;
-            name: string;
-            authority: 'machine' | 'plugin' | 'project';
-            lifecyclePurpose: 'deployment' | 'development' | 'infrastructure';
-            generation: null | string;
-            state: 'detecting' | 'failed' | 'healthy' | 'running' | 'starting' | 'stopped' | 'stopping' | 'unhealthy' | 'unknown';
-            capabilities: {
-                start: boolean;
-                stop: boolean;
-                restart: boolean;
-                logs: boolean;
-                accounting: boolean;
-            };
-            unavailableReason?: 'admission_unavailable' | 'cancelled' | 'denied' | 'secret_redaction_unavailable' | 'unavailable' | 'unsupported' | undefined;
-            native?: undefined | {
-                phase: 'running' | 'stopped' | 'unknown';
-                readiness: 'not_ready' | 'not_reported' | 'ready';
-            };
-            configuration?: null | undefined | {
-                ports: {
-                    target: null | number | string;
-                    published: null | number | string;
-                    bindAddress: null | string;
-                    protocol: null | string;
-                }[];
-            };
-            health?: undefined | {
-                status: 'degraded' | 'down' | 'unknown' | 'up';
-                observedAtMs: null | number;
-                freshness: 'current' | 'unavailable';
-                reason?: string | undefined;
-                expectedDown?: 'stop' | undefined;
-            };
-            deployment?: undefined | {
-                deploymentId: string;
-                installationId: string;
-                service: {
-                    kind: 'deployment';
-                    machineId: string;
-                    environmentId: string;
-                    environmentInstanceId: string;
-                    composeService: string;
-                    serviceId: string;
-                };
-            };
-            nativeInstance?: undefined | {
-                adapter: {
-                    pluginId: string;
-                    localId: string;
-                };
-                nativeResourceId: string;
-            };
-            baseUrl?: null | string | undefined;
-            port?: null | number | undefined;
-            environmentId?: string | undefined;
-            watchId?: string | undefined;
-            watchRevision?: string | undefined;
-        };
-        accounting?: undefined | {
-            kind: 'sample';
-            samples: {
-                nativeResourceId: string;
-                cpuPercent: null | number;
-                memoryBytes: null | number;
-            }[];
-        } | {
-            kind: 'unavailable';
-            reason: 'admission_unavailable' | 'cancelled' | 'denied' | 'secret_redaction_unavailable' | 'unavailable' | 'unsupported';
-        };
-        runtimeFacts?: undefined | {
-            configuration: null | {
-                name: string;
-                replicas: null | number | string;
-                resources: {
-                    cpus: null | number | string;
-                    memory: null | number | string;
-                };
-                restartPolicy: null | string;
-                healthcheck: 'absent' | 'configured';
-                ports: {
-                    target: null | number | string;
-                    published: null | number | string;
-                    bindAddress: null | string;
-                    protocol: null | string;
-                }[];
-                mounts: {
-                    type: null | string;
-                    source: null | string;
-                    target: null | string;
-                    readOnly: boolean;
-                }[];
-            };
-            observedAt: null | number;
-            freshness: 'current' | 'unavailable';
-        };
-    } | {
-        kind: 'unavailable';
-        reason: 'admission_unavailable' | 'cancelled' | 'denied' | 'secret_redaction_unavailable' | 'unavailable' | 'unsupported';
-    };
-
     readonly "machines.local.service.status": {
         taskId: string;
         result: {
@@ -245,5 +204,291 @@ readonly "machines.services.detail": {
     } | {
         outcome: 'user_owned';
         label: string | null;
+    };
+    readonly "machines.services.exec": {
+        exitCode: number;
+        stdout: string;
+        stderr: string;
+        stdoutTruncated?: boolean | undefined;
+        stderrTruncated?: boolean | undefined;
+    } | {
+        kind: 'outcome_unknown';
+    };
+    readonly "machines.services.list": {
+        kind: 'snapshot';
+        services: {
+            serviceId: string;
+            name: string;
+            authority: 'project' | 'machine' | 'plugin';
+            lifecyclePurpose: 'development' | 'deployment' | 'infrastructure';
+            generation: string | null;
+            state: 'unknown' | 'starting' | 'running' | 'detecting' | 'healthy' | 'unhealthy' | 'stopping' | 'stopped' | 'failed';
+            capabilities: {
+                start: boolean;
+                stop: boolean;
+                restart: boolean;
+                logs: boolean;
+                accounting: boolean;
+            };
+            unavailableReason?: 'unsupported' | 'unavailable' | 'admission_unavailable' | 'secret_redaction_unavailable' | 'denied' | 'cancelled' | undefined;
+            native?: {
+                phase: 'unknown' | 'running' | 'stopped';
+                readiness: 'ready' | 'not_ready' | 'not_reported';
+            } | undefined;
+            configuration?: {
+                ports: {
+                    target: string | number | null;
+                    published: string | number | null;
+                    bindAddress: string | null;
+                    protocol: string | null;
+                }[];
+            } | null | undefined;
+            health?: {
+                status: 'unknown' | 'up' | 'down' | 'degraded';
+                observedAtMs: number | null;
+                freshness: 'current' | 'unavailable';
+                reason?: string | undefined;
+                expectedDown?: 'stop' | undefined;
+            } | undefined;
+            deployment?: {
+                deploymentId: string;
+                installationId: string;
+                service: {
+                    kind: 'deployment';
+                    machineId: string;
+                    environmentId: string;
+                    environmentInstanceId: string;
+                    composeService: string;
+                    serviceId: string;
+                };
+            } | undefined;
+            nativeInstance?: {
+                adapter: {
+                    pluginId: string;
+                    localId: string;
+                };
+                nativeResourceId: string;
+            } | undefined;
+            baseUrl?: string | null | undefined;
+            port?: number | null | undefined;
+            environmentId?: string | undefined;
+            watchId?: string | undefined;
+            watchRevision?: string | undefined;
+        }[];
+    } | {
+        kind: 'unavailable';
+        reason: 'unsupported' | 'unavailable' | 'admission_unavailable' | 'secret_redaction_unavailable' | 'denied' | 'cancelled';
+    };
+    readonly "machines.services.discovery": {
+        kind: 'unavailable';
+        reason: 'unsupported' | 'unavailable' | 'admission_unavailable' | 'secret_redaction_unavailable' | 'denied' | 'cancelled';
+    } | {
+        kind: 'snapshot';
+        candidates: {
+            candidateId: string;
+            revision: string;
+            name: string;
+            adapter: {
+                pluginId: string;
+                localId: string;
+            };
+            nativeResourceId: string;
+            observation: {
+                phase: 'unknown' | 'running' | 'stopped';
+                readiness: 'ready' | 'not_ready' | 'not_reported';
+                endpoint: string | null;
+            };
+        }[];
+        failures: {
+            adapter: {
+                pluginId: string;
+                localId: string;
+            };
+            code: string;
+        }[];
+    };
+    readonly "machines.services.detail": {
+        kind: 'unavailable';
+        reason: 'unsupported' | 'unavailable' | 'admission_unavailable' | 'secret_redaction_unavailable' | 'denied' | 'cancelled';
+    } | {
+        kind: 'service';
+        service: {
+            serviceId: string;
+            name: string;
+            authority: 'project' | 'machine' | 'plugin';
+            lifecyclePurpose: 'development' | 'deployment' | 'infrastructure';
+            generation: string | null;
+            state: 'unknown' | 'starting' | 'running' | 'detecting' | 'healthy' | 'unhealthy' | 'stopping' | 'stopped' | 'failed';
+            capabilities: {
+                start: boolean;
+                stop: boolean;
+                restart: boolean;
+                logs: boolean;
+                accounting: boolean;
+            };
+            unavailableReason?: 'unsupported' | 'unavailable' | 'admission_unavailable' | 'secret_redaction_unavailable' | 'denied' | 'cancelled' | undefined;
+            native?: {
+                phase: 'unknown' | 'running' | 'stopped';
+                readiness: 'ready' | 'not_ready' | 'not_reported';
+            } | undefined;
+            configuration?: {
+                ports: {
+                    target: string | number | null;
+                    published: string | number | null;
+                    bindAddress: string | null;
+                    protocol: string | null;
+                }[];
+            } | null | undefined;
+            health?: {
+                status: 'unknown' | 'up' | 'down' | 'degraded';
+                observedAtMs: number | null;
+                freshness: 'current' | 'unavailable';
+                reason?: string | undefined;
+                expectedDown?: 'stop' | undefined;
+            } | undefined;
+            deployment?: {
+                deploymentId: string;
+                installationId: string;
+                service: {
+                    kind: 'deployment';
+                    machineId: string;
+                    environmentId: string;
+                    environmentInstanceId: string;
+                    composeService: string;
+                    serviceId: string;
+                };
+            } | undefined;
+            nativeInstance?: {
+                adapter: {
+                    pluginId: string;
+                    localId: string;
+                };
+                nativeResourceId: string;
+            } | undefined;
+            baseUrl?: string | null | undefined;
+            port?: number | null | undefined;
+            environmentId?: string | undefined;
+            watchId?: string | undefined;
+            watchRevision?: string | undefined;
+        };
+        accounting?: {
+            kind: 'unavailable';
+            reason: 'unsupported' | 'unavailable' | 'admission_unavailable' | 'secret_redaction_unavailable' | 'denied' | 'cancelled';
+        } | {
+            kind: 'sample';
+            samples: {
+                nativeResourceId: string;
+                cpuPercent: number | null;
+                memoryBytes: number | null;
+            }[];
+        } | undefined;
+        runtimeFacts?: {
+            configuration: {
+                name: string;
+                replicas: string | number | null;
+                resources: {
+                    cpus: string | number | null;
+                    memory: string | number | null;
+                };
+                restartPolicy: string | null;
+                healthcheck: 'configured' | 'absent';
+                ports: {
+                    target: string | number | null;
+                    published: string | number | null;
+                    bindAddress: string | null;
+                    protocol: string | null;
+                }[];
+                mounts: {
+                    type: string | null;
+                    source: string | null;
+                    target: string | null;
+                    readOnly: boolean;
+                }[];
+            } | null;
+            observedAt: number | null;
+            freshness: 'current' | 'unavailable';
+        } | undefined;
+    };
+    readonly "machines.services.watch": {
+        kind: 'unavailable';
+        reason: 'unsupported' | 'unavailable' | 'admission_unavailable' | 'secret_redaction_unavailable' | 'denied' | 'cancelled';
+    } | {
+        kind: 'applied' | 'unchanged' | 'conflict';
+        revision: string;
+        watch?: {
+            v: 1;
+            watchId: string;
+            name: string;
+            adapter: {
+                pluginId: string;
+                localId: string;
+            };
+            nativeResourceId: string;
+            lifecyclePurpose: 'development' | 'deployment' | 'infrastructure';
+        } | undefined;
+    };
+    readonly "machines.services.unwatch": {
+        kind: 'unavailable';
+        reason: 'unsupported' | 'unavailable' | 'admission_unavailable' | 'secret_redaction_unavailable' | 'denied' | 'cancelled';
+    } | {
+        kind: 'applied' | 'unchanged' | 'conflict';
+        revision: string;
+        watch?: {
+            v: 1;
+            watchId: string;
+            name: string;
+            adapter: {
+                pluginId: string;
+                localId: string;
+            };
+            nativeResourceId: string;
+            lifecyclePurpose: 'development' | 'deployment' | 'infrastructure';
+        } | undefined;
+    };
+    readonly "machines.services.control": {
+        kind: 'observed';
+        serviceId: string;
+        generation: string;
+        state: 'unknown' | 'starting' | 'running' | 'detecting' | 'healthy' | 'unhealthy' | 'stopping' | 'stopped' | 'failed';
+        operation: {
+            operationId: string;
+        };
+    } | {
+        kind: 'accepted';
+        operation: {
+            operationId: string;
+        };
+    } | {
+        kind: 'unsupported';
+        reason: 'unsupported' | 'unavailable' | 'admission_unavailable' | 'secret_redaction_unavailable' | 'denied' | 'cancelled';
+    } | {
+        kind: 'outcome_unknown';
+        operation: {
+            operationId: string;
+        };
+    };
+    readonly "machines.services.logs.read": {
+        kind: 'page';
+        page: {
+            sourceRevision: string;
+            text: string;
+            nextCursor: {
+                sourceRevision: string;
+                token: string;
+            } | null;
+            truncated: boolean;
+            secretMasking?: 'incomplete' | undefined;
+        };
+    } | {
+        kind: 'source-changed';
+        sourceRevision: string;
+    } | {
+        kind: 'unavailable';
+        reason: 'unsupported' | 'unavailable' | 'admission_unavailable' | 'secret_redaction_unavailable' | 'denied' | 'cancelled';
+        recipeRemedy?: {
+            pluginId: string;
+            recipeId: string;
+            revision: string;
+        } | undefined;
     };
 };

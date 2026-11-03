@@ -345,7 +345,7 @@ describe('usageObservation', () => {
         expect(message?.contextSnapshot).toEqual(contextSnapshot);
     });
 
-    it('builds a legacy usage report from a context-only cumulative observation', () => {
+    it.each([true, false])('omits tokenless scalar reports with context=%s', withContext => {
         const report = buildLegacyUsageReportFromUsageObservation({
             sessionId: 'sess-1',
             observation: {
@@ -358,22 +358,11 @@ describe('usageObservation', () => {
                 cost: {
                     total: 0.42,
                 },
-                contextUsedTokens: 123,
-                contextWindowTokens: 1000,
+                contextUsedTokens: withContext ? 123 : null,
+                contextWindowTokens: withContext ? 1000 : null,
             },
         });
 
-        expect(report).toEqual({
-            key: 'opencode-session',
-            sessionId: 'sess-1',
-            tokens: {
-                total: 123,
-                used: 123,
-                size: 1000,
-            },
-            cost: {
-                total: 0.42,
-            },
-        });
+        expect(report).toBeNull();
     });
 });

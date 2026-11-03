@@ -14,10 +14,12 @@ export type {
     PreparedHttpRead,
 } from '@happier-dev/cli-common/plugins/http/contracts';
 
-export type HttpService = Pick<
-    import('@happier-dev/cli-common/plugins/http/contracts').HttpService,
-    'request' | 'openWebSocket'
->;
+import type { HttpRequest, HttpResponse, PluginWebSocketOpenInput, PluginWebSocketConnection } from '@happier-dev/cli-common/plugins/http/contracts';
+
+export interface HttpService {
+    request(input: HttpRequest, options?: { signal?: AbortSignal }): Promise<HttpResponse>;
+    openWebSocket(input: PluginWebSocketOpenInput, options?: PluginCancellationOptions): Promise<PluginWebSocketConnection>;
+}
 /** @moduleRealm daemon */
 import type { PluginDiagnosticData } from '../diagnostics.js';
 import type { JsonValue, PluginContributionRef } from '../identity.js';

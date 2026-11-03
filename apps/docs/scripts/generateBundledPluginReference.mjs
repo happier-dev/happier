@@ -80,11 +80,11 @@ const CATEGORIES = [
     title: 'Language intelligence',
     blurb: 'On-demand language servers in the 0.3 development source.',
   },
-  },
   {
     family: 'secretSources',
     title: 'Secret sources',
     blurb: 'External secret sources in the 0.3 development source.',
+  },
 ];
 
 /** Everything that is not part of a family. Named explicitly so a new one fails the build. */

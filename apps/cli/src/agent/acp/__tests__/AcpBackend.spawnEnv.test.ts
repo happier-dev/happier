@@ -6,11 +6,13 @@ import { join } from 'node:path';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { withTempDir } from '@/testkit/fs/tempDir';
 import { logger } from '@/ui/logger';
+import { createRunnerManagedProviderBindingLaunchEnvironmentTransformer } from '@/agent/runtime/session/process/runnerManagedProviderBindingMaterialization';
+import type { AgentAcpProviderTurnSourceHost } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { AcpBackend } from '../AcpBackend';
 import { createAcpTestTransportHandler, writeAcpTestAgentScript } from '../testkit/subprocessHarness';
 
-function writeEnvCaptureAcpAgentScript(params: { dir: string }): string {
+function writeEnvCaptureAcpAgentScript(params: { dir: string; captureEnvKeys?: readonly string[] }): string {
   const preservedEnvKey = 'HAPPIER_ACP_ENV_PRESERVED_KEY';
   const src = `
     const { writeFileSync } = await import('node:fs');
@@ -28,6 +30,7 @@ function writeEnvCaptureAcpAgentScript(params: { dir: string }): string {
         HAPPIER_SESSION_ATTACH_FILE: process.env.HAPPIER_SESSION_ATTACH_FILE ?? null,
         HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON: process.env.HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON ?? null,
         HAPPIER_PROVIDER_KEY: process.env.HAPPIER_PROVIDER_KEY ?? null,
+        ...Object.fromEntries(${JSON.stringify(params.captureEnvKeys ?? [])}.map(name => [name, process.env[name] ?? null])),
       }), 'utf8');
     }
 
@@ -143,6 +146,9 @@ describe('AcpBackend spawn environment', () => {
     'HAPPIER_SESSION_ATTACH_FILE',
     'HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON',
     'HAPPIER_PROVIDER_KEY',
+    'SOURCE_INHERITED',
+    'SOURCE_UNSET',
+    'SOURCE_EXPLICIT',
   ]);
 
   afterEach(() => {
@@ -208,42 +214,59 @@ describe('AcpBackend spawn environment', () => {
     });
   });
 
-  it('substitutes the runner Provider marker only in the final ACP child environment', async () => {
-    await withTempDir('happier-acp-provider-env-', async (dir) => {
-      const placeholder =
-        'happier_runner_placeholder_AAAAAAAAAAAAAAAAAAAAAAAAAAA';
+  it.each([false, true])('keeps the source marker-only while the real ACP child receives credentials (hostFinalizedLaunch=%s)', async hostFinalizedLaunch => {
+    await withTempDir('happier-acp-provider-env-', async dir => {
+      envScope.patch({ SOURCE_INHERITED: 'ambient', SOURCE_UNSET: 'drop', SOURCE_EXPLICIT: 'ambient' });
+      const placeholder = 'happier_runner_placeholder_AAAAAAAAAAAAAAAAAAAAAAAAAAA';
+      const credential = 'synthetic-runner-owned-secret';
       const capturePath = join(dir, 'env.json');
-      const scriptPath = writeEnvCaptureAcpAgentScript({ dir });
-      const transformAgentChildLaunchEnvironment = (
-        environment: Readonly<Record<string, string>>,
-      ) => Object.freeze({
-        ...environment,
-        HAPPIER_PROVIDER_KEY:
-          environment.HAPPIER_PROVIDER_KEY === placeholder
-            ? 'runner-owned-secret'
-            : environment.HAPPIER_PROVIDER_KEY,
+      const scriptPath = writeEnvCaptureAcpAgentScript({ dir,
+        captureEnvKeys: ['HOME', 'SOURCE_INHERITED', 'SOURCE_UNSET', 'SOURCE_EXPLICIT', 'SOURCE_AUTHORIZATION'],
       });
+      const transformer = createRunnerManagedProviderBindingLaunchEnvironmentTransformer({
+        placeholder, credential, renderedPlaceholder: `Bearer ${placeholder}`, renderedCredential: `Bearer ${credential}`,
+        isCurrent: () => true,
+        materialization: { v: 1, kind: 'spawnEnv', env: [
+          { name: 'HAPPIER_PROVIDER_KEY', value: placeholder, source: 'provider' },
+          { name: 'SOURCE_AUTHORIZATION', value: `Bearer ${placeholder}`, source: 'provider' },
+        ] },
+      });
+      let sourceHost: AgentAcpProviderTurnSourceHost | undefined;
       const backend = new AcpBackend({
-        agentName: 'test-provider-child',
-        cwd: dir,
-        command: process.execPath,
-        args: [scriptPath],
+        agentName: 'test-provider-child', cwd: dir, command: process.execPath, args: [scriptPath],
         env: {
-          HAPPIER_TEST_ENV_CAPTURE: capturePath,
-          HAPPIER_PROVIDER_KEY: placeholder,
+          HOME: dir, HAPPIER_TEST_ENV_CAPTURE: capturePath, SOURCE_EXPLICIT: 'launch-override',
+          ...Object.fromEntries(transformer.materialization.env.flatMap(entry => entry.value === null ? [] : [[entry.name, entry.value]])),
         },
-        transformAgentChildLaunchEnvironment,
+        unsetEnv: ['source_unset'], ...(hostFinalizedLaunch ? { hostFinalizedLaunch: true as const } : {}),
+        transformAgentChildLaunchEnvironment: transformer.transform,
+        providerTurnSource: async host => {
+          sourceHost = host;
+          return { catchUp: async () => {}, dispose() {} };
+        },
+        providerTurnLifecycle: {
+          registerContinuation: () => true, beginContinuation: () => true, releaseToolCalls() {}, dispose() {},
+        },
         transportHandler: createAcpTestTransportHandler({ idleTimeoutMs: 1 }),
       });
       try {
         await backend.startSession();
-        expect(JSON.parse(readFileSync(capturePath, 'utf8')))
-          .toMatchObject({
-            HAPPIER_PROVIDER_KEY: 'runner-owned-secret',
-          });
+        expect(JSON.parse(readFileSync(capturePath, 'utf8'))).toMatchObject({
+          HOME: dir, SOURCE_INHERITED: hostFinalizedLaunch ? null : 'ambient', SOURCE_UNSET: null,
+          SOURCE_EXPLICIT: 'launch-override', HAPPIER_PROVIDER_KEY: credential, SOURCE_AUTHORIZATION: `Bearer ${credential}`,
+        });
+        expect(sourceHost?.env).toMatchObject({
+          HOME: dir, SOURCE_EXPLICIT: 'launch-override',
+          HAPPIER_PROVIDER_KEY: placeholder, SOURCE_AUTHORIZATION: `Bearer ${placeholder}`,
+        });
+        expect(sourceHost?.env.SOURCE_INHERITED).toBe(hostFinalizedLaunch ? undefined : 'ambient');
+        expect(sourceHost?.env).not.toHaveProperty('SOURCE_UNSET');
+        expect(JSON.stringify(sourceHost?.env)).not.toContain(credential);
+        expect(Object.isFrozen(sourceHost?.env)).toBe(true);
       } finally {
-        await backend.dispose().catch(() => {});
+        await backend.dispose();
       }
+      expect(sourceHost?.signal.aborted).toBe(true);
     });
   });
 
@@ -260,7 +283,7 @@ describe('AcpBackend spawn environment', () => {
       });
 
       try {
-        await expect(backend.startSession()).rejects.toThrow(secret);
+        await expect(backend.startSession()).rejects.toThrow('provider rejected:');
         const logged = debugSpy.mock.calls.flatMap((call) => call).map((value) => (
           value instanceof Error ? `${value.message}\n${value.stack ?? ''}` : JSON.stringify(value)
         )).join('\n');

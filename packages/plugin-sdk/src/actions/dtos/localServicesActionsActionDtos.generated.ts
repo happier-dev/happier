@@ -538,51 +538,6 @@ export type LocalServicesActionsActionResultById = {
                         targetMachineId: string;
                     } | undefined;
                 } | {
-                    kind: 'partial';
-                    savedSecrets: {
-                        name: string;
-                        phase: 'build' | 'runtime';
-                        source: {
-                            kind: 'secret';
-                            ref: string;
-                            resourceRevision: number;
-                        };
-                    }[];
-                    phase: 'bindings' | 'deploy' | 'environment' | 'generation' | 'metadata' | 'target';
-                    errorCode: string;
-                    environmentId?: string | undefined;
-                    revision?: number | undefined;
-                    targetLinkId?: string | undefined;
-                    definition?: undefined | {
-                        kind: 'stored';
-                        contentRevision: number;
-                        composeDigest: string;
-                    };
-                    deployment?: undefined | {
-                        deploymentId: string;
-                        deploymentRevision: number;
-                        state: 'cancelled' | 'failed' | 'outcome_unknown' | 'queued' | 'running' | 'running_unverified' | 'succeeded' | 'waitingApproval';
-                        ok: true;
-                        environmentId: string;
-                        revision: number;
-                    } | {
-                        kind: 'pending';
-                        actionOperationId: string;
-                        ok: true;
-                        environmentId: string;
-                        revision: number;
-                        operation?: undefined | {
-                            serverId: string;
-                            machineId: string;
-                            operationId: string;
-                        };
-                    };
-                    unknownSecret?: undefined | {
-                        name: string;
-                        phase: 'build' | 'runtime';
-                        ref: string;
-                    };
-                } | {
                     reviewedEffect: JsonValue;
                     reviewedEffectDigest: string;
                     kind: 'pendingApproval';
@@ -601,6 +556,32 @@ export type LocalServicesActionsActionResultById = {
                     category: 'currentness' | 'transport' | 'status' | 'schema';
                     status?: number | undefined;
                     code?: string | undefined;
+                } | {
+                    kind: 'managedNative';
+                    nativeCause: {
+                        httpStatusClass: '3xx' | '4xx' | '5xx' | 'other';
+                        code?: 'unknown' | 'unavailable' | 'forbidden' | 'json_error' | 'unauthorized' | 'maintenance' | 'resource_limit_exceeded' | 'not_found' | 'method_not_allowed' | 'uniqueness_error' | 'conflict' | 'deprecated_api_endpoint' | 'resource_unavailable' | 'invalid_input' | 'service_error' | 'unsupported_error' | 'locked' | 'protected' | 'rate_limit_exceeded' | 'server_error' | 'bad_gateway' | 'timeout' | 'placement_error' | 'bad_request' | 'unprocessable_entity' | 'too_many_requests' | 'insufficient_capacity' | 'volume_placement_capacity' | 'name_taken' | undefined;
+                        fields?: ('name' | 'location' | 'server_type' | 'start_after_create' | 'image' | 'placement_group' | 'ssh_keys' | 'volumes' | 'networks' | 'firewalls' | 'user_data' | 'labels' | 'automount' | 'public_net')[] | undefined;
+                    } | {
+                        localCause: 'native_command_failed';
+                        command: 'start' | 'restart' | 'stop' | 'create' | 'run' | 'up';
+                        exitCode: number | null;
+                        stderr?: string | undefined;
+                        stderrTruncated?: true | undefined;
+                    } | {
+                        localCause: 'native_options_changed' | 'native_ssh_network_unavailable' | 'native_route_unavailable' | 'native_lease_ended';
+                    } | {
+                        localCause: 'native_route_not_found';
+                        route: 'stop' | 'run' | 'inspect' | 'delete' | 'pull' | 'configure';
+                        httpStatus: 404;
+                    } | {
+                        localCause: 'native_configure_refused' | 'native_delete_refused';
+                        httpStatus: 400;
+                    } | {
+                        grpcStatusCode: 1 | 4 | 6 | 2 | 5 | 3 | 9 | 14 | 7 | 8 | 10 | 11 | 12 | 13 | 15 | 16;
+                    } | {
+                        sdkError: 'AlreadyExistsError' | 'NotFoundError' | 'InvalidError' | 'ResourceExhaustedError' | 'TimeoutError' | 'SandboxTimeoutError' | 'InternalFailure' | 'ExecutionError' | 'RemoteError' | 'ConflictError' | 'ClientClosedError';
+                    };
                 } | undefined;
             } | undefined;
             domainRef?: {
@@ -646,6 +627,11 @@ export type LocalServicesActionsActionResultById = {
                     serverId: string;
                     runId: string;
                 } | undefined;
+            } | {
+                kind: 'deployment';
+                serverId: string;
+                environmentId: string;
+                deploymentId: string;
             } | {
                 kind: 'forkRequest';
                 id: string;
@@ -697,6 +683,29 @@ export type LocalServicesActionsActionResultById = {
                 kind: 'handoff';
                 id: string;
                 targetMachineId?: string | undefined;
+            } | {
+                kind: 'machineSetup';
+                serverId: string;
+                machineId: string;
+                preset?: {
+                    id: string;
+                    revision: number;
+                } | undefined;
+                managedId?: string | undefined;
+                setupTask?: {
+                    id: string;
+                    taskKind: 'machine.setup.plan.v1' | 'machine.setup.apply.v1' | 'machine.setup.remove.v1';
+                    prompt?: {
+                        kind: 'sudo.password';
+                        adminUsername: string;
+                    } | undefined;
+                } | undefined;
+                terminalId?: string | undefined;
+                terminals?: {
+                    install?: string | undefined;
+                    setup?: string | undefined;
+                } | undefined;
+                exitCode?: number | undefined;
             } | {
                 kind: 'machineEnvironment';
                 serverId: string;
@@ -789,6 +798,50 @@ export type LocalServicesActionsActionResultById = {
             observation?: {
                 kind: 'outcome_uncertain' | 'stop_unconfirmed';
                 code: string;
+            } | {
+                kind: 'review_required';
+                code: 'agent_isolation_effect_changed';
+                machineId: string;
+                enabled: boolean;
+                current: {
+                    kind: 'ready';
+                    plan: {
+                        roots: {
+                            rootId: string;
+                            path: string;
+                            changes: ('group' | 'setgid' | 'mode' | 'gitShared' | 'safeDirectory')[];
+                        }[];
+                        ancestorAcls: {
+                            path: string;
+                            add: 'x';
+                        }[];
+                        sessionsToReplace: number;
+                        requiresAdmin: boolean;
+                        planDigest: string;
+                        memberProvisioning?: 'linuxUsersV1' | undefined;
+                    };
+                    policy: {
+                        enabled: boolean;
+                        memberProvisioning?: 'linuxUsersV1' | undefined;
+                    };
+                    metadataVersion: number;
+                    status: {
+                        kind: 'effective';
+                        platform: 'linux';
+                        agentUser: 'happier-agent';
+                    } | {
+                        kind: 'disabled';
+                    } | {
+                        kind: 'enable_required';
+                        reason: 'existing_machine_workspace_migration';
+                    } | {
+                        kind: 'applying';
+                        phase: 'workspace' | 'account' | 'sudoers' | 'runtime_replacement';
+                    } | {
+                        kind: 'unavailable';
+                        code: 'unsupported_platform' | 'sudo_unavailable' | 'sudoers_invalid' | 'agent_user_missing' | 'workspace_not_ready' | 'payload_not_accessible' | 'workspace_ancestor_not_traversable' | 'agent_launch_kind_unavailable' | 'provisioning_unavailable' | 'launch_probe_failed' | 'mcp_socket_access_unavailable' | 'local_admin_api_accessible' | 'metadata_unavailable';
+                    };
+                };
             } | undefined;
             setupReview?: {
                 reviewedEffect: JsonValue;
@@ -982,7 +1035,7 @@ export type LocalServicesActionsActionResultById = {
             expiresAt: number | null;
             diagnostics: {
                 v: 1;
-                code: 'invalid_preview_resource' | 'preview_registration_failed' | 'preview_token_secret_missing' | 'preview_public_base_url_missing' | 'preview_not_found' | 'preview_token_missing' | 'token_mismatch' | 'binding_mismatch' | 'expired' | 'not_yet_valid' | 'revoked' | 'host_origin_unavailable' | 'https_required' | 'invalid_public_base_url' | 'path_mode_degraded' | 'path_mode_cookie_semantics_unsupported' | 'service_worker_unavailable_in_path_mode' | 'cookie_isolated' | 'cookie_stripped' | 'upstream_header_stripped' | 'credentials_stripped' | 'method_not_allowed' | 'preview_loop_detected' | 'request_body_too_large' | 'response_body_too_large' | 'response_header_too_large' | 'upstream_response_invalid' | 'upstream_stream_failed' | 'invalid_upgrade_request' | 'web_socket_unavailable' | 'pms_observability_unavailable' | 'pms_relay_unavailable' | 'dns_tls_not_ready' | 'public_policy_denied' | 'public_preview_expired' | 'public_preview_rate_limited' | 'public_preview_revoked';
+                code: 'method_not_allowed' | 'invalid_preview_resource' | 'preview_registration_failed' | 'preview_token_secret_missing' | 'preview_public_base_url_missing' | 'preview_not_found' | 'preview_token_missing' | 'token_mismatch' | 'binding_mismatch' | 'expired' | 'not_yet_valid' | 'revoked' | 'host_origin_unavailable' | 'https_required' | 'invalid_public_base_url' | 'path_mode_degraded' | 'path_mode_cookie_semantics_unsupported' | 'service_worker_unavailable_in_path_mode' | 'cookie_isolated' | 'cookie_stripped' | 'upstream_header_stripped' | 'credentials_stripped' | 'preview_loop_detected' | 'request_body_too_large' | 'response_body_too_large' | 'response_header_too_large' | 'upstream_response_invalid' | 'upstream_stream_failed' | 'invalid_upgrade_request' | 'web_socket_unavailable' | 'pms_observability_unavailable' | 'pms_relay_unavailable' | 'dns_tls_not_ready' | 'public_policy_denied' | 'public_preview_expired' | 'public_preview_rate_limited' | 'public_preview_revoked';
                 severity: 'error' | 'info' | 'warning';
                 scope: 'privatePreview' | 'publicPreview' | 'previewProxy';
                 details: Record<string, unknown>;
@@ -1246,7 +1299,7 @@ export type LocalServicesActionsActionResultById = {
                 expiresAt: number | null;
                 diagnostics: {
                     v: 1;
-                    code: 'invalid_preview_resource' | 'preview_registration_failed' | 'preview_token_secret_missing' | 'preview_public_base_url_missing' | 'preview_not_found' | 'preview_token_missing' | 'token_mismatch' | 'binding_mismatch' | 'expired' | 'not_yet_valid' | 'revoked' | 'host_origin_unavailable' | 'https_required' | 'invalid_public_base_url' | 'path_mode_degraded' | 'path_mode_cookie_semantics_unsupported' | 'service_worker_unavailable_in_path_mode' | 'cookie_isolated' | 'cookie_stripped' | 'upstream_header_stripped' | 'credentials_stripped' | 'method_not_allowed' | 'preview_loop_detected' | 'request_body_too_large' | 'response_body_too_large' | 'response_header_too_large' | 'upstream_response_invalid' | 'upstream_stream_failed' | 'invalid_upgrade_request' | 'web_socket_unavailable' | 'pms_observability_unavailable' | 'pms_relay_unavailable' | 'dns_tls_not_ready' | 'public_policy_denied' | 'public_preview_expired' | 'public_preview_rate_limited' | 'public_preview_revoked';
+                    code: 'method_not_allowed' | 'invalid_preview_resource' | 'preview_registration_failed' | 'preview_token_secret_missing' | 'preview_public_base_url_missing' | 'preview_not_found' | 'preview_token_missing' | 'token_mismatch' | 'binding_mismatch' | 'expired' | 'not_yet_valid' | 'revoked' | 'host_origin_unavailable' | 'https_required' | 'invalid_public_base_url' | 'path_mode_degraded' | 'path_mode_cookie_semantics_unsupported' | 'service_worker_unavailable_in_path_mode' | 'cookie_isolated' | 'cookie_stripped' | 'upstream_header_stripped' | 'credentials_stripped' | 'preview_loop_detected' | 'request_body_too_large' | 'response_body_too_large' | 'response_header_too_large' | 'upstream_response_invalid' | 'upstream_stream_failed' | 'invalid_upgrade_request' | 'web_socket_unavailable' | 'pms_observability_unavailable' | 'pms_relay_unavailable' | 'dns_tls_not_ready' | 'public_policy_denied' | 'public_preview_expired' | 'public_preview_rate_limited' | 'public_preview_revoked';
                     severity: 'error' | 'info' | 'warning';
                     scope: 'privatePreview' | 'publicPreview' | 'previewProxy';
                     details: Record<string, unknown>;

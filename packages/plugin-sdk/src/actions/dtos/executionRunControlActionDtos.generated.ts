@@ -572,6 +572,7 @@ export type ExecutionRunControlActionInputById = {
         runId: string;
         sessionId?: string | null | undefined;
         includeStructured?: boolean | undefined;
+        includeLatestToolResult?: boolean | undefined;
         waitForInputId?: string | undefined;
         waitForOutput?: {
             kind: 'review_walkthrough';
@@ -1366,6 +1367,16 @@ export type ExecutionRunControlActionInputById = {
                         compaction?: {
                             events: true;
                             manual?: true | undefined;
+                            idle?: {
+                                mode: 'host';
+                                defaultEnabled: boolean;
+                                defaultMinContextTokens?: number | undefined;
+                            } | {
+                                mode: 'native';
+                                defaultEnabled: boolean;
+                                defaultMinContextTokens?: number | undefined;
+                                nativeHonorsMinimum?: true | undefined;
+                            } | undefined;
                         } | undefined;
                         conversationRollback?: true | undefined;
                         goals?: {
@@ -1451,6 +1462,7 @@ export type ExecutionRunControlActionInputById = {
                     code: string;
                     message?: string | undefined;
                     runtimeIssueV1?: unknown;
+                    uxDiagnostic?: unknown;
                 } | undefined;
             };
             latestToolResult?: unknown;
@@ -1784,6 +1796,16 @@ export type ExecutionRunControlActionResultById = {
                             compaction?: {
                                 events: true;
                                 manual?: true | undefined;
+                                idle?: {
+                                    mode: 'native';
+                                    defaultEnabled: boolean;
+                                    defaultMinContextTokens?: number | undefined;
+                                    nativeHonorsMinimum?: true | undefined;
+                                } | {
+                                    mode: 'host';
+                                    defaultEnabled: boolean;
+                                    defaultMinContextTokens?: number | undefined;
+                                } | undefined;
                             } | undefined;
                             conversationRollback?: true | undefined;
                             goals?: {
@@ -1971,6 +1993,18 @@ export type ExecutionRunControlActionResultById = {
                                 effectiveStateMode: 'shared' | 'isolated' | null;
                             } | undefined;
                         }> | undefined;
+                        uxDiagnostic?: {
+                            code: 'provider_session_state_unavailable_for_resume' | 'connected_service_materialization_identity_missing' | 'resume_reachability_inputs_missing' | 'metadata_update_failed' | 'no_eligible_group_member' | 'recovery_retry_scheduled' | 'recovery_dead_lettered' | 'provider_account_adoption_mismatch' | 'post_switch_verification_failed' | 'connected_service_credential_reconnect_required' | 'connected_service_credential_refresh_unavailable' | 'claude_subscription_missing_claude_code_scope' | 'claude_subscription_native_auth_materialization_failed' | 'claude_subscription_setup_token_not_supported_for_unified';
+                            failurePhase: 'session_lookup' | 'agent_validation' | 'normalization' | 'continuity' | 'materialization' | 'metadata' | 'restart' | 'hot_apply' | 'rollback' | 'post_switch_recovery' | 'post_switch_verification' | 'runtime_auth_recovery';
+                            source: 'runtime_auth_recovery' | 'spawn_resume' | 'new_session' | 'inactive_resume' | 'manual_auth_switch' | 'usage_limit_recovery' | 'transcript_switch_attempt' | 'session_view';
+                            retryable: boolean;
+                            suggestedActions: ('retry' | 'start_fresh_under_selected_account' | 'resume_current_account' | 'open_connected_accounts' | 'reconnect_profile' | 'enable_state_sharing' | 'view_latest_fork' | 'view_native_fork' | 'dismiss')[];
+                            serviceId?: string | undefined;
+                            agentId?: string | undefined;
+                            profileId?: string | undefined;
+                            groupId?: string | undefined;
+                            diagnostics?: Record<string, string | number | boolean | null> | undefined;
+                        } | undefined;
                     } | undefined;
                 };
                 latestToolResult?: unknown;
@@ -2240,6 +2274,16 @@ export type ExecutionRunControlActionResultById = {
                             compaction?: {
                                 events: true;
                                 manual?: true | undefined;
+                                idle?: {
+                                    mode: 'native';
+                                    defaultEnabled: boolean;
+                                    defaultMinContextTokens?: number | undefined;
+                                    nativeHonorsMinimum?: true | undefined;
+                                } | {
+                                    mode: 'host';
+                                    defaultEnabled: boolean;
+                                    defaultMinContextTokens?: number | undefined;
+                                } | undefined;
                             } | undefined;
                             conversationRollback?: true | undefined;
                             goals?: {
@@ -2427,6 +2471,18 @@ export type ExecutionRunControlActionResultById = {
                                 effectiveStateMode: 'shared' | 'isolated' | null;
                             } | undefined;
                         }> | undefined;
+                        uxDiagnostic?: {
+                            code: 'provider_session_state_unavailable_for_resume' | 'connected_service_materialization_identity_missing' | 'resume_reachability_inputs_missing' | 'metadata_update_failed' | 'no_eligible_group_member' | 'recovery_retry_scheduled' | 'recovery_dead_lettered' | 'provider_account_adoption_mismatch' | 'post_switch_verification_failed' | 'connected_service_credential_reconnect_required' | 'connected_service_credential_refresh_unavailable' | 'claude_subscription_missing_claude_code_scope' | 'claude_subscription_native_auth_materialization_failed' | 'claude_subscription_setup_token_not_supported_for_unified';
+                            failurePhase: 'session_lookup' | 'agent_validation' | 'normalization' | 'continuity' | 'materialization' | 'metadata' | 'restart' | 'hot_apply' | 'rollback' | 'post_switch_recovery' | 'post_switch_verification' | 'runtime_auth_recovery';
+                            source: 'runtime_auth_recovery' | 'spawn_resume' | 'new_session' | 'inactive_resume' | 'manual_auth_switch' | 'usage_limit_recovery' | 'transcript_switch_attempt' | 'session_view';
+                            retryable: boolean;
+                            suggestedActions: ('retry' | 'start_fresh_under_selected_account' | 'resume_current_account' | 'open_connected_accounts' | 'reconnect_profile' | 'enable_state_sharing' | 'view_latest_fork' | 'view_native_fork' | 'dismiss')[];
+                            serviceId?: string | undefined;
+                            agentId?: string | undefined;
+                            profileId?: string | undefined;
+                            groupId?: string | undefined;
+                            diagnostics?: Record<string, string | number | boolean | null> | undefined;
+                        } | undefined;
                     } | undefined;
                 };
                 latestToolResult?: unknown;
@@ -2696,6 +2752,16 @@ export type ExecutionRunControlActionResultById = {
                             compaction?: {
                                 events: true;
                                 manual?: true | undefined;
+                                idle?: {
+                                    mode: 'native';
+                                    defaultEnabled: boolean;
+                                    defaultMinContextTokens?: number | undefined;
+                                    nativeHonorsMinimum?: true | undefined;
+                                } | {
+                                    mode: 'host';
+                                    defaultEnabled: boolean;
+                                    defaultMinContextTokens?: number | undefined;
+                                } | undefined;
                             } | undefined;
                             conversationRollback?: true | undefined;
                             goals?: {
@@ -2883,6 +2949,18 @@ export type ExecutionRunControlActionResultById = {
                                 effectiveStateMode: 'shared' | 'isolated' | null;
                             } | undefined;
                         }> | undefined;
+                        uxDiagnostic?: {
+                            code: 'provider_session_state_unavailable_for_resume' | 'connected_service_materialization_identity_missing' | 'resume_reachability_inputs_missing' | 'metadata_update_failed' | 'no_eligible_group_member' | 'recovery_retry_scheduled' | 'recovery_dead_lettered' | 'provider_account_adoption_mismatch' | 'post_switch_verification_failed' | 'connected_service_credential_reconnect_required' | 'connected_service_credential_refresh_unavailable' | 'claude_subscription_missing_claude_code_scope' | 'claude_subscription_native_auth_materialization_failed' | 'claude_subscription_setup_token_not_supported_for_unified';
+                            failurePhase: 'session_lookup' | 'agent_validation' | 'normalization' | 'continuity' | 'materialization' | 'metadata' | 'restart' | 'hot_apply' | 'rollback' | 'post_switch_recovery' | 'post_switch_verification' | 'runtime_auth_recovery';
+                            source: 'runtime_auth_recovery' | 'spawn_resume' | 'new_session' | 'inactive_resume' | 'manual_auth_switch' | 'usage_limit_recovery' | 'transcript_switch_attempt' | 'session_view';
+                            retryable: boolean;
+                            suggestedActions: ('retry' | 'start_fresh_under_selected_account' | 'resume_current_account' | 'open_connected_accounts' | 'reconnect_profile' | 'enable_state_sharing' | 'view_latest_fork' | 'view_native_fork' | 'dismiss')[];
+                            serviceId?: string | undefined;
+                            agentId?: string | undefined;
+                            profileId?: string | undefined;
+                            groupId?: string | undefined;
+                            diagnostics?: Record<string, string | number | boolean | null> | undefined;
+                        } | undefined;
                     } | undefined;
                 };
                 latestToolResult?: unknown;
@@ -3156,6 +3234,16 @@ export type ExecutionRunControlActionResultById = {
                             compaction?: {
                                 events: true;
                                 manual?: true | undefined;
+                                idle?: {
+                                    mode: 'native';
+                                    defaultEnabled: boolean;
+                                    defaultMinContextTokens?: number | undefined;
+                                    nativeHonorsMinimum?: true | undefined;
+                                } | {
+                                    mode: 'host';
+                                    defaultEnabled: boolean;
+                                    defaultMinContextTokens?: number | undefined;
+                                } | undefined;
                             } | undefined;
                             conversationRollback?: true | undefined;
                             goals?: {
@@ -3343,6 +3431,18 @@ export type ExecutionRunControlActionResultById = {
                                 effectiveStateMode: 'shared' | 'isolated' | null;
                             } | undefined;
                         }> | undefined;
+                        uxDiagnostic?: {
+                            code: 'provider_session_state_unavailable_for_resume' | 'connected_service_materialization_identity_missing' | 'resume_reachability_inputs_missing' | 'metadata_update_failed' | 'no_eligible_group_member' | 'recovery_retry_scheduled' | 'recovery_dead_lettered' | 'provider_account_adoption_mismatch' | 'post_switch_verification_failed' | 'connected_service_credential_reconnect_required' | 'connected_service_credential_refresh_unavailable' | 'claude_subscription_missing_claude_code_scope' | 'claude_subscription_native_auth_materialization_failed' | 'claude_subscription_setup_token_not_supported_for_unified';
+                            failurePhase: 'session_lookup' | 'agent_validation' | 'normalization' | 'continuity' | 'materialization' | 'metadata' | 'restart' | 'hot_apply' | 'rollback' | 'post_switch_recovery' | 'post_switch_verification' | 'runtime_auth_recovery';
+                            source: 'runtime_auth_recovery' | 'spawn_resume' | 'new_session' | 'inactive_resume' | 'manual_auth_switch' | 'usage_limit_recovery' | 'transcript_switch_attempt' | 'session_view';
+                            retryable: boolean;
+                            suggestedActions: ('retry' | 'start_fresh_under_selected_account' | 'resume_current_account' | 'open_connected_accounts' | 'reconnect_profile' | 'enable_state_sharing' | 'view_latest_fork' | 'view_native_fork' | 'dismiss')[];
+                            serviceId?: string | undefined;
+                            agentId?: string | undefined;
+                            profileId?: string | undefined;
+                            groupId?: string | undefined;
+                            diagnostics?: Record<string, string | number | boolean | null> | undefined;
+                        } | undefined;
                     } | undefined;
                 };
                 latestToolResult?: unknown;
@@ -3477,7 +3577,11 @@ export type ExecutionRunControlActionResultById = {
             code: 'cancelled';
         } | {
             ok: false;
-            code: 'execution_run_not_found' | 'execution_run_not_allowed' | 'execution_run_action_not_supported' | 'execution_run_invalid_action_input' | 'execution_run_stream_not_found' | 'execution_run_busy' | 'execution_run_send_outcome_unknown' | 'execution_run_failed' | 'execution_run_budget_exceeded' | 'execution_run_output_limit_exceeded' | 'execution_run_protocol_unsupported' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_parent_selection_unavailable' | 'execution_run_start_ambiguous' | 'execution_run_scope_mismatch' | 'execution_run_connected_service_generation_refresh_required' | 'run_depth_exceeded' | 'permission_denied';
+            code: 'execution_run_not_found' | 'execution_run_not_allowed' | 'execution_run_input_required' | 'execution_run_action_not_supported' | 'execution_run_invalid_action_input' | 'execution_run_stream_not_found' | 'execution_run_busy' | 'execution_run_send_outcome_unknown' | 'execution_run_failed' | 'execution_run_budget_exceeded' | 'execution_run_output_limit_exceeded' | 'execution_run_protocol_unsupported' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_parent_selection_unavailable' | 'execution_run_start_ambiguous' | 'execution_run_scope_mismatch' | 'execution_run_connected_service_generation_refresh_required' | 'run_depth_exceeded' | 'permission_denied';
+        } | undefined;
+        preparedInstructionsFor?: {
+            serverId: string;
+            sessionId: string;
         } | undefined;
     };
     readonly "execution.run.list": {
@@ -3624,6 +3728,16 @@ export type ExecutionRunControlActionResultById = {
                     compaction?: {
                         events: true;
                         manual?: true | undefined;
+                        idle?: {
+                            mode: 'native';
+                            defaultEnabled: boolean;
+                            defaultMinContextTokens?: number | undefined;
+                            nativeHonorsMinimum?: true | undefined;
+                        } | {
+                            mode: 'host';
+                            defaultEnabled: boolean;
+                            defaultMinContextTokens?: number | undefined;
+                        } | undefined;
                     } | undefined;
                     conversationRollback?: true | undefined;
                     goals?: {
@@ -3811,6 +3925,18 @@ export type ExecutionRunControlActionResultById = {
                         effectiveStateMode: 'shared' | 'isolated' | null;
                     } | undefined;
                 }> | undefined;
+                uxDiagnostic?: {
+                    code: 'provider_session_state_unavailable_for_resume' | 'connected_service_materialization_identity_missing' | 'resume_reachability_inputs_missing' | 'metadata_update_failed' | 'no_eligible_group_member' | 'recovery_retry_scheduled' | 'recovery_dead_lettered' | 'provider_account_adoption_mismatch' | 'post_switch_verification_failed' | 'connected_service_credential_reconnect_required' | 'connected_service_credential_refresh_unavailable' | 'claude_subscription_missing_claude_code_scope' | 'claude_subscription_native_auth_materialization_failed' | 'claude_subscription_setup_token_not_supported_for_unified';
+                    failurePhase: 'session_lookup' | 'agent_validation' | 'normalization' | 'continuity' | 'materialization' | 'metadata' | 'restart' | 'hot_apply' | 'rollback' | 'post_switch_recovery' | 'post_switch_verification' | 'runtime_auth_recovery';
+                    source: 'runtime_auth_recovery' | 'spawn_resume' | 'new_session' | 'inactive_resume' | 'manual_auth_switch' | 'usage_limit_recovery' | 'transcript_switch_attempt' | 'session_view';
+                    retryable: boolean;
+                    suggestedActions: ('retry' | 'start_fresh_under_selected_account' | 'resume_current_account' | 'open_connected_accounts' | 'reconnect_profile' | 'enable_state_sharing' | 'view_latest_fork' | 'view_native_fork' | 'dismiss')[];
+                    serviceId?: string | undefined;
+                    agentId?: string | undefined;
+                    profileId?: string | undefined;
+                    groupId?: string | undefined;
+                    diagnostics?: Record<string, string | number | boolean | null> | undefined;
+                } | undefined;
             } | undefined;
         }[];
     };
@@ -3958,6 +4084,16 @@ export type ExecutionRunControlActionResultById = {
                     compaction?: {
                         events: true;
                         manual?: true | undefined;
+                        idle?: {
+                            mode: 'native';
+                            defaultEnabled: boolean;
+                            defaultMinContextTokens?: number | undefined;
+                            nativeHonorsMinimum?: true | undefined;
+                        } | {
+                            mode: 'host';
+                            defaultEnabled: boolean;
+                            defaultMinContextTokens?: number | undefined;
+                        } | undefined;
                     } | undefined;
                     conversationRollback?: true | undefined;
                     goals?: {
@@ -4145,6 +4281,18 @@ export type ExecutionRunControlActionResultById = {
                         effectiveStateMode: 'shared' | 'isolated' | null;
                     } | undefined;
                 }> | undefined;
+                uxDiagnostic?: {
+                    code: 'provider_session_state_unavailable_for_resume' | 'connected_service_materialization_identity_missing' | 'resume_reachability_inputs_missing' | 'metadata_update_failed' | 'no_eligible_group_member' | 'recovery_retry_scheduled' | 'recovery_dead_lettered' | 'provider_account_adoption_mismatch' | 'post_switch_verification_failed' | 'connected_service_credential_reconnect_required' | 'connected_service_credential_refresh_unavailable' | 'claude_subscription_missing_claude_code_scope' | 'claude_subscription_native_auth_materialization_failed' | 'claude_subscription_setup_token_not_supported_for_unified';
+                    failurePhase: 'session_lookup' | 'agent_validation' | 'normalization' | 'continuity' | 'materialization' | 'metadata' | 'restart' | 'hot_apply' | 'rollback' | 'post_switch_recovery' | 'post_switch_verification' | 'runtime_auth_recovery';
+                    source: 'runtime_auth_recovery' | 'spawn_resume' | 'new_session' | 'inactive_resume' | 'manual_auth_switch' | 'usage_limit_recovery' | 'transcript_switch_attempt' | 'session_view';
+                    retryable: boolean;
+                    suggestedActions: ('retry' | 'start_fresh_under_selected_account' | 'resume_current_account' | 'open_connected_accounts' | 'reconnect_profile' | 'enable_state_sharing' | 'view_latest_fork' | 'view_native_fork' | 'dismiss')[];
+                    serviceId?: string | undefined;
+                    agentId?: string | undefined;
+                    profileId?: string | undefined;
+                    groupId?: string | undefined;
+                    diagnostics?: Record<string, string | number | boolean | null> | undefined;
+                } | undefined;
             } | undefined;
         };
         latestToolResult?: unknown;
@@ -4290,6 +4438,10 @@ export type ExecutionRunControlActionResultById = {
             actions?: Readonly<{
                 t: string;
                 args: unknown;
+                confirmation?: {
+                    actionRequestId: string;
+                    inputDigest: string;
+                } | undefined;
             }>[] | undefined;
         } | {
             [x: string]: unknown;
@@ -4324,6 +4476,10 @@ export type ExecutionRunControlActionResultById = {
                 action: Readonly<{
                     t: string;
                     args: unknown;
+                    confirmation?: {
+                        actionRequestId: string;
+                        inputDigest: string;
+                    } | undefined;
                 }>;
             } | {
                 v: 1;
@@ -4515,6 +4671,16 @@ export type ExecutionRunControlActionResultById = {
                         compaction?: {
                             events: true;
                             manual?: true | undefined;
+                            idle?: {
+                                mode: 'native';
+                                defaultEnabled: boolean;
+                                defaultMinContextTokens?: number | undefined;
+                                nativeHonorsMinimum?: true | undefined;
+                            } | {
+                                mode: 'host';
+                                defaultEnabled: boolean;
+                                defaultMinContextTokens?: number | undefined;
+                            } | undefined;
                         } | undefined;
                         conversationRollback?: true | undefined;
                         goals?: {
@@ -4702,6 +4868,18 @@ export type ExecutionRunControlActionResultById = {
                             effectiveStateMode: 'shared' | 'isolated' | null;
                         } | undefined;
                     }> | undefined;
+                    uxDiagnostic?: {
+                        code: 'provider_session_state_unavailable_for_resume' | 'connected_service_materialization_identity_missing' | 'resume_reachability_inputs_missing' | 'metadata_update_failed' | 'no_eligible_group_member' | 'recovery_retry_scheduled' | 'recovery_dead_lettered' | 'provider_account_adoption_mismatch' | 'post_switch_verification_failed' | 'connected_service_credential_reconnect_required' | 'connected_service_credential_refresh_unavailable' | 'claude_subscription_missing_claude_code_scope' | 'claude_subscription_native_auth_materialization_failed' | 'claude_subscription_setup_token_not_supported_for_unified';
+                        failurePhase: 'session_lookup' | 'agent_validation' | 'normalization' | 'continuity' | 'materialization' | 'metadata' | 'restart' | 'hot_apply' | 'rollback' | 'post_switch_recovery' | 'post_switch_verification' | 'runtime_auth_recovery';
+                        source: 'runtime_auth_recovery' | 'spawn_resume' | 'new_session' | 'inactive_resume' | 'manual_auth_switch' | 'usage_limit_recovery' | 'transcript_switch_attempt' | 'session_view';
+                        retryable: boolean;
+                        suggestedActions: ('retry' | 'start_fresh_under_selected_account' | 'resume_current_account' | 'open_connected_accounts' | 'reconnect_profile' | 'enable_state_sharing' | 'view_latest_fork' | 'view_native_fork' | 'dismiss')[];
+                        serviceId?: string | undefined;
+                        agentId?: string | undefined;
+                        profileId?: string | undefined;
+                        groupId?: string | undefined;
+                        diagnostics?: Record<string, string | number | boolean | null> | undefined;
+                    } | undefined;
                 } | undefined;
             };
             latestToolResult?: unknown;
@@ -4971,6 +5149,16 @@ export type ExecutionRunControlActionResultById = {
                         compaction?: {
                             events: true;
                             manual?: true | undefined;
+                            idle?: {
+                                mode: 'native';
+                                defaultEnabled: boolean;
+                                defaultMinContextTokens?: number | undefined;
+                                nativeHonorsMinimum?: true | undefined;
+                            } | {
+                                mode: 'host';
+                                defaultEnabled: boolean;
+                                defaultMinContextTokens?: number | undefined;
+                            } | undefined;
                         } | undefined;
                         conversationRollback?: true | undefined;
                         goals?: {
@@ -5158,6 +5346,18 @@ export type ExecutionRunControlActionResultById = {
                             effectiveStateMode: 'shared' | 'isolated' | null;
                         } | undefined;
                     }> | undefined;
+                    uxDiagnostic?: {
+                        code: 'provider_session_state_unavailable_for_resume' | 'connected_service_materialization_identity_missing' | 'resume_reachability_inputs_missing' | 'metadata_update_failed' | 'no_eligible_group_member' | 'recovery_retry_scheduled' | 'recovery_dead_lettered' | 'provider_account_adoption_mismatch' | 'post_switch_verification_failed' | 'connected_service_credential_reconnect_required' | 'connected_service_credential_refresh_unavailable' | 'claude_subscription_missing_claude_code_scope' | 'claude_subscription_native_auth_materialization_failed' | 'claude_subscription_setup_token_not_supported_for_unified';
+                        failurePhase: 'session_lookup' | 'agent_validation' | 'normalization' | 'continuity' | 'materialization' | 'metadata' | 'restart' | 'hot_apply' | 'rollback' | 'post_switch_recovery' | 'post_switch_verification' | 'runtime_auth_recovery';
+                        source: 'runtime_auth_recovery' | 'spawn_resume' | 'new_session' | 'inactive_resume' | 'manual_auth_switch' | 'usage_limit_recovery' | 'transcript_switch_attempt' | 'session_view';
+                        retryable: boolean;
+                        suggestedActions: ('retry' | 'start_fresh_under_selected_account' | 'resume_current_account' | 'open_connected_accounts' | 'reconnect_profile' | 'enable_state_sharing' | 'view_latest_fork' | 'view_native_fork' | 'dismiss')[];
+                        serviceId?: string | undefined;
+                        agentId?: string | undefined;
+                        profileId?: string | undefined;
+                        groupId?: string | undefined;
+                        diagnostics?: Record<string, string | number | boolean | null> | undefined;
+                    } | undefined;
                 } | undefined;
             };
             latestToolResult?: unknown;
@@ -5427,6 +5627,16 @@ export type ExecutionRunControlActionResultById = {
                         compaction?: {
                             events: true;
                             manual?: true | undefined;
+                            idle?: {
+                                mode: 'native';
+                                defaultEnabled: boolean;
+                                defaultMinContextTokens?: number | undefined;
+                                nativeHonorsMinimum?: true | undefined;
+                            } | {
+                                mode: 'host';
+                                defaultEnabled: boolean;
+                                defaultMinContextTokens?: number | undefined;
+                            } | undefined;
                         } | undefined;
                         conversationRollback?: true | undefined;
                         goals?: {
@@ -5614,6 +5824,18 @@ export type ExecutionRunControlActionResultById = {
                             effectiveStateMode: 'shared' | 'isolated' | null;
                         } | undefined;
                     }> | undefined;
+                    uxDiagnostic?: {
+                        code: 'provider_session_state_unavailable_for_resume' | 'connected_service_materialization_identity_missing' | 'resume_reachability_inputs_missing' | 'metadata_update_failed' | 'no_eligible_group_member' | 'recovery_retry_scheduled' | 'recovery_dead_lettered' | 'provider_account_adoption_mismatch' | 'post_switch_verification_failed' | 'connected_service_credential_reconnect_required' | 'connected_service_credential_refresh_unavailable' | 'claude_subscription_missing_claude_code_scope' | 'claude_subscription_native_auth_materialization_failed' | 'claude_subscription_setup_token_not_supported_for_unified';
+                        failurePhase: 'session_lookup' | 'agent_validation' | 'normalization' | 'continuity' | 'materialization' | 'metadata' | 'restart' | 'hot_apply' | 'rollback' | 'post_switch_recovery' | 'post_switch_verification' | 'runtime_auth_recovery';
+                        source: 'runtime_auth_recovery' | 'spawn_resume' | 'new_session' | 'inactive_resume' | 'manual_auth_switch' | 'usage_limit_recovery' | 'transcript_switch_attempt' | 'session_view';
+                        retryable: boolean;
+                        suggestedActions: ('retry' | 'start_fresh_under_selected_account' | 'resume_current_account' | 'open_connected_accounts' | 'reconnect_profile' | 'enable_state_sharing' | 'view_latest_fork' | 'view_native_fork' | 'dismiss')[];
+                        serviceId?: string | undefined;
+                        agentId?: string | undefined;
+                        profileId?: string | undefined;
+                        groupId?: string | undefined;
+                        diagnostics?: Record<string, string | number | boolean | null> | undefined;
+                    } | undefined;
                 } | undefined;
             };
             latestToolResult?: unknown;
@@ -5887,6 +6109,16 @@ export type ExecutionRunControlActionResultById = {
                         compaction?: {
                             events: true;
                             manual?: true | undefined;
+                            idle?: {
+                                mode: 'native';
+                                defaultEnabled: boolean;
+                                defaultMinContextTokens?: number | undefined;
+                                nativeHonorsMinimum?: true | undefined;
+                            } | {
+                                mode: 'host';
+                                defaultEnabled: boolean;
+                                defaultMinContextTokens?: number | undefined;
+                            } | undefined;
                         } | undefined;
                         conversationRollback?: true | undefined;
                         goals?: {
@@ -6074,6 +6306,18 @@ export type ExecutionRunControlActionResultById = {
                             effectiveStateMode: 'shared' | 'isolated' | null;
                         } | undefined;
                     }> | undefined;
+                    uxDiagnostic?: {
+                        code: 'provider_session_state_unavailable_for_resume' | 'connected_service_materialization_identity_missing' | 'resume_reachability_inputs_missing' | 'metadata_update_failed' | 'no_eligible_group_member' | 'recovery_retry_scheduled' | 'recovery_dead_lettered' | 'provider_account_adoption_mismatch' | 'post_switch_verification_failed' | 'connected_service_credential_reconnect_required' | 'connected_service_credential_refresh_unavailable' | 'claude_subscription_missing_claude_code_scope' | 'claude_subscription_native_auth_materialization_failed' | 'claude_subscription_setup_token_not_supported_for_unified';
+                        failurePhase: 'session_lookup' | 'agent_validation' | 'normalization' | 'continuity' | 'materialization' | 'metadata' | 'restart' | 'hot_apply' | 'rollback' | 'post_switch_recovery' | 'post_switch_verification' | 'runtime_auth_recovery';
+                        source: 'runtime_auth_recovery' | 'spawn_resume' | 'new_session' | 'inactive_resume' | 'manual_auth_switch' | 'usage_limit_recovery' | 'transcript_switch_attempt' | 'session_view';
+                        retryable: boolean;
+                        suggestedActions: ('retry' | 'start_fresh_under_selected_account' | 'resume_current_account' | 'open_connected_accounts' | 'reconnect_profile' | 'enable_state_sharing' | 'view_latest_fork' | 'view_native_fork' | 'dismiss')[];
+                        serviceId?: string | undefined;
+                        agentId?: string | undefined;
+                        profileId?: string | undefined;
+                        groupId?: string | undefined;
+                        diagnostics?: Record<string, string | number | boolean | null> | undefined;
+                    } | undefined;
                 } | undefined;
             };
             latestToolResult?: unknown;
@@ -6208,6 +6452,6 @@ export type ExecutionRunControlActionResultById = {
         code: 'cancelled';
     } | {
         ok: false;
-        code: 'execution_run_not_found' | 'execution_run_not_allowed' | 'execution_run_action_not_supported' | 'execution_run_invalid_action_input' | 'execution_run_stream_not_found' | 'execution_run_busy' | 'execution_run_send_outcome_unknown' | 'execution_run_failed' | 'execution_run_budget_exceeded' | 'execution_run_output_limit_exceeded' | 'execution_run_protocol_unsupported' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_parent_selection_unavailable' | 'execution_run_start_ambiguous' | 'execution_run_scope_mismatch' | 'execution_run_connected_service_generation_refresh_required' | 'run_depth_exceeded' | 'permission_denied';
+        code: 'execution_run_not_found' | 'execution_run_not_allowed' | 'execution_run_input_required' | 'execution_run_action_not_supported' | 'execution_run_invalid_action_input' | 'execution_run_stream_not_found' | 'execution_run_busy' | 'execution_run_send_outcome_unknown' | 'execution_run_failed' | 'execution_run_budget_exceeded' | 'execution_run_output_limit_exceeded' | 'execution_run_protocol_unsupported' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_parent_selection_unavailable' | 'execution_run_start_ambiguous' | 'execution_run_scope_mismatch' | 'execution_run_connected_service_generation_refresh_required' | 'run_depth_exceeded' | 'permission_denied';
     };
 };

@@ -54,6 +54,10 @@ async function defaultPostJson(params: Readonly<{
     return { ok: true };
 }
 
+/**
+ * Negotiate v2 ingest with scalar fallback for Session observations. Native-subject
+ * capture requires v2; unsupported or failed publication stays unacknowledged for replay.
+ */
 export function createUsageObservationPublisher(params: Readonly<{
     token: string;
     apiServerUrl: string;
@@ -110,14 +114,24 @@ export function createUsageObservationPublisher(params: Readonly<{
         return { mode: 'legacy', path: null };
     }
 
+    /**
+     * Preserve explicit report keys, use event identity for keyless deltas, and
+     * retain cumulative stream keys. The scalar builder omits tokenless partial
+     * observations because legacy upserts replace the full token/cost snapshot.
+     */
     function emitLegacyReport(params2: Readonly<{
         sessionId?: string;
         observation: UsageObservation;
+        externalKey?: string | null;
     }>): UsageObservationPublishResult {
         if (!params2.sessionId) return { status: 'unsupported' };
         const report = buildLegacyUsageReportFromUsageObservation({
             sessionId: params2.sessionId,
-            observation: params2.observation,
+            // Scalar reports upsert by key too; a delta keeps its existing event identity on fallback.
+            observation: {
+                ...params2.observation,
+                key: params2.observation.key ?? (params2.observation.scope === 'turn_delta' ? params2.externalKey ?? null : null),
+            },
         });
         if (!report) return { status: 'skipped' };
         try {
@@ -187,10 +201,7 @@ export function createUsageObservationPublisher(params: Readonly<{
                         if (input.subject) return { status: 'unsupported' };
                         mode = 'legacy';
                         ingestPath = null;
-                        return emitLegacyReport({
-                            sessionId: input.sessionId,
-                            observation: input.observation,
-                        });
+                        return emitLegacyReport(input);
                     }
 
                     if (isAuthenticationStatus(status)) {
@@ -200,7 +211,7 @@ export function createUsageObservationPublisher(params: Readonly<{
                         } catch (refreshError) {
                             if (input.subject) return publishFailure(refreshError);
                             publishFailure(refreshError);
-                            return emitLegacyReport({ sessionId: input.sessionId, observation: input.observation });
+                            return emitLegacyReport(input);
                         }
                         if (refreshedToken && refreshedToken.length > 0) {
                             currentToken = refreshedToken;
@@ -219,36 +230,24 @@ export function createUsageObservationPublisher(params: Readonly<{
                                     if (input.subject) return { status: 'unsupported' };
                                     mode = 'legacy';
                                     ingestPath = null;
-                                    return emitLegacyReport({
-                                        sessionId: input.sessionId,
-                                        observation: input.observation,
-                                    });
+                                    return emitLegacyReport(input);
                                 }
                                 if (input.subject) return publishFailure(retryError);
                                 publishFailure(retryError);
-                                return emitLegacyReport({
-                                    sessionId: input.sessionId,
-                                    observation: input.observation,
-                                });
+                                return emitLegacyReport(input);
                             }
                         }
 
                         if (input.subject) return publishFailure(error);
                         publishFailure(error);
-                        return emitLegacyReport({
-                            sessionId: input.sessionId,
-                            observation: input.observation,
-                        });
+                        return emitLegacyReport(input);
                     }
 
                     return publishFailure(error);
                 }
             }
 
-            return emitLegacyReport({
-                sessionId: input.sessionId,
-                observation: input.observation,
-            });
+            return emitLegacyReport(input);
         },
     };
 }

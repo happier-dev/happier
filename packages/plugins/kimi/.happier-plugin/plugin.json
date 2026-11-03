@@ -1,5 +1,6 @@
 {
   "contributes": {
+    "accessProviders": [],
     "accountCollections": [],
     "actions": [],
     "agents": [
@@ -156,36 +157,16 @@
         "id": "kimi",
         "primary": "sessions",
         "runtime": {
-          "definition": {
-            "mcp": {
-              "policy": "pass_through"
-            },
-            "modelConfigOptionId": "model",
-            "stderrRules": {
-              "authenticationErrorDetail": "Authentication error. Run `kimi login` to re-authenticate, then retry."
-            }
-          },
-          "kind": "acp",
-          "transport": {
-            "args": [
-              "acp"
-            ],
-            "executable": {
-              "id": "kimi-cli",
-              "kind": "systemTool"
-            },
-            "kind": "stdio",
-            "timeouts": {
-              "idleMs": 500,
-              "initializeMs": 90000,
-              "toolCallMs": 120000
-            }
-          }
+          "kind": "custom"
         },
         "surfaces": {
           "externalSession": {
+            "externalLinkedTakeover": {
+              "writerSafety": "unsupported"
+            },
             "sources": [
               {
+                "contentSearch": true,
                 "instances": [
                   {
                     "constants": {},
@@ -196,21 +177,25 @@
                   "segments": [
                     {
                       "kind": "literal",
-                      "value": "kimiAcpSessionList"
+                      "value": "kimiCodeHome"
                     }
                   ]
                 },
-                "resumeOnly": true,
                 "schema": {
                   "fields": [
                     {
                       "kind": "literal",
                       "name": "kind",
-                      "value": "kimiAcpSessionList"
+                      "value": "kimiCodeHome"
+                    },
+                    {
+                      "kind": "string",
+                      "name": "homeDir",
+                      "nullish": true
                     }
                   ]
                 },
-                "sourceKind": "kimiAcpSessionList"
+                "sourceKind": "kimiCodeHome"
               }
             ]
           }
@@ -233,13 +218,18 @@
     "composerRegions": [],
     "connectedAccountDescriptors": [],
     "daemonDatabases": [],
+    "deploymentTargets": [],
     "dragSources": [],
     "dropTargets": [],
     "events": [],
     "executionRunProfiles": [],
+    "healthCheckKinds": [],
     "hooks": [],
     "inputTypes": [],
+    "languageServers": [],
     "machineProvisioners": [],
+    "machineRecipes": [],
+    "machineSetupPresets": [],
     "managedDependencies": [],
     "mcp": {
       "discoverySources": [],
@@ -259,6 +249,7 @@
     "scmBackends": [],
     "scmHostingProviders": [],
     "searchProviders": [],
+    "secretSources": [],
     "sessionHeaderActions": [],
     "sessionInfoSections": [],
     "settings": [],
@@ -449,6 +440,21 @@
     "optional": [],
     "required": [
       {
+        "capability": "filesystem",
+        "id": "kimi-native-history",
+        "reason": "Read native Kimi Code conversation history.",
+        "scope": {
+          "access": [
+            "read"
+          ],
+          "locations": [
+            {
+              "root": "workspace"
+            }
+          ]
+        }
+      },
+      {
         "capability": "process",
         "id": "kimi-process",
         "reason": "Run the declared Kimi CLI executable.",
@@ -465,6 +471,19 @@
   },
   "id": "happier.agent.kimi",
   "runtime": {
+    "agentFactories": [
+      {
+        "loadMode": "immutable-js",
+        "localAgentId": "kimi",
+        "locator": {
+          "export": "createKimiAgentRuntime",
+          "externalSessionsExport": "kimiExternalSessionsContribution",
+          "module": "./agent/runtime/factory",
+          "runtimeApiVersion": 1
+        },
+        "normalizedModulePath": ".happier-plugin/agent/runtime/factory.js"
+      }
+    ],
     "apiVersion": 1
   },
   "schemaVersion": 2,

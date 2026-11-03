@@ -325,10 +325,29 @@ const LifecycleSchemas = [
     })).check(z.maxLength(4_096)),
   }))),
   lazyZodSchema(() => z.strictObject({
+    ...EventBaseSchema.shape,
+    kind: z.literal('provider-continuation-registered'),
+    continuationId: ProviderIdSchema,
+    parentTurnId: HostIdSchema,
+    parentToolCallId: ProviderIdSchema,
+  })),
+  lazyZodSchema(() => z.strictObject({
+    ...EventBaseSchema.shape,
+    kind: z.literal('provider-continuation-released'),
+    continuationId: ProviderIdSchema,
+  })),
+  lazyZodSchema(() => z.strictObject({
+    ...EventBaseSchema.shape,
+    kind: z.literal('provider-tool-contexts-released'),
+    parentTurnId: HostIdSchema,
+    toolCallIds: z.array(ProviderIdSchema),
+  })),
+  lazyZodSchema(() => z.strictObject({
     ...TurnEventBaseShape,
     kind: z.literal('turn-start'),
     startedBy: z.enum(['host', 'provider']),
     causedByTurnId: z.optional(HostIdSchema),
+    continuationId: z.optional(ProviderIdSchema),
   })),
   lazyZodSchema(() => z.strictObject({ ...TurnEventBaseShape, kind: z.literal('turn-progress') })),
   lazyZodSchema(() => z.strictObject({ ...TurnEventBaseShape, kind: z.literal('turn-agent-id-observed'), agentTurnId: ProviderIdSchema })),
@@ -519,6 +538,10 @@ function jsonByteLength(value: unknown): number {
 }
 
 export const AgentSessionRuntimeEventV1Schema = lazyZodSchema(() => AgentSessionRuntimeEventCoreV1Schema.check(z.superRefine((value, context) => {
+  if (value.kind === 'turn-start' && value.continuationId !== undefined
+    && (value.startedBy !== 'provider' || value.causedByTurnId === undefined)) {
+    context.addIssue({ code: 'custom', message: 'Provider continuations require their originating turn' });
+  }
   if (jsonByteLength(value) > EVENT_JSON_BYTES_CANDIDATE_MAX) {
     context.addIssue({ code: 'custom', message: 'Agent runtime event exceeds the CORE-A candidate byte bound' });
   }

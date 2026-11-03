@@ -1,5 +1,6 @@
 {
   "contributes": {
+    "accessProviders": [],
     "accountCollections": [],
     "actions": [],
     "agents": [
@@ -23,9 +24,9 @@
             ]
           },
           "skills": {
-            "delivery": "none",
+            "delivery": "session_dir",
             "liveReload": "unsupported",
-            "nativeDisable": "unsupported",
+            "nativeDisable": "supported",
             "nativeRoots": {
               "project": [
                 [
@@ -118,6 +119,20 @@
               "read-only": "plan",
               "safe-yolo": "auto-edit",
               "yolo": "yolo"
+            },
+            "skills": {
+              "sessionDelivery": {
+                "directoriesKeyPath": [
+                  "skills",
+                  "directories"
+                ],
+                "disabledKeyPath": [
+                  "skills",
+                  "disabled"
+                ],
+                "envKey": "QWEN_CODE_SYSTEM_DEFAULTS_PATH",
+                "kind": "defaults_file_env"
+              }
             }
           },
           "kind": "acp",
@@ -136,6 +151,7 @@
           "externalSession": {
             "sources": [
               {
+                "contentSearch": true,
                 "instances": [
                   {
                     "constants": {},
@@ -146,21 +162,31 @@
                   "segments": [
                     {
                       "kind": "literal",
-                      "value": "qwenAcpSessionList"
+                      "value": "qwenRuntimeDir"
+                    },
+                    {
+                      "field": "runtimeDir",
+                      "kind": "field"
                     }
                   ]
                 },
-                "resumeOnly": true,
                 "schema": {
                   "fields": [
                     {
                       "kind": "literal",
                       "name": "kind",
-                      "value": "qwenAcpSessionList"
+                      "value": "qwenRuntimeDir"
+                    },
+                    {
+                      "kind": "string",
+                      "max": 10000,
+                      "min": 1,
+                      "name": "runtimeDir",
+                      "nullish": true
                     }
                   ]
                 },
-                "sourceKind": "qwenAcpSessionList"
+                "sourceKind": "qwenRuntimeDir"
               }
             ]
           }
@@ -180,13 +206,18 @@
     "composerRegions": [],
     "connectedAccountDescriptors": [],
     "daemonDatabases": [],
+    "deploymentTargets": [],
     "dragSources": [],
     "dropTargets": [],
     "events": [],
     "executionRunProfiles": [],
+    "healthCheckKinds": [],
     "hooks": [],
     "inputTypes": [],
+    "languageServers": [],
     "machineProvisioners": [],
+    "machineRecipes": [],
+    "machineSetupPresets": [],
     "managedDependencies": [],
     "mcp": {
       "discoverySources": [],
@@ -206,6 +237,7 @@
     "scmBackends": [],
     "scmHostingProviders": [],
     "searchProviders": [],
+    "secretSources": [],
     "sessionHeaderActions": [],
     "sessionInfoSections": [],
     "settings": [],
@@ -236,15 +268,27 @@
     "workflows": []
   },
   "displayName": "Qwen Code",
-  "engines": {
-    "happier": "^0.0.0"
-  },
   "entrypoints": {
     "daemon": "./.happier-plugin/daemon.js"
   },
   "hostAccess": {
     "optional": [],
     "required": [
+      {
+        "capability": "filesystem",
+        "id": "qwen-native-history",
+        "reason": "Read native Qwen conversation history.",
+        "scope": {
+          "access": [
+            "read"
+          ],
+          "locations": [
+            {
+              "root": "workspace"
+            }
+          ]
+        }
+      },
       {
         "capability": "process",
         "id": "qwen-process",

@@ -1,5 +1,6 @@
 export type { DevcontainerEffectReviewV1 } from '../machineProvisioners.js';
 export type { DevcontainerNativeObservationV1 } from '../machineProvisioners.js';
+export { MACHINE_PROVISIONER_DIMENSIONS_V1 } from '../machineProvisioners.js';
 export type { MachineProvisionerAcquireResultV1 } from '../machineProvisioners.js';
 export { MachineProvisionerAcquireResultV1Schema } from '../machineProvisioners.js';
 export type { MachineProvisionerAuthorDefinitionV1 } from '../machineProvisioners.js';
@@ -8,15 +9,21 @@ export { MachineProvisionerBootstrapCarrierV1Schema } from '../machineProvisione
 export { MachineProvisionerCheckInputV1Schema } from '../machineProvisioners.js';
 export type { MachineProvisionerCheckResultV1 } from '../machineProvisioners.js';
 export { MachineProvisionerCheckResultV1Schema } from '../machineProvisioners.js';
+export type { MachineProvisionerConditionalPriceV1 } from '../machineProvisioners.js';
 export type { MachineProvisionerContributionV1 } from '../machineProvisioners.js';
 export type { MachineProvisionerDestroyResultV1 } from '../machineProvisioners.js';
 export { MachineProvisionerDestroyResultV1Schema } from '../machineProvisioners.js';
+export type { MachineProvisionerDimensionOptionV1 } from '../machineProvisioners.js';
+export type { MachineProvisionerDimensionV1 } from '../machineProvisioners.js';
+export type { MachineProvisionerNativeCauseV1 } from '../machineProvisioners.js';
 export type { MachineProvisionerNativeExecResultV1 } from '../machineProvisioners.js';
 export { MachineProvisionerNativeExecResultV1Schema } from '../machineProvisioners.js';
 export type { MachineProvisionerNativeIntentV1 } from '../machineProvisioners.js';
 export type { MachineProvisionerNativeOptionFactsV1 } from '../machineProvisioners.js';
 export type { MachineProvisionerObservationV1 } from '../machineProvisioners.js';
 export { MachineProvisionerObservationV1Schema } from '../machineProvisioners.js';
+export type { MachineProvisionerOptionConstraintV1 } from '../machineProvisioners.js';
+export type { MachineProvisionerOptionSelectorV1 } from '../machineProvisioners.js';
 export type { MachineProvisionerOptionsResultV1 } from '../machineProvisioners.js';
 export { MachineProvisionerOptionsResultV1Schema } from '../machineProvisioners.js';
 export type { MachineProvisionerPowerResultV1 } from '../machineProvisioners.js';
@@ -28,10 +35,10 @@ export type { MachineProvisionerRebuildResultV1 } from '../machineProvisioners.j
 export { MachineProvisionerRebuildResultV1Schema } from '../machineProvisioners.js';
 export type { MachineProvisionerRefusalCodeV1 } from '../machineProvisioners.js';
 export type { MachineProvisionerResourceV1 } from '../machineProvisioners.js';
+export type { MachineProvisionerSelectionProjectionV1 } from '../machineProvisioners.js';
+export type { MachineProvisionerSelectionV1 } from '../machineProvisioners.js';
 export type { MachineProvisionerStoredReaderV1 } from '../machineProvisioners.js';
 export { defineMachineProvisionerReconciliationSchemas } from '../machineProvisioners.js';
 export { defineMachineProvisionerSchemas } from '../machineProvisioners.js';
 export { prepareMachineProvisionerStoredSchemas } from '../machineProvisioners.js';
-
-export type { MachineProvisionerNativeCauseV1, MachineProvisionerDimensionV1, MachineProvisionerDimensionOptionV1, MachineProvisionerSelectionV1, MachineProvisionerOptionSelectorV1, MachineProvisionerConditionalPriceV1, MachineProvisionerOptionConstraintV1, MachineProvisionerSelectionProjectionV1 } from '../machineProvisioners.js';
-export { MACHINE_PROVISIONER_DIMENSIONS_V1, projectMachineProvisionerSelectionV1 } from '../machineProvisioners.js';
+export { projectMachineProvisionerSelectionV1 } from '../machineProvisioners.js';

@@ -28,6 +28,9 @@ export type PluginJsonValueV2 =
  */
 export type PluginJsonSchema = {
     $schema?: 'http://json-schema.org/draft-07/schema#';
+    $ref?: string;
+    definitions?: Record<string, PluginJsonSchema>;
+    $defs?: Record<string, PluginJsonSchema>;
     type?: 'null' | 'boolean' | 'number' | 'integer' | 'string' | 'array' | 'object';
     format?: 'date-time' | 'time' | 'date' | 'duration' | 'uri' | 'uri-reference' | 'uri-template' | 'url' | 'email' | 'hostname' | 'ipv4' | 'ipv6' | 'regex' | 'uuid' | 'json-pointer' | 'relative-json-pointer';
     title?: string;
@@ -36,6 +39,7 @@ export type PluginJsonSchema = {
     enum?: PluginJsonValueV2[];
     const?: PluginJsonValueV2;
     properties?: Record<string, PluginJsonSchema>;
+    propertyNames?: PluginJsonSchema;
     required?: string[];
     additionalProperties?: boolean | PluginJsonSchema;
     items?: PluginJsonSchema;
@@ -45,6 +49,8 @@ export type PluginJsonSchema = {
     minimum?: number;
     maximum?: number;
     multipleOf?: number;
+    exclusiveMinimum?: number;
+    exclusiveMaximum?: number;
     minLength?: number;
     maxLength?: number;
     'x-happier-max-utf8-bytes'?: number;
@@ -53,6 +59,7 @@ export type PluginJsonSchema = {
     anyOf?: PluginJsonSchema[];
     oneOf?: PluginJsonSchema[];
     allOf?: PluginJsonSchema[];
+    not?: PluginJsonSchema;
 };
 
 /**

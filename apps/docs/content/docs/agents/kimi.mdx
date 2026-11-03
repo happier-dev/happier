@@ -1,6 +1,6 @@
 ---
 title: Kimi Code (experimental)
-description: Install Kimi Code and use its ACP sessions, models, modes, MCP tools, resume, execution runs, and interactive terminal in Happier.
+description: Install Kimi Code and use its ACP sessions, models, background tasks, MCP tools, resume, execution runs, and interactive terminal in Happier.
 ---
 
 Happier runs the locally installed Kimi Code CLI through `kimi acp` for managed
@@ -9,7 +9,8 @@ behavior on the version installed on your Agent machine.
 
 ## Requirements
 
-Install the current Kimi Code CLI, ensure `kimi` is on `PATH` (or set
+The development integration is validated with Kimi Code 2.4.1 and its journal
+protocol 1.5. Install Kimi Code, ensure `kimi` is on `PATH` (or set
 `HAPPIER_KIMI_PATH`), then sign in:
 
 ```bash
@@ -38,12 +39,13 @@ show **Unknown** even though the login flow is available.
 
 ## Sessions and controls
 
-Start a session with `happier kimi`. Happier projects the models and agent
-modes advertised by Kimi's ACP server instead of keeping a separate model
-list. New sessions, resume, cancellation, and follow-up prompts use the
-shared ACP lifecycle. Happier does not translate modes into top-level Kimi
-flags. When a session ends, Happier releases Kimi's own session through the
-shared lifecycle if that connection advertised session close.
+Start a session with `happier kimi`. Happier projects the models advertised by
+Kimi's ACP server instead of keeping a separate model list. New sessions,
+resume, cancellation, and follow-up prompts use the shared ACP lifecycle.
+Happier keeps Kimi in manual approval mode and applies the Happier permission
+policy; native automatic-approval controls are not exposed. When a session ends,
+Happier releases Kimi's own session through the shared lifecycle if that
+connection advertised session close.
 
 If Kimi's ACP server advertises session listing, its sessions appear in the
 “resume in Happier” picker, and when the same connection also advertises
@@ -62,6 +64,19 @@ Update an existing current installation with:
 kimi upgrade
 ```
 
+## Background continuations
+
+In the development integration, a continuation started by a background task
+makes the session active again. Happier displays its output and approvals,
+then returns to idle after publishing the result. The continuation retains the
+permission policy of the turn that started its task, even if a later turn uses
+a different policy.
+
+Cancelling a turn stops all pending background tasks and active continuations in
+the session, including tasks started by earlier turns. The same session remains
+available for another prompt. Closing the session stops waiting tasks as well.
+A detached shell waiting for work does not itself keep the session marked active.
+
 ## Interactive terminal
 
 The terminal action launches ordinary `kimi` through Happier's existing
@@ -73,8 +88,10 @@ match.
 
 - Run `kimi --version` on the Agent machine if Kimi is not detected.
 - Run `kimi login` again if Kimi reports an authentication error.
-- If a model or mode is missing, check what the installed `kimi acp`
-  advertises.
+- If a model is missing, check what the installed `kimi acp` advertises.
+- If Happier reports an unsupported Kimi journal protocol, use the validated
+  Kimi version or a Happier update that supports the newer protocol. Happier
+  stops the session when it cannot interpret background events safely.
 
 ### Coming from the retired Python `kimi-cli`
 

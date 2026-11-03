@@ -130,7 +130,15 @@ function resolveGroup(rows: readonly ScopedUsageEventRow[], ranks: Map<string, n
     const reasons = new Set<UsageAccountingCoverageReason>();
     const inferences = new Map<string, ScopedUsageEventRow>();
     const uncorrelated: ScopedUsageEventRow[] = [];
+    const contextOnly: ScopedUsageEventRow[] = [];
     for (const row of chronological) {
+        if ((row.isCumulative || row.scope !== "turn_delta")
+            && (row.contextUsedTokens != null || row.contextWindowTokens != null)
+            && !usageHasAnyValue(row.tokens, row.cost)) {
+            // Context occupancy is a presentation fact, not a cumulative inference counter.
+            contextOnly.push(row);
+            continue;
+        }
         const identity = row.accountingEvidence?.accounting?.inferenceId;
         if (row.scope !== "turn_delta" || row.isCumulative || !identity) {
             uncorrelated.push(row);
@@ -158,6 +166,8 @@ function resolveGroup(rows: readonly ScopedUsageEventRow[], ranks: Map<string, n
         && (!latestFinal || compareRows(row, latestFinal) <= 0));
     const contributions: ScopedUsageContribution[] = [];
     let previous: ScopedUsageEventRow | undefined;
+    let previousTokenSnapshot: ScopedUsageEventRow | undefined;
+    let pendingTokenDeltas = createEmptyUsageTokens();
     let deltaIndex = 0;
     let reportedCoverageStartIndex = 0;
     for (const snapshot of snapshots) {
@@ -170,19 +180,25 @@ function resolveGroup(rows: readonly ScopedUsageEventRow[], ranks: Map<string, n
             intervalTokens = addUsageTokens(intervalTokens, delta.tokens);
             intervalCost = addUsageCost(intervalCost, delta.cost);
         }
+        // A paid context observation advances money without asserting an inference-token total.
+        const hasTokenSnapshot = (snapshot.contextUsedTokens == null && snapshot.contextWindowTokens == null)
+            || usageHasAnyValue(snapshot.tokens, createEmptyUsageCost(snapshot.cost.currency));
+        pendingTokenDeltas = addUsageTokens(pendingTokenDeltas, intervalTokens);
         const epoch = snapshot.accountingEvidence?.accounting?.counterEpoch;
         const previousEpoch = previous?.accountingEvidence?.accounting?.counterEpoch;
         const witnessedReset = previous && epoch !== undefined && previousEpoch !== undefined && epoch !== previousEpoch;
-        const reset = previous && (witnessedReset || snapshot.tokens.total < previous.tokens.total);
+        const tokenReset = hasTokenSnapshot && previousTokenSnapshot
+            && snapshot.tokens.total < previousTokenSnapshot.tokens.total;
+        const reset = previous && (witnessedReset || tokenReset);
         if (reset) reportedCoverageStartIndex = intervalStartIndex;
         if (reset && !witnessedReset) reasons.add("counter_discontinuity");
-        const baselineTokens = previous && !reset ? previous.tokens : createEmptyUsageTokens();
+        const baselineTokens = previousTokenSnapshot && !reset ? previousTokenSnapshot.tokens : createEmptyUsageTokens();
         const baselineCost = previous && !reset ? previous.cost : createEmptyUsageCost(snapshot.cost.currency);
-        const missingBaseline = !previous && snapshot.tokens.total > intervalTokens.total
+        const missingBaseline = hasTokenSnapshot && !previousTokenSnapshot && snapshot.tokens.total > pendingTokenDeltas.total
             && snapshot.accountingEvidence?.accounting?.historyComplete !== true;
         const increaseTokens = subtractUsageTokens(snapshot.tokens, baselineTokens);
-        if (increaseTokens.total < intervalTokens.total) reasons.add("ambiguous_overlap");
-        const tokens = subtractUsageTokens(increaseTokens, intervalTokens);
+        if (hasTokenSnapshot && increaseTokens.total < pendingTokenDeltas.total) reasons.add("ambiguous_overlap");
+        const tokens = hasTokenSnapshot ? subtractUsageTokens(increaseTokens, pendingTokenDeltas) : createEmptyUsageTokens();
         const cost = subtractUsageCost(subtractUsageCost(snapshot.cost, baselineCost), intervalCost);
         const hasReportedTotal = snapshot.cost.reportedUsd > 0 || snapshot.cost.costSource === 'provider_reported'
             || snapshot.cost.costSource === 'provider_reported_api_equivalent';
@@ -225,9 +241,14 @@ function resolveGroup(rows: readonly ScopedUsageEventRow[], ranks: Map<string, n
             });
         }
         if (hasReportedTotal) reportedCoverageStartIndex = contributions.length;
+        if (hasTokenSnapshot || witnessedReset) {
+            previousTokenSnapshot = hasTokenSnapshot ? snapshot : undefined;
+            pendingTokenDeltas = createEmptyUsageTokens();
+        }
         previous = snapshot;
     }
     for (; deltaIndex < deltas.length; deltaIndex++) contributions.push(asContribution(deltas[deltaIndex]!));
+    for (const context of contextOnly) contributions.push(asContribution(context));
     const uncorrelatedSources = new Set(deltas.filter((row) => !row.accountingEvidence?.accounting?.inferenceId).map((row) => row.source));
     if (uncorrelatedSources.size > 1) reasons.add("ambiguous_overlap");
     const resolved = contributions.sort(compareRows).map((row) => ({ ...row, coverageReasons: [...new Set([...reasons, ...row.coverageReasons ?? []])] }));

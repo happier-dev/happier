@@ -42,7 +42,6 @@
   "dependencies": {
     "yaml": "^2.4.2",
     "@happier-dev/channels-protocol": "0.0.0",
-    "@happier-dev/forge-ci": "0.0.0",
     "@happier-dev/plugin-sdk": "0.0.0",
     "@happier-dev/plugin-ui": "0.0.0",
     "@happier-dev/triage-protocol": "0.0.0",

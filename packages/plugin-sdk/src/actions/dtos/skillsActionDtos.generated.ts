@@ -337,7 +337,7 @@ export type SkillsActionResultById = {
                 kind: 'registry';
                 registry: {
                     sourceId: string;
-                    format: 'skills-sh' | 'git' | 'claude-marketplace' | 'mcp-registry' | 'acp-registry' | 'happier-catalog' | 'happier-npm';
+                    format: 'skills-sh' | 'git' | 'claude-marketplace' | 'mcp-registry' | 'acp-registry' | 'happier-catalog' | 'happier-npm' | 'coolify-templates' | 'dokploy-templates';
                     sourceUrl: string;
                     itemId: string;
                     ref: {
@@ -355,6 +355,16 @@ export type SkillsActionResultById = {
                     } | {
                         kind: 'version';
                         version: string;
+                    } | {
+                        kind: 'content';
+                        digest: string;
+                    } | {
+                        digest: string;
+                        pluginId: string;
+                        pluginVersion: string;
+                        occurrenceId: string;
+                        path: string;
+                        kind: 'packageContent';
                     };
                     importedAt: number;
                 };
@@ -376,6 +386,16 @@ export type SkillsActionResultById = {
                 } | {
                     kind: 'version';
                     version: string;
+                } | {
+                    kind: 'content';
+                    digest: string;
+                } | {
+                    digest: string;
+                    pluginId: string;
+                    pluginVersion: string;
+                    occurrenceId: string;
+                    path: string;
+                    kind: 'packageContent';
                 };
             } | {
                 kind: 'machine';
@@ -418,6 +438,16 @@ export type SkillsActionResultById = {
                 } | {
                     kind: 'version';
                     version: string;
+                } | {
+                    kind: 'content';
+                    digest: string;
+                } | {
+                    digest: string;
+                    pluginId: string;
+                    pluginVersion: string;
+                    occurrenceId: string;
+                    path: string;
+                    kind: 'packageContent';
                 } | undefined;
             } | undefined;
             lastUsedAt?: number | undefined;
@@ -445,7 +475,7 @@ export type SkillsActionResultById = {
             kind: 'registry';
             registry: {
                 sourceId: string;
-                format: 'skills-sh' | 'git' | 'claude-marketplace' | 'mcp-registry' | 'acp-registry' | 'happier-catalog' | 'happier-npm';
+                format: 'skills-sh' | 'git' | 'claude-marketplace' | 'mcp-registry' | 'acp-registry' | 'happier-catalog' | 'happier-npm' | 'coolify-templates' | 'dokploy-templates';
                 sourceUrl: string;
                 itemId: string;
                 ref: {
@@ -463,6 +493,16 @@ export type SkillsActionResultById = {
                 } | {
                     kind: 'version';
                     version: string;
+                } | {
+                    kind: 'content';
+                    digest: string;
+                } | {
+                    digest: string;
+                    pluginId: string;
+                    pluginVersion: string;
+                    occurrenceId: string;
+                    path: string;
+                    kind: 'packageContent';
                 };
                 importedAt: number;
             };
@@ -484,6 +524,16 @@ export type SkillsActionResultById = {
             } | {
                 kind: 'version';
                 version: string;
+            } | {
+                kind: 'content';
+                digest: string;
+            } | {
+                digest: string;
+                pluginId: string;
+                pluginVersion: string;
+                occurrenceId: string;
+                path: string;
+                kind: 'packageContent';
             };
         } | {
             kind: 'machine';
@@ -552,6 +602,16 @@ export type SkillsActionResultById = {
             } | {
                 kind: 'version';
                 version: string;
+            } | {
+                kind: 'content';
+                digest: string;
+            } | {
+                digest: string;
+                pluginId: string;
+                pluginVersion: string;
+                occurrenceId: string;
+                path: string;
+                kind: 'packageContent';
             } | undefined;
         } | undefined;
         lastUsedAt?: number | undefined;
@@ -622,7 +682,7 @@ export type SkillsActionResultById = {
                 kind: 'registry';
                 registry: {
                     sourceId: string;
-                    format: 'skills-sh' | 'git' | 'claude-marketplace' | 'mcp-registry' | 'acp-registry' | 'happier-catalog' | 'happier-npm';
+                    format: 'skills-sh' | 'git' | 'claude-marketplace' | 'mcp-registry' | 'acp-registry' | 'happier-catalog' | 'happier-npm' | 'coolify-templates' | 'dokploy-templates';
                     sourceUrl: string;
                     itemId: string;
                     ref: {
@@ -640,6 +700,16 @@ export type SkillsActionResultById = {
                     } | {
                         kind: 'version';
                         version: string;
+                    } | {
+                        kind: 'content';
+                        digest: string;
+                    } | {
+                        digest: string;
+                        pluginId: string;
+                        pluginVersion: string;
+                        occurrenceId: string;
+                        path: string;
+                        kind: 'packageContent';
                     };
                     importedAt: number;
                 };
@@ -661,6 +731,16 @@ export type SkillsActionResultById = {
                 } | {
                     kind: 'version';
                     version: string;
+                } | {
+                    kind: 'content';
+                    digest: string;
+                } | {
+                    digest: string;
+                    pluginId: string;
+                    pluginVersion: string;
+                    occurrenceId: string;
+                    path: string;
+                    kind: 'packageContent';
                 };
             } | {
                 kind: 'machine';
@@ -732,7 +812,7 @@ export type SkillsActionResultById = {
             kind: 'registry';
             registry: {
                 sourceId: string;
-                format: 'skills-sh' | 'git' | 'claude-marketplace' | 'mcp-registry' | 'acp-registry' | 'happier-catalog' | 'happier-npm';
+                format: 'skills-sh' | 'git' | 'claude-marketplace' | 'mcp-registry' | 'acp-registry' | 'happier-catalog' | 'happier-npm' | 'coolify-templates' | 'dokploy-templates';
                 sourceUrl: string;
                 itemId: string;
                 ref: {
@@ -750,6 +830,16 @@ export type SkillsActionResultById = {
                 } | {
                     kind: 'version';
                     version: string;
+                } | {
+                    kind: 'content';
+                    digest: string;
+                } | {
+                    digest: string;
+                    pluginId: string;
+                    pluginVersion: string;
+                    occurrenceId: string;
+                    path: string;
+                    kind: 'packageContent';
                 };
                 importedAt: number;
             };
@@ -771,6 +861,16 @@ export type SkillsActionResultById = {
             } | {
                 kind: 'version';
                 version: string;
+            } | {
+                kind: 'content';
+                digest: string;
+            } | {
+                digest: string;
+                pluginId: string;
+                pluginVersion: string;
+                occurrenceId: string;
+                path: string;
+                kind: 'packageContent';
             };
         } | {
             kind: 'machine';

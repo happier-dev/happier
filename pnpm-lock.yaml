@@ -366,9 +366,6 @@ importers:
       '@happier-dev/email-transports-protocol':
         specifier: 0.0.0
         version: link:../../packages/email-transports-protocol
-      '@happier-dev/forge-ci':
-        specifier: 0.0.0
-        version: link:../../packages/forge-ci
       '@happier-dev/iroh-native':
         specifier: 0.0.0
         version: link:../../packages/iroh-native
@@ -3911,9 +3908,6 @@ importers:
       '@happier-dev/channels-protocol':
         specifier: 0.0.0
         version: link:../../channels-protocol
-      '@happier-dev/forge-ci':
-        specifier: 0.0.0
-        version: link:../../forge-ci
       '@happier-dev/plugin-sdk':
         specifier: 0.0.0
         version: link:../../plugin-sdk

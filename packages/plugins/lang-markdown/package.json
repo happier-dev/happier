@@ -8,5 +8,10 @@
   },
   "devDependencies": {
     "typescript": "^5.9.2"
+  },
+  "happier": {
+    "pluginScaffold": {
+      "shipping": "reservation_only"
+    }
   }
 }

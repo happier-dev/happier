@@ -1,329 +1,7 @@
 import ts from 'typescript';
 
-const AVAILABILITY_DISPOSITIONS = new Set(['available', 'deferred', 'retired']);
-const SOURCE_API_AVAILABILITY = new Set(['present', 'absent']);
-const LOADED_PLATFORM_PROOF = new Set(['not-recorded', 'established']);
-const RELEASE_AVAILABILITY = new Set(['not-published', 'published']);
-const MAINTAINED_PUBLIC_CONSUMER_PREFIXES = Object.freeze([
-  'packages/plugins/',
-  'packages/plugin-sdk/examples/',
-  'packages/plugin-sdk/fixtures/external-targeted-packages/',
-  'packages/plugin-ui/fixtures/',
-  'packages/tests/fixtures/plugin-platform/',
-]);
-/**
- * The canonical host owners that can bind, project, or run a public capability.
- * An available row cites one of these as its host binder and one as its
- * runtime lifecycle owner, chosen for its applicable realm; a Protocol
- * catalog entry, a `PluginServices` member spelling, or a published source
- * module declares a capability and binds nothing, so it can only be a row's
- * declaration owner. A row whose applicable realm has no owner here stays
- * deferred with both owner facts null.
- */
-export const CAPABILITY_HOST_BINDING_OWNERS_V1 = Object.freeze({
-  /** Binds manifest families that a plugin registers in the daemon realm. */
-  contributionRuntimeRegistration: 'apps/cli/src/plugins/runtime/resolveExecutablePluginRuntimeRegistry.ts',
-  /** Binds and retires client-realm executable registrations. */
-  clientExecutableRegistration: 'apps/ui/sources/components/plugins/reactNative/clientExecutableContributions.ts',
-  /** Projects the Plugin UI surface families into the client projection. */
-  pluginUiFamilyProjection: 'apps/cli/src/plugins/projection/registry/ui/projection.ts',
-  /** Projects the browser target/action families into the client projection. */
-  browserFamilyProjection: 'apps/cli/src/plugins/projection/registry/browser.ts',
-  /** Projects the Composer surface families into the client projection. */
-  composerFamilyProjection: 'apps/cli/src/plugins/projection/registry/composer.ts',
-  /** Projects declared managed dependencies into the client projection. */
-  managedDependencyFamilyProjection: 'apps/cli/src/plugins/projection/registry/managedDependencies.ts',
-  /** Reads admitted language-server declarations on the workspace Machine. */
-  languageServerDefinitions: 'apps/cli/src/lsp/languageServerDefinitions.ts',
-  /** Owns on-demand server processes and open-document lifetime. */
-  languageServerHost: 'apps/cli/src/lsp/languageServerHost.ts',
-  /** Projects cold machine-provisioner descriptors; executable roles remain ordinary Actions. */
-  machineProvisionerFamilyProjection: 'apps/cli/src/plugins/projection/registry/machineProvisioners.ts',
-  /** Projects declared Account collections into the client projection. */
-  accountCollectionFamilyProjection: 'apps/cli/src/plugins/projection/registry/accountCollections.ts',
-  /** Projects declared Voice model packs into the client projection. */
-  voiceDeclarationFamilyProjection: 'apps/cli/src/plugins/projection/registry/voiceDeclarations.ts',
-  /** Projects declared roles into the existing role source catalog. */
-  roleFamilyProjection: 'apps/cli/src/plugins/projection/registry/roles.ts',
-  /** Projects declared workflows into the existing workflow library. */
-  workflowFamilyProjection: 'apps/cli/src/plugins/projection/registry/workflows.ts',
-  inputTypeFamilyProjection: 'apps/cli/src/plugins/projection/registry/inputTypes.ts',
-  atmospherePictureFamilyProjection: 'apps/cli/src/plugins/projection/registry/atmospherePictures.ts',
-  registrySourceFamilyProjection: 'apps/cli/src/plugins/projection/registry/registrySources.ts',
-  skillFamilyProjection: 'apps/cli/src/plugins/projection/registry/skills.ts',
-  /** Admits contribution points and the contributions targeting them. */
-  targetedContributionAdmission: 'apps/cli/src/plugins/projection/registry/targetedContributions.ts',
-  /** Binds declared plugin commands onto the CLI command surface. */
-  cliPluginCommandHost: 'apps/cli/src/cli/pluginCommandContributions.ts',
-  /** Projects declared plugin tools into the executable Agent tool catalog. */
-  agentToolCatalogProjection: 'apps/cli/src/plugins/runtime/toolCatalog.ts',
-  /** Binds declared execution-run profiles onto the execution-run capability. */
-  executionRunProfileHost: 'apps/cli/src/capabilities/registry/toolExecutionRuns.ts',
-  /** Projects declared system tools onto the host exec surface. */
-  systemToolProjection: 'apps/cli/src/plugins/runtime/exec/system/tools/definitions.ts',
-  /** Binds declared Settings scopes/fields onto the plugin Settings host. */
-  pluginSettingsHost: 'apps/cli/src/plugins/runtime/invocation/services/settings.ts',
-  /** Binds declared notification categories onto the notifications host. */
-  pluginNotificationsHost: 'apps/cli/src/plugins/runtime/invocation/services/notifications.ts',
-  /** Owns contribution activation, deactivation, and disposal. */
-  contributionActivationLifecycle: 'apps/cli/src/plugins/runtime/lifecycle/manager.ts',
-  /** Prepares manifest-declared daemon databases during daemon readiness. */
-  daemonDatabaseRuntime: 'apps/cli/src/plugins/daemon/runtimeOwner.ts',
-  /** Resolves a webhook declaration against the exact current manifest. */
-  webhookContributionCurrentness: 'apps/server/sources/app/plugins/webhooks/currentContribution.ts',
-  /** Owns webhook delivery claim, lease, settlement, and recovery. */
-  webhookDeliveryLifecycle: 'apps/server/sources/app/plugins/webhooks/claimStore.ts',
-  /** Binds the binding-owned `PluginServices` members onto one invocation. */
-  invocationServiceBinding: 'apps/cli/src/plugins/runtime/invocation/services/factory.ts',
-  /** Composes the host-owned `PluginServices` members for one invocation. */
-  invocationHostServiceComposition: 'apps/cli/src/plugins/runtime/invocation/services/production.ts',
-  /** Owns invocation lifetime: settle, abort, and completion. */
-  invocationLifetime: 'apps/cli/src/plugins/runtime/invocation/lifetime.ts',
-  /** Resolves every HostAccess request against the invocation binding. */
-  hostAccessResolver: 'apps/cli/src/plugins/runtime/hostAccess/resolve.ts',
-  /** Binds Agent-session terminal access into the plugin runtime context. */
-  agentSessionTerminalHost: 'apps/cli/src/plugins/runtime/context/terminalHost.ts',
-  /** Owns the Agent-session host services that outlive one invocation. */
-  agentSessionHostServices: 'apps/cli/src/agent/runtime/registry/engineRegistry/nativeAgentSessionHostServiceOwners.ts',
-  /** Resolves every published author subpath for consumers. */
-  publishedPackageExports: 'packages/plugin-sdk/package.json',
-  /** Loads author modules in the daemon realm. */
-  daemonPluginModuleLoader: 'apps/cli/src/plugins/runtime/loadPluginModule.ts',
-  /** Mounts author surfaces in the client realm. */
-  clientPluginUiSurfaceHost: 'packages/plugin-ui/src/surfaceEntry.tsx',
-  /** Builds the author UI artifacts the build realm publishes. */
-  pluginUiBuildToolchain: 'packages/plugin-sdk/src/ui/build/buildUniversalUiArtifacts.ts',
-});
-const HOST_BINDING_OWNER_MODULES = new Set(Object.values(CAPABILITY_HOST_BINDING_OWNERS_V1));
-
-/** A capability whose applicable realm names no binder and no lifecycle owner. */
-const UNBOUND_REALM_OWNERS = Object.freeze({ specialistOwner: null, lifecycleOwner: null });
-
-function realmOwners(specialistOwner, lifecycleOwner) {
-  return Object.freeze({ specialistOwner, lifecycleOwner });
-}
-
-const DAEMON_REGISTRATION_OWNERS = realmOwners(
-  CAPABILITY_HOST_BINDING_OWNERS_V1.contributionRuntimeRegistration,
-  CAPABILITY_HOST_BINDING_OWNERS_V1.contributionActivationLifecycle,
-);
-
-function declarativeFamilyOwners(binder) {
-  return realmOwners(binder, CAPABILITY_HOST_BINDING_OWNERS_V1.contributionActivationLifecycle);
-}
-
-/**
- * The exhaustive owner map for catalogued manifest families. Each row names the
- * host owner that really binds or projects that family in the realm it applies
- * to, plus the owner that runs its lifecycle there. Catalog registration and
- * projection fields are declaration labels, so they select nothing here: a
- * family absent from this map has no nameable binder and cannot be available.
- */
-export const MANIFEST_FAMILY_REALM_OWNERS_V1 = Object.freeze({
-  // Families a plugin registers into the daemon runtime registry, activated and
-  // retired with their generation by the contribution lifecycle manager.
-  agents: DAEMON_REGISTRATION_OWNERS,
-  providers: DAEMON_REGISTRATION_OWNERS,
-  actions: DAEMON_REGISTRATION_OWNERS,
-  resources: DAEMON_REGISTRATION_OWNERS,
-  events: DAEMON_REGISTRATION_OWNERS,
-  notificationChannels: DAEMON_REGISTRATION_OWNERS,
-  scmHostingProviders: DAEMON_REGISTRATION_OWNERS,
-  scmBackends: DAEMON_REGISTRATION_OWNERS,
-  connectedAccountDescriptors: DAEMON_REGISTRATION_OWNERS,
-  promptAssets: DAEMON_REGISTRATION_OWNERS,
-  hooks: DAEMON_REGISTRATION_OWNERS,
-  requestInterceptors: DAEMON_REGISTRATION_OWNERS,
-  backgroundServices: DAEMON_REGISTRATION_OWNERS,
-  captureSources: DAEMON_REGISTRATION_OWNERS,
-  projectNativeAdapters: DAEMON_REGISTRATION_OWNERS,
-  composerReferences: DAEMON_REGISTRATION_OWNERS,
-  composerAttachments: DAEMON_REGISTRATION_OWNERS,
-  'mcp.servers': DAEMON_REGISTRATION_OWNERS,
-  'mcp.discoverySources': DAEMON_REGISTRATION_OWNERS,
-  // Voice providers run on web/iOS/Android only: the client executable
-  // registration index binds them and withdraws them, not the daemon registry.
-  voiceProviders: realmOwners(
-    CAPABILITY_HOST_BINDING_OWNERS_V1.clientExecutableRegistration,
-    CAPABILITY_HOST_BINDING_OWNERS_V1.clientExecutableRegistration,
-  ),
-  dragSources: realmOwners(
-    CAPABILITY_HOST_BINDING_OWNERS_V1.clientExecutableRegistration,
-    CAPABILITY_HOST_BINDING_OWNERS_V1.clientExecutableRegistration,
-  ),
-  workItems: realmOwners(
-    CAPABILITY_HOST_BINDING_OWNERS_V1.clientExecutableRegistration,
-    CAPABILITY_HOST_BINDING_OWNERS_V1.clientExecutableRegistration,
-  ),
-  dropTargets: realmOwners(
-    CAPABILITY_HOST_BINDING_OWNERS_V1.clientExecutableRegistration,
-    CAPABILITY_HOST_BINDING_OWNERS_V1.clientExecutableRegistration,
-  ),
-  // Declarative families whose reachability is the client projection their own
-  // projection-family owner builds.
-  transcriptActivities: declarativeFamilyOwners(CAPABILITY_HOST_BINDING_OWNERS_V1.pluginUiFamilyProjection),
-  sessionInfoSections: declarativeFamilyOwners(CAPABILITY_HOST_BINDING_OWNERS_V1.pluginUiFamilyProjection),
-  sessionHeaderActions: declarativeFamilyOwners(CAPABILITY_HOST_BINDING_OWNERS_V1.pluginUiFamilyProjection),
-  searchProviders: declarativeFamilyOwners(CAPABILITY_HOST_BINDING_OWNERS_V1.pluginUiFamilyProjection),
-  openableContentViewers: declarativeFamilyOwners(CAPABILITY_HOST_BINDING_OWNERS_V1.pluginUiFamilyProjection),
-  'ui.views': declarativeFamilyOwners(CAPABILITY_HOST_BINDING_OWNERS_V1.pluginUiFamilyProjection),
-  'ui.renderers': declarativeFamilyOwners(CAPABILITY_HOST_BINDING_OWNERS_V1.pluginUiFamilyProjection),
-  'ui.settingsGroups': declarativeFamilyOwners(CAPABILITY_HOST_BINDING_OWNERS_V1.pluginUiFamilyProjection),
-  'ui.settingsPages': declarativeFamilyOwners(CAPABILITY_HOST_BINDING_OWNERS_V1.pluginUiFamilyProjection),
-  'ui.translations': declarativeFamilyOwners(CAPABILITY_HOST_BINDING_OWNERS_V1.pluginUiFamilyProjection),
-  browserTargets: declarativeFamilyOwners(CAPABILITY_HOST_BINDING_OWNERS_V1.browserFamilyProjection),
-  browserActions: declarativeFamilyOwners(CAPABILITY_HOST_BINDING_OWNERS_V1.browserFamilyProjection),
-  composerControls: declarativeFamilyOwners(CAPABILITY_HOST_BINDING_OWNERS_V1.composerFamilyProjection),
-  composerRegions: declarativeFamilyOwners(CAPABILITY_HOST_BINDING_OWNERS_V1.composerFamilyProjection),
-  managedDependencies: declarativeFamilyOwners(
-    CAPABILITY_HOST_BINDING_OWNERS_V1.managedDependencyFamilyProjection,
-  ),
-  languageServers: realmOwners(
-    CAPABILITY_HOST_BINDING_OWNERS_V1.languageServerDefinitions,
-    CAPABILITY_HOST_BINDING_OWNERS_V1.languageServerHost,
-  ),
-  machineProvisioners: declarativeFamilyOwners(
-    CAPABILITY_HOST_BINDING_OWNERS_V1.machineProvisionerFamilyProjection,
-  ),
-  accountCollections: declarativeFamilyOwners(
-    CAPABILITY_HOST_BINDING_OWNERS_V1.accountCollectionFamilyProjection,
-  ),
-  voiceModelPacks: declarativeFamilyOwners(
-    CAPABILITY_HOST_BINDING_OWNERS_V1.voiceDeclarationFamilyProjection,
-  ),
-  // Declarative families a named host surface consumes directly.
-  commands: declarativeFamilyOwners(CAPABILITY_HOST_BINDING_OWNERS_V1.cliPluginCommandHost),
-  tools: declarativeFamilyOwners(CAPABILITY_HOST_BINDING_OWNERS_V1.agentToolCatalogProjection),
-  settings: declarativeFamilyOwners(CAPABILITY_HOST_BINDING_OWNERS_V1.pluginSettingsHost),
-  'settings.fields': declarativeFamilyOwners(CAPABILITY_HOST_BINDING_OWNERS_V1.pluginSettingsHost),
-  executionRunProfiles: declarativeFamilyOwners(CAPABILITY_HOST_BINDING_OWNERS_V1.executionRunProfileHost),
-  roles: declarativeFamilyOwners(CAPABILITY_HOST_BINDING_OWNERS_V1.roleFamilyProjection),
-  workflows: declarativeFamilyOwners(CAPABILITY_HOST_BINDING_OWNERS_V1.workflowFamilyProjection),
-  inputTypes: declarativeFamilyOwners(CAPABILITY_HOST_BINDING_OWNERS_V1.inputTypeFamilyProjection),
-  atmospherePictures: declarativeFamilyOwners(CAPABILITY_HOST_BINDING_OWNERS_V1.atmospherePictureFamilyProjection),
-  registrySources: declarativeFamilyOwners(CAPABILITY_HOST_BINDING_OWNERS_V1.registrySourceFamilyProjection),
-  skills: declarativeFamilyOwners(CAPABILITY_HOST_BINDING_OWNERS_V1.skillFamilyProjection),
-  notifications: declarativeFamilyOwners(CAPABILITY_HOST_BINDING_OWNERS_V1.pluginNotificationsHost),
-  systemTools: declarativeFamilyOwners(CAPABILITY_HOST_BINDING_OWNERS_V1.systemToolProjection),
-  pluginContributionPoints: declarativeFamilyOwners(
-    CAPABILITY_HOST_BINDING_OWNERS_V1.targetedContributionAdmission,
-  ),
-  targetedPluginContributions: declarativeFamilyOwners(
-    CAPABILITY_HOST_BINDING_OWNERS_V1.targetedContributionAdmission,
-  ),
-  // Families whose binder and lifecycle owner are outside contribution
-  // activation entirely.
-  daemonDatabases: realmOwners(
-    CAPABILITY_HOST_BINDING_OWNERS_V1.daemonDatabaseRuntime,
-    CAPABILITY_HOST_BINDING_OWNERS_V1.daemonDatabaseRuntime,
-  ),
-  webhooks: realmOwners(
-    CAPABILITY_HOST_BINDING_OWNERS_V1.webhookContributionCurrentness,
-    CAPABILITY_HOST_BINDING_OWNERS_V1.webhookDeliveryLifecycle,
-  ),
-});
-
-const BINDING_OWNED_SERVICE_OWNERS = realmOwners(
-  CAPABILITY_HOST_BINDING_OWNERS_V1.invocationServiceBinding,
-  CAPABILITY_HOST_BINDING_OWNERS_V1.invocationLifetime,
-);
-const HOST_OWNED_SERVICE_OWNERS = realmOwners(
-  CAPABILITY_HOST_BINDING_OWNERS_V1.invocationHostServiceComposition,
-  CAPABILITY_HOST_BINDING_OWNERS_V1.invocationLifetime,
-);
-
-/**
- * The exhaustive owner map for published `PluginServices` members, split the
- * way the host itself splits them: `availabilityOwner: 'binding'` members are
- * bound by the invocation service binding, and `availabilityOwner: 'host'`
- * members are composed by the host service owner. A `PluginServices` spelling
- * proves neither, so a member absent from this map cannot be available.
- */
-export const PLUGIN_SERVICE_REALM_OWNERS_V1 = Object.freeze({
-  logger: BINDING_OWNED_SERVICE_OWNERS,
-  events: BINDING_OWNED_SERVICE_OWNERS,
-  http: BINDING_OWNED_SERVICE_OWNERS,
-  fs: BINDING_OWNED_SERVICE_OWNERS,
-  exec: BINDING_OWNED_SERVICE_OWNERS,
-  managedServices: BINDING_OWNED_SERVICE_OWNERS,
-  sessions: BINDING_OWNED_SERVICE_OWNERS,
-  mcp: BINDING_OWNED_SERVICE_OWNERS,
-  connectedAccounts: BINDING_OWNED_SERVICE_OWNERS,
-  storage: HOST_OWNED_SERVICE_OWNERS,
-  settings: HOST_OWNED_SERVICE_OWNERS,
-  secrets: HOST_OWNED_SERVICE_OWNERS,
-  providers: HOST_OWNED_SERVICE_OWNERS,
-  resources: HOST_OWNED_SERVICE_OWNERS,
-  notifications: HOST_OWNED_SERVICE_OWNERS,
-  actions: HOST_OWNED_SERVICE_OWNERS,
-  targetedContributions: HOST_OWNED_SERVICE_OWNERS,
-  composerContent: HOST_OWNED_SERVICE_OWNERS,
-  machineProvisioners: HOST_OWNED_SERVICE_OWNERS,
-  interactions: HOST_OWNED_SERVICE_OWNERS,
-});
-
-const INVOCATION_HOST_ACCESS_OWNERS = realmOwners(
-  CAPABILITY_HOST_BINDING_OWNERS_V1.hostAccessResolver,
-  CAPABILITY_HOST_BINDING_OWNERS_V1.invocationLifetime,
-);
-
-/**
- * The exhaustive owner map for catalogued HostAccess capabilities. The daemon
- * resolver binds each ordinary grant for one invocation lifetime; the
- * Agent-session terminal is bound and run outside an invocation; and the three
- * capabilities the resolver refuses to serve name no owner at all.
- */
-export const HOST_ACCESS_REALM_OWNERS_V1 = Object.freeze({
-  network: INVOCATION_HOST_ACCESS_OWNERS,
-  'network.client': INVOCATION_HOST_ACCESS_OWNERS,
-  filesystem: INVOCATION_HOST_ACCESS_OWNERS,
-  process: INVOCATION_HOST_ACCESS_OWNERS,
-  environment: INVOCATION_HOST_ACCESS_OWNERS,
-  connectedAccounts: INVOCATION_HOST_ACCESS_OWNERS,
-  sessions: INVOCATION_HOST_ACCESS_OWNERS,
-  'storage.account': INVOCATION_HOST_ACCESS_OWNERS,
-  mcp: INVOCATION_HOST_ACCESS_OWNERS,
-  terminal: realmOwners(
-    CAPABILITY_HOST_BINDING_OWNERS_V1.agentSessionTerminalHost,
-    CAPABILITY_HOST_BINDING_OWNERS_V1.agentSessionHostServices,
-  ),
-  browser: UNBOUND_REALM_OWNERS,
-  clipboard: UNBOUND_REALM_OWNERS,
-  externalLinks: UNBOUND_REALM_OWNERS,
-});
-
-/**
- * The exhaustive owner map for published author subpaths, keyed by the realm
- * the API inventory records. The package `exports` map resolves every subpath;
- * the realm decides which host runs the module. An unrecorded realm names no
- * runtime owner rather than defaulting to the daemon loader.
- */
-export const PUBLISHED_SUBPATH_REALM_OWNERS_V1 = Object.freeze({
-  any: realmOwners(
-    CAPABILITY_HOST_BINDING_OWNERS_V1.publishedPackageExports,
-    CAPABILITY_HOST_BINDING_OWNERS_V1.daemonPluginModuleLoader,
-  ),
-  daemon: realmOwners(
-    CAPABILITY_HOST_BINDING_OWNERS_V1.publishedPackageExports,
-    CAPABILITY_HOST_BINDING_OWNERS_V1.daemonPluginModuleLoader,
-  ),
-  browser: realmOwners(
-    CAPABILITY_HOST_BINDING_OWNERS_V1.publishedPackageExports,
-    CAPABILITY_HOST_BINDING_OWNERS_V1.clientPluginUiSurfaceHost,
-  ),
-  client: realmOwners(
-    CAPABILITY_HOST_BINDING_OWNERS_V1.publishedPackageExports,
-    CAPABILITY_HOST_BINDING_OWNERS_V1.clientPluginUiSurfaceHost,
-  ),
-  build: realmOwners(
-    CAPABILITY_HOST_BINDING_OWNERS_V1.publishedPackageExports,
-    CAPABILITY_HOST_BINDING_OWNERS_V1.pluginUiBuildToolchain,
-  ),
-});
-
-/** The module that declares the public service catalog, not a member spelling. */
+const AVAILABILITY_DISPOSITIONS = new Set(['available', 'preview', 'deferred', 'retired']);
 const PLUGIN_SERVICES_DECLARATION_MODULE = 'packages/plugin-sdk/src/services/index.ts';
-const PLUGIN_SERVICES_MEMBER_SPELLING = /#PluginServices\./u;
 
 export class CapabilityMatrixValidationError extends Error {
   /** @param {readonly string[]} diagnostics */
@@ -562,25 +240,6 @@ function requiredLifecycle(value, label, diagnostics) {
   return null;
 }
 
-function isMaintainedPublicConsumerPath(value) {
-  if (typeof value !== 'string' || value === '' || value.includes('\\') || value.includes('\0')) {
-    return false;
-  }
-  if (!MAINTAINED_PUBLIC_CONSUMER_PREFIXES.some((prefix) => value.startsWith(prefix))) {
-    return false;
-  }
-  return !value.split('/').some((segment) => segment === '' || segment === '.' || segment === '..');
-}
-
-function optionalMaintainedPublicConsumer(value, label, diagnostics) {
-  if (value === null || value === undefined) return null;
-  if (!isMaintainedPublicConsumerPath(value)) {
-    diagnostics.push(`${label} must be null or name a maintained public plugin/example consumer`);
-    return null;
-  }
-  return value;
-}
-
 function assertExactMetadataKeys(label, metadata, canonicalIds, diagnostics) {
   if (!isRecord(metadata)) {
     diagnostics.push(`${label} metadata must be an object`);
@@ -595,7 +254,7 @@ function assertExactMetadataKeys(label, metadata, canonicalIds, diagnostics) {
   }
 }
 
-function normalizeMetadataRow(label, value, diagnostics, { disposition = false, lifecycle = true } = {}) {
+function normalizeMetadataRow(label, value, diagnostics, { lifecycle = true } = {}) {
   if (!isRecord(value)) {
     diagnostics.push(`${label} metadata must be an object`);
     return null;
@@ -604,100 +263,22 @@ function normalizeMetadataRow(label, value, diagnostics, { disposition = false, 
   const normalizedLifecycle = lifecycle
     ? requiredLifecycle(value.lifecycle, `${label}.lifecycle`, diagnostics)
     : undefined;
-  const provingConsumer = optionalMaintainedPublicConsumer(
-    value.provingConsumer,
-    `${label}.provingConsumer`,
-    diagnostics,
-  );
-  const specialistOwner = value.specialistOwner ?? null;
-  const lifecycleOwner = value.lifecycleOwner ?? null;
-  const predecessorRemoval = requiredString(value.predecessorRemoval, `${label}.predecessorRemoval`, diagnostics);
-  let availabilityDisposition;
-  let unblockCondition;
-  if (disposition) {
-    availabilityDisposition = value.availabilityDisposition;
-    if (!AVAILABILITY_DISPOSITIONS.has(availabilityDisposition)) {
-      diagnostics.push(`${label} availabilityDisposition must be available, deferred, or retired`);
-    }
-    if (availabilityDisposition === 'deferred') {
-      unblockCondition = requiredString(value.unblockCondition, `${label}.unblockCondition`, diagnostics);
-    } else if (value.unblockCondition !== undefined) {
-      diagnostics.push(`${label}.unblockCondition is only valid for deferred availability`);
-    }
-    // Availability is a fact of the canonical declaration owner, the host
-    // binder/projection that serves the row in its realm, and the owner that
-    // runs its lifecycle there. A row may never prove any of those with itself.
-    if (availabilityDisposition === 'available') {
-      if (producer !== null && PLUGIN_SERVICES_MEMBER_SPELLING.test(producer)) {
-        diagnostics.push(
-          `${label}.producer must name the module that declares the capability`
-          + '; a PluginServices member spelling declares no module',
-        );
-      }
-      if (!HOST_BINDING_OWNER_MODULES.has(specialistOwner)) {
-        diagnostics.push(
-          `${label}.specialistOwner must name a canonical host binder/projection owner`
-          + '; a declaration catalog, type member, or published source module binds nothing',
-        );
-      }
-      if (!HOST_BINDING_OWNER_MODULES.has(lifecycleOwner)) {
-        diagnostics.push(
-          `${label}.lifecycleOwner must name a canonical runtime lifecycle owner`
-          + '; a lifecycle stage label owns no lifecycle',
-        );
-      }
-      if (specialistOwner !== null && specialistOwner === producer) {
-        diagnostics.push(`${label}.specialistOwner must not repeat its own declaration owner`);
-      }
-      if (lifecycleOwner !== null && lifecycleOwner === producer) {
-        diagnostics.push(`${label}.lifecycleOwner must not repeat its own declaration owner`);
-      }
-    } else if (specialistOwner !== null || lifecycleOwner !== null) {
-      diagnostics.push(
-        `${label} must leave specialistOwner and lifecycleOwner null while it is ${availabilityDisposition}`,
-      );
-    }
+  const availabilityDisposition = value.availabilityDisposition;
+  if (!AVAILABILITY_DISPOSITIONS.has(availabilityDisposition)) {
+    diagnostics.push(`${label} availabilityDisposition must be available, preview, deferred, or retired`);
   }
-  // Every row joins a canonical public catalog/entrypoint, so source API
-  // availability is a matrix-owned fact. Loaded-platform and release evidence
-  // remain independently unrecorded until their owners establish them.
-  const sourceApiAvailability = value.sourceApiAvailability ?? 'present';
-  if (!SOURCE_API_AVAILABILITY.has(sourceApiAvailability)) {
-    diagnostics.push(`${label}.sourceApiAvailability must be present or absent`);
+  const unblockCondition = availabilityDisposition === 'deferred'
+    ? requiredString(value.unblockCondition, `${label}.unblockCondition`, diagnostics)
+    : undefined;
+  if (availabilityDisposition !== 'deferred' && value.unblockCondition !== undefined) {
+    diagnostics.push(`${label}.unblockCondition is only valid for deferred availability`);
   }
-  const sourceConsumer = optionalMaintainedPublicConsumer(
-    value.sourceConsumer,
-    `${label}.sourceConsumer`,
-    diagnostics,
-  );
-  const loadedPlatformProof = value.loadedPlatformProof ?? 'not-recorded';
-  if (!LOADED_PLATFORM_PROOF.has(loadedPlatformProof)) {
-    diagnostics.push(`${label}.loadedPlatformProof must be not-recorded or established`);
-  }
-  const releaseAvailability = value.releaseAvailability ?? 'not-published';
-  if (!RELEASE_AVAILABILITY.has(releaseAvailability)) {
-    diagnostics.push(`${label}.releaseAvailability must be not-published or published`);
-  }
-  if (!producer || (lifecycle && !normalizedLifecycle) || !predecessorRemoval) {
-    return null;
-  }
+  if (!producer || (lifecycle && !normalizedLifecycle)) return null;
   return Object.freeze({
     producer,
     ...(lifecycle ? { lifecycle: normalizedLifecycle } : {}),
-    provingConsumer,
-    specialistOwner,
-    lifecycleOwner,
-    predecessorRemoval,
-    sourceApiAvailability,
-    sourceConsumer,
-    loadedPlatformProof,
-    releaseAvailability,
-    ...(disposition && AVAILABILITY_DISPOSITIONS.has(availabilityDisposition)
-      ? {
-          availabilityDisposition,
-          ...(availabilityDisposition === 'deferred' && unblockCondition ? { unblockCondition } : {}),
-        }
-      : {}),
+    availabilityDisposition,
+    ...(unblockCondition ? { unblockCondition } : {}),
   });
 }
 
@@ -726,8 +307,8 @@ function authorEntrypoints(apiInventory) {
 
 /**
  * Joins the Protocol contribution/HostAccess catalogs, definePlugin policy,
- * PluginServices declaration, and generated public API inventory. Metadata is
- * deliberately limited to lifecycle evidence that no canonical catalog owns.
+ * PluginServices declaration, and generated public API inventory. Metadata supplies
+ * only author availability and exceptional lifecycle facts.
  */
 export function projectCapabilityMatrix({
   contributionCatalog,
@@ -816,7 +397,7 @@ export function projectCapabilityMatrix({
       `manifestFamilies.${family}`,
       metadataManifestFamilies?.[family],
       diagnostics,
-      { disposition: true, lifecycle: false },
+      { lifecycle: false },
     );
     if (!catalogEntry || !policy || !rowMetadata || !definePluginEntrypoint) continue;
     if (
@@ -858,7 +439,6 @@ export function projectCapabilityMatrix({
       `services.${serviceId}`,
       metadataServices?.[serviceId],
       diagnostics,
-      { disposition: true },
     );
     if (!service || !rowMetadata || !isRecord(apiInventory)) continue;
     if (typeof service.property !== 'string' || service.property === '') {
@@ -898,7 +478,6 @@ export function projectCapabilityMatrix({
       `hostAccess.${capability}`,
       metadataHostAccess?.[capability],
       diagnostics,
-      { disposition: true },
     );
     if (!entry || !rowMetadata) continue;
     if (typeof entry.authorizationClass !== 'string' || entry.authorizationClass === '') {
@@ -923,7 +502,6 @@ export function projectCapabilityMatrix({
       `subpaths.${entrypoint.specifier}`,
       metadataSubpaths?.[entrypoint.specifier],
       diagnostics,
-      { disposition: true },
     );
     if (!rowMetadata) continue;
     normalizedSubpaths.push(Object.freeze({
@@ -949,35 +527,8 @@ export function renderCapabilityMatrix(matrix) {
 }
 
 /**
- * Source availability is established when a row joins the canonical catalog;
- * source consumers, loaded-runtime proof, and release availability remain
- * separate facts. This is the single metadata choke point before projection.
- */
-function withEvidenceLifecycleFacts(declaration) {
-  if (!isRecord(declaration)) return declaration;
-  return Object.freeze({
-    ...declaration,
-    sourceApiAvailability: declaration.sourceApiAvailability ?? 'present',
-    sourceConsumer: declaration.sourceConsumer ?? null,
-    loadedPlatformProof: declaration.loadedPlatformProof ?? 'not-recorded',
-    releaseAvailability: declaration.releaseAvailability ?? 'not-published',
-  });
-}
-
-/**
- * Reads the owners of one capability from its canonical map. A capability the
- * map does not name has no host binder and no runtime lifecycle owner: it stays
- * unbound here instead of inheriting a generic registry, reader, or loader.
- */
-function mappedRealmOwners(map, identity) {
-  return typeof identity === 'string' && Object.hasOwn(map, identity)
-    ? map[identity]
-    : UNBOUND_REALM_OWNERS;
-}
-
-/**
  * Fills only facts that already have one canonical source. Declarations own
- * availability and optional positive-consumer (or deferred-unblock) facts for every
+ * availability and deferred-unblock facts for every
  * public capability family; catalogs and inventories retain identity, source,
  * lifecycle, and published-surface authority.
  */
@@ -1003,15 +554,13 @@ export function deriveCapabilityMatrixMetadata({
     if (declaration !== undefined) {
       manifestFamilies[entry.manifestKey] = Object.freeze({
         producer: `packages/protocol/src/plugins/contributions/catalog.ts#${entry.manifestKey}`,
-        ...mappedRealmOwners(MANIFEST_FAMILY_REALM_OWNERS_V1, entry.manifestKey),
-        predecessorRemoval: `catalog-disposition:${entry.disposition}`,
-        ...withEvidenceLifecycleFacts(declaration),
+        ...declaration,
       });
     }
   }
   for (const [family, declaration] of Object.entries(declarations.manifestFamilies ?? {})) {
     if (!Object.hasOwn(manifestFamilies, family)) {
-      manifestFamilies[family] = withEvidenceLifecycleFacts(declaration);
+      manifestFamilies[family] = declaration;
     }
   }
   const serviceMetadata = {};
@@ -1028,15 +577,13 @@ export function deriveCapabilityMatrixMetadata({
         // `PluginServices` member spelling names no module and is never used.
         producer: typeof source === 'string' ? source : PLUGIN_SERVICES_DECLARATION_MODULE,
         lifecycle: 'invocation-scoped',
-        ...mappedRealmOwners(PLUGIN_SERVICE_REALM_OWNERS_V1, service.id),
-        predecessorRemoval: 'none',
-        ...withEvidenceLifecycleFacts(declaration),
+        ...declaration,
       });
     }
   }
   for (const [serviceId, declaration] of Object.entries(declarations.services ?? {})) {
     if (!Object.hasOwn(serviceMetadata, serviceId)) {
-      serviceMetadata[serviceId] = withEvidenceLifecycleFacts(declaration);
+      serviceMetadata[serviceId] = declaration;
     }
   }
   const hostAccessMetadata = {};
@@ -1047,15 +594,13 @@ export function deriveCapabilityMatrixMetadata({
       hostAccessMetadata[entry.capability] = Object.freeze({
         producer: `packages/protocol/src/plugins/manifest/v2.ts#${entry.capability}`,
         lifecycle: 'invocation-scoped',
-        ...mappedRealmOwners(HOST_ACCESS_REALM_OWNERS_V1, entry.capability),
-        predecessorRemoval: 'none',
-        ...withEvidenceLifecycleFacts(declaration),
+        ...declaration,
       });
     }
   }
   for (const [capability, declaration] of Object.entries(declarations.hostAccess ?? {})) {
     if (!Object.hasOwn(hostAccessMetadata, capability)) {
-      hostAccessMetadata[capability] = withEvidenceLifecycleFacts(declaration);
+      hostAccessMetadata[capability] = declaration;
     }
   }
   const subpathMetadata = {};
@@ -1065,15 +610,13 @@ export function deriveCapabilityMatrixMetadata({
       subpathMetadata[entrypoint.specifier] = Object.freeze({
           producer: entrypoint.sourceModule,
           lifecycle: 'published',
-          ...mappedRealmOwners(PUBLISHED_SUBPATH_REALM_OWNERS_V1, entrypoint.realm),
-          predecessorRemoval: 'none',
-          ...withEvidenceLifecycleFacts(declaration),
+          ...declaration,
       });
     }
   }
   for (const [specifier, declaration] of Object.entries(declarations.subpaths ?? {})) {
     if (!Object.hasOwn(subpathMetadata, specifier)) {
-      subpathMetadata[specifier] = withEvidenceLifecycleFacts(declaration);
+      subpathMetadata[specifier] = declaration;
     }
   }
   return deepFreeze({

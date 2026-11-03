@@ -230,3 +230,5 @@ export type { UiTranslationBundle } from '../ui.js';
 export type { UiView } from '../ui.js';
 export { defineHostedWebBridgeMessage } from './hostedWeb.js';
 export type { PluginUiWatchEntityDragDropRequestV1, PluginUiEntityDragDropStateV1 } from './hostApi.js';
+
+export type { PluginDeclarativeDataFieldV1 } from './declarativeData.js';

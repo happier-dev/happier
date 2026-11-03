@@ -6,51 +6,6 @@ import type { PluginActionWorkflowBlockV1 } from './pluginActionDtoSupport.gener
 
 export type UsageActionInputById = {
     readonly "usage.recap.deliver": {
-        query: {
-            population?: 'all_personal_history' | 'public_eligible_personal' | undefined;
-            granularity?: 'hour' | 'day' | 'week' | 'month' | undefined;
-            timeZoneOffsetMinutes?: number | undefined;
-            includeSeries?: boolean | undefined;
-            includeInsights?: boolean | undefined;
-            includeActivity?: boolean | undefined;
-            includeLeaders?: boolean | undefined;
-            includeModelTimeline?: boolean | undefined;
-            includeMessageStats?: boolean | undefined;
-            activityResolution?: 'calendar' | 'weekdayHour' | 'both' | undefined;
-            topLimit?: number | undefined;
-            period?: {
-                startMs?: number | undefined;
-                endMs?: number | undefined;
-                relative?: undefined;
-            } | {
-                relative: 'today' | '7days' | '30days' | '90days' | 'year' | 'all';
-                startMs?: undefined;
-                endMs?: undefined;
-            } | undefined;
-            agents?: string[] | undefined;
-            machines?: string[] | undefined;
-            projects?: string[] | undefined;
-            sources?: string[] | undefined;
-            execution?: 'unknown' | 'happier' | 'outside' | undefined;
-            session?: string | string[] | null | undefined;
-            costBasis?: 'auto' | 'reported' | 'estimated' | 'api_equivalent' | undefined;
-            metric?: 'tokens' | 'cost' | 'sessions' | 'busy' | 'steering' | 'peakParallel' | undefined;
-            includeAccounting?: boolean | undefined;
-            includeQuotaHistory?: boolean | undefined;
-            includeSessionEvidence?: boolean | undefined;
-            includeTranscriptEvidence?: boolean | undefined;
-            includeWorkEvidence?: boolean | undefined;
-            breakdown?: ('agent' | 'model' | 'session' | 'project' | 'workspace' | 'backendMode' | 'source' | 'machine')[] | undefined;
-            modelIds?: string[] | undefined;
-            workspaceIds?: string[] | undefined;
-            backendModes?: string[] | undefined;
-        };
-        intent: 'copy' | 'save' | 'share';
-        sourceSelection?: 'whole_usage' | 'happier_only' | undefined;
-        style?: 'daybreak' | 'sigil' | 'editorial' | 'glass' | 'holo' | 'skyline' | 'terminal' | undefined;
-        format?: 'square' | 'story' | 'link-preview' | undefined;
-        selectedFields?: ('tokens' | 'activeDays' | 'streak' | 'modelMix' | 'agentMix' | 'cache' | 'rhythm' | 'parallel' | 'night' | 'work' | 'coach' | 'highlights' | 'names' | 'dollars')[] | undefined;
-    } | {
         source: {
             kind: 'public_profile';
         };
@@ -96,7 +51,7 @@ export type UsageActionInputById = {
             includeSessionEvidence?: boolean | undefined;
             includeTranscriptEvidence?: boolean | undefined;
             includeWorkEvidence?: boolean | undefined;
-            breakdown?: ('agent' | 'model' | 'session' | 'project' | 'workspace' | 'backendMode' | 'source' | 'machine')[] | undefined;
+            breakdown?: ('source' | 'agent' | 'model' | 'session' | 'project' | 'workspace' | 'backendMode' | 'machine')[] | undefined;
             modelIds?: string[] | undefined;
             workspaceIds?: string[] | undefined;
             backendModes?: string[] | undefined;
@@ -123,50 +78,6 @@ export type UsageActionInputById = {
         })[];
     };
     readonly "usage.recap.export": {
-        query: {
-            population?: 'all_personal_history' | 'public_eligible_personal' | undefined;
-            granularity?: 'hour' | 'day' | 'week' | 'month' | undefined;
-            timeZoneOffsetMinutes?: number | undefined;
-            includeSeries?: boolean | undefined;
-            includeInsights?: boolean | undefined;
-            includeActivity?: boolean | undefined;
-            includeLeaders?: boolean | undefined;
-            includeModelTimeline?: boolean | undefined;
-            includeMessageStats?: boolean | undefined;
-            activityResolution?: 'calendar' | 'weekdayHour' | 'both' | undefined;
-            topLimit?: number | undefined;
-            period?: {
-                startMs?: number | undefined;
-                endMs?: number | undefined;
-                relative?: undefined;
-            } | {
-                relative: 'today' | '7days' | '30days' | '90days' | 'year' | 'all';
-                startMs?: undefined;
-                endMs?: undefined;
-            } | undefined;
-            agents?: string[] | undefined;
-            machines?: string[] | undefined;
-            projects?: string[] | undefined;
-            sources?: string[] | undefined;
-            execution?: 'unknown' | 'happier' | 'outside' | undefined;
-            session?: string | string[] | null | undefined;
-            costBasis?: 'auto' | 'reported' | 'estimated' | 'api_equivalent' | undefined;
-            metric?: 'tokens' | 'cost' | 'sessions' | 'busy' | 'steering' | 'peakParallel' | undefined;
-            includeAccounting?: boolean | undefined;
-            includeQuotaHistory?: boolean | undefined;
-            includeSessionEvidence?: boolean | undefined;
-            includeTranscriptEvidence?: boolean | undefined;
-            includeWorkEvidence?: boolean | undefined;
-            breakdown?: ('agent' | 'model' | 'session' | 'project' | 'workspace' | 'backendMode' | 'source' | 'machine')[] | undefined;
-            modelIds?: string[] | undefined;
-            workspaceIds?: string[] | undefined;
-            backendModes?: string[] | undefined;
-        };
-        sourceSelection?: 'whole_usage' | 'happier_only' | undefined;
-        style?: 'daybreak' | 'sigil' | 'editorial' | 'glass' | 'holo' | 'skyline' | 'terminal' | undefined;
-        format?: 'square' | 'story' | 'link-preview' | undefined;
-        selectedFields?: ('tokens' | 'activeDays' | 'streak' | 'modelMix' | 'agentMix' | 'cache' | 'rhythm' | 'parallel' | 'night' | 'work' | 'coach' | 'highlights' | 'names' | 'dollars')[] | undefined;
-    } | {
         source: {
             kind: 'public_profile';
         };
@@ -175,50 +86,6 @@ export type UsageActionInputById = {
         selectedFields?: ('tokens' | 'activeDays' | 'streak' | 'agentMix' | 'rhythm' | 'parallel' | 'work' | 'highlights')[] | undefined;
     };
     readonly "usage.recap.compose": {
-        query: {
-            population?: 'all_personal_history' | 'public_eligible_personal' | undefined;
-            granularity?: 'hour' | 'day' | 'week' | 'month' | undefined;
-            timeZoneOffsetMinutes?: number | undefined;
-            includeSeries?: boolean | undefined;
-            includeInsights?: boolean | undefined;
-            includeActivity?: boolean | undefined;
-            includeLeaders?: boolean | undefined;
-            includeModelTimeline?: boolean | undefined;
-            includeMessageStats?: boolean | undefined;
-            activityResolution?: 'calendar' | 'weekdayHour' | 'both' | undefined;
-            topLimit?: number | undefined;
-            period?: {
-                startMs?: number | undefined;
-                endMs?: number | undefined;
-                relative?: undefined;
-            } | {
-                relative: 'today' | '7days' | '30days' | '90days' | 'year' | 'all';
-                startMs?: undefined;
-                endMs?: undefined;
-            } | undefined;
-            agents?: string[] | undefined;
-            machines?: string[] | undefined;
-            projects?: string[] | undefined;
-            sources?: string[] | undefined;
-            execution?: 'unknown' | 'happier' | 'outside' | undefined;
-            session?: string | string[] | null | undefined;
-            costBasis?: 'auto' | 'reported' | 'estimated' | 'api_equivalent' | undefined;
-            metric?: 'tokens' | 'cost' | 'sessions' | 'busy' | 'steering' | 'peakParallel' | undefined;
-            includeAccounting?: boolean | undefined;
-            includeQuotaHistory?: boolean | undefined;
-            includeSessionEvidence?: boolean | undefined;
-            includeTranscriptEvidence?: boolean | undefined;
-            includeWorkEvidence?: boolean | undefined;
-            breakdown?: ('agent' | 'model' | 'session' | 'project' | 'workspace' | 'backendMode' | 'source' | 'machine')[] | undefined;
-            modelIds?: string[] | undefined;
-            workspaceIds?: string[] | undefined;
-            backendModes?: string[] | undefined;
-        };
-        sourceSelection?: 'whole_usage' | 'happier_only' | undefined;
-        style?: 'daybreak' | 'sigil' | 'editorial' | 'glass' | 'holo' | 'skyline' | 'terminal' | undefined;
-        format?: 'square' | 'story' | 'link-preview' | undefined;
-        selectedFields?: ('tokens' | 'activeDays' | 'streak' | 'modelMix' | 'agentMix' | 'cache' | 'rhythm' | 'parallel' | 'night' | 'work' | 'coach' | 'highlights' | 'names' | 'dollars')[] | undefined;
-    } | {
         source: {
             kind: 'public_profile';
         };
@@ -261,7 +128,7 @@ export type UsageActionInputById = {
             includeSessionEvidence?: boolean | undefined;
             includeTranscriptEvidence?: boolean | undefined;
             includeWorkEvidence?: boolean | undefined;
-            breakdown?: ('agent' | 'model' | 'session' | 'project' | 'workspace' | 'backendMode' | 'source' | 'machine')[] | undefined;
+            breakdown?: ('source' | 'agent' | 'model' | 'session' | 'project' | 'workspace' | 'backendMode' | 'machine')[] | undefined;
             modelIds?: string[] | undefined;
             workspaceIds?: string[] | undefined;
             backendModes?: string[] | undefined;
@@ -302,7 +169,7 @@ export type UsageActionInputById = {
             includeSessionEvidence?: boolean | undefined;
             includeTranscriptEvidence?: boolean | undefined;
             includeWorkEvidence?: boolean | undefined;
-            breakdown?: ('agent' | 'model' | 'session' | 'project' | 'workspace' | 'backendMode' | 'source' | 'machine')[] | undefined;
+            breakdown?: ('source' | 'agent' | 'model' | 'session' | 'project' | 'workspace' | 'backendMode' | 'machine')[] | undefined;
             modelIds?: string[] | undefined;
             workspaceIds?: string[] | undefined;
             backendModes?: string[] | undefined;
@@ -345,7 +212,7 @@ export type UsageActionInputById = {
             includeSessionEvidence?: boolean | undefined;
             includeTranscriptEvidence?: boolean | undefined;
             includeWorkEvidence?: boolean | undefined;
-            breakdown?: ('agent' | 'model' | 'session' | 'project' | 'workspace' | 'backendMode' | 'source' | 'machine')[] | undefined;
+            breakdown?: ('source' | 'agent' | 'model' | 'session' | 'project' | 'workspace' | 'backendMode' | 'machine')[] | undefined;
             modelIds?: string[] | undefined;
             workspaceIds?: string[] | undefined;
             backendModes?: string[] | undefined;
@@ -387,7 +254,7 @@ export type UsageActionInputById = {
             includeSessionEvidence?: boolean | undefined;
             includeTranscriptEvidence?: boolean | undefined;
             includeWorkEvidence?: boolean | undefined;
-            breakdown?: ('agent' | 'model' | 'session' | 'project' | 'workspace' | 'backendMode' | 'source' | 'machine')[] | undefined;
+            breakdown?: ('source' | 'agent' | 'model' | 'session' | 'project' | 'workspace' | 'backendMode' | 'machine')[] | undefined;
             modelIds?: string[] | undefined;
             workspaceIds?: string[] | undefined;
             backendModes?: string[] | undefined;
@@ -575,7 +442,7 @@ export type UsageActionInputById = {
             includeSessionEvidence?: boolean | undefined;
             includeTranscriptEvidence?: boolean | undefined;
             includeWorkEvidence?: boolean | undefined;
-            breakdown?: ('agent' | 'model' | 'session' | 'project' | 'workspace' | 'backendMode' | 'source' | 'machine')[] | undefined;
+            breakdown?: ('source' | 'agent' | 'model' | 'session' | 'project' | 'workspace' | 'backendMode' | 'machine')[] | undefined;
             modelIds?: string[] | undefined;
             workspaceIds?: string[] | undefined;
             backendModes?: string[] | undefined;
@@ -618,7 +485,7 @@ export type UsageActionInputById = {
             includeSessionEvidence?: boolean | undefined;
             includeTranscriptEvidence?: boolean | undefined;
             includeWorkEvidence?: boolean | undefined;
-            breakdown?: ('agent' | 'model' | 'session' | 'project' | 'workspace' | 'backendMode' | 'source' | 'machine')[] | undefined;
+            breakdown?: ('source' | 'agent' | 'model' | 'session' | 'project' | 'workspace' | 'backendMode' | 'machine')[] | undefined;
             modelIds?: string[] | undefined;
             workspaceIds?: string[] | undefined;
             backendModes?: string[] | undefined;
@@ -635,8 +502,8 @@ export type UsageActionResultById = {
             v: 1;
             style: 'daybreak' | 'sigil' | 'editorial' | 'glass' | 'holo' | 'skyline' | 'terminal';
             format: 'square' | 'story' | 'link-preview';
-            selectedFields: ('tokens' | 'activeDays' | 'streak' | 'modelMix' | 'agentMix' | 'cache' | 'rhythm' | 'parallel' | 'night' | 'work' | 'coach' | 'highlights' | 'names' | 'dollars')[];
-            unavailableFields: ('tokens' | 'activeDays' | 'streak' | 'modelMix' | 'agentMix' | 'cache' | 'rhythm' | 'parallel' | 'night' | 'work' | 'coach' | 'highlights' | 'names' | 'dollars')[];
+            selectedFields: ('tokens' | 'activeDays' | 'streak' | 'agentMix' | 'rhythm' | 'parallel' | 'work' | 'highlights' | 'modelMix' | 'cache' | 'night' | 'coach' | 'names' | 'dollars')[];
+            unavailableFields: ('tokens' | 'activeDays' | 'streak' | 'agentMix' | 'rhythm' | 'parallel' | 'work' | 'highlights' | 'modelMix' | 'cache' | 'night' | 'coach' | 'names' | 'dollars')[];
             period: {
                 startMs: number;
                 endMs: number;
@@ -647,14 +514,14 @@ export type UsageActionResultById = {
                 accounting: {
                     status: 'unknown' | 'complete' | 'partial';
                     reasons: ('missing_baseline' | 'counter_discontinuity' | 'ambiguous_overlap' | 'unattributed_model' | 'unpriced_tokens' | 'unknown_source' | 'incomplete_history' | 'ranked_truncation' | 'unknown_token_categories')[];
-                    missingDimensions: ('agent' | 'model' | 'session' | 'project' | 'workspace' | 'backendMode' | 'source' | 'machine')[];
+                    missingDimensions: ('source' | 'agent' | 'model' | 'session' | 'project' | 'workspace' | 'backendMode' | 'machine')[];
                     range: {
                         complete: boolean;
                         startMs?: number | undefined;
                         endMs?: number | undefined;
                     };
                     ranked: {
-                        dimension: 'agent' | 'model' | 'session' | 'project' | 'workspace' | 'backendMode' | 'source' | 'machine';
+                        dimension: 'source' | 'agent' | 'model' | 'session' | 'project' | 'workspace' | 'backendMode' | 'machine';
                         totalEntries: number;
                         returnedEntries: number;
                         complete: boolean;
@@ -798,7 +665,7 @@ export type UsageActionResultById = {
                     status: 'unknown' | 'partial' | 'complete_for_supplied_facts' | 'unavailable';
                     method: 'unknown' | 'runtime' | 'mixed' | 'logs' | 'context_only';
                 };
-                fieldCoverage: Partial<Record<'calendar' | 'projects' | 'tokens' | 'peakParallel' | 'activeDays' | 'agentMix' | 'highlights' | 'name' | 'agentActiveDays' | 'weeklyAgentMix' | 'weeklyPeakParallel' | 'dayNightActivity' | 'machineKinds' | 'footprint' | 'avatar' | 'bio' | 'links' | 'since' | 'agentTime' | 'mergedPrs' | 'currentStreak' | 'bestStreak' | 'sourceSplit' | 'punch' | 'sessionDurations', {
+                fieldCoverage: Partial<Record<'tokens' | 'activeDays' | 'agentMix' | 'highlights' | 'calendar' | 'projects' | 'peakParallel' | 'name' | 'agentActiveDays' | 'weeklyAgentMix' | 'weeklyPeakParallel' | 'dayNightActivity' | 'machineKinds' | 'footprint' | 'avatar' | 'bio' | 'links' | 'since' | 'agentTime' | 'mergedPrs' | 'currentStreak' | 'bestStreak' | 'sourceSplit' | 'punch' | 'sessionDurations', {
                     status: 'unknown' | 'partial' | 'complete_for_supplied_facts' | 'unavailable';
                     method: 'unknown' | 'runtime' | 'mixed' | 'logs' | 'context_only';
                 }>>;
@@ -812,7 +679,7 @@ export type UsageActionResultById = {
                     peakParallel?: number | undefined;
                     calendar?: {
                         date: string;
-                        level: 0 | 4 | 1 | 2 | 3 | null;
+                        level: 0 | 1 | 4 | 3 | 2 | null;
                     }[] | undefined;
                     agentMix?: {
                         agentId: string;
@@ -831,7 +698,7 @@ export type UsageActionResultById = {
                     punch?: {
                         weekday: number;
                         hour: number;
-                        level: 0 | 4 | 1 | 2 | 3 | null;
+                        level: 0 | 1 | 4 | 3 | 2 | null;
                     }[] | undefined;
                     highlights?: {
                         kind: 'merged_prs' | 'peak_parallel' | 'active_days';
@@ -908,7 +775,7 @@ export type UsageActionResultById = {
                         peakParallel?: number | undefined;
                         calendar?: {
                             date: string;
-                            level: 0 | 4 | 1 | 2 | 3 | null;
+                            level: 0 | 1 | 4 | 3 | 2 | null;
                         }[] | undefined;
                         agentMix?: {
                             agentId: string;
@@ -927,7 +794,7 @@ export type UsageActionResultById = {
                         punch?: {
                             weekday: number;
                             hour: number;
-                            level: 0 | 4 | 1 | 2 | 3 | null;
+                            level: 0 | 1 | 4 | 3 | 2 | null;
                         }[] | undefined;
                         highlights?: {
                             kind: 'merged_prs' | 'peak_parallel' | 'active_days';
@@ -1006,8 +873,8 @@ export type UsageActionResultById = {
             v: 1;
             style: 'daybreak' | 'sigil' | 'editorial' | 'glass' | 'holo' | 'skyline' | 'terminal';
             format: 'square' | 'story' | 'link-preview';
-            selectedFields: ('tokens' | 'activeDays' | 'streak' | 'modelMix' | 'agentMix' | 'cache' | 'rhythm' | 'parallel' | 'night' | 'work' | 'coach' | 'highlights' | 'names' | 'dollars')[];
-            unavailableFields: ('tokens' | 'activeDays' | 'streak' | 'modelMix' | 'agentMix' | 'cache' | 'rhythm' | 'parallel' | 'night' | 'work' | 'coach' | 'highlights' | 'names' | 'dollars')[];
+            selectedFields: ('tokens' | 'activeDays' | 'streak' | 'agentMix' | 'rhythm' | 'parallel' | 'work' | 'highlights' | 'modelMix' | 'cache' | 'night' | 'coach' | 'names' | 'dollars')[];
+            unavailableFields: ('tokens' | 'activeDays' | 'streak' | 'agentMix' | 'rhythm' | 'parallel' | 'work' | 'highlights' | 'modelMix' | 'cache' | 'night' | 'coach' | 'names' | 'dollars')[];
             period: {
                 startMs: number;
                 endMs: number;
@@ -1018,14 +885,14 @@ export type UsageActionResultById = {
                 accounting: {
                     status: 'unknown' | 'complete' | 'partial';
                     reasons: ('missing_baseline' | 'counter_discontinuity' | 'ambiguous_overlap' | 'unattributed_model' | 'unpriced_tokens' | 'unknown_source' | 'incomplete_history' | 'ranked_truncation' | 'unknown_token_categories')[];
-                    missingDimensions: ('agent' | 'model' | 'session' | 'project' | 'workspace' | 'backendMode' | 'source' | 'machine')[];
+                    missingDimensions: ('source' | 'agent' | 'model' | 'session' | 'project' | 'workspace' | 'backendMode' | 'machine')[];
                     range: {
                         complete: boolean;
                         startMs?: number | undefined;
                         endMs?: number | undefined;
                     };
                     ranked: {
-                        dimension: 'agent' | 'model' | 'session' | 'project' | 'workspace' | 'backendMode' | 'source' | 'machine';
+                        dimension: 'source' | 'agent' | 'model' | 'session' | 'project' | 'workspace' | 'backendMode' | 'machine';
                         totalEntries: number;
                         returnedEntries: number;
                         complete: boolean;
@@ -1169,7 +1036,7 @@ export type UsageActionResultById = {
                     status: 'unknown' | 'partial' | 'complete_for_supplied_facts' | 'unavailable';
                     method: 'unknown' | 'runtime' | 'mixed' | 'logs' | 'context_only';
                 };
-                fieldCoverage: Partial<Record<'calendar' | 'projects' | 'tokens' | 'peakParallel' | 'activeDays' | 'agentMix' | 'highlights' | 'name' | 'agentActiveDays' | 'weeklyAgentMix' | 'weeklyPeakParallel' | 'dayNightActivity' | 'machineKinds' | 'footprint' | 'avatar' | 'bio' | 'links' | 'since' | 'agentTime' | 'mergedPrs' | 'currentStreak' | 'bestStreak' | 'sourceSplit' | 'punch' | 'sessionDurations', {
+                fieldCoverage: Partial<Record<'tokens' | 'activeDays' | 'agentMix' | 'highlights' | 'calendar' | 'projects' | 'peakParallel' | 'name' | 'agentActiveDays' | 'weeklyAgentMix' | 'weeklyPeakParallel' | 'dayNightActivity' | 'machineKinds' | 'footprint' | 'avatar' | 'bio' | 'links' | 'since' | 'agentTime' | 'mergedPrs' | 'currentStreak' | 'bestStreak' | 'sourceSplit' | 'punch' | 'sessionDurations', {
                     status: 'unknown' | 'partial' | 'complete_for_supplied_facts' | 'unavailable';
                     method: 'unknown' | 'runtime' | 'mixed' | 'logs' | 'context_only';
                 }>>;
@@ -1183,7 +1050,7 @@ export type UsageActionResultById = {
                     peakParallel?: number | undefined;
                     calendar?: {
                         date: string;
-                        level: 0 | 4 | 1 | 2 | 3 | null;
+                        level: 0 | 1 | 4 | 3 | 2 | null;
                     }[] | undefined;
                     agentMix?: {
                         agentId: string;
@@ -1202,7 +1069,7 @@ export type UsageActionResultById = {
                     punch?: {
                         weekday: number;
                         hour: number;
-                        level: 0 | 4 | 1 | 2 | 3 | null;
+                        level: 0 | 1 | 4 | 3 | 2 | null;
                     }[] | undefined;
                     highlights?: {
                         kind: 'merged_prs' | 'peak_parallel' | 'active_days';
@@ -1279,7 +1146,7 @@ export type UsageActionResultById = {
                         peakParallel?: number | undefined;
                         calendar?: {
                             date: string;
-                            level: 0 | 4 | 1 | 2 | 3 | null;
+                            level: 0 | 1 | 4 | 3 | 2 | null;
                         }[] | undefined;
                         agentMix?: {
                             agentId: string;
@@ -1298,7 +1165,7 @@ export type UsageActionResultById = {
                         punch?: {
                             weekday: number;
                             hour: number;
-                            level: 0 | 4 | 1 | 2 | 3 | null;
+                            level: 0 | 1 | 4 | 3 | 2 | null;
                         }[] | undefined;
                         highlights?: {
                             kind: 'merged_prs' | 'peak_parallel' | 'active_days';
@@ -1377,8 +1244,8 @@ export type UsageActionResultById = {
             v: 1;
             style: 'daybreak' | 'sigil' | 'editorial' | 'glass' | 'holo' | 'skyline' | 'terminal';
             format: 'square' | 'story' | 'link-preview';
-            selectedFields: ('tokens' | 'activeDays' | 'streak' | 'modelMix' | 'agentMix' | 'cache' | 'rhythm' | 'parallel' | 'night' | 'work' | 'coach' | 'highlights' | 'names' | 'dollars')[];
-            unavailableFields: ('tokens' | 'activeDays' | 'streak' | 'modelMix' | 'agentMix' | 'cache' | 'rhythm' | 'parallel' | 'night' | 'work' | 'coach' | 'highlights' | 'names' | 'dollars')[];
+            selectedFields: ('tokens' | 'activeDays' | 'streak' | 'agentMix' | 'rhythm' | 'parallel' | 'work' | 'highlights' | 'modelMix' | 'cache' | 'night' | 'coach' | 'names' | 'dollars')[];
+            unavailableFields: ('tokens' | 'activeDays' | 'streak' | 'agentMix' | 'rhythm' | 'parallel' | 'work' | 'highlights' | 'modelMix' | 'cache' | 'night' | 'coach' | 'names' | 'dollars')[];
             period: {
                 startMs: number;
                 endMs: number;
@@ -1389,14 +1256,14 @@ export type UsageActionResultById = {
                 accounting: {
                     status: 'unknown' | 'complete' | 'partial';
                     reasons: ('missing_baseline' | 'counter_discontinuity' | 'ambiguous_overlap' | 'unattributed_model' | 'unpriced_tokens' | 'unknown_source' | 'incomplete_history' | 'ranked_truncation' | 'unknown_token_categories')[];
-                    missingDimensions: ('agent' | 'model' | 'session' | 'project' | 'workspace' | 'backendMode' | 'source' | 'machine')[];
+                    missingDimensions: ('source' | 'agent' | 'model' | 'session' | 'project' | 'workspace' | 'backendMode' | 'machine')[];
                     range: {
                         complete: boolean;
                         startMs?: number | undefined;
                         endMs?: number | undefined;
                     };
                     ranked: {
-                        dimension: 'agent' | 'model' | 'session' | 'project' | 'workspace' | 'backendMode' | 'source' | 'machine';
+                        dimension: 'source' | 'agent' | 'model' | 'session' | 'project' | 'workspace' | 'backendMode' | 'machine';
                         totalEntries: number;
                         returnedEntries: number;
                         complete: boolean;
@@ -1540,7 +1407,7 @@ export type UsageActionResultById = {
                     status: 'unknown' | 'partial' | 'complete_for_supplied_facts' | 'unavailable';
                     method: 'unknown' | 'runtime' | 'mixed' | 'logs' | 'context_only';
                 };
-                fieldCoverage: Partial<Record<'calendar' | 'projects' | 'tokens' | 'peakParallel' | 'activeDays' | 'agentMix' | 'highlights' | 'name' | 'agentActiveDays' | 'weeklyAgentMix' | 'weeklyPeakParallel' | 'dayNightActivity' | 'machineKinds' | 'footprint' | 'avatar' | 'bio' | 'links' | 'since' | 'agentTime' | 'mergedPrs' | 'currentStreak' | 'bestStreak' | 'sourceSplit' | 'punch' | 'sessionDurations', {
+                fieldCoverage: Partial<Record<'tokens' | 'activeDays' | 'agentMix' | 'highlights' | 'calendar' | 'projects' | 'peakParallel' | 'name' | 'agentActiveDays' | 'weeklyAgentMix' | 'weeklyPeakParallel' | 'dayNightActivity' | 'machineKinds' | 'footprint' | 'avatar' | 'bio' | 'links' | 'since' | 'agentTime' | 'mergedPrs' | 'currentStreak' | 'bestStreak' | 'sourceSplit' | 'punch' | 'sessionDurations', {
                     status: 'unknown' | 'partial' | 'complete_for_supplied_facts' | 'unavailable';
                     method: 'unknown' | 'runtime' | 'mixed' | 'logs' | 'context_only';
                 }>>;
@@ -1554,7 +1421,7 @@ export type UsageActionResultById = {
                     peakParallel?: number | undefined;
                     calendar?: {
                         date: string;
-                        level: 0 | 4 | 1 | 2 | 3 | null;
+                        level: 0 | 1 | 4 | 3 | 2 | null;
                     }[] | undefined;
                     agentMix?: {
                         agentId: string;
@@ -1573,7 +1440,7 @@ export type UsageActionResultById = {
                     punch?: {
                         weekday: number;
                         hour: number;
-                        level: 0 | 4 | 1 | 2 | 3 | null;
+                        level: 0 | 1 | 4 | 3 | 2 | null;
                     }[] | undefined;
                     highlights?: {
                         kind: 'merged_prs' | 'peak_parallel' | 'active_days';
@@ -1650,7 +1517,7 @@ export type UsageActionResultById = {
                         peakParallel?: number | undefined;
                         calendar?: {
                             date: string;
-                            level: 0 | 4 | 1 | 2 | 3 | null;
+                            level: 0 | 1 | 4 | 3 | 2 | null;
                         }[] | undefined;
                         agentMix?: {
                             agentId: string;
@@ -1669,7 +1536,7 @@ export type UsageActionResultById = {
                         punch?: {
                             weekday: number;
                             hour: number;
-                            level: 0 | 4 | 1 | 2 | 3 | null;
+                            level: 0 | 1 | 4 | 3 | 2 | null;
                         }[] | undefined;
                         highlights?: {
                             kind: 'merged_prs' | 'peak_parallel' | 'active_days';
@@ -1749,8 +1616,8 @@ export type UsageActionResultById = {
             v: 1;
             style: 'daybreak' | 'sigil' | 'editorial' | 'glass' | 'holo' | 'skyline' | 'terminal';
             format: 'square' | 'story' | 'link-preview';
-            selectedFields: ('tokens' | 'activeDays' | 'streak' | 'modelMix' | 'agentMix' | 'cache' | 'rhythm' | 'parallel' | 'night' | 'work' | 'coach' | 'highlights' | 'names' | 'dollars')[];
-            unavailableFields: ('tokens' | 'activeDays' | 'streak' | 'modelMix' | 'agentMix' | 'cache' | 'rhythm' | 'parallel' | 'night' | 'work' | 'coach' | 'highlights' | 'names' | 'dollars')[];
+            selectedFields: ('tokens' | 'activeDays' | 'streak' | 'agentMix' | 'rhythm' | 'parallel' | 'work' | 'highlights' | 'modelMix' | 'cache' | 'night' | 'coach' | 'names' | 'dollars')[];
+            unavailableFields: ('tokens' | 'activeDays' | 'streak' | 'agentMix' | 'rhythm' | 'parallel' | 'work' | 'highlights' | 'modelMix' | 'cache' | 'night' | 'coach' | 'names' | 'dollars')[];
             period: {
                 startMs: number;
                 endMs: number;
@@ -1761,14 +1628,14 @@ export type UsageActionResultById = {
                 accounting: {
                     status: 'unknown' | 'complete' | 'partial';
                     reasons: ('missing_baseline' | 'counter_discontinuity' | 'ambiguous_overlap' | 'unattributed_model' | 'unpriced_tokens' | 'unknown_source' | 'incomplete_history' | 'ranked_truncation' | 'unknown_token_categories')[];
-                    missingDimensions: ('agent' | 'model' | 'session' | 'project' | 'workspace' | 'backendMode' | 'source' | 'machine')[];
+                    missingDimensions: ('source' | 'agent' | 'model' | 'session' | 'project' | 'workspace' | 'backendMode' | 'machine')[];
                     range: {
                         complete: boolean;
                         startMs?: number | undefined;
                         endMs?: number | undefined;
                     };
                     ranked: {
-                        dimension: 'agent' | 'model' | 'session' | 'project' | 'workspace' | 'backendMode' | 'source' | 'machine';
+                        dimension: 'source' | 'agent' | 'model' | 'session' | 'project' | 'workspace' | 'backendMode' | 'machine';
                         totalEntries: number;
                         returnedEntries: number;
                         complete: boolean;
@@ -1912,7 +1779,7 @@ export type UsageActionResultById = {
                     status: 'unknown' | 'partial' | 'complete_for_supplied_facts' | 'unavailable';
                     method: 'unknown' | 'runtime' | 'mixed' | 'logs' | 'context_only';
                 };
-                fieldCoverage: Partial<Record<'calendar' | 'projects' | 'tokens' | 'peakParallel' | 'activeDays' | 'agentMix' | 'highlights' | 'name' | 'agentActiveDays' | 'weeklyAgentMix' | 'weeklyPeakParallel' | 'dayNightActivity' | 'machineKinds' | 'footprint' | 'avatar' | 'bio' | 'links' | 'since' | 'agentTime' | 'mergedPrs' | 'currentStreak' | 'bestStreak' | 'sourceSplit' | 'punch' | 'sessionDurations', {
+                fieldCoverage: Partial<Record<'tokens' | 'activeDays' | 'agentMix' | 'highlights' | 'calendar' | 'projects' | 'peakParallel' | 'name' | 'agentActiveDays' | 'weeklyAgentMix' | 'weeklyPeakParallel' | 'dayNightActivity' | 'machineKinds' | 'footprint' | 'avatar' | 'bio' | 'links' | 'since' | 'agentTime' | 'mergedPrs' | 'currentStreak' | 'bestStreak' | 'sourceSplit' | 'punch' | 'sessionDurations', {
                     status: 'unknown' | 'partial' | 'complete_for_supplied_facts' | 'unavailable';
                     method: 'unknown' | 'runtime' | 'mixed' | 'logs' | 'context_only';
                 }>>;
@@ -1926,7 +1793,7 @@ export type UsageActionResultById = {
                     peakParallel?: number | undefined;
                     calendar?: {
                         date: string;
-                        level: 0 | 4 | 1 | 2 | 3 | null;
+                        level: 0 | 1 | 4 | 3 | 2 | null;
                     }[] | undefined;
                     agentMix?: {
                         agentId: string;
@@ -1945,7 +1812,7 @@ export type UsageActionResultById = {
                     punch?: {
                         weekday: number;
                         hour: number;
-                        level: 0 | 4 | 1 | 2 | 3 | null;
+                        level: 0 | 1 | 4 | 3 | 2 | null;
                     }[] | undefined;
                     highlights?: {
                         kind: 'merged_prs' | 'peak_parallel' | 'active_days';
@@ -2022,7 +1889,7 @@ export type UsageActionResultById = {
                         peakParallel?: number | undefined;
                         calendar?: {
                             date: string;
-                            level: 0 | 4 | 1 | 2 | 3 | null;
+                            level: 0 | 1 | 4 | 3 | 2 | null;
                         }[] | undefined;
                         agentMix?: {
                             agentId: string;
@@ -2041,7 +1908,7 @@ export type UsageActionResultById = {
                         punch?: {
                             weekday: number;
                             hour: number;
-                            level: 0 | 4 | 1 | 2 | 3 | null;
+                            level: 0 | 1 | 4 | 3 | 2 | null;
                         }[] | undefined;
                         highlights?: {
                             kind: 'merged_prs' | 'peak_parallel' | 'active_days';
@@ -2171,8 +2038,8 @@ export type UsageActionResultById = {
             v: 1;
             style: 'daybreak' | 'sigil' | 'editorial' | 'glass' | 'holo' | 'skyline' | 'terminal';
             format: 'square' | 'story' | 'link-preview';
-            selectedFields: ('tokens' | 'activeDays' | 'streak' | 'modelMix' | 'agentMix' | 'cache' | 'rhythm' | 'parallel' | 'night' | 'work' | 'coach' | 'highlights' | 'names' | 'dollars')[];
-            unavailableFields: ('tokens' | 'activeDays' | 'streak' | 'modelMix' | 'agentMix' | 'cache' | 'rhythm' | 'parallel' | 'night' | 'work' | 'coach' | 'highlights' | 'names' | 'dollars')[];
+            selectedFields: ('tokens' | 'activeDays' | 'streak' | 'agentMix' | 'rhythm' | 'parallel' | 'work' | 'highlights' | 'modelMix' | 'cache' | 'night' | 'coach' | 'names' | 'dollars')[];
+            unavailableFields: ('tokens' | 'activeDays' | 'streak' | 'agentMix' | 'rhythm' | 'parallel' | 'work' | 'highlights' | 'modelMix' | 'cache' | 'night' | 'coach' | 'names' | 'dollars')[];
             period: {
                 startMs: number;
                 endMs: number;
@@ -2183,14 +2050,14 @@ export type UsageActionResultById = {
                 accounting: {
                     status: 'unknown' | 'complete' | 'partial';
                     reasons: ('missing_baseline' | 'counter_discontinuity' | 'ambiguous_overlap' | 'unattributed_model' | 'unpriced_tokens' | 'unknown_source' | 'incomplete_history' | 'ranked_truncation' | 'unknown_token_categories')[];
-                    missingDimensions: ('agent' | 'model' | 'session' | 'project' | 'workspace' | 'backendMode' | 'source' | 'machine')[];
+                    missingDimensions: ('source' | 'agent' | 'model' | 'session' | 'project' | 'workspace' | 'backendMode' | 'machine')[];
                     range: {
                         complete: boolean;
                         startMs?: number | undefined;
                         endMs?: number | undefined;
                     };
                     ranked: {
-                        dimension: 'agent' | 'model' | 'session' | 'project' | 'workspace' | 'backendMode' | 'source' | 'machine';
+                        dimension: 'source' | 'agent' | 'model' | 'session' | 'project' | 'workspace' | 'backendMode' | 'machine';
                         totalEntries: number;
                         returnedEntries: number;
                         complete: boolean;
@@ -2334,7 +2201,7 @@ export type UsageActionResultById = {
                     status: 'unknown' | 'partial' | 'complete_for_supplied_facts' | 'unavailable';
                     method: 'unknown' | 'runtime' | 'mixed' | 'logs' | 'context_only';
                 };
-                fieldCoverage: Partial<Record<'calendar' | 'projects' | 'tokens' | 'peakParallel' | 'activeDays' | 'agentMix' | 'highlights' | 'name' | 'agentActiveDays' | 'weeklyAgentMix' | 'weeklyPeakParallel' | 'dayNightActivity' | 'machineKinds' | 'footprint' | 'avatar' | 'bio' | 'links' | 'since' | 'agentTime' | 'mergedPrs' | 'currentStreak' | 'bestStreak' | 'sourceSplit' | 'punch' | 'sessionDurations', {
+                fieldCoverage: Partial<Record<'tokens' | 'activeDays' | 'agentMix' | 'highlights' | 'calendar' | 'projects' | 'peakParallel' | 'name' | 'agentActiveDays' | 'weeklyAgentMix' | 'weeklyPeakParallel' | 'dayNightActivity' | 'machineKinds' | 'footprint' | 'avatar' | 'bio' | 'links' | 'since' | 'agentTime' | 'mergedPrs' | 'currentStreak' | 'bestStreak' | 'sourceSplit' | 'punch' | 'sessionDurations', {
                     status: 'unknown' | 'partial' | 'complete_for_supplied_facts' | 'unavailable';
                     method: 'unknown' | 'runtime' | 'mixed' | 'logs' | 'context_only';
                 }>>;
@@ -2348,7 +2215,7 @@ export type UsageActionResultById = {
                     peakParallel?: number | undefined;
                     calendar?: {
                         date: string;
-                        level: 0 | 4 | 1 | 2 | 3 | null;
+                        level: 0 | 1 | 4 | 3 | 2 | null;
                     }[] | undefined;
                     agentMix?: {
                         agentId: string;
@@ -2367,7 +2234,7 @@ export type UsageActionResultById = {
                     punch?: {
                         weekday: number;
                         hour: number;
-                        level: 0 | 4 | 1 | 2 | 3 | null;
+                        level: 0 | 1 | 4 | 3 | 2 | null;
                     }[] | undefined;
                     highlights?: {
                         kind: 'merged_prs' | 'peak_parallel' | 'active_days';
@@ -2444,7 +2311,7 @@ export type UsageActionResultById = {
                         peakParallel?: number | undefined;
                         calendar?: {
                             date: string;
-                            level: 0 | 4 | 1 | 2 | 3 | null;
+                            level: 0 | 1 | 4 | 3 | 2 | null;
                         }[] | undefined;
                         agentMix?: {
                             agentId: string;
@@ -2463,7 +2330,7 @@ export type UsageActionResultById = {
                         punch?: {
                             weekday: number;
                             hour: number;
-                            level: 0 | 4 | 1 | 2 | 3 | null;
+                            level: 0 | 1 | 4 | 3 | 2 | null;
                         }[] | undefined;
                         highlights?: {
                             kind: 'merged_prs' | 'peak_parallel' | 'active_days';
@@ -2541,7 +2408,7 @@ export type UsageActionResultById = {
             asOfMs: number | null;
             fileName: string;
             mediaType: 'image/png';
-            selectedFields: ('tokens' | 'activeDays' | 'streak' | 'modelMix' | 'agentMix' | 'cache' | 'rhythm' | 'parallel' | 'night' | 'work' | 'coach' | 'highlights' | 'names' | 'dollars')[];
+            selectedFields: ('tokens' | 'activeDays' | 'streak' | 'agentMix' | 'rhythm' | 'parallel' | 'work' | 'highlights' | 'modelMix' | 'cache' | 'night' | 'coach' | 'names' | 'dollars')[];
         };
     } | {
         kind: 'unavailable';
@@ -2551,8 +2418,8 @@ export type UsageActionResultById = {
             v: 1;
             style: 'daybreak' | 'sigil' | 'editorial' | 'glass' | 'holo' | 'skyline' | 'terminal';
             format: 'square' | 'story' | 'link-preview';
-            selectedFields: ('tokens' | 'activeDays' | 'streak' | 'modelMix' | 'agentMix' | 'cache' | 'rhythm' | 'parallel' | 'night' | 'work' | 'coach' | 'highlights' | 'names' | 'dollars')[];
-            unavailableFields: ('tokens' | 'activeDays' | 'streak' | 'modelMix' | 'agentMix' | 'cache' | 'rhythm' | 'parallel' | 'night' | 'work' | 'coach' | 'highlights' | 'names' | 'dollars')[];
+            selectedFields: ('tokens' | 'activeDays' | 'streak' | 'agentMix' | 'rhythm' | 'parallel' | 'work' | 'highlights' | 'modelMix' | 'cache' | 'night' | 'coach' | 'names' | 'dollars')[];
+            unavailableFields: ('tokens' | 'activeDays' | 'streak' | 'agentMix' | 'rhythm' | 'parallel' | 'work' | 'highlights' | 'modelMix' | 'cache' | 'night' | 'coach' | 'names' | 'dollars')[];
             period: {
                 startMs: number;
                 endMs: number;
@@ -2563,14 +2430,14 @@ export type UsageActionResultById = {
                 accounting: {
                     status: 'unknown' | 'complete' | 'partial';
                     reasons: ('missing_baseline' | 'counter_discontinuity' | 'ambiguous_overlap' | 'unattributed_model' | 'unpriced_tokens' | 'unknown_source' | 'incomplete_history' | 'ranked_truncation' | 'unknown_token_categories')[];
-                    missingDimensions: ('agent' | 'model' | 'session' | 'project' | 'workspace' | 'backendMode' | 'source' | 'machine')[];
+                    missingDimensions: ('source' | 'agent' | 'model' | 'session' | 'project' | 'workspace' | 'backendMode' | 'machine')[];
                     range: {
                         complete: boolean;
                         startMs?: number | undefined;
                         endMs?: number | undefined;
                     };
                     ranked: {
-                        dimension: 'agent' | 'model' | 'session' | 'project' | 'workspace' | 'backendMode' | 'source' | 'machine';
+                        dimension: 'source' | 'agent' | 'model' | 'session' | 'project' | 'workspace' | 'backendMode' | 'machine';
                         totalEntries: number;
                         returnedEntries: number;
                         complete: boolean;
@@ -2714,7 +2581,7 @@ export type UsageActionResultById = {
                     status: 'unknown' | 'partial' | 'complete_for_supplied_facts' | 'unavailable';
                     method: 'unknown' | 'runtime' | 'mixed' | 'logs' | 'context_only';
                 };
-                fieldCoverage: Partial<Record<'calendar' | 'projects' | 'tokens' | 'peakParallel' | 'activeDays' | 'agentMix' | 'highlights' | 'name' | 'agentActiveDays' | 'weeklyAgentMix' | 'weeklyPeakParallel' | 'dayNightActivity' | 'machineKinds' | 'footprint' | 'avatar' | 'bio' | 'links' | 'since' | 'agentTime' | 'mergedPrs' | 'currentStreak' | 'bestStreak' | 'sourceSplit' | 'punch' | 'sessionDurations', {
+                fieldCoverage: Partial<Record<'tokens' | 'activeDays' | 'agentMix' | 'highlights' | 'calendar' | 'projects' | 'peakParallel' | 'name' | 'agentActiveDays' | 'weeklyAgentMix' | 'weeklyPeakParallel' | 'dayNightActivity' | 'machineKinds' | 'footprint' | 'avatar' | 'bio' | 'links' | 'since' | 'agentTime' | 'mergedPrs' | 'currentStreak' | 'bestStreak' | 'sourceSplit' | 'punch' | 'sessionDurations', {
                     status: 'unknown' | 'partial' | 'complete_for_supplied_facts' | 'unavailable';
                     method: 'unknown' | 'runtime' | 'mixed' | 'logs' | 'context_only';
                 }>>;
@@ -2728,7 +2595,7 @@ export type UsageActionResultById = {
                     peakParallel?: number | undefined;
                     calendar?: {
                         date: string;
-                        level: 0 | 4 | 1 | 2 | 3 | null;
+                        level: 0 | 1 | 4 | 3 | 2 | null;
                     }[] | undefined;
                     agentMix?: {
                         agentId: string;
@@ -2747,7 +2614,7 @@ export type UsageActionResultById = {
                     punch?: {
                         weekday: number;
                         hour: number;
-                        level: 0 | 4 | 1 | 2 | 3 | null;
+                        level: 0 | 1 | 4 | 3 | 2 | null;
                     }[] | undefined;
                     highlights?: {
                         kind: 'merged_prs' | 'peak_parallel' | 'active_days';
@@ -2824,7 +2691,7 @@ export type UsageActionResultById = {
                         peakParallel?: number | undefined;
                         calendar?: {
                             date: string;
-                            level: 0 | 4 | 1 | 2 | 3 | null;
+                            level: 0 | 1 | 4 | 3 | 2 | null;
                         }[] | undefined;
                         agentMix?: {
                             agentId: string;
@@ -2843,7 +2710,7 @@ export type UsageActionResultById = {
                         punch?: {
                             weekday: number;
                             hour: number;
-                            level: 0 | 4 | 1 | 2 | 3 | null;
+                            level: 0 | 1 | 4 | 3 | 2 | null;
                         }[] | undefined;
                         highlights?: {
                             kind: 'merged_prs' | 'peak_parallel' | 'active_days';
@@ -2921,8 +2788,8 @@ export type UsageActionResultById = {
         v: 1;
         style: 'daybreak' | 'sigil' | 'editorial' | 'glass' | 'holo' | 'skyline' | 'terminal';
         format: 'square' | 'story' | 'link-preview';
-        selectedFields: ('tokens' | 'activeDays' | 'streak' | 'modelMix' | 'agentMix' | 'cache' | 'rhythm' | 'parallel' | 'night' | 'work' | 'coach' | 'highlights' | 'names' | 'dollars')[];
-        unavailableFields: ('tokens' | 'activeDays' | 'streak' | 'modelMix' | 'agentMix' | 'cache' | 'rhythm' | 'parallel' | 'night' | 'work' | 'coach' | 'highlights' | 'names' | 'dollars')[];
+        selectedFields: ('tokens' | 'activeDays' | 'streak' | 'agentMix' | 'rhythm' | 'parallel' | 'work' | 'highlights' | 'modelMix' | 'cache' | 'night' | 'coach' | 'names' | 'dollars')[];
+        unavailableFields: ('tokens' | 'activeDays' | 'streak' | 'agentMix' | 'rhythm' | 'parallel' | 'work' | 'highlights' | 'modelMix' | 'cache' | 'night' | 'coach' | 'names' | 'dollars')[];
         period: {
             startMs: number;
             endMs: number;
@@ -2933,14 +2800,14 @@ export type UsageActionResultById = {
             accounting: {
                 status: 'unknown' | 'complete' | 'partial';
                 reasons: ('missing_baseline' | 'counter_discontinuity' | 'ambiguous_overlap' | 'unattributed_model' | 'unpriced_tokens' | 'unknown_source' | 'incomplete_history' | 'ranked_truncation' | 'unknown_token_categories')[];
-                missingDimensions: ('agent' | 'model' | 'session' | 'project' | 'workspace' | 'backendMode' | 'source' | 'machine')[];
+                missingDimensions: ('source' | 'agent' | 'model' | 'session' | 'project' | 'workspace' | 'backendMode' | 'machine')[];
                 range: {
                     complete: boolean;
                     startMs?: number | undefined;
                     endMs?: number | undefined;
                 };
                 ranked: {
-                    dimension: 'agent' | 'model' | 'session' | 'project' | 'workspace' | 'backendMode' | 'source' | 'machine';
+                    dimension: 'source' | 'agent' | 'model' | 'session' | 'project' | 'workspace' | 'backendMode' | 'machine';
                     totalEntries: number;
                     returnedEntries: number;
                     complete: boolean;
@@ -3084,7 +2951,7 @@ export type UsageActionResultById = {
                 status: 'unknown' | 'partial' | 'complete_for_supplied_facts' | 'unavailable';
                 method: 'unknown' | 'runtime' | 'mixed' | 'logs' | 'context_only';
             };
-            fieldCoverage: Partial<Record<'calendar' | 'projects' | 'tokens' | 'peakParallel' | 'activeDays' | 'agentMix' | 'highlights' | 'name' | 'agentActiveDays' | 'weeklyAgentMix' | 'weeklyPeakParallel' | 'dayNightActivity' | 'machineKinds' | 'footprint' | 'avatar' | 'bio' | 'links' | 'since' | 'agentTime' | 'mergedPrs' | 'currentStreak' | 'bestStreak' | 'sourceSplit' | 'punch' | 'sessionDurations', {
+            fieldCoverage: Partial<Record<'tokens' | 'activeDays' | 'agentMix' | 'highlights' | 'calendar' | 'projects' | 'peakParallel' | 'name' | 'agentActiveDays' | 'weeklyAgentMix' | 'weeklyPeakParallel' | 'dayNightActivity' | 'machineKinds' | 'footprint' | 'avatar' | 'bio' | 'links' | 'since' | 'agentTime' | 'mergedPrs' | 'currentStreak' | 'bestStreak' | 'sourceSplit' | 'punch' | 'sessionDurations', {
                 status: 'unknown' | 'partial' | 'complete_for_supplied_facts' | 'unavailable';
                 method: 'unknown' | 'runtime' | 'mixed' | 'logs' | 'context_only';
             }>>;
@@ -3098,7 +2965,7 @@ export type UsageActionResultById = {
                 peakParallel?: number | undefined;
                 calendar?: {
                     date: string;
-                    level: 0 | 4 | 1 | 2 | 3 | null;
+                    level: 0 | 1 | 4 | 3 | 2 | null;
                 }[] | undefined;
                 agentMix?: {
                     agentId: string;
@@ -3117,7 +2984,7 @@ export type UsageActionResultById = {
                 punch?: {
                     weekday: number;
                     hour: number;
-                    level: 0 | 4 | 1 | 2 | 3 | null;
+                    level: 0 | 1 | 4 | 3 | 2 | null;
                 }[] | undefined;
                 highlights?: {
                     kind: 'merged_prs' | 'peak_parallel' | 'active_days';
@@ -3194,7 +3061,7 @@ export type UsageActionResultById = {
                     peakParallel?: number | undefined;
                     calendar?: {
                         date: string;
-                        level: 0 | 4 | 1 | 2 | 3 | null;
+                        level: 0 | 1 | 4 | 3 | 2 | null;
                     }[] | undefined;
                     agentMix?: {
                         agentId: string;
@@ -3213,7 +3080,7 @@ export type UsageActionResultById = {
                     punch?: {
                         weekday: number;
                         hour: number;
-                        level: 0 | 4 | 1 | 2 | 3 | null;
+                        level: 0 | 1 | 4 | 3 | 2 | null;
                     }[] | undefined;
                     highlights?: {
                         kind: 'merged_prs' | 'peak_parallel' | 'active_days';
@@ -3315,7 +3182,7 @@ export type UsageActionResultById = {
                 includeSessionEvidence: boolean;
                 includeTranscriptEvidence: boolean;
                 includeWorkEvidence: boolean;
-                breakdown: ('agent' | 'model' | 'session' | 'project' | 'workspace' | 'backendMode' | 'source' | 'machine')[];
+                breakdown: ('source' | 'agent' | 'model' | 'session' | 'project' | 'workspace' | 'backendMode' | 'machine')[];
                 modelIds: string[];
                 workspaceIds: string[];
                 backendModes: string[];
@@ -3354,7 +3221,7 @@ export type UsageActionResultById = {
                 includeSessionEvidence: boolean;
                 includeTranscriptEvidence: boolean;
                 includeWorkEvidence: boolean;
-                breakdown: ('agent' | 'model' | 'session' | 'project' | 'workspace' | 'backendMode' | 'source' | 'machine')[];
+                breakdown: ('source' | 'agent' | 'model' | 'session' | 'project' | 'workspace' | 'backendMode' | 'machine')[];
                 modelIds: string[];
                 workspaceIds: string[];
                 backendModes: string[];
@@ -4319,14 +4186,14 @@ export type UsageActionResultById = {
                 coverage?: {
                     status: 'unknown' | 'complete' | 'partial';
                     reasons: ('missing_baseline' | 'counter_discontinuity' | 'ambiguous_overlap' | 'unattributed_model' | 'unpriced_tokens' | 'unknown_source' | 'incomplete_history' | 'ranked_truncation' | 'unknown_token_categories')[];
-                    missingDimensions: ('agent' | 'model' | 'session' | 'project' | 'workspace' | 'backendMode' | 'source' | 'machine')[];
+                    missingDimensions: ('source' | 'agent' | 'model' | 'session' | 'project' | 'workspace' | 'backendMode' | 'machine')[];
                     range: {
                         complete: boolean;
                         startMs?: number | undefined;
                         endMs?: number | undefined;
                     };
                     ranked: {
-                        dimension: 'agent' | 'model' | 'session' | 'project' | 'workspace' | 'backendMode' | 'source' | 'machine';
+                        dimension: 'source' | 'agent' | 'model' | 'session' | 'project' | 'workspace' | 'backendMode' | 'machine';
                         totalEntries: number;
                         returnedEntries: number;
                         complete: boolean;
@@ -4419,7 +4286,7 @@ export type UsageActionResultById = {
                             code?: string | undefined;
                             rawScope?: string | undefined;
                             remainingPct?: number | null | undefined;
-                            scope?: 'unknown' | 'model' | 'session' | 'tokens' | 'requests' | 'primary' | 'secondary' | 'daily' | 'weekly' | 'monthly' | 'five_hour' | 'seven_day' | 'rolling' | undefined;
+                            scope?: 'unknown' | 'tokens' | 'model' | 'session' | 'requests' | 'primary' | 'secondary' | 'daily' | 'weekly' | 'monthly' | 'five_hour' | 'seven_day' | 'rolling' | undefined;
                             providerLimitId?: string | undefined;
                             limitCategory?: 'unknown' | 'disabled' | 'usage_limit' | 'rate_limit' | 'capacity' | 'temporary_throttle' | 'auth_invalid' | 'plan_invalid' | 'validation_failed' | undefined;
                         };
@@ -4434,8 +4301,9 @@ export type UsageActionResultById = {
                         isExhausted?: boolean | undefined;
                         isSoftLimited?: boolean | undefined;
                         isCapacityLimited?: boolean | undefined;
+                        currency?: string | undefined;
                         source?: 'unknown' | 'cached' | 'provider_api' | 'background_fetch' | 'runtime_event' | 'runtime_probe' | 'in_band_snapshot' | 'in_band_provider_snapshot' | 'manual_refresh' | 'user_probe' | undefined;
-                        scope?: 'unknown' | 'model' | 'session' | 'tokens' | 'requests' | 'primary' | 'secondary' | 'daily' | 'weekly' | 'monthly' | 'five_hour' | 'seven_day' | 'rolling' | undefined;
+                        scope?: 'unknown' | 'tokens' | 'model' | 'session' | 'requests' | 'primary' | 'secondary' | 'daily' | 'weekly' | 'monthly' | 'five_hour' | 'seven_day' | 'rolling' | undefined;
                         limitScope?: 'unknown' | 'model' | 'session' | 'workspace' | 'account' | 'provider' | 'organization' | undefined;
                         confidence?: 'unknown' | 'exact' | 'estimated' | 'stale' | 'derived' | undefined;
                     }[];
@@ -4628,7 +4496,7 @@ export type UsageActionResultById = {
                                     code?: string | undefined;
                                     rawScope?: string | undefined;
                                     remainingPct?: number | null | undefined;
-                                    scope?: 'unknown' | 'model' | 'session' | 'tokens' | 'requests' | 'primary' | 'secondary' | 'daily' | 'weekly' | 'monthly' | 'five_hour' | 'seven_day' | 'rolling' | undefined;
+                                    scope?: 'unknown' | 'tokens' | 'model' | 'session' | 'requests' | 'primary' | 'secondary' | 'daily' | 'weekly' | 'monthly' | 'five_hour' | 'seven_day' | 'rolling' | undefined;
                                     providerLimitId?: string | undefined;
                                     limitCategory?: 'unknown' | 'disabled' | 'usage_limit' | 'rate_limit' | 'capacity' | 'temporary_throttle' | 'auth_invalid' | 'plan_invalid' | 'validation_failed' | undefined;
                                 };
@@ -4643,8 +4511,9 @@ export type UsageActionResultById = {
                                 isExhausted?: boolean | undefined;
                                 isSoftLimited?: boolean | undefined;
                                 isCapacityLimited?: boolean | undefined;
+                                currency?: string | undefined;
                                 source?: 'unknown' | 'cached' | 'provider_api' | 'background_fetch' | 'runtime_event' | 'runtime_probe' | 'in_band_snapshot' | 'in_band_provider_snapshot' | 'manual_refresh' | 'user_probe' | undefined;
-                                scope?: 'unknown' | 'model' | 'session' | 'tokens' | 'requests' | 'primary' | 'secondary' | 'daily' | 'weekly' | 'monthly' | 'five_hour' | 'seven_day' | 'rolling' | undefined;
+                                scope?: 'unknown' | 'tokens' | 'model' | 'session' | 'requests' | 'primary' | 'secondary' | 'daily' | 'weekly' | 'monthly' | 'five_hour' | 'seven_day' | 'rolling' | undefined;
                                 limitScope?: 'unknown' | 'model' | 'session' | 'workspace' | 'account' | 'provider' | 'organization' | undefined;
                                 confidence?: 'unknown' | 'exact' | 'estimated' | 'stale' | 'derived' | undefined;
                             }[];
@@ -4796,7 +4665,7 @@ export type UsageActionResultById = {
                     meterDefinitions: {
                         details: {
                             code?: string | undefined;
-                            scope?: 'unknown' | 'model' | 'session' | 'tokens' | 'requests' | 'primary' | 'secondary' | 'daily' | 'weekly' | 'monthly' | 'five_hour' | 'seven_day' | 'rolling' | undefined;
+                            scope?: 'unknown' | 'tokens' | 'model' | 'session' | 'requests' | 'primary' | 'secondary' | 'daily' | 'weekly' | 'monthly' | 'five_hour' | 'seven_day' | 'rolling' | undefined;
                             providerLimitId?: string | undefined;
                             note?: string | null | undefined;
                             rawScope?: string | undefined;
@@ -4807,8 +4676,9 @@ export type UsageActionResultById = {
                         status: 'estimated' | 'unavailable' | 'ok';
                         unit: 'unknown' | 'tokens' | 'count' | 'credits' | 'usd' | 'requests';
                         source?: 'unknown' | 'cached' | 'provider_api' | 'background_fetch' | 'runtime_event' | 'runtime_probe' | 'in_band_snapshot' | 'in_band_provider_snapshot' | 'manual_refresh' | 'user_probe' | undefined;
+                        currency?: string | undefined;
                         modelId?: string | null | undefined;
-                        scope?: 'unknown' | 'model' | 'session' | 'tokens' | 'requests' | 'primary' | 'secondary' | 'daily' | 'weekly' | 'monthly' | 'five_hour' | 'seven_day' | 'rolling' | undefined;
+                        scope?: 'unknown' | 'tokens' | 'model' | 'session' | 'requests' | 'primary' | 'secondary' | 'daily' | 'weekly' | 'monthly' | 'five_hour' | 'seven_day' | 'rolling' | undefined;
                         confidence?: 'unknown' | 'exact' | 'estimated' | 'stale' | 'derived' | undefined;
                         resetSource?: 'unknown' | 'provider' | 'manual' | 'in_band_snapshot' | 'header' | 'body' | 'provider_event' | 'provider_probe' | 'computed' | 'retry_after' | undefined;
                         providerLimitId?: string | undefined;
@@ -4952,7 +4822,7 @@ export type UsageActionResultById = {
                                     code?: string | undefined;
                                     rawScope?: string | undefined;
                                     remainingPct?: number | null | undefined;
-                                    scope?: 'unknown' | 'model' | 'session' | 'tokens' | 'requests' | 'primary' | 'secondary' | 'daily' | 'weekly' | 'monthly' | 'five_hour' | 'seven_day' | 'rolling' | undefined;
+                                    scope?: 'unknown' | 'tokens' | 'model' | 'session' | 'requests' | 'primary' | 'secondary' | 'daily' | 'weekly' | 'monthly' | 'five_hour' | 'seven_day' | 'rolling' | undefined;
                                     providerLimitId?: string | undefined;
                                     limitCategory?: 'unknown' | 'disabled' | 'usage_limit' | 'rate_limit' | 'capacity' | 'temporary_throttle' | 'auth_invalid' | 'plan_invalid' | 'validation_failed' | undefined;
                                 };
@@ -4967,8 +4837,9 @@ export type UsageActionResultById = {
                                 isExhausted?: boolean | undefined;
                                 isSoftLimited?: boolean | undefined;
                                 isCapacityLimited?: boolean | undefined;
+                                currency?: string | undefined;
                                 source?: 'unknown' | 'cached' | 'provider_api' | 'background_fetch' | 'runtime_event' | 'runtime_probe' | 'in_band_snapshot' | 'in_band_provider_snapshot' | 'manual_refresh' | 'user_probe' | undefined;
-                                scope?: 'unknown' | 'model' | 'session' | 'tokens' | 'requests' | 'primary' | 'secondary' | 'daily' | 'weekly' | 'monthly' | 'five_hour' | 'seven_day' | 'rolling' | undefined;
+                                scope?: 'unknown' | 'tokens' | 'model' | 'session' | 'requests' | 'primary' | 'secondary' | 'daily' | 'weekly' | 'monthly' | 'five_hour' | 'seven_day' | 'rolling' | undefined;
                                 limitScope?: 'unknown' | 'model' | 'session' | 'workspace' | 'account' | 'provider' | 'organization' | undefined;
                                 confidence?: 'unknown' | 'exact' | 'estimated' | 'stale' | 'derived' | undefined;
                             }[];
@@ -5343,7 +5214,7 @@ export type UsageActionResultById = {
                     includeSessionEvidence: boolean;
                     includeTranscriptEvidence: boolean;
                     includeWorkEvidence: boolean;
-                    breakdown: ('agent' | 'model' | 'session' | 'project' | 'workspace' | 'backendMode' | 'source' | 'machine')[];
+                    breakdown: ('source' | 'agent' | 'model' | 'session' | 'project' | 'workspace' | 'backendMode' | 'machine')[];
                     modelIds: string[];
                     workspaceIds: string[];
                     backendModes: string[];
@@ -6307,14 +6178,14 @@ export type UsageActionResultById = {
                     coverage?: {
                         status: 'unknown' | 'complete' | 'partial';
                         reasons: ('missing_baseline' | 'counter_discontinuity' | 'ambiguous_overlap' | 'unattributed_model' | 'unpriced_tokens' | 'unknown_source' | 'incomplete_history' | 'ranked_truncation' | 'unknown_token_categories')[];
-                        missingDimensions: ('agent' | 'model' | 'session' | 'project' | 'workspace' | 'backendMode' | 'source' | 'machine')[];
+                        missingDimensions: ('source' | 'agent' | 'model' | 'session' | 'project' | 'workspace' | 'backendMode' | 'machine')[];
                         range: {
                             complete: boolean;
                             startMs?: number | undefined;
                             endMs?: number | undefined;
                         };
                         ranked: {
-                            dimension: 'agent' | 'model' | 'session' | 'project' | 'workspace' | 'backendMode' | 'source' | 'machine';
+                            dimension: 'source' | 'agent' | 'model' | 'session' | 'project' | 'workspace' | 'backendMode' | 'machine';
                             totalEntries: number;
                             returnedEntries: number;
                             complete: boolean;
@@ -8140,7 +8011,7 @@ export type UsageActionResultById = {
                         includeSessionEvidence: boolean;
                         includeTranscriptEvidence: boolean;
                         includeWorkEvidence: boolean;
-                        breakdown: ('agent' | 'model' | 'session' | 'project' | 'workspace' | 'backendMode' | 'source' | 'machine')[];
+                        breakdown: ('source' | 'agent' | 'model' | 'session' | 'project' | 'workspace' | 'backendMode' | 'machine')[];
                         modelIds: string[];
                         workspaceIds: string[];
                         backendModes: string[];

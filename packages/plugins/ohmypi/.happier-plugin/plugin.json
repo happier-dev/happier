@@ -1,10 +1,28 @@
 {
   "contributes": {
+    "accessProviders": [],
     "accountCollections": [],
     "actions": [],
     "agents": [
       {
         "capabilities": {
+          "providerStateSharing": {
+            "config": {
+              "modes": [
+                "isolated"
+              ],
+              "supported": false,
+              "unavailableReason": "not_implemented"
+            },
+            "state": {
+              "modes": [
+                "isolated",
+                "shared"
+              ],
+              "sharedStatePrivacyRiskAcknowledgementRequired": true,
+              "supported": true
+            }
+          },
           "sessions": {
             "cancel": true,
             "configuration": true,
@@ -310,10 +328,12 @@
     "composerRegions": [],
     "connectedAccountDescriptors": [],
     "daemonDatabases": [],
+    "deploymentTargets": [],
     "dragSources": [],
     "dropTargets": [],
     "events": [],
     "executionRunProfiles": [],
+    "healthCheckKinds": [],
     "hooks": [
       {
         "category": "decision",
@@ -328,7 +348,10 @@
       }
     ],
     "inputTypes": [],
+    "languageServers": [],
     "machineProvisioners": [],
+    "machineRecipes": [],
+    "machineSetupPresets": [],
     "managedDependencies": [],
     "mcp": {
       "discoverySources": [],
@@ -348,6 +371,7 @@
     "scmBackends": [],
     "scmHostingProviders": [],
     "searchProviders": [],
+    "secretSources": [],
     "sessionHeaderActions": [],
     "sessionInfoSections": [],
     "settings": [

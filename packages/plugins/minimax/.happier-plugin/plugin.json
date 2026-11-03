@@ -4,6 +4,7 @@
     "monochrome": true
   },
   "contributes": {
+    "accessProviders": [],
     "accountCollections": [],
     "actions": [],
     "agents": [],
@@ -19,13 +20,18 @@
     "composerRegions": [],
     "connectedAccountDescriptors": [],
     "daemonDatabases": [],
+    "deploymentTargets": [],
     "dragSources": [],
     "dropTargets": [],
     "events": [],
     "executionRunProfiles": [],
+    "healthCheckKinds": [],
     "hooks": [],
     "inputTypes": [],
+    "languageServers": [],
     "machineProvisioners": [],
+    "machineRecipes": [],
+    "machineSetupPresets": [],
     "managedDependencies": [],
     "mcp": {
       "discoverySources": [],
@@ -43,6 +49,18 @@
           "manualModelPolicy": "allowed",
           "source": "static",
           "staticModels": [
+            {
+              "aliases": [
+                "MiniMax-M3.1-Flash[1m]"
+              ],
+              "capabilities": {
+                "toolRoundTrips": "supported"
+              },
+              "contextWindowTokens": 1000000,
+              "extendedContextModelId": "MiniMax-M3.1-Flash[1m]",
+              "id": "MiniMax-M3.1-Flash",
+              "name": "MiniMax M3.1 Flash"
+            },
             {
               "aliases": [
                 "MiniMax-M3[1m]"
@@ -143,7 +161,7 @@
             ],
             "primaryModel": {
               "agentTargetKey": "agent:claude",
-              "defaultModelId": "MiniMax-M3",
+              "defaultModelId": "MiniMax-M3.1-Flash",
               "legacyEnvVarName": "ANTHROPIC_MODEL",
               "legacyProcessEnvAlias": "MINIMAX_MODEL"
             },
@@ -158,15 +176,15 @@
               },
               {
                 "name": "ANTHROPIC_DEFAULT_OPUS_MODEL",
-                "value": "${MINIMAX_OPUS_MODEL:-MiniMax-M3[1m]}"
+                "value": "${MINIMAX_OPUS_MODEL:-MiniMax-M3.1-Flash}"
               },
               {
                 "name": "ANTHROPIC_DEFAULT_SONNET_MODEL",
-                "value": "${MINIMAX_SONNET_MODEL:-MiniMax-M3[1m]}"
+                "value": "${MINIMAX_SONNET_MODEL:-MiniMax-M3.1-Flash}"
               },
               {
                 "name": "ANTHROPIC_DEFAULT_HAIKU_MODEL",
-                "value": "${MINIMAX_HAIKU_MODEL:-MiniMax-M2.7}"
+                "value": "${MINIMAX_HAIKU_MODEL:-MiniMax-M3.1-Flash}"
               },
               {
                 "name": "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
@@ -185,6 +203,18 @@
           "manualModelPolicy": "allowed",
           "source": "static",
           "staticModels": [
+            {
+              "aliases": [
+                "MiniMax-M3.1-Flash[1m]"
+              ],
+              "capabilities": {
+                "toolRoundTrips": "supported"
+              },
+              "contextWindowTokens": 1000000,
+              "extendedContextModelId": "MiniMax-M3.1-Flash[1m]",
+              "id": "MiniMax-M3.1-Flash",
+              "name": "MiniMax M3.1 Flash"
+            },
             {
               "aliases": [
                 "MiniMax-M3[1m]"
@@ -285,7 +315,7 @@
             ],
             "primaryModel": {
               "agentTargetKey": "agent:claude",
-              "defaultModelId": "MiniMax-M3",
+              "defaultModelId": "MiniMax-M3.1-Flash",
               "legacyEnvVarName": "ANTHROPIC_MODEL",
               "legacyProcessEnvAlias": "MINIMAX_CN_MODEL"
             },
@@ -300,15 +330,15 @@
               },
               {
                 "name": "ANTHROPIC_DEFAULT_OPUS_MODEL",
-                "value": "${MINIMAX_CN_OPUS_MODEL:-MiniMax-M3[1m]}"
+                "value": "${MINIMAX_CN_OPUS_MODEL:-MiniMax-M3.1-Flash}"
               },
               {
                 "name": "ANTHROPIC_DEFAULT_SONNET_MODEL",
-                "value": "${MINIMAX_CN_SONNET_MODEL:-MiniMax-M3[1m]}"
+                "value": "${MINIMAX_CN_SONNET_MODEL:-MiniMax-M3.1-Flash}"
               },
               {
                 "name": "ANTHROPIC_DEFAULT_HAIKU_MODEL",
-                "value": "${MINIMAX_CN_HAIKU_MODEL:-MiniMax-M2.7}"
+                "value": "${MINIMAX_CN_HAIKU_MODEL:-MiniMax-M3.1-Flash}"
               },
               {
                 "name": "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
@@ -337,6 +367,7 @@
     "scmBackends": [],
     "scmHostingProviders": [],
     "searchProviders": [],
+    "secretSources": [],
     "sessionHeaderActions": [],
     "sessionInfoSections": [],
     "settings": [],
@@ -360,9 +391,6 @@
   },
   "description": "Use MiniMax models through compatible agents on the global or China endpoint.",
   "displayName": "MiniMax",
-  "engines": {
-    "happier": "^0.0.0"
-  },
   "hostAccess": {
     "optional": [],
     "required": []

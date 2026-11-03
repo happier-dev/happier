@@ -62,7 +62,7 @@ function normalizeConfigOptionValueId(value: unknown): SessionConfigOptionValueI
   return null;
 }
 
-export function normalizeSessionConfigOptions(raw: ReadonlyArray<unknown>): SessionConfigOption[] {
+export function normalizeSessionConfigOptions(raw: ReadonlyArray<unknown>, disableModeControls = false): SessionConfigOption[] {
   const out: SessionConfigOption[] = [];
 
   for (const entryRaw of raw) {
@@ -73,6 +73,8 @@ export function normalizeSessionConfigOptions(raw: ReadonlyArray<unknown>): Sess
     const name = getString(entry, 'name');
     const type = getString(entry, 'type');
     if (!id || !name || !type) continue;
+    if (disableModeControls && [id, name, getString(entry, 'category')]
+      .some(value => value?.trim().toLowerCase() === 'mode')) continue;
 
     const currentValue = normalizeConfigOptionValueId(entry.currentValue);
     if (currentValue === null) continue;
@@ -240,7 +242,8 @@ export async function readSessionModelStateFromSessionResponseAwaitable(
 }
 
 export function readSessionConfigOptionsFromSessionResponse(
-  sessionResponse: unknown
+  sessionResponse: unknown,
+  disableModeControls = false,
 ): ReadonlyArray<SessionConfigOption> | null {
   const response = asRecord(sessionResponse);
   if (!response) return null;
@@ -249,7 +252,7 @@ export function readSessionConfigOptionsFromSessionResponse(
   const configOptionsRaw: unknown[] | null = Array.isArray(configOptionsCandidate) ? configOptionsCandidate : null;
   if (!configOptionsRaw) return null;
 
-  return normalizeSessionConfigOptions(configOptionsRaw);
+  return normalizeSessionConfigOptions(configOptionsRaw, disableModeControls);
 }
 
 export function readSessionModelStateFromConfigOptions(

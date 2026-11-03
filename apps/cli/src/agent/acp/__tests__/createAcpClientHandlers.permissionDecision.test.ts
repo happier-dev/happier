@@ -13,6 +13,28 @@ function createHandlerContext(): HandlerContext {
 }
 
 describe('createAcpClientHandlers permission pre-prompt decisions', () => {
+  it('returns a cancelled response when the provider cannot establish permission ownership', async () => {
+    const handlerContext = createLegacyHandlerContextFixture();
+    const effects: string[] = [];
+    const client = createAcpClientHandlers({
+      onSessionUpdate: () => undefined, transport: new DefaultTransport('test'), emit: () => undefined,
+      beforePermissionRequest: async () => { throw new Error('No originating turn'); },
+      permissionHandler: { handleToolCall: async () => { effects.push('policy'); return { decision: 'approved' }; } },
+      createHandlerContext: () => handlerContext,
+      getToolNameContext: () => ({ recentPromptHadChangeTitle: false, toolCallCountSincePrompt: 0 }),
+      getActiveSessionId: () => 'session-1',
+      capturePermissionRequest: () => ({ scope: 'turn', isCurrent: () => true, cancel: async () => { effects.push('cancel'); } }),
+      emitPermissionResponse: async () => { effects.push('response'); },
+      clearTrackedToolCall: () => undefined, incrementToolCallCountSincePrompt: () => undefined,
+      toolCalls: handlerContext.toolCalls, lastSelectedPermissionOptionIdByToolCallId: new Map(),
+    });
+
+    await expect(client.requestPermission({ sessionId: 'session-1', toolCall: {
+      toolCallId: 'call', kind: 'other', title: 'Read', rawInput: {},
+    }, options: [{ optionId: 'allow', kind: 'allow_once', name: 'Allow' }] })).resolves.toEqual({ outcome: { outcome: 'cancelled' } });
+    expect(effects).toEqual([]);
+  });
+
   it('cancels an unresolvable permission identity before consulting policy', async () => {
     const transport = createAcpTransportHandlerFromDefinition({
       backendId: 'fixture', callbacks: { toolNameResolver: () => { throw new Error('Ambiguous tool identity'); } },

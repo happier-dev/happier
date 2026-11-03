@@ -4,38 +4,25 @@
 import type { JSONType } from './pluginActionDtoSupport.generated.js';
 
 export type SessionOrganizationResourcesActionInputById = {
-    readonly "session.folders.list": Record<string, never>;
-    readonly "session.folders.create": {
-        folderKey: string;
-        parentFolderId: string | null;
-        parentFolderKey: string | null;
-        sortKey: string | null;
-        display: {
-            t: 'plain';
-            v: unknown;
-        } | {
-            t: 'encrypted';
-            c: string;
-        } | null;
-        folderId?: string | undefined;
+    readonly "session.sections.list": Record<string, never>;
+    readonly "session.sections.create": {
+        name: string;
+        icon?: string | null | undefined;
     };
-    readonly "session.folders.rename": {
-        folderKey: string;
-        parentFolderId: string | null;
-        parentFolderKey: string | null;
-        sortKey: string | null;
-        display: {
-            t: 'plain';
-            v: unknown;
-        } | {
-            t: 'encrypted';
-            c: string;
-        } | null;
-        folderId: string;
+    readonly "session.sections.update": {
+        sectionId: string;
+        name?: string | undefined;
+        icon?: string | null | undefined;
     };
-    readonly "session.folders.delete": {
-        folderId: string;
-        assignmentBehavior?: 'moveAssignmentsToParent' | undefined;
+    readonly "session.sections.reorder": {
+        sectionId: string;
+        beforeSectionId: string | null;
+    };
+    readonly "session.sections.delete": {
+        sectionId: string;
+    };
+    readonly "session.sections.archive": {
+        sectionId: string;
     };
     readonly "session.tags.list": Record<string, never>;
     readonly "session.tags.create": {
@@ -68,148 +55,70 @@ export type SessionOrganizationResourcesActionInputById = {
     };
 };
 export type SessionOrganizationResourcesActionResultById = {
-    readonly "session.folders.list": {
-        snapshot: {
-            schemaVersion: 1;
-            version: number;
-            pins: {
-                sessionId: string;
-                sortKey: string | null;
-                pinnedAt: number;
-                listPinned: boolean;
-                railPinned: boolean;
-            }[];
-            folders: {
-                folderId: string;
-                folderKey: string;
-                parentFolderId: string | null;
-                parentFolderKey: string | null;
-                sortKey: string | null;
-                display: {
-                    t: 'plain';
-                    v: JSONType;
-                } | {
-                    t: 'encrypted';
-                    c: string;
-                } | null;
-                archivedAt: number | null;
-                createdAt: number;
-                updatedAt: number;
-                displayState?: {
-                    status: 'unavailable';
-                    reason: 'invalid_stored_display' | 'storage_mode_mismatch';
-                } | undefined;
-            }[];
-            folderAssignments: {
-                sessionId: string;
-                folderId: string;
-            }[];
-            tags: {
-                tagId: string;
-                tagKey: string;
-                sortKey: string | null;
-                display: {
-                    t: 'plain';
-                    v: JSONType;
-                } | {
-                    t: 'encrypted';
-                    c: string;
-                } | null;
-                archivedAt: number | null;
-                createdAt: number;
-                updatedAt: number;
-                displayState?: {
-                    status: 'unavailable';
-                    reason: 'invalid_stored_display' | 'storage_mode_mismatch';
-                } | undefined;
-            }[];
-            tagAssignments: {
-                sessionId: string;
-                tagIds: string[];
-            }[];
-            orderEntries: {
-                scopeKind: 'pinned' | 'folder' | 'tag' | 'workspace' | 'group';
-                scopeKey: string;
-                itemKind: 'folder' | 'tag' | 'workspace' | 'group' | 'session';
-                itemKey: string;
-                sortKey: string;
-            }[];
-            labels: {
-                labelKind: 'workspace' | 'group';
-                scopeKey: string;
-                display: {
-                    t: 'plain';
-                    v: JSONType;
-                } | {
-                    t: 'encrypted';
-                    c: string;
-                } | null;
-                archivedAt: number | null;
-                createdAt: number;
-                updatedAt: number;
-                displayState?: {
-                    status: 'unavailable';
-                    reason: 'invalid_stored_display' | 'storage_mode_mismatch';
-                } | undefined;
-            }[];
-            attentionStandings?: {
-                sessionId: string;
-                standing: boolean;
-                updatedAt: number;
-                remindAt?: number | undefined;
-            }[] | undefined;
-        };
-    };
-    readonly "session.folders.create": {
-        folder: {
-            folderId: string;
-            folderKey: string;
-            parentFolderId: string | null;
-            parentFolderKey: string | null;
-            sortKey: string | null;
-            display: {
-                t: 'plain';
-                v: JSONType;
+    readonly "session.sections.list": {
+        sections: {
+            sectionId: string;
+            displayState: {
+                status: 'available';
+                value: {
+                    name: string;
+                    icon: string | null;
+                };
             } | {
-                t: 'encrypted';
-                c: string;
-            } | null;
-            archivedAt: number | null;
-            createdAt: number;
-            updatedAt: number;
-            displayState?: {
-                status: 'unavailable';
-                reason: 'invalid_stored_display' | 'storage_mode_mismatch';
-            } | undefined;
-        };
-    };
-    readonly "session.folders.rename": {
-        folder: {
-            folderId: string;
-            folderKey: string;
-            parentFolderId: string | null;
-            parentFolderKey: string | null;
+                status: 'locked';
+                reason: 'account_key_unavailable' | 'content_unreadable' | 'invalid_stored_display' | 'storage_mode_mismatch';
+            };
             sortKey: string | null;
-            display: {
-                t: 'plain';
-                v: JSONType;
+        }[];
+    };
+    readonly "session.sections.create": {
+        section: {
+            sectionId: string;
+            displayState: {
+                status: 'available';
+                value: {
+                    name: string;
+                    icon: string | null;
+                };
             } | {
-                t: 'encrypted';
-                c: string;
-            } | null;
-            archivedAt: number | null;
-            createdAt: number;
-            updatedAt: number;
-            displayState?: {
-                status: 'unavailable';
-                reason: 'invalid_stored_display' | 'storage_mode_mismatch';
-            } | undefined;
+                status: 'locked';
+                reason: 'account_key_unavailable' | 'content_unreadable' | 'invalid_stored_display' | 'storage_mode_mismatch';
+            };
+            sortKey: string | null;
         };
     };
-    readonly "session.folders.delete": {
-        deletedFolderIds: string[];
-        assignmentTargetFolderId: string | null;
+    readonly "session.sections.update": {
+        section: {
+            sectionId: string;
+            displayState: {
+                status: 'available';
+                value: {
+                    name: string;
+                    icon: string | null;
+                };
+            } | {
+                status: 'locked';
+                reason: 'account_key_unavailable' | 'content_unreadable' | 'invalid_stored_display' | 'storage_mode_mismatch';
+            };
+            sortKey: string | null;
+        };
+    };
+    readonly "session.sections.reorder": {
+        sectionId: string;
+        sortKey: string | null;
+    };
+    readonly "session.sections.delete": {
+        sectionId: string;
+        removed: boolean;
         affectedAssignmentCount: number;
+    };
+    readonly "session.sections.archive": {
+        archivedSessionIds: string[];
+        failures: {
+            sessionId: string;
+            code: string;
+        }[];
+        unknownSessionIds: string[];
     };
     readonly "session.tags.list": {
         snapshot: {

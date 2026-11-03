@@ -227,11 +227,36 @@ export type AgentSessionRuntimeEvent =
       sequence: number;
       sessionId: string;
       emittedAtMs: number;
+      kind: 'provider-continuation-registered';
+      continuationId: string;
+      parentTurnId: string;
+      parentToolCallId: string;
+    }>
+  | Readonly<{
+      sequence: number;
+      sessionId: string;
+      emittedAtMs: number;
+      kind: 'provider-continuation-released';
+      continuationId: string;
+    }>
+  | Readonly<{
+      sequence: number;
+      sessionId: string;
+      emittedAtMs: number;
+      kind: 'provider-tool-contexts-released';
+      parentTurnId: string;
+      toolCallIds: string[];
+    }>
+  | Readonly<{
+      sequence: number;
+      sessionId: string;
+      emittedAtMs: number;
       turnId: string;
       agentTurnId?: string;
       kind: 'turn-start';
       startedBy: 'host' | 'provider';
       causedByTurnId?: string;
+      continuationId?: string;
     }>
   | Readonly<{
       sequence: number;

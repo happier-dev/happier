@@ -20,11 +20,10 @@ examples, host wiring, source tests, and loaded development-stack lifecycle QA
 establish feature readiness.
 
 Tool and Command declarations are available in the current source contract, as
-recorded by the canonical capability matrix. Loaded development-stack evidence
-for either capability may still be `not-recorded`; that is an evidence status,
-not source unavailability. Public registry release is a separate publication
-boundary, and this workspace README does not claim that release or loaded
-validation. Preview status does not waive correctness, installability,
+recorded by the canonical capability matrix. Source availability is separate
+from loaded development-stack validation and public registry release; this
+workspace README does not claim either boundary has passed. Preview status does
+not waive correctness, installability,
 lifecycle cleanup, security disclosure, examples, or documentation.
 
 ## Discussion invalidation (0.3 development source)

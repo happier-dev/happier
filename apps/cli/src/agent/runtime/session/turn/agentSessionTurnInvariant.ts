@@ -1,3 +1,4 @@
+import { createProviderContinuationContexts } from './providerContinuations';
 import { isSessionScopedRuntimeTranscriptEvent } from '../events/runtimeTranscriptScope';
 import { AgentSessionRuntimeEventSchema } from '@happier-dev/protocol/runtime/agentSessionV1';
 import type { AgentSessionRuntimeEvent } from '@happier-dev/protocol/runtime';
@@ -9,6 +10,7 @@ type AgentSessionTurnInvariantDiagnosticCode =
     | 'agent_runtime_event_sequence_stale'
     | 'agent_runtime_event_after_runtime_end'
     | 'agent_runtime_provider_session_conflict'
+    | 'agent_runtime_provider_continuation_invalid'
     | 'agent_runtime_turn_reused'
     | 'agent_runtime_turn_start_without_acceptance'
     | 'agent_runtime_turn_already_active'
@@ -32,8 +34,8 @@ export type AgentSessionTurnInvariantDiagnostic = PluginDiagnosticData & Readonl
     }>;
 }>;
 
-export type AgentSessionTurnInvariantObservation =
-    | Readonly<{ status: 'accepted'; event: AgentSessionRuntimeEvent }>
+export type AgentSessionTurnInvariantObservation<TProviderContext extends object = object> =
+    | Readonly<{ status: 'accepted'; event: AgentSessionRuntimeEvent; providerContinuationContext?: TProviderContext }>
     | Readonly<{ status: 'ignored'; event: AgentSessionRuntimeEvent }>
     | Readonly<{ status: 'rejected'; diagnostic: AgentSessionTurnInvariantDiagnostic }>;
 
@@ -46,8 +48,8 @@ export type AgentSessionTurnInvariantSnapshot = Readonly<{
     lastAcceptedSequence: number | null;
 }>;
 
-export type AgentSessionTurnInvariant = Readonly<{
-    observe(event: unknown): AgentSessionTurnInvariantObservation;
+export type AgentSessionTurnInvariant<TProviderContext extends object = object> = Readonly<{
+    observe(event: unknown): AgentSessionTurnInvariantObservation<TProviderContext>;
     fence(): void;
     read(): AgentSessionTurnInvariantSnapshot;
 }>;
@@ -120,10 +122,16 @@ function isTurnScopedEvent(event: AgentSessionRuntimeEvent): boolean {
         || event.kind === 'turn-rollback-boundary';
 }
 
-export function createAgentSessionTurnInvariant(params: Readonly<{
+export function createAgentSessionTurnInvariant<TProviderContext extends object = object>(params: Readonly<{
     sessionId: string;
     expectedProviderSessionId?: string;
-}>): AgentSessionTurnInvariant {
+    providerContinuations?: Readonly<{
+        captureToolContext(turnId: string): TProviderContext | null;
+    }>;
+}>): AgentSessionTurnInvariant<TProviderContext> {
+    const providerContinuations = params.providerContinuations
+        ? createProviderContinuationContexts(params.providerContinuations.captureToolContext)
+        : null;
     const turns = new Map<string, KnownTurn>();
     const pendingAcceptedTurns = new Set<string>();
     let activeTurnId: string | null = null;
@@ -147,14 +155,17 @@ export function createAgentSessionTurnInvariant(params: Readonly<{
     const reject = (
         code: AgentSessionTurnInvariantDiagnosticCode,
         event: AgentSessionRuntimeEvent,
-    ): AgentSessionTurnInvariantObservation => ({ status: 'rejected', diagnostic: diagnostic(code, event) });
+    ): AgentSessionTurnInvariantObservation<TProviderContext> => ({ status: 'rejected', diagnostic: diagnostic(code, event) });
 
-    const accept = (event: AgentSessionRuntimeEvent): AgentSessionTurnInvariantObservation => {
+    const accept = (
+        event: AgentSessionRuntimeEvent,
+        providerContinuationContext?: TProviderContext,
+    ): AgentSessionTurnInvariantObservation<TProviderContext> => {
         lastAcceptedSequence = event.sequence;
-        return { status: 'accepted', event };
+        return { status: 'accepted', event, ...(providerContinuationContext ? { providerContinuationContext } : {}) };
     };
 
-    const ignore = (event: AgentSessionRuntimeEvent): AgentSessionTurnInvariantObservation => {
+    const ignore = (event: AgentSessionRuntimeEvent): AgentSessionTurnInvariantObservation<TProviderContext> => {
         lastAcceptedSequence = event.sequence;
         return { status: 'ignored', event };
     };
@@ -162,7 +173,7 @@ export function createAgentSessionTurnInvariant(params: Readonly<{
     const validateAgentTurnId = (
         turn: KnownTurn,
         event: AgentSessionRuntimeEvent,
-    ): AgentSessionTurnInvariantObservation | null => {
+    ): AgentSessionTurnInvariantObservation<TProviderContext> | null => {
         const observed = readAgentTurnId(event);
         if (!observed) return null;
         if (turn.agentTurnId && turn.agentTurnId !== observed) {
@@ -172,7 +183,7 @@ export function createAgentSessionTurnInvariant(params: Readonly<{
     };
 
     return Object.freeze({
-        observe(input): AgentSessionTurnInvariantObservation {
+        observe(input): AgentSessionTurnInvariantObservation<TProviderContext> {
             const parsed = AgentSessionRuntimeEventSchema.safeParse(input);
             if (!parsed.success) {
                 const candidate = input && typeof input === 'object'
@@ -210,6 +221,23 @@ export function createAgentSessionTurnInvariant(params: Readonly<{
                 }
                 providerSessionId = event.providerSessionId;
                 providerSessionNativeLogPath = nativeSessionLogPath;
+                return accept(event);
+            }
+
+            if (event.kind === 'provider-continuation-registered') {
+                if (!providerContinuations?.register(event.continuationId, event.parentTurnId, event.parentToolCallId)) {
+                    return reject('agent_runtime_provider_continuation_invalid', event);
+                }
+                return accept(event);
+            }
+            if (event.kind === 'provider-continuation-released') {
+                if (!providerContinuations) return reject('agent_runtime_provider_continuation_invalid', event);
+                providerContinuations.release(event.continuationId);
+                return accept(event);
+            }
+            if (event.kind === 'provider-tool-contexts-released') {
+                if (!providerContinuations) return reject('agent_runtime_provider_continuation_invalid', event);
+                providerContinuations.releaseTools(event.parentTurnId, event.toolCallIds);
                 return accept(event);
             }
 
@@ -251,10 +279,13 @@ export function createAgentSessionTurnInvariant(params: Readonly<{
                 if (event.startedBy === 'provider' && pendingAcceptedTurns.has(event.turnId)) {
                     return reject('agent_runtime_delivery_turn_conflict', event);
                 }
-                if (event.causedByTurnId) {
-                    if (event.causedByTurnId !== lastTerminalTurn?.turnId) {
-                        return reject('agent_runtime_successor_predecessor_not_terminal', event);
-                    }
+                let providerContinuationContext: TProviderContext | undefined;
+                if (event.continuationId !== undefined) {
+                    const context = providerContinuations?.consume(event.continuationId, event.causedByTurnId);
+                    if (!context) return reject('agent_runtime_provider_continuation_invalid', event);
+                    providerContinuationContext = context;
+                } else if (event.causedByTurnId && event.causedByTurnId !== lastTerminalTurn?.turnId) {
+                    return reject('agent_runtime_successor_predecessor_not_terminal', event);
                 }
                 pendingAcceptedTurns.delete(event.turnId);
                 turns.set(event.turnId, {
@@ -262,7 +293,7 @@ export function createAgentSessionTurnInvariant(params: Readonly<{
                     rollbackBoundaryObserved: false,
                 });
                 activeTurnId = event.turnId;
-                return accept(event);
+                return accept(event, providerContinuationContext);
             }
 
             if (isTerminalEvent(event)) {
@@ -301,6 +332,7 @@ export function createAgentSessionTurnInvariant(params: Readonly<{
                     return reject('agent_runtime_ended_with_pending_delivery', event);
                 }
                 runtimeEnded = true;
+                providerContinuations?.clear();
                 return accept(event);
             }
 
@@ -339,6 +371,7 @@ export function createAgentSessionTurnInvariant(params: Readonly<{
                     }
                     turn.rollbackBoundaryObserved = true;
                 }
+                if (event.kind === 'tool-call') providerContinuations?.captureTool(turnId, event.toolCallId);
                 return accept(event);
             }
 
@@ -350,6 +383,7 @@ export function createAgentSessionTurnInvariant(params: Readonly<{
             activeTurnId = null;
             turns.clear();
             pendingAcceptedTurns.clear();
+            providerContinuations?.clear();
         },
 
         read() {

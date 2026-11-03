@@ -483,6 +483,16 @@ function reclaimLockSnapshot(lockPath, expectedRaw) {
     restoreQuarantinedLockSnapshot(lockPath, reclaimPath);
     return false;
   }
+
+  if (movedRaw === expectedRaw) {
+    try {
+      unlinkSync(reclaimPath);
+    } catch {}
+    return true;
+  }
+
+  restoreQuarantinedLockSnapshot(lockPath, reclaimPath);
+  return false;
 }
 
 function restoreQuarantinedLockSnapshot(lockPath, reclaimPath) {

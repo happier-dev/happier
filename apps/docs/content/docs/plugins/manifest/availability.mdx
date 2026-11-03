@@ -10,256 +10,91 @@ manifest schema accepts are not yet wired end to end. `capability-matrix.json` i
 projection of it — so it cannot disagree with the artifact the rest of the
 corridor cites.
 
-**Available in Developer Preview** means the applicable realm has a complete
-current producer, registration/projection path, and lifecycle. A maintained
-consumer is useful evidence, but it is not required for an implemented
-capability to exist. **Deferred** means the lifecycle is incomplete in that
-realm and is not supported or advertised for ordinary author use; do not rely
-on it; consult its unblock condition.
+**Available** families have a current authoring and implementation path.
+**Preview** families retain an implemented author API while awaiting a current
+production consumer. Both are usable in the package's Developer Preview;
+`preview` is a label, not a registration restriction for external plugins.
+**Deferred** means the lifecycle is incomplete in the applicable realm and is
+not supported for ordinary author use; consult its unblock condition.
 
-Product availability is distinct from source API availability, source consumer,
-loaded-platform proof, and release availability. The evidence fields record
-only what the matrix has established: a source declaration or consumer does not
-by itself prove that the current platform loaded it or that it was published,
-and the absence of a consumer does not make a complete lifecycle unavailable.
-Likewise, `not-recorded` does not infer the opposite state.
+This reference describes 0.3 development source. It does not establish released
+availability or verify a loaded runtime.
 
-At the time this page was generated: **59 of 59 contribution families**,
-**20 of 20 services**, **10 of 13 host-access capabilities**
-and **53 of 53 SDK entrypoints** are available.
-
-## Evidence recorded by the capability matrix
-
-### Contribution family evidence
-
-| Name | Availability | Source API | Source consumer | Loaded-platform proof | Release availability |
-| --- | --- | --- | --- | --- | --- |
-| `accountCollections` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `actions` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `agents` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `atmospherePictures` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `backgroundServices` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `browserActions` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `browserTargets` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `captureSources` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `commands` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `composerAttachments` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `composerControls` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `composerReferences` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `composerRegions` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `connectedAccountDescriptors` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `daemonDatabases` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `dragSources` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `dropTargets` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `events` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `executionRunProfiles` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `hooks` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `inputTypes` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `languageServers` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `machineProvisioners` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `managedDependencies` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `mcp.discoverySources` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `mcp.servers` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `notificationChannels` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `notifications` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `openableContentViewers` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `pluginContributionPoints` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `projectNativeAdapters` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `promptAssets` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `providers` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `registrySources` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `requestInterceptors` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `resources` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `roles` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `scmBackends` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `scmHostingProviders` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `searchProviders` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `sessionHeaderActions` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `sessionInfoSections` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `settings` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `settings.fields` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `skills` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `systemTools` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `targetedPluginContributions` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `tools` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `transcriptActivities` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `ui.renderers` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `ui.settingsGroups` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `ui.settingsPages` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `ui.translations` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `ui.views` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `voiceModelPacks` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `voiceProviders` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `webhooks` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `workflows` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `workItems` | `available` | `present` | — | `not-recorded` | `not-published` |
-
-### Service evidence
-
-| Name | Availability | Source API | Source consumer | Loaded-platform proof | Release availability |
-| --- | --- | --- | --- | --- | --- |
-| `actions` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `composerContent` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `connectedAccounts` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `events` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `exec` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `fs` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `http` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `interactions` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `logger` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `machineProvisioners` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `managedServices` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `mcp` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `notifications` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `providers` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `resources` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `secrets` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `sessions` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `settings` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `storage` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `targetedContributions` | `available` | `present` | — | `not-recorded` | `not-published` |
-
-### Host-access evidence
-
-| Name | Availability | Source API | Source consumer | Loaded-platform proof | Release availability |
-| --- | --- | --- | --- | --- | --- |
-| `browser` | `deferred` | `present` | — | `not-recorded` | `not-published` |
-| `clipboard` | `deferred` | `present` | — | `not-recorded` | `not-published` |
-| `connectedAccounts` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `environment` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `externalLinks` | `deferred` | `present` | — | `not-recorded` | `not-published` |
-| `filesystem` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `mcp` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `network` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `network.client` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `process` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `sessions` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `storage.account` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `terminal` | `available` | `present` | — | `not-recorded` | `not-published` |
-
-### SDK entrypoint evidence
-
-| Name | Availability | Source API | Source consumer | Loaded-platform proof | Release availability |
-| --- | --- | --- | --- | --- | --- |
-| `.` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `./actions` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `./agents` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `./agents/runtime` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `./async` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `./automations` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `./background-services` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `./browser` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `./collections` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `./connected-accounts` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `./connected-accounts/request-auth` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `./contributions` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `./events` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `./exec` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `./exec/protocol-clients` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `./first-party/claude` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `./first-party/connected-accounts` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `./fs` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `./hooks` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `./http` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `./interactions` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `./machine-provisioners` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `./machine-provisioners/lima` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `./machine-provisioners/ssh` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `./managed-services` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `./managed-services/native` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `./manifest` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `./mcp` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `./notifications` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `./protocol` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `./providers` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `./resources` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `./reviews` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `./scm` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `./scm/backend` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `./scm/git` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `./scm/hosting` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `./secrets` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `./sessions` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `./sessions/external` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `./sessions/file-stores` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `./sessions/subagents` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `./sessions/work-state` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `./settings` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `./storage` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `./testing` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `./ui` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `./ui/build` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `./ui/client` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `./voice` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `./voice/client` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `./voice/speech` | `available` | `present` | — | `not-recorded` | `not-published` |
-| `./webhooks` | `available` | `present` | — | `not-recorded` | `not-published` |
+At the time this page was generated: **65 of 65 contribution families**,
+**23 of 23 services**, **10 of 13 host-access capabilities**
+and **55 of 55 SDK entrypoints** are implemented.
 
 ## Contribution families available in Developer Preview
 
 `definePlugin(...)` key and the entrypoint that exports its types.
 
-| Family | Author key | Entrypoint | Realm |
-| --- | --- | --- | --- |
-| `accountCollections` | `accountCollections` | `.` | any |
-| `actions` | `actions` | `.` | any |
-| `agents` | `agents` | `.` | any |
-| `atmospherePictures` | `atmospherePictures` | `.` | any |
-| `backgroundServices` | `backgroundServices` | `.` | any |
-| `browserActions` | `browserActions` | `.` | any |
-| `browserTargets` | `browserTargets` | `.` | any |
-| `captureSources` | `captureSources` | `.` | any |
-| `commands` | `commands` | `.` | any |
-| `composerAttachments` | `composer` | `.` | any |
-| `composerControls` | `composer` | `.` | any |
-| `composerReferences` | `composer` | `.` | any |
-| `composerRegions` | `composer` | `.` | any |
-| `connectedAccountDescriptors` | `connectedAccountDescriptors` | `.` | any |
-| `daemonDatabases` | `daemonDatabases` | `.` | any |
-| `dragSources` | `dragSources` | `.` | any |
-| `dropTargets` | `dropTargets` | `.` | any |
-| `events` | `events` | `.` | any |
-| `executionRunProfiles` | `executionRunProfiles` | `.` | any |
-| `hooks` | `hooks` | `.` | any |
-| `inputTypes` | `inputTypes` | `.` | any |
-| `languageServers` | `languageServers` | `.` | any |
-| `machineProvisioners` | `machineProvisioners` | `.` | any |
-| `managedDependencies` | `managedDependencies` | `.` | any |
-| `mcp.discoverySources` | `mcp` | `.` | any |
-| `mcp.servers` | `mcp` | `.` | any |
-| `notificationChannels` | `notificationChannels` | `.` | any |
-| `notifications` | `notifications` | `.` | any |
-| `openableContentViewers` | `openableContentViewers` | `.` | any |
-| `pluginContributionPoints` | `contributionPoints` | `.` | any |
-| `projectNativeAdapters` | `projectNativeAdapters` | `.` | any |
-| `promptAssets` | `promptAssets` | `.` | any |
-| `providers` | `providers` | `.` | any |
-| `registrySources` | `registrySources` | `.` | any |
-| `requestInterceptors` | `requestInterceptors` | `.` | any |
-| `resources` | `resources` | `.` | any |
-| `roles` | `roles` | `.` | any |
-| `scmBackends` | `scmBackends` | `.` | any |
-| `scmHostingProviders` | `scmHostingProviders` | `.` | any |
-| `searchProviders` | `searchProviders` | `.` | any |
-| `sessionHeaderActions` | `sessionHeaderActions` | `.` | any |
-| `sessionInfoSections` | `sessionInfoSections` | `.` | any |
-| `settings` | `settings` | `.` | any |
-| `settings.fields` | `settings` | `.` | any |
-| `skills` | `skills` | `.` | any |
-| `systemTools` | `systemTools` | `.` | any |
-| `targetedPluginContributions` | `contributesTo` | `.` | any |
-| `tools` | `tools` | `.` | any |
-| `transcriptActivities` | `transcriptActivities` | `.` | any |
-| `ui.renderers` | `ui` | `.` | any |
-| `ui.settingsGroups` | `ui` | `.` | any |
-| `ui.settingsPages` | `ui` | `.` | any |
-| `ui.translations` | `ui` | `.` | any |
-| `ui.views` | `ui` | `.` | any |
-| `voiceModelPacks` | `voiceModelPacks` | `.` | any |
-| `voiceProviders` | `voiceProviders` | `.` | any |
-| `webhooks` | `webhooks` | `.` | any |
-| `workflows` | `workflows` | `.` | any |
-| `workItems` | `workItems` | `.` | any |
+| Family | Availability | Author key | Entrypoint | Realm |
+| --- | --- | --- | --- | --- |
+| `accessProviders` | `available` | `accessProviders` | `.` | any |
+| `accountCollections` | `available` | `accountCollections` | `.` | any |
+| `actions` | `available` | `actions` | `.` | any |
+| `agents` | `available` | `agents` | `.` | any |
+| `atmospherePictures` | `available` | `atmospherePictures` | `.` | any |
+| `backgroundServices` | `available` | `backgroundServices` | `.` | any |
+| `browserActions` | `available` | `browserActions` | `.` | any |
+| `browserTargets` | `available` | `browserTargets` | `.` | any |
+| `captureSources` | `available` | `captureSources` | `.` | any |
+| `commands` | `available` | `commands` | `.` | any |
+| `composerAttachments` | `available` | `composer` | `.` | any |
+| `composerControls` | `available` | `composer` | `.` | any |
+| `composerReferences` | `available` | `composer` | `.` | any |
+| `composerRegions` | `available` | `composer` | `.` | any |
+| `connectedAccountDescriptors` | `available` | `connectedAccountDescriptors` | `.` | any |
+| `daemonDatabases` | `available` | `daemonDatabases` | `.` | any |
+| `deploymentTargets` | `available` | `deploymentTargets` | `.` | any |
+| `dragSources` | `available` | `dragSources` | `.` | any |
+| `dropTargets` | `available` | `dropTargets` | `.` | any |
+| `events` | `available` | `events` | `.` | any |
+| `executionRunProfiles` | `available` | `executionRunProfiles` | `.` | any |
+| `healthCheckKinds` | `available` | `healthCheckKinds` | `.` | any |
+| `hooks` | `available` | `hooks` | `.` | any |
+| `inputTypes` | `available` | `inputTypes` | `.` | any |
+| `languageServers` | `available` | `languageServers` | `.` | any |
+| `machineProvisioners` | `available` | `machineProvisioners` | `.` | any |
+| `machineRecipes` | `available` | `machineRecipes` | `.` | any |
+| `machineSetupPresets` | `available` | `machineSetupPresets` | `.` | any |
+| `managedDependencies` | `available` | `managedDependencies` | `.` | any |
+| `mcp.discoverySources` | `available` | `mcp` | `.` | any |
+| `mcp.servers` | `available` | `mcp` | `.` | any |
+| `notificationChannels` | `available` | `notificationChannels` | `.` | any |
+| `notifications` | `available` | `notifications` | `.` | any |
+| `openableContentViewers` | `available` | `openableContentViewers` | `.` | any |
+| `pluginContributionPoints` | `available` | `contributionPoints` | `.` | any |
+| `projectNativeAdapters` | `available` | `projectNativeAdapters` | `.` | any |
+| `promptAssets` | `available` | `promptAssets` | `.` | any |
+| `providers` | `available` | `providers` | `.` | any |
+| `registrySources` | `available` | `registrySources` | `.` | any |
+| `requestInterceptors` | `available` | `requestInterceptors` | `.` | any |
+| `resources` | `available` | `resources` | `.` | any |
+| `roles` | `available` | `roles` | `.` | any |
+| `scmBackends` | `available` | `scmBackends` | `.` | any |
+| `scmHostingProviders` | `available` | `scmHostingProviders` | `.` | any |
+| `searchProviders` | `available` | `searchProviders` | `.` | any |
+| `secretSources` | `available` | `secretSources` | `.` | any |
+| `sessionHeaderActions` | `available` | `sessionHeaderActions` | `.` | any |
+| `sessionInfoSections` | `available` | `sessionInfoSections` | `.` | any |
+| `settings` | `available` | `settings` | `.` | any |
+| `settings.fields` | `available` | `settings` | `.` | any |
+| `skills` | `available` | `skills` | `.` | any |
+| `systemTools` | `available` | `systemTools` | `.` | any |
+| `targetedPluginContributions` | `available` | `contributesTo` | `.` | any |
+| `tools` | `available` | `tools` | `.` | any |
+| `transcriptActivities` | `available` | `transcriptActivities` | `.` | any |
+| `ui.renderers` | `available` | `ui` | `.` | any |
+| `ui.settingsGroups` | `available` | `ui` | `.` | any |
+| `ui.settingsPages` | `available` | `ui` | `.` | any |
+| `ui.translations` | `available` | `ui` | `.` | any |
+| `ui.views` | `available` | `ui` | `.` | any |
+| `voiceModelPacks` | `available` | `voiceModelPacks` | `.` | any |
+| `voiceProviders` | `available` | `voiceProviders` | `.` | any |
+| `webhooks` | `available` | `webhooks` | `.` | any |
+| `workflows` | `available` | `workflows` | `.` | any |
+| `workItems` | `available` | `workItems` | `.` | any |
 
 ## Contribution families that are deferred
 
@@ -269,28 +104,31 @@ _Nothing deferred in this section._
 
 Reached through `context.services` inside a plugin invocation.
 
-| Service | Type | Entrypoint | Lifecycle |
-| --- | --- | --- | --- |
-| `context.services.actions` | `ActionsService` | `./actions` | invocation-scoped |
-| `context.services.composerContent` | `ComposerContentService` | `.` | invocation-scoped |
-| `context.services.connectedAccounts` | `ConnectedAccountsService` | `./connected-accounts` | invocation-scoped |
-| `context.services.events` | `EventsService` | `./events` | invocation-scoped |
-| `context.services.exec` | `ExecService` | `./exec` | invocation-scoped |
-| `context.services.fs` | `FileSystemService` | `./fs` | invocation-scoped |
-| `context.services.http` | `HttpService` | `./http` | invocation-scoped |
-| `context.services.interactions` | `InteractionsService` | `./interactions` | invocation-scoped |
-| `context.services.logger` | `LoggerService` | `.` | invocation-scoped |
-| `context.services.machineProvisioners` | `MachineProvisionersService` | `.` | invocation-scoped |
-| `context.services.managedServices` | `ManagedServices` | `./managed-services` | invocation-scoped |
-| `context.services.mcp` | `McpService` | `./mcp` | invocation-scoped |
-| `context.services.notifications` | `NotificationsService` | `./notifications` | invocation-scoped |
-| `context.services.providers` | `ProvidersService` | `./providers` | invocation-scoped |
-| `context.services.resources` | `ResourcesService` | `./resources` | invocation-scoped |
-| `context.services.secrets` | `SecretsService` | `./secrets` | invocation-scoped |
-| `context.services.sessions` | `SessionsService` | `./sessions` | invocation-scoped |
-| `context.services.settings` | `SettingsService` | `./settings` | invocation-scoped |
-| `context.services.storage` | `StorageService` | `./storage` | invocation-scoped |
-| `context.services.targetedContributions` | `TargetedContributionsService` | `.` | invocation-scoped |
+| Service | Availability | Type | Entrypoint | Lifecycle |
+| --- | --- | --- | --- | --- |
+| `context.services.actions` | `available` | `ActionsService` | `./actions` | invocation-scoped |
+| `context.services.backgroundServices` | `available` | `BackgroundServicesService` | `./background-services` | invocation-scoped |
+| `context.services.composerContent` | `available` | `ComposerContentService` | `.` | invocation-scoped |
+| `context.services.connectedAccounts` | `available` | `ConnectedAccountsService` | `./connected-accounts` | invocation-scoped |
+| `context.services.events` | `available` | `EventsService` | `./events` | invocation-scoped |
+| `context.services.exec` | `available` | `ExecService` | `./exec` | invocation-scoped |
+| `context.services.fs` | `available` | `FileSystemService` | `./fs` | invocation-scoped |
+| `context.services.healthChecks` | `available` | `HealthChecksService` | `.` | invocation-scoped |
+| `context.services.http` | `available` | `HttpService` | `./http` | invocation-scoped |
+| `context.services.interactions` | `available` | `InteractionsService` | `./interactions` | invocation-scoped |
+| `context.services.logger` | `available` | `LoggerService` | `.` | invocation-scoped |
+| `context.services.machineConnectorSecrets` | `available` | `MachineConnectorSecretsService` | `./secrets` | invocation-scoped |
+| `context.services.machineProvisioners` | `available` | `MachineProvisionersService` | `.` | invocation-scoped |
+| `context.services.managedServices` | `available` | `ManagedServices` | `./managed-services` | invocation-scoped |
+| `context.services.mcp` | `available` | `McpService` | `./mcp` | invocation-scoped |
+| `context.services.notifications` | `available` | `NotificationsService` | `./notifications` | invocation-scoped |
+| `context.services.providers` | `available` | `ProvidersService` | `./providers` | invocation-scoped |
+| `context.services.resources` | `available` | `ResourcesService` | `./resources` | invocation-scoped |
+| `context.services.secrets` | `available` | `SecretsService` | `./secrets` | invocation-scoped |
+| `context.services.sessions` | `available` | `SessionsService` | `./sessions` | invocation-scoped |
+| `context.services.settings` | `available` | `SettingsService` | `./settings` | invocation-scoped |
+| `context.services.storage` | `available` | `StorageService` | `./storage` | invocation-scoped |
+| `context.services.targetedContributions` | `available` | `TargetedContributionsService` | `.` | invocation-scoped |
 
 ## Services that are deferred
 
@@ -302,18 +140,18 @@ What each authorization class actually enforces is on
 [Host access](/plugins/security/permissions) — the classes differ more than the
 names suggest.
 
-| Capability | Class |
-| --- | --- |
-| `connectedAccounts` | hostResourceSelection |
-| `environment` | cooperativeDisclosure |
-| `filesystem` | cooperativeDisclosure |
-| `mcp` | hostResourceSelection |
-| `network` | cooperativeDisclosure |
-| `network.client` | cooperativeDisclosure |
-| `process` | cooperativeDisclosure |
-| `sessions` | hostResourceSelection |
-| `storage.account` | hostResourceSelection |
-| `terminal` | presentIntentOrOs |
+| Capability | Availability | Class |
+| --- | --- | --- |
+| `connectedAccounts` | `available` | hostResourceSelection |
+| `environment` | `available` | cooperativeDisclosure |
+| `filesystem` | `available` | cooperativeDisclosure |
+| `mcp` | `available` | hostResourceSelection |
+| `network` | `available` | cooperativeDisclosure |
+| `network.client` | `available` | cooperativeDisclosure |
+| `process` | `available` | cooperativeDisclosure |
+| `sessions` | `available` | hostResourceSelection |
+| `storage.account` | `available` | hostResourceSelection |
+| `terminal` | `available` | presentIntentOrOs |
 
 ### Deferred
 
@@ -322,6 +160,68 @@ names suggest.
 | `browser` | The manifest declaration has no host authority or service owner: no canonical browser owner binds present-intent, cancellation, currentness, or cleanup yet. |
 | `clipboard` | The manifest declaration has no host authority or service owner: no canonical clipboard owner binds present-intent, platform behavior, or cleanup yet. |
 | `externalLinks` | The manifest declaration has no host authority or service owner: no canonical external-link owner binds present-intent or canonical URL handling yet. |
+
+## SDK entrypoints available in Developer Preview
+
+| Entrypoint | Availability | Realm |
+| --- | --- | --- |
+| `.` | `available` | any |
+| `./access-providers` | `available` | any |
+| `./actions` | `available` | any |
+| `./agents` | `available` | any |
+| `./agents/runtime` | `available` | daemon |
+| `./async` | `available` | any |
+| `./automations` | `available` | any |
+| `./background-services` | `available` | daemon |
+| `./browser` | `available` | any |
+| `./collections` | `available` | daemon |
+| `./connected-accounts` | `available` | daemon |
+| `./connected-accounts/request-auth` | `available` | daemon |
+| `./contributions` | `available` | any |
+| `./errors` | `available` | any |
+| `./events` | `available` | any |
+| `./exec` | `available` | daemon |
+| `./exec/protocol-clients` | `available` | any |
+| `./first-party/claude` | `available` | any |
+| `./first-party/connected-accounts` | `available` | any |
+| `./fs` | `available` | daemon |
+| `./hooks` | `available` | daemon |
+| `./http` | `available` | any |
+| `./interactions` | `available` | any |
+| `./machine-provisioners` | `available` | any |
+| `./machine-provisioners/lima` | `available` | daemon |
+| `./machine-provisioners/ssh` | `available` | daemon |
+| `./managed-services` | `available` | any |
+| `./managed-services/native` | `available` | daemon |
+| `./manifest` | `available` | any |
+| `./mcp` | `available` | daemon |
+| `./notifications` | `available` | any |
+| `./protocol` | `available` | any |
+| `./providers` | `available` | any |
+| `./resources` | `available` | any |
+| `./reviews` | `available` | daemon |
+| `./scm` | `available` | daemon |
+| `./scm/backend` | `available` | daemon |
+| `./scm/git` | `available` | daemon |
+| `./scm/hosting` | `available` | daemon |
+| `./secrets` | `available` | any |
+| `./sessions` | `available` | daemon |
+| `./sessions/external` | `available` | daemon |
+| `./sessions/file-stores` | `available` | daemon |
+| `./sessions/subagents` | `available` | any |
+| `./sessions/work-state` | `available` | any |
+| `./settings` | `available` | any |
+| `./storage` | `available` | daemon |
+| `./testing` | `available` | daemon |
+| `./ui` | `available` | any |
+| `./ui/build` | `available` | daemon |
+| `./ui/client` | `available` | browser |
+| `./voice` | `available` | any |
+| `./voice/client` | `available` | client |
+| `./voice/speech` | `available` | any |
+| `./webhooks` | `available` | any |
+
+
 
 ## Related
 

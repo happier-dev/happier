@@ -17,3 +17,4 @@ export { readHttpStatus, isPermanentRequestStatus, isPermanentRequestError } fro
 
 
 export type { HttpResponse } from '../http.js';
+export type { HttpRequest } from '../http.js';

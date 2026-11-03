@@ -4,6 +4,7 @@
     "monochrome": true
   },
   "contributes": {
+    "accessProviders": [],
     "accountCollections": [
       {
         "id": "channel-state",
@@ -11359,6 +11360,17 @@
                     "minimum": 0,
                     "type": "integer"
                   },
+                  "bindingId": {
+                    "maxLength": 96,
+                    "minLength": 1,
+                    "pattern": "^[\\x21-\\x7E]+$",
+                    "type": "string"
+                  },
+                  "createdAt": {
+                    "maximum": 9007199254740991,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
                   "createdThreadEndpointRequired": {
                     "additionalProperties": false,
                     "properties": {
@@ -11456,6 +11468,7 @@
                 "required": [
                   "custodyId",
                   "revision",
+                  "createdAt",
                   "state",
                   "acceptedPartCount"
                 ],
@@ -15373,28 +15386,6 @@
                                 {
                                   "additionalProperties": false,
                                   "properties": {
-                                    "bundleId": {
-                                      "minLength": 1,
-                                      "pattern": ".*\\S.*",
-                                      "type": "string"
-                                    },
-                                    "kind": {
-                                      "const": "app_bundle"
-                                    }
-                                  },
-                                  "required": [
-                                    "kind",
-                                    "bundleId"
-                                  ],
-                                  "type": "object"
-                                },
-                                {
-                                  "additionalProperties": false,
-                                  "properties": {
-                                    "declarationDigest": {
-                                      "pattern": "^sha256:[a-f0-9]{64}$",
-                                      "type": "string"
-                                    },
                                     "kind": {
                                       "const": "source_declaration"
                                     },
@@ -15406,8 +15397,7 @@
                                   },
                                   "required": [
                                     "kind",
-                                    "packageName",
-                                    "declarationDigest"
+                                    "packageName"
                                   ],
                                   "type": "object"
                                 }
@@ -15605,28 +15595,6 @@
                                 {
                                   "additionalProperties": false,
                                   "properties": {
-                                    "bundleId": {
-                                      "minLength": 1,
-                                      "pattern": ".*\\S.*",
-                                      "type": "string"
-                                    },
-                                    "kind": {
-                                      "const": "app_bundle"
-                                    }
-                                  },
-                                  "required": [
-                                    "kind",
-                                    "bundleId"
-                                  ],
-                                  "type": "object"
-                                },
-                                {
-                                  "additionalProperties": false,
-                                  "properties": {
-                                    "declarationDigest": {
-                                      "pattern": "^sha256:[a-f0-9]{64}$",
-                                      "type": "string"
-                                    },
                                     "kind": {
                                       "const": "source_declaration"
                                     },
@@ -15638,8 +15606,7 @@
                                   },
                                   "required": [
                                     "kind",
-                                    "packageName",
-                                    "declarationDigest"
+                                    "packageName"
                                   ],
                                   "type": "object"
                                 }
@@ -16481,28 +16448,6 @@
                                 {
                                   "additionalProperties": false,
                                   "properties": {
-                                    "bundleId": {
-                                      "minLength": 1,
-                                      "pattern": ".*\\S.*",
-                                      "type": "string"
-                                    },
-                                    "kind": {
-                                      "const": "app_bundle"
-                                    }
-                                  },
-                                  "required": [
-                                    "kind",
-                                    "bundleId"
-                                  ],
-                                  "type": "object"
-                                },
-                                {
-                                  "additionalProperties": false,
-                                  "properties": {
-                                    "declarationDigest": {
-                                      "pattern": "^sha256:[a-f0-9]{64}$",
-                                      "type": "string"
-                                    },
                                     "kind": {
                                       "const": "source_declaration"
                                     },
@@ -16514,8 +16459,7 @@
                                   },
                                   "required": [
                                     "kind",
-                                    "packageName",
-                                    "declarationDigest"
+                                    "packageName"
                                   ],
                                   "type": "object"
                                 }
@@ -16713,28 +16657,6 @@
                                 {
                                   "additionalProperties": false,
                                   "properties": {
-                                    "bundleId": {
-                                      "minLength": 1,
-                                      "pattern": ".*\\S.*",
-                                      "type": "string"
-                                    },
-                                    "kind": {
-                                      "const": "app_bundle"
-                                    }
-                                  },
-                                  "required": [
-                                    "kind",
-                                    "bundleId"
-                                  ],
-                                  "type": "object"
-                                },
-                                {
-                                  "additionalProperties": false,
-                                  "properties": {
-                                    "declarationDigest": {
-                                      "pattern": "^sha256:[a-f0-9]{64}$",
-                                      "type": "string"
-                                    },
                                     "kind": {
                                       "const": "source_declaration"
                                     },
@@ -16746,8 +16668,7 @@
                                   },
                                   "required": [
                                     "kind",
-                                    "packageName",
-                                    "declarationDigest"
+                                    "packageName"
                                   ],
                                   "type": "object"
                                 }
@@ -17276,28 +17197,6 @@
                                 {
                                   "additionalProperties": false,
                                   "properties": {
-                                    "bundleId": {
-                                      "minLength": 1,
-                                      "pattern": ".*\\S.*",
-                                      "type": "string"
-                                    },
-                                    "kind": {
-                                      "const": "app_bundle"
-                                    }
-                                  },
-                                  "required": [
-                                    "kind",
-                                    "bundleId"
-                                  ],
-                                  "type": "object"
-                                },
-                                {
-                                  "additionalProperties": false,
-                                  "properties": {
-                                    "declarationDigest": {
-                                      "pattern": "^sha256:[a-f0-9]{64}$",
-                                      "type": "string"
-                                    },
                                     "kind": {
                                       "const": "source_declaration"
                                     },
@@ -17309,8 +17208,7 @@
                                   },
                                   "required": [
                                     "kind",
-                                    "packageName",
-                                    "declarationDigest"
+                                    "packageName"
                                   ],
                                   "type": "object"
                                 }
@@ -17508,28 +17406,6 @@
                                 {
                                   "additionalProperties": false,
                                   "properties": {
-                                    "bundleId": {
-                                      "minLength": 1,
-                                      "pattern": ".*\\S.*",
-                                      "type": "string"
-                                    },
-                                    "kind": {
-                                      "const": "app_bundle"
-                                    }
-                                  },
-                                  "required": [
-                                    "kind",
-                                    "bundleId"
-                                  ],
-                                  "type": "object"
-                                },
-                                {
-                                  "additionalProperties": false,
-                                  "properties": {
-                                    "declarationDigest": {
-                                      "pattern": "^sha256:[a-f0-9]{64}$",
-                                      "type": "string"
-                                    },
                                     "kind": {
                                       "const": "source_declaration"
                                     },
@@ -17541,8 +17417,7 @@
                                   },
                                   "required": [
                                     "kind",
-                                    "packageName",
-                                    "declarationDigest"
+                                    "packageName"
                                   ],
                                   "type": "object"
                                 }
@@ -17734,6 +17609,53 @@
                       "maxLength": 256,
                       "minLength": 1,
                       "type": "string"
+                    },
+                    "steps": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "copyableValues": {
+                            "items": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "label": {
+                                  "maxLength": 256,
+                                  "minLength": 1,
+                                  "type": "string"
+                                },
+                                "value": {
+                                  "minLength": 1,
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "label",
+                                "value"
+                              ],
+                              "type": "object"
+                            },
+                            "minItems": 1,
+                            "type": "array"
+                          },
+                          "externalUrl": {
+                            "minLength": 1,
+                            "pattern": "^https://[^\\s]+$",
+                            "type": "string",
+                            "x-happier-max-utf8-bytes": 2048
+                          },
+                          "title": {
+                            "maxLength": 256,
+                            "minLength": 1,
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "title"
+                        ],
+                        "type": "object"
+                      },
+                      "minItems": 1,
+                      "type": "array"
                     }
                   },
                   "required": [
@@ -17996,28 +17918,6 @@
                                 {
                                   "additionalProperties": false,
                                   "properties": {
-                                    "bundleId": {
-                                      "minLength": 1,
-                                      "pattern": ".*\\S.*",
-                                      "type": "string"
-                                    },
-                                    "kind": {
-                                      "const": "app_bundle"
-                                    }
-                                  },
-                                  "required": [
-                                    "kind",
-                                    "bundleId"
-                                  ],
-                                  "type": "object"
-                                },
-                                {
-                                  "additionalProperties": false,
-                                  "properties": {
-                                    "declarationDigest": {
-                                      "pattern": "^sha256:[a-f0-9]{64}$",
-                                      "type": "string"
-                                    },
                                     "kind": {
                                       "const": "source_declaration"
                                     },
@@ -18029,8 +17929,7 @@
                                   },
                                   "required": [
                                     "kind",
-                                    "packageName",
-                                    "declarationDigest"
+                                    "packageName"
                                   ],
                                   "type": "object"
                                 }
@@ -18228,28 +18127,6 @@
                                 {
                                   "additionalProperties": false,
                                   "properties": {
-                                    "bundleId": {
-                                      "minLength": 1,
-                                      "pattern": ".*\\S.*",
-                                      "type": "string"
-                                    },
-                                    "kind": {
-                                      "const": "app_bundle"
-                                    }
-                                  },
-                                  "required": [
-                                    "kind",
-                                    "bundleId"
-                                  ],
-                                  "type": "object"
-                                },
-                                {
-                                  "additionalProperties": false,
-                                  "properties": {
-                                    "declarationDigest": {
-                                      "pattern": "^sha256:[a-f0-9]{64}$",
-                                      "type": "string"
-                                    },
                                     "kind": {
                                       "const": "source_declaration"
                                     },
@@ -18261,8 +18138,7 @@
                                   },
                                   "required": [
                                     "kind",
-                                    "packageName",
-                                    "declarationDigest"
+                                    "packageName"
                                   ],
                                   "type": "object"
                                 }
@@ -31171,6 +31047,7 @@
     "composerRegions": [],
     "connectedAccountDescriptors": [],
     "daemonDatabases": [],
+    "deploymentTargets": [],
     "dragSources": [],
     "dropTargets": [],
     "events": [
@@ -31187,10 +31064,13 @@
       }
     ],
     "executionRunProfiles": [],
+    "healthCheckKinds": [],
     "hooks": [],
     "inputTypes": [],
     "languageServers": [],
     "machineProvisioners": [],
+    "machineRecipes": [],
+    "machineSetupPresets": [],
     "managedDependencies": [],
     "mcp": {
       "discoverySources": [],
@@ -31205,6 +31085,93 @@
         "maxContributionsPerContributor": 1,
         "protocols": [
           {
+            "descriptor": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "additionalProperties": true,
+              "properties": {
+                "displayName": {
+                  "minLength": 1,
+                  "pattern": "\\S",
+                  "type": "string"
+                },
+                "setupGuidance": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "externalUrl": {
+                      "minLength": 1,
+                      "pattern": "^https://[^\\s]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 2048
+                    },
+                    "requiredPermissionsLabel": {
+                      "maxLength": 256,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "steps": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "copyableValues": {
+                            "items": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "label": {
+                                  "maxLength": 256,
+                                  "minLength": 1,
+                                  "type": "string"
+                                },
+                                "value": {
+                                  "minLength": 1,
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "label",
+                                "value"
+                              ],
+                              "type": "object"
+                            },
+                            "minItems": 1,
+                            "type": "array"
+                          },
+                          "externalUrl": {
+                            "minLength": 1,
+                            "pattern": "^https://[^\\s]+$",
+                            "type": "string",
+                            "x-happier-max-utf8-bytes": 2048
+                          },
+                          "title": {
+                            "maxLength": 256,
+                            "minLength": 1,
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "title"
+                        ],
+                        "type": "object"
+                      },
+                      "minItems": 1,
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "externalUrl",
+                    "requiredPermissionsLabel"
+                  ],
+                  "type": "object"
+                },
+                "v": {
+                  "const": 1
+                }
+              },
+              "required": [
+                "v",
+                "displayName"
+              ],
+              "type": "object"
+            },
             "id": "happier.channels/providers",
             "operations": {
               "attachmentFetch": {
@@ -38595,6 +38562,53 @@
                               "maxLength": 256,
                               "minLength": 1,
                               "type": "string"
+                            },
+                            "steps": {
+                              "items": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "copyableValues": {
+                                    "items": {
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "label": {
+                                          "maxLength": 256,
+                                          "minLength": 1,
+                                          "type": "string"
+                                        },
+                                        "value": {
+                                          "minLength": 1,
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "label",
+                                        "value"
+                                      ],
+                                      "type": "object"
+                                    },
+                                    "minItems": 1,
+                                    "type": "array"
+                                  },
+                                  "externalUrl": {
+                                    "minLength": 1,
+                                    "pattern": "^https://[^\\s]+$",
+                                    "type": "string",
+                                    "x-happier-max-utf8-bytes": 2048
+                                  },
+                                  "title": {
+                                    "maxLength": 256,
+                                    "minLength": 1,
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "title"
+                                ],
+                                "type": "object"
+                              },
+                              "minItems": 1,
+                              "type": "array"
                             }
                           },
                           "required": [
@@ -38893,6 +38907,7 @@
     "scmBackends": [],
     "scmHostingProviders": [],
     "searchProviders": [],
+    "secretSources": [],
     "sessionHeaderActions": [
       {
         "command": {
@@ -39211,7 +39226,6 @@
             "plugins.channels.surface.bindingCreateContinue": "Continue",
             "plugins.channels.surface.bindingCreateConversation": "Conversation",
             "plugins.channels.surface.bindingCreateCreated": "Conversation binding created.",
-            "plugins.channels.surface.bindingCreateCurrentStep": "Current step",
             "plugins.channels.surface.bindingCreateDeliveryMode": "Session delivery",
             "plugins.channels.surface.bindingCreateDescription": "Choose the current external conversation, allowed principals, and destination.",
             "plugins.channels.surface.bindingCreateEndpoint": "Choose a conversation",
@@ -39234,6 +39248,8 @@
             "plugins.channels.surface.bindingCreateNewSessionUnavailable": "New Session creation is unavailable for this destination.",
             "plugins.channels.surface.bindingCreateNewSessionUnavailableDescription": "The binding will continue to use the selected existing Session.",
             "plugins.channels.surface.bindingCreateNoConnection": "Create an active conversation connection before adding a binding.",
+            "plugins.channels.surface.bindingCreateNotReadyDescription": "Wait for the provider to become ready, then search again.",
+            "plugins.channels.surface.bindingCreateNotReadyTitle": "Binding setup is not ready",
             "plugins.channels.surface.bindingCreatePairingAttempts": "Attempts remaining",
             "plugins.channels.surface.bindingCreatePairingCancel": "Cancel pairing",
             "plugins.channels.surface.bindingCreatePairingChallengeDetails": "Pairing challenge",
@@ -39368,7 +39384,6 @@
             "plugins.channels.surface.bindingEditConnectionChangedDescription": "Your draft is retained. Reload the current connection and re-resolve provider-dependent choices before saving.",
             "plugins.channels.surface.bindingEditConnectionChangedTitle": "Current provider connection details are unavailable",
             "plugins.channels.surface.bindingEditCurrentAudience": "Current conversation and senders",
-            "plugins.channels.surface.bindingEditCurrentStep": "Current step",
             "plugins.channels.surface.bindingEditDebounce": "Message grouping delay",
             "plugins.channels.surface.bindingEditDebounceInvalid": "Enter a whole number of milliseconds.",
             "plugins.channels.surface.bindingEditDebounceNone": "No delay",
@@ -39449,8 +39464,10 @@
             "plugins.channels.surface.connectionDeleteConfirmDescription": "This disables the connection and waits for exact transport-stop proof before cleanup.",
             "plugins.channels.surface.connectionDeleteConfirmTitle": "Delete this connection?",
             "plugins.channels.surface.connectionDeleted": "Connection deleted.",
+            "plugins.channels.surface.connectionDetailsTitle": "Details",
             "plugins.channels.surface.connectionNoAttention": "Nothing needs attention",
             "plugins.channels.surface.connectionPaused": "Paused",
+            "plugins.channels.surface.connectionPolicyTitle": "Policy",
             "plugins.channels.surface.connectionRetest": "Test connection",
             "plugins.channels.surface.connectionRetestFailedDescription": "The saved connection may have changed. Refresh connection details before trying again.",
             "plugins.channels.surface.connectionRetestFailedTitle": "Could not test the connection",
@@ -39529,10 +39546,12 @@
             "plugins.channels.surface.deliveryResolutionFailedTitle": "Could not record the delivery decision",
             "plugins.channels.surface.deliveryResolutionGroupArchived": "{count} deliveries to archived destinations",
             "plugins.channels.surface.deliveryResolutionGroupArchivedOne": "1 delivery to an archived destination",
+            "plugins.channels.surface.deliveryResolutionGroupConnection": "Outside linked conversations",
             "plugins.channels.surface.deliveryResolutionGroupPartial": "{count} deliveries partly sent",
             "plugins.channels.surface.deliveryResolutionGroupPartialOne": "1 delivery partly sent",
             "plugins.channels.surface.deliveryResolutionGroupUnknown": "{count} deliveries with an unknown outcome",
             "plugins.channels.surface.deliveryResolutionGroupUnknownOne": "1 delivery with an unknown outcome",
+            "plugins.channels.surface.deliveryResolutionGroupUnlisted": "A conversation not listed here",
             "plugins.channels.surface.deliveryResolutionLoadMore": "Show more delivery decisions",
             "plugins.channels.surface.deliveryResolutionLoading": "Loading delivery details",
             "plugins.channels.surface.deliveryResolutionOutcomeUnknown": "Outcome unknown",
@@ -39543,8 +39562,8 @@
             "plugins.channels.surface.deliveryResolutionReadFailedTitle": "Could not read delivery details",
             "plugins.channels.surface.deliveryResolutionRetryAfterUnarchive": "Unarchived it — send again",
             "plugins.channels.surface.deliveryResolutionRetrying": "Retrying…",
-            "plugins.channels.surface.deliveryResolutionRevision": "Delivery",
-            "plugins.channels.surface.deliveryResolutionRevisionValue": "{id} · revision {revision}",
+            "plugins.channels.surface.deliveryResolutionRowName": "Delivery sent {time}",
+            "plugins.channels.surface.deliveryResolutionSentAt": "Sent {time}",
             "plugins.channels.surface.deliveryResolutionThreadId": "Started thread ID",
             "plugins.channels.surface.deliveryResolutionThreadIdDescription": "This started a new conversation. If it arrived, enter the ID of the thread it created so replies reach the session. Without it, only Discard is possible.",
             "plugins.channels.surface.deliveryResolutionThreadIdPlaceholder": "For email, the sent message’s Message-ID",
@@ -39609,7 +39628,6 @@
             "plugins.channels.surface.ingressOccurrenceConflict": "Incoming occurrence conflict needs attention",
             "plugins.channels.surface.ingressOccurrenceConflictDescription": "Happier received contradictory evidence for one incoming occurrence. It will not retry or advance this connection; delete the connection to remove the retained conflict.",
             "plugins.channels.surface.ingressOccurrenceConflictTitle": "Incoming occurrence conflict needs attention",
-            "plugins.channels.surface.integrationIdentity": "Integration identity and Account policy",
             "plugins.channels.surface.liveUpdatesEndedDescription": "Refresh to read the current Account connection policy again.",
             "plugins.channels.surface.liveUpdatesEndedTitle": "Live updates are unavailable",
             "plugins.channels.surface.loadingDescription": "Reading the current connection policy from your Account.",
@@ -39706,6 +39724,9 @@
             "plugins.channels.surface.reload": "Reload",
             "plugins.channels.surface.repairEndpointRetarget": "Repair delivery target",
             "plugins.channels.surface.repairingEndpointRetarget": "Repairing…",
+            "plugins.channels.surface.resolverRefusedTitle": "The provider refused this search",
+            "plugins.channels.surface.resolverUnsupportedDescription": "The provider can’t look up this kind of address. Enter it the way the provider names it.",
+            "plugins.channels.surface.resolverUnsupportedTitle": "Search for it another way",
             "plugins.channels.surface.resourceConnectionInvalid": "The connection Resource contains an invalid connection.",
             "plugins.channels.surface.resourceContentTypeInvalid": "The connection Resource did not return JSON.",
             "plugins.channels.surface.resourceInvalidJson": "The connection Resource could not be read.",
@@ -39764,6 +39785,15 @@
             "plugins.channels.surface.seconds": "seconds",
             "plugins.channels.surface.selectedMachineId": "Selected machine ID",
             "plugins.channels.surface.selectedMachineSummary": "Runs on your selected machine",
+            "plugins.channels.surface.setupGuidanceCopyLink": "Copy link",
+            "plugins.channels.surface.setupGuidanceCopyPermissions": "Copy permissions",
+            "plugins.channels.surface.setupGuidanceCopyValue": "Copy {label}",
+            "plugins.channels.surface.setupGuidanceGrant": "Grant what it asks for",
+            "plugins.channels.surface.setupGuidanceOpen": "Open {provider}",
+            "plugins.channels.surface.setupGuidanceOpenHost": "Open {host}",
+            "plugins.channels.surface.setupGuidanceOpenStep": "Open page",
+            "plugins.channels.surface.setupGuidanceVerify": "Create and test the connection",
+            "plugins.channels.surface.setupGuidanceVerifyDetail": "Create it below. Then Test connection checks that Happier can reach {provider} with it.",
             "plugins.channels.surface.staleDescription": "Live connection updates are temporarily unavailable.",
             "plugins.channels.surface.staleTitle": "Showing last known connection details",
             "plugins.channels.surface.stopPending": "Stop reconciliation pending",
@@ -40030,7 +40060,6 @@
             "plugins.channels.surface.bindingCreateContinue": "Weiter",
             "plugins.channels.surface.bindingCreateConversation": "Unterhaltung",
             "plugins.channels.surface.bindingCreateCreated": "Unterhaltungsverknüpfung erstellt.",
-            "plugins.channels.surface.bindingCreateCurrentStep": "Aktueller Schritt",
             "plugins.channels.surface.bindingCreateDeliveryMode": "Session-Zustellung",
             "plugins.channels.surface.bindingCreateDescription": "Wähle die aktuelle externe Konversation, die zulässigen Identitäten und das Ziel aus.",
             "plugins.channels.surface.bindingCreateEndpoint": "Konversation auswählen",
@@ -40053,6 +40082,8 @@
             "plugins.channels.surface.bindingCreateNewSessionUnavailable": "Für dieses Ziel kann keine neue Session erstellt werden.",
             "plugins.channels.surface.bindingCreateNewSessionUnavailableDescription": "Die Verknüpfung verwendet weiterhin die ausgewählte bestehende Session.",
             "plugins.channels.surface.bindingCreateNoConnection": "Erstelle eine aktive Konversationsverbindung, bevor du eine Verknüpfung hinzufügst.",
+            "plugins.channels.surface.bindingCreateNotReadyDescription": "Warte, bis der Anbieter bereit ist, und suche dann erneut.",
+            "plugins.channels.surface.bindingCreateNotReadyTitle": "Die Verknüpfung ist noch nicht bereit",
             "plugins.channels.surface.bindingCreatePairingAttempts": "Verbleibende Versuche",
             "plugins.channels.surface.bindingCreatePairingCancel": "Kopplung abbrechen",
             "plugins.channels.surface.bindingCreatePairingChallengeDetails": "Kopplungsanfrage",
@@ -40187,7 +40218,6 @@
             "plugins.channels.surface.bindingEditConnectionChangedDescription": "Dein Entwurf bleibt erhalten. Lade die aktuelle Verbindung neu und bestimme die anbieterabhängigen Optionen erneut, bevor du speicherst.",
             "plugins.channels.surface.bindingEditConnectionChangedTitle": "Die aktuellen Details der Anbieterverbindung sind nicht verfügbar",
             "plugins.channels.surface.bindingEditCurrentAudience": "Aktuelle Konversation und Absender",
-            "plugins.channels.surface.bindingEditCurrentStep": "Aktueller Schritt",
             "plugins.channels.surface.bindingEditDebounce": "Verzögerung für Nachrichtengruppierung",
             "plugins.channels.surface.bindingEditDebounceInvalid": "Gib eine ganze Zahl in Millisekunden ein.",
             "plugins.channels.surface.bindingEditDebounceNone": "Keine Verzögerung",
@@ -40268,8 +40298,10 @@
             "plugins.channels.surface.connectionDeleteConfirmDescription": "Dadurch wird die Verbindung deaktiviert und vor der Bereinigung auf einen eindeutigen Nachweis gewartet, dass der Transport beendet wurde.",
             "plugins.channels.surface.connectionDeleteConfirmTitle": "Diese Verbindung löschen?",
             "plugins.channels.surface.connectionDeleted": "Verbindung gelöscht.",
+            "plugins.channels.surface.connectionDetailsTitle": "Details",
             "plugins.channels.surface.connectionNoAttention": "Nichts erfordert Aufmerksamkeit",
             "plugins.channels.surface.connectionPaused": "Pausiert",
+            "plugins.channels.surface.connectionPolicyTitle": "Richtlinie",
             "plugins.channels.surface.connectionRetest": "Verbindung testen",
             "plugins.channels.surface.connectionRetestFailedDescription": "Die gespeicherte Verbindung könnte sich geändert haben. Aktualisiere die Verbindungsdetails, bevor du es erneut versuchst.",
             "plugins.channels.surface.connectionRetestFailedTitle": "Die Verbindung konnte nicht getestet werden",
@@ -40348,10 +40380,12 @@
             "plugins.channels.surface.deliveryResolutionFailedTitle": "Die Zustellungsentscheidung konnte nicht gespeichert werden",
             "plugins.channels.surface.deliveryResolutionGroupArchived": "{count} Zustellungen an archivierte Ziele",
             "plugins.channels.surface.deliveryResolutionGroupArchivedOne": "1 Zustellung an ein archiviertes Ziel",
+            "plugins.channels.surface.deliveryResolutionGroupConnection": "Außerhalb verknüpfter Unterhaltungen",
             "plugins.channels.surface.deliveryResolutionGroupPartial": "{count} Zustellungen teilweise gesendet",
             "plugins.channels.surface.deliveryResolutionGroupPartialOne": "1 Zustellung teilweise gesendet",
             "plugins.channels.surface.deliveryResolutionGroupUnknown": "{count} Zustellungen mit unbekanntem Ergebnis",
             "plugins.channels.surface.deliveryResolutionGroupUnknownOne": "1 Zustellung mit unbekanntem Ergebnis",
+            "plugins.channels.surface.deliveryResolutionGroupUnlisted": "Eine hier nicht aufgeführte Unterhaltung",
             "plugins.channels.surface.deliveryResolutionLoadMore": "Weitere Zustellungsentscheidungen anzeigen",
             "plugins.channels.surface.deliveryResolutionLoading": "Zustellungsdetails werden geladen",
             "plugins.channels.surface.deliveryResolutionOutcomeUnknown": "Ergebnis unbekannt",
@@ -40362,8 +40396,8 @@
             "plugins.channels.surface.deliveryResolutionReadFailedTitle": "Zustellungsdetails konnten nicht gelesen werden",
             "plugins.channels.surface.deliveryResolutionRetryAfterUnarchive": "Archivierung aufgehoben – erneut senden",
             "plugins.channels.surface.deliveryResolutionRetrying": "Erneuter Versuch…",
-            "plugins.channels.surface.deliveryResolutionRevision": "Zustellung",
-            "plugins.channels.surface.deliveryResolutionRevisionValue": "{id} · Revision {revision}",
+            "plugins.channels.surface.deliveryResolutionRowName": "Zustellung gesendet {time}",
+            "plugins.channels.surface.deliveryResolutionSentAt": "Gesendet {time}",
             "plugins.channels.surface.deliveryResolutionThreadId": "ID des gestarteten Threads",
             "plugins.channels.surface.deliveryResolutionThreadIdDescription": "Damit wurde eine neue Konversation gestartet. Falls sie angekommen ist, gib die ID des entstandenen Threads ein, damit Antworten die Sitzung erreichen. Ohne sie ist nur Verwerfen möglich.",
             "plugins.channels.surface.deliveryResolutionThreadIdPlaceholder": "Bei E-Mail: die Message-ID der gesendeten Nachricht",
@@ -40428,7 +40462,6 @@
             "plugins.channels.surface.ingressOccurrenceConflict": "Konflikt bei eingehendem Ereignis erfordert Aufmerksamkeit",
             "plugins.channels.surface.ingressOccurrenceConflictDescription": "Happier hat für ein eingehendes Ereignis widersprüchliche Nachweise erhalten. Es wird weder einen erneuten Versuch unternehmen noch diese Verbindung fortschreiben; lösche die Verbindung, um den beibehaltenen Konflikt zu entfernen.",
             "plugins.channels.surface.ingressOccurrenceConflictTitle": "Konflikt bei eingehendem Ereignis erfordert Aufmerksamkeit",
-            "plugins.channels.surface.integrationIdentity": "Integrationsidentität und Account-Richtlinie",
             "plugins.channels.surface.liveUpdatesEndedDescription": "Aktualisiere die Ansicht, um die aktuelle Account-Verbindungsrichtlinie erneut zu lesen.",
             "plugins.channels.surface.liveUpdatesEndedTitle": "Live-Aktualisierungen sind nicht verfügbar",
             "plugins.channels.surface.loadingDescription": "Die aktuelle Verbindungsrichtlinie wird aus deinem Account gelesen.",
@@ -40525,6 +40558,9 @@
             "plugins.channels.surface.reload": "Neu laden",
             "plugins.channels.surface.repairEndpointRetarget": "Zustellungsziel reparieren",
             "plugins.channels.surface.repairingEndpointRetarget": "Wird repariert…",
+            "plugins.channels.surface.resolverRefusedTitle": "Der Anbieter hat diese Suche abgelehnt",
+            "plugins.channels.surface.resolverUnsupportedDescription": "Der Anbieter kann diese Art von Adresse nicht nachschlagen. Gib sie so ein, wie der Anbieter sie benennt.",
+            "plugins.channels.surface.resolverUnsupportedTitle": "Auf andere Weise suchen",
             "plugins.channels.surface.resourceConnectionInvalid": "Die Verbindungs-Resource enthält eine ungültige Verbindung.",
             "plugins.channels.surface.resourceContentTypeInvalid": "Die Verbindungs-Resource hat kein JSON zurückgegeben.",
             "plugins.channels.surface.resourceInvalidJson": "Die Verbindungs-Resource konnte nicht gelesen werden.",
@@ -40583,6 +40619,15 @@
             "plugins.channels.surface.seconds": "Sekunden",
             "plugins.channels.surface.selectedMachineId": "ID des ausgewählten Computers",
             "plugins.channels.surface.selectedMachineSummary": "Wird auf dem ausgewählten Computer ausgeführt",
+            "plugins.channels.surface.setupGuidanceCopyLink": "Link kopieren",
+            "plugins.channels.surface.setupGuidanceCopyPermissions": "Berechtigungen kopieren",
+            "plugins.channels.surface.setupGuidanceCopyValue": "{label} kopieren",
+            "plugins.channels.surface.setupGuidanceGrant": "Erteile, was angefragt wird",
+            "plugins.channels.surface.setupGuidanceOpen": "{provider} öffnen",
+            "plugins.channels.surface.setupGuidanceOpenHost": "{host} öffnen",
+            "plugins.channels.surface.setupGuidanceOpenStep": "Seite öffnen",
+            "plugins.channels.surface.setupGuidanceVerify": "Verbindung erstellen und testen",
+            "plugins.channels.surface.setupGuidanceVerifyDetail": "Erstelle sie unten. Danach prüft „Verbindung testen“, ob Happier {provider} damit erreicht.",
             "plugins.channels.surface.staleDescription": "Live-Aktualisierungen der Verbindung sind vorübergehend nicht verfügbar.",
             "plugins.channels.surface.staleTitle": "Zuletzt bekannte Verbindungsdetails werden angezeigt",
             "plugins.channels.surface.stopPending": "Transportabgleich zum Beenden ausstehend",
@@ -40849,7 +40894,6 @@
             "plugins.channels.surface.bindingCreateContinue": "Продолжать",
             "plugins.channels.surface.bindingCreateConversation": "Беседа",
             "plugins.channels.surface.bindingCreateCreated": "Привязка разговора создана.",
-            "plugins.channels.surface.bindingCreateCurrentStep": "Текущий шаг",
             "plugins.channels.surface.bindingCreateDeliveryMode": "Доставка сеанса",
             "plugins.channels.surface.bindingCreateDescription": "Выберите текущий внешний разговор, разрешенных участников и пункт назначения.",
             "plugins.channels.surface.bindingCreateEndpoint": "Выберите разговор",
@@ -40872,6 +40916,8 @@
             "plugins.channels.surface.bindingCreateNewSessionUnavailable": "Создание нового сеанса недоступно для этого места назначения.",
             "plugins.channels.surface.bindingCreateNewSessionUnavailableDescription": "Привязка будет продолжать использовать выбранную существующую сессию.",
             "plugins.channels.surface.bindingCreateNoConnection": "Создайте активное соединение перед добавлением привязки.",
+            "plugins.channels.surface.bindingCreateNotReadyDescription": "Дождитесь готовности провайдера и повторите поиск.",
+            "plugins.channels.surface.bindingCreateNotReadyTitle": "Привязка пока не готова",
             "plugins.channels.surface.bindingCreatePairingAttempts": "Оставшиеся попытки",
             "plugins.channels.surface.bindingCreatePairingCancel": "Отменить связывание",
             "plugins.channels.surface.bindingCreatePairingChallengeDetails": "Испытание для связи",
@@ -41006,7 +41052,6 @@
             "plugins.channels.surface.bindingEditConnectionChangedDescription": "Ваш черновик сохранен. Перезагрузите текущее соединение и переопределите зависимые от поставщика выборы перед сохранением.",
             "plugins.channels.surface.bindingEditConnectionChangedTitle": "Текущие детали подключения к поставщику недоступны",
             "plugins.channels.surface.bindingEditCurrentAudience": "Текущий разговор и отправители",
-            "plugins.channels.surface.bindingEditCurrentStep": "Текущий шаг",
             "plugins.channels.surface.bindingEditDebounce": "Задержка группировки сообщений",
             "plugins.channels.surface.bindingEditDebounceInvalid": "Введите целое число миллисекунд.",
             "plugins.channels.surface.bindingEditDebounceNone": "Без задержки",
@@ -41087,8 +41132,10 @@
             "plugins.channels.surface.connectionDeleteConfirmDescription": "Это отключает соединение и ждет точных доказательств прекращения перед очисткой.",
             "plugins.channels.surface.connectionDeleteConfirmTitle": "Удалить это соединение?",
             "plugins.channels.surface.connectionDeleted": "Соединение удалено.",
+            "plugins.channels.surface.connectionDetailsTitle": "Сведения",
             "plugins.channels.surface.connectionNoAttention": "Ничего не требует внимания",
             "plugins.channels.surface.connectionPaused": "Приостановлено",
+            "plugins.channels.surface.connectionPolicyTitle": "Правила",
             "plugins.channels.surface.connectionRetest": "Проверить подключение",
             "plugins.channels.surface.connectionRetestFailedDescription": "Сохранённое подключение могло измениться. Обновите сведения о подключении, прежде чем повторять попытку.",
             "plugins.channels.surface.connectionRetestFailedTitle": "Не удалось проверить подключение",
@@ -41167,10 +41214,12 @@
             "plugins.channels.surface.deliveryResolutionFailedTitle": "Не удалось записать решение о доставке.",
             "plugins.channels.surface.deliveryResolutionGroupArchived": "Доставок получателям в архиве: {count}",
             "plugins.channels.surface.deliveryResolutionGroupArchivedOne": "1 доставка получателю в архиве",
+            "plugins.channels.surface.deliveryResolutionGroupConnection": "Вне привязанных бесед",
             "plugins.channels.surface.deliveryResolutionGroupPartial": "Доставок, отправленных частично: {count}",
             "plugins.channels.surface.deliveryResolutionGroupPartialOne": "1 доставка отправлена частично",
             "plugins.channels.surface.deliveryResolutionGroupUnknown": "Доставок с неизвестным результатом: {count}",
             "plugins.channels.surface.deliveryResolutionGroupUnknownOne": "1 доставка с неизвестным результатом",
+            "plugins.channels.surface.deliveryResolutionGroupUnlisted": "Разговор, которого нет в этом списке",
             "plugins.channels.surface.deliveryResolutionLoadMore": "Показать больше решений о доставке",
             "plugins.channels.surface.deliveryResolutionLoading": "Загрузка сведений о доставке",
             "plugins.channels.surface.deliveryResolutionOutcomeUnknown": "Результат неизвестен",
@@ -41181,8 +41230,8 @@
             "plugins.channels.surface.deliveryResolutionReadFailedTitle": "Не удалось прочитать подробности доставки.",
             "plugins.channels.surface.deliveryResolutionRetryAfterUnarchive": "Разархивировано — отправить снова",
             "plugins.channels.surface.deliveryResolutionRetrying": "Повторная попытка…",
-            "plugins.channels.surface.deliveryResolutionRevision": "Доставка",
-            "plugins.channels.surface.deliveryResolutionRevisionValue": "{id} · ревизия {revision}",
+            "plugins.channels.surface.deliveryResolutionRowName": "Доставка отправлена {time}",
+            "plugins.channels.surface.deliveryResolutionSentAt": "Отправлено {time}",
             "plugins.channels.surface.deliveryResolutionThreadId": "ID начатой цепочки",
             "plugins.channels.surface.deliveryResolutionThreadIdDescription": "Так был начат новый разговор. Если сообщение дошло, введите ID созданной цепочки, чтобы ответы попадали в сессию. Без него можно только отбросить.",
             "plugins.channels.surface.deliveryResolutionThreadIdPlaceholder": "Для почты: Message-ID отправленного письма",
@@ -41247,7 +41296,6 @@
             "plugins.channels.surface.ingressOccurrenceConflict": "Возникающий конфликт требует внимания",
             "plugins.channels.surface.ingressOccurrenceConflictDescription": "Хэппиер получил противоречивые свидетельства об одном происшествии. Он не будет повторять или продвигать это соединение;удалите соединение, чтобы устранить сохраняющийся конфликт.",
             "plugins.channels.surface.ingressOccurrenceConflictTitle": "Возникающий конфликт требует внимания",
-            "plugins.channels.surface.integrationIdentity": "Интеграция идентификационной информации и политики учетной записи",
             "plugins.channels.surface.liveUpdatesEndedDescription": "Обновите, чтобы снова прочитать текущую политику подключения учетной записи.",
             "plugins.channels.surface.liveUpdatesEndedTitle": "Текущие обновления недоступны.",
             "plugins.channels.surface.loadingDescription": "Чтение текущей политики подключения из вашей учетной записи.",
@@ -41344,6 +41392,9 @@
             "plugins.channels.surface.reload": "Перезагрузить",
             "plugins.channels.surface.repairEndpointRetarget": "Восстановить цель доставки",
             "plugins.channels.surface.repairingEndpointRetarget": "Восстановление…",
+            "plugins.channels.surface.resolverRefusedTitle": "Провайдер отклонил этот поиск",
+            "plugins.channels.surface.resolverUnsupportedDescription": "Провайдер не умеет искать такой адрес. Введите его так, как его называет провайдер.",
+            "plugins.channels.surface.resolverUnsupportedTitle": "Найдите иначе",
             "plugins.channels.surface.resourceConnectionInvalid": "Ресурс соединения содержит недопустимое соединение.",
             "plugins.channels.surface.resourceContentTypeInvalid": "Ресурс соединения не вернул JSON.",
             "plugins.channels.surface.resourceInvalidJson": "Ресурс соединения не может быть прочитан.",
@@ -41402,6 +41453,15 @@
             "plugins.channels.surface.seconds": "секунды",
             "plugins.channels.surface.selectedMachineId": "Выбранный идентификатор машины",
             "plugins.channels.surface.selectedMachineSummary": "Работает на выбранной вами машине",
+            "plugins.channels.surface.setupGuidanceCopyLink": "Копировать ссылку",
+            "plugins.channels.surface.setupGuidanceCopyPermissions": "Копировать права",
+            "plugins.channels.surface.setupGuidanceCopyValue": "Скопировать: {label}",
+            "plugins.channels.surface.setupGuidanceGrant": "Выдайте запрошенные права",
+            "plugins.channels.surface.setupGuidanceOpen": "Открыть {provider}",
+            "plugins.channels.surface.setupGuidanceOpenHost": "Открыть {host}",
+            "plugins.channels.surface.setupGuidanceOpenStep": "Открыть страницу",
+            "plugins.channels.surface.setupGuidanceVerify": "Создайте и проверьте подключение",
+            "plugins.channels.surface.setupGuidanceVerifyDetail": "Создайте его ниже. Затем «Проверить подключение» убедится, что Happier может связаться с {provider}.",
             "plugins.channels.surface.staleDescription": "Обновления онлайн-соединения временно недоступны.",
             "plugins.channels.surface.staleTitle": "Показаны сведения о последнем известном соединении",
             "plugins.channels.surface.stopPending": "Остановить ожидание сверки",
@@ -41668,7 +41728,6 @@
             "plugins.channels.surface.bindingCreateContinue": "Kontynuować",
             "plugins.channels.surface.bindingCreateConversation": "Rozmowa",
             "plugins.channels.surface.bindingCreateCreated": "Utworzono powiązanie konwersacji.",
-            "plugins.channels.surface.bindingCreateCurrentStep": "Bieżący krok",
             "plugins.channels.surface.bindingCreateDeliveryMode": "Dostawa sesji",
             "plugins.channels.surface.bindingCreateDescription": "Wybierz bieżącą konwersację zewnętrzną, dozwolonych podmiotów zabezpieczeń i miejsce docelowe.",
             "plugins.channels.surface.bindingCreateEndpoint": "Wybierz rozmowę",
@@ -41691,6 +41750,8 @@
             "plugins.channels.surface.bindingCreateNewSessionUnavailable": "Tworzenie nowej sesji jest niedostępne dla tego miejsca docelowego.",
             "plugins.channels.surface.bindingCreateNewSessionUnavailableDescription": "Powiązanie będzie nadal używać wybranego istniejącego Sesji.",
             "plugins.channels.surface.bindingCreateNoConnection": "Utwórz aktywną połączenie rozmowy przed dodaniem powiązania.",
+            "plugins.channels.surface.bindingCreateNotReadyDescription": "Poczekaj, aż dostawca będzie gotowy, i wyszukaj ponownie.",
+            "plugins.channels.surface.bindingCreateNotReadyTitle": "Powiązanie nie jest jeszcze gotowe",
             "plugins.channels.surface.bindingCreatePairingAttempts": "Pozostałe próby",
             "plugins.channels.surface.bindingCreatePairingCancel": "Anuluj parowanie",
             "plugins.channels.surface.bindingCreatePairingChallengeDetails": "Wyzwania do parowania",
@@ -41825,7 +41886,6 @@
             "plugins.channels.surface.bindingEditConnectionChangedDescription": "Twój konceptyjne dzieło jest zachowane. Odśwież bieżące połączenie i ponownie rozwiąż zależności od dostawcy przed zapisem.",
             "plugins.channels.surface.bindingEditConnectionChangedTitle": "Bieżące szczegóły połączenia dostawcy są niedostępne",
             "plugins.channels.surface.bindingEditCurrentAudience": "Bieżąca rozmowa i nadawcy",
-            "plugins.channels.surface.bindingEditCurrentStep": "Bieżąca krok",
             "plugins.channels.surface.bindingEditDebounce": "Opóźnienie grupowania wiadomości",
             "plugins.channels.surface.bindingEditDebounceInvalid": "Podaj liczbę całkowitą milisekund.",
             "plugins.channels.surface.bindingEditDebounceNone": "Bez opóźnienia",
@@ -41906,8 +41966,10 @@
             "plugins.channels.surface.connectionDeleteConfirmDescription": "To wyłącza połączenie i czeka na dokładne dowody zatrzymania transportu przed czyszczeniem.",
             "plugins.channels.surface.connectionDeleteConfirmTitle": "Usuń to połączenie?",
             "plugins.channels.surface.connectionDeleted": "Połączenie usunięte.",
+            "plugins.channels.surface.connectionDetailsTitle": "Szczegóły",
             "plugins.channels.surface.connectionNoAttention": "Nic nie wymaga uwagi",
             "plugins.channels.surface.connectionPaused": "Wstrzymane",
+            "plugins.channels.surface.connectionPolicyTitle": "Zasady",
             "plugins.channels.surface.connectionRetest": "Przetestuj połączenie",
             "plugins.channels.surface.connectionRetestFailedDescription": "Zapisane połączenie mogło się zmienić. Odśwież szczegóły połączenia przed ponowną próbą.",
             "plugins.channels.surface.connectionRetestFailedTitle": "Nie można przetestować połączenia",
@@ -41986,10 +42048,12 @@
             "plugins.channels.surface.deliveryResolutionFailedTitle": "Nie można zapisać decyzji o dostawie",
             "plugins.channels.surface.deliveryResolutionGroupArchived": "Dostarczenia do zarchiwizowanych miejsc: {count}",
             "plugins.channels.surface.deliveryResolutionGroupArchivedOne": "1 dostarczenie do zarchiwizowanego miejsca",
+            "plugins.channels.surface.deliveryResolutionGroupConnection": "Poza powiązanymi rozmowami",
             "plugins.channels.surface.deliveryResolutionGroupPartial": "Dostarczenia wysłane częściowo: {count}",
             "plugins.channels.surface.deliveryResolutionGroupPartialOne": "1 dostarczenie wysłane częściowo",
             "plugins.channels.surface.deliveryResolutionGroupUnknown": "Dostarczenia o nieznanym wyniku: {count}",
             "plugins.channels.surface.deliveryResolutionGroupUnknownOne": "1 dostarczenie o nieznanym wyniku",
+            "plugins.channels.surface.deliveryResolutionGroupUnlisted": "Rozmowa spoza tej listy",
             "plugins.channels.surface.deliveryResolutionLoadMore": "Pokaż więcej decyzji o dostawie",
             "plugins.channels.surface.deliveryResolutionLoading": "Ładowanie szczegółów dostawy",
             "plugins.channels.surface.deliveryResolutionOutcomeUnknown": "Wynik nieznany",
@@ -42000,8 +42064,8 @@
             "plugins.channels.surface.deliveryResolutionReadFailedTitle": "Nie udało się odczytać szczegółów dostawy",
             "plugins.channels.surface.deliveryResolutionRetryAfterUnarchive": "Przywrócono z archiwum — wyślij ponownie",
             "plugins.channels.surface.deliveryResolutionRetrying": "Ponawianie…",
-            "plugins.channels.surface.deliveryResolutionRevision": "Dostarczenie",
-            "plugins.channels.surface.deliveryResolutionRevisionValue": "{id} · wersja {revision}",
+            "plugins.channels.surface.deliveryResolutionRowName": "Dostarczenie wysłane {time}",
+            "plugins.channels.surface.deliveryResolutionSentAt": "Wysłano {time}",
             "plugins.channels.surface.deliveryResolutionThreadId": "ID rozpoczętego wątku",
             "plugins.channels.surface.deliveryResolutionThreadIdDescription": "To rozpoczęło nową rozmowę. Jeśli dotarła, wpisz ID utworzonego wątku, aby odpowiedzi trafiały do sesji. Bez niego można tylko odrzucić.",
             "plugins.channels.surface.deliveryResolutionThreadIdPlaceholder": "Dla poczty: Message-ID wysłanej wiadomości",
@@ -42066,7 +42130,6 @@
             "plugins.channels.surface.ingressOccurrenceConflict": "Nadchodzący konflikt zdarzeń wymaga uwagi",
             "plugins.channels.surface.ingressOccurrenceConflictDescription": "Happier otrzymał sprzeczne dowody na jedno nadchodzące zdarzenie. Nie będzie ponawiać ani przyspieszać tego połączenia;usuń połączenie, aby usunąć zachowany konflikt.",
             "plugins.channels.surface.ingressOccurrenceConflictTitle": "Nadchodzący konflikt zdarzeń wymaga uwagi",
-            "plugins.channels.surface.integrationIdentity": "Tożsamość integracji i polityka konta",
             "plugins.channels.surface.liveUpdatesEndedDescription": "Odśwież, aby ponownie przeczytać aktualne zasady połączeń Konta.",
             "plugins.channels.surface.liveUpdatesEndedTitle": "Aktualizacje na żywo są niedostępne",
             "plugins.channels.surface.loadingDescription": "Zapoznanie się z aktualną polityką połączeń z Twojego Konta.",
@@ -42163,6 +42226,9 @@
             "plugins.channels.surface.reload": "Odśwież",
             "plugins.channels.surface.repairEndpointRetarget": "Napraw cel dostarczania",
             "plugins.channels.surface.repairingEndpointRetarget": "Naprawianie…",
+            "plugins.channels.surface.resolverRefusedTitle": "Dostawca odrzucił to wyszukiwanie",
+            "plugins.channels.surface.resolverUnsupportedDescription": "Dostawca nie potrafi wyszukać takiego adresu. Wpisz go tak, jak nazywa go dostawca.",
+            "plugins.channels.surface.resolverUnsupportedTitle": "Wyszukaj inaczej",
             "plugins.channels.surface.resourceConnectionInvalid": "Zasób połączenia zawiera nieprawidłowe połączenie.",
             "plugins.channels.surface.resourceContentTypeInvalid": "Zasób połączenia nie zwrócił JSON.",
             "plugins.channels.surface.resourceInvalidJson": "Nie można odczytać zasobu połączenia.",
@@ -42221,6 +42287,15 @@
             "plugins.channels.surface.seconds": "towary drugiej jakości",
             "plugins.channels.surface.selectedMachineId": "Wybrany identyfikator maszyny",
             "plugins.channels.surface.selectedMachineSummary": "Działa na wybranej maszynie",
+            "plugins.channels.surface.setupGuidanceCopyLink": "Kopiuj link",
+            "plugins.channels.surface.setupGuidanceCopyPermissions": "Kopiuj uprawnienia",
+            "plugins.channels.surface.setupGuidanceCopyValue": "Kopiuj: {label}",
+            "plugins.channels.surface.setupGuidanceGrant": "Przyznaj, o co prosi",
+            "plugins.channels.surface.setupGuidanceOpen": "Otwórz {provider}",
+            "plugins.channels.surface.setupGuidanceOpenHost": "Otwórz {host}",
+            "plugins.channels.surface.setupGuidanceOpenStep": "Otwórz stronę",
+            "plugins.channels.surface.setupGuidanceVerify": "Utwórz i przetestuj połączenie",
+            "plugins.channels.surface.setupGuidanceVerifyDetail": "Utwórz je poniżej. Potem „Testuj połączenie” sprawdzi, czy Happier łączy się z {provider}.",
             "plugins.channels.surface.staleDescription": "Aktualizacje połączeń na żywo są tymczasowo niedostępne.",
             "plugins.channels.surface.staleTitle": "Wyświetlanie szczegółów ostatniego znanego połączenia",
             "plugins.channels.surface.stopPending": "Zatrzymaj oczekujące uzgodnienie",
@@ -42487,7 +42562,6 @@
             "plugins.channels.surface.bindingCreateContinue": "Continuar",
             "plugins.channels.surface.bindingCreateConversation": "Conversación",
             "plugins.channels.surface.bindingCreateCreated": "Enlace de conversación creado.",
-            "plugins.channels.surface.bindingCreateCurrentStep": "Paso actual",
             "plugins.channels.surface.bindingCreateDeliveryMode": "Entrega de sesión",
             "plugins.channels.surface.bindingCreateDescription": "Elija la conversación externa actual, los directores permitidos y el destino.",
             "plugins.channels.surface.bindingCreateEndpoint": "Elija una conversación",
@@ -42510,6 +42584,8 @@
             "plugins.channels.surface.bindingCreateNewSessionUnavailable": "La creación de una nueva sesión no está disponible para este destino.",
             "plugins.channels.surface.bindingCreateNewSessionUnavailableDescription": "La vinculación continuará usando la sesión existente seleccionada.",
             "plugins.channels.surface.bindingCreateNoConnection": "Cree una conexión de conversación activa antes de agregar una vinculación.",
+            "plugins.channels.surface.bindingCreateNotReadyDescription": "Espera a que el proveedor esté listo y vuelve a buscar.",
+            "plugins.channels.surface.bindingCreateNotReadyTitle": "La vinculación aún no está lista",
             "plugins.channels.surface.bindingCreatePairingAttempts": "Intentos restantes",
             "plugins.channels.surface.bindingCreatePairingCancel": "Cancelar la pareja",
             "plugins.channels.surface.bindingCreatePairingChallengeDetails": "Reto de pareja",
@@ -42644,7 +42720,6 @@
             "plugins.channels.surface.bindingEditConnectionChangedDescription": "Tu borrador se mantiene. Recarga la conexión actual y vuelve a resolver las elecciones dependientes del proveedor antes de guardar.",
             "plugins.channels.surface.bindingEditConnectionChangedTitle": "Los detalles de la conexión del proveedor actuales no están disponibles",
             "plugins.channels.surface.bindingEditCurrentAudience": "Conversación y remitentes actuales",
-            "plugins.channels.surface.bindingEditCurrentStep": "Paso actual",
             "plugins.channels.surface.bindingEditDebounce": "Retraso de agrupación de mensajes",
             "plugins.channels.surface.bindingEditDebounceInvalid": "Introduce un número entero de milisegundos.",
             "plugins.channels.surface.bindingEditDebounceNone": "Sin demora",
@@ -42725,8 +42800,10 @@
             "plugins.channels.surface.connectionDeleteConfirmDescription": "Esto desactiva la conexión y espera la prueba exacta de la detención de la transmisión antes de la limpieza.",
             "plugins.channels.surface.connectionDeleteConfirmTitle": "¿Eliminar esta conexión?",
             "plugins.channels.surface.connectionDeleted": "Conexión eliminada.",
+            "plugins.channels.surface.connectionDetailsTitle": "Detalles",
             "plugins.channels.surface.connectionNoAttention": "Nada necesita atención",
             "plugins.channels.surface.connectionPaused": "En pausa",
+            "plugins.channels.surface.connectionPolicyTitle": "Política",
             "plugins.channels.surface.connectionRetest": "Probar conexión",
             "plugins.channels.surface.connectionRetestFailedDescription": "La conexión guardada puede haber cambiado. Actualiza los detalles de la conexión antes de volver a intentarlo.",
             "plugins.channels.surface.connectionRetestFailedTitle": "No se pudo probar la conexión",
@@ -42805,10 +42882,12 @@
             "plugins.channels.surface.deliveryResolutionFailedTitle": "No se pudo registrar la decisión de entrega.",
             "plugins.channels.surface.deliveryResolutionGroupArchived": "{count} entregas a destinos archivados",
             "plugins.channels.surface.deliveryResolutionGroupArchivedOne": "1 entrega a un destino archivado",
+            "plugins.channels.surface.deliveryResolutionGroupConnection": "Fuera de las conversaciones vinculadas",
             "plugins.channels.surface.deliveryResolutionGroupPartial": "{count} entregas enviadas en parte",
             "plugins.channels.surface.deliveryResolutionGroupPartialOne": "1 entrega enviada en parte",
             "plugins.channels.surface.deliveryResolutionGroupUnknown": "{count} entregas con resultado desconocido",
             "plugins.channels.surface.deliveryResolutionGroupUnknownOne": "1 entrega con resultado desconocido",
+            "plugins.channels.surface.deliveryResolutionGroupUnlisted": "Una conversación que no aparece aquí",
             "plugins.channels.surface.deliveryResolutionLoadMore": "Mostrar más decisiones de entrega",
             "plugins.channels.surface.deliveryResolutionLoading": "Cargando detalles de entrega",
             "plugins.channels.surface.deliveryResolutionOutcomeUnknown": "Resultado desconocido",
@@ -42819,8 +42898,8 @@
             "plugins.channels.surface.deliveryResolutionReadFailedTitle": "No se pudieron leer los detalles de entrega",
             "plugins.channels.surface.deliveryResolutionRetryAfterUnarchive": "Se desarchivó — envíalo de nuevo",
             "plugins.channels.surface.deliveryResolutionRetrying": "Reintentando…",
-            "plugins.channels.surface.deliveryResolutionRevision": "Entrega",
-            "plugins.channels.surface.deliveryResolutionRevisionValue": "{id} · revisión {revision}",
+            "plugins.channels.surface.deliveryResolutionRowName": "Entrega enviada {time}",
+            "plugins.channels.surface.deliveryResolutionSentAt": "Enviada {time}",
             "plugins.channels.surface.deliveryResolutionThreadId": "ID del hilo iniciado",
             "plugins.channels.surface.deliveryResolutionThreadIdDescription": "Esto inició una conversación nueva. Si llegó, introduce el ID del hilo que creó para que las respuestas lleguen a la sesión. Sin él, solo se puede descartar.",
             "plugins.channels.surface.deliveryResolutionThreadIdPlaceholder": "Para correo: el Message-ID del mensaje enviado",
@@ -42885,7 +42964,6 @@
             "plugins.channels.surface.ingressOccurrenceConflict": "El conflicto entrante necesita atención",
             "plugins.channels.surface.ingressOccurrenceConflictDescription": "Happier recibió pruebas contradictorias de un suceso entrante. No volverá a intentar ni avanzará en esta conexión;elimine la conexión para eliminar el conflicto retenido.",
             "plugins.channels.surface.ingressOccurrenceConflictTitle": "El conflicto entrante necesita atención",
-            "plugins.channels.surface.integrationIdentity": "Identidad de integración y política de cuenta",
             "plugins.channels.surface.liveUpdatesEndedDescription": "Actualice para leer nuevamente la política de conexión de la cuenta actual.",
             "plugins.channels.surface.liveUpdatesEndedTitle": "Las actualizaciones en vivo no están disponibles",
             "plugins.channels.surface.loadingDescription": "Leer la política de conexión actual desde su Cuenta.",
@@ -42982,6 +43060,9 @@
             "plugins.channels.surface.reload": "Recargar",
             "plugins.channels.surface.repairEndpointRetarget": "Reparar el destino de entrega",
             "plugins.channels.surface.repairingEndpointRetarget": "Reparando…",
+            "plugins.channels.surface.resolverRefusedTitle": "El proveedor rechazó esta búsqueda",
+            "plugins.channels.surface.resolverUnsupportedDescription": "El proveedor no puede buscar este tipo de dirección. Escríbela como la nombra el proveedor.",
+            "plugins.channels.surface.resolverUnsupportedTitle": "Búscalo de otra forma",
             "plugins.channels.surface.resourceConnectionInvalid": "El recurso de conexión contiene una conexión no válida.",
             "plugins.channels.surface.resourceContentTypeInvalid": "El recurso de conexión no devolvió JSON.",
             "plugins.channels.surface.resourceInvalidJson": "No se pudo leer el recurso de conexión.",
@@ -43040,6 +43121,15 @@
             "plugins.channels.surface.seconds": "artículos de segunda clase",
             "plugins.channels.surface.selectedMachineId": "ID de máquina seleccionada",
             "plugins.channels.surface.selectedMachineSummary": "Se ejecuta en su máquina seleccionada",
+            "plugins.channels.surface.setupGuidanceCopyLink": "Copiar enlace",
+            "plugins.channels.surface.setupGuidanceCopyPermissions": "Copiar permisos",
+            "plugins.channels.surface.setupGuidanceCopyValue": "Copiar {label}",
+            "plugins.channels.surface.setupGuidanceGrant": "Concede lo que pide",
+            "plugins.channels.surface.setupGuidanceOpen": "Abrir {provider}",
+            "plugins.channels.surface.setupGuidanceOpenHost": "Abrir {host}",
+            "plugins.channels.surface.setupGuidanceOpenStep": "Abrir página",
+            "plugins.channels.surface.setupGuidanceVerify": "Crea y prueba la conexión",
+            "plugins.channels.surface.setupGuidanceVerifyDetail": "Créala abajo. Después, Probar conexión comprueba que Happier puede llegar a {provider} con ella.",
             "plugins.channels.surface.staleDescription": "Las actualizaciones de conexión en vivo no están disponibles temporalmente.",
             "plugins.channels.surface.staleTitle": "Mostrando los detalles de la última conexión conocida",
             "plugins.channels.surface.stopPending": "Detener conciliación pendiente",
@@ -43306,7 +43396,6 @@
             "plugins.channels.surface.bindingCreateContinue": "Continuer",
             "plugins.channels.surface.bindingCreateConversation": "Conversation",
             "plugins.channels.surface.bindingCreateCreated": "Liaison de conversation créée.",
-            "plugins.channels.surface.bindingCreateCurrentStep": "Étape actuelle",
             "plugins.channels.surface.bindingCreateDeliveryMode": "Livraison de la session",
             "plugins.channels.surface.bindingCreateDescription": "Choisis la conversation externe en cours, les mandataires autorisés et la destination.",
             "plugins.channels.surface.bindingCreateEndpoint": "Choisis une conversation",
@@ -43329,6 +43418,8 @@
             "plugins.channels.surface.bindingCreateNewSessionUnavailable": "La création d'une nouvelle session n'est pas disponible pour cette destination.",
             "plugins.channels.surface.bindingCreateNewSessionUnavailableDescription": "La liaison continuera à utiliser la Session existante sélectionnée.",
             "plugins.channels.surface.bindingCreateNoConnection": "Crée une connexion de conversation active avant d'ajouter une liaison.",
+            "plugins.channels.surface.bindingCreateNotReadyDescription": "Attendez que le fournisseur soit prêt, puis relancez la recherche.",
+            "plugins.channels.surface.bindingCreateNotReadyTitle": "La liaison n’est pas encore prête",
             "plugins.channels.surface.bindingCreatePairingAttempts": "Essais restants",
             "plugins.channels.surface.bindingCreatePairingCancel": "Annuler la correspondance",
             "plugins.channels.surface.bindingCreatePairingChallengeDetails": "Défi de correspondance",
@@ -43463,7 +43554,6 @@
             "plugins.channels.surface.bindingEditConnectionChangedDescription": "Ton brouillon est conservé. Actualise la connexion actuelle et ré-résous les choix dépendants du fournisseur avant de sauvegarder.",
             "plugins.channels.surface.bindingEditConnectionChangedTitle": "Les détails de la connexion actuelle fournisseur sont indisponibles",
             "plugins.channels.surface.bindingEditCurrentAudience": "La conversation et les expéditeurs actuels",
-            "plugins.channels.surface.bindingEditCurrentStep": "Étape actuelle",
             "plugins.channels.surface.bindingEditDebounce": "Délai de regroupement des messages",
             "plugins.channels.surface.bindingEditDebounceInvalid": "Saisis un nombre entier de millisecondes.",
             "plugins.channels.surface.bindingEditDebounceNone": "Aucun délai",
@@ -43544,8 +43634,10 @@
             "plugins.channels.surface.connectionDeleteConfirmDescription": "Cela désactive la connexion et attend la preuve exacte de l'arrêt du transport avant la nettoyage.",
             "plugins.channels.surface.connectionDeleteConfirmTitle": "Supprimer cette connexion?",
             "plugins.channels.surface.connectionDeleted": "Connexion supprimée.",
+            "plugins.channels.surface.connectionDetailsTitle": "Détails",
             "plugins.channels.surface.connectionNoAttention": "Rien ne nécessite d’attention",
             "plugins.channels.surface.connectionPaused": "En pause",
+            "plugins.channels.surface.connectionPolicyTitle": "Règles",
             "plugins.channels.surface.connectionRetest": "Tester la connexion",
             "plugins.channels.surface.connectionRetestFailedDescription": "La connexion enregistrée a peut-être changé. Actualise les détails de la connexion avant de réessayer.",
             "plugins.channels.surface.connectionRetestFailedTitle": "Impossible de tester la connexion",
@@ -43624,10 +43716,12 @@
             "plugins.channels.surface.deliveryResolutionFailedTitle": "Impossible d'enregistrer la décision de livraison",
             "plugins.channels.surface.deliveryResolutionGroupArchived": "{count} envois vers des destinations archivées",
             "plugins.channels.surface.deliveryResolutionGroupArchivedOne": "1 envoi vers une destination archivée",
+            "plugins.channels.surface.deliveryResolutionGroupConnection": "Hors des conversations liées",
             "plugins.channels.surface.deliveryResolutionGroupPartial": "{count} envois partiellement envoyés",
             "plugins.channels.surface.deliveryResolutionGroupPartialOne": "1 envoi partiellement envoyé",
             "plugins.channels.surface.deliveryResolutionGroupUnknown": "{count} envois au résultat inconnu",
             "plugins.channels.surface.deliveryResolutionGroupUnknownOne": "1 envoi au résultat inconnu",
+            "plugins.channels.surface.deliveryResolutionGroupUnlisted": "Une conversation absente de cette liste",
             "plugins.channels.surface.deliveryResolutionLoadMore": "Afficher plus de décisions de livraison",
             "plugins.channels.surface.deliveryResolutionLoading": "Chargement des détails de livraison",
             "plugins.channels.surface.deliveryResolutionOutcomeUnknown": "Résultat inconnu",
@@ -43638,8 +43732,8 @@
             "plugins.channels.surface.deliveryResolutionReadFailedTitle": "Impossible de lire les détails de la livraison",
             "plugins.channels.surface.deliveryResolutionRetryAfterUnarchive": "Désarchivée — envoyer à nouveau",
             "plugins.channels.surface.deliveryResolutionRetrying": "Nouvelle tentative…",
-            "plugins.channels.surface.deliveryResolutionRevision": "Envoi",
-            "plugins.channels.surface.deliveryResolutionRevisionValue": "{id} · révision {revision}",
+            "plugins.channels.surface.deliveryResolutionRowName": "Envoi parti {time}",
+            "plugins.channels.surface.deliveryResolutionSentAt": "Envoyé {time}",
             "plugins.channels.surface.deliveryResolutionThreadId": "ID du fil démarré",
             "plugins.channels.surface.deliveryResolutionThreadIdDescription": "Cela a démarré une nouvelle conversation. Si elle est arrivée, saisis l’ID du fil créé pour que les réponses atteignent la session. Sans lui, seul « Rejeter » est possible.",
             "plugins.channels.surface.deliveryResolutionThreadIdPlaceholder": "Pour un mail : le Message-ID du message envoyé",
@@ -43704,7 +43798,6 @@
             "plugins.channels.surface.ingressOccurrenceConflict": "Un conflit d’occurrence entrant nécessite une attention particulière",
             "plugins.channels.surface.ingressOccurrenceConflictDescription": "Happier a reçu des preuves contradictoires pour un événement entrant. Il ne réessayera pas et ne fera pas avancer cette connexion ;supprime la connexion pour supprimer le conflit conservé.",
             "plugins.channels.surface.ingressOccurrenceConflictTitle": "Un conflit d’occurrence entrant nécessite une attention particulière",
-            "plugins.channels.surface.integrationIdentity": "Identité d'intégration et politique de compte",
             "plugins.channels.surface.liveUpdatesEndedDescription": "Actualise pour lire à nouveau la politique actuelle de connexion au compte.",
             "plugins.channels.surface.liveUpdatesEndedTitle": "Les mises à jour en direct ne sont pas disponibles",
             "plugins.channels.surface.loadingDescription": "Lire la politique de connexion actuelle depuis ton Compte.",
@@ -43801,6 +43894,9 @@
             "plugins.channels.surface.reload": "Recharger",
             "plugins.channels.surface.repairEndpointRetarget": "Réparer la cible de livraison",
             "plugins.channels.surface.repairingEndpointRetarget": "Réparation…",
+            "plugins.channels.surface.resolverRefusedTitle": "Le fournisseur a refusé cette recherche",
+            "plugins.channels.surface.resolverUnsupportedDescription": "Le fournisseur ne peut pas rechercher ce type d’adresse. Saisissez-la comme le fournisseur la nomme.",
+            "plugins.channels.surface.resolverUnsupportedTitle": "Cherchez autrement",
             "plugins.channels.surface.resourceConnectionInvalid": "La ressource de connexion contient une connexion non valide.",
             "plugins.channels.surface.resourceContentTypeInvalid": "La ressource de connexion n'a pas renvoyé JSON .",
             "plugins.channels.surface.resourceInvalidJson": "La ressource de connexion n'a pas pu être lue.",
@@ -43859,6 +43955,15 @@
             "plugins.channels.surface.seconds": "secondes",
             "plugins.channels.surface.selectedMachineId": "ID de l'ordinateur sélectionné",
             "plugins.channels.surface.selectedMachineSummary": "Fonctionne sur la machine sélectionnée",
+            "plugins.channels.surface.setupGuidanceCopyLink": "Copier le lien",
+            "plugins.channels.surface.setupGuidanceCopyPermissions": "Copier les autorisations",
+            "plugins.channels.surface.setupGuidanceCopyValue": "Copier {label}",
+            "plugins.channels.surface.setupGuidanceGrant": "Accordez ce qui est demandé",
+            "plugins.channels.surface.setupGuidanceOpen": "Ouvrir {provider}",
+            "plugins.channels.surface.setupGuidanceOpenHost": "Ouvrir {host}",
+            "plugins.channels.surface.setupGuidanceOpenStep": "Ouvrir la page",
+            "plugins.channels.surface.setupGuidanceVerify": "Créer et tester la connexion",
+            "plugins.channels.surface.setupGuidanceVerifyDetail": "Créez-la ci-dessous. Ensuite, Tester la connexion vérifie que Happier joint {provider} avec elle.",
             "plugins.channels.surface.staleDescription": "Les mises à jour de connexion en direct sont temporairement indisponibles.",
             "plugins.channels.surface.staleTitle": "Affichage des détails de la dernière connexion connue",
             "plugins.channels.surface.stopPending": "Arrêter la réconciliation en attente",
@@ -44125,7 +44230,6 @@
             "plugins.channels.surface.bindingCreateContinue": "Continuare",
             "plugins.channels.surface.bindingCreateConversation": "Conversazione",
             "plugins.channels.surface.bindingCreateCreated": "Associazione della conversazione creata.",
-            "plugins.channels.surface.bindingCreateCurrentStep": "Passaggio attuale",
             "plugins.channels.surface.bindingCreateDeliveryMode": "Consegna della sessione",
             "plugins.channels.surface.bindingCreateDescription": "Scegli la conversazione esterna corrente, le entità consentite e la destinazione.",
             "plugins.channels.surface.bindingCreateEndpoint": "Scegli una conversazione",
@@ -44148,6 +44252,8 @@
             "plugins.channels.surface.bindingCreateNewSessionUnavailable": "La creazione di una nuova sessione non è disponibile per questa destinazione.",
             "plugins.channels.surface.bindingCreateNewSessionUnavailableDescription": "La bind continuerà a usare la Sessione esistente selezionata.",
             "plugins.channels.surface.bindingCreateNoConnection": "Crea una connessione di conversazione attiva prima di aggiungere una bind.",
+            "plugins.channels.surface.bindingCreateNotReadyDescription": "Attendi che il provider sia pronto, poi cerca di nuovo.",
+            "plugins.channels.surface.bindingCreateNotReadyTitle": "Il collegamento non è ancora pronto",
             "plugins.channels.surface.bindingCreatePairingAttempts": "Tentativi rimanenti",
             "plugins.channels.surface.bindingCreatePairingCancel": "Annulla la coppia",
             "plugins.channels.surface.bindingCreatePairingChallengeDetails": "Sfida di coppia",
@@ -44282,7 +44388,6 @@
             "plugins.channels.surface.bindingEditConnectionChangedDescription": "Il tuo bozza è mantenuto. Ri-carica la connessione corrente e risolvi di nuovo le scelte dipendenti dal fornitore prima di salvare.",
             "plugins.channels.surface.bindingEditConnectionChangedTitle": "I dettagli di connessione corrente del fornitore non sono disponibili.",
             "plugins.channels.surface.bindingEditCurrentAudience": "La conversazione corrente e gli invianti",
-            "plugins.channels.surface.bindingEditCurrentStep": "Passo corrente",
             "plugins.channels.surface.bindingEditDebounce": "Ritardo di raggruppamento dei messaggi",
             "plugins.channels.surface.bindingEditDebounceInvalid": "Inserisci un numero intero di millisecondi.",
             "plugins.channels.surface.bindingEditDebounceNone": "Nessun ritardo",
@@ -44363,8 +44468,10 @@
             "plugins.channels.surface.connectionDeleteConfirmDescription": "Questo disabilita la connessione e aspetta la prova esatta di interruzione del trasporto prima della pulizia.",
             "plugins.channels.surface.connectionDeleteConfirmTitle": "Elimina questa connessione?",
             "plugins.channels.surface.connectionDeleted": "Connessione eliminata.",
+            "plugins.channels.surface.connectionDetailsTitle": "Dettagli",
             "plugins.channels.surface.connectionNoAttention": "Nulla richiede attenzione",
             "plugins.channels.surface.connectionPaused": "In pausa",
+            "plugins.channels.surface.connectionPolicyTitle": "Criteri",
             "plugins.channels.surface.connectionRetest": "Prova la connessione",
             "plugins.channels.surface.connectionRetestFailedDescription": "La connessione salvata potrebbe essere cambiata. Aggiorna i dettagli della connessione prima di riprovare.",
             "plugins.channels.surface.connectionRetestFailedTitle": "Impossibile provare la connessione",
@@ -44443,10 +44550,12 @@
             "plugins.channels.surface.deliveryResolutionFailedTitle": "Impossibile registrare la decisione di consegna",
             "plugins.channels.surface.deliveryResolutionGroupArchived": "{count} consegne a destinazioni archiviate",
             "plugins.channels.surface.deliveryResolutionGroupArchivedOne": "1 consegna a una destinazione archiviata",
+            "plugins.channels.surface.deliveryResolutionGroupConnection": "Fuori dalle conversazioni collegate",
             "plugins.channels.surface.deliveryResolutionGroupPartial": "{count} consegne inviate in parte",
             "plugins.channels.surface.deliveryResolutionGroupPartialOne": "1 consegna inviata in parte",
             "plugins.channels.surface.deliveryResolutionGroupUnknown": "{count} consegne con esito sconosciuto",
             "plugins.channels.surface.deliveryResolutionGroupUnknownOne": "1 consegna con esito sconosciuto",
+            "plugins.channels.surface.deliveryResolutionGroupUnlisted": "Una conversazione non elencata qui",
             "plugins.channels.surface.deliveryResolutionLoadMore": "Mostra più decisioni di consegna",
             "plugins.channels.surface.deliveryResolutionLoading": "Caricamento dei dettagli di consegna",
             "plugins.channels.surface.deliveryResolutionOutcomeUnknown": "Risultato sconosciuto",
@@ -44457,8 +44566,8 @@
             "plugins.channels.surface.deliveryResolutionReadFailedTitle": "Impossibile leggere i dettagli di consegna",
             "plugins.channels.surface.deliveryResolutionRetryAfterUnarchive": "Rimossa dall’archivio — invia di nuovo",
             "plugins.channels.surface.deliveryResolutionRetrying": "Nuovo tentativo…",
-            "plugins.channels.surface.deliveryResolutionRevision": "Consegna",
-            "plugins.channels.surface.deliveryResolutionRevisionValue": "{id} · revisione {revision}",
+            "plugins.channels.surface.deliveryResolutionRowName": "Consegna inviata {time}",
+            "plugins.channels.surface.deliveryResolutionSentAt": "Inviata {time}",
             "plugins.channels.surface.deliveryResolutionThreadId": "ID del thread avviato",
             "plugins.channels.surface.deliveryResolutionThreadIdDescription": "Questo ha avviato una nuova conversazione. Se è arrivata, inserisci l’ID del thread creato così le risposte raggiungono la sessione. Senza, si può solo scartare.",
             "plugins.channels.surface.deliveryResolutionThreadIdPlaceholder": "Per l’email: il Message-ID del messaggio inviato",
@@ -44523,7 +44632,6 @@
             "plugins.channels.surface.ingressOccurrenceConflict": "Il conflitto relativo agli eventi in arrivo richiede attenzione",
             "plugins.channels.surface.ingressOccurrenceConflictDescription": "Happier ha ricevuto prove contraddittorie per un evento imminente. Non tenterà né avanzerà questa connessione;eliminare la connessione per rimuovere il conflitto mantenuto.",
             "plugins.channels.surface.ingressOccurrenceConflictTitle": "Il conflitto relativo agli eventi in arrivo richiede attenzione",
-            "plugins.channels.surface.integrationIdentity": "Identità di integrazione e politica dell'account",
             "plugins.channels.surface.liveUpdatesEndedDescription": "Aggiorna per leggere nuovamente la politica di connessione dell'account corrente.",
             "plugins.channels.surface.liveUpdatesEndedTitle": "Gli aggiornamenti in tempo reale non sono disponibili",
             "plugins.channels.surface.loadingDescription": "Leggere l'attuale politica di connessione dal tuo Account.",
@@ -44620,6 +44728,9 @@
             "plugins.channels.surface.reload": "Ricarica",
             "plugins.channels.surface.repairEndpointRetarget": "Ripara la destinazione di consegna",
             "plugins.channels.surface.repairingEndpointRetarget": "Riparazione…",
+            "plugins.channels.surface.resolverRefusedTitle": "Il provider ha rifiutato questa ricerca",
+            "plugins.channels.surface.resolverUnsupportedDescription": "Il provider non può cercare questo tipo di indirizzo. Inseriscilo come lo chiama il provider.",
+            "plugins.channels.surface.resolverUnsupportedTitle": "Cercalo in un altro modo",
             "plugins.channels.surface.resourceConnectionInvalid": "La risorsa di connessione contiene una connessione non valida.",
             "plugins.channels.surface.resourceContentTypeInvalid": "La risorsa di connessione non ha restituito JSON.",
             "plugins.channels.surface.resourceInvalidJson": "Impossibile leggere la risorsa di connessione.",
@@ -44678,6 +44789,15 @@
             "plugins.channels.surface.seconds": "secondi",
             "plugins.channels.surface.selectedMachineId": "ID macchina selezionata",
             "plugins.channels.surface.selectedMachineSummary": "Funziona sulla macchina selezionata",
+            "plugins.channels.surface.setupGuidanceCopyLink": "Copia link",
+            "plugins.channels.surface.setupGuidanceCopyPermissions": "Copia autorizzazioni",
+            "plugins.channels.surface.setupGuidanceCopyValue": "Copia {label}",
+            "plugins.channels.surface.setupGuidanceGrant": "Concedi ciò che chiede",
+            "plugins.channels.surface.setupGuidanceOpen": "Apri {provider}",
+            "plugins.channels.surface.setupGuidanceOpenHost": "Apri {host}",
+            "plugins.channels.surface.setupGuidanceOpenStep": "Apri pagina",
+            "plugins.channels.surface.setupGuidanceVerify": "Crea e prova la connessione",
+            "plugins.channels.surface.setupGuidanceVerifyDetail": "Creala qui sotto. Poi Prova connessione verifica che Happier raggiunga {provider} con essa.",
             "plugins.channels.surface.staleDescription": "Gli aggiornamenti della connessione live sono temporaneamente non disponibili.",
             "plugins.channels.surface.staleTitle": "Mostra i dettagli dell'ultima connessione conosciuta",
             "plugins.channels.surface.stopPending": "Interrompere la riconciliazione in sospeso",
@@ -44944,7 +45064,6 @@
             "plugins.channels.surface.bindingCreateContinue": "Continuar",
             "plugins.channels.surface.bindingCreateConversation": "Conversa",
             "plugins.channels.surface.bindingCreateCreated": "Vinculação de conversa criada.",
-            "plugins.channels.surface.bindingCreateCurrentStep": "Etapa atual",
             "plugins.channels.surface.bindingCreateDeliveryMode": "Entrega da sessão",
             "plugins.channels.surface.bindingCreateDescription": "Escolha a conversa externa atual, os principais permitidos e o destino.",
             "plugins.channels.surface.bindingCreateEndpoint": "Escolha uma conversa",
@@ -44967,6 +45086,8 @@
             "plugins.channels.surface.bindingCreateNewSessionUnavailable": "A criação de nova sessão não está disponível para este destino.",
             "plugins.channels.surface.bindingCreateNewSessionUnavailableDescription": "A associação continuará a usar a Sessão selecionada existente.",
             "plugins.channels.surface.bindingCreateNoConnection": "Crie uma conexão de conversa ativa antes de adicionar uma associação.",
+            "plugins.channels.surface.bindingCreateNotReadyDescription": "Aguarde o provedor ficar pronto e pesquise novamente.",
+            "plugins.channels.surface.bindingCreateNotReadyTitle": "A vinculação ainda não está pronta",
             "plugins.channels.surface.bindingCreatePairingAttempts": "Tentativas restantes",
             "plugins.channels.surface.bindingCreatePairingCancel": "Cancelar parceria",
             "plugins.channels.surface.bindingCreatePairingChallengeDetails": "Desafio de parceria",
@@ -45101,7 +45222,6 @@
             "plugins.channels.surface.bindingEditConnectionChangedDescription": "Seu borrão é retido. Recarregue a conexão atual e resolva novamente as escolhas dependentes do provedor antes de salvar.",
             "plugins.channels.surface.bindingEditConnectionChangedTitle": "Detalhes da conexão atual do provedor não estão disponíveis.",
             "plugins.channels.surface.bindingEditCurrentAudience": "Conversa atual e remetentes",
-            "plugins.channels.surface.bindingEditCurrentStep": "Etapa atual",
             "plugins.channels.surface.bindingEditDebounce": "Atraso no agrupamento de mensagens",
             "plugins.channels.surface.bindingEditDebounceInvalid": "Digite um número inteiro de milissegundos.",
             "plugins.channels.surface.bindingEditDebounceNone": "Sem atraso",
@@ -45182,8 +45302,10 @@
             "plugins.channels.surface.connectionDeleteConfirmDescription": "Isso desativa a conexão e espera uma prova exata de parada da transmissão antes da limpeza.",
             "plugins.channels.surface.connectionDeleteConfirmTitle": "Excluir esta conexão?",
             "plugins.channels.surface.connectionDeleted": "Conexão excluída.",
+            "plugins.channels.surface.connectionDetailsTitle": "Detalhes",
             "plugins.channels.surface.connectionNoAttention": "Nada precisa de atenção",
             "plugins.channels.surface.connectionPaused": "Em pausa",
+            "plugins.channels.surface.connectionPolicyTitle": "Política",
             "plugins.channels.surface.connectionRetest": "Testar conexão",
             "plugins.channels.surface.connectionRetestFailedDescription": "A conexão salva pode ter mudado. Atualize os detalhes da conexão antes de tentar novamente.",
             "plugins.channels.surface.connectionRetestFailedTitle": "Não foi possível testar a conexão",
@@ -45262,10 +45384,12 @@
             "plugins.channels.surface.deliveryResolutionFailedTitle": "Não foi possível registrar a decisão de entrega",
             "plugins.channels.surface.deliveryResolutionGroupArchived": "{count} entregas para destinos arquivados",
             "plugins.channels.surface.deliveryResolutionGroupArchivedOne": "1 entrega para um destino arquivado",
+            "plugins.channels.surface.deliveryResolutionGroupConnection": "Fora das conversas vinculadas",
             "plugins.channels.surface.deliveryResolutionGroupPartial": "{count} entregas enviadas em parte",
             "plugins.channels.surface.deliveryResolutionGroupPartialOne": "1 entrega enviada em parte",
             "plugins.channels.surface.deliveryResolutionGroupUnknown": "{count} entregas com resultado desconhecido",
             "plugins.channels.surface.deliveryResolutionGroupUnknownOne": "1 entrega com resultado desconhecido",
+            "plugins.channels.surface.deliveryResolutionGroupUnlisted": "Uma conversa que não está listada aqui",
             "plugins.channels.surface.deliveryResolutionLoadMore": "Mostrar mais decisões de entrega",
             "plugins.channels.surface.deliveryResolutionLoading": "Carregando detalhes da entrega",
             "plugins.channels.surface.deliveryResolutionOutcomeUnknown": "Resultado desconhecido",
@@ -45276,8 +45400,8 @@
             "plugins.channels.surface.deliveryResolutionReadFailedTitle": "Não foi possível ler os detalhes da entrega",
             "plugins.channels.surface.deliveryResolutionRetryAfterUnarchive": "Desarquivado — enviar novamente",
             "plugins.channels.surface.deliveryResolutionRetrying": "Tentando novamente…",
-            "plugins.channels.surface.deliveryResolutionRevision": "Entrega",
-            "plugins.channels.surface.deliveryResolutionRevisionValue": "{id} · revisão {revision}",
+            "plugins.channels.surface.deliveryResolutionRowName": "Entrega enviada {time}",
+            "plugins.channels.surface.deliveryResolutionSentAt": "Enviada {time}",
             "plugins.channels.surface.deliveryResolutionThreadId": "ID do thread iniciado",
             "plugins.channels.surface.deliveryResolutionThreadIdDescription": "Isso iniciou uma nova conversa. Se ela chegou, informe o ID do thread criado para que as respostas alcancem a sessão. Sem ele, só é possível descartar.",
             "plugins.channels.surface.deliveryResolutionThreadIdPlaceholder": "Para e-mail: o Message-ID da mensagem enviada",
@@ -45342,7 +45466,6 @@
             "plugins.channels.surface.ingressOccurrenceConflict": "Conflito de ocorrência recebida precisa de atenção",
             "plugins.channels.surface.ingressOccurrenceConflictDescription": "Happier recebeu evidências contraditórias para uma ocorrência recente. Ele não tentará novamente nem avançará esta conexão;exclua a conexão para remover o conflito retido.",
             "plugins.channels.surface.ingressOccurrenceConflictTitle": "Conflito de ocorrência recebida precisa de atenção",
-            "plugins.channels.surface.integrationIdentity": "Identidade de integração e política de conta",
             "plugins.channels.surface.liveUpdatesEndedDescription": "Atualize para ler novamente a política de conexão da conta atual.",
             "plugins.channels.surface.liveUpdatesEndedTitle": "As atualizações ao vivo não estão disponíveis",
             "plugins.channels.surface.loadingDescription": "Lendo a política de conexão atual da sua conta.",
@@ -45439,6 +45562,9 @@
             "plugins.channels.surface.reload": "Recarregar",
             "plugins.channels.surface.repairEndpointRetarget": "Reparar o destino de entrega",
             "plugins.channels.surface.repairingEndpointRetarget": "Reparando…",
+            "plugins.channels.surface.resolverRefusedTitle": "O provedor recusou esta pesquisa",
+            "plugins.channels.surface.resolverUnsupportedDescription": "O provedor não consegue pesquisar este tipo de endereço. Digite-o como o provedor o nomeia.",
+            "plugins.channels.surface.resolverUnsupportedTitle": "Pesquise de outra forma",
             "plugins.channels.surface.resourceConnectionInvalid": "O recurso de conexão contém uma conexão inválida.",
             "plugins.channels.surface.resourceContentTypeInvalid": "O recurso de conexão não retornou JSON .",
             "plugins.channels.surface.resourceInvalidJson": "O recurso de conexão não pôde ser lido.",
@@ -45497,6 +45623,15 @@
             "plugins.channels.surface.seconds": "segundos",
             "plugins.channels.surface.selectedMachineId": "ID da máquina selecionada",
             "plugins.channels.surface.selectedMachineSummary": "Funciona na máquina selecionada",
+            "plugins.channels.surface.setupGuidanceCopyLink": "Copiar link",
+            "plugins.channels.surface.setupGuidanceCopyPermissions": "Copiar permissões",
+            "plugins.channels.surface.setupGuidanceCopyValue": "Copiar {label}",
+            "plugins.channels.surface.setupGuidanceGrant": "Conceda o que é pedido",
+            "plugins.channels.surface.setupGuidanceOpen": "Abrir {provider}",
+            "plugins.channels.surface.setupGuidanceOpenHost": "Abrir {host}",
+            "plugins.channels.surface.setupGuidanceOpenStep": "Abrir página",
+            "plugins.channels.surface.setupGuidanceVerify": "Crie e teste a conexão",
+            "plugins.channels.surface.setupGuidanceVerifyDetail": "Crie-a abaixo. Depois, Testar conexão verifica se o Happier alcança {provider} com ela.",
             "plugins.channels.surface.staleDescription": "As atualizações de conexão ao vivo estão temporariamente indisponíveis.",
             "plugins.channels.surface.staleTitle": "Mostrando detalhes da última conexão conhecida",
             "plugins.channels.surface.stopPending": "Interromper reconciliação pendente",
@@ -45763,7 +45898,6 @@
             "plugins.channels.surface.bindingCreateContinue": "Continua",
             "plugins.channels.surface.bindingCreateConversation": "Conversa",
             "plugins.channels.surface.bindingCreateCreated": "S'ha creat l'enllaç de conversa.",
-            "plugins.channels.surface.bindingCreateCurrentStep": "Pas actual",
             "plugins.channels.surface.bindingCreateDeliveryMode": "Lliurament de la sessió",
             "plugins.channels.surface.bindingCreateDescription": "Trieu la conversa externa actual, els principals permesos i la destinació.",
             "plugins.channels.surface.bindingCreateEndpoint": "Selecciona una conversa",
@@ -45786,6 +45920,8 @@
             "plugins.channels.surface.bindingCreateNewSessionUnavailable": "La creació d'una sessió nova no està disponible per a aquesta destinació.",
             "plugins.channels.surface.bindingCreateNewSessionUnavailableDescription": "La vinculació continuarà utilitzant la sessió existent seleccionada.",
             "plugins.channels.surface.bindingCreateNoConnection": "Crea una connectió d' conversa activa abans d'afegir una vinculació.",
+            "plugins.channels.surface.bindingCreateNotReadyDescription": "Espera que el proveïdor estigui a punt i torna a cercar.",
+            "plugins.channels.surface.bindingCreateNotReadyTitle": "La vinculació encara no està a punt",
             "plugins.channels.surface.bindingCreatePairingAttempts": "Proves restants",
             "plugins.channels.surface.bindingCreatePairingCancel": "Cancel·la la vinculació",
             "plugins.channels.surface.bindingCreatePairingChallengeDetails": "Desafí de vinculació",
@@ -45920,7 +46056,6 @@
             "plugins.channels.surface.bindingEditConnectionChangedDescription": "La teva esborranya està retenció. Reinicia la connexió actual i reavalua les opcions dependent del proveïdor abans de guardar.",
             "plugins.channels.surface.bindingEditConnectionChangedTitle": "Les detalls actuels de la connexió del proveïdor no estan disponibles",
             "plugins.channels.surface.bindingEditCurrentAudience": "Conversa actual i enviadors",
-            "plugins.channels.surface.bindingEditCurrentStep": "Pas actual",
             "plugins.channels.surface.bindingEditDebounce": "Retard d’agrupament de missatges",
             "plugins.channels.surface.bindingEditDebounceInvalid": "Introdueix un nombre enter de mil·lisegons.",
             "plugins.channels.surface.bindingEditDebounceNone": "Sense retard",
@@ -46001,8 +46136,10 @@
             "plugins.channels.surface.connectionDeleteConfirmDescription": "Aquest deshabilita la connexió i espera la prova exacta de la parada de transport abans de netejar.",
             "plugins.channels.surface.connectionDeleteConfirmTitle": "Suprimeix aquesta connexió?",
             "plugins.channels.surface.connectionDeleted": "S'ha suprimit la connexió.",
+            "plugins.channels.surface.connectionDetailsTitle": "Detalls",
             "plugins.channels.surface.connectionNoAttention": "Res no requereix atenció",
             "plugins.channels.surface.connectionPaused": "En pausa",
+            "plugins.channels.surface.connectionPolicyTitle": "Política",
             "plugins.channels.surface.connectionRetest": "Prova la connexió",
             "plugins.channels.surface.connectionRetestFailedDescription": "La connexió desada pot haver canviat. Actualitzeu els detalls de la connexió abans de tornar-ho a provar.",
             "plugins.channels.surface.connectionRetestFailedTitle": "No s’ha pogut provar la connexió",
@@ -46081,10 +46218,12 @@
             "plugins.channels.surface.deliveryResolutionFailedTitle": "No s'ha pogut registrar la decisió de lliurament",
             "plugins.channels.surface.deliveryResolutionGroupArchived": "{count} lliuraments a destinacions arxivades",
             "plugins.channels.surface.deliveryResolutionGroupArchivedOne": "1 lliurament a una destinació arxivada",
+            "plugins.channels.surface.deliveryResolutionGroupConnection": "Fora de les converses vinculades",
             "plugins.channels.surface.deliveryResolutionGroupPartial": "{count} lliuraments enviats en part",
             "plugins.channels.surface.deliveryResolutionGroupPartialOne": "1 lliurament enviat en part",
             "plugins.channels.surface.deliveryResolutionGroupUnknown": "{count} lliuraments amb resultat desconegut",
             "plugins.channels.surface.deliveryResolutionGroupUnknownOne": "1 lliurament amb resultat desconegut",
+            "plugins.channels.surface.deliveryResolutionGroupUnlisted": "Una conversa que no és en aquesta llista",
             "plugins.channels.surface.deliveryResolutionLoadMore": "Mostra més decisions de lliurament",
             "plugins.channels.surface.deliveryResolutionLoading": "S'estan carregant els detalls de lliurament",
             "plugins.channels.surface.deliveryResolutionOutcomeUnknown": "Resultat desconegut",
@@ -46095,8 +46234,8 @@
             "plugins.channels.surface.deliveryResolutionReadFailedTitle": "No s'han pogut llegir els detalls de lliurament",
             "plugins.channels.surface.deliveryResolutionRetryAfterUnarchive": "S’ha desarxivat — torneu-ho a enviar",
             "plugins.channels.surface.deliveryResolutionRetrying": "S’està tornant a provar…",
-            "plugins.channels.surface.deliveryResolutionRevision": "Lliurament",
-            "plugins.channels.surface.deliveryResolutionRevisionValue": "{id} · revisió {revision}",
+            "plugins.channels.surface.deliveryResolutionRowName": "Lliurament enviat {time}",
+            "plugins.channels.surface.deliveryResolutionSentAt": "Enviat {time}",
             "plugins.channels.surface.deliveryResolutionThreadId": "ID del fil iniciat",
             "plugins.channels.surface.deliveryResolutionThreadIdDescription": "Això ha iniciat una conversa nova. Si ha arribat, introdueix l’ID del fil que ha creat perquè les respostes arribin a la sessió. Sense això, només es pot descartar.",
             "plugins.channels.surface.deliveryResolutionThreadIdPlaceholder": "Per al correu: el Message-ID del missatge enviat",
@@ -46161,7 +46300,6 @@
             "plugins.channels.surface.ingressOccurrenceConflict": "El conflicte d'ocurrència entrant necessita atenció",
             "plugins.channels.surface.ingressOccurrenceConflictDescription": "Happier va rebre proves contradictòries d'un esdeveniment entrant. No tornarà a intentar ni avançarà aquesta connexió;suprimiu la connexió per eliminar el conflicte retingut.",
             "plugins.channels.surface.ingressOccurrenceConflictTitle": "El conflicte d'ocurrència entrant necessita atenció",
-            "plugins.channels.surface.integrationIdentity": "Identitat d'integració i política de comptes",
             "plugins.channels.surface.liveUpdatesEndedDescription": "Actualitzeu per tornar a llegir la política actual de connexió del compte.",
             "plugins.channels.surface.liveUpdatesEndedTitle": "Les actualitzacions en directe no estan disponibles",
             "plugins.channels.surface.loadingDescription": "Llegint la política de connexió actual del vostre compte.",
@@ -46258,6 +46396,9 @@
             "plugins.channels.surface.reload": "Actualitza",
             "plugins.channels.surface.repairEndpointRetarget": "Repara la destinació de lliurament",
             "plugins.channels.surface.repairingEndpointRetarget": "Reparant…",
+            "plugins.channels.surface.resolverRefusedTitle": "El proveïdor ha rebutjat aquesta cerca",
+            "plugins.channels.surface.resolverUnsupportedDescription": "El proveïdor no pot cercar aquest tipus d’adreça. Escriu-la com l’anomena el proveïdor.",
+            "plugins.channels.surface.resolverUnsupportedTitle": "Cerca-ho d’una altra manera",
             "plugins.channels.surface.resourceConnectionInvalid": "El recurs de connexió conté una connexió no vàlida.",
             "plugins.channels.surface.resourceContentTypeInvalid": "El recurs de connexió no ha retornat JSON.",
             "plugins.channels.surface.resourceInvalidJson": "No s'ha pogut llegir el recurs de connexió.",
@@ -46316,6 +46457,15 @@
             "plugins.channels.surface.seconds": "segons",
             "plugins.channels.surface.selectedMachineId": "ID de la màquina seleccionada",
             "plugins.channels.surface.selectedMachineSummary": "S'executa a la màquina seleccionada",
+            "plugins.channels.surface.setupGuidanceCopyLink": "Copia l’enllaç",
+            "plugins.channels.surface.setupGuidanceCopyPermissions": "Copia els permisos",
+            "plugins.channels.surface.setupGuidanceCopyValue": "Copia {label}",
+            "plugins.channels.surface.setupGuidanceGrant": "Concedeix el que demana",
+            "plugins.channels.surface.setupGuidanceOpen": "Obre {provider}",
+            "plugins.channels.surface.setupGuidanceOpenHost": "Obre {host}",
+            "plugins.channels.surface.setupGuidanceOpenStep": "Obre la pàgina",
+            "plugins.channels.surface.setupGuidanceVerify": "Crea i prova la connexió",
+            "plugins.channels.surface.setupGuidanceVerifyDetail": "Crea-la a sota. Després, Prova la connexió comprova que Happier arriba a {provider} amb ella.",
             "plugins.channels.surface.staleDescription": "Les actualitzacions de connexió en directe no estan disponibles temporalment.",
             "plugins.channels.surface.staleTitle": "Es mostren els detalls de la darrera connexió coneguda",
             "plugins.channels.surface.stopPending": "Atura la reconciliació pendent",
@@ -46582,7 +46732,6 @@
             "plugins.channels.surface.bindingCreateContinue": "继续",
             "plugins.channels.surface.bindingCreateConversation": "对话",
             "plugins.channels.surface.bindingCreateCreated": "对话绑定已创建。",
-            "plugins.channels.surface.bindingCreateCurrentStep": "当前步骤",
             "plugins.channels.surface.bindingCreateDeliveryMode": "会话交付",
             "plugins.channels.surface.bindingCreateDescription": "选择当前的外部对话、允许的主体和目标。",
             "plugins.channels.surface.bindingCreateEndpoint": "选择一个对话",
@@ -46605,6 +46754,8 @@
             "plugins.channels.surface.bindingCreateNewSessionUnavailable": "此目标无法创建新会话。",
             "plugins.channels.surface.bindingCreateNewSessionUnavailableDescription": "绑定将继续使用选定的现有会话。",
             "plugins.channels.surface.bindingCreateNoConnection": "在添加绑定之前创建一个活跃的对话连接。",
+            "plugins.channels.surface.bindingCreateNotReadyDescription": "等待提供方就绪后再搜索。",
+            "plugins.channels.surface.bindingCreateNotReadyTitle": "绑定设置尚未就绪",
             "plugins.channels.surface.bindingCreatePairingAttempts": "剩余尝试次数",
             "plugins.channels.surface.bindingCreatePairingCancel": "取消配对",
             "plugins.channels.surface.bindingCreatePairingChallengeDetails": "配对挑战",
@@ -46739,7 +46890,6 @@
             "plugins.channels.surface.bindingEditConnectionChangedDescription": "您的草稿被保留。重新加载当前连接并重新解析提供程序依赖的选择后再保存。",
             "plugins.channels.surface.bindingEditConnectionChangedTitle": "当前提供程序连接详细信息不可用",
             "plugins.channels.surface.bindingEditCurrentAudience": "当前对话和发送者",
-            "plugins.channels.surface.bindingEditCurrentStep": "当前步骤",
             "plugins.channels.surface.bindingEditDebounce": "消息分组延迟",
             "plugins.channels.surface.bindingEditDebounceInvalid": "请输入毫秒数的整数。",
             "plugins.channels.surface.bindingEditDebounceNone": "无延迟",
@@ -46820,8 +46970,10 @@
             "plugins.channels.surface.connectionDeleteConfirmDescription": "这会禁用连接，并在确认确切传输停止证明之前进行清理",
             "plugins.channels.surface.connectionDeleteConfirmTitle": "删除此连接？",
             "plugins.channels.surface.connectionDeleted": "连接已删除。",
+            "plugins.channels.surface.connectionDetailsTitle": "详情",
             "plugins.channels.surface.connectionNoAttention": "无需处理",
             "plugins.channels.surface.connectionPaused": "已暂停",
+            "plugins.channels.surface.connectionPolicyTitle": "策略",
             "plugins.channels.surface.connectionRetest": "测试连接",
             "plugins.channels.surface.connectionRetestFailedDescription": "已保存的连接可能已更改。请先刷新连接详情，然后重试。",
             "plugins.channels.surface.connectionRetestFailedTitle": "无法测试该连接",
@@ -46900,10 +47052,12 @@
             "plugins.channels.surface.deliveryResolutionFailedTitle": "无法记录交付决定",
             "plugins.channels.surface.deliveryResolutionGroupArchived": "{count} 条投递的目标已归档",
             "plugins.channels.surface.deliveryResolutionGroupArchivedOne": "1 条投递的目标已归档",
+            "plugins.channels.surface.deliveryResolutionGroupConnection": "不在已关联的会话中",
             "plugins.channels.surface.deliveryResolutionGroupPartial": "{count} 条投递仅部分发送",
             "plugins.channels.surface.deliveryResolutionGroupPartialOne": "1 条投递仅部分发送",
             "plugins.channels.surface.deliveryResolutionGroupUnknown": "{count} 条投递结果未知",
             "plugins.channels.surface.deliveryResolutionGroupUnknownOne": "1 条投递结果未知",
+            "plugins.channels.surface.deliveryResolutionGroupUnlisted": "未在此列出的会话",
             "plugins.channels.surface.deliveryResolutionLoadMore": "显示更多交付决策",
             "plugins.channels.surface.deliveryResolutionLoading": "正在加载交货详细信息",
             "plugins.channels.surface.deliveryResolutionOutcomeUnknown": "结果未知",
@@ -46914,8 +47068,8 @@
             "plugins.channels.surface.deliveryResolutionReadFailedTitle": "无法读取交货详细信息",
             "plugins.channels.surface.deliveryResolutionRetryAfterUnarchive": "已取消归档 — 重新发送",
             "plugins.channels.surface.deliveryResolutionRetrying": "正在重试…",
-            "plugins.channels.surface.deliveryResolutionRevision": "投递",
-            "plugins.channels.surface.deliveryResolutionRevisionValue": "{id} · 版本 {revision}",
+            "plugins.channels.surface.deliveryResolutionRowName": "投递发送于 {time}",
+            "plugins.channels.surface.deliveryResolutionSentAt": "发送于 {time}",
             "plugins.channels.surface.deliveryResolutionThreadId": "已发起线程的 ID",
             "plugins.channels.surface.deliveryResolutionThreadIdDescription": "这发起了一个新对话。如果它已到达，请输入所创建线程的 ID，让回复能到达会话。没有它，只能丢弃。",
             "plugins.channels.surface.deliveryResolutionThreadIdPlaceholder": "邮件请填写已发送邮件的 Message-ID",
@@ -46980,7 +47134,6 @@
             "plugins.channels.surface.ingressOccurrenceConflict": "即将发生的冲突需要注意",
             "plugins.channels.surface.ingressOccurrenceConflictDescription": "哈皮尔收到了关于一件即将发生的事件的相互矛盾的证据。它不会重试或推进此连接；删除连接以消除保留的冲突。",
             "plugins.channels.surface.ingressOccurrenceConflictTitle": "即将发生的冲突需要注意",
-            "plugins.channels.surface.integrationIdentity": "集成身份和帐户策略",
             "plugins.channels.surface.liveUpdatesEndedDescription": "刷新以再次读取当前的帐户连接策略。",
             "plugins.channels.surface.liveUpdatesEndedTitle": "实时更新不可用",
             "plugins.channels.surface.loadingDescription": "从您的帐户读取当前的连接策略。",
@@ -47077,6 +47230,9 @@
             "plugins.channels.surface.reload": "重新加载",
             "plugins.channels.surface.repairEndpointRetarget": "修复投递目标",
             "plugins.channels.surface.repairingEndpointRetarget": "正在修复…",
+            "plugins.channels.surface.resolverRefusedTitle": "提供方拒绝了这次搜索",
+            "plugins.channels.surface.resolverUnsupportedDescription": "提供方无法查找这类地址。请按提供方的命名方式输入。",
+            "plugins.channels.surface.resolverUnsupportedTitle": "换一种方式查找",
             "plugins.channels.surface.resourceConnectionInvalid": "连接资源包含无效连接。",
             "plugins.channels.surface.resourceContentTypeInvalid": "连接 Resource 未返回 JSON 。",
             "plugins.channels.surface.resourceInvalidJson": "无法读取连接资源。",
@@ -47135,6 +47291,15 @@
             "plugins.channels.surface.seconds": "秒",
             "plugins.channels.surface.selectedMachineId": "选定的机器 ID",
             "plugins.channels.surface.selectedMachineSummary": "在您选择的机器上运行",
+            "plugins.channels.surface.setupGuidanceCopyLink": "复制链接",
+            "plugins.channels.surface.setupGuidanceCopyPermissions": "复制权限",
+            "plugins.channels.surface.setupGuidanceCopyValue": "复制{label}",
+            "plugins.channels.surface.setupGuidanceGrant": "授予所需权限",
+            "plugins.channels.surface.setupGuidanceOpen": "打开 {provider}",
+            "plugins.channels.surface.setupGuidanceOpenHost": "打开 {host}",
+            "plugins.channels.surface.setupGuidanceOpenStep": "打开页面",
+            "plugins.channels.surface.setupGuidanceVerify": "创建并测试连接",
+            "plugins.channels.surface.setupGuidanceVerifyDetail": "在下方创建。然后“测试连接”会检查 Happier 能否用它连接到 {provider}。",
             "plugins.channels.surface.staleDescription": "实时连接更新暂时不可用。",
             "plugins.channels.surface.staleTitle": "显示最后已知的连接详细信息",
             "plugins.channels.surface.stopPending": "停止对账待处理",
@@ -47401,7 +47566,6 @@
             "plugins.channels.surface.bindingCreateContinue": "繼續",
             "plugins.channels.surface.bindingCreateConversation": "對話",
             "plugins.channels.surface.bindingCreateCreated": "對話綁定已建立。",
-            "plugins.channels.surface.bindingCreateCurrentStep": "目前步驟",
             "plugins.channels.surface.bindingCreateDeliveryMode": "會話交付",
             "plugins.channels.surface.bindingCreateDescription": "選擇目前的外部對話、允許的主體和目標。",
             "plugins.channels.surface.bindingCreateEndpoint": "選擇一個會話",
@@ -47424,6 +47588,8 @@
             "plugins.channels.surface.bindingCreateNewSessionUnavailable": "此目標無法建立新會話。",
             "plugins.channels.surface.bindingCreateNewSessionUnavailableDescription": "绑定将继续使用所选的现有会话。",
             "plugins.channels.surface.bindingCreateNoConnection": "在添加绑定之前，请创建一个活动的会话连接。",
+            "plugins.channels.surface.bindingCreateNotReadyDescription": "等待提供者就緒後再搜尋。",
+            "plugins.channels.surface.bindingCreateNotReadyTitle": "綁定設定尚未就緒",
             "plugins.channels.surface.bindingCreatePairingAttempts": "剩余尝试次数",
             "plugins.channels.surface.bindingCreatePairingCancel": "取消配对",
             "plugins.channels.surface.bindingCreatePairingChallengeDetails": "配对挑战",
@@ -47558,7 +47724,6 @@
             "plugins.channels.surface.bindingEditConnectionChangedDescription": "您的草稿被保留。在重新加载当前连接并重新解析提供者依赖的选择之前，无法保存。",
             "plugins.channels.surface.bindingEditConnectionChangedTitle": "当前提供者的连接详细信息不可用",
             "plugins.channels.surface.bindingEditCurrentAudience": "当前对话和发送者",
-            "plugins.channels.surface.bindingEditCurrentStep": "当前步骤",
             "plugins.channels.surface.bindingEditDebounce": "訊息分組延遲",
             "plugins.channels.surface.bindingEditDebounceInvalid": "請輸入毫秒數的整數。",
             "plugins.channels.surface.bindingEditDebounceNone": "無延遲",
@@ -47639,8 +47804,10 @@
             "plugins.channels.surface.connectionDeleteConfirmDescription": "这将禁用连接，并在确认确切的传输停止证明之前进行清理。",
             "plugins.channels.surface.connectionDeleteConfirmTitle": "删除此连接？",
             "plugins.channels.surface.connectionDeleted": "連接已刪除。",
+            "plugins.channels.surface.connectionDetailsTitle": "詳細資料",
             "plugins.channels.surface.connectionNoAttention": "無需處理",
             "plugins.channels.surface.connectionPaused": "已暫停",
+            "plugins.channels.surface.connectionPolicyTitle": "政策",
             "plugins.channels.surface.connectionRetest": "測試連接",
             "plugins.channels.surface.connectionRetestFailedDescription": "已儲存的連接可能已變更。請先重新整理連接詳細資料，然後再試一次。",
             "plugins.channels.surface.connectionRetestFailedTitle": "無法測試該連接",
@@ -47719,10 +47886,12 @@
             "plugins.channels.surface.deliveryResolutionFailedTitle": "無法記錄交付決定",
             "plugins.channels.surface.deliveryResolutionGroupArchived": "{count} 筆傳送的目標已封存",
             "plugins.channels.surface.deliveryResolutionGroupArchivedOne": "1 筆傳送的目標已封存",
+            "plugins.channels.surface.deliveryResolutionGroupConnection": "不在已連結的對話中",
             "plugins.channels.surface.deliveryResolutionGroupPartial": "{count} 筆傳送僅部分送出",
             "plugins.channels.surface.deliveryResolutionGroupPartialOne": "1 筆傳送僅部分送出",
             "plugins.channels.surface.deliveryResolutionGroupUnknown": "{count} 筆傳送結果不明",
             "plugins.channels.surface.deliveryResolutionGroupUnknownOne": "1 筆傳送結果不明",
+            "plugins.channels.surface.deliveryResolutionGroupUnlisted": "未列在此處的對話",
             "plugins.channels.surface.deliveryResolutionLoadMore": "顯示更多交付決策",
             "plugins.channels.surface.deliveryResolutionLoading": "正在加載交貨詳細信息",
             "plugins.channels.surface.deliveryResolutionOutcomeUnknown": "結果未知",
@@ -47733,8 +47902,8 @@
             "plugins.channels.surface.deliveryResolutionReadFailedTitle": "無法讀取交貨詳細信息",
             "plugins.channels.surface.deliveryResolutionRetryAfterUnarchive": "已取消封存 — 重新傳送",
             "plugins.channels.surface.deliveryResolutionRetrying": "正在重試…",
-            "plugins.channels.surface.deliveryResolutionRevision": "傳送",
-            "plugins.channels.surface.deliveryResolutionRevisionValue": "{id} · 版本 {revision}",
+            "plugins.channels.surface.deliveryResolutionRowName": "傳送於 {time}",
+            "plugins.channels.surface.deliveryResolutionSentAt": "送出於 {time}",
             "plugins.channels.surface.deliveryResolutionThreadId": "已發起討論串的 ID",
             "plugins.channels.surface.deliveryResolutionThreadIdDescription": "這發起了一個新對話。如果它已送達，請輸入所建立討論串的 ID，讓回覆能到達工作階段。沒有它，只能捨棄。",
             "plugins.channels.surface.deliveryResolutionThreadIdPlaceholder": "郵件請填寫已傳送郵件的 Message-ID",
@@ -47799,7 +47968,6 @@
             "plugins.channels.surface.ingressOccurrenceConflict": "即將發生的衝突需要注意",
             "plugins.channels.surface.ingressOccurrenceConflictDescription": "哈皮爾收到了關於一件即將發生的事件的相互矛盾的證據。它不會重試或推進此連接；刪除連接以消除保留的衝突。",
             "plugins.channels.surface.ingressOccurrenceConflictTitle": "即將發生的衝突需要注意",
-            "plugins.channels.surface.integrationIdentity": "整合身分和帳戶策略",
             "plugins.channels.surface.liveUpdatesEndedDescription": "刷新以再次讀取目前的帳戶連接策略。",
             "plugins.channels.surface.liveUpdatesEndedTitle": "即時更新不可用",
             "plugins.channels.surface.loadingDescription": "從您的帳戶讀取目前的連線策略。",
@@ -47896,6 +48064,9 @@
             "plugins.channels.surface.reload": "重新加载",
             "plugins.channels.surface.repairEndpointRetarget": "修復投遞目標",
             "plugins.channels.surface.repairingEndpointRetarget": "正在修復…",
+            "plugins.channels.surface.resolverRefusedTitle": "提供者拒絕了這次搜尋",
+            "plugins.channels.surface.resolverUnsupportedDescription": "提供者無法查詢這類位址。請依提供者的命名方式輸入。",
+            "plugins.channels.surface.resolverUnsupportedTitle": "換一種方式尋找",
             "plugins.channels.surface.resourceConnectionInvalid": "連線資源包含無效連線。",
             "plugins.channels.surface.resourceContentTypeInvalid": "連接 Resource 未回傳JSON 。",
             "plugins.channels.surface.resourceInvalidJson": "無法讀取連線資源。",
@@ -47954,6 +48125,15 @@
             "plugins.channels.surface.seconds": "秒",
             "plugins.channels.surface.selectedMachineId": "選定的機器ID",
             "plugins.channels.surface.selectedMachineSummary": "在您選擇的機器上運行",
+            "plugins.channels.surface.setupGuidanceCopyLink": "複製連結",
+            "plugins.channels.surface.setupGuidanceCopyPermissions": "複製權限",
+            "plugins.channels.surface.setupGuidanceCopyValue": "複製{label}",
+            "plugins.channels.surface.setupGuidanceGrant": "授予所需權限",
+            "plugins.channels.surface.setupGuidanceOpen": "開啟 {provider}",
+            "plugins.channels.surface.setupGuidanceOpenHost": "開啟 {host}",
+            "plugins.channels.surface.setupGuidanceOpenStep": "開啟頁面",
+            "plugins.channels.surface.setupGuidanceVerify": "建立並測試連線",
+            "plugins.channels.surface.setupGuidanceVerifyDetail": "在下方建立。接著「測試連線」會檢查 Happier 能否用它連到 {provider}。",
             "plugins.channels.surface.staleDescription": "即時連線更新暫時不可用。",
             "plugins.channels.surface.staleTitle": "顯示最後已知的連接詳細信息",
             "plugins.channels.surface.stopPending": "停止對帳待處理",
@@ -48220,7 +48400,6 @@
             "plugins.channels.surface.bindingCreateContinue": "続く",
             "plugins.channels.surface.bindingCreateConversation": "会話",
             "plugins.channels.surface.bindingCreateCreated": "会話バインディングが作成されました。",
-            "plugins.channels.surface.bindingCreateCurrentStep": "現在のステップ",
             "plugins.channels.surface.bindingCreateDeliveryMode": "セッション配信",
             "plugins.channels.surface.bindingCreateDescription": "現在の外部会話、許可されたプリンシパル、および宛先を選択します。",
             "plugins.channels.surface.bindingCreateEndpoint": "会話を選びます",
@@ -48243,6 +48422,8 @@
             "plugins.channels.surface.bindingCreateNewSessionUnavailable": "この宛先では新しいセッションを作成できません。",
             "plugins.channels.surface.bindingCreateNewSessionUnavailableDescription": "選択した既存のセッションが継続的に使用されます。",
             "plugins.channels.surface.bindingCreateNoConnection": "アクティブな会話接続を作成してからバインディングを追加してください。",
+            "plugins.channels.surface.bindingCreateNotReadyDescription": "プロバイダーの準備ができてから、もう一度検索してください。",
+            "plugins.channels.surface.bindingCreateNotReadyTitle": "連携の設定はまだ準備できていません",
             "plugins.channels.surface.bindingCreatePairingAttempts": "残りの試行回数",
             "plugins.channels.surface.bindingCreatePairingCancel": "ペアリングをキャンセルする",
             "plugins.channels.surface.bindingCreatePairingChallengeDetails": "ペアリングチャレンジ",
@@ -48377,7 +48558,6 @@
             "plugins.channels.surface.bindingEditConnectionChangedDescription": "下書きは残っています。現在の接続を再読み込みしてプロバイダ依存の選択肢を再解決してから保存してください。",
             "plugins.channels.surface.bindingEditConnectionChangedTitle": "現在のプロバイダー接続詳細が利用できません",
             "plugins.channels.surface.bindingEditCurrentAudience": "現在の会話と送信者",
-            "plugins.channels.surface.bindingEditCurrentStep": "現在の手順",
             "plugins.channels.surface.bindingEditDebounce": "メッセージをまとめる待ち時間",
             "plugins.channels.surface.bindingEditDebounceInvalid": "ミリ秒を整数で入力してください。",
             "plugins.channels.surface.bindingEditDebounceNone": "遅延なし",
@@ -48458,8 +48638,10 @@
             "plugins.channels.surface.connectionDeleteConfirmDescription": "これにより、正確な転送停止証拠を待ってからクリーンアップを行うまで接続を無効化します",
             "plugins.channels.surface.connectionDeleteConfirmTitle": "この接続を削除しますか？",
             "plugins.channels.surface.connectionDeleted": "接続が削除されました。",
+            "plugins.channels.surface.connectionDetailsTitle": "詳細",
             "plugins.channels.surface.connectionNoAttention": "対応が必要な項目はありません",
             "plugins.channels.surface.connectionPaused": "一時停止中",
+            "plugins.channels.surface.connectionPolicyTitle": "ポリシー",
             "plugins.channels.surface.connectionRetest": "接続をテスト",
             "plugins.channels.surface.connectionRetestFailedDescription": "保存された接続が変更された可能性があります。接続の詳細を再読み込みしてから、もう一度お試しください。",
             "plugins.channels.surface.connectionRetestFailedTitle": "接続をテストできませんでした",
@@ -48538,10 +48720,12 @@
             "plugins.channels.surface.deliveryResolutionFailedTitle": "配信決定を記録できませんでした",
             "plugins.channels.surface.deliveryResolutionGroupArchived": "アーカイブ済みの宛先への配信 {count} 件",
             "plugins.channels.surface.deliveryResolutionGroupArchivedOne": "アーカイブ済みの宛先への配信 1 件",
+            "plugins.channels.surface.deliveryResolutionGroupConnection": "連携済みの会話の外",
             "plugins.channels.surface.deliveryResolutionGroupPartial": "一部のみ送信された配信 {count} 件",
             "plugins.channels.surface.deliveryResolutionGroupPartialOne": "一部のみ送信された配信 1 件",
             "plugins.channels.surface.deliveryResolutionGroupUnknown": "結果不明の配信 {count} 件",
             "plugins.channels.surface.deliveryResolutionGroupUnknownOne": "結果不明の配信 1 件",
+            "plugins.channels.surface.deliveryResolutionGroupUnlisted": "ここに表示されていない会話",
             "plugins.channels.surface.deliveryResolutionLoadMore": "配信決定をさらに表示する",
             "plugins.channels.surface.deliveryResolutionLoading": "配送の詳細を読み込んでいます",
             "plugins.channels.surface.deliveryResolutionOutcomeUnknown": "結果は不明",
@@ -48552,8 +48736,8 @@
             "plugins.channels.surface.deliveryResolutionReadFailedTitle": "配送詳細を読み取れませんでした",
             "plugins.channels.surface.deliveryResolutionRetryAfterUnarchive": "アーカイブを解除しました — もう一度送信",
             "plugins.channels.surface.deliveryResolutionRetrying": "再試行しています…",
-            "plugins.channels.surface.deliveryResolutionRevision": "配信",
-            "plugins.channels.surface.deliveryResolutionRevisionValue": "{id} · リビジョン {revision}",
+            "plugins.channels.surface.deliveryResolutionRowName": "{time} に送信した配信",
+            "plugins.channels.surface.deliveryResolutionSentAt": "{time} に送信",
             "plugins.channels.surface.deliveryResolutionThreadId": "開始したスレッドの ID",
             "plugins.channels.surface.deliveryResolutionThreadIdDescription": "これにより新しい会話が始まりました。届いている場合は、作成されたスレッドの ID を入力すると、返信がセッションに届きます。入力しない場合は破棄のみ可能です。",
             "plugins.channels.surface.deliveryResolutionThreadIdPlaceholder": "メールの場合は、送信したメッセージの Message-ID",
@@ -48618,7 +48802,6 @@
             "plugins.channels.surface.ingressOccurrenceConflict": "受信競合の発生には注意が必要です",
             "plugins.channels.surface.ingressOccurrenceConflictDescription": "ハッピーは、ある出来事について矛盾する証拠を受け取りました。この接続は再試行または続行されません。接続を削除して、保持された競合を削除します。",
             "plugins.channels.surface.ingressOccurrenceConflictTitle": "受信競合の発生には注意が必要です",
-            "plugins.channels.surface.integrationIdentity": "統合 ID とアカウント ポリシー",
             "plugins.channels.surface.liveUpdatesEndedDescription": "更新して、現在のアカウント接続ポリシーを再度読み取ります。",
             "plugins.channels.surface.liveUpdatesEndedTitle": "ライブアップデートは利用できません",
             "plugins.channels.surface.loadingDescription": "アカウントから現在の接続ポリシーを読み取ります。",
@@ -48715,6 +48898,9 @@
             "plugins.channels.surface.reload": "再読み込み",
             "plugins.channels.surface.repairEndpointRetarget": "配信先を修復",
             "plugins.channels.surface.repairingEndpointRetarget": "修復中…",
+            "plugins.channels.surface.resolverRefusedTitle": "プロバイダーがこの検索を拒否しました",
+            "plugins.channels.surface.resolverUnsupportedDescription": "プロバイダーはこの種類のアドレスを検索できません。プロバイダーでの名前どおりに入力してください。",
+            "plugins.channels.surface.resolverUnsupportedTitle": "別の方法で検索",
             "plugins.channels.surface.resourceConnectionInvalid": "接続リソースに無効な接続が含まれています。",
             "plugins.channels.surface.resourceContentTypeInvalid": "接続リソースが JSON を返しませんでした。",
             "plugins.channels.surface.resourceInvalidJson": "接続リソースを読み取ることができませんでした。",
@@ -48773,6 +48959,15 @@
             "plugins.channels.surface.seconds": "秒",
             "plugins.channels.surface.selectedMachineId": "選択したマシンID",
             "plugins.channels.surface.selectedMachineSummary": "選択したマシン上で実行されます",
+            "plugins.channels.surface.setupGuidanceCopyLink": "リンクをコピー",
+            "plugins.channels.surface.setupGuidanceCopyPermissions": "権限をコピー",
+            "plugins.channels.surface.setupGuidanceCopyValue": "{label}をコピー",
+            "plugins.channels.surface.setupGuidanceGrant": "求められた権限を付与",
+            "plugins.channels.surface.setupGuidanceOpen": "{provider} を開く",
+            "plugins.channels.surface.setupGuidanceOpenHost": "{host} を開く",
+            "plugins.channels.surface.setupGuidanceOpenStep": "ページを開く",
+            "plugins.channels.surface.setupGuidanceVerify": "接続を作成してテスト",
+            "plugins.channels.surface.setupGuidanceVerifyDetail": "下で作成します。その後「接続をテスト」で Happier が {provider} に接続できるか確認します。",
             "plugins.channels.surface.staleDescription": "ライブ接続の更新は一時的に利用できなくなります。",
             "plugins.channels.surface.staleTitle": "最後に確認された接続の詳細を表示する",
             "plugins.channels.surface.stopPending": "保留中の調整を停止します",

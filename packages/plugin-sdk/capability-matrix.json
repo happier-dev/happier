@@ -2,6 +2,28 @@
   "schemaVersion": 1,
   "manifestFamilies": [
     {
+      "manifestFamily": "accessProviders",
+      "pluginApiRegistrationFamily": null,
+      "registrationHost": null,
+      "definePluginAuthorKey": "accessProviders",
+      "definePluginInputShape": "descriptor",
+      "definePluginClassification": "descriptor-only",
+      "authorEntrypoint": ".",
+      "realm": "any",
+      "lifecycle": [
+        "declared",
+        "normalized",
+        "projected",
+        "bound",
+        "active",
+        "unavailable",
+        "invalid"
+      ],
+      "catalogDisposition": "reshaped",
+      "producer": "packages/protocol/src/plugins/contributions/catalog.ts#accessProviders",
+      "availabilityDisposition": "available"
+    },
+    {
       "manifestFamily": "accountCollections",
       "pluginApiRegistrationFamily": null,
       "registrationHost": null,
@@ -21,14 +43,6 @@
       ],
       "catalogDisposition": "reshaped",
       "producer": "packages/protocol/src/plugins/contributions/catalog.ts#accountCollections",
-      "provingConsumer": "packages/plugins/channels/src/manifest.ts",
-      "specialistOwner": "apps/cli/src/plugins/projection/registry/accountCollections.ts",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/lifecycle/manager.ts",
-      "predecessorRemoval": "catalog-disposition:reshaped",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -51,14 +65,6 @@
       ],
       "catalogDisposition": "reshaped",
       "producer": "packages/protocol/src/plugins/contributions/catalog.ts#actions",
-      "provingConsumer": "packages/plugins/channels/src/manifest.ts",
-      "specialistOwner": "apps/cli/src/plugins/runtime/resolveExecutablePluginRuntimeRegistry.ts",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/lifecycle/manager.ts",
-      "predecessorRemoval": "catalog-disposition:reshaped",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -81,14 +87,6 @@
       ],
       "catalogDisposition": "reshaped",
       "producer": "packages/protocol/src/plugins/contributions/catalog.ts#agents",
-      "provingConsumer": "packages/plugins/claude/src/manifest.ts",
-      "specialistOwner": "apps/cli/src/plugins/runtime/resolveExecutablePluginRuntimeRegistry.ts",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/lifecycle/manager.ts",
-      "predecessorRemoval": "catalog-disposition:reshaped",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -111,14 +109,6 @@
       ],
       "catalogDisposition": "retained",
       "producer": "packages/protocol/src/plugins/contributions/catalog.ts#atmospherePictures",
-      "provingConsumer": null,
-      "specialistOwner": "apps/cli/src/plugins/projection/registry/atmospherePictures.ts",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/lifecycle/manager.ts",
-      "predecessorRemoval": "catalog-disposition:retained",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -141,14 +131,6 @@
       ],
       "catalogDisposition": "retained",
       "producer": "packages/protocol/src/plugins/contributions/catalog.ts#backgroundServices",
-      "provingConsumer": "packages/plugins/channels/src/manifest.ts",
-      "specialistOwner": "apps/cli/src/plugins/runtime/resolveExecutablePluginRuntimeRegistry.ts",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/lifecycle/manager.ts",
-      "predecessorRemoval": "catalog-disposition:retained",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -171,14 +153,6 @@
       ],
       "catalogDisposition": "reshaped",
       "producer": "packages/protocol/src/plugins/contributions/catalog.ts#browserActions",
-      "provingConsumer": "packages/plugin-sdk/examples/action-contract-producer/src/index.ts",
-      "specialistOwner": "apps/cli/src/plugins/projection/registry/browser.ts",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/lifecycle/manager.ts",
-      "predecessorRemoval": "catalog-disposition:reshaped",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -201,14 +175,6 @@
       ],
       "catalogDisposition": "reshaped",
       "producer": "packages/protocol/src/plugins/contributions/catalog.ts#browserTargets",
-      "provingConsumer": "packages/plugin-sdk/examples/action-contract-producer/src/index.ts",
-      "specialistOwner": "apps/cli/src/plugins/projection/registry/browser.ts",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/lifecycle/manager.ts",
-      "predecessorRemoval": "catalog-disposition:reshaped",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -231,14 +197,6 @@
       ],
       "catalogDisposition": "retained",
       "producer": "packages/protocol/src/plugins/contributions/catalog.ts#captureSources",
-      "provingConsumer": null,
-      "specialistOwner": "apps/cli/src/plugins/runtime/resolveExecutablePluginRuntimeRegistry.ts",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/lifecycle/manager.ts",
-      "predecessorRemoval": "catalog-disposition:retained",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -261,14 +219,6 @@
       ],
       "catalogDisposition": "reshaped",
       "producer": "packages/protocol/src/plugins/contributions/catalog.ts#commands",
-      "provingConsumer": null,
-      "specialistOwner": "apps/cli/src/cli/pluginCommandContributions.ts",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/lifecycle/manager.ts",
-      "predecessorRemoval": "catalog-disposition:reshaped",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -291,14 +241,6 @@
       ],
       "catalogDisposition": "reshaped",
       "producer": "packages/protocol/src/plugins/contributions/catalog.ts#composerAttachments",
-      "provingConsumer": "packages/tests/fixtures/plugin-platform/composer-external-dogfood/src/index.mjs",
-      "specialistOwner": "apps/cli/src/plugins/runtime/resolveExecutablePluginRuntimeRegistry.ts",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/lifecycle/manager.ts",
-      "predecessorRemoval": "catalog-disposition:reshaped",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -321,14 +263,6 @@
       ],
       "catalogDisposition": "reshaped",
       "producer": "packages/protocol/src/plugins/contributions/catalog.ts#composerControls",
-      "provingConsumer": "packages/tests/fixtures/plugin-platform/composer-external-dogfood/src/index.mjs",
-      "specialistOwner": "apps/cli/src/plugins/projection/registry/composer.ts",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/lifecycle/manager.ts",
-      "predecessorRemoval": "catalog-disposition:reshaped",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -351,14 +285,6 @@
       ],
       "catalogDisposition": "reshaped",
       "producer": "packages/protocol/src/plugins/contributions/catalog.ts#composerReferences",
-      "provingConsumer": "packages/plugin-ui/fixtures/external-authoring/src/index.ts",
-      "specialistOwner": "apps/cli/src/plugins/runtime/resolveExecutablePluginRuntimeRegistry.ts",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/lifecycle/manager.ts",
-      "predecessorRemoval": "catalog-disposition:reshaped",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -381,14 +307,6 @@
       ],
       "catalogDisposition": "reshaped",
       "producer": "packages/protocol/src/plugins/contributions/catalog.ts#composerRegions",
-      "provingConsumer": "packages/plugin-ui/fixtures/external-authoring/src/index.ts",
-      "specialistOwner": "apps/cli/src/plugins/projection/registry/composer.ts",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/lifecycle/manager.ts",
-      "predecessorRemoval": "catalog-disposition:reshaped",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -411,14 +329,6 @@
       ],
       "catalogDisposition": "reshaped",
       "producer": "packages/protocol/src/plugins/contributions/catalog.ts#connectedAccountDescriptors",
-      "provingConsumer": "packages/plugins/gemini/src/manifest.ts",
-      "specialistOwner": "apps/cli/src/plugins/runtime/resolveExecutablePluginRuntimeRegistry.ts",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/lifecycle/manager.ts",
-      "predecessorRemoval": "catalog-disposition:reshaped",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -441,14 +351,28 @@
       ],
       "catalogDisposition": "reshaped",
       "producer": "packages/protocol/src/plugins/contributions/catalog.ts#daemonDatabases",
-      "provingConsumer": null,
-      "specialistOwner": "apps/cli/src/plugins/daemon/runtimeOwner.ts",
-      "lifecycleOwner": "apps/cli/src/plugins/daemon/runtimeOwner.ts",
-      "predecessorRemoval": "catalog-disposition:reshaped",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
+      "availabilityDisposition": "available"
+    },
+    {
+      "manifestFamily": "deploymentTargets",
+      "pluginApiRegistrationFamily": null,
+      "registrationHost": null,
+      "definePluginAuthorKey": "deploymentTargets",
+      "definePluginInputShape": "descriptor",
+      "definePluginClassification": "descriptor-only",
+      "authorEntrypoint": ".",
+      "realm": "any",
+      "lifecycle": [
+        "declared",
+        "normalized",
+        "projected",
+        "bound",
+        "active",
+        "unavailable",
+        "invalid"
+      ],
+      "catalogDisposition": "retained",
+      "producer": "packages/protocol/src/plugins/contributions/catalog.ts#deploymentTargets",
       "availabilityDisposition": "available"
     },
     {
@@ -471,14 +395,6 @@
       ],
       "catalogDisposition": "retained",
       "producer": "packages/protocol/src/plugins/contributions/catalog.ts#dragSources",
-      "provingConsumer": "packages/plugins/triage/src/manifest.ts",
-      "specialistOwner": "apps/ui/sources/components/plugins/reactNative/clientExecutableContributions.ts",
-      "lifecycleOwner": "apps/ui/sources/components/plugins/reactNative/clientExecutableContributions.ts",
-      "predecessorRemoval": "catalog-disposition:retained",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -501,14 +417,6 @@
       ],
       "catalogDisposition": "retained",
       "producer": "packages/protocol/src/plugins/contributions/catalog.ts#dropTargets",
-      "provingConsumer": "packages/plugins/triage/src/manifest.ts",
-      "specialistOwner": "apps/ui/sources/components/plugins/reactNative/clientExecutableContributions.ts",
-      "lifecycleOwner": "apps/ui/sources/components/plugins/reactNative/clientExecutableContributions.ts",
-      "predecessorRemoval": "catalog-disposition:retained",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -531,14 +439,6 @@
       ],
       "catalogDisposition": "reshaped",
       "producer": "packages/protocol/src/plugins/contributions/catalog.ts#events",
-      "provingConsumer": "packages/plugins/scm-github/src/manifest.ts",
-      "specialistOwner": "apps/cli/src/plugins/runtime/resolveExecutablePluginRuntimeRegistry.ts",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/lifecycle/manager.ts",
-      "predecessorRemoval": "catalog-disposition:reshaped",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -561,14 +461,28 @@
       ],
       "catalogDisposition": "reshaped",
       "producer": "packages/protocol/src/plugins/contributions/catalog.ts#executionRunProfiles",
-      "provingConsumer": "packages/plugins/review-deepsec/src/manifest.ts",
-      "specialistOwner": "apps/cli/src/capabilities/registry/toolExecutionRuns.ts",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/lifecycle/manager.ts",
-      "predecessorRemoval": "catalog-disposition:reshaped",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
+      "availabilityDisposition": "available"
+    },
+    {
+      "manifestFamily": "healthCheckKinds",
+      "pluginApiRegistrationFamily": null,
+      "registrationHost": null,
+      "definePluginAuthorKey": "healthCheckKinds",
+      "definePluginInputShape": "descriptor",
+      "definePluginClassification": "descriptor-only",
+      "authorEntrypoint": ".",
+      "realm": "any",
+      "lifecycle": [
+        "declared",
+        "normalized",
+        "projected",
+        "bound",
+        "active",
+        "unavailable",
+        "invalid"
+      ],
+      "catalogDisposition": "retained",
+      "producer": "packages/protocol/src/plugins/contributions/catalog.ts#healthCheckKinds",
       "availabilityDisposition": "available"
     },
     {
@@ -591,14 +505,6 @@
       ],
       "catalogDisposition": "reshaped",
       "producer": "packages/protocol/src/plugins/contributions/catalog.ts#hooks",
-      "provingConsumer": "packages/plugins/gemini/src/manifest.ts",
-      "specialistOwner": "apps/cli/src/plugins/runtime/resolveExecutablePluginRuntimeRegistry.ts",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/lifecycle/manager.ts",
-      "predecessorRemoval": "catalog-disposition:reshaped",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -621,14 +527,6 @@
       ],
       "catalogDisposition": "retained",
       "producer": "packages/protocol/src/plugins/contributions/catalog.ts#inputTypes",
-      "provingConsumer": "packages/plugin-sdk/examples/public-authoring/definition.ts",
-      "specialistOwner": "apps/cli/src/plugins/projection/registry/inputTypes.ts",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/lifecycle/manager.ts",
-      "predecessorRemoval": "catalog-disposition:retained",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -651,14 +549,6 @@
       ],
       "catalogDisposition": "retained",
       "producer": "packages/protocol/src/plugins/contributions/catalog.ts#languageServers",
-      "provingConsumer": "packages/plugins/lang-typescript/src/manifest.ts",
-      "specialistOwner": "apps/cli/src/lsp/languageServerDefinitions.ts",
-      "lifecycleOwner": "apps/cli/src/lsp/languageServerHost.ts",
-      "predecessorRemoval": "catalog-disposition:retained",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -681,14 +571,50 @@
       ],
       "catalogDisposition": "reshaped",
       "producer": "packages/protocol/src/plugins/contributions/catalog.ts#machineProvisioners",
-      "provingConsumer": "packages/plugins/machine-lima/src/manifest.ts",
-      "specialistOwner": "apps/cli/src/plugins/projection/registry/machineProvisioners.ts",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/lifecycle/manager.ts",
-      "predecessorRemoval": "catalog-disposition:reshaped",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
+      "availabilityDisposition": "available"
+    },
+    {
+      "manifestFamily": "machineRecipes",
+      "pluginApiRegistrationFamily": null,
+      "registrationHost": null,
+      "definePluginAuthorKey": "machineRecipes",
+      "definePluginInputShape": "descriptor",
+      "definePluginClassification": "descriptor-only",
+      "authorEntrypoint": ".",
+      "realm": "any",
+      "lifecycle": [
+        "declared",
+        "normalized",
+        "projected",
+        "bound",
+        "active",
+        "unavailable",
+        "invalid"
+      ],
+      "catalogDisposition": "retained",
+      "producer": "packages/protocol/src/plugins/contributions/catalog.ts#machineRecipes",
+      "availabilityDisposition": "available"
+    },
+    {
+      "manifestFamily": "machineSetupPresets",
+      "pluginApiRegistrationFamily": null,
+      "registrationHost": null,
+      "definePluginAuthorKey": "machineSetupPresets",
+      "definePluginInputShape": "descriptor",
+      "definePluginClassification": "descriptor-only",
+      "authorEntrypoint": ".",
+      "realm": "any",
+      "lifecycle": [
+        "declared",
+        "normalized",
+        "projected",
+        "bound",
+        "active",
+        "unavailable",
+        "invalid"
+      ],
+      "catalogDisposition": "retained",
+      "producer": "packages/protocol/src/plugins/contributions/catalog.ts#machineSetupPresets",
       "availabilityDisposition": "available"
     },
     {
@@ -711,14 +637,6 @@
       ],
       "catalogDisposition": "reshaped",
       "producer": "packages/protocol/src/plugins/contributions/catalog.ts#managedDependencies",
-      "provingConsumer": "packages/plugins/codex/src/manifest.ts",
-      "specialistOwner": "apps/cli/src/plugins/projection/registry/managedDependencies.ts",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/lifecycle/manager.ts",
-      "predecessorRemoval": "catalog-disposition:reshaped",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -741,14 +659,6 @@
       ],
       "catalogDisposition": "reshaped",
       "producer": "packages/protocol/src/plugins/contributions/catalog.ts#mcp.discoverySources",
-      "provingConsumer": "packages/plugins/opencode/src/manifest.ts",
-      "specialistOwner": "apps/cli/src/plugins/runtime/resolveExecutablePluginRuntimeRegistry.ts",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/lifecycle/manager.ts",
-      "predecessorRemoval": "catalog-disposition:reshaped",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -771,14 +681,6 @@
       ],
       "catalogDisposition": "reshaped",
       "producer": "packages/protocol/src/plugins/contributions/catalog.ts#mcp.servers",
-      "provingConsumer": null,
-      "specialistOwner": "apps/cli/src/plugins/runtime/resolveExecutablePluginRuntimeRegistry.ts",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/lifecycle/manager.ts",
-      "predecessorRemoval": "catalog-disposition:reshaped",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -801,14 +703,6 @@
       ],
       "catalogDisposition": "reshaped",
       "producer": "packages/protocol/src/plugins/contributions/catalog.ts#notificationChannels",
-      "provingConsumer": null,
-      "specialistOwner": "apps/cli/src/plugins/runtime/resolveExecutablePluginRuntimeRegistry.ts",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/lifecycle/manager.ts",
-      "predecessorRemoval": "catalog-disposition:reshaped",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -831,14 +725,6 @@
       ],
       "catalogDisposition": "reshaped",
       "producer": "packages/protocol/src/plugins/contributions/catalog.ts#notifications",
-      "provingConsumer": null,
-      "specialistOwner": "apps/cli/src/plugins/runtime/invocation/services/notifications.ts",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/lifecycle/manager.ts",
-      "predecessorRemoval": "catalog-disposition:reshaped",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -861,14 +747,6 @@
       ],
       "catalogDisposition": "reshaped",
       "producer": "packages/protocol/src/plugins/contributions/catalog.ts#openableContentViewers",
-      "provingConsumer": null,
-      "specialistOwner": "apps/cli/src/plugins/projection/registry/ui/projection.ts",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/lifecycle/manager.ts",
-      "predecessorRemoval": "catalog-disposition:reshaped",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -891,14 +769,6 @@
       ],
       "catalogDisposition": "reshaped",
       "producer": "packages/protocol/src/plugins/contributions/catalog.ts#pluginContributionPoints",
-      "provingConsumer": "packages/plugin-sdk/fixtures/external-targeted-packages/target/src/index.ts",
-      "specialistOwner": "apps/cli/src/plugins/projection/registry/targetedContributions.ts",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/lifecycle/manager.ts",
-      "predecessorRemoval": "catalog-disposition:reshaped",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -921,14 +791,6 @@
       ],
       "catalogDisposition": "retained",
       "producer": "packages/protocol/src/plugins/contributions/catalog.ts#projectNativeAdapters",
-      "provingConsumer": "packages/plugin-sdk/fixtures/external-targeted-packages/project-native-source.ts",
-      "specialistOwner": "apps/cli/src/plugins/runtime/resolveExecutablePluginRuntimeRegistry.ts",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/lifecycle/manager.ts",
-      "predecessorRemoval": "catalog-disposition:retained",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -951,14 +813,6 @@
       ],
       "catalogDisposition": "reshaped",
       "producer": "packages/protocol/src/plugins/contributions/catalog.ts#promptAssets",
-      "provingConsumer": "packages/plugins/review-deepsec/src/manifest.ts",
-      "specialistOwner": "apps/cli/src/plugins/runtime/resolveExecutablePluginRuntimeRegistry.ts",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/lifecycle/manager.ts",
-      "predecessorRemoval": "catalog-disposition:reshaped",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -981,14 +835,6 @@
       ],
       "catalogDisposition": "delegated",
       "producer": "packages/protocol/src/plugins/contributions/catalog.ts#providers",
-      "provingConsumer": "packages/plugins/openai-models/src/manifest.ts",
-      "specialistOwner": "apps/cli/src/plugins/runtime/resolveExecutablePluginRuntimeRegistry.ts",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/lifecycle/manager.ts",
-      "predecessorRemoval": "catalog-disposition:delegated",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -1011,14 +857,6 @@
       ],
       "catalogDisposition": "retained",
       "producer": "packages/protocol/src/plugins/contributions/catalog.ts#registrySources",
-      "provingConsumer": "packages/tests/fixtures/plugin-platform/current-source-native-public/index.ts",
-      "specialistOwner": "apps/cli/src/plugins/projection/registry/registrySources.ts",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/lifecycle/manager.ts",
-      "predecessorRemoval": "catalog-disposition:retained",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -1041,14 +879,6 @@
       ],
       "catalogDisposition": "reshaped",
       "producer": "packages/protocol/src/plugins/contributions/catalog.ts#requestInterceptors",
-      "provingConsumer": "packages/plugin-sdk/examples/action-contract-producer/src/index.ts",
-      "specialistOwner": "apps/cli/src/plugins/runtime/resolveExecutablePluginRuntimeRegistry.ts",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/lifecycle/manager.ts",
-      "predecessorRemoval": "catalog-disposition:reshaped",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -1071,14 +901,6 @@
       ],
       "catalogDisposition": "reshaped",
       "producer": "packages/protocol/src/plugins/contributions/catalog.ts#resources",
-      "provingConsumer": "packages/plugins/channels/src/manifest.ts",
-      "specialistOwner": "apps/cli/src/plugins/runtime/resolveExecutablePluginRuntimeRegistry.ts",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/lifecycle/manager.ts",
-      "predecessorRemoval": "catalog-disposition:reshaped",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -1101,14 +923,6 @@
       ],
       "catalogDisposition": "retained",
       "producer": "packages/protocol/src/plugins/contributions/catalog.ts#roles",
-      "provingConsumer": "packages/plugin-sdk/examples/public-authoring/definition.ts",
-      "specialistOwner": "apps/cli/src/plugins/projection/registry/roles.ts",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/lifecycle/manager.ts",
-      "predecessorRemoval": "catalog-disposition:retained",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -1131,14 +945,6 @@
       ],
       "catalogDisposition": "reshaped",
       "producer": "packages/protocol/src/plugins/contributions/catalog.ts#scmBackends",
-      "provingConsumer": "packages/plugins/scm-git/src/manifest.ts",
-      "specialistOwner": "apps/cli/src/plugins/runtime/resolveExecutablePluginRuntimeRegistry.ts",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/lifecycle/manager.ts",
-      "predecessorRemoval": "catalog-disposition:reshaped",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -1161,14 +967,6 @@
       ],
       "catalogDisposition": "reshaped",
       "producer": "packages/protocol/src/plugins/contributions/catalog.ts#scmHostingProviders",
-      "provingConsumer": "packages/plugins/scm-github/src/manifest.ts",
-      "specialistOwner": "apps/cli/src/plugins/runtime/resolveExecutablePluginRuntimeRegistry.ts",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/lifecycle/manager.ts",
-      "predecessorRemoval": "catalog-disposition:reshaped",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -1191,14 +989,28 @@
       ],
       "catalogDisposition": "reshaped",
       "producer": "packages/protocol/src/plugins/contributions/catalog.ts#searchProviders",
-      "provingConsumer": "packages/plugins/triage/src/manifest.ts",
-      "specialistOwner": "apps/cli/src/plugins/projection/registry/ui/projection.ts",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/lifecycle/manager.ts",
-      "predecessorRemoval": "catalog-disposition:reshaped",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
+      "availabilityDisposition": "available"
+    },
+    {
+      "manifestFamily": "secretSources",
+      "pluginApiRegistrationFamily": "secretSources",
+      "registrationHost": "daemon",
+      "definePluginAuthorKey": "secretSources",
+      "definePluginInputShape": "structured",
+      "definePluginClassification": "adapter",
+      "authorEntrypoint": ".",
+      "realm": "any",
+      "lifecycle": [
+        "declared",
+        "normalized",
+        "projected",
+        "bound",
+        "active",
+        "unavailable",
+        "invalid"
+      ],
+      "catalogDisposition": "retained",
+      "producer": "packages/protocol/src/plugins/contributions/catalog.ts#secretSources",
       "availabilityDisposition": "available"
     },
     {
@@ -1221,14 +1033,6 @@
       ],
       "catalogDisposition": "reshaped",
       "producer": "packages/protocol/src/plugins/contributions/catalog.ts#sessionHeaderActions",
-      "provingConsumer": "packages/plugins/channels/src/manifest.ts",
-      "specialistOwner": "apps/cli/src/plugins/projection/registry/ui/projection.ts",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/lifecycle/manager.ts",
-      "predecessorRemoval": "catalog-disposition:reshaped",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -1251,14 +1055,6 @@
       ],
       "catalogDisposition": "reshaped",
       "producer": "packages/protocol/src/plugins/contributions/catalog.ts#sessionInfoSections",
-      "provingConsumer": "packages/plugins/channels/src/manifest.ts",
-      "specialistOwner": "apps/cli/src/plugins/projection/registry/ui/projection.ts",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/lifecycle/manager.ts",
-      "predecessorRemoval": "catalog-disposition:reshaped",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -1281,14 +1077,6 @@
       ],
       "catalogDisposition": "reshaped",
       "producer": "packages/protocol/src/plugins/contributions/catalog.ts#settings",
-      "provingConsumer": "packages/plugins/inspector/src/manifest.ts",
-      "specialistOwner": "apps/cli/src/plugins/runtime/invocation/services/settings.ts",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/lifecycle/manager.ts",
-      "predecessorRemoval": "catalog-disposition:reshaped",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -1311,14 +1099,6 @@
       ],
       "catalogDisposition": "reshaped",
       "producer": "packages/protocol/src/plugins/contributions/catalog.ts#settings.fields",
-      "provingConsumer": "packages/plugins/inspector/src/manifest.ts",
-      "specialistOwner": "apps/cli/src/plugins/runtime/invocation/services/settings.ts",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/lifecycle/manager.ts",
-      "predecessorRemoval": "catalog-disposition:reshaped",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -1341,14 +1121,6 @@
       ],
       "catalogDisposition": "retained",
       "producer": "packages/protocol/src/plugins/contributions/catalog.ts#skills",
-      "provingConsumer": null,
-      "specialistOwner": "apps/cli/src/plugins/projection/registry/skills.ts",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/lifecycle/manager.ts",
-      "predecessorRemoval": "catalog-disposition:retained",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -1371,14 +1143,6 @@
       ],
       "catalogDisposition": "reshaped",
       "producer": "packages/protocol/src/plugins/contributions/catalog.ts#systemTools",
-      "provingConsumer": "packages/plugins/antigravity/src/manifest.ts",
-      "specialistOwner": "apps/cli/src/plugins/runtime/exec/system/tools/definitions.ts",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/lifecycle/manager.ts",
-      "predecessorRemoval": "catalog-disposition:reshaped",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -1401,14 +1165,6 @@
       ],
       "catalogDisposition": "reshaped",
       "producer": "packages/protocol/src/plugins/contributions/catalog.ts#targetedPluginContributions",
-      "provingConsumer": "packages/plugin-sdk/fixtures/external-targeted-packages/contributor/src/index.ts",
-      "specialistOwner": "apps/cli/src/plugins/projection/registry/targetedContributions.ts",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/lifecycle/manager.ts",
-      "predecessorRemoval": "catalog-disposition:reshaped",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -1431,14 +1187,6 @@
       ],
       "catalogDisposition": "reshaped",
       "producer": "packages/protocol/src/plugins/contributions/catalog.ts#tools",
-      "provingConsumer": null,
-      "specialistOwner": "apps/cli/src/plugins/runtime/toolCatalog.ts",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/lifecycle/manager.ts",
-      "predecessorRemoval": "catalog-disposition:reshaped",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -1461,14 +1209,6 @@
       ],
       "catalogDisposition": "reshaped",
       "producer": "packages/protocol/src/plugins/contributions/catalog.ts#transcriptActivities",
-      "provingConsumer": "packages/plugins/channels/src/manifest.ts",
-      "specialistOwner": "apps/cli/src/plugins/projection/registry/ui/projection.ts",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/lifecycle/manager.ts",
-      "predecessorRemoval": "catalog-disposition:reshaped",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -1491,14 +1231,6 @@
       ],
       "catalogDisposition": "reshaped",
       "producer": "packages/protocol/src/plugins/contributions/catalog.ts#ui.renderers",
-      "provingConsumer": "packages/plugins/inspector/src/manifest.ts",
-      "specialistOwner": "apps/cli/src/plugins/projection/registry/ui/projection.ts",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/lifecycle/manager.ts",
-      "predecessorRemoval": "catalog-disposition:reshaped",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -1521,14 +1253,6 @@
       ],
       "catalogDisposition": "reshaped",
       "producer": "packages/protocol/src/plugins/contributions/catalog.ts#ui.settingsGroups",
-      "provingConsumer": "packages/plugins/channels/src/manifest.ts",
-      "specialistOwner": "apps/cli/src/plugins/projection/registry/ui/projection.ts",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/lifecycle/manager.ts",
-      "predecessorRemoval": "catalog-disposition:reshaped",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -1551,14 +1275,6 @@
       ],
       "catalogDisposition": "reshaped",
       "producer": "packages/protocol/src/plugins/contributions/catalog.ts#ui.settingsPages",
-      "provingConsumer": "packages/plugins/channels/src/manifest.ts",
-      "specialistOwner": "apps/cli/src/plugins/projection/registry/ui/projection.ts",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/lifecycle/manager.ts",
-      "predecessorRemoval": "catalog-disposition:reshaped",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -1581,14 +1297,6 @@
       ],
       "catalogDisposition": "reshaped",
       "producer": "packages/protocol/src/plugins/contributions/catalog.ts#ui.translations",
-      "provingConsumer": "packages/plugins/inspector/src/manifest.ts",
-      "specialistOwner": "apps/cli/src/plugins/projection/registry/ui/projection.ts",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/lifecycle/manager.ts",
-      "predecessorRemoval": "catalog-disposition:reshaped",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -1611,14 +1319,6 @@
       ],
       "catalogDisposition": "reshaped",
       "producer": "packages/protocol/src/plugins/contributions/catalog.ts#ui.views",
-      "provingConsumer": "packages/plugins/inspector/src/manifest.ts",
-      "specialistOwner": "apps/cli/src/plugins/projection/registry/ui/projection.ts",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/lifecycle/manager.ts",
-      "predecessorRemoval": "catalog-disposition:reshaped",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -1641,14 +1341,6 @@
       ],
       "catalogDisposition": "retained",
       "producer": "packages/protocol/src/plugins/contributions/catalog.ts#voiceModelPacks",
-      "provingConsumer": null,
-      "specialistOwner": "apps/cli/src/plugins/projection/registry/voiceDeclarations.ts",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/lifecycle/manager.ts",
-      "predecessorRemoval": "catalog-disposition:retained",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -1671,14 +1363,6 @@
       ],
       "catalogDisposition": "retained",
       "producer": "packages/protocol/src/plugins/contributions/catalog.ts#voiceProviders",
-      "provingConsumer": "packages/plugins/openai/src/manifest.ts",
-      "specialistOwner": "apps/ui/sources/components/plugins/reactNative/clientExecutableContributions.ts",
-      "lifecycleOwner": "apps/ui/sources/components/plugins/reactNative/clientExecutableContributions.ts",
-      "predecessorRemoval": "catalog-disposition:retained",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -1701,14 +1385,6 @@
       ],
       "catalogDisposition": "reshaped",
       "producer": "packages/protocol/src/plugins/contributions/catalog.ts#webhooks",
-      "provingConsumer": "packages/plugins/scm-github/src/manifest.ts",
-      "specialistOwner": "apps/server/sources/app/plugins/webhooks/currentContribution.ts",
-      "lifecycleOwner": "apps/server/sources/app/plugins/webhooks/claimStore.ts",
-      "predecessorRemoval": "catalog-disposition:reshaped",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -1731,14 +1407,6 @@
       ],
       "catalogDisposition": "retained",
       "producer": "packages/protocol/src/plugins/contributions/catalog.ts#workItems",
-      "provingConsumer": null,
-      "specialistOwner": "apps/ui/sources/components/plugins/reactNative/clientExecutableContributions.ts",
-      "lifecycleOwner": "apps/ui/sources/components/plugins/reactNative/clientExecutableContributions.ts",
-      "predecessorRemoval": "catalog-disposition:retained",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -1761,14 +1429,6 @@
       ],
       "catalogDisposition": "retained",
       "producer": "packages/protocol/src/plugins/contributions/catalog.ts#workflows",
-      "provingConsumer": null,
-      "specialistOwner": "apps/cli/src/plugins/projection/registry/workflows.ts",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/lifecycle/manager.ts",
-      "predecessorRemoval": "catalog-disposition:retained",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     }
   ],
@@ -1791,14 +1451,20 @@
       },
       "producer": "src/actions/service.ts",
       "lifecycle": "invocation-scoped",
-      "provingConsumer": "packages/plugins/channels/src/ingress.ts",
-      "specialistOwner": "apps/cli/src/plugins/runtime/invocation/services/production.ts",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/invocation/lifetime.ts",
-      "predecessorRemoval": "none",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
+      "availabilityDisposition": "available"
+    },
+    {
+      "serviceId": "backgroundServices",
+      "property": "backgroundServices",
+      "publicType": "BackgroundServicesService",
+      "authorEntrypoints": [
+        "./background-services"
+      ],
+      "realms": [
+        "daemon"
+      ],
+      "producer": "src/backgroundServices.ts",
+      "lifecycle": "invocation-scoped",
       "availabilityDisposition": "available"
     },
     {
@@ -1813,14 +1479,6 @@
       ],
       "producer": "src/services/composerContent.ts",
       "lifecycle": "invocation-scoped",
-      "provingConsumer": "packages/tests/fixtures/plugin-platform/composer-external-dogfood/src/index.mjs",
-      "specialistOwner": "apps/cli/src/plugins/runtime/invocation/services/production.ts",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/invocation/lifetime.ts",
-      "predecessorRemoval": "none",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -1835,14 +1493,6 @@
       ],
       "producer": "src/connectedAccounts.ts",
       "lifecycle": "invocation-scoped",
-      "provingConsumer": "packages/plugins/channel-discord/src/discordActions.ts",
-      "specialistOwner": "apps/cli/src/plugins/runtime/invocation/services/factory.ts",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/invocation/lifetime.ts",
-      "predecessorRemoval": "none",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -1857,14 +1507,6 @@
       ],
       "producer": "src/events.ts",
       "lifecycle": "invocation-scoped",
-      "provingConsumer": null,
-      "specialistOwner": "apps/cli/src/plugins/runtime/invocation/services/factory.ts",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/invocation/lifetime.ts",
-      "predecessorRemoval": "none",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -1879,14 +1521,6 @@
       ],
       "producer": "src/exec.ts",
       "lifecycle": "invocation-scoped",
-      "provingConsumer": "packages/plugins/review-coderabbit/src/agent/reviews/nativeRun.ts",
-      "specialistOwner": "apps/cli/src/plugins/runtime/invocation/services/factory.ts",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/invocation/lifetime.ts",
-      "predecessorRemoval": "none",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -1901,14 +1535,20 @@
       ],
       "producer": "src/fs.ts",
       "lifecycle": "invocation-scoped",
-      "provingConsumer": null,
-      "specialistOwner": "apps/cli/src/plugins/runtime/invocation/services/factory.ts",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/invocation/lifetime.ts",
-      "predecessorRemoval": "none",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
+      "availabilityDisposition": "available"
+    },
+    {
+      "serviceId": "healthChecks",
+      "property": "healthChecks",
+      "publicType": "HealthChecksService",
+      "authorEntrypoints": [
+        "."
+      ],
+      "realms": [
+        "daemon"
+      ],
+      "producer": "src/healthCheckKinds.ts",
+      "lifecycle": "invocation-scoped",
       "availabilityDisposition": "available"
     },
     {
@@ -1923,14 +1563,6 @@
       ],
       "producer": "src/http.ts",
       "lifecycle": "invocation-scoped",
-      "provingConsumer": "packages/plugins/channel-telegram/src/channelActions.ts",
-      "specialistOwner": "apps/cli/src/plugins/runtime/invocation/services/factory.ts",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/invocation/lifetime.ts",
-      "predecessorRemoval": "none",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -1945,14 +1577,6 @@
       ],
       "producer": "src/interactions.ts",
       "lifecycle": "invocation-scoped",
-      "provingConsumer": "packages/plugins/cursor/src/agent/acp/extensions/handlers.ts",
-      "specialistOwner": "apps/cli/src/plugins/runtime/invocation/services/production.ts",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/invocation/lifetime.ts",
-      "predecessorRemoval": "none",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -1967,14 +1591,23 @@
       ],
       "producer": "src/services/core.ts",
       "lifecycle": "invocation-scoped",
-      "provingConsumer": "packages/plugins/pi/src/agent/runtime/engine.ts",
-      "specialistOwner": "apps/cli/src/plugins/runtime/invocation/services/factory.ts",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/invocation/lifetime.ts",
-      "predecessorRemoval": "none",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
+      "availabilityDisposition": "available"
+    },
+    {
+      "serviceId": "machineConnectorSecrets",
+      "property": "machineConnectorSecrets",
+      "publicType": "MachineConnectorSecretsService",
+      "authorEntrypoints": [
+        "./secrets"
+      ],
+      "realms": [
+        "any"
+      ],
+      "accountInvocation": {
+        "members": "all"
+      },
+      "producer": "src/secrets.ts",
+      "lifecycle": "invocation-scoped",
       "availabilityDisposition": "available"
     },
     {
@@ -1989,14 +1622,6 @@
       ],
       "producer": "src/services/machineProvisioners.ts",
       "lifecycle": "invocation-scoped",
-      "provingConsumer": "packages/plugins/machine-cua/src/machine/remoteProvisioner.ts",
-      "specialistOwner": "apps/cli/src/plugins/runtime/invocation/services/production.ts",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/invocation/lifetime.ts",
-      "predecessorRemoval": "none",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -2007,18 +1632,10 @@
         "./managed-services"
       ],
       "realms": [
-        "daemon"
+        "any"
       ],
       "producer": "src/managed-services/contract.ts",
       "lifecycle": "invocation-scoped",
-      "provingConsumer": "packages/plugins/opencode/src/agent/runtime/server/runtimeContext.ts",
-      "specialistOwner": "apps/cli/src/plugins/runtime/invocation/services/factory.ts",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/invocation/lifetime.ts",
-      "predecessorRemoval": "none",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -2033,14 +1650,6 @@
       ],
       "producer": "src/mcp/projections.ts",
       "lifecycle": "invocation-scoped",
-      "provingConsumer": null,
-      "specialistOwner": "apps/cli/src/plugins/runtime/invocation/services/factory.ts",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/invocation/lifetime.ts",
-      "predecessorRemoval": "none",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -2055,14 +1664,6 @@
       ],
       "producer": "src/notifications.ts",
       "lifecycle": "invocation-scoped",
-      "provingConsumer": null,
-      "specialistOwner": "apps/cli/src/plugins/runtime/invocation/services/production.ts",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/invocation/lifetime.ts",
-      "predecessorRemoval": "none",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -2077,14 +1678,6 @@
       ],
       "producer": "src/providers/projections.ts",
       "lifecycle": "invocation-scoped",
-      "provingConsumer": null,
-      "specialistOwner": "apps/cli/src/plugins/runtime/invocation/services/production.ts",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/invocation/lifetime.ts",
-      "predecessorRemoval": "none",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -2099,14 +1692,6 @@
       ],
       "producer": "src/resources.ts",
       "lifecycle": "invocation-scoped",
-      "provingConsumer": null,
-      "specialistOwner": "apps/cli/src/plugins/runtime/invocation/services/production.ts",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/invocation/lifetime.ts",
-      "predecessorRemoval": "none",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -2117,18 +1702,10 @@
         "./secrets"
       ],
       "realms": [
-        "daemon"
+        "any"
       ],
       "producer": "src/secrets.ts",
       "lifecycle": "invocation-scoped",
-      "provingConsumer": null,
-      "specialistOwner": "apps/cli/src/plugins/runtime/invocation/services/production.ts",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/invocation/lifetime.ts",
-      "predecessorRemoval": "none",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -2143,14 +1720,6 @@
       ],
       "producer": "src/services/sessions.ts",
       "lifecycle": "invocation-scoped",
-      "provingConsumer": "packages/plugins/channels/src/ingress.ts",
-      "specialistOwner": "apps/cli/src/plugins/runtime/invocation/services/factory.ts",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/invocation/lifetime.ts",
-      "predecessorRemoval": "none",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -2165,14 +1734,6 @@
       ],
       "producer": "src/settings/projections.ts",
       "lifecycle": "invocation-scoped",
-      "provingConsumer": "packages/plugins/cursor/src/agent/acp/connection.ts",
-      "specialistOwner": "apps/cli/src/plugins/runtime/invocation/services/production.ts",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/invocation/lifetime.ts",
-      "predecessorRemoval": "none",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -2192,14 +1753,6 @@
       },
       "producer": "src/storage.ts",
       "lifecycle": "invocation-scoped",
-      "provingConsumer": "packages/plugins/channels/src/requiredAccountStorage.ts",
-      "specialistOwner": "apps/cli/src/plugins/runtime/invocation/services/production.ts",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/invocation/lifetime.ts",
-      "predecessorRemoval": "none",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -2217,14 +1770,6 @@
       },
       "producer": "src/services/targetedContributions.ts",
       "lifecycle": "invocation-scoped",
-      "provingConsumer": "packages/plugins/channels/src/ingress.ts",
-      "specialistOwner": "apps/cli/src/plugins/runtime/invocation/services/production.ts",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/invocation/lifetime.ts",
-      "predecessorRemoval": "none",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     }
   ],
@@ -2235,14 +1780,6 @@
       "realm": "daemon",
       "producer": "packages/protocol/src/plugins/manifest/v2.ts#browser",
       "lifecycle": "declaration-only",
-      "provingConsumer": null,
-      "specialistOwner": null,
-      "lifecycleOwner": null,
-      "predecessorRemoval": "none",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "deferred",
       "unblockCondition": "The manifest declaration has no host authority or service owner: no canonical browser owner binds present-intent, cancellation, currentness, or cleanup yet."
     },
@@ -2252,14 +1789,6 @@
       "realm": "daemon",
       "producer": "packages/protocol/src/plugins/manifest/v2.ts#clipboard",
       "lifecycle": "declaration-only",
-      "provingConsumer": null,
-      "specialistOwner": null,
-      "lifecycleOwner": null,
-      "predecessorRemoval": "none",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "deferred",
       "unblockCondition": "The manifest declaration has no host authority or service owner: no canonical clipboard owner binds present-intent, platform behavior, or cleanup yet."
     },
@@ -2269,14 +1798,6 @@
       "realm": "daemon",
       "producer": "packages/protocol/src/plugins/manifest/v2.ts#connectedAccounts",
       "lifecycle": "invocation-scoped",
-      "provingConsumer": "packages/plugins/posthog/src/manifest.ts",
-      "specialistOwner": "apps/cli/src/plugins/runtime/hostAccess/resolve.ts",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/invocation/lifetime.ts",
-      "predecessorRemoval": "none",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -2285,14 +1806,6 @@
       "realm": "daemon",
       "producer": "packages/protocol/src/plugins/manifest/v2.ts#environment",
       "lifecycle": "invocation-scoped",
-      "provingConsumer": "packages/plugins/review-deepsec/src/manifest.ts",
-      "specialistOwner": "apps/cli/src/plugins/runtime/hostAccess/resolve.ts",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/invocation/lifetime.ts",
-      "predecessorRemoval": "none",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -2301,14 +1814,6 @@
       "realm": "daemon",
       "producer": "packages/protocol/src/plugins/manifest/v2.ts#externalLinks",
       "lifecycle": "declaration-only",
-      "provingConsumer": null,
-      "specialistOwner": null,
-      "lifecycleOwner": null,
-      "predecessorRemoval": "none",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "deferred",
       "unblockCondition": "The manifest declaration has no host authority or service owner: no canonical external-link owner binds present-intent or canonical URL handling yet."
     },
@@ -2318,14 +1823,6 @@
       "realm": "daemon",
       "producer": "packages/protocol/src/plugins/manifest/v2.ts#filesystem",
       "lifecycle": "invocation-scoped",
-      "provingConsumer": "packages/plugins/opencode/src/manifest.ts",
-      "specialistOwner": "apps/cli/src/plugins/runtime/hostAccess/resolve.ts",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/invocation/lifetime.ts",
-      "predecessorRemoval": "none",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -2334,14 +1831,6 @@
       "realm": "daemon",
       "producer": "packages/protocol/src/plugins/manifest/v2.ts#mcp",
       "lifecycle": "invocation-scoped",
-      "provingConsumer": null,
-      "specialistOwner": "apps/cli/src/plugins/runtime/hostAccess/resolve.ts",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/invocation/lifetime.ts",
-      "predecessorRemoval": "none",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -2350,14 +1839,6 @@
       "realm": "daemon",
       "producer": "packages/protocol/src/plugins/manifest/v2.ts#network",
       "lifecycle": "invocation-scoped",
-      "provingConsumer": "packages/plugin-sdk/examples/public-authoring/definition.ts",
-      "specialistOwner": "apps/cli/src/plugins/runtime/hostAccess/resolve.ts",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/invocation/lifetime.ts",
-      "predecessorRemoval": "none",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -2366,14 +1847,6 @@
       "realm": "daemon",
       "producer": "packages/protocol/src/plugins/manifest/v2.ts#network.client",
       "lifecycle": "invocation-scoped",
-      "provingConsumer": "packages/tests/fixtures/plugin-platform/out-of-tree-channel-socket-provider/src/index.mjs",
-      "specialistOwner": "apps/cli/src/plugins/runtime/hostAccess/resolve.ts",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/invocation/lifetime.ts",
-      "predecessorRemoval": "none",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -2382,14 +1855,6 @@
       "realm": "daemon",
       "producer": "packages/protocol/src/plugins/manifest/v2.ts#process",
       "lifecycle": "invocation-scoped",
-      "provingConsumer": "packages/plugins/opencode/src/manifest.ts",
-      "specialistOwner": "apps/cli/src/plugins/runtime/hostAccess/resolve.ts",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/invocation/lifetime.ts",
-      "predecessorRemoval": "none",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -2398,14 +1863,6 @@
       "realm": "daemon",
       "producer": "packages/protocol/src/plugins/manifest/v2.ts#sessions",
       "lifecycle": "invocation-scoped",
-      "provingConsumer": "packages/plugins/claude/src/manifest.ts",
-      "specialistOwner": "apps/cli/src/plugins/runtime/hostAccess/resolve.ts",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/invocation/lifetime.ts",
-      "predecessorRemoval": "none",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -2414,14 +1871,6 @@
       "realm": "daemon",
       "producer": "packages/protocol/src/plugins/manifest/v2.ts#storage.account",
       "lifecycle": "invocation-scoped",
-      "provingConsumer": "packages/plugins/channels/src/manifest.ts",
-      "specialistOwner": "apps/cli/src/plugins/runtime/hostAccess/resolve.ts",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/invocation/lifetime.ts",
-      "predecessorRemoval": "none",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -2430,14 +1879,6 @@
       "realm": "daemon",
       "producer": "packages/protocol/src/plugins/manifest/v2.ts#terminal",
       "lifecycle": "session-runtime",
-      "provingConsumer": "packages/plugins/claude/src/manifest.ts",
-      "specialistOwner": "apps/cli/src/plugins/runtime/context/terminalHost.ts",
-      "lifecycleOwner": "apps/cli/src/agent/runtime/registry/engineRegistry/nativeAgentSessionHostServiceOwners.ts",
-      "predecessorRemoval": "none",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     }
   ],
@@ -2448,14 +1889,14 @@
       "realm": "any",
       "producer": "src/index.ts",
       "lifecycle": "published",
-      "provingConsumer": "packages/plugins/channels/src/manifest.ts",
-      "specialistOwner": "packages/plugin-sdk/package.json",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/loadPluginModule.ts",
-      "predecessorRemoval": "none",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
+      "availabilityDisposition": "available"
+    },
+    {
+      "specifier": "./access-providers",
+      "sourceModule": "src/access-providers/index.ts",
+      "realm": "any",
+      "producer": "src/access-providers/index.ts",
+      "lifecycle": "published",
       "availabilityDisposition": "available"
     },
     {
@@ -2464,14 +1905,6 @@
       "realm": "any",
       "producer": "src/actions/index.ts",
       "lifecycle": "published",
-      "provingConsumer": "packages/plugins/inspector/src/manifest.ts",
-      "specialistOwner": "packages/plugin-sdk/package.json",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/loadPluginModule.ts",
-      "predecessorRemoval": "none",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -2480,14 +1913,6 @@
       "realm": "any",
       "producer": "src/agents/index.ts",
       "lifecycle": "published",
-      "provingConsumer": "packages/plugins/gemini/src/manifest.ts",
-      "specialistOwner": "packages/plugin-sdk/package.json",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/loadPluginModule.ts",
-      "predecessorRemoval": "none",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -2496,14 +1921,6 @@
       "realm": "daemon",
       "producer": "src/agents/runtime/index.ts",
       "lifecycle": "published",
-      "provingConsumer": "packages/plugins/kiro/src/agent/acp/runtimeDefinition.ts",
-      "specialistOwner": "packages/plugin-sdk/package.json",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/loadPluginModule.ts",
-      "predecessorRemoval": "none",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -2512,14 +1929,6 @@
       "realm": "any",
       "producer": "src/async/index.ts",
       "lifecycle": "published",
-      "provingConsumer": "packages/plugins/pi/src/agent/runtime/rpc/operations.ts",
-      "specialistOwner": "packages/plugin-sdk/package.json",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/loadPluginModule.ts",
-      "predecessorRemoval": "none",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -2528,30 +1937,14 @@
       "realm": "any",
       "producer": "src/automations/index.ts",
       "lifecycle": "published",
-      "provingConsumer": "packages/plugins/channels/src/automationResultDelivery.ts",
-      "specialistOwner": "packages/plugin-sdk/package.json",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/loadPluginModule.ts",
-      "predecessorRemoval": "none",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
       "specifier": "./background-services",
       "sourceModule": "src/background-services/index.ts",
-      "realm": "any",
+      "realm": "daemon",
       "producer": "src/background-services/index.ts",
       "lifecycle": "published",
-      "provingConsumer": "packages/plugin-sdk/examples/advanced-package-root/background/refreshCatalog.ts",
-      "specialistOwner": "packages/plugin-sdk/package.json",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/loadPluginModule.ts",
-      "predecessorRemoval": "none",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -2560,14 +1953,6 @@
       "realm": "any",
       "producer": "src/browser/index.ts",
       "lifecycle": "published",
-      "provingConsumer": "packages/plugin-sdk/examples/action-contract-producer/src/index.ts",
-      "specialistOwner": "packages/plugin-sdk/package.json",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/loadPluginModule.ts",
-      "predecessorRemoval": "none",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -2576,14 +1961,6 @@
       "realm": "daemon",
       "producer": "src/collections/index.ts",
       "lifecycle": "published",
-      "provingConsumer": "packages/plugins/channels/src/collections.ts",
-      "specialistOwner": "packages/plugin-sdk/package.json",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/loadPluginModule.ts",
-      "predecessorRemoval": "none",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -2592,14 +1969,6 @@
       "realm": "daemon",
       "producer": "src/connected-accounts/index.ts",
       "lifecycle": "published",
-      "provingConsumer": "packages/plugins/gemini/src/connectedAccounts/runtime.ts",
-      "specialistOwner": "packages/plugin-sdk/package.json",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/loadPluginModule.ts",
-      "predecessorRemoval": "none",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -2608,14 +1977,6 @@
       "realm": "daemon",
       "producer": "src/connected-accounts/request-auth/index.ts",
       "lifecycle": "published",
-      "provingConsumer": null,
-      "specialistOwner": "packages/plugin-sdk/package.json",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/loadPluginModule.ts",
-      "predecessorRemoval": "none",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -2624,14 +1985,14 @@
       "realm": "any",
       "producer": "src/contributions/index.ts",
       "lifecycle": "published",
-      "provingConsumer": "packages/tests/fixtures/plugin-platform/packed-targeted-contribution-projection/public-protocol.ts",
-      "specialistOwner": "packages/plugin-sdk/package.json",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/loadPluginModule.ts",
-      "predecessorRemoval": "none",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
+      "availabilityDisposition": "available"
+    },
+    {
+      "specifier": "./errors",
+      "sourceModule": "src/errors/index.ts",
+      "realm": "any",
+      "producer": "src/errors/index.ts",
+      "lifecycle": "published",
       "availabilityDisposition": "available"
     },
     {
@@ -2640,30 +2001,14 @@
       "realm": "any",
       "producer": "src/events/index.ts",
       "lifecycle": "published",
-      "provingConsumer": "packages/plugins/scm-github/src/githubAutomationEventActions.ts",
-      "specialistOwner": "packages/plugin-sdk/package.json",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/loadPluginModule.ts",
-      "predecessorRemoval": "none",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
       "specifier": "./exec",
       "sourceModule": "src/exec/index.ts",
-      "realm": "any",
+      "realm": "daemon",
       "producer": "src/exec/index.ts",
       "lifecycle": "published",
-      "provingConsumer": "packages/plugins/claude/src/agent/sdk/nativeExec.ts",
-      "specialistOwner": "packages/plugin-sdk/package.json",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/loadPluginModule.ts",
-      "predecessorRemoval": "none",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -2672,14 +2017,6 @@
       "realm": "any",
       "producer": "src/exec/protocol-clients/index.ts",
       "lifecycle": "published",
-      "provingConsumer": "packages/plugins/codex/src/agent/runtime/appServer/client.ts",
-      "specialistOwner": "packages/plugin-sdk/package.json",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/loadPluginModule.ts",
-      "predecessorRemoval": "none",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -2688,14 +2025,6 @@
       "realm": "any",
       "producer": "src/first-party/claude/index.ts",
       "lifecycle": "published",
-      "provingConsumer": "packages/plugins/claude/src/agent/transcripts/rawJsonLines.ts",
-      "specialistOwner": "packages/plugin-sdk/package.json",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/loadPluginModule.ts",
-      "predecessorRemoval": "none",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -2704,14 +2033,6 @@
       "realm": "any",
       "producer": "src/first-party/connected-accounts/index.ts",
       "lifecycle": "published",
-      "provingConsumer": "packages/plugins/codex/src/connectedAccounts/openAiCodexProfile.ts",
-      "specialistOwner": "packages/plugin-sdk/package.json",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/loadPluginModule.ts",
-      "predecessorRemoval": "none",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -2720,14 +2041,6 @@
       "realm": "daemon",
       "producer": "src/fs/index.ts",
       "lifecycle": "published",
-      "provingConsumer": "packages/plugins/antigravity/src/agent/cliPrint/observation.ts",
-      "specialistOwner": "packages/plugin-sdk/package.json",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/loadPluginModule.ts",
-      "predecessorRemoval": "none",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -2736,14 +2049,6 @@
       "realm": "daemon",
       "producer": "src/hooks/index.ts",
       "lifecycle": "published",
-      "provingConsumer": "packages/plugins/kimi/src/manifest.ts",
-      "specialistOwner": "packages/plugin-sdk/package.json",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/loadPluginModule.ts",
-      "predecessorRemoval": "none",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -2752,14 +2057,6 @@
       "realm": "any",
       "producer": "src/http/index.ts",
       "lifecycle": "published",
-      "provingConsumer": "packages/plugins/opencode/src/agent/runtime/server/transport.ts",
-      "specialistOwner": "packages/plugin-sdk/package.json",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/loadPluginModule.ts",
-      "predecessorRemoval": "none",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -2768,14 +2065,6 @@
       "realm": "any",
       "producer": "src/interactions/index.ts",
       "lifecycle": "published",
-      "provingConsumer": "packages/plugins/codex/src/agent/runtime/appServer/interactions.ts",
-      "specialistOwner": "packages/plugin-sdk/package.json",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/loadPluginModule.ts",
-      "predecessorRemoval": "none",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -2784,14 +2073,6 @@
       "realm": "any",
       "producer": "src/machine-provisioners/index.ts",
       "lifecycle": "published",
-      "provingConsumer": "packages/plugins/machine-lima/src/manifest.ts",
-      "specialistOwner": "packages/plugin-sdk/package.json",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/loadPluginModule.ts",
-      "predecessorRemoval": "none",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -2800,14 +2081,6 @@
       "realm": "daemon",
       "producer": "src/machine-provisioners/lima/index.ts",
       "lifecycle": "published",
-      "provingConsumer": "packages/plugins/machine-lima/src/machine/provider.ts",
-      "specialistOwner": "packages/plugin-sdk/package.json",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/loadPluginModule.ts",
-      "predecessorRemoval": "none",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -2816,30 +2089,14 @@
       "realm": "daemon",
       "producer": "src/machine-provisioners/ssh/index.ts",
       "lifecycle": "published",
-      "provingConsumer": "packages/plugins/machine-hetzner/src/manifest.ts",
-      "specialistOwner": "packages/plugin-sdk/package.json",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/loadPluginModule.ts",
-      "predecessorRemoval": "none",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
       "specifier": "./managed-services",
       "sourceModule": "src/managed-services/index.ts",
-      "realm": "daemon",
+      "realm": "any",
       "producer": "src/managed-services/index.ts",
       "lifecycle": "published",
-      "provingConsumer": "packages/plugins/ollama/src/provider/publicManagedRuntime.ts",
-      "specialistOwner": "packages/plugin-sdk/package.json",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/loadPluginModule.ts",
-      "predecessorRemoval": "none",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -2848,14 +2105,6 @@
       "realm": "daemon",
       "producer": "src/managed-services/native/index.ts",
       "lifecycle": "published",
-      "provingConsumer": "packages/plugins/codex/src/agent/acp/command.ts",
-      "specialistOwner": "packages/plugin-sdk/package.json",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/loadPluginModule.ts",
-      "predecessorRemoval": "none",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -2864,14 +2113,6 @@
       "realm": "any",
       "producer": "src/manifest/index.ts",
       "lifecycle": "published",
-      "provingConsumer": "packages/plugins/channels/src/manifest.ts",
-      "specialistOwner": "packages/plugin-sdk/package.json",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/loadPluginModule.ts",
-      "predecessorRemoval": "none",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -2880,14 +2121,6 @@
       "realm": "daemon",
       "producer": "src/mcp/index.ts",
       "lifecycle": "published",
-      "provingConsumer": "packages/plugins/opencode/src/manifest.ts",
-      "specialistOwner": "packages/plugin-sdk/package.json",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/loadPluginModule.ts",
-      "predecessorRemoval": "none",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -2896,14 +2129,6 @@
       "realm": "any",
       "producer": "src/notifications/index.ts",
       "lifecycle": "published",
-      "provingConsumer": null,
-      "specialistOwner": "packages/plugin-sdk/package.json",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/loadPluginModule.ts",
-      "predecessorRemoval": "none",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -2912,14 +2137,6 @@
       "realm": "any",
       "producer": "src/protocol/index.ts",
       "lifecycle": "published",
-      "provingConsumer": "packages/plugins/channels/src/bindingTransition.ts",
-      "specialistOwner": "packages/plugin-sdk/package.json",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/loadPluginModule.ts",
-      "predecessorRemoval": "none",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -2928,14 +2145,6 @@
       "realm": "any",
       "producer": "src/providers/index.ts",
       "lifecycle": "published",
-      "provingConsumer": "packages/plugins/openai-compat/src/voice/speech.ts",
-      "specialistOwner": "packages/plugin-sdk/package.json",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/loadPluginModule.ts",
-      "predecessorRemoval": "none",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -2944,14 +2153,6 @@
       "realm": "any",
       "producer": "src/resources/index.ts",
       "lifecycle": "published",
-      "provingConsumer": "packages/plugins/channels/src/connectionsResource.ts",
-      "specialistOwner": "packages/plugin-sdk/package.json",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/loadPluginModule.ts",
-      "predecessorRemoval": "none",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -2960,14 +2161,6 @@
       "realm": "daemon",
       "producer": "src/reviews/index.ts",
       "lifecycle": "published",
-      "provingConsumer": "packages/plugins/review-deepsec/src/agent/reviews/findings.ts",
-      "specialistOwner": "packages/plugin-sdk/package.json",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/loadPluginModule.ts",
-      "predecessorRemoval": "none",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -2976,14 +2169,6 @@
       "realm": "daemon",
       "producer": "src/scm/index.ts",
       "lifecycle": "published",
-      "provingConsumer": "packages/plugins/scm-gitlab/src/pullRequests/restAdapter.ts",
-      "specialistOwner": "packages/plugin-sdk/package.json",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/loadPluginModule.ts",
-      "predecessorRemoval": "none",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -2992,14 +2177,6 @@
       "realm": "daemon",
       "producer": "src/scm/backend/index.ts",
       "lifecycle": "published",
-      "provingConsumer": "packages/plugins/scm-git/src/capabilities.ts",
-      "specialistOwner": "packages/plugin-sdk/package.json",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/loadPluginModule.ts",
-      "predecessorRemoval": "none",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -3008,14 +2185,6 @@
       "realm": "daemon",
       "producer": "src/scm/git/index.ts",
       "lifecycle": "published",
-      "provingConsumer": "packages/plugins/scm-git/src/operations/commitExecutionRuntime.ts",
-      "specialistOwner": "packages/plugin-sdk/package.json",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/loadPluginModule.ts",
-      "predecessorRemoval": "none",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -3024,14 +2193,6 @@
       "realm": "daemon",
       "producer": "src/scm/hosting/index.ts",
       "lifecycle": "published",
-      "provingConsumer": "packages/plugins/scm-gitlab/src/pullRequests/restAdapter.ts",
-      "specialistOwner": "packages/plugin-sdk/package.json",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/loadPluginModule.ts",
-      "predecessorRemoval": "none",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -3040,14 +2201,6 @@
       "realm": "any",
       "producer": "src/secrets/index.ts",
       "lifecycle": "published",
-      "provingConsumer": "packages/plugins/elevenlabs/src/protocol/voice/index.ts",
-      "specialistOwner": "packages/plugin-sdk/package.json",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/loadPluginModule.ts",
-      "predecessorRemoval": "none",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -3056,14 +2209,6 @@
       "realm": "daemon",
       "producer": "src/sessions/index.ts",
       "lifecycle": "published",
-      "provingConsumer": "packages/plugins/gemini/src/agent/acp/toolNames.ts",
-      "specialistOwner": "packages/plugin-sdk/package.json",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/loadPluginModule.ts",
-      "predecessorRemoval": "none",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -3072,14 +2217,6 @@
       "realm": "daemon",
       "producer": "src/sessions/external/index.ts",
       "lifecycle": "published",
-      "provingConsumer": "packages/plugins/antigravity/src/agent/cliPrint/observation.ts",
-      "specialistOwner": "packages/plugin-sdk/package.json",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/loadPluginModule.ts",
-      "predecessorRemoval": "none",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -3088,14 +2225,6 @@
       "realm": "daemon",
       "producer": "src/sessions/file-stores/index.ts",
       "lifecycle": "published",
-      "provingConsumer": "packages/plugins/antigravity/src/agent/cliPrint/conversationStore.ts",
-      "specialistOwner": "packages/plugin-sdk/package.json",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/loadPluginModule.ts",
-      "predecessorRemoval": "none",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -3104,14 +2233,6 @@
       "realm": "any",
       "producer": "src/sessions/subagents/index.ts",
       "lifecycle": "published",
-      "provingConsumer": "packages/plugins/claude/src/agent/workflowRecords/correlation.ts",
-      "specialistOwner": "packages/plugin-sdk/package.json",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/loadPluginModule.ts",
-      "predecessorRemoval": "none",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -3120,14 +2241,6 @@
       "realm": "any",
       "producer": "src/sessions/work-state/index.ts",
       "lifecycle": "published",
-      "provingConsumer": "packages/plugins/cursor/src/agent/acp/workState/normalize.ts",
-      "specialistOwner": "packages/plugin-sdk/package.json",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/loadPluginModule.ts",
-      "predecessorRemoval": "none",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -3136,14 +2249,6 @@
       "realm": "any",
       "producer": "src/settings/index.ts",
       "lifecycle": "published",
-      "provingConsumer": "packages/plugins/claude/src/agentSettings/definition.ts",
-      "specialistOwner": "packages/plugin-sdk/package.json",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/loadPluginModule.ts",
-      "predecessorRemoval": "none",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -3152,14 +2257,6 @@
       "realm": "daemon",
       "producer": "src/storage/index.ts",
       "lifecycle": "published",
-      "provingConsumer": "packages/plugins/claude/src/agent/runtime/terminal/unified/terminalOriginLocalIds.ts",
-      "specialistOwner": "packages/plugin-sdk/package.json",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/loadPluginModule.ts",
-      "predecessorRemoval": "none",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -3168,14 +2265,6 @@
       "realm": "daemon",
       "producer": "src/testing/index.ts",
       "lifecycle": "published",
-      "provingConsumer": "packages/plugins/channels/src/activate.test.ts",
-      "specialistOwner": "packages/plugin-sdk/package.json",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/loadPluginModule.ts",
-      "predecessorRemoval": "none",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -3184,14 +2273,6 @@
       "realm": "any",
       "producer": "src/ui/index.ts",
       "lifecycle": "published",
-      "provingConsumer": "packages/plugins/inspector/src/ui/renderSurface.tsx",
-      "specialistOwner": "packages/plugin-sdk/package.json",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/loadPluginModule.ts",
-      "predecessorRemoval": "none",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -3200,14 +2281,6 @@
       "realm": "daemon",
       "producer": "src/ui/build/index.ts",
       "lifecycle": "published",
-      "provingConsumer": "packages/plugin-sdk/examples/public-authoring/definition.ts",
-      "specialistOwner": "packages/plugin-sdk/package.json",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/loadPluginModule.ts",
-      "predecessorRemoval": "none",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -3216,14 +2289,6 @@
       "realm": "browser",
       "producer": "src/ui/client/index.ts",
       "lifecycle": "published",
-      "provingConsumer": "packages/plugin-sdk/examples/public-authoring/ui/reviewPanel.web.tsx",
-      "specialistOwner": "packages/plugin-sdk/package.json",
-      "lifecycleOwner": "packages/plugin-ui/src/surfaceEntry.tsx",
-      "predecessorRemoval": "none",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -3232,14 +2297,6 @@
       "realm": "any",
       "producer": "src/voice/index.ts",
       "lifecycle": "published",
-      "provingConsumer": "packages/plugins/openai-compat/src/voice/speech.ts",
-      "specialistOwner": "packages/plugin-sdk/package.json",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/loadPluginModule.ts",
-      "predecessorRemoval": "none",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -3248,14 +2305,6 @@
       "realm": "client",
       "producer": "src/voice/client/index.ts",
       "lifecycle": "published",
-      "provingConsumer": "packages/plugins/openai/src/ui/voice/protocol.ts",
-      "specialistOwner": "packages/plugin-sdk/package.json",
-      "lifecycleOwner": "packages/plugin-ui/src/surfaceEntry.tsx",
-      "predecessorRemoval": "none",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -3264,14 +2313,6 @@
       "realm": "any",
       "producer": "src/voice/speech/index.ts",
       "lifecycle": "published",
-      "provingConsumer": "packages/plugins/openai-compat/src/voice/speech.ts",
-      "specialistOwner": "packages/plugin-sdk/package.json",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/loadPluginModule.ts",
-      "predecessorRemoval": "none",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     },
     {
@@ -3280,14 +2321,6 @@
       "realm": "any",
       "producer": "src/webhooks/index.ts",
       "lifecycle": "published",
-      "provingConsumer": "packages/plugins/scm-github/src/webhookAction.ts",
-      "specialistOwner": "packages/plugin-sdk/package.json",
-      "lifecycleOwner": "apps/cli/src/plugins/runtime/loadPluginModule.ts",
-      "predecessorRemoval": "none",
-      "sourceApiAvailability": "present",
-      "sourceConsumer": null,
-      "loadedPlatformProof": "not-recorded",
-      "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
     }
   ]

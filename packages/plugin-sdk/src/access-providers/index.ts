@@ -1,1 +1,15 @@
-export * from './index.public.js';
+export type { AccessCredentialPurposeRefV1 } from '../accessProviders.js';
+export type { AccessProviderAuthorDefinitionV1 } from '../accessProviders.js';
+export type { AccessProviderContributionV1 } from '../accessProviders.js';
+export type { AccessProviderRefV1 } from '../accessProviders.js';
+export { AccessProviderRefV1Schema } from '../accessProviders.js';
+export type { AccessProviderRoleInputV1 } from '../accessProviders.js';
+export type { AccessProviderRoleResultV1 } from '../accessProviders.js';
+export { AccessProviderRoleResultV1Schema } from '../accessProviders.js';
+export type { AccessProviderRoleV1 } from '../accessProviders.js';
+export type { AccessProviderRouteV1 } from '../accessProviders.js';
+export type { AccessProviderSelectionV1 } from '../accessProviders.js';
+export { AccessProviderSelectionV1Schema } from '../accessProviders.js';
+export type { MachinePrivateNetworkObservationV1 } from '../accessProviders.js';
+export { accessProviderRefsEqualV1 } from '../accessProviders.js';
+export { defineAccessProviderSchemas } from '../accessProviders.js';

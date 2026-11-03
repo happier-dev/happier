@@ -1,10 +1,27 @@
 {
   "contributes": {
+    "accessProviders": [],
     "accountCollections": [],
     "actions": [],
     "agents": [
       {
         "capabilities": {
+          "providerStateSharing": {
+            "config": {
+              "modes": [
+                "isolated"
+              ],
+              "supported": false,
+              "unavailableReason": "not_implemented"
+            },
+            "state": {
+              "modes": [
+                "isolated"
+              ],
+              "supported": false,
+              "unavailableReason": "not_implemented"
+            }
+          },
           "sessions": {
             "cancel": true,
             "delivery": [
@@ -22,9 +39,9 @@
             ]
           },
           "skills": {
-            "delivery": "none",
+            "delivery": "session_dir",
             "liveReload": "unsupported",
-            "nativeDisable": "unsupported",
+            "nativeDisable": "supported",
             "nativeRoots": {
               "project": [
                 [
@@ -48,6 +65,9 @@
               ]
             }
           },
+          "surfaces": [
+            "externalSessions"
+          ],
           "tools": {
             "delivery": "native_mcp",
             "mcpToolControl": {
@@ -115,6 +135,53 @@
         "runtime": {
           "kind": "custom"
         },
+        "surfaces": {
+          "externalSession": {
+            "externalLinkedTakeover": {
+              "writerSafety": "unsupported"
+            },
+            "sources": [
+              {
+                "contentSearch": true,
+                "instances": [
+                  {
+                    "constants": {},
+                    "kind": "default"
+                  }
+                ],
+                "key": {
+                  "segments": [
+                    {
+                      "kind": "literal",
+                      "value": "geminiConfigDir"
+                    },
+                    {
+                      "field": "configDir",
+                      "kind": "field"
+                    }
+                  ]
+                },
+                "schema": {
+                  "fields": [
+                    {
+                      "kind": "literal",
+                      "name": "kind",
+                      "value": "geminiConfigDir"
+                    },
+                    {
+                      "kind": "string",
+                      "max": 10000,
+                      "min": 1,
+                      "name": "configDir",
+                      "nullish": true
+                    }
+                  ]
+                },
+                "sourceKind": "geminiConfigDir"
+              }
+            ]
+          }
+        },
         "title": "Gemini"
       }
     ],
@@ -179,10 +246,12 @@
       }
     ],
     "daemonDatabases": [],
+    "deploymentTargets": [],
     "dragSources": [],
     "dropTargets": [],
     "events": [],
     "executionRunProfiles": [],
+    "healthCheckKinds": [],
     "hooks": [
       {
         "category": "decision",
@@ -197,7 +266,10 @@
       }
     ],
     "inputTypes": [],
+    "languageServers": [],
     "machineProvisioners": [],
+    "machineRecipes": [],
+    "machineSetupPresets": [],
     "managedDependencies": [],
     "mcp": {
       "discoverySources": [],
@@ -217,6 +289,7 @@
     "scmBackends": [],
     "scmHostingProviders": [],
     "searchProviders": [],
+    "secretSources": [],
     "sessionHeaderActions": [],
     "sessionInfoSections": [],
     "settings": [],
@@ -330,6 +403,21 @@
     "optional": [],
     "required": [
       {
+        "capability": "filesystem",
+        "id": "gemini-native-history",
+        "reason": "Read native Gemini conversation history.",
+        "scope": {
+          "access": [
+            "read"
+          ],
+          "locations": [
+            {
+              "root": "workspace"
+            }
+          ]
+        }
+      },
+      {
         "capability": "process",
         "id": "gemini-process",
         "reason": "Run the declared Gemini CLI executable.",
@@ -365,6 +453,7 @@
         "localAgentId": "gemini",
         "locator": {
           "export": "createGeminiAgentRuntime",
+          "externalSessionsExport": "geminiExternalSessionsContribution",
           "module": "./agent/runtime/factory",
           "runtimeApiVersion": 1
         },

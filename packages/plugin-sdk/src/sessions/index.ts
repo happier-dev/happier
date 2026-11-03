@@ -94,6 +94,7 @@ export { isSlashCommandSupported } from '../services/sessions.js';
 export { normalizeSessionAttachmentUploadPath } from '../services/sessions.js';
 export { normalizeSlashCommandName } from '../services/sessions.js';
 export { parseSpecialCommand } from './specialCommands.js';
+export { projectSessionSpawnNewActionInputV2 } from '../services/sessions.js';
 export { readHappierStructuredInputV1FromMeta } from '../services/sessions.js';
 export { readLeadingSlashCommandName } from '../services/sessions.js';
 export { readPendingLocalId } from '../services/sessions.js';

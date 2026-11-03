@@ -1495,6 +1495,11 @@
       "types": "./dist/actions/executor/actionOriginationPreferences.d.ts",
       "default": "./dist/actions/executor/actionOriginationPreferences.js"
     },
+    "./actions/executor/actionFailureEnvelope": {
+      "happier-source": "./src/actions/executor/actionFailureEnvelope.ts",
+      "types": "./dist/actions/executor/actionFailureEnvelope.d.ts",
+      "default": "./dist/actions/executor/actionFailureEnvelope.js"
+    },
     "./actions/executor/actionInputValidation": {
       "happier-source": "./src/actions/executor/actionInputValidation.ts",
       "types": "./dist/actions/executor/actionInputValidation.d.ts",
@@ -1764,6 +1769,11 @@
       "happier-source": "./src/plugins/contributions/projectNativeAdapters.ts",
       "types": "./dist/plugins/contributions/projectNativeAdapters.d.ts",
       "default": "./dist/plugins/contributions/projectNativeAdapters.js"
+    },
+    "./projects/projectOrganizationV1": {
+      "happier-source": "./src/projects/projectOrganizationV1.ts",
+      "types": "./dist/projects/projectOrganizationV1.d.ts",
+      "default": "./dist/projects/projectOrganizationV1.js"
     },
     "./projects/projectAccountRowsV1": {
       "happier-source": "./src/projects/projectAccountRowsV1.ts",
@@ -4874,6 +4884,11 @@
       "happier-source": "./src/sessions/external/contentSearchMatch.ts",
       "types": "./dist/sessions/external/contentSearchMatch.d.ts",
       "default": "./dist/sessions/external/contentSearchMatch.js"
+    },
+    "./ssh/commandFailure": {
+      "happier-source": "./src/ssh/commandFailure.ts",
+      "types": "./dist/ssh/commandFailure.d.ts",
+      "default": "./dist/ssh/commandFailure.js"
     },
     "./ssh/sshTarget": {
       "happier-source": "./src/ssh/sshTarget.ts",

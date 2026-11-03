@@ -30,6 +30,7 @@ import type { WorkflowsActionResultById } from './actions/dtos/workflowsActionDt
 import type { PluginDragSourceContributionV1, PluginDropTargetContributionV1 } from '@happier-dev/protocol';
 import type { MachineProvisionerContributionV1 } from './machineProvisioners.js';
 import type { AccessProviderContributionV1 } from './accessProviders.js';
+import type { PluginSecretSourceDefinitionV1 } from './secretSources.js';
 import type { PluginProjectNativeAdapterContributionV1 } from '@happier-dev/protocol/plugins/contributions/projectNativeAdapters';
 import type { PluginWorkItemsContributionV1 } from '@happier-dev/protocol/plugins/contributions/workItems';
 export type { PluginDragSourceContributionV1, PluginDropTargetContributionV1 } from '@happier-dev/protocol';
@@ -592,6 +593,7 @@ export interface PluginManifest {
   } & {
     machineProvisioners?: readonly MachineProvisionerContributionV1[];
     accessProviders?: readonly AccessProviderContributionV1[];
+    secretSources?: readonly Readonly<PluginSecretSourceDefinitionV1['declaration'] & { id: PluginContributionLocalId }>[];
     deploymentTargets?: readonly DeploymentTargetContributionV1[];
     healthCheckKinds?: readonly HealthCheckKindContributionV1[];
     machineRecipes?: readonly MachineRecipeV1[];
@@ -738,6 +740,7 @@ export interface PluginManifest {
 export type PluginContributes = Readonly<{
   machineProvisioners: readonly MachineProvisionerContributionV1[];
   accessProviders: readonly AccessProviderContributionV1[];
+  secretSources: NonNullable<NonNullable<PluginManifest['contributes']>['secretSources']>;
   deploymentTargets: readonly DeploymentTargetContributionV1[];
   healthCheckKinds: readonly HealthCheckKindContributionV1[];
   machineRecipes: readonly MachineRecipeV1[];

@@ -1,4 +1,5 @@
 /** @moduleRealm daemon */
+import type { PluginLocalizedStringV2 } from '../manifest.js';
 import type {
     ScmBranchCheckoutRequest,
     ScmBranchCheckoutResponse,
@@ -300,8 +301,8 @@ export type ScmBackendCapabilities = {
 
 export type ScmBackendContribution = {
     id: string;
-    title: string | { key: string; fallback: string };
-    description?: string | { key: string; fallback: string };
+    title: PluginLocalizedStringV2;
+    description?: PluginLocalizedStringV2;
     kind: string;
     capabilities: ('detect' | 'clone' | 'fetch' | 'status' | 'diff' | 'commit' | 'push' | 'pullRequest')[];
     metadata?: Record<string, PluginJsonValueV2>;

@@ -56,46 +56,28 @@ export const SessionApprovalDecisionCurrentnessV1Schema = lazyZodSchema(() => z.
 }));
 export type SessionApprovalDecisionCurrentnessV1 = z.infer<typeof SessionApprovalDecisionCurrentnessV1Schema>;
 
-export const MachineInstallationProofPayloadV1Schema = lazyZodSchema(() => z.strictObject({
-deploymentTransition: z.optional(z.strictObject({
-        serverId: ActionOperationIdentifierV1Schema,
-        environmentId: ActionOperationIdentifierV1Schema,
-        deploymentId: ActionOperationIdentifierV1Schema,
-        actionOperationId: ActionOperationIdentifierV1Schema,
-        expectedRevision: z.number().check(z.int(), z.minimum(1), z.maximum(Number.MAX_SAFE_INTEGER)),
-        requestBodyDigest: z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u)),
-    })),
+type MachineInstallationRpcAdmissionSchemaType = z.ZodMiniObject<{
+    context: typeof SocketRpcMachineAdmissionContextV1Schema;
+    method: z.ZodMiniOptional<z.ZodMiniString>;
+    purpose: z.ZodMiniOptional<typeof RequesterSessionCurrentnessPurposeV1Schema>;
+    sessionDecision: z.ZodMiniOptional<typeof SessionApprovalDecisionCurrentnessV1Schema>;
+    workspaceSyncSourceRouting: z.ZodMiniOptional<typeof WorkspaceSyncSourceRoutingV1Schema>;
+    workspaceSyncTargetRouting: z.ZodMiniOptional<typeof WorkspaceSyncTargetRoutingV1Schema>;
+    workspaceSyncSourceWriterTargetRouting: z.ZodMiniOptional<typeof WorkspaceSyncSourceWriterTargetRoutingV1Schema>;
+    workspaceSyncSourceExecution: z.ZodMiniOptional<typeof WorkspaceSyncSourceExecutionV1Schema>;
+    workspaceSyncSeedRouting: z.ZodMiniOptional<typeof WorkspaceSyncSeedRoutingV1Schema>;
+    callerInputAuthorization: z.ZodMiniOptional<typeof ExternalActionExecutionAuthorizationV1Schema>;
+    custodySubjectAccountId: z.ZodMiniOptional<z.ZodMiniString>;
+    managedTarget: z.ZodMiniOptional<z.ZodMiniLazy<typeof ManagedActivityReadRequestV1Schema>>;
+    managedIdleDecision: z.ZodMiniOptional<z.ZodMiniObject<{
+        kind: z.ZodMiniLiteral<'idle'>;
+        since: z.ZodMiniNumber;
+        confirmedAt: z.ZodMiniNumber;
+    }, z.core.$strict>>;
+}, z.core.$strict>;
 
-deploymentSecretLaunch: z.optional(z.strictObject({
-        requestBodyDigest: z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u)),
-    })),
-
-deploymentDomainTransition: z.optional(z.strictObject({
-        serverId: ActionOperationIdentifierV1Schema, environmentId: ActionOperationIdentifierV1Schema,
-        domainId: ActionOperationIdentifierV1Schema, actionOperationId: ActionOperationIdentifierV1Schema,
-        expectedRevision: z.number().check(z.int(), z.minimum(1), z.maximum(Number.MAX_SAFE_INTEGER)),
-        requestBodyDigest: z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u)),
-    })),
-
-    version: z.literal(1),
-    installationId: z.string().check(z.trim(), z.minLength(1)),
-    machineId: z.string().check(z.trim(), z.minLength(1)),
-    replacesMachineId: z.optional(z.string().check(z.trim(), z.minLength(1))),
-    replacementReason: z.optional(MachineReplacementReasonSchema),
-    contentPublicKeyFingerprint: z.optional(ContentPublicKeyFingerprintSchema),
-    accountId: z.optional(z.string().check(z.trim(), z.minLength(1))),
-    sessionCreation: z.optional(z.strictObject({
-        sourceExecutionDigest: z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u)),
-        requestBodyDigest: z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u)),
-    })),
-    externalActionOrigin: z.optional(z.strictObject({
-        homeId: z.string().check(z.trim(), z.minLength(1)),
-        actionId: ExternalActionActionIdV1Schema,
-        requestId: ExternalActionRequestIdV1Schema,
-        requestEnvelopeDigest: z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u)),
-        origin: z.union([SessionActionRpcOriginV1Schema, ExternalActionWorkflowOriginV1Schema]),
-    })),
-    rpcAdmission: z.optional(z.strictObject({
+// Name the nested parser shape once instead of serializing it in every signed proof.
+const MachineInstallationRpcAdmissionSchema: MachineInstallationRpcAdmissionSchemaType = lazyZodSchema(() => z.strictObject({
         context: SocketRpcMachineAdmissionContextV1Schema,
         method: z.optional(z.string().check(z.minLength(1))),
         purpose: z.optional(RequesterSessionCurrentnessPurposeV1Schema),
@@ -144,7 +126,48 @@ deploymentDomainTransition: z.optional(z.strictObject({
             || admission.custodySubjectAccountId || admission.managedTarget || admission.managedIdleDecision)) {
             ctx.addIssue({ code: 'custom', message: 'Seed preparation requires only its exact retained Project proof' });
         }
-    }))),
+    })));
+
+export const MachineInstallationProofPayloadV1Schema = lazyZodSchema(() => z.strictObject({
+deploymentTransition: z.optional(z.strictObject({
+        serverId: ActionOperationIdentifierV1Schema,
+        environmentId: ActionOperationIdentifierV1Schema,
+        deploymentId: ActionOperationIdentifierV1Schema,
+        actionOperationId: ActionOperationIdentifierV1Schema,
+        expectedRevision: z.number().check(z.int(), z.minimum(1), z.maximum(Number.MAX_SAFE_INTEGER)),
+        requestBodyDigest: z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u)),
+    })),
+
+deploymentSecretLaunch: z.optional(z.strictObject({
+        requestBodyDigest: z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u)),
+    })),
+
+deploymentDomainTransition: z.optional(z.strictObject({
+        serverId: ActionOperationIdentifierV1Schema, environmentId: ActionOperationIdentifierV1Schema,
+        domainId: ActionOperationIdentifierV1Schema, actionOperationId: ActionOperationIdentifierV1Schema,
+        expectedRevision: z.number().check(z.int(), z.minimum(1), z.maximum(Number.MAX_SAFE_INTEGER)),
+        requestBodyDigest: z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u)),
+    })),
+
+    version: z.literal(1),
+    installationId: z.string().check(z.trim(), z.minLength(1)),
+    machineId: z.string().check(z.trim(), z.minLength(1)),
+    replacesMachineId: z.optional(z.string().check(z.trim(), z.minLength(1))),
+    replacementReason: z.optional(MachineReplacementReasonSchema),
+    contentPublicKeyFingerprint: z.optional(ContentPublicKeyFingerprintSchema),
+    accountId: z.optional(z.string().check(z.trim(), z.minLength(1))),
+    sessionCreation: z.optional(z.strictObject({
+        sourceExecutionDigest: z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u)),
+        requestBodyDigest: z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u)),
+    })),
+    externalActionOrigin: z.optional(z.strictObject({
+        homeId: z.string().check(z.trim(), z.minLength(1)),
+        actionId: ExternalActionActionIdV1Schema,
+        requestId: ExternalActionRequestIdV1Schema,
+        requestEnvelopeDigest: z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u)),
+        origin: z.union([SessionActionRpcOriginV1Schema, ExternalActionWorkflowOriginV1Schema]),
+    })),
+    rpcAdmission: z.optional(MachineInstallationRpcAdmissionSchema),
     managedPolicy: z.optional(z.strictObject({
         homeId: z.string().check(z.minLength(1)), managedId: z.string().check(z.minLength(1)), expectedIntentRevision: z.number().check(z.int(), z.nonnegative()),
         controller: z.strictObject({ machineId: z.string().check(z.minLength(1)), installationId: z.string().check(z.minLength(1)) }),

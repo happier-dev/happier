@@ -33,7 +33,7 @@ import {
   type AutomationConversationAdmitResultV1,
   type AutomationConversationResultDeliveryV1,
 } from '@happier-dev/plugin-sdk/automations';
-import { SessionSpawnNewInputV2Schema } from '@happier-dev/plugin-sdk/sessions';
+import { SessionSpawnNewInputV2Schema, projectSessionSpawnNewActionInputV2 } from '@happier-dev/plugin-sdk/sessions';
 import {
   areConversationEndpointIdentitiesEqual,
   isChannelSessionSpawnRecipeAuthorableV1,
@@ -2094,7 +2094,7 @@ async function bindingsForThreadObservation(input: Readonly<{
     if (!await hasCurrentProviderContributionSelection({ context, connection })) {
       throw pluginError('channels_ingress_stale_authority', 'The thread provider contribution is no longer current.', true);
     }
-    const spawned = await context.services.actions.execute('session.spawn_new', spawnInput, { signal: context.signal });
+    const spawned = await context.services.actions.execute('session.spawn_new', projectSessionSpawnNewActionInputV2(spawnInput), { signal: context.signal });
     assertNotAborted(context.signal);
     if (isPluginActionApprovalRequestCreated(spawned) || spawned.type === 'pending') {
       throw pluginError('channels_thread_spawn_unsettled', 'The thread Session has not settled; retry the same creation key.', true);
@@ -3819,7 +3819,7 @@ async function dispatchNewSessionRotation(input: Readonly<{
   }
   const spawned = await input.context.services.actions.execute(
     'session.spawn_new',
-    spawnInput.data,
+    projectSessionSpawnNewActionInputV2(spawnInput.data),
     { signal: input.context.signal },
   );
   assertNotAborted(input.context.signal);

@@ -20,3 +20,5 @@ export type { SystemToolsService } from '../exec.js';
 
 
 export type { DeploymentExecEnvAttachmentV1, DeploymentExecEnvPortV1 } from '../services/io.js';
+
+export type { GhCommandDeps, GhCommandParams, GhCommandResult, GhNativeTokenResult } from '../exec.js';

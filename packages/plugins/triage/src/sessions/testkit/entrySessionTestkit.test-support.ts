@@ -122,7 +122,7 @@ export function spawnSuccess(
         disposition: overrides.disposition ?? 'created',
         sessionId: overrides.sessionId ?? 'session-a',
         executionTarget: { serverId: 'server-a', machineId: 'machine-a' },
-        organizationPlacement: { folderId: null, tagIds: [] },
+        organizationPlacement: { sectionId: null, tagIds: [] },
         initialInput: overrides.initialInput ?? { status: 'notRequested' },
     };
 }

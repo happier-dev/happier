@@ -1,5 +1,6 @@
 {
   "contributes": {
+    "accessProviders": [],
     "accountCollections": [],
     "actions": [
       {
@@ -151,8 +152,31 @@
     "agents": [
       {
         "capabilities": {
+          "providerStateSharing": {
+            "config": {
+              "modes": [
+                "linked",
+                "copied",
+                "isolated"
+              ],
+              "supported": true
+            },
+            "state": {
+              "modes": [
+                "isolated",
+                "shared"
+              ],
+              "sharedStatePrivacyRiskAcknowledgementRequired": true,
+              "supported": true
+            }
+          },
           "sessions": {
             "cancel": true,
+            "catalog": {
+              "active": [
+                "skills"
+              ]
+            },
             "compaction": {
               "events": true,
               "idle": {
@@ -221,17 +245,6 @@
             "liveReload": "supported",
             "nativeDisable": "supported",
             "nativeRoots": {
-              "plugin": [
-                [
-                  ".claude",
-                  "plugins",
-                  "cache",
-                  "*",
-                  "{plugin}",
-                  "*",
-                  "skills"
-                ]
-              ],
               "project": [
                 [
                   ".claude",
@@ -258,6 +271,7 @@
           ],
           "tools": {
             "delivery": "native_mcp",
+            "mcpToolCallIdMetaKey": "claudecode/toolUseId",
             "mcpToolControl": {
               "approval": "host",
               "off": "hidden"
@@ -462,7 +476,8 @@
             "streaming": true,
             "toolRoundTrips": true
           },
-          "supportsFreeformModelIds": true
+          "supportsFreeformModelIds": true,
+          "supportsReasoningEffort": true
         },
         "runtime": {
           "kind": "custom"
@@ -615,7 +630,11 @@
         "recoveryCredits": {
           "supported": true
         },
-        "title": "Claude"
+        "title": "Claude",
+        "usageIdentity": {
+          "providerId": "claude",
+          "requiredContext": "organization"
+        }
       },
       {
         "authentication": {
@@ -646,10 +665,12 @@
       }
     ],
     "daemonDatabases": [],
+    "deploymentTargets": [],
     "dragSources": [],
     "dropTargets": [],
     "events": [],
     "executionRunProfiles": [],
+    "healthCheckKinds": [],
     "hooks": [
       {
         "category": "decision",
@@ -675,7 +696,10 @@
       }
     ],
     "inputTypes": [],
+    "languageServers": [],
     "machineProvisioners": [],
+    "machineRecipes": [],
+    "machineSetupPresets": [],
     "managedDependencies": [],
     "mcp": {
       "discoverySources": [
@@ -1268,6 +1292,7 @@
     "scmBackends": [],
     "scmHostingProviders": [],
     "searchProviders": [],
+    "secretSources": [],
     "sessionHeaderActions": [],
     "sessionInfoSections": [],
     "settings": [
@@ -1556,6 +1581,136 @@
               "trackCurrentState": true,
               "valueKind": "enum"
             },
+            "default": "app_and_terminal",
+            "description": {
+              "fallback": "Choose where to answer questions during unified terminal sessions.",
+              "key": "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.subtitle"
+            },
+            "id": "claudeUnifiedTerminalQuestionResponseLocation",
+            "presentation": {
+              "control": "select",
+              "options": [
+                {
+                  "description": {
+                    "fallback": "Respond in the Happier app or Claude Code terminal.",
+                    "key": "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.options.app_and_terminal.subtitle"
+                  },
+                  "title": {
+                    "fallback": "App and terminal",
+                    "key": "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.options.app_and_terminal.title"
+                  },
+                  "value": "app_and_terminal"
+                },
+                {
+                  "description": {
+                    "fallback": "Use the existing app request flow. Claude may still accept responses in its terminal.",
+                    "key": "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.options.app_only.subtitle"
+                  },
+                  "title": {
+                    "fallback": "App prompts",
+                    "key": "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.options.app_only.title"
+                  },
+                  "value": "app_only"
+                },
+                {
+                  "description": {
+                    "fallback": "Respond in the Claude Code terminal.",
+                    "key": "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.options.terminal_only.subtitle"
+                  },
+                  "title": {
+                    "fallback": "Terminal only",
+                    "key": "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.options.terminal_only.title"
+                  },
+                  "value": "terminal_only"
+                }
+              ]
+            },
+            "schema": {
+              "enum": [
+                "app_and_terminal",
+                "app_only",
+                "terminal_only"
+              ],
+              "type": "string"
+            },
+            "title": {
+              "fallback": "Answer questions",
+              "key": "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.title"
+            }
+          },
+          {
+            "analytics": {
+              "identityScope": "person",
+              "privacy": "safe",
+              "trackChanges": true,
+              "trackCurrentState": true,
+              "valueKind": "enum"
+            },
+            "default": "app_and_terminal",
+            "description": {
+              "fallback": "Choose where to approve permission requests during unified terminal sessions.",
+              "key": "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.subtitle"
+            },
+            "id": "claudeUnifiedTerminalPermissionResponseLocation",
+            "presentation": {
+              "control": "select",
+              "options": [
+                {
+                  "description": {
+                    "fallback": "Respond in the Happier app or Claude Code terminal.",
+                    "key": "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.options.app_and_terminal.subtitle"
+                  },
+                  "title": {
+                    "fallback": "App and terminal",
+                    "key": "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.options.app_and_terminal.title"
+                  },
+                  "value": "app_and_terminal"
+                },
+                {
+                  "description": {
+                    "fallback": "Use the existing app request flow. Claude may still accept responses in its terminal.",
+                    "key": "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.options.app_only.subtitle"
+                  },
+                  "title": {
+                    "fallback": "App prompts",
+                    "key": "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.options.app_only.title"
+                  },
+                  "value": "app_only"
+                },
+                {
+                  "description": {
+                    "fallback": "Respond in the Claude Code terminal.",
+                    "key": "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.options.terminal_only.subtitle"
+                  },
+                  "title": {
+                    "fallback": "Terminal only",
+                    "key": "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.options.terminal_only.title"
+                  },
+                  "value": "terminal_only"
+                }
+              ]
+            },
+            "schema": {
+              "enum": [
+                "app_and_terminal",
+                "app_only",
+                "terminal_only"
+              ],
+              "type": "string"
+            },
+            "title": {
+              "fallback": "Approve permission requests",
+              "key": "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.title"
+            }
+          },
+          {
+            "analytics": {
+              "identityScope": "person",
+              "privacy": "safe",
+              "trackChanges": true,
+              "trackCurrentState": true,
+              "valueKind": "enum"
+            },
             "default": "ask_every_time",
             "description": {
               "fallback": "Choose how Happier responds when Claude asks whether to trust a workspace.",
@@ -1758,7 +1913,7 @@
             },
             "default": true,
             "description": {
-              "fallback": "Forward Claude local-mode permission prompts to Happier so you can approve or deny from the app UI.",
+              "fallback": "Forward permission prompts from classic local Claude sessions to Happier.",
               "key": "settingsAgents.plugins.claude.fields.claudeLocalPermissionBridgeEnabled.subtitle"
             },
             "id": "claudeLocalPermissionBridgeEnabled",
@@ -2172,6 +2327,8 @@
                 "claudeUnifiedTerminalEnabled",
                 "claudeUnifiedTerminalHost",
                 "claudeUnifiedTerminalResumeChoice",
+                "claudeUnifiedTerminalQuestionResponseLocation",
+                "claudeUnifiedTerminalPermissionResponseLocation",
                 "claudeUnifiedTerminalWorkspaceTrust"
               ],
               "id": "claude-unified-terminal",
@@ -2309,6 +2466,23 @@
             "session.subagents.panel.launchClaudeTeamsSubtitle": "Start a team or add a teammate",
             "settingsAgents.plugins.claude.fields.claudeCodeIncludeInNativeHistory.subtitle": "Use Happier attribution for new Claude sessions, including Agent SDK runs. Off keeps runtime defaults.",
             "settingsAgents.plugins.claude.fields.claudeCodeIncludeInNativeHistory.title": "Show sessions in Claude Code",
+            "settingsAgents.plugins.claude.fields.claudeLocalPermissionBridgeEnabled.subtitle": "Forward permission prompts from classic local Claude sessions to Happier.",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.options.app_and_terminal.subtitle": "Respond in the Happier app or Claude Code terminal.",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.options.app_and_terminal.title": "App and terminal",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.options.app_only.subtitle": "Use the existing app request flow. Claude may still accept responses in its terminal.",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.options.app_only.title": "App prompts",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.options.terminal_only.subtitle": "Respond in the Claude Code terminal.",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.options.terminal_only.title": "Terminal only",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.subtitle": "Choose where to approve permission requests during unified terminal sessions.",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.title": "Approve permission requests",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.options.app_and_terminal.subtitle": "Respond in the Happier app or Claude Code terminal.",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.options.app_and_terminal.title": "App and terminal",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.options.app_only.subtitle": "Use the existing app request flow. Claude may still accept responses in its terminal.",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.options.app_only.title": "App prompts",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.options.terminal_only.subtitle": "Respond in the Claude Code terminal.",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.options.terminal_only.title": "Terminal only",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.subtitle": "Choose where to answer questions during unified terminal sessions.",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.title": "Answer questions",
             "subAgentGuidance.settings.agents.claude.footer": "Agent-specific subagent behavior stays owned by the agent settings screen.",
             "subAgentGuidance.settings.agents.claude.openSubtitle": "Manage Agent Teams and other Claude-specific subagent behavior.",
             "subAgentGuidance.settings.agents.claude.openTitle": "Claude subagent options",
@@ -2328,6 +2502,23 @@
             "session.subagents.panel.launchClaudeTeamsSubtitle": "Ein Team starten oder ein Teammitglied hinzufügen",
             "settingsAgents.plugins.claude.fields.claudeCodeIncludeInNativeHistory.subtitle": "Happier-Zuordnung für neue Claude-Sitzungen verwenden, auch mit dem Agent SDK. Aus behält die Laufzeitstandards bei.",
             "settingsAgents.plugins.claude.fields.claudeCodeIncludeInNativeHistory.title": "Sitzungen in Claude Code anzeigen",
+            "settingsAgents.plugins.claude.fields.claudeLocalPermissionBridgeEnabled.subtitle": "Leite Berechtigungsanfragen klassischer lokaler Claude-Sitzungen an Happier weiter.",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.options.app_and_terminal.subtitle": "Antworte in der Happier-App oder im Claude Code-Terminal.",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.options.app_and_terminal.title": "App und Terminal",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.options.app_only.subtitle": "Nutze den bisherigen Anfrageablauf in der App. Claude kann weiterhin Antworten in seinem Terminal annehmen.",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.options.app_only.title": "Anfragen in der App",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.options.terminal_only.subtitle": "Antworte im Claude Code-Terminal.",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.options.terminal_only.title": "Nur Terminal",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.subtitle": "Wähle, wo du Berechtigungsanfragen in gemeinsamen Terminalsitzungen genehmigst.",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.title": "Berechtigungsanfragen genehmigen",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.options.app_and_terminal.subtitle": "Antworte in der Happier-App oder im Claude Code-Terminal.",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.options.app_and_terminal.title": "App und Terminal",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.options.app_only.subtitle": "Nutze den bisherigen Anfrageablauf in der App. Claude kann weiterhin Antworten in seinem Terminal annehmen.",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.options.app_only.title": "Anfragen in der App",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.options.terminal_only.subtitle": "Antworte im Claude Code-Terminal.",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.options.terminal_only.title": "Nur Terminal",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.subtitle": "Wähle, wo du Fragen in gemeinsamen Terminalsitzungen beantwortest.",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.title": "Fragen beantworten",
             "subAgentGuidance.settings.agents.claude.footer": "Agent-spezifisches Subagent-Verhalten bleibt Sache des Agent-Einstellungsbildschirms.",
             "subAgentGuidance.settings.agents.claude.openSubtitle": "Agent Teams und weiteres Claude-spezifisches Subagent-Verhalten verwalten.",
             "subAgentGuidance.settings.agents.claude.openTitle": "Claude-Subagent-Optionen",
@@ -2347,6 +2538,23 @@
             "session.subagents.panel.launchClaudeTeamsSubtitle": "Создайте команду или добавьте участника",
             "settingsAgents.plugins.claude.fields.claudeCodeIncludeInNativeHistory.subtitle": "Использовать идентификацию Happier для новых сессий Claude, включая Agent SDK. При отключении сохраняются настройки среды по умолчанию.",
             "settingsAgents.plugins.claude.fields.claudeCodeIncludeInNativeHistory.title": "Показывать сессии в Claude Code",
+            "settingsAgents.plugins.claude.fields.claudeLocalPermissionBridgeEnabled.subtitle": "Передавайте запросы разрешений из классических локальных сеансов Claude в Happier.",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.options.app_and_terminal.subtitle": "Отвечайте в приложении Happier или терминале Claude Code.",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.options.app_and_terminal.title": "Приложение и терминал",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.options.app_only.subtitle": "Используйте существующий процесс запросов в приложении. Claude по-прежнему может принимать ответы в своём терминале.",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.options.app_only.title": "Запросы в приложении",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.options.terminal_only.subtitle": "Отвечайте в терминале Claude Code.",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.options.terminal_only.title": "Только терминал",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.subtitle": "Выберите, где подтверждать запросы разрешений в сеансах единого терминала.",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.title": "Подтверждение запросов разрешений",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.options.app_and_terminal.subtitle": "Отвечайте в приложении Happier или терминале Claude Code.",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.options.app_and_terminal.title": "Приложение и терминал",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.options.app_only.subtitle": "Используйте существующий процесс запросов в приложении. Claude по-прежнему может принимать ответы в своём терминале.",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.options.app_only.title": "Запросы в приложении",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.options.terminal_only.subtitle": "Отвечайте в терминале Claude Code.",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.options.terminal_only.title": "Только терминал",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.subtitle": "Выберите, где отвечать на вопросы в сеансах единого терминала.",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.title": "Ответы на вопросы",
             "subAgentGuidance.settings.agents.claude.footer": "Поведение субагентов для конкретного агента настраивается на экране настроек агента.",
             "subAgentGuidance.settings.agents.claude.openSubtitle": "Управляйте Agent Teams и другими особенностями субагентов Claude.",
             "subAgentGuidance.settings.agents.claude.openTitle": "Параметры субагентов Claude",
@@ -2366,6 +2574,23 @@
             "session.subagents.panel.launchClaudeTeamsSubtitle": "Utwórz zespół lub dodaj członka zespołu",
             "settingsAgents.plugins.claude.fields.claudeCodeIncludeInNativeHistory.subtitle": "Używaj identyfikacji Happier dla nowych sesji Claude, także z Agent SDK. Wyłączenie zachowuje domyślne ustawienia środowiska.",
             "settingsAgents.plugins.claude.fields.claudeCodeIncludeInNativeHistory.title": "Pokaż sesje w Claude Code",
+            "settingsAgents.plugins.claude.fields.claudeLocalPermissionBridgeEnabled.subtitle": "Przekazuj prośby o uprawnienia z klasycznych lokalnych sesji Claude do Happier.",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.options.app_and_terminal.subtitle": "Odpowiadaj w aplikacji Happier lub terminalu Claude Code.",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.options.app_and_terminal.title": "Aplikacja i terminal",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.options.app_only.subtitle": "Korzystaj z dotychczasowego sposobu obsługi próśb w aplikacji. Claude może nadal przyjmować odpowiedzi w swoim terminalu.",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.options.app_only.title": "Prośby w aplikacji",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.options.terminal_only.subtitle": "Odpowiadaj w terminalu Claude Code.",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.options.terminal_only.title": "Tylko terminal",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.subtitle": "Wybierz, gdzie zatwierdzać prośby o uprawnienia podczas sesji ujednoliconego terminala.",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.title": "Zatwierdzanie próśb o uprawnienia",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.options.app_and_terminal.subtitle": "Odpowiadaj w aplikacji Happier lub terminalu Claude Code.",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.options.app_and_terminal.title": "Aplikacja i terminal",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.options.app_only.subtitle": "Korzystaj z dotychczasowego sposobu obsługi próśb w aplikacji. Claude może nadal przyjmować odpowiedzi w swoim terminalu.",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.options.app_only.title": "Prośby w aplikacji",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.options.terminal_only.subtitle": "Odpowiadaj w terminalu Claude Code.",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.options.terminal_only.title": "Tylko terminal",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.subtitle": "Wybierz, gdzie odpowiadać na pytania podczas sesji ujednoliconego terminala.",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.title": "Odpowiadanie na pytania",
             "subAgentGuidance.settings.agents.claude.footer": "Ustawienia agenta nadal odpowiadają za zachowanie jego podagentów.",
             "subAgentGuidance.settings.agents.claude.openSubtitle": "Zarządzaj Agent Teams i innymi zachowaniami podagentów Claude.",
             "subAgentGuidance.settings.agents.claude.openTitle": "Opcje podagentów Claude",
@@ -2385,6 +2610,23 @@
             "session.subagents.panel.launchClaudeTeamsSubtitle": "Crea un equipo o añade un compañero",
             "settingsAgents.plugins.claude.fields.claudeCodeIncludeInNativeHistory.subtitle": "Usar la atribución de Happier para nuevas sesiones de Claude, incluidas las del Agent SDK. Desactivado conserva los valores predeterminados.",
             "settingsAgents.plugins.claude.fields.claudeCodeIncludeInNativeHistory.title": "Mostrar sesiones en Claude Code",
+            "settingsAgents.plugins.claude.fields.claudeLocalPermissionBridgeEnabled.subtitle": "Envía a Happier las solicitudes de permiso de las sesiones locales clásicas de Claude.",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.options.app_and_terminal.subtitle": "Responde en la app Happier o en el terminal de Claude Code.",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.options.app_and_terminal.title": "App y terminal",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.options.app_only.subtitle": "Usa el flujo habitual de solicitudes de la app. Claude puede seguir aceptando respuestas en su terminal.",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.options.app_only.title": "Solicitudes en la app",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.options.terminal_only.subtitle": "Responde en el terminal de Claude Code.",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.options.terminal_only.title": "Solo terminal",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.subtitle": "Elige dónde aprobar solicitudes de permiso durante las sesiones de terminal unificado.",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.title": "Aprobar solicitudes de permiso",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.options.app_and_terminal.subtitle": "Responde en la app Happier o en el terminal de Claude Code.",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.options.app_and_terminal.title": "App y terminal",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.options.app_only.subtitle": "Usa el flujo habitual de solicitudes de la app. Claude puede seguir aceptando respuestas en su terminal.",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.options.app_only.title": "Solicitudes en la app",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.options.terminal_only.subtitle": "Responde en el terminal de Claude Code.",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.options.terminal_only.title": "Solo terminal",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.subtitle": "Elige dónde responder preguntas durante las sesiones de terminal unificado.",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.title": "Responder preguntas",
             "subAgentGuidance.settings.agents.claude.footer": "La pantalla de ajustes del agente sigue controlando el comportamiento específico de sus subagentes.",
             "subAgentGuidance.settings.agents.claude.openSubtitle": "Gestiona Agent Teams y otros comportamientos específicos de los subagentes de Claude.",
             "subAgentGuidance.settings.agents.claude.openTitle": "Opciones de subagentes de Claude",
@@ -2404,6 +2646,23 @@
             "session.subagents.panel.launchClaudeTeamsSubtitle": "Crée une équipe ou ajoute un équipier",
             "settingsAgents.plugins.claude.fields.claudeCodeIncludeInNativeHistory.subtitle": "Utiliser l’attribution Happier pour les nouvelles sessions Claude, y compris avec l’Agent SDK. Désactivé conserve les valeurs par défaut.",
             "settingsAgents.plugins.claude.fields.claudeCodeIncludeInNativeHistory.title": "Afficher les sessions dans Claude Code",
+            "settingsAgents.plugins.claude.fields.claudeLocalPermissionBridgeEnabled.subtitle": "Transmettez les demandes d’autorisation des sessions Claude locales classiques à Happier.",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.options.app_and_terminal.subtitle": "Répondez dans l’application Happier ou le terminal Claude Code.",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.options.app_and_terminal.title": "Application et terminal",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.options.app_only.subtitle": "Utilisez le flux habituel de demandes dans l’application. Claude peut toujours accepter des réponses dans son terminal.",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.options.app_only.title": "Demandes dans l’application",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.options.terminal_only.subtitle": "Répondez dans le terminal Claude Code.",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.options.terminal_only.title": "Terminal uniquement",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.subtitle": "Choisissez où approuver les demandes d’autorisation dans les sessions de terminal unifié.",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.title": "Approuver les demandes d’autorisation",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.options.app_and_terminal.subtitle": "Répondez dans l’application Happier ou le terminal Claude Code.",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.options.app_and_terminal.title": "Application et terminal",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.options.app_only.subtitle": "Utilisez le flux habituel de demandes dans l’application. Claude peut toujours accepter des réponses dans son terminal.",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.options.app_only.title": "Demandes dans l’application",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.options.terminal_only.subtitle": "Répondez dans le terminal Claude Code.",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.options.terminal_only.title": "Terminal uniquement",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.subtitle": "Choisissez où répondre aux questions dans les sessions de terminal unifié.",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.title": "Répondre aux questions",
             "subAgentGuidance.settings.agents.claude.footer": "L’écran des réglages de l’agent reste responsable du comportement de ses sous-agents.",
             "subAgentGuidance.settings.agents.claude.openSubtitle": "Gère Agent Teams et les autres comportements propres aux sous-agents Claude.",
             "subAgentGuidance.settings.agents.claude.openTitle": "Options des sous-agents Claude",
@@ -2423,6 +2682,23 @@
             "session.subagents.panel.launchClaudeTeamsSubtitle": "Crea un team o aggiungi un compagno",
             "settingsAgents.plugins.claude.fields.claudeCodeIncludeInNativeHistory.subtitle": "Usa l’attribuzione Happier per le nuove sessioni Claude, incluse quelle Agent SDK. Disattivato mantiene le impostazioni predefinite.",
             "settingsAgents.plugins.claude.fields.claudeCodeIncludeInNativeHistory.title": "Mostra le sessioni in Claude Code",
+            "settingsAgents.plugins.claude.fields.claudeLocalPermissionBridgeEnabled.subtitle": "Inoltra a Happier le richieste di autorizzazione delle sessioni Claude locali classiche.",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.options.app_and_terminal.subtitle": "Rispondi nell’app Happier o nel terminale Claude Code.",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.options.app_and_terminal.title": "App e terminale",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.options.app_only.subtitle": "Usa il flusso di richieste esistente nell’app. Claude potrebbe continuare ad accettare risposte nel suo terminale.",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.options.app_only.title": "Richieste nell’app",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.options.terminal_only.subtitle": "Rispondi nel terminale Claude Code.",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.options.terminal_only.title": "Solo terminale",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.subtitle": "Scegli dove approvare le richieste di autorizzazione durante le sessioni del terminale unificato.",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.title": "Approva le richieste di autorizzazione",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.options.app_and_terminal.subtitle": "Rispondi nell’app Happier o nel terminale Claude Code.",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.options.app_and_terminal.title": "App e terminale",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.options.app_only.subtitle": "Usa il flusso di richieste esistente nell’app. Claude potrebbe continuare ad accettare risposte nel suo terminale.",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.options.app_only.title": "Richieste nell’app",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.options.terminal_only.subtitle": "Rispondi nel terminale Claude Code.",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.options.terminal_only.title": "Solo terminale",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.subtitle": "Scegli dove rispondere alle domande durante le sessioni del terminale unificato.",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.title": "Rispondi alle domande",
             "subAgentGuidance.settings.agents.claude.footer": "La schermata delle impostazioni dell’agente continua a gestire il comportamento specifico dei suoi sottoagenti.",
             "subAgentGuidance.settings.agents.claude.openSubtitle": "Gestisci Agent Teams e gli altri comportamenti specifici dei sottoagenti Claude.",
             "subAgentGuidance.settings.agents.claude.openTitle": "Opzioni dei sottoagenti Claude",
@@ -2442,6 +2718,23 @@
             "session.subagents.panel.launchClaudeTeamsSubtitle": "Crie uma equipe ou adicione um colega",
             "settingsAgents.plugins.claude.fields.claudeCodeIncludeInNativeHistory.subtitle": "Usar a atribuição de Happier para novas sessões Claude, incluindo as do Agent SDK. Desativado mantém os padrões de execução.",
             "settingsAgents.plugins.claude.fields.claudeCodeIncludeInNativeHistory.title": "Mostrar sessões no Claude Code",
+            "settingsAgents.plugins.claude.fields.claudeLocalPermissionBridgeEnabled.subtitle": "Encaminhe para o Happier os pedidos de permissão das sessões Claude locais clássicas.",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.options.app_and_terminal.subtitle": "Responda na app Happier ou no terminal do Claude Code.",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.options.app_and_terminal.title": "App e terminal",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.options.app_only.subtitle": "Use o fluxo de pedidos existente na app. O Claude pode continuar a aceitar respostas no seu terminal.",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.options.app_only.title": "Pedidos na app",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.options.terminal_only.subtitle": "Responda no terminal do Claude Code.",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.options.terminal_only.title": "Apenas terminal",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.subtitle": "Escolha onde aprovar pedidos de permissão durante as sessões de terminal unificado.",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.title": "Aprovar pedidos de permissão",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.options.app_and_terminal.subtitle": "Responda na app Happier ou no terminal do Claude Code.",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.options.app_and_terminal.title": "App e terminal",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.options.app_only.subtitle": "Use o fluxo de pedidos existente na app. O Claude pode continuar a aceitar respostas no seu terminal.",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.options.app_only.title": "Pedidos na app",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.options.terminal_only.subtitle": "Responda no terminal do Claude Code.",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.options.terminal_only.title": "Apenas terminal",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.subtitle": "Escolha onde responder a perguntas durante as sessões de terminal unificado.",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.title": "Responder a perguntas",
             "subAgentGuidance.settings.agents.claude.footer": "O ecrã de definições do agente continua responsável pelo comportamento específico dos respetivos subagentes.",
             "subAgentGuidance.settings.agents.claude.openSubtitle": "Gira Agent Teams e outros comportamentos específicos dos subagentes Claude.",
             "subAgentGuidance.settings.agents.claude.openTitle": "Opções dos subagentes Claude",
@@ -2461,6 +2754,23 @@
             "session.subagents.panel.launchClaudeTeamsSubtitle": "Crea un equip o afegeix un company",
             "settingsAgents.plugins.claude.fields.claudeCodeIncludeInNativeHistory.subtitle": "Utilitza l’atribució de Happier per a les sessions noves de Claude, incloses les de l’Agent SDK. Desactivat conserva els valors predeterminats.",
             "settingsAgents.plugins.claude.fields.claudeCodeIncludeInNativeHistory.title": "Mostra les sessions al Claude Code",
+            "settingsAgents.plugins.claude.fields.claudeLocalPermissionBridgeEnabled.subtitle": "Envia a Happier les sol·licituds de permís de les sessions locals clàssiques de Claude.",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.options.app_and_terminal.subtitle": "Respon a l’app Happier o al terminal de Claude Code.",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.options.app_and_terminal.title": "App i terminal",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.options.app_only.subtitle": "Fes servir el flux habitual de sol·licituds de l’app. Claude pot continuar acceptant respostes al seu terminal.",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.options.app_only.title": "Sol·licituds a l’app",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.options.terminal_only.subtitle": "Respon al terminal de Claude Code.",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.options.terminal_only.title": "Només terminal",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.subtitle": "Tria on aprovar sol·licituds de permís durant les sessions de terminal unificat.",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.title": "Aprovar sol·licituds de permís",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.options.app_and_terminal.subtitle": "Respon a l’app Happier o al terminal de Claude Code.",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.options.app_and_terminal.title": "App i terminal",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.options.app_only.subtitle": "Fes servir el flux habitual de sol·licituds de l’app. Claude pot continuar acceptant respostes al seu terminal.",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.options.app_only.title": "Sol·licituds a l’app",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.options.terminal_only.subtitle": "Respon al terminal de Claude Code.",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.options.terminal_only.title": "Només terminal",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.subtitle": "Tria on respondre preguntes durant les sessions de terminal unificat.",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.title": "Respondre preguntes",
             "subAgentGuidance.settings.agents.claude.footer": "La pantalla de configuració de l’agent continua gestionant el comportament específic dels seus subagents.",
             "subAgentGuidance.settings.agents.claude.openSubtitle": "Gestiona Agent Teams i altres comportaments específics dels subagents de Claude.",
             "subAgentGuidance.settings.agents.claude.openTitle": "Opcions dels subagents de Claude",
@@ -2480,6 +2790,23 @@
             "session.subagents.panel.launchClaudeTeamsSubtitle": "创建团队或添加队友",
             "settingsAgents.plugins.claude.fields.claudeCodeIncludeInNativeHistory.subtitle": "将新的 Claude 会话标记为 Happier 来源，包括 Agent SDK 会话。关闭时保留运行时默认值。",
             "settingsAgents.plugins.claude.fields.claudeCodeIncludeInNativeHistory.title": "在 Claude Code 中显示会话",
+            "settingsAgents.plugins.claude.fields.claudeLocalPermissionBridgeEnabled.subtitle": "将传统本地 Claude 会话的权限请求转发到 Happier。",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.options.app_and_terminal.subtitle": "在 Happier 应用或 Claude Code 终端中响应。",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.options.app_and_terminal.title": "应用和终端",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.options.app_only.subtitle": "使用现有的应用请求流程。Claude 仍可能在其终端中接受响应。",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.options.app_only.title": "应用内请求",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.options.terminal_only.subtitle": "在 Claude Code 终端中响应。",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.options.terminal_only.title": "仅终端",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.subtitle": "选择在统一终端会话中批准权限请求的位置。",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.title": "批准权限请求",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.options.app_and_terminal.subtitle": "在 Happier 应用或 Claude Code 终端中响应。",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.options.app_and_terminal.title": "应用和终端",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.options.app_only.subtitle": "使用现有的应用请求流程。Claude 仍可能在其终端中接受响应。",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.options.app_only.title": "应用内请求",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.options.terminal_only.subtitle": "在 Claude Code 终端中响应。",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.options.terminal_only.title": "仅终端",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.subtitle": "选择在统一终端会话中回答问题的位置。",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.title": "回答问题",
             "subAgentGuidance.settings.agents.claude.footer": "代理专属的子代理行为仍由代理设置页面管理。",
             "subAgentGuidance.settings.agents.claude.openSubtitle": "管理 Agent Teams 和其他 Claude 子代理专属行为。",
             "subAgentGuidance.settings.agents.claude.openTitle": "Claude 子代理选项",
@@ -2499,6 +2826,23 @@
             "session.subagents.panel.launchClaudeTeamsSubtitle": "建立團隊或新增隊友",
             "settingsAgents.plugins.claude.fields.claudeCodeIncludeInNativeHistory.subtitle": "將新的 Claude 工作階段標記為 Happier 來源，包括 Agent SDK 工作階段。關閉時保留執行環境預設值。",
             "settingsAgents.plugins.claude.fields.claudeCodeIncludeInNativeHistory.title": "在 Claude Code 中顯示工作階段",
+            "settingsAgents.plugins.claude.fields.claudeLocalPermissionBridgeEnabled.subtitle": "將傳統本機 Claude 工作階段的權限請求轉送到 Happier。",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.options.app_and_terminal.subtitle": "在 Happier 應用程式或 Claude Code 終端機中回應。",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.options.app_and_terminal.title": "應用程式和終端機",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.options.app_only.subtitle": "使用現有的應用程式請求流程。Claude 仍可能在其終端機中接受回應。",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.options.app_only.title": "應用程式內請求",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.options.terminal_only.subtitle": "在 Claude Code 終端機中回應。",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.options.terminal_only.title": "僅終端機",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.subtitle": "選擇在統一終端機工作階段中核准權限請求的位置。",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.title": "核准權限請求",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.options.app_and_terminal.subtitle": "在 Happier 應用程式或 Claude Code 終端機中回應。",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.options.app_and_terminal.title": "應用程式和終端機",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.options.app_only.subtitle": "使用現有的應用程式請求流程。Claude 仍可能在其終端機中接受回應。",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.options.app_only.title": "應用程式內請求",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.options.terminal_only.subtitle": "在 Claude Code 終端機中回應。",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.options.terminal_only.title": "僅終端機",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.subtitle": "選擇在統一終端機工作階段中回答問題的位置。",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.title": "回答問題",
             "subAgentGuidance.settings.agents.claude.footer": "代理專屬的子代理行為仍由代理設定畫面管理。",
             "subAgentGuidance.settings.agents.claude.openSubtitle": "管理 Agent Teams 和其他 Claude 子代理專屬行為。",
             "subAgentGuidance.settings.agents.claude.openTitle": "Claude 子代理選項",
@@ -2518,6 +2862,23 @@
             "session.subagents.panel.launchClaudeTeamsSubtitle": "チームを作成するか、チームメイトを追加します",
             "settingsAgents.plugins.claude.fields.claudeCodeIncludeInNativeHistory.subtitle": "Agent SDK を含む新しい Claude セッションを Happier として識別します。オフでは実行環境の既定値を維持します。",
             "settingsAgents.plugins.claude.fields.claudeCodeIncludeInNativeHistory.title": "Claude Code にセッションを表示",
+            "settingsAgents.plugins.claude.fields.claudeLocalPermissionBridgeEnabled.subtitle": "従来のローカルClaudeセッションの権限リクエストをHappierに転送します。",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.options.app_and_terminal.subtitle": "HappierアプリまたはClaude Codeターミナルで回答します。",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.options.app_and_terminal.title": "アプリとターミナル",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.options.app_only.subtitle": "既存のアプリ内リクエストフローを使用します。Claude は引き続きターミナルでの回答を受け付ける場合があります。",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.options.app_only.title": "アプリで確認",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.options.terminal_only.subtitle": "Claude Codeターミナルで回答します。",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.options.terminal_only.title": "ターミナルのみ",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.subtitle": "統合ターミナルセッションで権限リクエストを承認する場所を選びます。",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.title": "権限リクエストを承認",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.options.app_and_terminal.subtitle": "HappierアプリまたはClaude Codeターミナルで回答します。",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.options.app_and_terminal.title": "アプリとターミナル",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.options.app_only.subtitle": "既存のアプリ内リクエストフローを使用します。Claude は引き続きターミナルでの回答を受け付ける場合があります。",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.options.app_only.title": "アプリで確認",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.options.terminal_only.subtitle": "Claude Codeターミナルで回答します。",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.options.terminal_only.title": "ターミナルのみ",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.subtitle": "統合ターミナルセッションで質問に回答する場所を選びます。",
+            "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.title": "質問に回答",
             "subAgentGuidance.settings.agents.claude.footer": "エージェント固有のサブエージェント動作は、引き続きエージェント設定画面で管理されます。",
             "subAgentGuidance.settings.agents.claude.openSubtitle": "Agent Teams とその他の Claude 固有のサブエージェント動作を管理します。",
             "subAgentGuidance.settings.agents.claude.openTitle": "Claude サブエージェントのオプション",
@@ -2724,10 +3085,10 @@
         "locator": {
           "export": "createClaudeAgentRuntime",
           "externalSessionsExport": "claudeExternalSessionsContribution",
-          "module": "./agent/runtime/nativeRuntime",
+          "module": "./agent/runtime/factory",
           "runtimeApiVersion": 1
         },
-        "normalizedModulePath": ".happier-plugin/agent/runtime/nativeRuntime.js"
+        "normalizedModulePath": ".happier-plugin/agent/runtime/factory.js"
       }
     ],
     "apiVersion": 1

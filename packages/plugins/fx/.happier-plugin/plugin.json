@@ -1,5 +1,6 @@
 {
   "contributes": {
+    "accessProviders": [],
     "accountCollections": [],
     "actions": [],
     "agents": [
@@ -182,6 +183,7 @@
           "externalSession": {
             "sources": [
               {
+                "contentSearch": true,
                 "instances": [
                   {
                     "constants": {},
@@ -192,21 +194,20 @@
                   "segments": [
                     {
                       "kind": "literal",
-                      "value": "fxAcpSessionList"
+                      "value": "fxHome"
                     }
                   ]
                 },
-                "resumeOnly": true,
                 "schema": {
                   "fields": [
                     {
                       "kind": "literal",
                       "name": "kind",
-                      "value": "fxAcpSessionList"
+                      "value": "fxHome"
                     }
                   ]
                 },
-                "sourceKind": "fxAcpSessionList"
+                "sourceKind": "fxHome"
               }
             ]
           }
@@ -229,13 +230,18 @@
     "composerRegions": [],
     "connectedAccountDescriptors": [],
     "daemonDatabases": [],
+    "deploymentTargets": [],
     "dragSources": [],
     "dropTargets": [],
     "events": [],
     "executionRunProfiles": [],
+    "healthCheckKinds": [],
     "hooks": [],
     "inputTypes": [],
+    "languageServers": [],
     "machineProvisioners": [],
+    "machineRecipes": [],
+    "machineSetupPresets": [],
     "managedDependencies": [],
     "mcp": {
       "discoverySources": [],
@@ -255,6 +261,7 @@
     "scmBackends": [],
     "scmHostingProviders": [],
     "searchProviders": [],
+    "secretSources": [],
     "sessionHeaderActions": [],
     "sessionInfoSections": [],
     "settings": [],

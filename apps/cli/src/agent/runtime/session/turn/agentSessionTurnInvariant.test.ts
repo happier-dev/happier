@@ -1,8 +1,72 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { createAgentSessionTurnInvariant } from './agentSessionTurnInvariant';
 
 describe('createAgentSessionTurnInvariant', () => {
+    it('admits a registered continuation from its original tool after a newer foreground turn', () => {
+        const original = Object.freeze({ permission: 'read-only' });
+        let current: Readonly<{ permission: string }> = original;
+        const captureToolContext = vi.fn(() => current);
+        const invariant = createAgentSessionTurnInvariant({
+            sessionId: 'session-1', providerContinuations: { captureToolContext },
+        });
+        let sequence = 0;
+        const observe = (event: Record<string, unknown>) => invariant.observe({
+            sessionId: 'session-1', emittedAtMs: 1, sequence: ++sequence, ...event,
+        });
+        const tool = { kind: 'tool-call', toolCallId: 'background', toolName: 'Bash', input: {} };
+        expect(observe({ kind: 'turn-start', turnId: 'first', startedBy: 'provider' }).status).toBe('accepted');
+        expect(observe({ ...tool, turnId: 'first' }).status).toBe('accepted');
+        expect(observe({ kind: 'turn-complete', turnId: 'first' }).status).toBe('accepted');
+        current = Object.freeze({ permission: 'yolo' });
+        expect(observe({ kind: 'turn-start', turnId: 'second', startedBy: 'provider' }).status).toBe('accepted');
+        expect(observe({ kind: 'turn-complete', turnId: 'second' }).status).toBe('accepted');
+        const registration = { kind: 'provider-continuation-registered', continuationId: 'task',
+            parentTurnId: 'first', parentToolCallId: 'background' };
+        expect(observe(registration).status).toBe('accepted');
+        expect(observe(registration).status).toBe('rejected');
+        expect(observe({ kind: 'provider-tool-contexts-released', parentTurnId: 'first', toolCallIds: ['background'] }).status).toBe('accepted');
+        const start = { kind: 'turn-start', startedBy: 'provider', turnId: 'continuation',
+            causedByTurnId: 'first', continuationId: 'task' };
+        expect(observe(start)).toMatchObject({ status: 'accepted', providerContinuationContext: original });
+        expect(observe({ kind: 'turn-complete', turnId: 'continuation' }).status).toBe('accepted');
+        expect(observe({ ...start, turnId: 'reused' }).status).toBe('rejected');
+        expect(observe({ ...registration, continuationId: 'released-tool' }).status).toBe('rejected');
+        expect(captureToolContext).toHaveBeenCalledTimes(1);
+    });
+
+    it.each(['missing', 'released', 'sidechain', 'unadvertised'] as const)(
+        'does not grant continuation ownership for a %s tool witness', (source) => {
+            const captureToolContext = vi.fn(() => ({ permission: 'default' }));
+            const invariant = createAgentSessionTurnInvariant({
+                sessionId: 'session-1',
+                ...(source === 'unadvertised' ? {} : { providerContinuations: { captureToolContext } }),
+            });
+            let sequence = 0;
+            const observe = (event: Record<string, unknown>) => invariant.observe({
+                sessionId: 'session-1', emittedAtMs: 1, sequence: ++sequence, ...event,
+            });
+            observe({ kind: 'turn-start', turnId: 'first', startedBy: 'provider' });
+            if (source !== 'missing') {
+                observe({ kind: 'tool-call', turnId: 'first', toolCallId: 'background', toolName: 'Bash', input: {},
+                    ...(source === 'sidechain' ? { sidechainId: 'child' } : {}) });
+            }
+            observe({ kind: 'turn-complete', turnId: 'first' });
+            const registration = { kind: 'provider-continuation-registered', continuationId: 'task',
+                parentTurnId: 'first', parentToolCallId: 'background' };
+            if (source === 'released') {
+                expect(observe(registration).status).toBe('accepted');
+                expect(observe({ kind: 'provider-continuation-released', continuationId: 'task' }).status).toBe('accepted');
+            } else {
+                expect(observe(registration).status).toBe('rejected');
+            }
+            expect(observe({ kind: 'turn-start', startedBy: 'provider', turnId: 'continuation',
+                causedByTurnId: 'first', continuationId: 'task' }).status).toBe('rejected');
+            expect(invariant.read().activeTurnId).toBeNull();
+            if (source === 'unadvertised' || source === 'sidechain') expect(captureToolContext).not.toHaveBeenCalled();
+        },
+    );
+
     it('admits skill evidence only for its current active turn', () => {
         const invariant = createAgentSessionTurnInvariant({ sessionId: 'session-1' });
         let sequence = 0;

@@ -85,6 +85,7 @@ export type PluginDevLoopActionInputById = {
     };
     readonly "plugins.enable": {
         pluginId: string;
+        scope?: 'account' | 'machine' | undefined;
         machineId?: string | undefined;
     };
     readonly "plugins.disable": {
@@ -129,6 +130,7 @@ export type PluginDevLoopActionInputById = {
                 consoleUrl?: string | undefined;
             } | undefined;
         }[] | undefined;
+        scope?: 'account' | 'machine' | undefined;
         machineId?: string | undefined;
     };
     readonly "plugins.rollback": {

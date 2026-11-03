@@ -24,12 +24,13 @@ export type { ConnectedAccountAuthFailureRequestV1 } from '../connectedAccounts.
 export type { PluginConnectedAccountAuthenticationAttempt as ConnectedAccountAuthenticationAttempt } from '../services/connectedAccounts.js';
 export type { ConnectedAccountAuthenticationContext } from '../connectedAccounts.js';
 export type { ConnectedAccountAuthenticationModeRuntime } from '../connectedAccounts.js';
-export type { ConnectedAccountAuthenticationRuntime, ConnectedAccountPortableAuthenticationContext, ConnectedAccountPortableReadContext, ConnectedAccountPortableRuntime } from '../connectedAccounts.js';
+export type { ConnectedAccountAuthenticationRuntime } from '../connectedAccounts.js';
 export type { PluginConnectedAccountBindingEvent as ConnectedAccountBindingEvent } from '../services/connectedAccounts.js';
 export type { ConnectedAccountBindingSummary } from '../connectedAccounts.js';
 export type { ConnectedAccountCredentialStore } from '../connectedAccounts.js';
 export type { PluginConnectedAccountDeviceBeginResult as ConnectedAccountDeviceBeginResult } from '../services/connectedAccounts.js';
 export type { PluginConnectedAccountDevicePollResult as ConnectedAccountDevicePollResult } from '../services/connectedAccounts.js';
+export type { ConnectedAccountEstablishedReadContext } from '../connectedAccounts.js';
 export type { PluginConnectedAccountFailureRetryEvidence as ConnectedAccountFailureRetryEvidence } from '../services/connectedAccounts.js';
 export type { ConnectedAccountHealthResult } from '../connectedAccounts.js';
 export type { ConnectedAccountListRequest } from '../connectedAccounts.js';
@@ -45,6 +46,9 @@ export type { PluginConnectedAccountMutationContext as ConnectedAccountMutationC
 export type { PluginConnectedAccountOAuthBeginRequest as ConnectedAccountOAuthBeginRequest } from '../services/connectedAccounts.js';
 export type { PluginConnectedAccountOAuthBeginResult as ConnectedAccountOAuthBeginResult } from '../services/connectedAccounts.js';
 export type { PluginConnectedAccountOAuthCompletion as ConnectedAccountOAuthCompletion } from '../services/connectedAccounts.js';
+export type { ConnectedAccountPortableAuthenticationContext } from '../connectedAccounts.js';
+export type { ConnectedAccountPortableReadContext } from '../connectedAccounts.js';
+export type { ConnectedAccountPortableRuntime } from '../connectedAccounts.js';
 export type { ConnectedAccountProviderIdentity } from '../services/connectedAccounts.js';
 export type { ConnectedAccountPurposeDeclaration } from '../connectedAccounts.js';
 export type { ConnectedAccountPurposeDeclarations } from './projections.js';

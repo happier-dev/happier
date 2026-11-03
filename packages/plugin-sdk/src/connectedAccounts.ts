@@ -71,7 +71,7 @@ import type { AgentAccountUsageMeter } from './agentRuntime/accountUsage.js';
 import type { Disposable } from './lifecycle.js';
 import type { PluginInvocationContext } from './invocation.js';
 import type { HttpService } from './services/io.js';
-import type { ConnectedAccountAuthenticationModeRuntime as CommonAuthenticationModeRuntime, ConnectedAccountEstablishedReadContext, ConnectedAccountEstablishedRuntime } from '@happier-dev/cli-common/connectedAccounts';
+import type { ConnectedAccountAuthenticationModeRuntime as CommonAuthenticationModeRuntime, ConnectedAccountEstablishedReadContext } from '@happier-dev/cli-common/connectedAccounts';
 import type { ConnectedAccountMaterialization } from './connected-accounts/materialization.js';
 export type { ConnectedAccountMaterialization } from './connected-accounts/materialization.js';
 
@@ -328,7 +328,13 @@ export type ConnectedAccountPortableRuntime = Readonly<{
     authentication: Readonly<{
         modes: Readonly<Record<string, CommonAuthenticationModeRuntime<PluginConnectedAccountPortableAuthenticationContext>>>;
     }>;
-}> & Partial<Pick<ConnectedAccountEstablishedRuntime<ConnectedAccountPortableReadContext>, 'materialize'>>;
+}> & {
+    materialize?(
+        request: ConnectedAccountMaterializationRequest,
+        context: ConnectedAccountPortableReadContext,
+        options?: Readonly<{ signal?: AbortSignal; existingFiles?: Readonly<Record<string, Uint8Array>> }>,
+    ): Promise<ConnectedAccountMaterialization>;
+};
 
 /** Authentication-only registrations remain valid portable runtimes. @realm any */
 export type ConnectedAccountAuthenticationRuntime = ConnectedAccountPortableRuntime;
@@ -658,3 +664,5 @@ export const buildConnectedServiceCredentialRecord: (
             }>;
         }>,
 ) => ConnectedServiceCredentialRecordV1 = buildProtocolConnectedServiceCredentialRecord;
+
+export type { ConnectedAccountEstablishedReadContext } from '@happier-dev/cli-common/connectedAccounts';

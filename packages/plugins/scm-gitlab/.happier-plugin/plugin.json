@@ -4,8 +4,571 @@
     "monochrome": true
   },
   "contributes": {
+    "accessProviders": [],
     "accountCollections": [],
     "actions": [
+      {
+        "connectedAccountPurposeBindings": [
+          {
+            "path": "draft.binding.account",
+            "purpose": "gitlab-connected-account"
+          }
+        ],
+        "dangerLevel": "safe",
+        "description": "Lists selectable projects or the retained configured selection.",
+        "execution": {
+          "target": "daemon"
+        },
+        "hostAccess": [
+          "gitlab-cloud-api",
+          "gitlab-account-api",
+          "gitlab-connected-account"
+        ],
+        "id": "triage/list-gitlab-scope-units",
+        "inputSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "additionalProperties": false,
+          "properties": {
+            "cursor": {
+              "additionalProperties": false,
+              "properties": {
+                "token": {
+                  "minLength": 1,
+                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                  "type": "string",
+                  "x-happier-max-utf8-bytes": 40322
+                },
+                "v": {
+                  "const": 1
+                }
+              },
+              "required": [
+                "v",
+                "token"
+              ],
+              "type": "object"
+            },
+            "draft": {
+              "additionalProperties": false,
+              "properties": {
+                "binding": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "account": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "accountId": {
+                          "maxLength": 256,
+                          "minLength": 1,
+                          "pattern": "^(?!\\s)[\\s\\S]*\\S$(?![\\s\\S])",
+                          "type": "string"
+                        },
+                        "service": {
+                          "anyOf": [
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "localId": {
+                                  "maxLength": 256,
+                                  "minLength": 1,
+                                  "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$(?![\\s\\S])",
+                                  "type": "string"
+                                },
+                                "pluginId": {
+                                  "maxLength": 256,
+                                  "minLength": 3,
+                                  "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$(?![\\s\\S])",
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "pluginId",
+                                "localId"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "localId": {
+                                  "const": "mcp-sign-in"
+                                },
+                                "pluginId": {
+                                  "const": "happier"
+                                }
+                              },
+                              "required": [
+                                "pluginId",
+                                "localId"
+                              ],
+                              "type": "object"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "service",
+                        "accountId"
+                      ],
+                      "type": "object"
+                    },
+                    "purpose": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 128
+                    }
+                  },
+                  "required": [
+                    "purpose",
+                    "account"
+                  ],
+                  "type": "object"
+                },
+                "configuration": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "token": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 1024
+                    },
+                    "v": {
+                      "const": 1
+                    }
+                  },
+                  "required": [
+                    "v",
+                    "token"
+                  ],
+                  "type": "object"
+                },
+                "keyStability": {
+                  "anyOf": [
+                    {
+                      "const": "stable"
+                    },
+                    {
+                      "const": "locatorDerived"
+                    }
+                  ]
+                },
+                "localInstanceKey": {
+                  "minLength": 1,
+                  "pattern": "^[^\\u0000-\\u001f\\u007f]+(?:\\u001f[^\\u0000-\\u001f\\u007f]+)?$",
+                  "type": "string",
+                  "x-happier-max-utf8-bytes": 128
+                },
+                "locator": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "displayLabel": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 512
+                    },
+                    "displayPath": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 512
+                    },
+                    "v": {
+                      "const": 1
+                    },
+                    "webUrl": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 384
+                    }
+                  },
+                  "required": [
+                    "v",
+                    "displayLabel"
+                  ],
+                  "type": "object"
+                },
+                "v": {
+                  "const": 1
+                }
+              },
+              "required": [
+                "v",
+                "localInstanceKey",
+                "configuration",
+                "binding"
+              ],
+              "type": "object"
+            },
+            "mode": {
+              "anyOf": [
+                {
+                  "const": "available"
+                },
+                {
+                  "const": "configured"
+                }
+              ]
+            },
+            "query": {
+              "minLength": 1,
+              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+              "type": "string",
+              "x-happier-max-utf8-bytes": 512
+            },
+            "v": {
+              "const": 1
+            }
+          },
+          "required": [
+            "v",
+            "draft"
+          ],
+          "type": "object"
+        },
+        "placementBindings": [
+          "commandPalette"
+        ],
+        "resultSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "page"
+                },
+                "selection": {
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "kind": {
+                          "const": "all"
+                        }
+                      },
+                      "required": [
+                        "kind"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "kind": {
+                          "const": "selected"
+                        },
+                        "unitIds": {
+                          "items": {
+                            "minLength": 1,
+                            "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                            "type": "string",
+                            "x-happier-max-utf8-bytes": 1024
+                          },
+                          "minItems": 1,
+                          "type": "array",
+                          "uniqueItems": true
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "unitIds"
+                      ],
+                      "type": "object"
+                    }
+                  ]
+                },
+                "status": {
+                  "const": "complete"
+                },
+                "units": {
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "collisionScope": {
+                        "minLength": 1,
+                        "pattern": "^[^\\u0000-\\u001f\\u007f]+(?:\\u001f[^\\u0000-\\u001f\\u007f]+)?$",
+                        "type": "string",
+                        "x-happier-max-utf8-bytes": 192
+                      },
+                      "id": {
+                        "minLength": 1,
+                        "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                        "type": "string",
+                        "x-happier-max-utf8-bytes": 1024
+                      },
+                      "label": {
+                        "minLength": 1,
+                        "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                        "type": "string",
+                        "x-happier-max-utf8-bytes": 512
+                      },
+                      "secondaryText": {
+                        "minLength": 1,
+                        "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                        "type": "string",
+                        "x-happier-max-utf8-bytes": 512
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "label"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                }
+              },
+              "required": [
+                "kind",
+                "selection",
+                "units",
+                "status"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "failure": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "class": {
+                      "anyOf": [
+                        {
+                          "const": "authentication"
+                        },
+                        {
+                          "const": "permission"
+                        },
+                        {
+                          "const": "rateLimit"
+                        },
+                        {
+                          "const": "transient"
+                        },
+                        {
+                          "const": "unsupportedContract"
+                        },
+                        {
+                          "const": "unknown"
+                        }
+                      ]
+                    },
+                    "code": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 128
+                    },
+                    "detail": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 256
+                    },
+                    "retryNotBeforeMs": {
+                      "maximum": 9007199254740991,
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "class",
+                    "code"
+                  ],
+                  "type": "object"
+                },
+                "kind": {
+                  "const": "page"
+                },
+                "nextCursor": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "token": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 40322
+                    },
+                    "v": {
+                      "const": 1
+                    }
+                  },
+                  "required": [
+                    "v",
+                    "token"
+                  ],
+                  "type": "object"
+                },
+                "selection": {
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "kind": {
+                          "const": "all"
+                        }
+                      },
+                      "required": [
+                        "kind"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "kind": {
+                          "const": "selected"
+                        },
+                        "unitIds": {
+                          "items": {
+                            "minLength": 1,
+                            "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                            "type": "string",
+                            "x-happier-max-utf8-bytes": 1024
+                          },
+                          "minItems": 1,
+                          "type": "array",
+                          "uniqueItems": true
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "unitIds"
+                      ],
+                      "type": "object"
+                    }
+                  ]
+                },
+                "status": {
+                  "const": "partial"
+                },
+                "units": {
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "collisionScope": {
+                        "minLength": 1,
+                        "pattern": "^[^\\u0000-\\u001f\\u007f]+(?:\\u001f[^\\u0000-\\u001f\\u007f]+)?$",
+                        "type": "string",
+                        "x-happier-max-utf8-bytes": 192
+                      },
+                      "id": {
+                        "minLength": 1,
+                        "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                        "type": "string",
+                        "x-happier-max-utf8-bytes": 1024
+                      },
+                      "label": {
+                        "minLength": 1,
+                        "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                        "type": "string",
+                        "x-happier-max-utf8-bytes": 512
+                      },
+                      "secondaryText": {
+                        "minLength": 1,
+                        "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                        "type": "string",
+                        "x-happier-max-utf8-bytes": 512
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "label"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                }
+              },
+              "required": [
+                "kind",
+                "selection",
+                "units",
+                "status"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "failure": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "class": {
+                      "anyOf": [
+                        {
+                          "const": "authentication"
+                        },
+                        {
+                          "const": "permission"
+                        },
+                        {
+                          "const": "rateLimit"
+                        },
+                        {
+                          "const": "transient"
+                        },
+                        {
+                          "const": "unsupportedContract"
+                        },
+                        {
+                          "const": "unknown"
+                        }
+                      ]
+                    },
+                    "code": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 128
+                    },
+                    "detail": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 256
+                    },
+                    "retryNotBeforeMs": {
+                      "maximum": 9007199254740991,
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "class",
+                    "code"
+                  ],
+                  "type": "object"
+                },
+                "kind": {
+                  "const": "failed"
+                }
+              },
+              "required": [
+                "kind",
+                "failure"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "scopes": [
+          "settings"
+        ],
+        "surfaces": [
+          "plugin",
+          "ui",
+          "agent",
+          "mcp",
+          "cli"
+        ],
+        "title": "List GitLab projects"
+      },
       {
         "dangerLevel": "safe",
         "description": "Discovers the GitLab deployments each authorized account can reach.",
@@ -255,11 +818,11 @@
                     },
                     "required": [
                       "v",
-                      "binding",
                       "localInstanceKey",
                       "keyStability",
                       "configuration",
-                      "locator"
+                      "locator",
+                      "binding"
                     ],
                     "type": "object"
                   },
@@ -701,11 +1264,11 @@
                     },
                     "required": [
                       "v",
-                      "binding",
                       "localInstanceKey",
                       "keyStability",
                       "configuration",
-                      "locator"
+                      "locator",
+                      "binding"
                     ],
                     "type": "object"
                   },
@@ -1078,6 +1641,31 @@
             {
               "additionalProperties": false,
               "properties": {
+                "completed": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "kindIds": {
+                      "items": {
+                        "minLength": 1,
+                        "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                        "type": "string",
+                        "x-happier-max-utf8-bytes": 128
+                      },
+                      "minItems": 1,
+                      "type": "array"
+                    },
+                    "sinceMs": {
+                      "maximum": 8640000000000000,
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "kindIds",
+                    "sinceMs"
+                  ],
+                  "type": "object"
+                },
                 "instance": {
                   "additionalProperties": false,
                   "properties": {
@@ -1294,6 +1882,31 @@
             {
               "additionalProperties": false,
               "properties": {
+                "completed": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "kindIds": {
+                      "items": {
+                        "minLength": 1,
+                        "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                        "type": "string",
+                        "x-happier-max-utf8-bytes": 128
+                      },
+                      "minItems": 1,
+                      "type": "array"
+                    },
+                    "sinceMs": {
+                      "maximum": 8640000000000000,
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "kindIds",
+                    "sinceMs"
+                  ],
+                  "type": "object"
+                },
                 "instance": {
                   "additionalProperties": false,
                   "properties": {
@@ -1738,12 +2351,23 @@
                                 "type": "string",
                                 "x-happier-max-utf8-bytes": 512
                               },
+                              "completedAtMs": {
+                                "maximum": 9007199254740991,
+                                "minimum": -9007199254740991,
+                                "type": "integer"
+                              },
                               "createdAtMs": {
                                 "maximum": 9007199254740991,
                                 "minimum": -9007199254740991,
                                 "type": "integer"
                               },
                               "designation": {
+                                "minLength": 1,
+                                "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                "type": "string",
+                                "x-happier-max-utf8-bytes": 512
+                              },
+                              "dueDate": {
                                 "minLength": 1,
                                 "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                 "type": "string",
@@ -2175,6 +2799,12 @@
                                 "type": "string",
                                 "x-happier-max-utf8-bytes": 512
                               },
+                              "scopeUnitId": {
+                                "minLength": 1,
+                                "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                "type": "string",
+                                "x-happier-max-utf8-bytes": 1024
+                              },
                               "state": {
                                 "additionalProperties": false,
                                 "properties": {
@@ -2241,6 +2871,15 @@
                               "taskCapabilities": {
                                 "additionalProperties": false,
                                 "properties": {
+                                  "completedScan": {
+                                    "const": true
+                                  },
+                                  "completingTransitionId": {
+                                    "minLength": 1,
+                                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                    "type": "string",
+                                    "x-happier-max-utf8-bytes": 128
+                                  },
                                   "createFields": {
                                     "items": {
                                       "anyOf": [
@@ -2898,12 +3537,23 @@
                                 "type": "string",
                                 "x-happier-max-utf8-bytes": 512
                               },
+                              "completedAtMs": {
+                                "maximum": 9007199254740991,
+                                "minimum": -9007199254740991,
+                                "type": "integer"
+                              },
                               "createdAtMs": {
                                 "maximum": 9007199254740991,
                                 "minimum": -9007199254740991,
                                 "type": "integer"
                               },
                               "designation": {
+                                "minLength": 1,
+                                "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                "type": "string",
+                                "x-happier-max-utf8-bytes": 512
+                              },
+                              "dueDate": {
                                 "minLength": 1,
                                 "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                 "type": "string",
@@ -3335,6 +3985,12 @@
                                 "type": "string",
                                 "x-happier-max-utf8-bytes": 512
                               },
+                              "scopeUnitId": {
+                                "minLength": 1,
+                                "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                "type": "string",
+                                "x-happier-max-utf8-bytes": 1024
+                              },
                               "state": {
                                 "additionalProperties": false,
                                 "properties": {
@@ -3401,6 +4057,15 @@
                               "taskCapabilities": {
                                 "additionalProperties": false,
                                 "properties": {
+                                  "completedScan": {
+                                    "const": true
+                                  },
+                                  "completingTransitionId": {
+                                    "minLength": 1,
+                                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                    "type": "string",
+                                    "x-happier-max-utf8-bytes": 128
+                                  },
                                   "createFields": {
                                     "items": {
                                       "anyOf": [
@@ -4335,6 +5000,28 @@
                     {
                       "additionalProperties": false,
                       "properties": {
+                        "baseOid": {
+                          "pattern": "^[a-f0-9]{40}(?:[a-f0-9]{24})?$",
+                          "type": "string"
+                        },
+                        "headOid": {
+                          "pattern": "^[a-f0-9]{40}(?:[a-f0-9]{24})?$",
+                          "type": "string"
+                        },
+                        "kind": {
+                          "const": "revisionRange"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "baseOid",
+                        "headOid"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
                         "kind": {
                           "const": "pullRequest"
                         },
@@ -4386,6 +5073,10 @@
                                     "localId"
                                   ],
                                   "type": "object"
+                                },
+                                "clientId": {
+                                  "minLength": 1,
+                                  "type": "string"
                                 },
                                 "input": {},
                                 "messageActionReference": {
@@ -4566,12 +5257,23 @@
                       "type": "string",
                       "x-happier-max-utf8-bytes": 512
                     },
+                    "completedAtMs": {
+                      "maximum": 9007199254740991,
+                      "minimum": -9007199254740991,
+                      "type": "integer"
+                    },
                     "createdAtMs": {
                       "maximum": 9007199254740991,
                       "minimum": -9007199254740991,
                       "type": "integer"
                     },
                     "designation": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 512
+                    },
+                    "dueDate": {
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
@@ -5003,6 +5705,12 @@
                       "type": "string",
                       "x-happier-max-utf8-bytes": 512
                     },
+                    "scopeUnitId": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 1024
+                    },
                     "state": {
                       "additionalProperties": false,
                       "properties": {
@@ -5069,6 +5777,15 @@
                     "taskCapabilities": {
                       "additionalProperties": false,
                       "properties": {
+                        "completedScan": {
+                          "const": true
+                        },
+                        "completingTransitionId": {
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                          "type": "string",
+                          "x-happier-max-utf8-bytes": 128
+                        },
                         "createFields": {
                           "items": {
                             "anyOf": [
@@ -8576,6 +9293,28 @@
                             {
                               "additionalProperties": false,
                               "properties": {
+                                "baseOid": {
+                                  "pattern": "^[a-f0-9]{40}(?:[a-f0-9]{24})?$",
+                                  "type": "string"
+                                },
+                                "headOid": {
+                                  "pattern": "^[a-f0-9]{40}(?:[a-f0-9]{24})?$",
+                                  "type": "string"
+                                },
+                                "kind": {
+                                  "const": "revisionRange"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "baseOid",
+                                "headOid"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
                                 "kind": {
                                   "const": "pullRequest"
                                 },
@@ -8627,6 +9366,10 @@
                                             "localId"
                                           ],
                                           "type": "object"
+                                        },
+                                        "clientId": {
+                                          "minLength": 1,
+                                          "type": "string"
                                         },
                                         "input": {},
                                         "messageActionReference": {
@@ -8807,12 +9550,23 @@
                               "type": "string",
                               "x-happier-max-utf8-bytes": 512
                             },
+                            "completedAtMs": {
+                              "maximum": 9007199254740991,
+                              "minimum": -9007199254740991,
+                              "type": "integer"
+                            },
                             "createdAtMs": {
                               "maximum": 9007199254740991,
                               "minimum": -9007199254740991,
                               "type": "integer"
                             },
                             "designation": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 512
+                            },
+                            "dueDate": {
                               "minLength": 1,
                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                               "type": "string",
@@ -9244,6 +9998,12 @@
                               "type": "string",
                               "x-happier-max-utf8-bytes": 512
                             },
+                            "scopeUnitId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 1024
+                            },
                             "state": {
                               "additionalProperties": false,
                               "properties": {
@@ -9310,6 +10070,15 @@
                             "taskCapabilities": {
                               "additionalProperties": false,
                               "properties": {
+                                "completedScan": {
+                                  "const": true
+                                },
+                                "completingTransitionId": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                },
                                 "createFields": {
                                   "items": {
                                     "anyOf": [
@@ -12058,6 +12827,9 @@
           "$schema": "http://json-schema.org/draft-07/schema#",
           "additionalProperties": false,
           "properties": {
+            "comparison": {
+              "const": true
+            },
             "continuation": {
               "minLength": 1,
               "type": "string"
@@ -12304,6 +13076,357 @@
         "resultSchema": {
           "$schema": "http://json-schema.org/draft-07/schema#",
           "anyOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "comparison": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "baseOid": {
+                      "minLength": 1,
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 128
+                    },
+                    "beforeOid": {
+                      "minLength": 1,
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 128
+                    },
+                    "content": {
+                      "anyOf": [
+                        {
+                          "const": "complete"
+                        },
+                        {
+                          "const": "incomplete"
+                        }
+                      ]
+                    },
+                    "enumeratedFileCount": {
+                      "maximum": 9007199254740991,
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "failure": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "class": {
+                          "anyOf": [
+                            {
+                              "const": "authentication"
+                            },
+                            {
+                              "const": "permission"
+                            },
+                            {
+                              "const": "rateLimit"
+                            },
+                            {
+                              "const": "transient"
+                            },
+                            {
+                              "const": "unsupportedContract"
+                            },
+                            {
+                              "const": "unknown"
+                            }
+                          ]
+                        },
+                        "code": {
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                          "type": "string",
+                          "x-happier-max-utf8-bytes": 128
+                        },
+                        "detail": {
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                          "type": "string",
+                          "x-happier-max-utf8-bytes": 256
+                        },
+                        "retryNotBeforeMs": {
+                          "maximum": 9007199254740991,
+                          "minimum": 0,
+                          "type": "integer"
+                        }
+                      },
+                      "required": [
+                        "class",
+                        "code"
+                      ],
+                      "type": "object"
+                    },
+                    "freshness": {
+                      "anyOf": [
+                        {
+                          "const": "current"
+                        },
+                        {
+                          "const": "stale"
+                        },
+                        {
+                          "const": "unverified"
+                        }
+                      ]
+                    },
+                    "headOid": {
+                      "minLength": 1,
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 128
+                    },
+                    "inventory": {
+                      "anyOf": [
+                        {
+                          "const": "complete"
+                        },
+                        {
+                          "const": "incomplete"
+                        }
+                      ]
+                    },
+                    "locator": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "number": {
+                          "maximum": 9007199254740991,
+                          "minimum": 1,
+                          "type": "integer"
+                        },
+                        "providerId": {
+                          "const": "gitlab"
+                        },
+                        "repository": {
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "providerId",
+                        "repository",
+                        "number"
+                      ],
+                      "type": "object"
+                    },
+                    "reasons": {
+                      "items": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "type": "array"
+                    },
+                    "totalFileCount": {
+                      "anyOf": [
+                        {
+                          "maximum": 9007199254740991,
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        {
+                          "const": null
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "beforeOid",
+                    "baseOid",
+                    "headOid",
+                    "totalFileCount",
+                    "locator",
+                    "enumeratedFileCount",
+                    "freshness",
+                    "inventory",
+                    "content",
+                    "reasons"
+                  ],
+                  "type": "object"
+                },
+                "continuation": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "incomplete": {
+                  "const": "pagination"
+                },
+                "kind": {
+                  "const": "changedFiles"
+                },
+                "omittedRowCount": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "projectionTruncated": {
+                  "anyOf": [
+                    {
+                      "const": true
+                    },
+                    {
+                      "const": false
+                    }
+                  ]
+                },
+                "rows": {
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "collapsed": {
+                        "anyOf": [
+                          {
+                            "const": true
+                          },
+                          {
+                            "const": false
+                          }
+                        ]
+                      },
+                      "deletedFile": {
+                        "anyOf": [
+                          {
+                            "const": true
+                          },
+                          {
+                            "const": false
+                          }
+                        ]
+                      },
+                      "diffAvailable": {
+                        "anyOf": [
+                          {
+                            "const": true
+                          },
+                          {
+                            "const": false
+                          }
+                        ]
+                      },
+                      "evidence": {
+                        "anyOf": [
+                          {
+                            "additionalProperties": false,
+                            "properties": {
+                              "patch": {
+                                "type": "string"
+                              },
+                              "state": {
+                                "const": "available"
+                              }
+                            },
+                            "required": [
+                              "state",
+                              "patch"
+                            ],
+                            "type": "object"
+                          },
+                          {
+                            "additionalProperties": false,
+                            "properties": {
+                              "patch": {
+                                "type": "string"
+                              },
+                              "reason": {
+                                "minLength": 1,
+                                "type": "string"
+                              },
+                              "state": {
+                                "const": "truncated"
+                              }
+                            },
+                            "required": [
+                              "state",
+                              "patch",
+                              "reason"
+                            ],
+                            "type": "object"
+                          },
+                          {
+                            "additionalProperties": false,
+                            "properties": {
+                              "reason": {
+                                "minLength": 1,
+                                "type": "string"
+                              },
+                              "state": {
+                                "const": "unavailable"
+                              }
+                            },
+                            "required": [
+                              "state",
+                              "reason"
+                            ],
+                            "type": "object"
+                          }
+                        ]
+                      },
+                      "newFile": {
+                        "anyOf": [
+                          {
+                            "const": true
+                          },
+                          {
+                            "const": false
+                          }
+                        ]
+                      },
+                      "path": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "previousPath": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "renamedFile": {
+                        "anyOf": [
+                          {
+                            "const": true
+                          },
+                          {
+                            "const": false
+                          }
+                        ]
+                      },
+                      "status": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "tooLarge": {
+                        "anyOf": [
+                          {
+                            "const": true
+                          },
+                          {
+                            "const": false
+                          }
+                        ]
+                      },
+                      "truncated": {
+                        "const": true
+                      }
+                    },
+                    "required": [
+                      "path",
+                      "newFile",
+                      "renamedFile",
+                      "deletedFile",
+                      "status",
+                      "diffAvailable",
+                      "evidence"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                }
+              },
+              "required": [
+                "kind",
+                "rows",
+                "omittedRowCount",
+                "projectionTruncated",
+                "comparison"
+              ],
+              "type": "object"
+            },
             {
               "additionalProperties": false,
               "properties": {
@@ -29112,13 +30235,18 @@
       }
     ],
     "daemonDatabases": [],
+    "deploymentTargets": [],
     "dragSources": [],
     "dropTargets": [],
     "events": [],
     "executionRunProfiles": [],
+    "healthCheckKinds": [],
     "hooks": [],
     "inputTypes": [],
+    "languageServers": [],
     "machineProvisioners": [],
+    "machineRecipes": [],
+    "machineSetupPresets": [],
     "managedDependencies": [],
     "mcp": {
       "discoverySources": [],
@@ -29160,6 +30288,7 @@
       }
     ],
     "searchProviders": [],
+    "secretSources": [],
     "sessionHeaderActions": [],
     "sessionInfoSections": [],
     "settings": [],
@@ -29214,6 +30343,10 @@
             }
           ],
           "purpose": "gitlab-connected-account",
+          "scopeUnit": {
+            "pluralLabel": "Projects",
+            "singularLabel": "Project"
+          },
           "settingsPageId": "triage-sources",
           "v": 1
         },
@@ -29221,6 +30354,7 @@
         "operations": {
           "get": "triage/get-gitlab-entry",
           "listInstances": "triage/list-gitlab-instances",
+          "listScopeUnits": "triage/list-gitlab-scope-units",
           "prepareReviewWorkspace": "triage/prepare-gitlab-review-workspace",
           "readPullRequestStatus": "triage/read-gitlab-pull-request-status",
           "scan": "triage/scan-gitlab",
@@ -29617,6 +30751,8 @@
             "plugins.triage.detailStory.runningSoFar.many": "{count} running so far",
             "plugins.triage.detailStory.runningSoFar.one": "{count} running so far",
             "plugins.triage.detailStory.runningSoFar.other": "{count} running so far",
+            "plugins.triage.detailStory.showLess": "Show less",
+            "plugins.triage.detailStory.showMore": "Show more",
             "plugins.triage.detailStory.smallerFiles.few": "{count} smaller files",
             "plugins.triage.detailStory.smallerFiles.many": "{count} smaller files",
             "plugins.triage.detailStory.smallerFiles.one": "{count} smaller file",
@@ -30007,6 +31143,8 @@
             "plugins.triage.detailStory.runningSoFar.many": "Пока выполняется: {count}",
             "plugins.triage.detailStory.runningSoFar.one": "Пока выполняется: {count}",
             "plugins.triage.detailStory.runningSoFar.other": "Пока выполняется: {count}",
+            "plugins.triage.detailStory.showLess": "Показать меньше",
+            "plugins.triage.detailStory.showMore": "Показать больше",
             "plugins.triage.detailStory.smallerFiles.few": "ещё {count} файла поменьше",
             "plugins.triage.detailStory.smallerFiles.many": "ещё {count} файлов поменьше",
             "plugins.triage.detailStory.smallerFiles.one": "ещё {count} файл поменьше",
@@ -30397,6 +31535,8 @@
             "plugins.triage.detailStory.runningSoFar.many": "Dotąd w toku: {count}",
             "plugins.triage.detailStory.runningSoFar.one": "Dotąd w toku: {count}",
             "plugins.triage.detailStory.runningSoFar.other": "Dotąd w toku: {count}",
+            "plugins.triage.detailStory.showLess": "Pokaż mniej",
+            "plugins.triage.detailStory.showMore": "Pokaż więcej",
             "plugins.triage.detailStory.smallerFiles.few": "{count} mniejsze pliki",
             "plugins.triage.detailStory.smallerFiles.many": "{count} mniejszych plików",
             "plugins.triage.detailStory.smallerFiles.one": "{count} mniejszy plik",
@@ -30787,6 +31927,8 @@
             "plugins.triage.detailStory.runningSoFar.many": "{count} en curso por ahora",
             "plugins.triage.detailStory.runningSoFar.one": "{count} en curso por ahora",
             "plugins.triage.detailStory.runningSoFar.other": "{count} en curso por ahora",
+            "plugins.triage.detailStory.showLess": "Mostrar menos",
+            "plugins.triage.detailStory.showMore": "Mostrar más",
             "plugins.triage.detailStory.smallerFiles.few": "{count} archivos más pequeños",
             "plugins.triage.detailStory.smallerFiles.many": "{count} archivos más pequeños",
             "plugins.triage.detailStory.smallerFiles.one": "{count} archivo más pequeño",
@@ -31177,6 +32319,8 @@
             "plugins.triage.detailStory.runningSoFar.many": "{count} en cours pour l’instant",
             "plugins.triage.detailStory.runningSoFar.one": "{count} en cours pour l’instant",
             "plugins.triage.detailStory.runningSoFar.other": "{count} en cours pour l’instant",
+            "plugins.triage.detailStory.showLess": "Afficher moins",
+            "plugins.triage.detailStory.showMore": "Afficher plus",
             "plugins.triage.detailStory.smallerFiles.few": "{count} fichiers plus petits",
             "plugins.triage.detailStory.smallerFiles.many": "{count} fichiers plus petits",
             "plugins.triage.detailStory.smallerFiles.one": "{count} fichier plus petit",
@@ -31567,6 +32711,8 @@
             "plugins.triage.detailStory.runningSoFar.many": "{count} in corso finora",
             "plugins.triage.detailStory.runningSoFar.one": "{count} in corso finora",
             "plugins.triage.detailStory.runningSoFar.other": "{count} in corso finora",
+            "plugins.triage.detailStory.showLess": "Mostra meno",
+            "plugins.triage.detailStory.showMore": "Mostra altro",
             "plugins.triage.detailStory.smallerFiles.few": "{count} file più piccoli",
             "plugins.triage.detailStory.smallerFiles.many": "{count} file più piccoli",
             "plugins.triage.detailStory.smallerFiles.one": "{count} file più piccolo",
@@ -31957,6 +33103,8 @@
             "plugins.triage.detailStory.runningSoFar.many": "{count} em andamento até agora",
             "plugins.triage.detailStory.runningSoFar.one": "{count} em andamento até agora",
             "plugins.triage.detailStory.runningSoFar.other": "{count} em andamento até agora",
+            "plugins.triage.detailStory.showLess": "Mostrar menos",
+            "plugins.triage.detailStory.showMore": "Mostrar mais",
             "plugins.triage.detailStory.smallerFiles.few": "{count} arquivos menores",
             "plugins.triage.detailStory.smallerFiles.many": "{count} arquivos menores",
             "plugins.triage.detailStory.smallerFiles.one": "{count} arquivo menor",
@@ -32347,6 +33495,8 @@
             "plugins.triage.detailStory.runningSoFar.many": "bisher {count} laufen",
             "plugins.triage.detailStory.runningSoFar.one": "bisher {count} läuft",
             "plugins.triage.detailStory.runningSoFar.other": "bisher {count} laufen",
+            "plugins.triage.detailStory.showLess": "Weniger anzeigen",
+            "plugins.triage.detailStory.showMore": "Mehr anzeigen",
             "plugins.triage.detailStory.smallerFiles.few": "{count} kleinere Dateien",
             "plugins.triage.detailStory.smallerFiles.many": "{count} kleinere Dateien",
             "plugins.triage.detailStory.smallerFiles.one": "{count} kleinere Datei",
@@ -32737,6 +33887,8 @@
             "plugins.triage.detailStory.runningSoFar.many": "{count} en curs de moment",
             "plugins.triage.detailStory.runningSoFar.one": "{count} en curs de moment",
             "plugins.triage.detailStory.runningSoFar.other": "{count} en curs de moment",
+            "plugins.triage.detailStory.showLess": "Mostra’n menys",
+            "plugins.triage.detailStory.showMore": "Mostra’n més",
             "plugins.triage.detailStory.smallerFiles.few": "{count} fitxers més petits",
             "plugins.triage.detailStory.smallerFiles.many": "{count} fitxers més petits",
             "plugins.triage.detailStory.smallerFiles.one": "{count} fitxer més petit",
@@ -33127,6 +34279,8 @@
             "plugins.triage.detailStory.runningSoFar.many": "目前 {count} 项进行中",
             "plugins.triage.detailStory.runningSoFar.one": "目前 {count} 项进行中",
             "plugins.triage.detailStory.runningSoFar.other": "目前 {count} 项进行中",
+            "plugins.triage.detailStory.showLess": "收起",
+            "plugins.triage.detailStory.showMore": "显示更多",
             "plugins.triage.detailStory.smallerFiles.few": "另有 {count} 个较小的文件",
             "plugins.triage.detailStory.smallerFiles.many": "另有 {count} 个较小的文件",
             "plugins.triage.detailStory.smallerFiles.one": "另有 {count} 个较小的文件",
@@ -33517,6 +34671,8 @@
             "plugins.triage.detailStory.runningSoFar.many": "目前 {count} 項進行中",
             "plugins.triage.detailStory.runningSoFar.one": "目前 {count} 項進行中",
             "plugins.triage.detailStory.runningSoFar.other": "目前 {count} 項進行中",
+            "plugins.triage.detailStory.showLess": "收合",
+            "plugins.triage.detailStory.showMore": "顯示更多",
             "plugins.triage.detailStory.smallerFiles.few": "另有 {count} 個較小的檔案",
             "plugins.triage.detailStory.smallerFiles.many": "另有 {count} 個較小的檔案",
             "plugins.triage.detailStory.smallerFiles.one": "另有 {count} 個較小的檔案",
@@ -33907,6 +35063,8 @@
             "plugins.triage.detailStory.runningSoFar.many": "現時点で {count} 件実行中",
             "plugins.triage.detailStory.runningSoFar.one": "現時点で {count} 件実行中",
             "plugins.triage.detailStory.runningSoFar.other": "現時点で {count} 件実行中",
+            "plugins.triage.detailStory.showLess": "表示を減らす",
+            "plugins.triage.detailStory.showMore": "さらに表示",
             "plugins.triage.detailStory.smallerFiles.few": "ほか {count} 個の小さなファイル",
             "plugins.triage.detailStory.smallerFiles.many": "ほか {count} 個の小さなファイル",
             "plugins.triage.detailStory.smallerFiles.one": "ほか {count} 個の小さなファイル",

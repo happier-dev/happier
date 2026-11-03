@@ -1446,7 +1446,7 @@ export type HomeGovernanceActionResultById = {
             source: 'default' | 'home' | 'deployment';
             fixed: boolean;
             editable: 'home' | 'bootstrap';
-            apply: 'live' | 'restart';
+            apply: 'restart' | 'live';
             secretSet?: boolean | undefined;
             readOnlyReason?: string | undefined;
             declaration?: {
@@ -1500,7 +1500,7 @@ export type HomeGovernanceActionResultById = {
             source: 'default' | 'home' | 'deployment';
             fixed: boolean;
             editable: 'home' | 'bootstrap';
-            apply: 'live' | 'restart';
+            apply: 'restart' | 'live';
             secretSet?: boolean | undefined;
             readOnlyReason?: string | undefined;
             declaration?: {

@@ -123,6 +123,8 @@ export interface EventMessage {
  */
 export interface TokenCountMessage {
   type: 'token-count';
+  /** Stable identity of an explicit provider delta, preserved as usage-observed identity. */
+  observationId?: string;
   [key: string]: unknown;
 }
 
