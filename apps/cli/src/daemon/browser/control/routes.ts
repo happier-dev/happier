@@ -9,13 +9,17 @@ import {
 import type { MachineLiveStreamCaptureRegistry } from '../../peer/mediation/stream/captureRegistry';
 import type { BrowserAutomationDaemonService } from '../automation/service';
 import type { createBrowserProfileCookieImporter } from '../profiles/importCookies';
+import type { BrowserProfilePasskeyActivation } from '../profiles/passkeys';
 import type { BrowserProfileLoginsImportResultV1 } from '@happier-dev/protocol/browser/profile/v1';
 
+
+type ImportPasskeys = (input: BrowserProfilePasskeyActivation) => Promise<BrowserProfileLoginsImportResultV1>;
 
 export type BrowserDaemonControlRoutes = Readonly<{
   dispatchCommand(command: unknown, context?: Pick<ActionExecutorContext, 'authority' | 'bypassApprovals' | 'signal'>): Promise<BrowserCommandDispatchResultV1>;
   listViews(browserSessionId: string): readonly BrowserDaemonViewV1[];
   importCookies?: ReturnType<typeof createBrowserProfileCookieImporter>;
+  importPasskeys?: ImportPasskeys;
 }>;
 
 function readCommandId(input: unknown): string {
@@ -38,6 +42,7 @@ export function createBrowserDaemonControlRoutes(input: Readonly<{
   captureRegistry?: Pick<MachineLiveStreamCaptureRegistry, 'resolve'>;
   automation?: () => BrowserAutomationDaemonService | null;
   importCookies?: ReturnType<typeof createBrowserProfileCookieImporter>;
+  importPasskeys?: ImportPasskeys;
 }>): BrowserDaemonControlRoutes {
   async function dispatchToBroker(command: BrowserCommandV1, signal?: AbortSignal): Promise<BrowserCommandDispatchResultV1> {
     const result = await input.broker.dispatchCommand(command, signal ? { signal } : undefined);
@@ -51,6 +56,7 @@ export function createBrowserDaemonControlRoutes(input: Readonly<{
 
   return {
     ...(input.importCookies ? { importCookies: input.importCookies } : {}),
+    ...(input.importPasskeys ? { importPasskeys: input.importPasskeys } : {}),
     listViews(browserSessionId) {
       return (input.broker.listViews?.(browserSessionId) ?? []).map(view => {
         const source = input.captureRegistry?.resolve({ sourceId: view.sourceId, streamFamily: 'browser.streamed' });

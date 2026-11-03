@@ -70,3 +70,4 @@ export type BrowserProfileV1 = z.infer<typeof BrowserProfileV1Schema>;
 export * from './extensionsV1.js';
 export * from './loginsV1.js';
 export * from './importCookiesV1.js';
+export * from './importPasskeysV1.js';

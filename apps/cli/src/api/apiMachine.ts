@@ -1551,6 +1551,8 @@ export class ApiMachineClient {
                     machineId: runtime.machineId, isCurrent } : null;
             },
         });
+        // Native-view imports are available independently of managed Chromium startup.
+        registerDaemonBrowserControlHandler(this.rpcHandlerManager, { getNativeClient: () => this });
         const operationInstallation = readInstallationIdentityIfExistsSync();
         this.actionOperationRuntime = createHostActionOperationRuntime({
             serverId: configuration.activeServerId,
@@ -2914,6 +2916,7 @@ export class ApiMachineClient {
     registerBrowserControlRoutes(browserControl: BrowserDaemonControlRoutes): void {
         registerDaemonBrowserControlHandler(this.rpcHandlerManager, {
             browserControl,
+            getNativeClient: () => this,
         });
     }
 

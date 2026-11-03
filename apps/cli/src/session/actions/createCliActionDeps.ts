@@ -13,6 +13,7 @@
 
 
 
+import { importCliSavedSecretPasskeysForOperation } from './cliActionDeps/browserProfileLogins';
 import { importBrowserProfileCookiesV1 } from '@happier-dev/protocol/browser/profile/v1';
 import { createCliWorkspaceSyncActionDeps } from './cliActionDeps/workspaceSync';
 import { createCliOccurrenceAction } from './cliActionDeps/occurrences';
@@ -909,10 +910,13 @@ export function createCliActionDeps(params: CliActionDepsParams,
       promptStacks: approvalsStore.promptLibraryStore.organization, skillRules: approvalsStore.skillRules } : {}),
     prepareLocalServiceStartApproval,
     browserProfileLoginsImport: async ({ input, context }) => {
-      if (input.kind !== 'cookies') return { status: 'unavailable', code: 'passkey_import_unavailable' };
-      return importBrowserProfileCookiesV1(input, call => callMachineAction({ machineId: call.machineId,
+      const rpc = (call: Readonly<{ machineId: string; method: string; input: unknown }>) => callMachineAction({ machineId: call.machineId,
         method: call.method, request: call.input, context, signal: context.signal, exactMachine: true,
-        effectActionId: 'browser.profile.logins.import', timeoutMs: null }), context.signal);
+        effectActionId: 'browser.profile.logins.import', timeoutMs: null });
+      if (input.kind === 'cookies') return importBrowserProfileCookiesV1(input, rpc, context.signal);
+      const activate = () => importCliSavedSecretPasskeysForOperation({ input, rpc, expectedScopeKey: roleAccountScopeKey,
+        operationContext: params.savedSecretOperationContext, signal: context.signal });
+      return params.serverHttpBaseUrl ? runWithServerHttpBaseUrl(params.serverHttpBaseUrl, activate) : activate();
     },
     runtimeActionExecute,
     ...(approvalsStore ? { memoryLibrary: {

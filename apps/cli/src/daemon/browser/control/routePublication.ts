@@ -1,4 +1,6 @@
 import { createBrowserProfileCookieImporter } from "@/daemon/browser/profiles/importCookies";
+import { createBrowserProfilePasskeyImporter } from "@/daemon/browser/profiles/importPasskeys";
+import { createBrowserProfilePasskeyAuthenticator } from "@/daemon/browser/profiles/passkeys";
 import type { BrowserStoragePartitionOwner } from '@/daemon/browser/storage/partitions';
 import { invalidateProcessLaunchDiscovery } from "@/processes/launchNotification";
 import { join, resolve } from "node:path";
@@ -194,6 +196,7 @@ setBrowserRecordingRoutesProvider?: (
   let disposeBrowserSidecarControlAdapter: (() => void | Promise<void>) | null =
     null;
   let disposeBrowserSidecarDiagnosticsRuntime: (() => void) | null = null;
+  let browserProfilePasskeys: ReturnType<typeof createBrowserProfilePasskeyAuthenticator> | null = null;
   let browserControlRoutes: BrowserDaemonControlRoutes | null = null;
   let browserContextRoutes: BrowserContextRoutes | null = null;
   let browserAutomationRoutes: BrowserAutomationRoutes | null = null;
@@ -360,8 +363,21 @@ setBrowserRecordingRoutesProvider?: (
             browserControlBroker.hasExecutableAdapters() &&
             !browserControlRoutes
           ) {
+            if (browserSidecarControlAdapterResult.contextCapture) {
+              browserProfilePasskeys = createBrowserProfilePasskeyAuthenticator({
+                capture: browserSidecarControlAdapterResult.contextCapture,
+                listViews: browserControlBroker.listViews,
+              });
+            }
             browserControlRoutes = createBrowserDaemonControlRoutes({
-              importCookies: createBrowserProfileCookieImporter(browserSidecarControlAdapterResult.contextCapture),
+              importCookies: createBrowserProfileCookieImporter(browserSidecarControlAdapterResult.contextCapture, {
+                getNativeClient: params.getApiMachineForSessions,
+              }),
+              importPasskeys: request => createBrowserProfilePasskeyImporter(browserSidecarControlAdapterResult.contextCapture, {
+                activateManaged: browserProfilePasskeys?.activate,
+                getNativeClient: params.getApiMachineForSessions,
+              })({ browserSessionId: request.browserSessionId, viewId: request.viewId, profileId: request.profileId,
+                credentials: request.credentials }, request.signal),
               broker: browserControlBroker,
               captureRegistry: params.liveStreamCaptureRegistry,
               automation: () => browserAutomationServiceForCapture,
@@ -841,6 +857,8 @@ setBrowserRecordingRoutesProvider?: (
       );
     });
     browserCdpScreencastProducer = null;
+    await browserProfilePasskeys?.dispose();
+    browserProfilePasskeys = null;
     await disposeBrowserSidecarControlAdapter?.();
   };
   const stopRecording = (): void => {

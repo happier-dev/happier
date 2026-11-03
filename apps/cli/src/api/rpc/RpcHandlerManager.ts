@@ -397,7 +397,8 @@ export class RpcHandlerManager {
         const confidential = privateMethod === RPC_METHODS.APPROVAL_REQUEST_SECRET_CONTINUE
             || privateMethod === RPC_METHODS.DAEMON_SECRET_SOURCE_INVOKE
             || privateMethod === RPC_METHODS.DAEMON_BROWSER_PROFILE_COOKIE_SOURCE_READ
-            || privateMethod === RPC_METHODS.DAEMON_BROWSER_PROFILE_COOKIES_APPLY;
+            || privateMethod === RPC_METHODS.DAEMON_BROWSER_PROFILE_COOKIES_APPLY
+            || privateMethod === RPC_METHODS.DAEMON_BROWSER_PROFILE_PASSKEYS_APPLY;
         let callId: string | null = null;
         const respond = (request: RpcRequest, result: unknown, acknowledgement: SocketRpcTransportAcknowledgementV1 | null = null) => {
             diagnostic.outcomeCode = readOutcomeCode(result);

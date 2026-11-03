@@ -40,6 +40,7 @@ export const RPC_METHODS = {
   DAEMON_BROWSER_PROFILE_LOGIN_SOURCES: 'daemon.browser.profile.loginSources',
   DAEMON_BROWSER_PROFILE_COOKIE_SOURCE_READ: 'daemon.browser.profile.cookieSource.read',
   DAEMON_BROWSER_PROFILE_COOKIES_APPLY: 'daemon.browser.profile.cookies.apply',
+  DAEMON_BROWSER_PROFILE_PASSKEYS_APPLY: 'daemon.browser.profile.passkeys.apply',
   USAGE_SOURCES_DISCOVER: 'usage.sources.discover',
   USAGE_SOURCES_GET: 'usage.sources.get',
   USAGE_SOURCES_CONSENT_SET: 'usage.sources.consent.set',

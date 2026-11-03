@@ -1,14 +1,42 @@
+import { uiBrowserAutomationDispatchMethod } from '@happier-dev/protocol/browser/automation/reverseDispatchV1';
+import { BrowserProfileLoginsImportResultV1Schema } from '@happier-dev/protocol/browser/profile/v1';
+import type { ReverseCaptureMachineRpcClient } from '../recording/reverseChannel/desktopReverseCaptureUiCall';
 import type { BrowserSidecarContextCaptureSurface } from '../sidecar/controlAdapter';
 import { BrowserCookieApplyV1Schema, type BrowserProfileLoginsImportResultV1, type BrowserLoginImportRecordV1 } from '@happier-dev/protocol/browser/profile/v1';
 
-export function createBrowserProfileCookieImporter(capture: BrowserSidecarContextCaptureSurface | undefined) {
+export function createBrowserProfileCookieImporter(
+  capture: BrowserSidecarContextCaptureSurface | undefined,
+  options?: Readonly<{ getNativeClient: () => ReverseCaptureMachineRpcClient | null | undefined }>,
+) {
   return async (input: unknown, signal?: AbortSignal): Promise<BrowserProfileLoginsImportResultV1> => {
     const parsed = BrowserCookieApplyV1Schema.safeParse(input);
     if (!parsed.success) return { status: 'unavailable', code: 'import_failed' };
     if (signal?.aborted) return { status: 'unavailable', code: 'canceled' };
     const request = parsed.data;
     const handle = capture?.resolvePageHandle(request);
-    if (!capture || !handle) return { status: 'unavailable', code: 'destination_unavailable' };
+    if (!capture || !handle) {
+      const client = options?.getNativeClient();
+      if (!client) return { status: 'unavailable', code: 'destination_unavailable' };
+      let issued = false;
+      try {
+        // Continues the admitted import over the existing encrypted, exact-view channel. This is
+        // private material, never a second Action invocation or an agent-visible result.
+        const response = await client.callConnectedClientRpc(uiBrowserAutomationDispatchMethod(request), request, {
+          timeoutMs: null, signal, answeringClient: { requireSingle: true }, onIssued: () => { issued = true; },
+        });
+        if (response.ok) {
+          const result = BrowserProfileLoginsImportResultV1Schema.safeParse(response.result);
+          if (result.success) return result.data;
+        }
+      } catch {
+        // The native exception may contain cookie material. Only metadata leaves this owner.
+      }
+      if (signal?.aborted) return { status: 'unavailable', code: 'canceled' };
+      if (!issued || !request.cookies.length) return { status: 'unavailable', code: 'destination_unavailable' };
+      return { status: 'completed', records: request.cookies.map(({ domain, name }) => ({
+        domain, name, status: 'failed' as const, code: 'import_unknown' as const,
+      })) };
+    }
     const profile = capture.resolveProfile?.(request);
     if (!profile || profile.profileId !== request.profileId || profile.lifecycleState !== 'active') {
       return { status: 'unavailable', code: 'profile_mismatch' };

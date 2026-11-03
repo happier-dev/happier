@@ -334,7 +334,7 @@ const DIRECT_EPHEMERAL_POLICIES = Object.freeze([
     sharedMachineAccess: 'manage' as const },
   directEphemeral(RPC_METHODS.DAEMON_BROWSER_VIEW_LIST, 'Session-filtered browser view discovery projects the daemon control owner and live capture readiness without server persistence or mutation.'),
   ...([RPC_METHODS.DAEMON_BROWSER_PROFILE_LOGIN_SOURCES, RPC_METHODS.DAEMON_BROWSER_PROFILE_COOKIE_SOURCE_READ,
-    RPC_METHODS.DAEMON_BROWSER_PROFILE_COOKIES_APPLY] as const).map(method => ({ ...directEphemeral(method,
+    RPC_METHODS.DAEMON_BROWSER_PROFILE_COOKIES_APPLY, RPC_METHODS.DAEMON_BROWSER_PROFILE_PASSKEYS_APPLY] as const).map(method => ({ ...directEphemeral(method,
       'Private native browser login exchange. Manage grants access to the Machine OS user and its browser stores.'),
     sharedMachineAccess: 'manage' as const })),
   directEphemeral(RPC_METHODS.DAEMON_BROWSER_DIAGNOSTICS_SNAPSHOT, 'Daemon-local browser diagnostics snapshot read with bounded redacted events and no server persistence or cross-device fanout.'),
