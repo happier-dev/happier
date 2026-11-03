@@ -59,6 +59,7 @@ export async function inReadSnapshot<T>(read: (tx: Tx) => Promise<T>, options?: 
 }
 
 export type TransactionReplayReason = "session-account-audience-changed"
+    | "session-machine-access-key-conflict"
     | "session-initial-access-admission-changed"
     | "discussion-participant-birth-admission-changed"
     | "automation-assignment-admission-changed"

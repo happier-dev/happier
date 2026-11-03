@@ -109,7 +109,7 @@ export function accessKeysRoutes(app: Fastify) {
         try {
             const created = await inTx(tx => createSessionMachineAccessKeyInTx(tx, {
                 accountId: userId, machineId, sessionId, data,
-            }), { isolationLevel: "Serializable" /* Key creation composes Session correspondence with current Machine installation/access admission. */ });
+            }));
 
             if (!created.ok) {
                 return created.reason === "binding-not-found"
@@ -182,7 +182,7 @@ export function accessKeysRoutes(app: Fastify) {
                 sessionId,
                 data,
                 expectedVersion,
-            }), { isolationLevel: "Serializable" /* Key CAS does not itself guard the separately read Machine admission and Session binding. */ });
+            }));
 
             if (!updated.ok) {
                 if (updated.reason === "not-found") {

@@ -28,6 +28,13 @@ import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 
 import { sessionRpcWithServerAccountScope, sessionRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
+import { captureLazyActionAccountContext, type LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
+import { createUiAccountAction } from '@/sync/ops/actions/accountActionDeps';
+import { runWithServerRequestAuthorityForServerAccountScope } from '@/sync/runtime/orchestration/serverScopedRpc/createServerRequestWithServerScope';
+import { SessionSnapshotReadError } from '@/sync/runtime/orchestration/serverScopedRpc/readSessionSnapshotForAuthority';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
+import { isActionAccountScopeChangedError } from '@/sync/domains/scope/actionAccountScopeError';
 import { notifyExecutionRunActivity } from '@/sync/runtime/executionRuns/executionRunActivityBus';
 import {
     INACTIVE_SESSION_RPC_UNAVAILABLE_ERROR,
@@ -93,6 +100,91 @@ function readErrorResponseShape(response: unknown): { ok: false; error: string; 
         ...(typeof (response as any).errorCode === 'string' ? { errorCode: String((response as any).errorCode) } : {}),
         ...('details' in response ? { details: (response as { details?: unknown }).details } : {}),
     };
+}
+
+type SessionExecutionRunReadOptions = Readonly<{
+    serverId?: string | null;
+    scope?: ServerAccountScope;
+    signal?: AbortSignal;
+    account?: LazyActionAccountContext;
+    context?: ActionExecutorContext;
+}>;
+
+/** Live Session RPC and retained reads share the CLI source owner after a typed route loss. */
+async function readSessionExecutionRun(
+    actionId: 'execution.run.get' | 'execution.run.list' | 'execution.run.wait',
+    sessionId: string,
+    request: unknown,
+    serverId: string,
+    opts?: SessionExecutionRunReadOptions,
+): Promise<unknown> {
+    let account: LazyActionAccountContext | undefined;
+    try {
+        // Capture before the first suspension: a late route failure must not
+        // borrow a replacement Account's credentials for its retained read.
+        try { account = opts?.account ?? await captureLazyActionAccountContext(serverId, opts?.signal); }
+        catch { /* Session-scoped viewers retain their existing live RPC path. */ }
+        account?.assertCurrent();
+        if (account && (opts?.scope && opts.scope.accountId !== account.accountId
+            || opts?.context?.runtimeAccountId && opts.context.runtimeAccountId !== account.accountId
+            || !areServerProfileIdentifiersEquivalent(account.serverId, serverId))) {
+            return { ok: false, error: 'action_account_scope_changed', errorCode: 'action_account_scope_changed' };
+        }
+        let response: unknown;
+        try {
+            response = await executionRunSessionRpc({ sessionId, serverId, scope: opts?.scope,
+                method: actionId, payload: request, signal: opts?.signal,
+                ...(actionId === 'execution.run.get' && request && typeof request === 'object'
+                    && ('waitForInputId' in request && request.waitForInputId || 'waitForOutput' in request && request.waitForOutput)
+                    ? { timeoutMs: null } : {}) });
+        } catch (error) {
+            response = { ok: false, error: error instanceof Error ? error.message : 'Unknown error', errorCode: readRpcErrorCode(error) };
+        }
+        account?.assertCurrent();
+        const failure = readErrorResponseShape(response);
+        if (!failure || ![RPC_ERROR_CODES.METHOD_NOT_AVAILABLE, RPC_ERROR_CODES.METHOD_NOT_FOUND,
+            RPC_ERROR_CODES.CLIENT_NOT_AVAILABLE, RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE,
+            'target_unavailable', 'execution_run_target_unavailable', 'execution_run_not_found'].includes(failure.errorCode ?? '')) return response;
+        // A restricted invocation cannot borrow the app's private Account authority.
+        if (opts?.signal?.aborted || opts?.context?.externalActionCredential || opts?.context?.externalActionExecutionAuthorization
+            || opts?.context?.rpcSessionAuthorization) return response;
+        if (!account) return response;
+        account.assertCurrent();
+        const captured = account;
+        const { sync } = await import('@/sync/sync');
+        const hydrated = await runWithServerRequestAuthorityForServerAccountScope({ scope: account.accountLifetime.scope,
+            activeRequest: account.request }, authority => sync.ensureSessionVisibleForMessageRoute(sessionId, {
+                serverId: authority.scope.serverId, authority, hydrateMessages: false,
+                scopeCurrentness: captured.accountLifetime.isCurrent, signal: opts?.signal,
+            }));
+        account.assertCurrent();
+        opts?.signal?.throwIfAborted();
+        if (hydrated.kind !== 'available') {
+            throw new SessionSnapshotReadError(hydrated.errorCode
+                ?? (hydrated.kind === 'missing' ? hydrated.cause : 'content_unavailable'));
+        }
+        const session = storage.getState().sessions[sessionId];
+        if (!session || !areServerProfileIdentifiersEquivalent(session.serverId, account.serverId)) return response;
+        const machineId = readSessionOwnerMetadataView(session)?.machineId?.trim();
+        if (!machineId) return response;
+        const target = opts?.context?.externalActionTarget;
+        if (target && (target.kind === 'machine' ? target.machineId !== machineId : target.sessionId !== sessionId)) {
+            return { ok: false, error: 'target_not_local', errorCode: 'target_not_local' };
+        }
+        if (!request || typeof request !== 'object' || Array.isArray(request)) {
+            return { ok: false, error: 'invalid_parameters', errorCode: 'invalid_parameters' };
+        }
+        return await createUiAccountAction({ account })({ actionId, input: { ...request, sessionId },
+            context: { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, ...opts?.context,
+                serverId: account.serverId, runtimeAccountId: account.accountId,
+                externalActionTarget: { kind: 'machine', machineId }, signal: opts?.signal } });
+    } catch (error) {
+        const code = isActionAccountScopeChangedError(error) ? 'action_account_scope_changed'
+            : error instanceof SessionSnapshotReadError ? error.errorCode : readRpcErrorCode(error) ?? 'content_unavailable';
+        return { ok: false, error: code, errorCode: code };
+    } finally {
+        if (account && account !== opts?.account) account.dispose();
+    }
 }
 
 export function isExecutionRunNotRunningMutationError(result: unknown): boolean {
@@ -336,19 +428,12 @@ export async function sessionExecutionRunEnsure(
 export async function sessionExecutionRunList(
     sessionId: string,
     request: ExecutionRunListRequest,
-    opts?: Readonly<{ serverId?: string | null; scope?: ServerAccountScope; signal?: AbortSignal }>,
+    opts?: SessionExecutionRunReadOptions,
 ): Promise<SessionExecutionRunListResult> {
     try {
         const serverId = opts?.scope?.serverId ?? resolveExecutionRunSessionServerId(sessionId, opts?.serverId, 'read');
         if (!serverId) return createExecutionRunHomeUnavailableResult();
-        const response = await executionRunSessionRpc<unknown, ExecutionRunListRequest>({
-            sessionId,
-            serverId,
-            scope: opts?.scope,
-            method: SESSION_RPC_METHODS.EXECUTION_RUN_LIST,
-            payload: request,
-            signal: opts?.signal,
-        });
+        const response = await readSessionExecutionRun('execution.run.list', sessionId, request, serverId, opts);
         const errorResponse = readErrorResponseShape(response);
         if (errorResponse) return errorResponse;
         const parsed = ExecutionRunListResponseSchema.safeParse(response);
@@ -368,20 +453,12 @@ export async function sessionExecutionRunList(
 export async function sessionExecutionRunGet(
     sessionId: string,
     request: ExecutionRunGetRequest,
-    opts?: Readonly<{ serverId?: string | null; scope?: ServerAccountScope; signal?: AbortSignal }>,
+    opts?: SessionExecutionRunReadOptions,
 ): Promise<SessionExecutionRunGetResult> {
     try {
         const serverId = opts?.scope?.serverId ?? resolveExecutionRunSessionServerId(sessionId, opts?.serverId, 'read');
         if (!serverId) return createExecutionRunHomeUnavailableResult();
-        const response = await executionRunSessionRpc<unknown, ExecutionRunGetRequest>({
-            sessionId,
-            serverId,
-            scope: opts?.scope,
-            method: SESSION_RPC_METHODS.EXECUTION_RUN_GET,
-            payload: request,
-            ...(request.waitForInputId || request.waitForOutput ? { timeoutMs: null } : {}),
-            ...(opts?.signal ? { signal: opts.signal } : {}),
-        });
+        const response = await readSessionExecutionRun('execution.run.get', sessionId, request, serverId, opts);
         const errorResponse = readErrorResponseShape(response);
         if (errorResponse) return errorResponse;
         const parsed = ExecutionRunGetResponseSchema.safeParse(response);
@@ -401,18 +478,12 @@ export async function sessionExecutionRunGet(
 export async function sessionExecutionRunWait(
     sessionId: string,
     request: unknown,
-    opts?: Readonly<{ serverId?: string | null; signal?: AbortSignal }>,
+    opts?: SessionExecutionRunReadOptions,
 ): Promise<unknown> {
     try {
-        const serverId = resolveExecutionRunSessionServerId(sessionId, opts?.serverId, 'read');
+        const serverId = opts?.scope?.serverId ?? resolveExecutionRunSessionServerId(sessionId, opts?.serverId, 'read');
         if (!serverId) return createExecutionRunHomeUnavailableResult();
-        return await sessionRpcWithServerScope<unknown, unknown>({
-            sessionId,
-            serverId,
-            method: SESSION_RPC_METHODS.EXECUTION_RUN_WAIT,
-            payload: request,
-            ...(opts?.signal ? { signal: opts.signal } : {}),
-        });
+        return await readSessionExecutionRun('execution.run.wait', sessionId, request, serverId, opts);
     } catch (error) {
         return {
             ok: false,

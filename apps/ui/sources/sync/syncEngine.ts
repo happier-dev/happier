@@ -4028,6 +4028,7 @@ class Sync {
                 forceRefresh?: boolean;
                 /** Require a read started after this demand instead of joining an older hydration. */
                 fresh?: boolean;
+                signal?: AbortSignal;
                 serverId?: string;
                 includeTurnsProjection?: boolean;
                 hydrateMessages?: boolean;
@@ -4127,9 +4128,9 @@ class Sync {
                 return createRetryableSessionRouteResult(normalized, preferredServerId, 'unknown');
             }
 
-            const authorityScopeKey = options?.authority
-                ? serverAccountScopeKeySuffix(options.authority.scope)
-                : '';
+            // Captured and applied readers of the same Home/credentials share
+            // the existing acquisition; capturing authority is not new demand.
+            const authorityScopeKey = resolveAuthCredentialsScopeKey(credentials);
             // A lean background read cannot satisfy an opened transcript's turn demand.
             const inFlightKey = `${buildSessionByIdHydrationInFlightKey(normalized, preferredServerId)}:${authorityScopeKey}:${includeTurnsProjection}`;
             const finishMessageHydration = async (result: EnsureSessionVisibleForRouteResult) => {
@@ -4162,6 +4163,8 @@ class Sync {
             }
 
             let hydrationCurrent = true;
+            const hydrationController = new AbortController();
+            const hydrationCancellation = mergeAbortSignals([hydrationController.signal, options?.signal]);
             const hydrationEncryption = this.encryption;
             const readerEncryption = options?.authority ? options.authority.context.encryption : hydrationEncryption;
             const readSessionEncryption = () => readerEncryption?.getSessionEncryption(normalized) ?? null;
@@ -4171,9 +4174,8 @@ class Sync {
             const hydrationLifetime = embedScope || options?.scopeCurrentness
                 ? null
                 : captureActiveServerAccountScopeCurrentness();
-            const isHydrationCurrent = (): boolean => (
-                hydrationCurrent
-                && (embedScope ? this.embedSessionScope === embedScope && embedScope.isCurrent() : (options?.scopeCurrentness?.() ?? hydrationLifetime?.isCurrent() ?? false))
+            const isHydrationScopeCurrent = (): boolean => (
+                (embedScope ? this.embedSessionScope === embedScope && embedScope.isCurrent() : (options?.scopeCurrentness?.() ?? hydrationLifetime?.isCurrent() ?? false))
                 && (hasExplicitScopeCurrentness || (
                     hydrationEncryption === this.encryption
                     && hydrationGeneration === this.serverScopeGeneration
@@ -4182,6 +4184,9 @@ class Sync {
                         || this.isServerAccountSessionAuthorityCurrent(options.authority)
                     )
                 ))
+            );
+            const isHydrationCurrent = (): boolean => (
+                hydrationCurrent && !hydrationCancellation.signal.aborted && isHydrationScopeCurrent()
             );
             const inFlight = (async () => {
                 try {
@@ -4207,8 +4212,12 @@ class Sync {
                         includeTurnsProjection,
                         authority: options?.authority,
                         accountCurrentnessSource: options?.accountCurrentnessSource,
+                        signal: hydrationCancellation.signal,
                         isCurrent: isHydrationCurrent,
                     });
+                    // Retirement can abort the physical read before it returns its stale
+                    // response. Preserve the hydration owner's settled stale-result contract.
+                    if (!isHydrationCurrent()) return createAwaitingPushSessionRouteResult(normalized, preferredServerId);
                     if (!result.ok) {
                         const code = typeof result.errorCode === 'string' ? result.errorCode : '';
                         if (code === 'stale_response') return createAwaitingPushSessionRouteResult(normalized, preferredServerId);
@@ -4287,6 +4296,7 @@ class Sync {
                 readSessionEncryption,
                 invalidate: () => {
                     hydrationCurrent = false;
+                    hydrationController.abort();
                     if (this.sessionByIdHydrationInFlight.get(inFlightKey) === inFlightEntry) {
                         this.sessionByIdHydrationInFlight.delete(inFlightKey);
                     }
@@ -4294,6 +4304,7 @@ class Sync {
             });
             this.sessionByIdHydrationInFlight.set(inFlightKey, inFlightEntry);
             inFlight.finally(() => {
+                hydrationCancellation.dispose();
                 if (this.sessionByIdHydrationInFlight.get(inFlightKey) === inFlightEntry) {
                     this.sessionByIdHydrationInFlight.delete(inFlightKey);
                 }
@@ -13354,15 +13365,16 @@ class Sync {
                 const currentDemand = () => isCurrent()
                     && resolveSessionLiveConsumption(sessionId, serverId).isFullContentConsumer;
                 if (!currentDemand()) return;
-                // Admission needs the current snapshot even for a retained same-Home
-                // carrier. A read begun before reconnect cannot satisfy this demand.
+                // Visibility admission consumes the hydration owner's retained or
+                // ongoing transcript acquisition. Changes/reconnect reconciliation
+                // already invalidate that owner when Session facts advance.
                 const authority = await captureServerRequestAuthorityForServerAccountScope({
                     serverId, activeRequest: this.requestViaConfiguredSocket,
                 });
                 try {
                     if (!currentDemand()) return;
-                    await this.ensureSessionVisibleForMessageRoute(sessionId, { serverId, fresh: true,
-                        hydrateMessages: false, includeTurnsProjection: false,
+                    await this.ensureSessionVisibleForMessageRoute(sessionId, { serverId,
+                        hydrateMessages: false, includeTurnsProjection: true,
                         authority, scopeCurrentness: currentDemand });
                 } finally { await authority.release(); }
                 if (currentDemand() && areServerProfileIdentifiersEquivalent(storage.getState().sessions[sessionId]?.serverId, serverId)) {

@@ -1,10 +1,14 @@
+import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
+import { createMachineReadBatchResponseFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { countTransportRequests } from '@/dev/testkit/performance/counts';
 import * as React from 'react';
 import { beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { encodeV2SessionListCursorV2, projectLegacySessionAccessCapabilitiesV1, SessionAwarenessListResultV1Schema } from '@happier-dev/protocol';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
-import { createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
-import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { createCompactSessionListFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
+import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { Encryption } from '@/sync/encryption/encryption';
 import { encodeBase64 } from '@/encryption/base64';
@@ -76,7 +80,11 @@ const runtimeFetchMock = vi.hoisted(() => vi.fn());
 
 // The callbacks describe external per-Session facts. The canonical adapter
 // serves those same facts through either the single or current batch HTTP wire.
-const sessionHttpBoundary = createSessionReadBatchFetchBoundary(async (url, init) => runtimeFetchMock(String(url), init));
+const sessionHttpBoundary = createCompactSessionListFetchBoundary(
+    async (url, init) => new URL(String(url)).pathname === '/v2/sessions/read-batch'
+        ? undefined
+        : runtimeFetchMock(String(url), init),
+);
 
 import { storage } from './domains/state/storage';
 import { createDeferred, renderHook, renderScreen } from '@/dev/testkit';
@@ -150,16 +158,35 @@ function expectRuntimeFetchWithBearer(url: string, token: string): void {
     expect(new Headers(init?.headers).get('Authorization')).toBe(`Bearer ${token}`);
 }
 
-async function applySelectedHomeForSessionListTest(credentials?: import('@/auth/storage/tokenStorage').AuthCredentials): Promise<void> {
+async function applySelectedHomeForSessionListTest(
+    credentials?: import('@/auth/storage/tokenStorage').AuthCredentials,
+    configureSocket?: Parameters<typeof restoreServerAccountForTest>[0]['configureSocket'],
+): Promise<void> {
     const { disconnectActiveServerConnection } = await import('./runtime/orchestration/connectionManager');
     await disconnectActiveServerConnection();
     const selected = getActiveServerSnapshot();
     const appliedCredentials = credentials ?? { token: tokenForSub('account-a') };
+    if (configureSocket) {
+        const originalFetch = runtimeFetchMock.getMockImplementation()!;
+        runtimeFetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+            const path = new URL(url).pathname;
+            if (path === '/health') return Response.json({});
+            if (path === '/v2/cursor') return Response.json({ cursor: 0, changesFloor: 0 });
+            if (path === '/v1/features' || path === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse());
+            if (path === '/v1/machines/read-batch') return createMachineReadBatchResponseFixture(init?.body, () => null);
+            const response = await originalFetch(url, init);
+            return response?.status === 404 ? createEmptyAccountBootstrapHttpResponse(path, init) ?? response : response;
+        });
+    }
     await TokenStorage.setCredentialsForServerUrl(selected.serverUrl, { serverId: selected.serverId }, appliedCredentials);
     const connection = await restoreServerAccountForTest({
         serverUrl: selected.serverUrl,
         credentials: appliedCredentials,
         request: sessionHttpBoundary,
+        configureSocket: configureSocket ? (socket, serverUrl) => {
+            configureSocket(socket, serverUrl);
+            configureConnectedServerSocketBoundary(socket);
+        } : undefined,
     });
     // Current restore harness uses real secure credential storage.
     const { setRuntimeFetch } = await import('@/utils/system/runtimeFetch');
@@ -206,6 +233,64 @@ async function createEncryptedSessionFixture(sessionId: string) {
 }
 
 describe('sync.ensureSessionVisibleForMessageRoute', () => {
+    it('shares a mounted transcript acquisition with live admission and reopens without a snapshot', async () => {
+        const { createSocketIoBoundaryStub } = await import('@/dev/testkit/mocks/socketIo');
+        const { RPC_ERROR_CODES } = await import('@happier-dev/protocol/rpc');
+        const { SOCKET_RPC_EVENTS } = await import('@happier-dev/protocol/socketRpc');
+        const acknowledgements = createSocketIoBoundaryStub().socket.emitWithAck;
+        await applySelectedHomeForSessionListTest(undefined, (socket) => {
+            socket.emitWithAck = vi.fn(async (event: string, payload?: unknown) => event === SOCKET_RPC_EVENTS.CALL
+                ? { ok: false, error: 'Session runner is unavailable', errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND }
+                : acknowledgements(event, payload));
+        });
+        const sessionId = 'live-admission-open';
+        const serverId = getActiveServerSnapshot().serverId!;
+        const row = createPlainSessionCurrentProjectionRecordFixture({ id: sessionId, seq: 1 });
+        const { buildSessionTurnsProjectionV1 } = await import('@happier-dev/protocol/sessions/turns/sessionTurnV1');
+        requestMock.mockImplementation(async (path: string) => {
+            if (path.split('?')[0] === `/v2/sessions/${sessionId}`) return Response.json({ session: row });
+            if (path === `/v1/sessions/${sessionId}/turns`) return Response.json(buildSessionTurnsProjectionV1({ sessionId, updatedAt: 1, turns: [] }));
+            if (path.startsWith(`/v1/sessions/${sessionId}/messages`)) return Response.json({
+                messages: [], hasMore: false, nextBeforeSeq: null, nextAfterSeq: null,
+            });
+            return undefined;
+        });
+        const transport = countTransportRequests(sessionHttpBoundary, (input, init) =>
+            `${init?.method ?? 'GET'} ${new URL(String(input)).pathname}`);
+        const { setRuntimeFetch } = await import('@/utils/system/runtimeFetch');
+        setRuntimeFetch(transport.request);
+        onTestFinished(() => { setRuntimeFetch(sessionHttpBoundary); markSessionSurfaceHidden(sessionId, serverId); });
+        const { sync } = await import('./sync');
+        const { useHydrateSessionForRoute } = await import('@/hooks/session/useHydrateSessionForRoute');
+        const open = async () => {
+            const hook = await renderHook(() => {
+                React.useEffect(() => {
+                    markSessionSurfaceVisible(sessionId, serverId);
+                    return () => markSessionSurfaceHidden(sessionId, serverId);
+                }, []);
+                return useHydrateSessionForRoute(sessionId, 'live-admission-test', { serverId });
+            });
+            await waitForAssertion(() => expect(hook.getCurrent().kind).toBe('available'));
+            await sync.ensureSessionVisibleForMessageRoute(sessionId, { serverId, includeTurnsProjection: true,
+                hydrateMessages: true, awaitMessageHydration: true });
+            const { sessionExecutionRunList } = await import('@/sync/ops/sessionExecutionRuns');
+            // SessionView and the SCM comparison's launchability independently
+            // inspect historical runs; neither creates new snapshot demand.
+            await sessionExecutionRunList(sessionId, {}, { serverId });
+            await sessionExecutionRunList(sessionId, {}, { serverId });
+            await hook.rerender();
+            return hook;
+        };
+        const first = await open();
+        const firstReads = transport.read()['POST /v2/sessions/read-batch'] ?? 0;
+        await first.unmount();
+        transport.reset();
+        const reopened = await open();
+        const reopenReads = transport.read()['POST /v2/sessions/read-batch'] ?? 0;
+        await reopened.unmount();
+        expect({ firstReads, reopenReads }).toEqual({ firstReads: 1, reopenReads: 0 });
+    });
+
     it.each(['plain', 'e2ee'] as const)('presents a freshly created %s Session regardless of list order or stored witness', async (mode) => {
         const { sync } = await import('./sync');
         for (const order of ['list-first', 'detail-first'] as const) {

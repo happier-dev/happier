@@ -1,7 +1,7 @@
 import { readMachineAvailabilityStateInTx } from "@/app/machines/machineStateGuards";
 import { resolveMachineAdmissionInTx } from "@/app/machines/machineAccess";
 import { isPrismaErrorCode } from "@/storage/db";
-import type { Tx } from "@/storage/inTx";
+import { TransactionReplayRequiredError, type Tx } from "@/storage/inTx";
 import { acquireAccountChangePublicationLocksInTx } from '@/app/changes/markAccountChanged';
 
 async function acquireBindingMutationAccountsInTx(tx: Tx, binding: SessionMachineAccessKeyBinding): Promise<void> {
@@ -19,6 +19,8 @@ async function acquireBindingMutationAccountsInTx(tx: Tx, binding: SessionMachin
  * of its own — the tuple must already exist and the Machine must be available.
  *
  * Standalone callers open `inTx`; the same transaction owns admission and the tuple write.
+ * Admission is decided once; the unique tuple and version CAS protect the writes
+ * without Serializable predicate conflicts between unrelated Session bindings.
  */
 
 export type SessionMachineAccessKeyBinding = Readonly<{
@@ -145,12 +147,9 @@ export async function createSessionMachineAccessKeyInTx(
     } catch (error) {
         if (!isPrismaErrorCode(error, "P2002")) throw error;
 
-        // A concurrent writer won the unique tuple. The binding is already
-        // established, so the caller's retry observes the winner instead of a
-        // conflict.
-        const winner = await readSessionMachineAccessKeyInTx(tx, binding);
-        if (!winner) return { ok: false, reason: "already-exists" };
-        return { ok: true, created: false, accessKey: winner };
+        // PostgreSQL aborts the transaction after a unique violation. Re-enter
+        // through its existing replay owner before reading the winning tuple.
+        throw new TransactionReplayRequiredError("session-machine-access-key-conflict");
     }
 }
 
