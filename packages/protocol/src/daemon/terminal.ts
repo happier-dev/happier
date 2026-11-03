@@ -13,6 +13,10 @@ export const DaemonTerminalErrorCodeSchema = lazyZodSchema(() => z.enum([
   'terminal_spawn_failed',
   'terminal_invalid_request',
   'terminal_busy',
+  'service_generation_changed',
+  'effect_in_progress',
+  'service_unavailable',
+  'service_admission_unavailable',
   'terminal_resize_unavailable',
   'agent_login_unsupported',
   'agent_cli_missing',
@@ -58,6 +62,11 @@ export const DaemonTerminalLaunchIntentSchema = lazyZodSchema(() => z.discrimina
     runTargetId: z.string().check(z.trim(), z.minLength(1)),
   }),
   z.strictObject({
+    kind: z.literal('service_shell'),
+    serviceId: z.string().check(z.trim(), z.minLength(1)),
+    expectedGeneration: z.string().check(z.trim(), z.minLength(1)),
+  }),
+  z.strictObject({
     kind: z.literal('agent_login'),
     agentId: z.string().check(z.trim(), z.minLength(1)),
     launchId: z.optional(z.enum(['primary', 'device_code'])),
@@ -84,7 +93,10 @@ export const DaemonTerminalEnsureRequestSchema = lazyZodSchema(() => z.strictObj
   // Attribution is not authority: the receiving Session owner must prove this
   // identity before admitting a Session-scoped terminal.
   sessionId: z.optional(z.string().check(z.minLength(1), z.maxLength(256))),
-}).check(z.refine((value) => value.initialCommand === undefined || value.launch === undefined, { message: 'initialCommand and launch are mutually exclusive' })));
+}).check(z.refine((value) => value.initialCommand === undefined || value.launch === undefined, { message: 'initialCommand and launch are mutually exclusive' }),
+  z.refine(value => value.launch?.kind !== 'service_shell'
+    || value.cwd === undefined && value.workspace === undefined && value.sessionId === undefined,
+    { path: ['launch'], message: 'service_shell resolves its target context on the daemon' })));
 export type DaemonTerminalEnsureRequest = z.infer<typeof DaemonTerminalEnsureRequestSchema>;
 
 export const DaemonTerminalEnsureResponseSchema = lazyZodSchema(() => z.union([

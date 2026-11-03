@@ -15,6 +15,12 @@ import { actionInputServerId } from './definition.js';
 import { RPC_METHODS } from '../../rpc/methods.js';
 import { readRecord } from '../../inputs/inputRecords.js';
 export type MachineTerminalActionId = typeof MACHINE_TERMINAL_ACTION_IDS[number];
+/** Selected only by the receiving service_shell owner after typed admission.
+ * Ordinary terminal opens retain their existing immediate completion.
+ */
+export const MACHINE_SERVICE_SHELL_OPERATION = {
+  version: 1, visibility: 'activity', progress: 'reported', presentation: { onStart: 'current' },
+} as const;
 const id = z.string().check(z.trim(), z.minLength(1));
 const routing = { serverId: id, machineId: id };
 export const MachineTerminalOpenInputSchema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.safeExtend(DaemonTerminalEnsureRequestSchema, routing)));

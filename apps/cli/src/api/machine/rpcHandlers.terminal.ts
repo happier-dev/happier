@@ -29,6 +29,8 @@ import {
   type FilesystemAccessPolicy,
 } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 import { readDaemonTerminalPtyConfig } from '@/terminal/pty/config';
+import { openServiceShellTerminal } from './serviceShellTerminal';
+import { selectHostRequesterExecutionIdentity, type HostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import { createTerminalPtySessionManager, type TerminalPtySessionManager, type TerminalPtyCustody } from '@/terminal/pty/sessions';
 import { createNodePtyProvider } from '@/terminal/pty/provider';
 import { resolveTerminalShell } from '@/terminal/pty/shells';
@@ -90,6 +92,7 @@ export type MachineTerminalRpcHandlerDeps = Readonly<{
   sessionManager?: TerminalBridgeSessionManager;
   terminalRegistry?: TerminalProcessRegistry;
   admissionDrain?: DaemonAdmissionDrain;
+  operationRuntime?: Pick<HostActionOperationRuntime, 'observeExecution'>;
   resolveLaunch?: (launch: import('@happier-dev/protocol').DaemonTerminalLaunchIntent) => TerminalLaunchProcess;
   projectFiniteRuntime?: (ingress: RpcHandlerContext) => ProjectTerminalRuntime | null | Promise<ProjectTerminalRuntime | null>;
   /** Requester Account reads for Session and accepted Project custody. */
@@ -160,7 +163,7 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
   const terminalRegistry = params.deps?.terminalRegistry ?? getSharedTerminalProcessRegistry();
   const resolveLaunch = params.deps?.resolveLaunch
     ?? ((launch) => resolveDaemonTerminalLaunch(launch, { env, platform: params.deps?.platform }));
-  const resolveRequestedLaunch = (launch: Exclude<import('@happier-dev/protocol').DaemonTerminalLaunchIntent, { kind: 'package_script' }> | undefined) => {
+  const resolveRequestedLaunch = (launch: Exclude<import('@happier-dev/protocol').DaemonTerminalLaunchIntent, { kind: 'package_script' | 'service_shell' }> | undefined) => {
     try {
       return { ok: true as const, launchProcess: launch ? resolveLaunch(launch) : undefined };
     } catch (error) {
@@ -193,6 +196,35 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
       return err('terminal_cwd_denied');
     }
     return { ok: true, cwd: validation.resolvedPath ?? expanded };
+  };
+
+  const resolveRequesterIdentity = async (context?: RpcHandlerContext): Promise<Readonly<{
+    identity: HostRequesterExecutionIdentity;
+    homeServerIdentityId: string | null;
+  }>> => {
+    try {
+      const signedHome = context?.callerInputAuthorization?.binding.serverIdentityId;
+      const home = params.deps?.resolveHostHomeServerIdentityId
+        ? await params.deps.resolveHostHomeServerIdentityId(context?.signal)
+        : signedHome ?? (params.deps?.serverId ? await resolveServerProfileHomeIdentityId(params.deps.serverId) : null);
+      return { identity: selectHostRequesterExecutionIdentity({ rpcContext: context, hostHomeServerIdentityId: home }), homeServerIdentityId: home };
+    } catch { return { identity: { kind: 'unknown', reason: 'requester_authority_unavailable' }, homeServerIdentityId: null }; }
+  };
+
+  const unavailableIdentityTransport = () => ({ ...err('terminal_unavailable'), error: 'agent_isolation_unavailable' });
+
+  const runServiceShell = async (request: Pick<import('@happier-dev/protocol').DaemonTerminalEnsureRequest, 'terminalKey' | 'cols' | 'rows'> & Readonly<{
+    launch: Extract<import('@happier-dev/protocol').DaemonTerminalLaunchIntent, { kind: 'service_shell' }>;
+  }>, context: RpcHandlerContext | undefined, actionId: 'machines.terminal.open' | 'machines.terminal.restart', homeServerIdentityId: string | null) => {
+    if (!context?.machineAdmission || !params.deps?.serverId || !params.deps.operationRuntime || params.deps.requiredSessionId)
+      return err('terminal_unavailable');
+    const admitted = await resolveTerminalCustody({}, context);
+    if (!admitted.ok) return admitted;
+    if (!admitted.custody || admitted.custody.kind !== 'machine') return err('terminal_forbidden');
+    return openServiceShellTerminal({ request, actionId, context, custody: { ...admitted.custody,
+      ...(homeServerIdentityId ? { homeServerIdentityId } : {}) },
+      terminalSessions: getSessionManager(), operationRuntime: params.deps.operationRuntime,
+      ...(params.deps.admissionDrain ? { admissionDrain: params.deps.admissionDrain } : {}) });
   };
 
   const admissionCurrent = async (context: RpcHandlerContext): Promise<boolean> => {
@@ -244,7 +276,7 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
     : Promise<Readonly<{ ok: true; cwd: string; custody?: TerminalPtyCustody }> | ReturnType<typeof err>> => {
     if (hasRequiredSessionAuthority(context)) {
       if (input.workspace) return err('terminal_invalid_request');
-      if (context?.machineAdmission && !await admissionCurrent(context)) return err('terminal_forbidden');
+      if (context?.machineAdmission && context.signal.aborted) return err('terminal_forbidden');
       return resolveCwd(input.cwd);
     }
     if (!context?.machineAdmission) {
@@ -256,11 +288,12 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
       if (input.workspace || input.launch?.kind === 'session_attach' && input.launch.sessionId !== sessionId) return err('terminal_invalid_request');
       return await resolveOwnSessionCustody(sessionId, input.cwd, context);
     }
-    if (!await admissionCurrent(context)) return err('terminal_forbidden');
+    if (context.signal.aborted) return err('terminal_forbidden');
     const admission = context.machineAdmission;
-    // An unqualified custodian shell belongs to the Machine, not an accepted
+    // An unqualified Manage shell belongs to the Machine, not an accepted
     // Project checkout. Explicit Project and Session targets keep their owners.
-    if (!input.workspace && admission.actorAccountId === admission.custodianAccountId && admission.role === 'manage') {
+    if (!input.workspace) {
+      if (admission.role !== 'manage') return err('terminal_forbidden');
       if (!params.deps?.serverId) return err('terminal_unavailable');
       const cwd = resolveCwd(input.cwd);
       if (!cwd.ok) return cwd;
@@ -277,8 +310,10 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
       || input.workspace.machineId !== runtime.machineId)) return err('terminal_cwd_denied');
     try {
       if (runtime.isCurrent && !await runtime.isCurrent()) return err('terminal_forbidden');
+      const selectedHomeServerId = await resolveServerProfileHomeIdentityId(runtime.serverId) ?? runtime.serverId;
       const rows = await runWithServerHttpBaseUrl(runtime.serverHttpBaseUrl, () => readProjectAccountRows({
         ...projectRuntimeAccountRowsInput(runtime), serverId: runtime.serverId, signal: context.signal,
+        selection: { kinds: ['workspace-ref'], serverId: selectedHomeServerId },
       }));
       const cwd = resolveCwd(input.workspace?.rootPath ?? input.cwd);
       if (!cwd.ok) return cwd;
@@ -293,8 +328,7 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
       if (accepted.kind !== 'resolved') return err('terminal_cwd_denied');
       const acceptedCwd = resolveCwd(accepted.ref.rootPath);
       if (!acceptedCwd.ok || normalizeWorkspaceRootPathV1(acceptedCwd.cwd) !== normalizeWorkspaceRootPathV1(cwd.cwd)) return err('terminal_cwd_denied');
-      if (!await admissionCurrent(context)) return err('terminal_forbidden');
-      if (runtime.isCurrent && !await runtime.isCurrent()) return err('terminal_forbidden');
+      if (context.signal.aborted) return err('terminal_forbidden');
       return { ok: true, cwd: acceptedCwd.cwd, custody: {
         serverId: runtime.serverId, requesterAccountId: admission.actorAccountId, machineId: admission.machineId,
         installationId: admission.installationId, workspaceRefId: accepted.ref.id,
@@ -585,6 +619,12 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
       )
     ) return err('terminal_invalid_request');
 
+    if (parsed.data.launch?.kind === 'service_shell') {
+      const { identity, homeServerIdentityId } = await resolveRequesterIdentity(context);
+      if (identity.kind !== 'owner_person') return unavailableIdentityTransport();
+      return await runServiceShell({ ...parsed.data, launch: parsed.data.launch }, context, 'machines.terminal.open', homeServerIdentityId);
+    }
+
     const cwd = parsed.data.launch?.kind === 'package_script' ? resolveCwd(parsed.data.cwd)
       : await resolveTerminalCustody(parsed.data, context);
     if (!cwd.ok) return cwd;
@@ -710,6 +750,12 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
         || (parsed.data.launch?.kind === 'session_attach' && parsed.data.launch.sessionId !== params.deps.requiredSessionId)
       )
     ) return err('terminal_invalid_request');
+
+    if (parsed.data.launch?.kind === 'service_shell') {
+      const { identity, homeServerIdentityId } = await resolveRequesterIdentity(context);
+      if (identity.kind !== 'owner_person') return unavailableIdentityTransport();
+      return await runServiceShell({ ...parsed.data, launch: parsed.data.launch }, context, 'machines.terminal.restart', homeServerIdentityId);
+    }
 
     const cwd = parsed.data.launch?.kind === 'package_script' ? resolveCwd(parsed.data.cwd)
       : await resolveTerminalCustody(parsed.data, context);
