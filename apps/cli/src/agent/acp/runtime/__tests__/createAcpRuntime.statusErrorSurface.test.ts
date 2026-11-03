@@ -570,7 +570,7 @@ describe('createAcpRuntime (status error surfacing)', () => {
     }));
   });
 
-  it('does not surface abort-like status:error detail as a transcript message', async () => {
+  it('does not surface typed cancellation status:error detail as a transcript message', async () => {
     const backend = createFakeAcpRuntimeBackend({ sessionId: 'sess_main' });
 
     const sent: ACPMessageData[] = [];
@@ -598,6 +598,7 @@ describe('createAcpRuntime (status error surfacing)', () => {
       type: 'status',
       status: 'error',
       detail: 'Error: OpenCode session aborted\n    at Object.cancel (/tmp/runtime.ts:10:1)',
+      error: Object.assign(new Error('OpenCode session aborted'), { name: 'AbortError' }),
     } satisfies AgentMessage);
     await Promise.resolve();
     await Promise.resolve();
@@ -775,6 +776,7 @@ describe('createAcpRuntime (status error surfacing)', () => {
       type: 'status',
       status: 'error',
       detail: 'Error: OpenCode session aborted\n    at Object.cancel (/tmp/runtime.ts:10:1)',
+      error: Object.assign(new Error('OpenCode session aborted'), { name: 'AbortError' }),
     } satisfies AgentMessage);
     await expect.poll(() => published.some((body) => body.type === 'message')).toBe(true);
 

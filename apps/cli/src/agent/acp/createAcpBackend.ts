@@ -54,6 +54,9 @@ export interface CreateAcpBackendOptions {
 
   /** Optional permission handler for tool approval */
   permissionHandler?: AcpPermissionHandler;
+  providerTurnSource?: AcpBackendOptions['providerTurnSource'];
+  permissionMode?: AcpBackendOptions['permissionMode'];
+  getPermissionMode?: AcpBackendOptions['getPermissionMode'];
 
   /** Optional transport handler for agent-specific behavior */
   transportHandler?: TransportHandler;
@@ -74,6 +77,7 @@ export interface CreateAcpBackendOptions {
   /** Provider-owned projection/application for model metadata not standardized by ACP. */
   sessionModelAdapter?: AcpSessionModelAdapter;
   sessionModesEnabled?: AcpBackendOptions['sessionModesEnabled'];
+  initialSessionModeId?: AcpBackendOptions['initialSessionModeId'];
 
   /** Configured-catalog policy for session/load. Undefined retains built-in provider behavior. */
   declaredSessionLoadSupport?: boolean;
@@ -114,6 +118,9 @@ export function createAcpBackend(options: CreateAcpBackendOptions): AcpBackend {
     unsetEnv: options.unsetEnv,
     mcpServers: options.mcpServers,
     permissionHandler: options.permissionHandler,
+    providerTurnSource: options.providerTurnSource,
+    permissionMode: options.permissionMode,
+    getPermissionMode: options.getPermissionMode,
     transportHandler: options.transportHandler ?? new DefaultTransport(options.agentName),
     authentication: options.authentication,
     isAuthenticationSetupFailure: options.isAuthenticationSetupFailure,
@@ -122,6 +129,7 @@ export function createAcpBackend(options: CreateAcpBackendOptions): AcpBackend {
     extensionHandlers: options.extensionHandlers,
     sessionModelAdapter: options.sessionModelAdapter,
     sessionModesEnabled: options.sessionModesEnabled,
+    initialSessionModeId: options.initialSessionModeId,
     declaredSessionLoadSupport: options.declaredSessionLoadSupport,
   };
 

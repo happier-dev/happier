@@ -28,7 +28,7 @@ export function createConfiguredAcpBackend(options: ConfiguredAcpBackendOptions)
     unsetEnv: options.happierSessionId !== undefined ? [HAPPIER_SESSION_ID_ENV_KEY] : undefined,
     mcpServers: options.mcpServers,
     permissionHandler: options.permissionHandler,
-    transportHandler: resolveAcpCatalogTransportHandler(options.backend.transportProfile),
+    transportHandler: resolveAcpCatalogTransportHandler(options.backend.transportProfile, options.backend.backendId),
     declaredSessionLoadSupport: options.backend.capabilities.supportsLoadSession,
   });
 }

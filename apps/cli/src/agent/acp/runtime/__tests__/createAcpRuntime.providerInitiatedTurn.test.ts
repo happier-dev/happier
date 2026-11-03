@@ -144,6 +144,111 @@ describe('createAcpRuntime (provider-initiated turns)', () => {
     expect(published.indexOf('provider answer')).toBeGreaterThan(published.lastIndexOf('task_started'));
   });
 
+  it.each([
+    { hostPrompt: false, rejects: false, beforeIdle: false },
+    { hostPrompt: false, rejects: true, beforeIdle: false },
+    { hostPrompt: true, rejects: true, beforeIdle: false },
+    { hostPrompt: true, rejects: true, beforeIdle: true },
+  ])('preserves a provider cancellation outcome (host prompt: $hostPrompt, rejects: $rejects, before idle: $beforeIdle)', async ({ hostPrompt, rejects, beforeIdle }) => {
+    const published: string[] = [];
+    const mutations: SessionTurnMutationV1[] = [];
+    const backend = createFakeAcpRuntimeBackend({
+      sendPrompt: async () => {
+        if (beforeIdle) throw Object.assign(new Error('Cancelled by user'), { name: 'AbortError' });
+      },
+      waitForResponseComplete: async () => {
+        if (rejects) throw Object.assign(new Error('Cancelled by user'), { name: 'AbortError' });
+        return { kind: 'aborted', stopReason: 'cancelled' };
+      },
+    });
+    const lifecycle = createSessionTurnLifecycle({
+      sessionId: 'provider-cancel-session',
+      enqueueSessionTurn: async (mutation) => { mutations.push(mutation); },
+    });
+    const runtime = createAcpRuntime({
+      provider: 'pi', directory: '/tmp', messageBuffer: new MessageBuffer(),
+      mcpServers: {}, permissionHandler: createApprovedPermissionHandler(),
+      session: createBasicSessionClientWithOverrides({
+        sessionTurnLifecycle: lifecycle,
+        sendAgentMessage: (provider, body) => {
+          void lifecycle.observeAcpLifecycleMarker({ provider, body }).pendingWrite;
+          published.push(body.type);
+        },
+        sendAgentMessageCommitted: async (_provider, body) => {
+          published.push(body.type === 'message' ? body.message : body.type);
+        },
+      }),
+      onThinkingChange: () => {}, ensureBackend: async () => backend,
+    });
+    await runtime.startOrLoad({});
+    if (hostPrompt) runtime.beginTurn();
+    backend.emit({ type: 'status', status: 'running' });
+    backend.emit({ type: 'model-output', fullText: 'before provider cancellation', fullTextScope: 'segment' });
+    if (beforeIdle) await expect(runtime.sendPrompt('fixture')).rejects.toMatchObject({ name: 'AbortError' });
+    else backend.emit({ type: 'status', status: 'idle', turnFinished: true });
+    await runtime.flushTurn();
+    expect(mutations.map(mutation => mutation.action)).toEqual(['begin', 'cancel']);
+    expect(published.indexOf('before provider cancellation')).toBeLessThan(published.indexOf('turn_cancelled'));
+    expect(published).not.toContain('task_complete');
+    expect(published).not.toContain('turn_failed');
+    expect(lifecycle.hasActiveTurn()).toBe(false);
+    await runtime.reset();
+  });
+
+  it.each([
+    { path: 'prompt', message: 'Connection aborted' },
+    { path: 'prompt', message: 'Upstream cancelled the request' },
+    { path: 'completion', message: 'Connection aborted' },
+    { path: 'completion', message: 'Upstream cancelled the request' },
+    { path: 'status', message: 'Connection aborted' },
+    { path: 'status', message: 'Upstream cancelled the request' },
+  ] as const)('surfaces an ordinary $path failure containing cancellation words: $message', async ({ path, message }) => {
+    const failure = new Error(message);
+    const published: string[] = [];
+    const mutations: SessionTurnMutationV1[] = [];
+    const backend = createFakeAcpRuntimeBackend({
+      sendPrompt: async () => { if (path === 'prompt') throw failure; },
+      waitForResponseComplete: async () => { if (path === 'completion') throw failure; },
+    });
+    const lifecycle = createSessionTurnLifecycle({
+      sessionId: 'provider-failure-session',
+      enqueueSessionTurn: async (mutation) => { mutations.push(mutation); },
+    });
+    const runtime = createAcpRuntime({
+      provider: 'pi', directory: '/tmp', messageBuffer: new MessageBuffer(),
+      mcpServers: {}, permissionHandler: createApprovedPermissionHandler(),
+      session: createBasicSessionClientWithOverrides({
+        sessionTurnLifecycle: lifecycle,
+        sendAgentMessage: (provider, body) => {
+          void lifecycle.observeAcpLifecycleMarker({ provider, body }).pendingWrite;
+          published.push(body.type);
+        },
+      }),
+      onThinkingChange: () => {}, ensureBackend: async () => backend,
+    });
+    try {
+      await runtime.startOrLoad({});
+      if (path === 'prompt') runtime.beginTurn();
+      backend.emit({ type: 'status', status: 'running' });
+      if (path === 'prompt') {
+        await expect(runtime.sendPrompt('fixture')).rejects.toBe(failure);
+        await runtime.failTurn(failure);
+      } else if (path === 'completion') {
+        backend.emit({ type: 'status', status: 'idle', turnFinished: true });
+      } else {
+        backend.emit({ type: 'status', status: 'error', error: failure });
+      }
+      await runtime.flushTurn();
+      expect(mutations.map(mutation => mutation.action)).toEqual(['begin', 'fail']);
+      expect(published).toContain('turn_failed');
+      expect(published).not.toContain('turn_cancelled');
+      expect(published).not.toContain('task_complete');
+      expect(lifecycle.hasActiveTurn()).toBe(false);
+    } finally {
+      await runtime.reset();
+    }
+  });
+
   it('initiates cancellation before pending transcript settlement and retains trailing provider output', async () => {
     const transcriptCommit = createDeferred();
     const abortAcknowledged = createDeferred();

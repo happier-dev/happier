@@ -42,7 +42,7 @@ export function createCatalogDefinedAcpEntry(
         agentId,
         title: getProviderCliRuntimeSpec(agentId).title,
         acpArgs: [...config.launcher.args],
-        transport: resolveAcpCatalogTransportHandler(config.transportProfile),
+        transport: resolveAcpCatalogTransportHandler(config.transportProfile, agentId),
         resolveAcpProbeLaunch: options.resolveAcpProbeLaunch,
       });
     },

@@ -1,6 +1,6 @@
 import { JsonlLineFollower, type JsonlLineSource } from './jsonlLineFollower';
 import type { JsonlFollowPolicyInput } from './jsonlFollowPolicy';
-import type { JsonlFollowerDrainSource, JsonlFollowerMetrics } from './jsonlFollowMetrics';
+import type { JsonlFollowerDrainSource, JsonlFollowerMetrics, JsonlFollowerResetReason } from './jsonlFollowMetrics';
 
 export type JsonlFollowerOptions = Readonly<{
     filePath: string;
@@ -9,6 +9,7 @@ export type JsonlFollowerOptions = Readonly<{
     startAtEnd?: boolean;
     startOffsetBytes?: number;
     onJson: (value: unknown, source?: JsonlLineSource) => void | Promise<void>;
+    onReset?: (reason: JsonlFollowerResetReason) => void;
     onError?: (error: unknown) => void;
     metrics?: JsonlFollowerMetrics;
 }>;
@@ -25,6 +26,7 @@ export class JsonlFollower {
             startOffsetBytes: opts.startOffsetBytes,
             metrics: opts.metrics,
             onError: opts.onError,
+            onReset: opts.onReset,
             onLine: async (line, source) => {
                 let parsed: unknown | undefined;
                 try {

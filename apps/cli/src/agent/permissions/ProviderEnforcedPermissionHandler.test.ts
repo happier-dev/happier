@@ -390,6 +390,70 @@ describe('ProviderEnforcedPermissionHandler always-auto-approve matching', () =>
     expect(session.agentState.completedRequests.claimed).toBeUndefined();
   });
 
+  it('uses the admitted permission mode after the foreground mode changes', async () => {
+    const session = new FakeSession();
+    const handler = new ProviderEnforcedPermissionHandler(asApiSessionClient(session), { logPrefix: '[Test]' });
+    const permissionHandler: AcpPermissionHandler = handler;
+    handler.setPermissionMode('yolo');
+
+    const pending = permissionHandler.handleToolCall('older-turn', 'bash', { command: 'touch fixture' }, {
+      permissionMode: 'default',
+    });
+    try {
+      expect(session.agentState.requests['older-turn']).toBeTruthy();
+      await session.rpcHandlerManager.handlers.get('permission')?.({
+        id: 'older-turn', approved: false, decision: 'denied',
+      });
+      await expect(pending).resolves.toEqual({ decision: 'denied' });
+    } finally {
+      await handler.abortPendingRequestsAndFlush();
+      await pending.catch(() => undefined);
+    }
+  });
+
+  it('keeps a pinned permission pending when a later mode change approves unbound requests', async () => {
+    const session = new FakeSession();
+    const handler = new ProviderEnforcedPermissionHandler(asApiSessionClient(session), { logPrefix: '[Test]' });
+    const permissionHandler: AcpPermissionHandler = handler;
+    const context: { permissionMode: 'default' | 'yolo' } = {
+      permissionMode: 'default',
+    };
+    const pinned = permissionHandler.handleToolCall('pinned-turn', 'bash', { command: 'touch pinned' }, context);
+    const unbound = permissionHandler.handleToolCall('current-turn', 'bash', { command: 'touch current' });
+    context.permissionMode = 'yolo';
+    try {
+      handler.setPermissionMode('yolo');
+      await expect(unbound).resolves.toEqual({ decision: 'approved' });
+      expect(session.agentState.requests['pinned-turn']).toBeTruthy();
+      expect(session.agentState.completedRequests['pinned-turn']).toBeUndefined();
+      await session.rpcHandlerManager.handlers.get('permission')?.({
+        id: 'pinned-turn', approved: false, decision: 'denied',
+      });
+      await expect(pinned).resolves.toEqual({ decision: 'denied' });
+    } finally {
+      await handler.abortPendingRequestsAndFlush();
+      await pinned.catch(() => undefined);
+      await unbound.catch(() => undefined);
+    }
+  });
+
+  it('honors an explicitly admitted full-access permission mode without changing the session mode', async () => {
+    const session = new FakeSession();
+    const handler = new ProviderEnforcedPermissionHandler(asApiSessionClient(session), { logPrefix: '[Test]' });
+    const permissionHandler: AcpPermissionHandler = handler;
+    const admitted = permissionHandler.handleToolCall('full-access-turn', 'bash', { command: 'pwd' }, {
+      permissionMode: 'yolo',
+    });
+    try {
+      expect(session.agentState.requests['full-access-turn']).toBeUndefined();
+      await expect(admitted).resolves.toEqual({ decision: 'approved' });
+      expect(handler.getImmediateDecision('unbound-next', 'bash', { command: 'pwd' })).toBeNull();
+    } finally {
+      await handler.abortPendingRequestsAndFlush();
+      await admitted.catch(() => undefined);
+    }
+  });
+
   it('resolves every duplicate same-id waiter from one permission response', async () => {
     const session = new FakeSession();
     const handler = new ProviderEnforcedPermissionHandler(session as any, { logPrefix: '[Test]' });
