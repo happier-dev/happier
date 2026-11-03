@@ -469,7 +469,14 @@ export async function createPluginUiHostApiClientFromTransport(
         terminalError = error;
         if (negotiationTimeout) clearTimeout(negotiationTimeout);
         rejectNegotiation(error);
-        for (const id of [...pending.keys()]) settle(id, (request) => request.reject(error));
+        // Pending requests have already been issued. Losing their receipt does
+        // not establish that an effect did not run, even if reconnecting is safe.
+        const issuedError = new PluginUiHostApiClientError(error.code, error.message, false, {
+            details: { layer: 'transport', phase: 'settlement' },
+            ...(error.diagnostics === undefined ? {} : { diagnostics: error.diagnostics }),
+            ...(error.remediation === undefined ? {} : { remediation: error.remediation }),
+        });
+        for (const id of [...pending.keys()]) settle(id, (request) => request.reject(issuedError));
         subscriptions.clear();
         disposeTransport();
         // Last, so an observer sees a fully settled client rather than one still

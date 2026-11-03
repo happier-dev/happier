@@ -1,4 +1,4 @@
-import { createCanonicalJsonSigningInput, type Disposable } from '@happier-dev/plugin-sdk';
+import { createCanonicalJsonSigningInput, isPluginError, type PluginErrorData, type Disposable } from '@happier-dev/plugin-sdk';
 import type {
   PluginUiHostApi,
   ResourceContent,
@@ -74,7 +74,7 @@ export function createPluginUiHostApiResourceClient(
   });
 }
 
-export type PluginUiResourceError = Readonly<{
+export type PluginUiResourceError = Readonly<Pick<PluginErrorData, 'details'> & {
   code?: string;
   /** Preserve the producer's retry decision when a host joins this read. */
   retryable?: boolean;
@@ -237,6 +237,7 @@ function readError(error: unknown): PluginUiResourceError {
   return Object.freeze({
     ...(typeof candidate?.code === 'string' ? { code: candidate.code } : {}),
     ...(typeof candidate?.retryable === 'boolean' ? { retryable: candidate.retryable } : {}),
+    ...(isPluginError(error) && error.details !== undefined ? { details: error.details } : {}),
     ...(diagnostics.length > 0 ? { diagnostics: Object.freeze(diagnostics) } : {}),
     message: typeof candidate?.message === 'string'
       ? candidate.message
@@ -298,6 +299,8 @@ function sameError(
   return left === right || (
     left?.code === right?.code
     && left?.retryable === right?.retryable
+    && (left?.details === right?.details || (left?.details !== undefined && right?.details !== undefined
+      && createCanonicalJsonSigningInput(left.details) === createCanonicalJsonSigningInput(right.details)))
     && left?.message === right?.message
     && left?.diagnostics?.length === right?.diagnostics?.length
     && left?.diagnostics?.every((diagnostic, index) => diagnostic === right?.diagnostics?.[index]) !== false

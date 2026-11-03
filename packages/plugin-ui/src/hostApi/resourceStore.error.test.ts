@@ -1,12 +1,39 @@
 import { describe, expect, it, vi } from 'vitest';
+import { PLUGIN_UI_HOST_API_VERSION_V1 } from '@happier-dev/protocol/plugins/ui/client';
 
 import {
   createPluginUiResourceStore,
   type PluginUiResourceClient,
 } from './resourceStore.js';
 import type { ResourceSubscriptionEvent } from '@happier-dev/plugin-sdk/ui';
+import { createPluginUiHostApiClientFromTransport } from '../../../plugin-sdk/src/ui/clientTransport.js';
 
 describe('plugin UI Resource store read failures', () => {
+  it('preserves the real SDK producer settlement reason without re-polling a nonretryable read', async () => {
+    const identity = { instanceId: 'resource-reason', mountNonce: 'resource-reason' };
+    let receive: ((message: unknown) => void) | undefined;
+    let reads = 0;
+    const api = await createPluginUiHostApiClientFromTransport({ identity, transport: {
+      subscribe(listener) { receive = listener; return { dispose() { receive = undefined; } }; },
+      send(message) {
+        if (message.kind === 'negotiate') receive?.({ wireVersion: 1, kind: 'negotiated', identity,
+          apiVersion: PLUGIN_UI_HOST_API_VERSION_V1, methods: ['readResource'] });
+        if (message.kind === 'request' && message.method === 'readResource') {
+          reads++;
+          receive?.({ wireVersion: 1, kind: 'disconnected', identity, reason: 'daemon_offline' });
+        }
+      },
+    } });
+    const store = createPluginUiResourceStore({ pluginId: 'acme.preview', client: createPluginUiHostApiResourceClient(api) });
+    try {
+      const snapshot = await store.getEntry('document').refresh();
+      expect(snapshot).toMatchObject({ pending: 'idle', error: { code: 'daemon_offline', retryable: false,
+        details: { layer: 'transport', phase: 'settlement' } } });
+      await Promise.resolve();
+      expect(reads).toBe(1);
+    } finally { store.dispose(); }
+  });
+
   it.each(['denied', 'unavailable'] as const)('distinguishes authoritative %s watch-open refusal from a nonretryable transport outage', async (code) => {
     const value = { contentType: 'application/json', digest: 'private', bytes: new TextEncoder().encode('7') };
     let baselineRead = true;
