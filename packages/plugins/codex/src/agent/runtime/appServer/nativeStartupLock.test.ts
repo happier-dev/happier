@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { createInterface } from 'node:readline';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -31,6 +32,63 @@ describe.skipIf(process.platform !== 'linux')('native SQLite startup admission',
     await writeFile(join(osBoundary.home, '.codex', 'config.toml'), 'cli_auth_credentials_store = "keyring"\n');
     await mkdir(join(osBoundary.home, 'project'));
   });
+  it('preserves a live startup holder and recovers its abandoned lock after actual process exit', async () => {
+    const lockPath = join(osBoundary.home, '.happier-codex-native-startup.lock');
+    // Only the native holder is a subprocess. Both its publication and the
+    // contender's admission use the real filesystem lock owner through the SDK.
+    const holder = spawn(process.execPath, [
+      '--conditions=happier-source',
+      '--import', fileURLToPath(new URL('../../../../../../cli-common/registerSourceRuntime.mjs', import.meta.url)),
+      '--input-type=module', '-e', `
+        import { withExclusiveFileLock } from '@happier-dev/plugin-sdk/fs';
+        await withExclusiveFileLock({ lockPath: process.argv[1], timeoutMs: Infinity }, async () => {
+          process.stdin.once('data', () => process.exit(0));
+          process.stdin.once('end', () => process.exit(0));
+          process.stdout.write('held\\n');
+          process.stdin.resume();
+          await new Promise(() => {});
+        });
+      `, lockPath,
+    ], { cwd: new URL('../../../..', import.meta.url), stdio: ['pipe', 'pipe', 'pipe'] });
+    holder.stderr.resume();
+    const closed = new Promise<number | null>((resolve, reject) => {
+      holder.once('close', resolve);
+      holder.once('error', reject);
+    });
+    const lines = createInterface({ input: holder.stdout });
+    const published = new Promise<void>((resolve, reject) => {
+      lines.once('line', () => resolve());
+      void closed.then(() => reject(new Error('Startup holder exited before publication')), reject);
+    });
+    const controller = new AbortController();
+    let initialized = false;
+    let waiting: Promise<unknown> | undefined;
+    try {
+      await published;
+      const owner = await readFile(lockPath, 'utf8');
+      expect(JSON.parse(owner)).toMatchObject({ pid: holder.pid });
+      let observedWait!: () => void;
+      const contention = new Promise<void>(resolve => { observedWait = resolve; });
+      waiting = withCodexNativeStartupLock(async () => { initialized = true; }, controller.signal, {
+        debug: () => observedWait(),
+      });
+      await contention;
+      expect(initialized).toBe(false);
+      expect(await readFile(lockPath, 'utf8')).toBe(owner);
+      holder.stdin.end('exit');
+      expect(await closed).toBe(0);
+      await waiting;
+      expect(initialized).toBe(true);
+      await expect(readFile(lockPath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally {
+      controller.abort();
+      holder.stdin.end();
+      await waiting?.catch(() => undefined);
+      await closed;
+      lines.close();
+    }
+  });
+
   it('serializes fresh roots on the predecessor seam, including a second start at the same root', async () => {
     const rootA = join(osBoundary.home, 'sqlite-a');
     const rootB = join(osBoundary.home, 'sqlite-b');
