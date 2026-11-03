@@ -38,6 +38,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     ffmpeg \
     git \
+    libatomic1 \
     openssh-client \
     python3 \
     tar \
