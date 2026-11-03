@@ -4174,6 +4174,7 @@ encryptedUnavailable: "Detalls xifrats no disponibles",
             accountIdentityMismatch: 'This sign-in or action refers to a different account or service. Return to the intended account and connect it again.',
             accountAccessUnavailable: 'This account cannot be used in the current context. Check the selected account, service and access permissions before continuing.',
             accountSaveUnavailable: 'Happier could not save or read the account state. Check the Home connection, then refresh this page and review the account before continuing.',
+            signInLoadFailed: ({ service }: { service: string }) => `No s’ha pogut carregar l’inici de sessió de ${service}. Torna-ho a provar.`,
         },
         diagnostics: {
             title: {

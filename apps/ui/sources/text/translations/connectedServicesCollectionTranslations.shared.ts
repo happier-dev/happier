@@ -34,6 +34,8 @@ export const en = {
     railEmpty: 'No accounts yet',
     railKey: 'key',
     railAccountLabel: ({ service, account }: { service: string; account: string }) => `${service} · ${account}`,
+    newAccountDraft: ({ service }: { service: string }) => `New ${service} account`,
+    newServiceDraft: ({ service }: { service: string }) => `New ${service}`,
     agentSignInTitle: 'How agents sign in',
     subscriptionTitle: 'Subscription',
     subscriptionNone: 'No subscription',

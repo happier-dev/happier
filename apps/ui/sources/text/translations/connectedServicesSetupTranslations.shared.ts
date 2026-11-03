@@ -25,7 +25,14 @@ export type ConnectedServicesSetupTranslation = Readonly<{
     deviceStepOpenWhere: (params: Readonly<{ where: string }>) => string;
     deviceStepApprove: (params: Readonly<{ service: string }>) => string;
     deviceCheckNow: string;
+    keyUse: (params: Readonly<{ name: string }>) => string;
+    keyHowToAdd: string;
+    accountNew: string;
     accountSaved: string;
+    sheetUnavailable: string;
+    sheetPurposeUnavailable: string;
+    sheetSelectionRequired: string;
+    sheetProfileUnavailable: string;
 }>;
 
 
@@ -54,5 +61,12 @@ export const connectedServicesSetupTranslationsEnglish = { en: {
         deviceStepOpenWhere: ({ where }) => `${where}, signed in to the account you want to use`,
         deviceStepApprove: ({ service }) => `Approve Happier in ${service}`,
         deviceCheckNow: 'Check now',
+        keyUse: ({ name }) => `Use ${name}`,
+        keyHowToAdd: 'How to add the key',
+        accountNew: 'Add account',
         accountSaved: 'Your accounts',
+        sheetUnavailable: 'This sign-in belongs to another account, so it can’t be changed here.',
+        sheetPurposeUnavailable: 'This plugin’s account purpose is unavailable. Reopen the source after the plugin loads.',
+        sheetSelectionRequired: 'Choose this account from the machine setup that requested it.',
+        sheetProfileUnavailable: 'The loaded credentials belong to a different account. Reopen Credentials in the current account.',
     } } satisfies Pick<Readonly<Record<string, ConnectedServicesSetupTranslation>>, "en">;

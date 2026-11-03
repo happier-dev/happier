@@ -4106,6 +4106,7 @@ encryptedUnavailable: "Verschlüsselte Details nicht verfügbar",
             accountIdentityMismatch: 'This sign-in or action refers to a different account or service. Return to the intended account and connect it again.',
             accountAccessUnavailable: 'This account cannot be used in the current context. Check the selected account, service and access permissions before continuing.',
             accountSaveUnavailable: 'Happier could not save or read the account state. Check the Home connection, then refresh this page and review the account before continuing.',
+            signInLoadFailed: ({ service }: { service: string }) => `Die Anmeldung für ${service} konnte nicht geladen werden. Versuch es noch einmal.`,
         },
         diagnostics: {
             title: {
