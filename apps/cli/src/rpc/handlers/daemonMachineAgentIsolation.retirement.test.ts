@@ -10,7 +10,8 @@ import { registerDaemonMachineAgentIsolationRpcHandlers } from './daemonMachineA
 
 // Native state is the OS boundary; preview, Manage admission, field mutation,
 // operation ownership, elevation framing and CHECK/APPLY remain production code.
-function fixture(foreignRule = false, adminMode: 'preauthorized' | 'none' = 'preauthorized') {
+function fixture(foreignRule = false, adminMode: 'preauthorized' | 'none' = 'preauthorized',
+  failure?: 'sudo' | 'identity' | 'identity-error', initiallyEnabled = false) {
   const target = { serverId: 'home', machineId: 'machine', installationId: 'installation', custodianAccountId: 'owner' };
   const residue = new Set(['agent-runas', 'agent-account', 'agent-primary-group', 'agent-home', 'workspace-group',
     'workspace-root', 'tools-root', 'happier-shared-git', 'happier-agent-shared-git']);
@@ -36,6 +37,15 @@ function fixture(foreignRule = false, adminMode: 'preauthorized' | 'none' = 'pre
   const native = createAgentIsolationEffectsBoundary({ installationId: target.installationId, backend, adminAccess: { version: 1, mode: adminMode },
     installedCli: '/opt/happier/cli/current/happier', readRoots: () => [], readSessionsToReplace: () => 0,
     publishStatus: async () => {} });
+  const elevation = { ...native.effects.elevation,
+    ...(failure === 'sudo' ? { spawn: () => { throw new Error('sudo unavailable'); } } : {}),
+    observe: async () => {
+      if (failure === 'identity-error') throw new Error('identity unreadable');
+      const observation = await native.effects.elevation.observe();
+      return failure === 'identity' ? { ...observation, daemonUid: null, daemonUsername: null, daemonPrimaryGroup: null } : observation;
+    } };
+  let metadata: Record<string, unknown> = { agentIsolation: { enabled: initiallyEnabled } };
+  let metadataVersion = 4;
   let operation = 0;
   const operations = createHostActionOperationRuntime({ serverId: target.serverId, machineId: target.machineId,
     resolveAccountId: async () => 'owner', generateOperationId: () => `retirement-operation-${++operation}` });
@@ -46,11 +56,15 @@ function fixture(foreignRule = false, adminMode: 'preauthorized' | 'none' = 'pre
   const rpc = new RpcHandlerManager({ scopePrefix: target.machineId, localMachineId: target.machineId,
     encryptionMode: 'plain', logger() {}, authorizeRequest: async () => ({ ok: true }) });
   registerDaemonMachineAgentIsolationRpcHandlers(rpc, { target: () => target,
-    read: () => ({ enabled: false, status: { kind: 'disabled' } }), effects: { ...native.effects, backend: undefined },
+    read: () => ({ enabled: false, status: { kind: 'disabled' } }), effects: { ...native.effects, backend: undefined, elevation },
     readCanonicalHomeServerIdentityId: () => 'home', runActionOperation: operations.runActionOperation,
-    captureMetadataPort: () => ({ read: async () => ({ status: 'ready', metadataVersion: 4,
-      metadata: { agentIsolation: { enabled: false } } }),
-      compareAndSwap: async () => { throw new Error('Already-off retirement must not rewrite policy'); } }) });
+    captureMetadataPort: () => ({ read: async () => ({ status: 'ready', metadataVersion, metadata }),
+      compareAndSwap: async input => {
+        if (!initiallyEnabled) throw new Error('Already-off retirement must not rewrite policy');
+        if (input.expectedMetadataVersion !== metadataVersion) return { status: 'conflict', metadata, metadataVersion };
+        metadata = input.metadata;
+        return { status: 'applied', metadata, metadataVersion: ++metadataVersion };
+      } }) });
   const preview = async () => MachineAgentIsolationPreviewResultV1Schema.parse(await rpc.invokeLocal('machines.agentIsolation.preview',
     { machineId: target.machineId, enabled: false }, { rpcContext: context,
       localActionContext: { actionRequestId: 'retirement-preview' } }));
@@ -105,10 +119,24 @@ it('leaves a changed or foreign sudoers rule untouched and returns its typed adm
 });
 
 
-it('reports the existing administrator recovery when off inventory cannot be inspected, without claiming no residue', async () => {
-  const f = fixture(false, 'none');
-  expect(await f.preview()).toMatchObject({ kind: 'unavailable', setup: { outcome: 'not_applied',
-    recovery: { kind: 'configure_admin_access', mode: 'preauthorized' } } });
+it.each([
+  { adminMode: 'none', failure: undefined },
+  { adminMode: 'preauthorized', failure: 'sudo' },
+  { adminMode: 'preauthorized', failure: 'identity' },
+  { adminMode: 'preauthorized', failure: 'identity-error' },
+] as const)('keeps off ready and retains uninspected residue with $adminMode/$failure', async ({ adminMode, failure }) => {
+  const f = fixture(false, adminMode, failure, true);
+  const review = await f.preview();
+  expect(review).toMatchObject({ kind: 'ready', policy: { enabled: true }, plan: { requiresAdmin: false } });
+  if (review.kind !== 'ready') throw new Error('Expected ready off recovery');
+  expect(review.plan.retirement?.map(item => item.stepId)).toEqual(expect.arrayContaining([
+    'agent-runas', 'agent-account', 'agent-primary-group', 'agent-home', 'workspace-group', 'workspace-root', 'tools-root',
+  ]));
+  for (const item of review.plan.retirement ?? []) expect(item).toMatchObject({ observation: 'unknown', action: 'retain',
+    reasonCode: 'native_check_unavailable', remedy: expect.any(String) });
+  expect(await f.apply(review)).toMatchObject({ kind: 'accepted',
+    status: { kind: 'disabled' }, retirement: { removed: [], retained: review.plan.retirement } });
+  expect(await f.preview()).toMatchObject({ kind: 'ready', policy: { enabled: false } });
   expect(f.residue.has('agent-runas')).toBe(true);
   expect(f.mutations).toEqual([]);
 });

@@ -4,7 +4,7 @@ import type { MachineAgentIsolationStatusV1 } from '@happier-dev/protocol';
 import { isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPath';
 import { buildUserManagerGroupRefreshStep } from '@/daemon/service/userManagerGroups';
 import { buildAgentIsolationProvisioningSteps, type AgentIsolationMemberRequester } from './provisioning';
-import { buildAgentIsolationBootstrapRetirementObservations } from './bootstrapRetirement';
+import { buildAgentIsolationBootstrapRetirementObservations, buildUnobservedAgentIsolationBootstrapRetirement } from './bootstrapRetirement';
 import type { AgentIsolationEffectDependencies } from './agentIsolationProvisioner';
 
 type UnavailableStatus = Extract<MachineAgentIsolationStatusV1, { kind: 'unavailable' }>;
@@ -20,8 +20,11 @@ export async function resolveAgentIsolationEffectIntentResult(enabled: boolean, 
   if (!Number.isSafeInteger(sessionsToReplace) || sessionsToReplace < 0) return unavailable('session_inventory',
     'Restore the daemon Session inventory before reviewing isolation.');
   const daemon = await effects.elevation.observe().catch(() => null);
-  if (!daemon || daemon.daemonIdentity !== 'nonRoot' || daemon.daemonUid === null || daemon.daemonUid <= 0 || !daemon.daemonUsername || !daemon.daemonPrimaryGroup)
+  if (!daemon || daemon.daemonIdentity !== 'nonRoot' || daemon.daemonUid === null || daemon.daemonUid <= 0 || !daemon.daemonUsername || !daemon.daemonPrimaryGroup) {
+    if (!enabled) return { kind: 'ready' as const, intent: { roots: [], ancestorAcls: [], sessionsToReplace, steps: [],
+      retirement: buildUnobservedAgentIsolationBootstrapRetirement(effects.installedCli) } };
     return unavailable('daemon_identity', 'Run the daemon as a named non-root OS user with a primary group, then review isolation.');
+  }
   if (!enabled) {
     const retirementObservations = buildAgentIsolationBootstrapRetirementObservations({ daemonUsername: daemon.daemonUsername,
       daemonPrimaryGroup: daemon.daemonPrimaryGroup, binaryPath: effects.installedCli });

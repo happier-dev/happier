@@ -5970,5 +5970,8 @@ are retained with explicit administrator guidance. A changed or foreign sudoers
 file is retained too; only a matching content digest, root owner/group and mode
 can enter the existing elevated APPLY. Accepted/unchanged results report removed
 step ids and retained remedies. Off inventory uses the same read-only elevated
-CHECK and administrator recovery as enabling; it never treats denied observation
-as an empty plan. This is an unreleased 0.3 development contract.
+CHECK as enabling. If the daemon identity or elevated CHECK is unavailable, Off
+still returns a ready review, retains every inventory item with
+`native_check_unavailable`, and removes nothing. An unavailable checkout census
+also does not block this explicit policy recovery. This is an unreleased 0.3
+development contract.

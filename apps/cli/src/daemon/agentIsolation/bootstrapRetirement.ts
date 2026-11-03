@@ -20,7 +20,7 @@ export function buildAgentIsolationBootstrapRetirementObservations(input: Readon
 
 /** Native CHECK owns presence and exact-file safety. Legacy bootstrap did not
  * record prior ownership/configuration, so retirement never guesses those values. */
-export function projectAgentIsolationBootstrapRetirement(plan: MachineSetupEffectPlanV1): Retirement {
+export function projectAgentIsolationBootstrapRetirement(plan: Pick<MachineSetupEffectPlanV1, 'steps' | 'nativeFacts'>): Retirement {
   return plan.steps.map((step, index): Retirement[number] => {
     const fact = plan.nativeFacts[index];
     const base = { stepId: step.id, kind: step.kind, target: 'path' in step ? step.path
@@ -46,4 +46,12 @@ export function projectAgentIsolationBootstrapRetirement(plan: MachineSetupEffec
     return { ...base, observation, action: 'retain', reasonCode: 'prior_value_unknown',
       remedy: 'Bootstrap did not retain the previous permission or Git configuration. Have an administrator review current users and restore the intended value explicitly.' };
   });
+}
+
+/** Derive the inventory without claiming an OS principal or actionable plan.
+ * The placeholder is used only to enumerate the producer's fixed resources. */
+export function buildUnobservedAgentIsolationBootstrapRetirement(binaryPath: string): Retirement {
+  const steps = buildAgentIsolationBootstrapRetirementObservations({ daemonUsername: 'unknown', daemonPrimaryGroup: 'unknown', binaryPath });
+  return projectAgentIsolationBootstrapRetirement({ steps, nativeFacts: [] }).map(item => item.stepId === 'unknown-shared-git'
+    ? { ...item, stepId: 'daemon-shared-git', target: 'Daemon global Git configuration (identity unavailable)' } : item);
 }

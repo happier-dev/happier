@@ -82,15 +82,17 @@ export async function prepareAgentIsolationEffectsResult(input: Readonly<{
   const basis: MachineSetupEffectPlanV1['basis'] = { kind: 'agentIsolation', machineId: input.machineId, enabled: input.enabled,
     expectedPolicy: input.expectedPolicy ?? policy.policy, review: { roots, ancestorAcls, sessionsToReplace, ...memberReview } };
   const observationSteps = ('retirementObservations' in intent ? intent.retirementObservations : undefined) ?? steps;
-  let setupPlan: MachineSetupEffectPlanV1;
-  if (!effects.backend && input.operationId && input.verifyCurrent) {
+  // An uninspected Off inventory is advisory: no native effect may be admitted.
+  let setupPlan = createMachineSetupEffectPlan({ basis, steps: [], nativeFacts: [] });
+  if (observationSteps.length && !effects.backend && input.operationId && input.verifyCurrent) {
     const checked = await checkElevatedMachineSetupPlanResult({ machineId: input.machineId, operationId: input.operationId,
       basis, steps: observationSteps, signal: input.signal }, { ...effects.elevation, verifyCurrent: input.verifyCurrent });
-    if (checked.outcome !== 'checked') return { ...unavailable(),
+    if (checked.outcome === 'checked') setupPlan = checked.plan;
+    else if (input.enabled) return { ...unavailable(),
       ...(checked.outcome === 'not_applied' ? { setup: checked } : {}) };
-    setupPlan = checked.plan;
-  } else setupPlan = await checkMachineSetupEffectPlan({ basis, steps: observationSteps, backend: effects.backend ?? createMachineSetupNativeBackend() });
-  const retirement = !input.enabled ? projectAgentIsolationBootstrapRetirement(setupPlan) : undefined;
+  } else if (observationSteps.length) setupPlan = await checkMachineSetupEffectPlan({ basis, steps: observationSteps, backend: effects.backend ?? createMachineSetupNativeBackend() });
+  const retirement = !input.enabled ? ('retirement' in intent ? intent.retirement : undefined)
+    ?? projectAgentIsolationBootstrapRetirement({ steps: observationSteps, nativeFacts: setupPlan.nativeFacts }) : undefined;
   if (retirement) {
     const removals = new Set(retirement.filter(effect => effect.action === 'remove').map(effect => effect.stepId));
     setupPlan = createMachineSetupEffectPlan({ basis, steps: setupPlan.steps.filter(step => removals.has(step.id)),
