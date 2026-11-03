@@ -43,6 +43,26 @@ describe('resolveApprovalExecutor', () => {
       .toEqual({ kind: 'daemon', machineId: 'retained-controller' });
   });
 
+  it.each(['cli', 'ui'] as const)('returns immediate retained Delete to its controller across %s approval replay', surface => {
+    const request = requestFor('machines.managed.delete', {
+      homeId: 'home', managedId: 'lima-leaf', when: 'now', expectedRevision: 0,
+      intent: 'delete', reviewedDependencies: true,
+    }, surface);
+    // An ambient Machine does not turn a controllerless Account proposal native.
+    expect(resolveApprovalExecutor(request)).toEqual({ kind: 'app', placement: 'account' });
+    const targeted = ApprovalRequestV2Schema.parse({ ...request, executionOriginV1: {
+      ...request.executionOriginV1, machineId: 'retained-controller',
+      target: { kind: 'machine', machineId: 'retained-controller' },
+    } });
+    expect(resolveApprovalExecutor(targeted)).toEqual({ kind: 'daemon', machineId: 'retained-controller' });
+    expect(resolveApprovalExecutor(ApprovalRequestV2Schema.parse(projectApprovalRequestForPublicRead(targeted))))
+      .toEqual({ kind: 'daemon', machineId: 'retained-controller' });
+    expect(resolveApprovalExecutor(ApprovalRequestV2Schema.parse({ ...targeted,
+      actionArgs: { homeId: 'home', managedId: 'lima-leaf', when: 'after-idle',
+        intent: 'delete', reviewedDependencies: true },
+    }))).toEqual({ kind: 'app', placement: 'account' });
+  });
+
   it.each(surfaces)('routes placement and private custody independently of the %s surface', surface => {
     for (const row of cases) {
       const expected = row.expected.kind === 'live_invocation' && (surface === 'agent' || surface === 'mcp' || surface === 'rpc' || surface === 'api')

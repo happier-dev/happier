@@ -62,12 +62,13 @@ export function resolveApprovalExecutor(request: ApprovalRequest | TargetActionA
     : actionId.data === 'discussion.invite' && origin.caller.kind === 'workflowRun'
       && origin.caller.discussionModelReservation
       ? 'machine' : resolveActionExecutionPlacementForInput(spec, input.data);
-  // Native deployment roots and managed bootstrap recovery return to their controller, including
+  // Native deployment roots and retained managed controls return to their controller, including
   // public read projections that omit private replay authorization. The daemon
   // reads that custody from the original Artifact; location grants no authority.
   // Ordinary Account proposals keep their app executor.
   if ((deploymentOperationForRootActionV1(actionId.data) !== undefined
       || actionId.data === 'machines.managed.bootstrap.retry'
+      || actionId.data === 'machines.managed.delete' && readRecord(input.data).when === 'now'
       || actionId.data === 'machines.managed.power.set' && readRecord(input.data).when === 'now'
         && origin.externalActionExecutionAuthorization?.binding.actionId === actionId.data)
     && origin.target?.kind === 'machine') return { kind: 'daemon', machineId: origin.target.machineId };
