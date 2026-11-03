@@ -74,6 +74,8 @@ export type PluginAccountAvailabilitySnapshot = Readonly<{
 export type PluginAccountInstalledPluginInstallation = Readonly<{
     materialization: PluginMachineMaterializationV1;
     declaration: PluginPortableReleaseManifestV1 | null;
+    /** Full discovery facts; first-paint presentation manifests do not prove absent contributors. */
+    contributorDeclaration: PluginPortableReleaseManifestV1 | null;
     declarationState: 'known' | 'preparing';
     /** Manifest knowledge alone does not prove projected renderer descriptors. */
     uiDeclarationState: 'known' | 'preparing';
@@ -834,8 +836,9 @@ function readInstalledPluginRows(state: AvailabilityProjectionState, scope: Serv
         const bundles = state!.bundledUiByPluginId.get(materialization.pluginId) ?? [];
         const bundle = materialization.sourceClass === 'bundledFirstParty' && bundles.length === 1
             && bundles[0]!.pluginVersion === materialization.version ? bundles[0] : undefined;
-        const declaration = release?.normalizedManifest ?? materialization.declaredManifest
-            ?? bundle?.normalizedManifest ?? bundle?.presentationManifest ?? null;
+        const contributorDeclaration = release?.normalizedManifest ?? materialization.declaredManifest
+            ?? bundle?.normalizedManifest ?? null;
+        const declaration = contributorDeclaration ?? bundle?.presentationManifest ?? null;
         const installations = byPluginId.get(materialization.pluginId) ?? [];
         const incumbent = previousInstallations.get(materializationLookupKey(materialization));
         let uiModel = incumbent && samePluginUiMaterializationFacts(incumbent.materialization, materialization) && incumbent.declaration === declaration
@@ -868,6 +871,7 @@ function readInstalledPluginRows(state: AvailabilityProjectionState, scope: Serv
         installations.push(retainIfEqual(incumbent, Object.freeze({
             materialization,
             declaration,
+            contributorDeclaration,
             declarationState: declaration ? 'known' : 'preparing',
             uiDeclarationState: materialization.declaredUiEntries !== undefined || release ? 'known' : 'preparing',
             release,
@@ -1676,7 +1680,8 @@ function retainUiInstalledPlugins(previous: PluginAccountUiProjectionInputs['ins
             const before = previousInstallations.get(materializationLookupKey(installation.materialization));
             const execution = retainIfEqual(before?.execution, installation.execution);
             if (before && samePluginUiMaterializationFacts(before.materialization, installation.materialization)
-                && before.declaration === installation.declaration && before.release === installation.release
+                && before.declaration === installation.declaration && before.contributorDeclaration === installation.contributorDeclaration
+                && before.release === installation.release
                 && before.declarationState === installation.declarationState && before.uiDeclarationState === installation.uiDeclarationState
                 && before.uiModel === installation.uiModel && before.execution === execution) return before;
             return installation;
@@ -1768,7 +1773,8 @@ function deriveDeclarationAvailabilityObservations(state: AvailabilityProjection
 }
 
 function deriveAvailabilityObservations(state: AvailabilityProjectionState,
-    accountSelections: AvailabilityAccountUiProjection['selections'], previous?: AvailabilityObservations,
+    accountSelections: AvailabilityAccountUiProjection['selections'], installed: PluginAccountInstalledPluginsAdmission,
+    previous?: AvailabilityObservations,
     previousCursor?: number): AvailabilityObservations {
     const { snapshot } = state;
     const intents = state.intentReadsByPluginId;
@@ -1784,8 +1790,12 @@ function deriveAvailabilityObservations(state: AvailabilityProjectionState,
             if (rows) rows.push(declaration); else accountDeclarations.set(target, [declaration]);
         }
     }
-    for (const row of snapshot.materializations) {
-        const targets = new Set(row.declaredManifest?.contributes.targetedPluginContributions.map(contribution => contribution.target.pluginId));
+    for (const installation of installed.kind === 'available' ? installed.plugins.flatMap(plugin => plugin.installations) : []) {
+        const { materialization, contributorDeclaration: declaration } = installation;
+        const targets = new Set(declaration?.contributes.targetedPluginContributions.map(contribution => contribution.target.pluginId));
+        // The observation carries the resolved declaration only as a change fact;
+        // the Machine census and execution authority remain unchanged.
+        const row = declaration ? { ...materialization, declaredManifest: declaration } : materialization;
         for (const target of targets) {
             if (target === row.pluginId) continue;
             const rows = targetedMaterializations.get(target);
@@ -2212,7 +2222,8 @@ export function createPluginAccountAvailabilityReaderStore(input: Readonly<{
             && sameStrictJsonValue(state!.retiredPluginIds ?? [], nextState.retiredPluginIds ?? [])
             ? previousInputs : Object.freeze({ materializations, installedPlugins, accountUiProjection });
         const nextDerived = Object.freeze({ ...nextProjection, uiInputs });
-        const nextObservations = deriveAvailabilityObservations(nextState, nextProjection.accountUi.selections, sameScope ? observations : undefined,
+        const nextObservations = deriveAvailabilityObservations(nextState, nextProjection.accountUi.selections, nextProjection.installed,
+            sameScope ? observations : undefined,
             state?.snapshot.availabilityCursor);
         state = nextState;
         derived = nextDerived;

@@ -121,6 +121,45 @@ function snapshot(overrides: Partial<PluginAccountAvailabilitySnapshot> = {}): P
 }
 
 describe('Plugin Account Availability reader', () => {
+    it.each([false, true])('publishes targeted contributor changes only to the affected plugin observation (thin=%s)', (thin) => {
+        const base = snapshot();
+        const source = { ...base.materializations[0]!, enabled: true, trustState: 'trusted' as const,
+            declaredManifest: PluginPortableReleaseManifestV1Schema.parse({
+                ...intentRead().release!.normalizedManifest, contributes: {
+                    actions: [{ id: 'read', title: 'Read', scopes: ['global'], surfaces: ['ui'], placementBindings: [], dangerLevel: 'safe',
+                        execution: { target: 'daemon' } }],
+                    targetedPluginContributions: [{ id: 'source', target: { pluginId: 'acme.target', pointId: 'sources' },
+                        protocol: { id: 'sources', version: 1 }, operations: { read: 'read' } }],
+                },
+            }) };
+        const store = createPluginAccountAvailabilityReaderStore({ hostBundledUi: [{ pluginId: source.pluginId,
+            pluginVersion: source.version, displayName: 'Source', packageName: '@acme/source',
+            normalizedManifest: source.declaredManifest, entriesById: {} }] });
+        const reader = store.bind(scope);
+        const publish = (input: typeof source) => {
+            const row = thin ? { ...input, sourceClass: 'bundledFirstParty' as const, portableRelease: false,
+                declaredManifest: undefined } : input;
+            return store.replace({ scope, snapshot: { ...base,
+                materializations: [row], snapshots: [{ serverIdentityId: row.serverIdentityId,
+                    machineId: row.machineId, materializations: [row] }] } });
+        };
+        publish(source);
+        const target = reader.getObservationSnapshot('acme.target');
+        const unrelated = reader.getObservationSnapshot('acme.unrelated');
+        expect(target).not.toBeNull();
+        for (let index = 1; index <= 5; index += 1) {
+            publish({ ...source, observedAt: source.observedAt + index });
+            expect(reader.getObservationSnapshot('acme.target')).toBe(target);
+            expect(reader.getObservationSnapshot('acme.unrelated')).toBe(unrelated);
+        }
+        publish({ ...source, enabled: false });
+        expect(reader.getObservationSnapshot('acme.target')).not.toBe(target);
+        expect(reader.getObservationSnapshot('acme.unrelated')).toBe(unrelated);
+        publish({ ...source, declaredManifest: { ...source.declaredManifest,
+            contributes: { ...source.declaredManifest.contributes, targetedPluginContributions: [] } } });
+        expect(reader.getObservationSnapshot('acme.target')).not.toBe(target);
+    });
+
     it('reads desired Account enablement without requiring a release, declaration or Machine materialization', () => {
         const store = createPluginAccountAvailabilityReaderStore();
         const reader = store.bind(scope);
