@@ -21,6 +21,7 @@ import {
     type PluginUiInputTypeProjection,
     type PluginUiAtmospherePictureProjection,
     type PluginUiRegistrySourceProjection,
+    type PluginUiStoreKindProjection,
     type PluginUiSkillProjection,
 } from './projection';
 import { arePluginMachineExecutionOriginsEqual, getPluginMachineExecutionOriginRef, type PluginMachineExecutionOriginV1 } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
@@ -132,7 +133,12 @@ function deriveInstalledPluginUiProjection(
     ]).filter(id => completeUiPluginIds === undefined || completeUiPluginIds.has(id)));
     const hostBundledPluginIds = new Set(installed.flatMap(model => Object.values(model.installedPackagesById)
         .filter(plugin => plugin.source.kind === 'bundled' && !plugin.occurrenceId).map(plugin => plugin.id)));
-    const merge = <T>(read: (model: PluginUiProjectionModel) => Readonly<Record<string, T>>, artifactFacts = false, hostDeclarations = false) => {
+    const merge = <T>(read: (model: PluginUiProjectionModel) => Readonly<Record<string, T>>, options: Readonly<{
+        artifactFacts?: boolean;
+        hostDeclarations?: boolean;
+        uiCensus?: boolean;
+    }> = {}) => {
+        const { artifactFacts, hostDeclarations, uiCensus } = options;
         const declared: Record<string, T> = Object.assign({}, ...installed.map(read));
         for (const [key, entry] of Object.entries(runtime ? read(runtime) : {})) {
             const declaration = asRecord(declared[key]);
@@ -179,7 +185,7 @@ function deriveInstalledPluginUiProjection(
                 }));
                 continue;
             }
-            if (!pluginId || (!installedPluginIds.has(pluginId) && !declared[key])
+            if (!pluginId || ((!uiCensus || !installedPluginIds.has(pluginId)) && !declared[key])
                 || (artifactFacts && matchesInstalledArtifactSlot(entry, materializations))
                 || (declared[key] && sameDeclarationContent(declared[key], entry, comparisons))) {
                 declared[key] = entry;
@@ -196,25 +202,28 @@ function deriveInstalledPluginUiProjection(
         actionsById: Object.freeze(Object.assign({}, runtime?.actionsById,
             ...installed.map(model => Object.fromEntries(Object.entries(model.actionsById)
                 .filter(([, action]) => action.execution.target === 'account'))))),
-        translationsByPluginId: merge(model => model.translationsByPluginId),
-        sessionHeaderActionsById: merge(model => model.sessionHeaderActionsById),
+        translationsByPluginId: merge(model => model.translationsByPluginId, { uiCensus: true }),
+        sessionHeaderActionsById: merge(model => model.sessionHeaderActionsById, { uiCensus: true }),
         // Search binds the runtime Action's occurrence and origin, like
         // Machine Actions above. Portable renderer declarations omit this family
         // and cannot withdraw an admitted runtime provider from Home.
         searchProvidersById: runtime?.searchProvidersById ?? EMPTY_PLUGIN_UI_PROJECTION.searchProvidersById,
-        hostedWebById: merge(model => model.hostedWebById, true),
-        reactNativeBundlesById: merge(model => model.reactNativeBundlesById, true),
-        surfacePlacementsById: merge(model => model.surfacePlacementsById, false, true),
-        settingsGroupsById: merge(model => model.settingsGroupsById),
-        settingsPagesById: merge(model => model.settingsPagesById, false, true),
+        hostedWebById: merge(model => model.hostedWebById, { artifactFacts: true, uiCensus: true }),
+        reactNativeBundlesById: merge(model => model.reactNativeBundlesById, { artifactFacts: true, uiCensus: true }),
+        surfacePlacementsById: merge(model => model.surfacePlacementsById, { hostDeclarations: true, uiCensus: true }),
+        settingsGroupsById: merge(model => model.settingsGroupsById, { uiCensus: true }),
+        settingsPagesById: merge(model => model.settingsPagesById, { hostDeclarations: true, uiCensus: true }),
+        // The installed pluginUi census cannot withdraw independent contribution
+        // families. Their current daemon projection owns declaration removal.
         composerControlsById: merge(model => model.composerControlsById),
         composerRegionsById: merge(model => model.composerRegionsById),
         composerReferencesById: merge(model => model.composerReferencesById),
         voiceProvidersById: merge(model => model.voiceProvidersById),
         atmospherePicturesById: merge(model => model.atmospherePicturesById),
         registrySourcesById: merge(model => model.registrySourcesById),
+        storeKindsById: merge(model => model.storeKindsById),
         skillsById: merge(model => model.skillsById),
-        unknownEntriesById: merge(model => model.unknownEntriesById),
+        unknownEntriesById: merge(model => model.unknownEntriesById, { uiCensus: true }),
     });
     return projection;
 }
@@ -534,7 +543,7 @@ function declarationMaps(model: PluginUiProjectionModel): readonly Readonly<Reco
 const DECLARATION_MAP_KEYS = ['translationsByPluginId', 'sessionHeaderActionsById', 'searchProvidersById',
     'hostedWebById', 'reactNativeBundlesById', 'surfacePlacementsById', 'settingsGroupsById', 'settingsPagesById',
     'actionsById', 'voiceProvidersById', 'dragSourcesById', 'workItemsById', 'dropTargetsById',
-    'atmospherePicturesById', 'registrySourcesById', 'skillsById', 'unknownEntriesById', 'inputTypesById',
+    'atmospherePicturesById', 'registrySourcesById', 'storeKindsById', 'skillsById', 'unknownEntriesById', 'inputTypesById',
     'composerControlsById', 'composerRegionsById', 'composerReferencesById'] as const;
 const UNION_MAP_KEYS = [...DECLARATION_MAP_KEYS, 'resourcesById', 'installedPackagesById'] as const;
 type UnionMapKey = typeof UNION_MAP_KEYS[number];
@@ -1688,6 +1697,7 @@ function derivePluginUiProjectionUnion(
     const inputTypesById: Record<string, PluginUiInputTypeProjection> = {};
     const atmospherePicturesById: Record<string, PluginUiAtmospherePictureProjection> = {};
     const registrySourcesById: Record<string, PluginUiRegistrySourceProjection> = {};
+    const storeKindsById: Record<string, PluginUiStoreKindProjection> = {};
     const skillsById: Record<string, PluginUiSkillProjection> = {};
     const unknownEntriesById: Record<string, UnknownRecord> = {};
     const composerControlsById: Record<string, PluginUiProjectionModel['composerControlsById'][string]> = {};
@@ -1888,6 +1898,13 @@ function derivePluginUiProjectionUnion(
             const origin = model.installedPackagesById[entry.pluginId]?.enabled === true ? originFor(entry) : null;
             if (origin) publishFirstAdmitted(member, registrySourcesById, id, entry, origin);
         }
+        for (const [id, entry] of Object.entries(model.storeKindsById)) {
+            const representative = selectedMembersByPluginId.get(entry.pluginId)?.projection.storeKindsById[id]
+                ?? storeKindsById[id];
+            if (representative && !sameDeclarationContent(entry.definition, representative.definition, comparisons)) continue;
+            const origin = model.installedPackagesById[entry.pluginId]?.enabled === true ? originFor(entry) : null;
+            if (origin) publishFirstAdmitted(member, storeKindsById, id, entry, origin);
+        }
         for (const [id, entry] of Object.entries(model.skillsById)) {
             const origin = model.installedPackagesById[entry.pluginId]?.enabled === true ? originFor(entry) : null;
             if (origin) publishFirstAdmitted(member, skillsById, id, entry, origin);
@@ -1927,7 +1944,7 @@ function derivePluginUiProjectionUnion(
     // keep their reported supplies for Administration's origin picker.
     const publishedMaps: readonly Record<string, unknown>[] = [translationsByPluginId, sessionHeaderActionsById, searchProvidersById,
         hostedWebById, reactNativeBundlesById, surfacePlacementsById, settingsGroupsById, settingsPagesById, actionsById,
-        voiceProvidersById, dragSourcesById, workItemsById, dropTargetsById, atmospherePicturesById, registrySourcesById, skillsById, unknownEntriesById, inputTypesById,
+        voiceProvidersById, dragSourcesById, workItemsById, dropTargetsById, atmospherePicturesById, registrySourcesById, storeKindsById, skillsById, unknownEntriesById, inputTypesById,
         composerControlsById, composerRegionsById, composerReferencesById, resourcesById];
     for (const [index, map] of publishedMaps.entries()) {
         for (const [key, entry] of Object.entries(map)) {
@@ -1957,6 +1974,7 @@ function derivePluginUiProjectionUnion(
         + Object.keys(inputTypesById).length
         + Object.keys(atmospherePicturesById).length
         + Object.keys(registrySourcesById).length
+        + Object.keys(storeKindsById).length
         + Object.keys(skillsById).length
         + Object.keys(composerControlsById).length
         + Object.keys(composerRegionsById).length
@@ -2009,6 +2027,7 @@ function derivePluginUiProjectionUnion(
         inputTypesById: Object.freeze(inputTypesById),
         atmospherePicturesById: Object.freeze(atmospherePicturesById),
         registrySourcesById: Object.freeze(registrySourcesById),
+        storeKindsById: Object.freeze(storeKindsById),
         skillsById: Object.freeze(skillsById),
         // Openable viewers are scoped to a session/project details host. There is
         // no app-union consumer, so do not make app scope a second projection

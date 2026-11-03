@@ -75,6 +75,7 @@ export type PluginUiWorkItemsProjection = PluginProjectedWorkItemsEntryV1 & Unkn
 export type PluginUiInputTypeProjection = NonNullable<DaemonContributionRegistryProjection['familiesById']['inputTypes']>['entriesById'][string];
 export type PluginUiAtmospherePictureProjection = NonNullable<DaemonContributionRegistryProjection['familiesById']['atmospherePictures']>['entriesById'][string];
 export type PluginUiRegistrySourceProjection = NonNullable<DaemonContributionRegistryProjection['familiesById']['registrySources']>['entriesById'][string];
+export type PluginUiStoreKindProjection = NonNullable<DaemonContributionRegistryProjection['familiesById']['storeKinds']>['entriesById'][string];
 export type PluginUiSkillProjection = NonNullable<DaemonContributionRegistryProjection['familiesById']['skills']>['entriesById'][string];
 export type PluginUiComposerReferenceProjection = Readonly<{
     id: string;
@@ -434,6 +435,7 @@ export type PluginUiProjectionModel = Readonly<{
     inputTypesById: Readonly<Record<string, PluginUiInputTypeProjection>>;
     atmospherePicturesById: Readonly<Record<string, PluginUiAtmospherePictureProjection>>;
     registrySourcesById: Readonly<Record<string, PluginUiRegistrySourceProjection>>;
+    storeKindsById: Readonly<Record<string, PluginUiStoreKindProjection>>;
     skillsById: Readonly<Record<string, PluginUiSkillProjection>>;
     voiceProvidersById: Readonly<Record<string, PluginVoiceProviderProjection>>;
     dragSourcesById: Readonly<Record<string, PluginUiDragSourceProjection>>;
@@ -466,6 +468,7 @@ export const EMPTY_PLUGIN_UI_PROJECTION: PluginUiProjectionModel = Object.freeze
     inputTypesById: Object.freeze({}),
     atmospherePicturesById: Object.freeze({}),
     registrySourcesById: Object.freeze({}),
+    storeKindsById: Object.freeze({}),
     skillsById: Object.freeze({}),
     voiceProvidersById: Object.freeze({}),
     dragSourcesById: Object.freeze({}),
@@ -1047,6 +1050,7 @@ export function normalizePluginUiProjection(
     const inputTypesById = previous && sameFamily('inputTypes') ? previous.inputTypesById : Object.freeze({ ...(projection.familiesById.inputTypes?.entriesById ?? {}) });
     const atmospherePicturesById = previous && sameFamily('atmospherePictures') ? previous.atmospherePicturesById : Object.freeze({ ...(projection.familiesById.atmospherePictures?.entriesById ?? {}) });
     const registrySourcesById = previous && sameFamily('registrySources') ? previous.registrySourcesById : Object.freeze({ ...(projection.familiesById.registrySources?.entriesById ?? {}) });
+    const storeKindsById = previous && sameFamily('storeKinds') ? previous.storeKindsById : Object.freeze({ ...(projection.familiesById.storeKinds?.entriesById ?? {}) });
     const skillsById = previous && sameFamily('skills') ? previous.skillsById : Object.freeze({ ...(projection.familiesById.skills?.entriesById ?? {}) });
     const workItemsById = normalizeAdmittedProjectionEntries(projection.familiesById.workItems?.entriesById,
         previous?.workItemsById, previousInput?.familiesById.workItems?.entriesById);
@@ -1126,6 +1130,7 @@ export function normalizePluginUiProjection(
             inputTypesById,
             atmospherePicturesById,
             registrySourcesById,
+            storeKindsById,
             skillsById,
             voiceProvidersById: Object.freeze(voiceProvidersById),
             dragSourcesById: Object.freeze(dragSourcesById),
@@ -1306,6 +1311,7 @@ export function normalizePluginUiProjection(
         inputTypesById,
         atmospherePicturesById,
         registrySourcesById,
+        storeKindsById,
         skillsById,
         voiceProvidersById: Object.freeze(voiceProvidersById),
         dragSourcesById: Object.freeze(dragSourcesById),
