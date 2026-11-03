@@ -36,6 +36,23 @@ function setup(respond: (args: string[]) => unknown = args => args.includes('lis
 afterEach(() => { vi.restoreAllMocks(); });
 
 describe('agent-desktop native driver', () => {
+  it('transfers text clipboard through the pinned clipboard commands and preserves missing-text failure', async () => {
+    let clipboard: string | null = 'remote 日本';
+    setup(args => {
+      if (args.includes('clipboard-get')) return clipboard === null ? { type: 'text', found: false } : { type: 'text', text: clipboard };
+      if (args.includes('clipboard-set')) { clipboard = args.at(-1) ?? ''; return { type: 'text', disposition: { delivery: 'delivered_unverified', retry: 'unsafe' } }; }
+      return {};
+    });
+    const driver = await createAgentDesktopComputerDriver({ displayId: ':73', executablePath: '/managed/agent-desktop' });
+    try {
+      expect(await driver.clipboard?.(target, { kind: 'read' })).toEqual({ ok: true, text: 'remote 日本' });
+      expect(await driver.clipboard?.(target, { kind: 'write', text: '--local 👋' })).toEqual({ ok: true });
+      expect(clipboard).toBe('--local 👋');
+      expect(boundary.calls.find(args => args.includes('clipboard-set'))).toEqual(['clipboard-set', '--', '--local 👋']);
+      clipboard = null;
+      expect(await driver.clipboard?.(target, { kind: 'read' })).toEqual({ ok: false, code: 'clipboard_text_unavailable' });
+    } finally { await driver.close(); }
+  });
   it('captures the native snapshot window descriptor without requiring list-windows metadata', async () => {
     setup(args => args.includes('list-windows') ? [window]
       : args.includes('screenshot') ? { data: png, format: 'png', width: 200, height: 100, scale_factor: 1 }

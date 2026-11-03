@@ -15,6 +15,24 @@ import { ComputerSelectedTargetResponseV1Schema } from '@happier-dev/protocol/co
 
 
 describe('native primary-display and macOS contract', () => {
+  it('transfers text clipboard without capturing or retaining clipboard content in observations', async () => {
+    let clipboard: string | null = 'remote 日本';
+    native.call.mockImplementation(async ({ name, arguments: args }) => {
+      if (name === 'clipboard_read') return { structuredContent: { supported: true, types: ['text/plain'], text: clipboard } };
+      if (name === 'clipboard_write') { clipboard = String(args.text); return { structuredContent: { supported: true, written_type: 'text' } }; }
+      throw new Error('Clipboard must not capture or inject input');
+    });
+    const driver = await createManagedComputerDriver({ displayId: ':73', executablePath: '/managed/native-driver' });
+    try {
+      expect(await driver.clipboard?.(target, { kind: 'read' })).toEqual({ ok: true, text: 'remote 日本' });
+      expect(await driver.clipboard?.(target, { kind: 'write', text: 'local 👋' })).toEqual({ ok: true });
+      expect(clipboard).toBe('local 👋');
+      expect(native.tools).toEqual([{ name: 'clipboard_read', arguments: { include_text: true } },
+        { name: 'clipboard_write', arguments: { text: 'local 👋' } }]);
+      clipboard = null;
+      expect(await driver.clipboard?.(target, { kind: 'read' })).toEqual({ ok: false, code: 'clipboard_text_unavailable' });
+    } finally { await driver.close(); }
+  });
   it('admits X11 input permissions once per connection and leaves later refusals to the native operation', async () => {
     const display = { kind: 'display', displayId: ':73' } as const;
     native.call.mockImplementation(async ({ name }) => name === 'check_permissions'

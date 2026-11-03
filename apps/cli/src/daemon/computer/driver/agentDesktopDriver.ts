@@ -236,6 +236,25 @@ export async function createAgentDesktopComputerDriver(params: Readonly<{ displa
     capture,
     captureFrame: (target, options) => screenshot(target, options?.maxImageDimension),
     input,
+    async clipboard(target, operation, context) {
+      try {
+        assertTarget(target);
+        if (context?.signal?.aborted) return { ok: false, code: 'user_canceled' };
+        if (operation.kind === 'read') {
+          const result = z.object({ type: z.literal('text'), text: z.optional(z.string()), found: z.optional(z.boolean()) })
+            .safeParse(await read(['clipboard-get', '--format', 'text']));
+          if (!result.success) return { ok: false, code: 'driver_result_invalid' };
+          return result.data.text === undefined ? { ok: false, code: 'clipboard_text_unavailable' } : { ok: true, text: result.data.text };
+        }
+        const result = z.object({ type: z.literal('text'), disposition: dispositionSchema })
+          .safeParse(await read(['clipboard-set', '--', operation.text]));
+        if (!result.success) return { ok: false, code: 'driver_result_invalid' };
+        return result.data.disposition.delivery === 'delivered_verified' || result.data.disposition.delivery === 'delivered_unverified'
+          ? { ok: true } : { ok: false, code: 'clipboard_write_failed' };
+      } catch (error) {
+        return { ok: false, code: error instanceof ComputerDriverError ? error.code : 'driver_result_invalid' };
+      }
+    },
     close() {
       return closePromise ??= (async () => { closing = true; await Promise.allSettled([...pending]); binding = undefined; await rm(stateRoot, { recursive: true, force: true }); })();
     },

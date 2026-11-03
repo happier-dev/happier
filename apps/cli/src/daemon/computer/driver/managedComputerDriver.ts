@@ -2,6 +2,7 @@ import { isAbsolute } from 'node:path';
 
 import { z } from 'zod/mini';
 
+import type { ComputerClipboardOperationV1, ComputerClipboardResultV1 } from '@happier-dev/protocol/computer/v1';
 import { ComputerAccessibilityNodeV1Schema, ComputerCaptureGeometryV1Schema, computerTargetKeyV1 } from '@happier-dev/protocol/computer/v1';
 import type { ComputerAccessibilityNodeV1, ComputerCaptureGeometryV1, ComputerTargetV1, ComputerInputOperationV1, ComputerTargetsListResponseV1, ComputerProviderIdV1, ComputerUseSettingsV1 } from '@happier-dev/protocol';
 import { createAgentDesktopComputerDriver } from './agentDesktopDriver';
@@ -23,6 +24,7 @@ export type ManagedComputerDriver = Readonly<{
   captureFrame(target: ComputerTargetV1, options?: Readonly<{ maxImageDimension: number }>): Promise<Readonly<{ png: Buffer; geometry: ComputerCaptureGeometryV1 }>>;
   /** Only host-admitted viewer keys/text omit capture grounding; pointer input always requires it. */
   input(target: ComputerTargetV1, captureId: string | null, operation: ComputerInputOperationV1, context?: Readonly<{ signal?: AbortSignal }>): Promise<ComputerDriverInputResult>;
+  clipboard?(target: ComputerTargetV1, operation: ComputerClipboardOperationV1, context?: Readonly<{ signal?: AbortSignal }>): Promise<ComputerClipboardResultV1>;
   close(): Promise<void>;
 }>;
 
@@ -84,7 +86,12 @@ async function createCuaComputerDriver(params: Readonly<{ displayId: string; exe
   const frameInitialization = new AbortController();
   let closing = false;
   let closePromise: Promise<void> | undefined;
-  const inputs = new Set<Promise<ComputerDriverInputResult>>();
+  const inputs = new Set<Promise<unknown>>();
+  const trackInput = <T>(operation: Promise<T>): Promise<T> => {
+    inputs.add(operation);
+    void operation.then(() => inputs.delete(operation), () => inputs.delete(operation));
+    return operation;
+  };
   // Retain only action-binding facts, never duplicate the native PNG store.
   let captureBinding: Readonly<{ captureId: string; target: ComputerTargetV1; geometry: ComputerCaptureGeometryV1;
     elementTokens: ReadonlyMap<string, string>; nativeScale?: number }> | undefined;
@@ -341,10 +348,29 @@ async function createCuaComputerDriver(params: Readonly<{ displayId: string; exe
     capture,
     captureFrame,
     input(target, captureId, operation, context) {
-      const input = performInput(target, captureId, operation, context);
-      inputs.add(input);
-      void input.finally(() => inputs.delete(input));
-      return input;
+      return trackInput(performInput(target, captureId, operation, context));
+    },
+    clipboard(target, operation, context) {
+      return trackInput((async (): Promise<ComputerClipboardResultV1> => {
+        try {
+          assertTarget(target);
+          if (context?.signal?.aborted) return { ok: false, code: 'user_canceled' };
+          const result = await native.call(operation.kind === 'read' ? 'clipboard_read' : 'clipboard_write',
+            operation.kind === 'read' ? { include_text: true } : { text: operation.text });
+          if (result.isError) return { ok: false, code: nativeRefusalCode(result) };
+          if (operation.kind === 'read') {
+            const parsed = z.object({ supported: z.boolean(), text: z.nullable(z.string()) }).safeParse(result.structuredContent);
+            if (!parsed.success) return { ok: false, code: 'driver_result_invalid' };
+            if (!parsed.data.supported) return { ok: false, code: 'clipboard_not_supported' };
+            return parsed.data.text === null ? { ok: false, code: 'clipboard_text_unavailable' } : { ok: true, text: parsed.data.text };
+          }
+          const parsed = z.object({ supported: z.boolean(), written_type: z.literal('text') }).safeParse(result.structuredContent);
+          return !parsed.success ? { ok: false, code: 'driver_result_invalid' }
+            : parsed.data.supported ? { ok: true } : { ok: false, code: 'clipboard_not_supported' };
+        } catch (error) {
+          return { ok: false, code: error instanceof ComputerDriverError ? error.code : 'driver_unavailable' };
+        }
+      })());
     },
     close() {
       if (!closePromise) {

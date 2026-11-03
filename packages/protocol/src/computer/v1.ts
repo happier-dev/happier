@@ -104,6 +104,18 @@ export const ComputerInputRequestV1Schema = lazyZodSchema(() => z.extend(Compute
 }));
 export type ComputerInputRequestV1 = z.infer<typeof ComputerInputRequestV1Schema>;
 
+export const ComputerClipboardOperationV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
+  z.strictObject({ kind: z.literal('read') }),
+  z.strictObject({ kind: z.literal('write'), text: z.string() }),
+]));
+export type ComputerClipboardOperationV1 = z.infer<typeof ComputerClipboardOperationV1Schema>;
+export const ComputerClipboardWriteRequestV1Schema = lazyZodSchema(() => z.extend(ComputerTargetRequestV1Schema, { text: z.string() }));
+export const ComputerClipboardResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('ok', [
+  z.strictObject({ ok: z.literal(true), text: z.optional(z.string()) }),
+  z.strictObject({ ok: z.literal(false), code: IdSchema }),
+]));
+export type ComputerClipboardResultV1 = z.infer<typeof ComputerClipboardResultV1Schema>;
+
 /** Public credential requests bind an observed field; values exist only in the private human continuation. */
 export const SecretFillScopeV1Schema = lazyZodSchema(() => z.strictObject({
   serverId: IdSchema,
