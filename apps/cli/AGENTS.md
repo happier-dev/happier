@@ -52,6 +52,8 @@ Details: `../../docs/agents-catalog.md`.
 - Daemon lifecycle, state files, local HTTP control, backend sockets, spawn hooks, and session tracking are production behavior and require TDD.
 - Preserve graceful shutdown, stale-process cleanup, authentication, and validation semantics.
 - Reuse daemon-owned process/session helpers rather than adding ad hoc spawn or cleanup paths.
+- A settled daemon or runner issues no recurring server reads except named liveness. Re-read server state on the live change signal, not per activity read, RPC or wake, and reuse context the daemon already holds for a tracked Session without turning it into a TTL cache. Prove it with requests per idle minute by caller.
+- A startup budget or required-readiness wait applies only to dependencies the Session requires; optional and third-party integrations start on their own defaults and never hold the first turn.
 
 ## Binary-safe runtime and packaging
 
