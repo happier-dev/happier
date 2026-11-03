@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { JsonValue } from '@happier-dev/plugin-sdk';
+import { isPluginError, type JsonValue, type PluginDiagnosticData } from '@happier-dev/plugin-sdk';
 import type {
   PluginUiActionExecutionOptions,
   PluginUiActionInputFor,
@@ -34,8 +34,8 @@ export type PluginActionExecution<Result = unknown> =
   | Readonly<{ status: 'idle' }>
   | Readonly<{ status: 'pending' }>
   | Readonly<{ status: 'success'; result: Result }>
-  | Readonly<{ status: 'error'; code: string; message: string; retryable: boolean }>
-  | Readonly<{ status: 'outcomeUnknown'; code: string; message: string }>;
+  | Readonly<{ status: 'error'; code: string; message: string; retryable: boolean; diagnostics?: readonly PluginDiagnosticData[]; requestId?: string }>
+  | Readonly<{ status: 'outcomeUnknown'; code: string; message: string; requestId?: string }>;
 
 /**
  * The rejection codes that mean "the request reached the host and we stopped
@@ -100,7 +100,8 @@ function readErrorMessage(error: unknown, code: string, translate: Translate): s
   return translate(key, fallback);
 }
 
-function settledFromRejection<Result>(error: unknown, translate: Translate): PluginActionExecution<Result> {
+/** The same transport settlement for controllers that dispatch through an admitted domain executor. */
+export function projectPluginActionRejectionV1<Result>(error: unknown, translate: Translate): PluginActionExecution<Result> {
   const code = readErrorCode(error);
   // The host has withdrawn this mount's occurrence and is establishing its
   // successor. Readiness/rebinding owns recovery; never replay an Action here.
@@ -113,14 +114,23 @@ function settledFromRejection<Result>(error: unknown, translate: Translate): Plu
     return { status: 'idle' };
   }
   const message = readErrorMessage(error, code, translate);
-  if (OUTCOME_UNKNOWN_ERROR_CODES.has(code)) {
-    return { status: 'outcomeUnknown', code, message };
+  const details = (error as { details?: unknown } | null)?.details;
+  const requestIdValue = details !== null && typeof details === 'object' && !Array.isArray(details)
+    ? Reflect.get(details, 'requestId') : undefined;
+  const requestId = typeof requestIdValue === 'string' ? requestIdValue : undefined;
+  const receiptLost = details !== null && typeof details === 'object' && !Array.isArray(details)
+    && Reflect.get(details, 'layer') === 'transport'
+    && Reflect.get(details, 'phase') === 'settlement';
+  if (OUTCOME_UNKNOWN_ERROR_CODES.has(code) || receiptLost) {
+    return { status: 'outcomeUnknown', code, message, ...(requestId === undefined ? {} : { requestId }) };
   }
   return {
     status: 'error',
     code,
     message,
     retryable: (error as { retryable?: unknown } | null)?.retryable === true,
+    ...(requestId === undefined ? {} : { requestId }),
+    ...(isPluginError(error) && error.diagnostics !== undefined ? { diagnostics: error.diagnostics } : {}),
   };
 }
 
@@ -231,7 +241,7 @@ export function useExecutePluginAction(
         : await executeAction(action, actionInput, options);
       settled = settledFromResult(result);
     } catch (error) {
-      settled = settledFromRejection<JsonValue>(error, translateRef.current);
+      settled = projectPluginActionRejectionV1<JsonValue>(error, translateRef.current);
     }
 
     if (pendingRef.current === bindingToken) pendingRef.current = null;

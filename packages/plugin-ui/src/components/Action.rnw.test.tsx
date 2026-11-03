@@ -1,6 +1,7 @@
 import type { ActionContract } from '@happier-dev/plugin-sdk/actions';
-import type { JsonValue } from '@happier-dev/plugin-sdk';
+import { PluginError, type JsonValue } from '@happier-dev/plugin-sdk';
 import type { PluginUiHostApi, SurfaceContext } from '@happier-dev/plugin-sdk/ui';
+import { PLUGIN_UI_HOST_API_VERSION_V1 } from '@happier-dev/protocol/plugins/ui/client';
 import type { ReactNode } from 'react';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -11,6 +12,7 @@ import { createHostApiStub, createSurfaceContext } from '../surfaceFixture.testS
 import { Action, ActionPanel } from './Action.js';
 import { useExecutePluginAction } from '../hostApi/executeAction.js';
 import { PluginUiProvider } from './PluginUiProvider.js';
+import { createPluginUiHostApiClientFromTransport } from '../../../plugin-sdk/src/ui/clientTransport.js';
 
 declare const updateReview: ActionContract;
 declare const completeReview: ActionContract;
@@ -359,7 +361,9 @@ describe('plugin-ui Action family dispatches through the canonical host API', ()
 
   it('surfaces a failed execution without retrying it', async () => {
     const executeAction = vi.fn(async () => {
-      throw Object.assign(new Error('The review service refused.'), { code: 'denied', retryable: false });
+      throw new PluginError({ code: 'denied', retryable: false, message: 'The review service refused.',
+        details: { requestId: 'review-request-1', privatePayload: 'must not be projected' },
+        diagnostics: [{ code: 'plugin_action_scope_denied', severity: 'error' }] });
     });
     const onSettled = vi.fn();
     const mount = mountSurface(
@@ -371,7 +375,10 @@ describe('plugin-ui Action family dispatches through the canonical host API', ()
 
     expect(executeAction).toHaveBeenCalledTimes(1);
     expect(onSettled).toHaveBeenCalledTimes(1);
-    expect(onSettled.mock.calls[0]?.[0]).toMatchObject({ status: 'error', code: 'denied' });
+    expect(onSettled.mock.calls[0]?.[0]).toMatchObject({ status: 'error', code: 'denied', retryable: false,
+      requestId: 'review-request-1',
+      diagnostics: [{ code: 'plugin_action_scope_denied', severity: 'error' }] });
+    expect(onSettled.mock.calls[0]?.[0]).not.toHaveProperty('details');
 
     mount.unmount();
   });
@@ -523,6 +530,35 @@ describe('plugin-ui Action family dispatches through the canonical host API', ()
     expect(onSettled.mock.calls[0]?.[0]).toMatchObject({ status: 'outcomeUnknown', code: 'timeout' });
 
     mount.unmount();
+  });
+
+  it('keeps a lost post-issue receipt outcome-unknown from the real SDK transport without replay', async () => {
+    const context = createSurfaceContext();
+    const identity = { instanceId: 'lost-receipt', mountNonce: 'lost-receipt-nonce' };
+    let receive: ((value: unknown) => void) | undefined;
+    let issued = 0;
+    const hostApi = await createPluginUiHostApiClientFromTransport({ identity, transport: {
+      subscribe(listener) { receive = listener; return { dispose() { receive = undefined; } }; },
+      send(message) {
+        if (message.kind === 'negotiate') receive?.({ wireVersion: 1, kind: 'negotiated', identity,
+          apiVersion: PLUGIN_UI_HOST_API_VERSION_V1, methods: ['context', 'watchContext', 'executeAction'] });
+        if (message.kind === 'subscribe') receive?.({ wireVersion: 1, kind: 'result', identity,
+          requestId: message.requestId, method: message.method, result: {} });
+        if (message.kind !== 'request') return;
+        if (message.method === 'executeAction') {
+          issued++;
+          receive?.({ wireVersion: 1, kind: 'disconnected', identity, reason: 'daemon_offline' });
+        } else receive?.({ wireVersion: 1, kind: 'result', identity, requestId: message.requestId,
+          method: message.method, result: { surface: context, activity: { active: true } } });
+      },
+    } });
+    const onSettled = vi.fn();
+    const mount = mountSurface(<Action.Execute action="review.refresh" title="Run review" onSettled={onSettled} />, hostApi, context);
+    try {
+      await press(pressableByLabel(mount.container, 'Run review'));
+      expect(onSettled.mock.calls[0]?.[0]).toMatchObject({ status: 'outcomeUnknown', code: 'daemon_offline' });
+      expect(issued).toBe(1);
+    } finally { mount.unmount(); }
   });
 
   it('routes copy, external link, surface navigation and refresh to their own host owners', async () => {

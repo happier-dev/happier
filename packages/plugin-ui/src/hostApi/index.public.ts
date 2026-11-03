@@ -80,6 +80,7 @@ export type {
 } from './resourceStore.js';
 export {
   useExecutePluginAction,
+  projectPluginActionRejectionV1,
   type PluginActionExecution,
   type PluginActionExecutionController,
   type PluginActionInput,
