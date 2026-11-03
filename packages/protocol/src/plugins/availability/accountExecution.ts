@@ -29,7 +29,7 @@ export type PluginAccountExecutionSelectionV1 =
   | Readonly<{
       kind: 'available';
       manifest: PluginPortableReleaseManifestV1;
-      sourceCustody: PluginSourceCustodyV1;
+      sourceCustody: Extract<PluginSourceCustodyV1, Readonly<{ kind: 'account_release' | 'bundled_first_party' }>>;
       custodyId: string;
       release: PluginReleaseFactsV1 | null;
     }>
