@@ -2457,4 +2457,3 @@ it.each([RPC_METHODS.SPAWN_HAPPY_SESSION, RPC_METHODS.SPAWN_HAPPY_SESSION_PROVID
     expect(rawAdmissions).toBe(2);
   },
 );
-
