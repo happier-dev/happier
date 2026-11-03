@@ -1369,6 +1369,15 @@ type AgentParams = Shared_browserPresenceTranslations.AgentParams;
 type BrowserPresenceTranslations = Shared_browserPresenceTranslations.BrowserPresenceTranslations;
 
 const browserPresenceTranslations = { es: {
+        remoteControls: {
+            touch: "Táctil",
+            modifiers: "Modificadores",
+            arrows: "Flechas",
+            clipboard: "Portapapeles",
+            sendClipboard: "Enviar portapapeles",
+            receiveClipboard: "Recibir portapapeles",
+            hideKeyboard: "Ocultar teclado",
+        },
         agentFallbackName: 'El agente',
         agentBrowsing: ({ agent }) => `${agent} está navegando`,
         clickTarget: ({ target }) => `Haciendo clic en «${target}»`,

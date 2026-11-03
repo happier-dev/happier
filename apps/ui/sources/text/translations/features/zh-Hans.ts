@@ -1364,6 +1364,15 @@ type AgentParams = Shared_browserPresenceTranslations.AgentParams;
 type BrowserPresenceTranslations = Shared_browserPresenceTranslations.BrowserPresenceTranslations;
 
 const browserPresenceTranslations = { 'zh-Hans': {
+        remoteControls: {
+            touch: "触控",
+            modifiers: "修饰键",
+            arrows: "方向键",
+            clipboard: "剪贴板",
+            sendClipboard: "发送剪贴板",
+            receiveClipboard: "接收剪贴板",
+            hideKeyboard: "隐藏键盘",
+        },
         agentFallbackName: '代理',
         agentBrowsing: ({ agent }) => `${agent} 正在浏览`,
         clickTarget: ({ target }) => `正在点击“${target}”`,

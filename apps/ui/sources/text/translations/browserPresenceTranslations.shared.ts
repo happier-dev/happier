@@ -6,6 +6,15 @@ export type AgentParams = Readonly<{ agent: string }>;
 
 export type BrowserPresenceTranslations = Readonly<{
     /** Names the agent when the session's agent is unknown to the catalog. */
+    remoteControls: Readonly<{
+        touch: string;
+        modifiers: string;
+        arrows: string;
+        clipboard: string;
+        sendClipboard: string;
+        receiveClipboard: string;
+        hideKeyboard: string;
+    }>;
     agentFallbackName: string;
     agentBrowsing: (params: AgentParams) => string;
     clickTarget: (params: Readonly<{ target: string }>) => string;
@@ -78,6 +87,15 @@ export type BrowserPresenceTranslations = Readonly<{
 
 
 export const browserPresenceTranslationsEnglish = { en: {
+        remoteControls: {
+            touch: "Touch",
+            modifiers: "Modifiers",
+            arrows: "Arrows",
+            clipboard: "Clipboard",
+            sendClipboard: "Send clipboard",
+            receiveClipboard: "Receive clipboard",
+            hideKeyboard: "Hide keyboard",
+        },
         agentFallbackName: 'The agent',
         agentBrowsing: ({ agent }) => `${agent} is browsing`,
         clickTarget: ({ target }) => `Clicking “${target}”`,

@@ -4,10 +4,7 @@ import Svg, { Polyline } from 'react-native-svg';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { HappierLiveStreamInputMode, HappierLiveStreamViewTransform } from '@happier-dev/plugin-ui/presentation';
 import { createPersistentUiState, usePersistentUiStateValue } from '@/sync/domains/state/persistentUiState';
-import { CORE_CAPSULE_HOST } from '@/components/ui/status/capsuleHost';
-import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
-import { t } from '@/text';
 import type { RemoteViewerActions } from './useRemoteViewerActions';
 
 /** A viewer preference, scoped by its producer to Home, Account, Machine and source identity. */
@@ -27,14 +24,13 @@ export type RemoteViewerHostActions = RemoteViewerActions & Readonly<{
     inputMode: Readonly<{ value: HappierLiveStreamInputMode; setMode(mode: HappierLiveStreamInputMode): void }>;
     resetZoom(): void;
 }>;
-const styles = StyleSheet.create(theme => ({
+const styles = StyleSheet.create({
     root: { ...StyleSheet.absoluteFillObject, overflow: 'hidden' },
     picture: { ...StyleSheet.absoluteFillObject },
-    controls: { position: 'absolute', left: theme.space.s12, bottom: theme.space.s12, zIndex: 3 },
     cursor: { position: 'absolute', pointerEvents: 'none' },
-}));
+});
 
-/** Picture, local viewport and touch-mode controls share one leaf; cursor frames never rerender the host screen. */
+/** Picture and local viewport share one leaf; cursor frames never rerender the host screen. */
 export function RemoteViewerStage(props: Readonly<{
     viewerKey?: string;
     viewport: Readonly<{ width: number; height: number }>;
@@ -71,7 +67,6 @@ export function RemoteViewerStage(props: Readonly<{
         [props.enabled, props.testID, props.viewport.width, props.viewport.height, theme.colors.text.primary]);
     const controls = React.useMemo(() => ({ mode, setMode, resetZoom, zoomReset, onViewTransformChange, renderCursor, renderDragTrail }),
         [mode, setMode, resetZoom, zoomReset, onViewTransformChange, renderCursor, renderDragTrail]);
-    const { Surface, Button } = CORE_CAPSULE_HOST;
     return <View style={styles.root}>
         <View style={[styles.picture, { transform: [
             { translateX: transform.x + (transform.scale - 1) * props.viewport.width / 2 },
@@ -79,13 +74,5 @@ export function RemoteViewerStage(props: Readonly<{
             { scale: transform.scale },
         ] }]}>{props.children}</View>
         {props.renderInput(controls)}
-        {props.enabled ? <View style={styles.controls}><Surface elevation="low" testID={`${props.testID}-mode-controls`}>
-            <SegmentedTabBar tabs={[
-                {id: 'direct' as const, label: t('browserPresence.stream.directMode')},
-                {id: 'trackpad' as const, label: t('browserPresence.stream.trackpadMode')},
-            ]} activeTabId={mode} onSelectTab={setMode} testIDPrefix={`${props.testID}-mode`} compact />
-            {transform.scale > 1 ? <Button emphasis="plain" title={t('browserPresence.stream.resetZoom')}
-                onPress={resetZoom} testID={`${props.testID}-reset-zoom`} /> : null}
-        </Surface></View> : null}
     </View>;
 }

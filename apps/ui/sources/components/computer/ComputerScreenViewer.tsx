@@ -16,6 +16,7 @@ import { BrowserAgentCursor } from '@/components/browser/copresence/BrowserAgent
 import { BrowserFrameStatusCapsule } from '@/components/browser/frame/BrowserFrameStatusCapsule';
 import { RemoteViewerStage, type RemoteViewerStageControls, type RemoteViewerHostActions } from '@/components/stream/RemoteViewerStage';
 import { useRemoteViewerActions } from '@/components/stream/useRemoteViewerActions';
+import { RemoteViewerControlBar } from '@/components/stream/RemoteViewerControlBar';
 import { useBrowserSoftKeyboard } from '@/components/browser/streamed/useBrowserSoftKeyboard';
 import { LiveStreamInputLayer } from '@/components/stream/LiveStreamInputLayer';
 import { LiveStreamPlayer } from '@/components/stream/LiveStreamPlayer';
@@ -214,15 +215,15 @@ function ViewerStreamInput(props: Readonly<{
     }, [send, sourceId, streamId]);
     const sequence = React.useRef(0);
     const sendAction = React.useCallback((action: LiveStreamInputGesture) => sendGesture({eventId: `viewer:${Date.now()}:${++sequence.current}`, action}), [sendGesture]);
-    const actions = useRemoteViewerActions({enabled: true, sendGesture: sendAction, clipboardShortcut: props.input.clipboardShortcut});
-    const keyboard = useBrowserSoftKeyboard({enabled: true, target: null, manual: true, sendText: actions.sendText, sendKey: actions.sendKey});
+    const actions = useRemoteViewerActions({enabled: props.controlling, sendGesture: sendAction, clipboardShortcut: props.input.clipboardShortcut});
+    const keyboard = useBrowserSoftKeyboard({enabled: props.controlling, target: null, manual: true, sendText: actions.sendText, sendKey: actions.sendKey});
     const keyboardActions = React.useMemo(() => ({available: keyboard.available, focused: keyboard.focused,
         showKeyboard: keyboard.showKeyboard, hideKeyboard: keyboard.hideKeyboard}),
         [keyboard.available, keyboard.focused, keyboard.showKeyboard, keyboard.hideKeyboard]);
     const onGesture = React.useCallback((gesture: Readonly<{eventId: string; action: LiveStreamInputGesture}>) => {
-        const action = actions.prepareGesture(gesture.action);
+        const action = props.controlling ? actions.prepareGesture(gesture.action) : gesture.action;
         if (action) sendGesture({...gesture, action});
-    }, [actions.prepareGesture, sendGesture]);
+    }, [actions.prepareGesture, props.controlling, sendGesture]);
     const supports = React.useCallback((kind: LiveStreamInputGesture['kind']) => kind === 'move' ? props.controlling : supportsScreenInput(kind), [props.controlling]);
     const published = React.useMemo(() => ({...actions, keyboard: keyboardActions, inputMode: {value: props.controls.mode, setMode: props.controls.setMode},
         resetZoom: props.controls.resetZoom}),
@@ -251,6 +252,7 @@ function ViewerStreamInput(props: Readonly<{
             <TextInput ref={keyboard.inputRef} {...keyboard.sentinelProps}
                 style={{position: 'absolute', left: 0, bottom: 0, width: 1, height: 1, opacity: 0}}
                 accessibilityLabel={t('browserPresence.interaction.showKeyboard')} testID={`${props.testID}-keyboard-sentinel`} />
+            <RemoteViewerControlBar actions={published} controls={props.controls} enabled={props.controlling} testID={`${props.testID}-controls`} />
         </View>
     );
 }

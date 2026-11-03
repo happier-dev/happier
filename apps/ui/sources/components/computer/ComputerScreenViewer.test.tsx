@@ -63,7 +63,44 @@ function props(
   };
 }
 
+function pictureStage(screen: Awaited<ReturnType<typeof renderScreen>>) {
+  // The viewport belongs to the picture's ancestor, not the first measured
+  // control in the chrome surrounding it.
+  let stage = screen.findHostByTestId('v-picture')?.parent ?? null;
+  while (stage && (typeof stage.type !== 'string' || typeof stage.props.onLayout !== 'function')) {
+    stage = stage.parent;
+  }
+  if (!stage) throw new Error('Expected the picture viewport layout owner');
+  return stage;
+}
+
 describe('ComputerScreenViewer', () => {
+  it('mounts remote control panels on the live Machine viewer and sends keys and clipboard through its input owner', async () => {
+    const send = vi.fn();
+    const clipboardShortcut = vi.fn(async (_action: 'copy' | 'cut' | 'paste') => ({ ok: true as const }));
+    const viewerProps = props({ presence: { kind: 'human', controlEpoch: 1, interruptedCompletion: null },
+      stream: { machineName: 'machine', input: { sourceId: 'computer-source', streamId: 'stream', send, clipboardShortcut },
+        playerState: { phase: 'playing', selectedCodec: 'image.mjpeg', activeRenderer: 'mjpeg',
+          lastFrameUrl: 'data:image/jpeg;base64,AQID', decodedFrames: 1, droppedFrames: 0, bufferedBytes: 0 } } });
+    const screen = await renderScreen(<ComputerScreenViewer {...viewerProps} />);
+    await act(async () => pictureStage(screen).props.onLayout({ nativeEvent: { layout: { width: 800, height: 600 } } }));
+    expect(screen.findByTestId('v-input-controls')).not.toBeNull();
+    await screen.pressByTestIdAsync('v-input-controls-tabs:modifiers');
+    await screen.pressByTestIdAsync('v-input-controls-modifier-control');
+    await screen.pressByTestIdAsync('v-input-controls-escape');
+    expect(send).toHaveBeenLastCalledWith(expect.objectContaining({ kind: 'keyboard_key', key: 'Escape', modifiers: ['control'] }));
+    await screen.pressByTestIdAsync('v-input-controls-tabs:arrows');
+    await screen.pressByTestIdAsync('v-input-controls-key-ArrowLeft');
+    expect(send).toHaveBeenLastCalledWith(expect.objectContaining({ kind: 'keyboard_key', key: 'ArrowLeft' }));
+    await screen.pressByTestIdAsync('v-input-controls-tabs:clipboard');
+    await screen.pressByTestIdAsync('v-input-controls-paste');
+    await screen.pressByTestIdAsync('v-input-controls-copy');
+    expect(clipboardShortcut.mock.calls.map(call => call[0])).toEqual(['paste', 'copy']);
+    expect(screen.findByTestId('v-input-controls-keyboard')).not.toBeNull();
+    await screen.update(<ComputerScreenViewer {...viewerProps} presence={{ kind: 'agent', activity: null, target: null, controlEpoch: 2 }} />);
+    expect(screen.findByTestId('v-input-controls-escape')?.props.disabled).toBe(true);
+    await screen.unmount();
+  });
   it('shows connecting while the share selection is unread, then shows a confirmed empty selection', async () => {
     const screen = await renderScreen(<ComputerScreenViewer {...props({ shared: false, selectionPending: true })} />);
     expect(screen.findByTestId('v-not-shared')).toBeNull();
