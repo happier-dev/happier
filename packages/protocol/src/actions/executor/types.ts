@@ -2110,6 +2110,7 @@ export type ActionExecutorDeps = Readonly<{
   sessionStop?: (args: Readonly<{ sessionId: string; stopIntent: SessionStopIntent; serverId?: string | null; context?: ActionExecutorContext; signal?: AbortSignal }>) => Promise<unknown>;
   sessionRuntimeRefresh?: (args: Readonly<{ sessionId: string; machineId: string; serverId?: string; context: ActionExecutorContext; signal?: AbortSignal }>) => Promise<unknown>;
   sessionTurnCancel?: (args: Readonly<{ sessionId: string; serverId?: string | null; context: ActionExecutorContext; signal?: AbortSignal }>) => Promise<unknown>;
+  sessionCompact?: (args: Readonly<{ sessionId: string; instructions?: string; serverId?: string | null; context: ActionExecutorContext; signal?: AbortSignal }>) => Promise<unknown>;
   sessionTerminalComposerClear?: (args: Readonly<{
     sessionId: string;
     expectedStateAtMs?: number;

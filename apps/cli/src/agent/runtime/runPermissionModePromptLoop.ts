@@ -1,7 +1,8 @@
+import { readQueuedPromptDeliveryIdentity, hasQueuedPromptDeliveryIdentity, confirmLocallyConsumedPrompt, observeLocalSpecialCommandSettlement } from './permissions/localSpecialCommandSettlement';
+import type { ManualCompactionQueue } from './queueSpecialCommands';
 import { randomUUID } from 'node:crypto';
 
 import { readPendingLocalId } from '@happier-dev/protocol/sessions/pending/pendingLocalId';
-import { AgentSessionRuntimeEventSchema } from '@happier-dev/protocol/runtime/agentSessionV1';
 import { AgentSessionStartupInstructionsV1Schema } from '@happier-dev/protocol/runtime/agentSessionStartupInstructionsV1';
 import { validatePluginHookPayloadV1 } from '@happier-dev/protocol/plugins/hooks';
 import { isModelRefGrantedV1, isPermissionModeGrantedV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
@@ -19,6 +20,7 @@ import { resolveAppendSystemPromptBaseOverride } from '@/agent/runtime/permissio
 import {
   isRuntimeTurnFailureAlreadySurfaced,
   type RuntimeTurnOperations,
+  type RuntimeTurnMessage,
   type RuntimeTurnPromptMeta,
   type RuntimeTurnSessionOpenIntent,
 } from '@/agent/runtime/turns/runtimeTurnOperations';
@@ -36,8 +38,6 @@ import type {
 } from '@/agent/runtime/permissions/queuedPrompt';
 import {
   normalizePermissionModeQueuedPromptLocalIds,
-  normalizePermissionModeQueuedPromptUserMessageSeqs,
-  readHighestPermissionModeQueuedPromptUserMessageSeq,
   isNextTurnContextQueuedPrompt,
 } from '@/agent/runtime/permissions/queuedPrompt';
 import { fitHappierReplaySeedWithinTotalBudget } from '@happier-dev/agents';
@@ -266,32 +266,23 @@ async function parkUntilPromptRecovery(params: Readonly<{
   }
 }
 
-function readCheckpointRuntimeMessage(message: unknown): CheckpointRuntimeMessage | null {
-  const parsedRuntimeEvent = AgentSessionRuntimeEventSchema.safeParse(message);
-  if (parsedRuntimeEvent.success) {
-    const runtimeEvent = parsedRuntimeEvent.data;
-    switch (runtimeEvent.kind) {
-      case 'turn-start':
-        return { type: 'task_started', id: runtimeEvent.turnId, sequence: runtimeEvent.sequence };
-      case 'turn-complete':
-        return { type: 'task_complete', id: runtimeEvent.turnId, sequence: runtimeEvent.sequence };
-      case 'turn-cancelled':
-        return { type: 'turn_aborted', id: runtimeEvent.turnId, reason: runtimeEvent.cause, sequence: runtimeEvent.sequence };
-      case 'turn-failed':
-        return { type: 'turn_failed', id: runtimeEvent.turnId, sequence: runtimeEvent.sequence };
-      default:
-        return null;
-    }
+function readCheckpointRuntimeMessage(runtimeEvent: RuntimeTurnMessage): CheckpointRuntimeMessage | null {
+  switch (runtimeEvent.kind) {
+    case 'turn-start':
+      return { type: 'task_started', id: runtimeEvent.turnId, sequence: runtimeEvent.sequence };
+    case 'turn-complete':
+      return { type: 'task_complete', id: runtimeEvent.turnId, sequence: runtimeEvent.sequence };
+    case 'turn-cancelled':
+      return { type: 'turn_aborted', id: runtimeEvent.turnId, reason: runtimeEvent.cause, sequence: runtimeEvent.sequence };
+    case 'turn-failed':
+      return { type: 'turn_failed', id: runtimeEvent.turnId, sequence: runtimeEvent.sequence };
+    default:
+      return null;
   }
-  return message && typeof message === 'object' ? message as CheckpointRuntimeMessage : null;
 }
 
 function readCheckpointTurnId(message: CheckpointRuntimeMessage): string | null {
   return typeof message.id === 'string' && message.id.trim().length > 0 ? message.id : null;
-}
-
-function readCommittedUserMessageSeq(message: PermissionModeQueuedPrompt): number | null {
-  return readHighestPermissionModeQueuedPromptUserMessageSeq(message);
 }
 
 function readRuntimeRestartModeHash(mode: QueuedPermissionModeMessage['mode']): string {
@@ -300,67 +291,6 @@ function readRuntimeRestartModeHash(mode: QueuedPermissionModeMessage['mode']): 
     appendSystemPrompt: mode.appendSystemPrompt ?? null,
     suppressUserEcho: mode.suppressUserEcho === true,
     providerPromptAlreadyResolved: mode.providerPromptAlreadyResolved === true,
-  });
-}
-
-type QueuedPromptDeliveryIdentity = Readonly<{
-  localIds: readonly string[];
-  userMessageSeq: number | null;
-  userMessageSeqs: readonly number[];
-}>;
-
-function readQueuedPromptDeliveryIdentity(message: PermissionModeQueuedPrompt): QueuedPromptDeliveryIdentity {
-  return {
-    localIds: normalizePermissionModeQueuedPromptLocalIds(message),
-    userMessageSeq: readCommittedUserMessageSeq(message),
-    userMessageSeqs: normalizePermissionModeQueuedPromptUserMessageSeqs(message),
-  };
-}
-
-function hasQueuedPromptDeliveryIdentity(identity: QueuedPromptDeliveryIdentity): boolean {
-  return identity.localIds.length > 0 || identity.userMessageSeq !== null || identity.userMessageSeqs.length > 0;
-}
-
-function confirmLocallyConsumedPrompt(session: ApiSessionClient, message: PermissionModeQueuedPrompt): void {
-  if (message.hostContextOnly) return;
-  const identity = readQueuedPromptDeliveryIdentity(message);
-  if (!hasQueuedPromptDeliveryIdentity(identity)) return;
-  session.confirmUserMessageLocallyConsumed?.(identity);
-}
-
-function observeLocalSpecialCommandSettlement(params: Readonly<{
-  session: ApiSessionClient;
-  message: PermissionModeQueuedPrompt;
-  outcome:
-    | Readonly<{ kind: 'accepted' }>
-    | Readonly<{ kind: 'rejected_before_effect'; diagnosticMessage: string }>;
-}>): void {
-  if (params.message.hostContextOnly) return;
-  const identity = readQueuedPromptDeliveryIdentity(params.message);
-  if (identity.localIds.length !== 1) return;
-  const localId = identity.localIds[0]!;
-  const sharedIdentity = {
-    localId,
-    userMessageSeq: identity.userMessageSeq,
-    ...(identity.userMessageSeqs.length > 0 ? { userMessageSeqs: identity.userMessageSeqs } : {}),
-  };
-  if (params.outcome.kind === 'accepted') {
-    params.session.observeProviderInputSettlement({
-      kind: 'accepted',
-      ...sharedIdentity,
-    });
-    return;
-  }
-  params.session.observeProviderInputSettlement({
-    kind: 'rejected_before_effect',
-    ...sharedIdentity,
-    reason: 'provider_rejected_before_acceptance',
-    diagnostic: {
-      code: 'local_special_command_rejected',
-      severity: 'error',
-      message: params.outcome.diagnosticMessage,
-    },
-    retryable: false,
   });
 }
 
@@ -613,6 +543,7 @@ export async function runPermissionModePromptLoop(opts: {
   explicitPermissionMode: PermissionMode | undefined;
   session: ApiSessionClient;
   messageQueue: MessageQueue2<PermissionModeQueuedPromptMode, PermissionModeQueuedPrompt>;
+  manualCompaction?: Pick<ManualCompactionQueue<PermissionModeQueuedPromptMode, PermissionModeQueuedPrompt>, 'setRunning'>;
   permissionHandler: PromptLoopPermissionHandler;
   runtime: PermissionModePromptLoopTurnOperations;
   /** Host composition must not clone the Agent's receiver-sensitive operations. */
@@ -801,13 +732,17 @@ export async function runPermissionModePromptLoop(opts: {
 
   const unsubscribeCheckpointRuntimeMessages = (() => {
     try {
-      return opts.runtime.subscribeRuntimeEvents((rawMessage) => {
-        const event = AgentSessionRuntimeEventSchema.safeParse(rawMessage);
-        if (!turnInFlight && event.success && (event.data.kind === 'turn-complete'
-          || event.data.kind === 'turn-failed' || event.data.kind === 'turn-cancelled')) {
+      return opts.runtime.subscribeRuntimeEvents((event) => {
+        if (event.kind === 'context-compaction' && event.phase !== 'progress') {
+          opts.manualCompaction?.setRunning(event.phase === 'started');
+        } else if (event.kind === 'runtime-ended') {
+          opts.manualCompaction?.setRunning(false);
+        }
+        if (!turnInFlight && (event.kind === 'turn-complete'
+          || event.kind === 'turn-failed' || event.kind === 'turn-cancelled')) {
           // Native terminal input can finish while this loop is parked rather than
-          // awaiting its own turn. Settle the existing lifecycle boundary before
-          // waking the same Pending consumer; terminal events are not metadata updates.
+          // awaiting its own turn. Reuse the same settlement boundary before waking
+          // the existing Pending consumer; terminal events are not metadata updates.
           void (async () => {
             await opts.onAfterLoopBoundary?.({ reason: 'turn_completed' });
             inputConsumer.notifyInputReadinessChanged();
@@ -815,14 +750,14 @@ export async function runPermissionModePromptLoop(opts: {
             logger.debug(`[${opts.providerName}] Native-turn Pending wake could not settle`);
           });
         }
-        if (event.success && event.data.kind === 'context-compaction' && event.data.phase === 'completed') {
+        if (event.kind === 'context-compaction' && event.phase === 'completed') {
           // The canonical event invalidates this delivery owner. No compact
           // command heuristic, separate cadence or provider-specific marker.
           pendingFreshSessionSystemPrompt = true;
           pendingSessionSystemPromptDelivery = null;
         }
         if (!opts.checkpointLifecycle) return;
-        const message = readCheckpointRuntimeMessage(rawMessage);
+        const message = readCheckpointRuntimeMessage(event);
         if (!message || typeof message.type !== 'string') return;
         const messageId = activeCheckpointMessageId;
         if (!messageId) return;

@@ -952,6 +952,7 @@ export const ca = {
     sessions_spawn_mcp_servers_preview: "Previsualitza els servidors MCP per iniciar sessions",
     session_message_send: "Envia un missatge a una sessió",
     session_turn_cancel: "Atura el torn actual",
+    session_compact: "Resumeix la conversa",
     session_terminalComposer_clear: "Esborra el redactor del terminal",
     session_pending_markHandled: "Marca el lliurament pendent com a gestionat",
     session_pending_dismiss: "Descarta un lliurament pendent de resultat incert",

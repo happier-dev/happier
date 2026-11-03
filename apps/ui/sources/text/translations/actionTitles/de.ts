@@ -952,6 +952,7 @@ export const de = {
     sessions_spawn_mcp_servers_preview: "MCP-Server für den Start ansehen",
     session_message_send: "Nachricht an eine Session senden",
     session_turn_cancel: "Aktuellen Beitrag stoppen",
+    session_compact: "Unterhaltung zusammenfassen",
     session_terminalComposer_clear: "Terminal-Eingabefeld leeren",
     session_pending_markHandled: "Ausstehende Zustellung als erledigt markieren",
     session_pending_dismiss: "Unklare ausstehende Zustellung ausblenden",

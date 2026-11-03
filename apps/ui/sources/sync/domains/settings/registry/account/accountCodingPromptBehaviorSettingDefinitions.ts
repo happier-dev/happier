@@ -12,6 +12,7 @@ export const ACCOUNT_CODING_PROMPT_BEHAVIOR_SETTING_ANALYTICS = defineAccountSet
             const parsed = CodingPromptBehaviorV1Schema.parse(value);
             return {
                 sessionTitleUpdates: parsed.sessionTitleUpdates,
+                sessionCompactionNudge: parsed.sessionCompactionNudge,
                 responseOptions: parsed.responseOptions,
             };
         },

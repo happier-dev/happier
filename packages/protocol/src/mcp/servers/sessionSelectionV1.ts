@@ -15,6 +15,7 @@ function dedupeStrings(values: ReadonlyArray<string>): string[] {
 const SESSION_MCP_SELECTION_V1_FIELDS = {
   v: z._default(z.literal(1), 1),
   managedServersEnabled: z._default(z.boolean(), true),
+  happierToolsEnabled: z.optional(z.boolean()),
   forceIncludeServerIds: z._default(z.array(z.string().check(z.minLength(1))), []),
   forceExcludeServerIds: z._default(z.array(z.string().check(z.minLength(1))), []),
 } as const;
@@ -22,6 +23,7 @@ const SESSION_MCP_SELECTION_V1_FIELDS = {
 function normalizeSessionMcpSelectionV1(value: {
   v: 1;
   managedServersEnabled: boolean;
+  happierToolsEnabled?: boolean;
   forceIncludeServerIds: string[];
   forceExcludeServerIds: string[];
 }) {
@@ -67,6 +69,7 @@ function selectionBehaviorKey(selection: SessionMcpSelectionV1): string {
     .sort();
   return JSON.stringify({
     managedServersEnabled: normalized.managedServersEnabled,
+    happierToolsEnabled: normalized.happierToolsEnabled ?? true,
     forceIncludeServerIds,
     forceExcludeServerIds,
   });

@@ -327,6 +327,7 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
     'session.pending.dismiss',
     'session.pending.sendAsNew',
     'session.turn.cancel',
+    'session.compact',
     'session.stop',
     'session.exchange.control',
     'session.runtime.refresh',

@@ -952,6 +952,7 @@ export const ja = {
     sessions_spawn_mcp_servers_preview: "起動時の MCP サーバーをプレビュー",
     session_message_send: "セッションにメッセージを送信",
     session_turn_cancel: "現在のターンを停止",
+    session_compact: "会話を要約",
     session_terminalComposer_clear: "ターミナルの入力欄を消去",
     session_pending_markHandled: "保留中の配信を処理済みにする",
     session_pending_dismiss: "結果が不明な保留中の配信を閉じる",

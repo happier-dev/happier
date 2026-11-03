@@ -14522,6 +14522,21 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `turnId` (text, required): Turn id
 - `cwd` (text, required): Working directory
 
+## `session.compact`
+
+**Compact conversation** — Compact a Session's conversation into a summary to free context; runs after the current turn. Use after a large, self-contained piece of work in a long conversation — not after small tasks or mid-task. \`instructions\` (optional; only some Agents support it): what the summary must keep.
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `none` result; `deferred` flow.
+- Request admission: `account_automation` — subject to surface, access, grant and approval policy.
+- Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `rpc`, `api`.
+
+### Input guidance
+
+- `sessionId` (text): Session id
+- `instructions` (textarea): What the summary must keep
+
 ## `session.config_option.set`
 
 **Set session configuration option** — Set one provider-owned configuration option for the current session.

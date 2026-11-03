@@ -5662,6 +5662,16 @@ durable approval material. The public Action input is strict and contains only
 
 ### Session cancellation and permission intent (0.3 development)
 
+The 0.3 development `session.compact` Action requests manual compaction after
+the current turn. It defaults to the caller's current Session and accepts optional
+instructions when the Agent supports them. Admission returns `admitted`,
+`already_pending`, or `unsupported`; admission is not native completion. Agent
+calls to their own Session are allowed by default; calls to another or unproven
+Session, including standalone MCP calls, ask by default. Existing approval
+preferences can change these defaults. Native refusal remains visible through
+the Session lifecycle. The composer retains its `/compact` text and Pending
+behavior; both routes share the host's manual compaction admission.
+
 In 0.3 development source, `session.turn.cancel` requests cancellation of the
 current turn through the existing `abort` RPC. It keeps the Session process
 available; `session.stop` requests process shutdown. Both the composer Stop

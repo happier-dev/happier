@@ -9,6 +9,7 @@ import { SessionUsageLimitCheckNowRequestV1Schema, SessionUsageLimitConsumeReset
 import { SessionTerminalComposerClearRequestV1Schema, SessionTerminalComposerClearResultV1Schema } from '../../../sessions/control/terminalComposerClearV1.js';
 import { SessionPendingInputInterruptAndRunRequestV1Schema, SessionPendingInputInterruptAndRunResultV1Schema } from '../../../sessions/control/pendingInputInterruptAndRunV1.js';
 import { SESSION_RPC_METHODS } from '../../../rpc/methods.js';
+import { SessionCompactResultV1Schema } from '../../../sessions/control/index.js';
 import { SESSION_STOP_CLI_PROJECTION } from '../sessionCommandCli.js';
 import { SESSION_READ_STATE_SET_CLI_PROJECTION } from './readStateCli.js';
 import { SESSION_READ_STATE_ACTION_INPUT_SCHEMAS_V1, SESSION_READ_STATE_ACTION_OUTPUT_SCHEMAS_V1 } from '../../../sessions/readState/actions.js';
@@ -28,6 +29,26 @@ export const SessionTurnCancelInputSchema = lazyZodSchema(() => z.strictObject({
 }));
 
 export const SESSION_LIFETIME_CONTROL_ACTION_SPECS = Object.freeze([
+  {
+    id: 'session.compact', executionPlacement: 'session', approval: { result: 'none' },
+    sessionTarget: { field: 'sessionId', cardinality: 'one' },
+    title: 'Compact conversation',
+    description: "Compact a Session's conversation into a summary to free context; runs after the current turn. Use after a large, self-contained piece of work in a long conversation — not after small tasks or mid-task. `instructions` (optional; only some Agents support it): what the summary must keep.",
+    safety: 'safe', sideEffectClass: 'write', placements: [],
+    toolExposure: { agent: 'direct' },
+    bindings: { voiceClientToolName: 'session_compact', mcpToolName: 'session_compact', rpcMethod: SESSION_RPC_METHODS.SESSION_COMPACT },
+    surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: true },
+    inputHints: { title: 'Compact conversation', fields: [
+      { path: 'sessionId', title: 'Session id', prompt: 'Which session?', widget: 'text' },
+      { path: 'instructions', title: 'What the summary must keep', widget: 'textarea' },
+    ] },
+    inputSchema: lazyZodSchema(() => z.strictObject({
+      sessionId: z.optional(SessionTargetV1Schema),
+      instructions: z.optional(z.string().check(z.trim())),
+    })),
+    outputSchema: SessionCompactResultV1Schema,
+    cli: { commands: [{ path: ['session', 'compact'], positionals: ['sessionId'], visibility: 'canonical' }] },
+  } satisfies PreNormalizedActionSpec,
   {
     id: 'session.turn.cancel', executionPlacement: 'session', approval: {result: 'none'},
     sessionTarget: { field: 'sessionId', cardinality: 'many' },

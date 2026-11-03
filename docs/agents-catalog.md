@@ -40,6 +40,13 @@ omitted or null compaction in that publication means unsupported. Before open,
 the plugin's existing terminal-presentation selection can supply the selected
 mode's descriptor without the host interpreting its opaque runtime descriptor.
 
+In 0.3 development, the opt-in `codingPromptBehaviorV1.sessionCompactionNudge`
+preference defaults off. The shared base prompt reads the published Session
+metadata's manual capability and, when the compact tool is available through
+native delivery, adds a short reminder using its delivered name. Shell-bridge
+delivery omits the reminder. Manual support does not imply support for optional
+instructions; native implementations retain their typed refusal.
+
 Before a Session opens, the UI reads the configured runtime through the plugin's
 `sessionExtras` behavior declaration and the shared registry resolver. A declaration
 can omit `outputKey` when it selects a runtime without adding a spawn option;

@@ -24,6 +24,33 @@ import {
 const missingToolDelivery: ResolveEffectiveCodingPromptArgs = { settings: {}, profileId: null };
 void missingToolDelivery;
 
+describe('compaction prompt delivery', () => {
+  it('uses the delivered native alias and omits advice when delivery or Action availability cannot support it', async () => {
+    const settings = { codingPromptBehaviorV1: { sessionCompactionNudge: true } };
+    const sessionMetadata = { agentRuntimeCapabilitiesV1: { sessionCapabilities: {
+      sessionListing: 'unsupported', sessionFork: { conversation: 'unsupported', fromMessage: 'unsupported' },
+      sessionRollback: { conversation: 'unsupported' }, compaction: { events: true, manual: true },
+    } } };
+    const base = { settings, sessionMetadata, profileId: null, memoryRecallGuidanceEnabled: false };
+    for (const [toolDelivery, name] of [['native_mcp', 'mcp__happier__session_compact'], ['native_extension', 'session_compact']] as const) {
+      const result = await resolveEffectiveCodingPromptPlan({ ...base, toolDelivery });
+      expect(result.text).toContain(`call \`${name}\`.`);
+      expect(result.text.match(/In long sessions,/g)).toHaveLength(1);
+      expect(result.text).toContain('change_title');
+    }
+    for (const toolDelivery of ['shell_bridge', 'unsupported'] as const) {
+      expect((await resolveEffectiveCodingPromptPlan({ ...base, toolDelivery,
+        toolDeliverySessionId: 'session', toolDeliveryDirectory: '/repo' })).text).not.toContain('In long sessions,');
+    }
+    expect((await resolveEffectiveCodingPromptPlan({ ...base, toolDelivery: 'native_mcp', settings: {
+      ...settings, actionsSettingsV1: { v: 1, actions: { 'session.compact': { enabled: false } } },
+    } })).text).not.toContain('In long sessions,');
+    expect((await resolveEffectiveCodingPromptPlan({ ...base, toolDelivery: 'native_mcp', settings: {
+      ...settings, actionsSettingsV1: { v: 1, actions: { 'session.compact': { toolExposureModes: { agent: 'discoverable_only' } } } },
+    } })).text).not.toContain('In long sessions,');
+  });
+});
+
 function createPromptDocArtifactRecord(params: Readonly<{
   artifactId: string; markdown: string; recipientPublicKey: Uint8Array;
 }>): PromptLibraryStoredArtifact {
@@ -148,7 +175,7 @@ describe('resolveEffectiveCodingPromptText', () => {
       profileId: profile.id, profileCatalog, baseOverride: null, memoryRecallGuidanceEnabled: false,
       toolDelivery: 'native_mcp' } satisfies ResolveEffectiveCodingPromptArgs;
     const plan = await resolveEffectiveCodingPromptPlan(args);
-    expect(plan.codingPromptBehavior).toEqual({ v: 1, sessionTitleUpdates: 'initial', responseOptions: 'disabled' });
+    expect(plan.codingPromptBehavior).toEqual({ v: 1, sessionTitleUpdates: 'initial', responseOptions: 'disabled', sessionCompactionNudge: false });
   });
 
   it('composes the first child prompt from its complete spawn role snapshot rather than changed Account instructions', async () => {

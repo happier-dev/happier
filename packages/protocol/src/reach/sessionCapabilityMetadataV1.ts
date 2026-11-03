@@ -64,6 +64,11 @@ export function readAppliedSessionCapabilitySelectionFromMetadataV1(metadata: un
     skills: skills.success ? skills.data.appliedSelection : desired.skills };
 }
 
+/** Built-in tool delivery follows the applied Session-start MCP policy. */
+export function isSessionHappierToolsEnabled(metadata: unknown): boolean {
+  return readAppliedSessionCapabilitySelectionFromMetadataV1(metadata).mcp.happierToolsEnabled !== false;
+}
+
 export function readPendingCapabilityApplyV1(metadata: unknown): Readonly<{ mcp: boolean; skills: boolean }> {
   const desired = readSessionCapabilitySelectionFromMetadataV1(metadata);
   const applied = readAppliedSessionCapabilitySelectionFromMetadataV1(metadata);

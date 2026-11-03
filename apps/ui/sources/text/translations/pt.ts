@@ -12828,6 +12828,8 @@ settingsSession: {
           promptPersonalization: {
               title: 'Personalização imediata',
               footer: 'Escolha quais instruções integradas Happier serão adicionadas às novas sessões do agente. Isso não oculta as opções que um agente já envia.',
+              sessionCompactionNudgeTitle: "Sugerir a compactação da conversa",
+              sessionCompactionNudgeDescription: "Permita que o agente compacte a conversa após uma parte importante do trabalho em uma sessão longa.",
               askAgentToRenameSessionsTitle: 'Atualizações do título da sessão',
               askAgentToRenameSessionsNeverTitle: 'Nunca',
               askAgentToRenameSessionsNeverSubtitle: 'Não solicite aos agentes que definam títulos de sessão.',

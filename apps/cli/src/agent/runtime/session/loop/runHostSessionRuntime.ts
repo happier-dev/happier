@@ -2362,6 +2362,7 @@ export async function runHostSessionRuntime(
 
   const permissionModeState = createPermissionModeQueueStateFn({
     session,
+    readManualCompactionAvailable: () => typeof runtimeForInFlightSteer?.compactContext === 'function',
     agentTargetKey: modelTargetKey,
     initialPermissionMode,
     inFlightSteer: inFlightSteerController,

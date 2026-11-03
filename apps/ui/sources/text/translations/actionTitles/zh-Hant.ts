@@ -952,6 +952,7 @@ export const zhHant = {
     sessions_spawn_mcp_servers_preview: "預覽啟動時的 MCP 伺服器",
     session_message_send: "傳送訊息至工作階段",
     session_turn_cancel: "停止目前回合",
+    session_compact: "壓縮對話",
     session_terminalComposer_clear: "清除終端機輸入框",
     session_pending_markHandled: "將待傳送項目標記為已處理",
     session_pending_dismiss: "忽略傳送結果不明的項目",

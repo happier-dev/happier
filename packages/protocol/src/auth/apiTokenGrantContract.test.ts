@@ -27,10 +27,10 @@ describe('scoped credential public ingress', () => {
   it('requires submitAgentInput and the declared current-turn Action for abort', () => {
     expect(resolveSocketRpcSessionAuthorization('s1:abort')).toMatchObject({ authority: 'submitAgentInput', actionId: 'session.turn.cancel' });
   });
-  it('projects the abort-only capability without granting Send or stopping the process', () => {
-    const grant = { ...API_TOKEN_FULL_GRANT_V1, actions: { families: [], ids: ['session.turn.cancel'] } };
+  it.each(['session.turn.cancel', 'session.compact'])('projects the %s capability without granting Send or stopping the process', actionId => {
+    const grant = { ...API_TOKEN_FULL_GRANT_V1, actions: { families: [], ids: [actionId] } };
     expect(resolveApiTokenSessionCapabilityCeilingV1(grant).has('submitAgentInput')).toBe(true);
-    expect(evaluateApiTokenGrantV1({ grant, actionId: 'session.turn.cancel' }).ok).toBe(true);
+    expect(evaluateApiTokenGrantV1({ grant, actionId }).ok).toBe(true);
     expect(evaluateApiTokenGrantV1({ grant, actionId: 'session.message.send' }).ok).toBe(false);
     expect(evaluateApiTokenGrantV1({ grant, actionId: 'session.stop' }).ok).toBe(false);
   });

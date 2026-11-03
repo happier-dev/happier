@@ -2371,6 +2371,11 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       return { ok: true };
     },
 
+    sessionCompact: async ({ sessionId, instructions, serverId, signal }) => actionSessionRpc({
+      sessionId, serverId, signal, method: SESSION_RPC_METHODS.SESSION_COMPACT,
+      payload: { ...(instructions !== undefined ? { instructions } : {}) },
+    }),
+
     sessionTurnCancel: async ({ sessionId, serverId, signal }) => {
       await withAccountLifetime(signal, ownedSignal => sessionAbort(sessionId, { serverId: serverId ?? undefined, signal: ownedSignal }));
       return { requested: true };

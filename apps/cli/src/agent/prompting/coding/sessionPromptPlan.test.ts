@@ -61,6 +61,32 @@ function createProjectedIdentityTestMetadata(params: Parameters<typeof projectSe
 }
 
 describe('session prompt-plan producer', () => {
+  it('withdraws prepared compaction guidance when its delivered Action tool is disabled', async () => {
+    const credentials = { token: `header.${Buffer.from(JSON.stringify({ sub: 'compaction-context-account' })).toString('base64url')}.signature`, encryption: null };
+    const scopeKey = resolveAccountSettingsScopeKey(credentials);
+    const settings = accountSettingsParse({ codingPromptBehaviorV1: { sessionCompactionNudge: true } });
+    const snapshot = { source: 'network' as const, settings, rawSettings: {}, scopeKey,
+      settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [],
+      promptLibraryCatalog: { status: 'ready' as const, rows: [], tombstones: [], diagnostics: [] } };
+    setActiveAccountSettingsSnapshot(snapshot);
+    const resolve = createSessionPromptPlanResolver({
+      opts: { credentials, accountSettingsContext: { ...snapshot, whenRefreshed: null } },
+      session: Object.assign(createApiSessionClientFixture(), { sessionId: 'compaction-context-session', getMetadataSnapshot: () => createTestMetadata({
+        agentRuntimeCapabilitiesV1: { sessionCapabilities: { sessionListing: 'unsupported',
+          sessionFork: { conversation: 'unsupported', fromMessage: 'unsupported' },
+          sessionRollback: { conversation: 'unsupported' }, compaction: { events: true, manual: true } } },
+      }) }),
+      agentId: 'codex', machineId: 'test-machine', directory: '/tmp/project', memoryRecallGuidanceEnabled: false,
+      readNativeSessionId: () => 'native', daemonBridge,
+    });
+    expect(await resolve()).toContain('In long sessions,');
+    expect(resolve.assertPreparedPlanCurrent).not.toThrow();
+    setActiveAccountSettingsSnapshot({ ...snapshot, settingsVersion: 2, settings: accountSettingsParse({
+      ...settings, actionsSettingsV1: { v: 1, actions: { 'session.compact': { enabled: false } } },
+    }) });
+    expect(resolve.assertPreparedPlanCurrent).toThrow(expect.objectContaining({ reason: 'active-account-settings-changed' }));
+  });
+
   beforeEach(() => { installEmptyProjectAccountRowsHttpBoundary(); });
   afterEach(() => { vi.restoreAllMocks(); resetActiveAccountSettingsSnapshotForTests(); });
 

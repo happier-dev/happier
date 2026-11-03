@@ -101,6 +101,10 @@ export type SessionControlActionInputById = {
         originInputLocalId: string;
         decision: 'stop';
     };
+    readonly "session.compact": {
+        sessionId?: SessionTargetV1<true> | undefined;
+        instructions?: string | undefined;
+    };
     readonly "session.turn.cancel": {
         sessionId: SessionTargetV1<true>;
     };
@@ -750,6 +754,9 @@ export type SessionControlActionResultById = {
             afterTurns: number | null;
         };
         observedRevision: string;
+    };
+    readonly "session.compact": {
+        status: 'admitted' | 'already_pending' | 'unsupported';
     };
     readonly "session.turn.cancel": JsonValue;
     readonly "session.runtime.refresh": {

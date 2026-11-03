@@ -12,6 +12,12 @@ import {
 const ACCOUNT_REGISTRY_DIRECTORY = __dirname;
 
 describe('Account setting analytics presentation', () => {
+    it('serializes the deliberate compaction preference without Account content', () => {
+        expect(ACCOUNT_SETTING_ANALYTICS.codingPromptBehaviorV1?.serializeCurrentProperties?.({
+            sessionCompactionNudge: true, privateText: 'not telemetry',
+        })).toEqual({ sessionTitleUpdates: 'initial', responseOptions: 'agent', sessionCompactionNudge: true });
+    });
+
     it('attaches metadata to Protocol definitions without rebuilding persistence artifacts', () => {
         const definition = ACCOUNT_SETTING_ANALYTICS_ARTIFACTS.definitions.sessionListDensity;
 

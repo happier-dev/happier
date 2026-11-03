@@ -6,6 +6,9 @@ import { MessageBuffer } from '@/ui/ink/messageBuffer';
 import { createMutableApiSessionClientFixture } from '@/testkit/backends/sessionFixtures';
 import { createUnsettledReplaySeedRetirement } from '@/agent/runtime/replaySeed/unsettledReplaySeedRetirement';
 import { computeRunnerTerminationOutcome } from '@/agent/runtime/lifecycle/runnerTerminationOutcome';
+import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
+import { combinePermissionModeQueuedPrompts, type PermissionModeQueuedPrompt, type PermissionModeQueuedPromptMode } from '@/agent/runtime/permissions/queuedPrompt';
+import { createManualCompactionQueue } from '@/agent/runtime/queueSpecialCommands';
 import type { SessionLoopLifecycleParams } from './lifecycle';
 type RunPermissionModePromptLoopFn = NonNullable<NonNullable<SessionLoopLifecycleParams['deps']>['runPermissionModePromptLoopFn']>;
 
@@ -73,6 +76,8 @@ export function createLifecycleParams(overrides?: Readonly<{
     close: vi.fn(async () => undefined),
   };
 
+  const messageQueue = new MessageQueue2<PermissionModeQueuedPromptMode, PermissionModeQueuedPrompt>(
+    mode => mode.permissionMode, { batcher: combinePermissionModeQueuedPrompts });
   return {
     opts: {
       credentials: {
@@ -122,10 +127,8 @@ export function createLifecycleParams(overrides?: Readonly<{
       getCurrentPermissionModeUpdatedAt: vi.fn(() => 0),
       setCurrentPermissionMode: vi.fn(),
       setCurrentPermissionModeUpdatedAt: vi.fn(),
-      messageQueue: {
-        reset: vi.fn(),
-        size: vi.fn(() => 0),
-      } as unknown as SessionLoopLifecycleParams['permissionModeState']['messageQueue'],
+      messageQueue,
+      manualCompaction: createManualCompactionQueue({ queue: messageQueue, readText: message => message.text, isAvailable: () => false }),
       replaySeedRetirement: createUnsettledReplaySeedRetirement(),
     },
     sessionSwapStrategy: {

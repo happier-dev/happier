@@ -81,6 +81,16 @@ a mode for its next prompt should use the Send Action's permission-mode override
 See the [Action reference](/plugins/api/host-actions). This describes development
 integration, not released availability.
 
+## Conversation compaction guidance (development integration)
+
+The 0.3 development Session settings include **Suggest conversation compaction**
+beside the session title guidance. It defaults off. When enabled, supported
+Agents can receive a short reminder to compact after a large piece of work in a
+long session. The reminder is included only when manual compaction and the tool
+are available; it takes effect at the next supported prompt preparation.
+Support for optional compaction instructions varies by Agent. This describes
+development integration, not released availability.
+
 ## Session Instructions (development integration)
 
 Development source lets an ordinary Session or Bot select a Prompt Library

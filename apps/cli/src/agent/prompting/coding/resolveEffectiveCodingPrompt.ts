@@ -19,7 +19,7 @@ import {
 import { resolveCodingProviderBehaviorBlocks } from './providerPromptBehaviorRegistry';
 import { resolveCodingToolDeliveryBlocks } from './toolDeliveryPromptRegistry';
 import { loadAccountLaunchProfileArtifacts, readProfileCollectionFromAccountSnapshot, readProfileSettingsForAccount } from '@/settings/profiles/readProfilesFromAccountSettings';
-import { isSessionAgentChangeTitleToolAvailable } from '@/agent/tools/happierTools/resolveSessionNativeToolBridge';
+import { isSessionAgentChangeTitleToolAvailable, isSessionAgentToolAvailable } from '@/agent/tools/happierTools/resolveSessionNativeToolBridge';
 import { createPromptCompositionScope, measurePromptPlanComposition, type PromptCompositionScope, type PromptPlanComposition } from '../promptComposition';
 
 type ToolPromptContribution = Readonly<{
@@ -63,6 +63,7 @@ export type ResolveEffectiveCodingPromptArgs = Omit<CliPromptStackSystemAppendIn
   toolDeliveryDirectory?: string | null;
   memoryMachineId?: string | null;
   sessionTitleToolAvailable?: boolean;
+  sessionMetadata?: unknown;
   createdAsBot?: boolean;
   toolPromptContributions?: readonly ToolPromptContribution[];
   /**
@@ -318,7 +319,11 @@ export async function resolveEffectiveCodingPromptPlan(
     executionRunsFeatureEnabled: args.executionRunsFeatureEnabled === true,
     memoryRecallGuidanceEnabled,
     sessionTitleToolAvailable,
+    sessionCompactionToolAvailable: codingPromptBehavior.sessionCompactionNudge && (toolDelivery === 'native_mcp' || toolDelivery === 'native_extension')
+      && isSessionAgentToolAvailable({ accountSettings: settings, codingPromptBehavior, toolName: 'session_compact' }),
+    sessionCompactionToolName: toolDelivery === 'native_extension' ? 'session_compact' : 'mcp__happier__session_compact',
     createdAsBot: args.createdAsBot,
+    sessionMetadata: args.sessionMetadata,
   });
   const stackResult = await resolveCliPromptStackSystemAppendBlocks({
     ...args,

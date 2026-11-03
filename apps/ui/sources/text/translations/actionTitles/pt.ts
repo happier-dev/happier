@@ -952,6 +952,7 @@ export const pt = {
     sessions_spawn_mcp_servers_preview: "Visualizar servidores MCP da inicialização de sessão",
     session_message_send: "Enviar mensagem para uma sessão",
     session_turn_cancel: "Parar turno atual",
+    session_compact: "Resumir conversa",
     session_terminalComposer_clear: "Limpar compositor do terminal",
     session_pending_markHandled: "Marcar entrega pendente como tratada",
     session_pending_dismiss: "Dispensar entrega pendente incerta",

@@ -104,6 +104,7 @@ export const SESSION_SETTINGS = defineSettingsPage({
             titleKey: 'settingsSession.rootGroups.agentPersonalization.title',
             settings: {
                 renameSessions: {},
+                suggestCompaction: {},
                 suggestReplyOptions: { storage: responseOptionsStorage },
             },
         },

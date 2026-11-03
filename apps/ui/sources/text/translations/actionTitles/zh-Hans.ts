@@ -952,6 +952,7 @@ export const zhHans = {
     sessions_spawn_mcp_servers_preview: "预览启动时使用的 MCP 服务器",
     session_message_send: "向会话发送消息",
     session_turn_cancel: "停止当前轮次",
+    session_compact: "压缩对话",
     session_terminalComposer_clear: "清空终端输入框",
     session_pending_markHandled: "将待投递消息标记为已处理",
     session_pending_dismiss: "忽略状态不确定的待投递消息",

@@ -12299,6 +12299,8 @@ settingsSession: {
           promptPersonalization: {
               title: '及时个性化',
               footer: '选择将哪些内置指令 Happier 添加到新代理会话中。这不会隐藏代理已发送的选项。',
+              sessionCompactionNudgeTitle: "建议压缩对话",
+              sessionCompactionNudgeDescription: "允许代理在长会话中完成一大段工作后压缩对话。",
               askAgentToRenameSessionsTitle: '会议标题更新',
               askAgentToRenameSessionsNeverTitle: '从来没有',
               askAgentToRenameSessionsNeverSubtitle: '不要提示客服人员设置会话标题。',

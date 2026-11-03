@@ -1,8 +1,11 @@
+import { isSessionHappierToolsEnabled } from '../reach/sessionCapabilityMetadataV1.js';
 import { trimIdent } from '../strings/trimIdent.js';
+import { SessionOwnerCompatibilityViewV1Schema } from '../sessions/metadata/sessionMetadataSchemasV1.js';
 import { readLeadingCodingPromptPlanV1 } from './promptPlanV1.js';
 import {
   isCodingPromptResponseOptionsEnabled,
   resolveCodingPromptSessionTitleUpdatesModeV1,
+  resolveCodingPromptBehaviorV1,
 } from './codingPromptBehaviorV1.js';
 
 export const HAPPIER_BASE_SYSTEM_PROMPT_SESSION_TITLE_INITIAL_V1 = trimIdent(`
@@ -48,9 +51,17 @@ const HAPPIER_BASE_SYSTEM_PROMPT_BOT_TITLE_V1 = trimIdent(`
 export interface HappierSessionTitleGuidanceV1Options {
   settings?: Record<string, unknown> | null | undefined;
   sessionTitleToolAvailable?: boolean;
+  sessionMetadata?: unknown;
   createdAsBot?: boolean;
   preferredToolName?: string;
 }
+
+export interface HappierBaseSystemPromptV1Options extends HappierSessionTitleGuidanceV1Options {
+  sessionCompactionToolAvailable?: boolean;
+  sessionCompactionToolName?: string;
+}
+
+const HAPPIER_SESSION_COMPACTION_NUDGE_V1 = 'In long sessions, when you finish a large piece of work and are about to move to a different one, call `session_compact`.';
 
 /** The title policy shared by the base prompt, dynamic suffix and transport appendix. */
 export function buildHappierSessionTitleGuidanceV1(args: HappierSessionTitleGuidanceV1Options = {}): string {
@@ -107,11 +118,21 @@ export const HAPPIER_BASE_SYSTEM_PROMPT_LINKED_WORKSPACE_FILES_V1 = trimIdent(`
   Treat these \`@path\` references as file paths relative to the session/worktree. When you see them, open and analyze the referenced files before answering.
 `);
 
-export function buildHappierBaseSystemPromptV1(args?: Readonly<HappierSessionTitleGuidanceV1Options>): string {
+export function buildHappierBaseSystemPromptV1(args?: Readonly<HappierBaseSystemPromptV1Options>): string {
   const blocks: string[] = [];
   if (args?.createdAsBot === true) blocks.push(HAPPIER_BASE_SYSTEM_PROMPT_BOT_FIRST_MESSAGE_V1);
   const titleGuidance = buildHappierSessionTitleGuidanceV1(args);
   if (titleGuidance) blocks.push(titleGuidance);
+  if (resolveCodingPromptBehaviorV1(args?.settings).sessionCompactionNudge
+    && args?.sessionCompactionToolAvailable === true && isSessionHappierToolsEnabled(args.sessionMetadata)) {
+    const metadata = args.sessionMetadata && typeof args.sessionMetadata === 'object' && !Array.isArray(args.sessionMetadata)
+      ? args.sessionMetadata as Record<string, unknown> : null;
+    const capabilities = SessionOwnerCompatibilityViewV1Schema.shape.agentRuntimeCapabilitiesV1.safeParse(metadata?.agentRuntimeCapabilitiesV1);
+    if (capabilities.success && capabilities.data?.sessionCapabilities?.compaction?.manual === true) {
+      blocks.push(HAPPIER_SESSION_COMPACTION_NUDGE_V1.replace('`session_compact`',
+        `\`${args.sessionCompactionToolName?.trim() || 'mcp__happier__session_compact'}\``));
+    }
+  }
   if (isCodingPromptResponseOptionsEnabled(args?.settings)) {
     blocks.push(HAPPIER_BASE_SYSTEM_PROMPT_OPTIONS_V1);
   }
@@ -130,6 +151,8 @@ const HAPPIER_BASE_SYSTEM_PROMPT_DISPLAY_BLOCKS_V1 = (() => {
     .replace('Unless the user supplied an explicit title or name, at', 'At')
     .replace('\n\nPreserve any explicit title or name supplied by the user instead of replacing it automatically.', '');
   const blocks = [
+    HAPPIER_SESSION_COMPACTION_NUDGE_V1,
+    HAPPIER_SESSION_COMPACTION_NUDGE_V1.replace('`session_compact`', '`mcp__happier__session_compact`'),
     buildHappierSessionTitleGuidanceV1({ createdAsBot: true }),
     buildHappierSessionTitleGuidanceV1(),
     buildHappierSessionTitleGuidanceV1({ settings: { codingPromptBehaviorV1: { sessionTitleUpdates: 'initial' } } }),

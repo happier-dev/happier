@@ -54,6 +54,35 @@ function resumePromptChoice(screen: SettingsScreen) {
 }
 
 describe('Session settings (prompt personalization)', () => {
+    it('round-trips the Account compaction switch while preserving title and response preferences', async () => {
+        sessionSettingsEntryState.settingsState.codingPromptBehaviorV1 = {
+            v: 1, sessionTitleUpdates: 'ongoing', responseOptions: 'disabled',
+        };
+        const { default: SessionSettingsScreen } = await import('@/app/(app)/settings/session');
+        const screen = await renderSettingsView(React.createElement(SessionSettingsScreen));
+        const compaction = () => screen.findAllByType(Item).find(node => node.props.testID === 'settings-session-compaction-nudge');
+        expect(compaction()).toBeTruthy();
+        expect(compaction()!.props.rightElement.props.value).toBe(false);
+        await act(async () => {
+            compaction()!.props.rightElement.props.onValueChange(true);
+            await vi.waitFor(() => expect(storage.getState().settings.codingPromptBehaviorV1).toEqual({
+                v: 1, sessionTitleUpdates: 'ongoing', responseOptions: 'disabled', sessionCompactionNudge: true,
+            }));
+        });
+        const title = screen.findAllByType(DropdownMenu).find(node => node.props.itemTrigger?.testID === 'settings-session-title-updates-mode-trigger'
+            || node.props.itemTrigger?.itemProps?.testID === 'settings-session-title-updates-mode-trigger');
+        await act(async () => { await title!.props.onSelect('initial'); });
+        await vi.waitFor(() => expect(storage.getState().settings.codingPromptBehaviorV1).toMatchObject({
+            sessionTitleUpdates: 'initial', responseOptions: 'disabled', sessionCompactionNudge: true,
+        }));
+        await act(async () => {
+            compaction()!.props.onPress();
+            await vi.waitFor(() => expect(storage.getState().settings.codingPromptBehaviorV1).toMatchObject({
+                sessionTitleUpdates: 'initial', responseOptions: 'disabled', sessionCompactionNudge: false,
+            }));
+        });
+    });
+
     it('renders prompt personalization controls on the root session settings screen', async () => {
         sessionSettingsEntryState.settingsState.codingPromptBehaviorV1 = {
             v: 1,
@@ -85,6 +114,7 @@ describe('Session settings (prompt personalization)', () => {
         await vi.waitFor(() => expect(storage.getState().settings.codingPromptBehaviorV1).toEqual({
             v: 1,
             sessionTitleUpdates: 'initial',
+            sessionCompactionNudge: false,
             responseOptions: 'agent',
         }));
     });

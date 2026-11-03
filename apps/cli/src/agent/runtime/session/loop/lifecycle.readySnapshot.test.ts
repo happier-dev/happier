@@ -25,6 +25,7 @@ import { withHostSessionRuntimeIdentityPublication } from '@/agent/runtime/ident
 import { subscribeSessionRuntimePublicationToMetadata } from '@/agent/runtime/identity/metadata/subscription';
 import { createNativeAgentSessionOperations } from '@/agent/runtime/registry/engineRegistry/nativeAgentSession';
 import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
+import { createManualCompactionQueue } from '@/agent/runtime/queueSpecialCommands';
 import { combinePermissionModeQueuedPrompts, type PermissionModeQueuedPrompt, type PermissionModeQueuedPromptMode } from '@/agent/runtime/permissions/queuedPrompt';
 import { runPermissionModePromptLoop } from '@/agent/runtime/runPermissionModePromptLoop';
 import { createUnsettledReplaySeedRetirement } from '@/agent/runtime/replaySeed/unsettledReplaySeedRetirement';
@@ -292,7 +293,10 @@ describe('host ready after a provider successor starts', () => {
       permissionModeState: {
         rebindSession() {}, releaseRejectedBeforeProviderPromptIdentity() {}, getCurrentPermissionMode: () => 'default',
         getCurrentPermissionModeUpdatedAt: () => 0, setCurrentPermissionMode() {}, setCurrentPermissionModeUpdatedAt() {},
-        messageQueue: queue, replaySeedRetirement: createUnsettledReplaySeedRetirement(),
+        messageQueue: queue,
+        manualCompaction: createManualCompactionQueue({ queue, readText: message => message.text,
+          isAvailable: () => typeof runtime.compactContext === 'function' }),
+        replaySeedRetirement: createUnsettledReplaySeedRetirement(),
       },
       sessionSwapStrategy: { async requestSessionSwap() {} }, runtimeDirectory: metadata.path, runtimeMetadata: metadata,
       machineId: 'machine', memoryRecallGuidanceEnabled: false, policyAgentId: 'codex',

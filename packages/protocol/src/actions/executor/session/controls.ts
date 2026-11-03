@@ -48,6 +48,16 @@ export async function dispatchSessionControls1(inv: Pick<CoreInvocation, 'action
           return completeActionResult(res);
         }
 
+        if (actionId === 'session.compact') {
+          const sessionId = resolveSessionIdFromInput(parsed.data, ctx);
+          if (!sessionId) return { ok: false, errorCode: 'session_not_selected', error: 'session_not_selected' };
+          if (!deps.sessionCompact) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.compact' };
+          const serverId = resolveServerIdForSession(deps, ctx, sessionId);
+          return completeActionResult(await deps.sessionCompact({ sessionId, context: ctx,
+            ...(typeof data.instructions === 'string' ? { instructions: data.instructions } : {}),
+            ...(serverId ? { serverId } : {}), ...(ctx.signal ? { signal: ctx.signal } : {}) }));
+        }
+
         if (actionId === 'session.turn.cancel') {
           const sessionId = normalizeId(data.sessionId);
           if (!sessionId) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };

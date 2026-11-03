@@ -12999,6 +12999,8 @@ settingsSession: {
           promptPersonalization: {
               title: '迅速なパーソナライゼーション',
               footer: '新しいエージェント セッションに追加する組み込み命令 Happier を選択します。これにより、エージェントがすでに送信したオプションが非表示になることはありません。',
+              sessionCompactionNudgeTitle: "会話の圧縮を提案する",
+              sessionCompactionNudgeDescription: "長いセッションで大きな作業を終えた後に、エージェントが会話を圧縮できるようにします。",
               askAgentToRenameSessionsTitle: 'セッションタイトルの更新',
               askAgentToRenameSessionsNeverTitle: '決してしない',
               askAgentToRenameSessionsNeverSubtitle: 'エージェントにセッション タイトルの設定を求めないでください。',

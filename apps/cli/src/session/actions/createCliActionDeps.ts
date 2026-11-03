@@ -778,7 +778,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
     },
   });
   const { sessionVendorPluginCatalogList, sessionSkillCatalogList } = createCliSessionCatalogActionDeps(params, { callSessionRpcForTransport, readCurrentMachineControlIdentity, readTransportSessionOwnerMetadata, resolveTransportForSession });
-  const { sessionExchangePrepare, sessionExchangeControl, sessionTurnCancel, sessionRuntimeRefresh, sessionStop, sessionControlSwitch, sessionModeSet } = createCliControlActionDeps(params, { callMachineAction, readServerFeaturesSnapshot, resolveServerRequestHeaders, resolveTransportForSession, withProjectHome });
+  const { sessionExchangePrepare, sessionExchangeControl, sessionTurnCancel, sessionCompact, sessionRuntimeRefresh, sessionStop, sessionControlSwitch, sessionModeSet } = createCliControlActionDeps(params, { callMachineAction, readServerFeaturesSnapshot, resolveServerRequestHeaders, resolveTransportForSession, withProjectHome });
   const { homeRuntimeTaskRpc, prepareLocalServiceStartApproval, runtimeActionExecute } = createCliLocalServiceActionDeps(params, {
     callMachineAction, projectHomeId, projectHomeAdmission, withProjectHome, executionRunActionFailure,
   });
@@ -1188,6 +1188,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
     sessionExchangePrepare,
     sessionExchangeControl,
     sessionTurnCancel,
+    sessionCompact,
     sessionRuntimeRefresh,
     sessionStop,
     sessionUpdatePost,

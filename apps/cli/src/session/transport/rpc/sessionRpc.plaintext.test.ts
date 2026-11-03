@@ -462,6 +462,37 @@ describe('current-turn cancellation through the CLI Action owner', () => {
     configureNextSocket = null;
   });
 
+  it.each(['plain', 'e2ee'] as const)('retains compact notes and native refusal through the %s socket codec', async mode => {
+    const secret = new Uint8Array(32).fill(4);
+    const encryptedCredentials = { token: credentials.token, encryption: { type: 'legacy' as const, secret } };
+    vi.spyOn(axios, 'get').mockImplementation(async url => {
+      if (String(url).endsWith('/v1/account/encryption/currentness')) return { status: 200, data: { ...currentness, mode } };
+      if (String(url).endsWith(`/v2/sessions/${sessionId}`)) return { status: 200, data: { session: mode === 'plain' ? session : {
+        ...session, encryptionMode: 'e2ee', metadata: encodeBase64(encrypt(secret, 'legacy', {})),
+      } } };
+      throw new Error(`Unexpected Home HTTP boundary: ${url}`);
+    });
+    nextRpcAck = async (request: { method: string; params: unknown }) => {
+      const content: SocketRpcContent = mode === 'plain' ? { mode } : { mode, cipher: {
+        encryptRaw: async value => encodeBase64(encrypt(secret, 'legacy', value)),
+        decryptRaw: async value => decrypt(secret, 'legacy', decodeBase64(value)),
+      } };
+      const decoded = await socketRpcCodec.decodeRequestParams(content, request.params, request.method);
+      expect(request.method).toBe(`${sessionId}:session-compact`);
+      expect(decoded.params).toEqual({ instructions: 'Preserve the API decision' });
+      return { ok: true, result: await socketRpcCodec.encodeResponse(content,
+        { ok: false, errorCode: 'compact_instructions_not_supported', error: 'compact_instructions_not_supported' }, decoded.callId) };
+    };
+    const owner = createCliActionExecutorHarness({ token: credentials.token,
+      credentials: mode === 'plain' ? credentials : encryptedCredentials, sessionId, ...home,
+      ...(mode === 'plain' ? { mode, ctx: null } : { mode, ctx: { encryptionKey: secret, encryptionVariant: 'legacy' as const } }) });
+    const outcome = await owner.executor.execute('session.compact', { sessionId, instructions: '  Preserve the API decision  ' }, {
+      authority: 'account_automation', surface: 'agent', defaultSessionId: sessionId,
+    });
+    expect(outcome, JSON.stringify(outcome)).toMatchObject({ ok: false, errorCode: 'compact_instructions_not_supported' });
+    expect(vi.mocked(io).mock.calls.at(-1)?.[1]?.auth).toMatchObject({ authorityCeiling: 'account_automation' });
+  });
+
   it.each(['plain', 'e2ee'] as const)('projects an acknowledged void %s abort as a requested cancellation result', async mode => {
     // The host abort callback has no return value; only its Socket.IO ACK is substituted.
     const secret = new Uint8Array(32).fill(4);
@@ -528,13 +559,13 @@ describe('current-turn cancellation through the CLI Action owner', () => {
     expect(io).not.toHaveBeenCalled();
   });
 
-  it('carries the admitted external cancellation proof to the exact abort payload', async () => {
+  it.each(['session.turn.cancel', 'session.compact'] as const)('carries the admitted external %s proof to the exact payload', async actionId => {
     const key = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(7));
     const target = { kind: 'session' as const, sessionId };
     const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-proof', binding: {
       serverIdentityId: 'home', accountId: 'account', custodianAccountId: 'account', installationId: 'installation', principalId: 'account',
       credentialId: '11111111-1111-4111-8111-111111111111', machineId: 'machine',
-      actionId: 'session.turn.cancel', requestId: 'cancel-request', requestEnvelopeDigest: 'A'.repeat(43),
+      actionId, requestId: 'cancel-request', requestEnvelopeDigest: 'A'.repeat(43),
       target, grant: API_TOKEN_FULL_GRANT_V1,
     } });
     const context: ActionExecutorContext = { authority: 'account_automation', surface: 'api',
@@ -542,17 +573,19 @@ describe('current-turn cancellation through the CLI Action owner', () => {
     const http = vi.spyOn(axios, 'get').mockRejectedValue(new Error('Unexpected Home HTTP boundary'));
     http.mockResolvedValueOnce({ status: 200, data: currentness })
       .mockResolvedValueOnce({ status: 200, data: { session } });
-    nextRpcAck = { ok: true, result: { cancelled: true } };
+    const result = actionId === 'session.compact' ? { status: 'admitted' } : { cancelled: true };
+    nextRpcAck = { ok: true, result };
     const owner = createCliActionExecutorHarness({ token: credentials.token, credentials,
       sessionId: 'construction-session', mode: 'plain', ctx: null, ...home, serverIdentityId: 'home',
       externalActionMachineRequestPrivateKey: key.secretKey, externalActionMachineInstallationId: 'installation' });
-    expect(await owner.deps.sessionTurnCancel?.({ sessionId, serverId: home.serverId, context }))
-      .toEqual({ cancelled: true });
+    const control = actionId === 'session.compact' ? owner.deps.sessionCompact : owner.deps.sessionTurnCancel;
+    expect(await control?.({ sessionId, serverId: home.serverId, context }))
+      .toEqual(result);
     const payload = nextSocket?.emitted.find(call => call.event === 'rpc-call')?.data;
-    expect(payload).toMatchObject({ method: `${sessionId}:abort`, externalActionExecution: {
-      authorization, target, effectActionId: 'session.turn.cancel',
+    expect(payload).toMatchObject({ method: `${sessionId}:${actionId === 'session.compact' ? 'session-compact' : 'abort'}`, externalActionExecution: {
+      authorization, target, effectActionId: actionId,
     } });
-    const signed = { authorizationToken: authorization.token, effectActionId: 'session.turn.cancel', target,
+    const signed = { authorizationToken: authorization.token, effectActionId: actionId, target,
       installationId: 'installation', event: 'rpc-call', method: payload.method, requestId: payload.requestId,
       params: payload.params, publicKey: key.publicKey, signature: payload.externalActionExecution.machineSignature };
     expect(verifyExternalActionMachineRpcRequestV1(signed)).toBe(true);
@@ -560,9 +593,10 @@ describe('current-turn cancellation through the CLI Action owner', () => {
     expect(http.mock.calls.every(([, config]) => config?.headers?.Authorization !== `Bearer ${credentials.token}`)).toBe(true);
   });
 
-  it('refuses another Home and an unsigned external effect before reading or dispatching', async () => {
+  it.each(['session.turn.cancel', 'session.compact'] as const)('refuses another Home and an unsigned external %s effect before reading or dispatching', async actionId => {
     const http = vi.spyOn(axios, 'get').mockRejectedValue(new Error('Unexpected Home HTTP boundary'));
-    const cancel = harness().deps.sessionTurnCancel;
+    const deps = harness().deps;
+    const cancel = actionId === 'session.compact' ? deps.sessionCompact : deps.sessionTurnCancel;
     expect(cancel).toBeTypeOf('function');
     expect(await cancel!({ sessionId, serverId: 'other-home', context: { authority: 'account_automation' } }))
       .toMatchObject({ ok: false, errorCode: 'server_scope_mismatch' });
@@ -572,7 +606,7 @@ describe('current-turn cancellation through the CLI Action owner', () => {
       externalActionExecutionAuthorization: { v: 1, token: 'home-proof', binding: {
         serverIdentityId: 'home', accountId: 'account', custodianAccountId: 'account', installationId: 'installation', principalId: 'account',
         credentialId: '11111111-1111-4111-8111-111111111111', machineId: 'machine',
-        actionId: 'session.turn.cancel', requestId: 'cancel-request', requestEnvelopeDigest: 'A'.repeat(43),
+        actionId, requestId: 'cancel-request', requestEnvelopeDigest: 'A'.repeat(43),
         target, grant: API_TOKEN_FULL_GRANT_V1,
       } },
     } })).toMatchObject({ ok: false, errorCode: 'not_authenticated' });

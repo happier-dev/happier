@@ -15122,6 +15122,8 @@ const enSettingsSession = {
     title: 'Prompt personalization',
     footer:
       'Choose which built-in instructions Happier adds to new agent sessions. This does not hide options an agent already sends.',
+    sessionCompactionNudgeTitle: "Suggest conversation compaction",
+    sessionCompactionNudgeDescription: "Let the agent compact after a large piece of work in a long session.",
     askAgentToRenameSessionsTitle: 'Session title updates',
     askAgentToRenameSessionsNeverTitle: 'Never',
     askAgentToRenameSessionsNeverSubtitle:

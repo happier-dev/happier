@@ -200,6 +200,10 @@ export class MessageQueue2<Mode, Message = string> {
     return this.queue.reduce((size, item) => size + (item.contextOnly ? 0 : 1), 0);
   }
 
+  hasMatching(predicate: (message: Message, mode: Mode) => boolean): boolean {
+    return this.queue.some(item => predicate(item.message, item.mode));
+  }
+
   discardMatching(predicate: (message: Message, mode: Mode) => boolean): number {
     const before = this.queue.length;
     this.queue = this.queue.filter((item) => !predicate(item.message, item.mode));

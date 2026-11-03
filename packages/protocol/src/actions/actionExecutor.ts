@@ -2791,6 +2791,11 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     let contextualSafety = actionId === 'widgets.item.network.set' ? 'danger' as const
       : actionId === 'widgets.definition.create' && readRecord(readRecord(readRecord(admittedInput).definition).body).kind === 'html' ? 'danger' as const
       : !existingAdmission && memoryAdmission ? memoryAdmission.safety
+      : !existingAdmission && actionId === 'session.compact'
+      ? isAgentCaller(ctx)
+        ? normalizeId(ctx.defaultSessionId) && normalizeId(ctx.defaultSessionId) === resolveSessionIdFromInput(admittedInput, ctx)
+          ? 'safe' as const : 'danger' as const
+        : ctx.surface === 'mcp' ? 'danger' as const : undefined
       : !existingAdmission && actionId === 'session.manager.set'
       ? isAgentCaller(ctx)
         && (normalizeId(ctx.defaultSessionId) === String(readRecord(admittedInput).sessionId)

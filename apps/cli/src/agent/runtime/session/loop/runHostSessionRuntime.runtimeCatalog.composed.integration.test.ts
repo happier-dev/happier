@@ -4091,6 +4091,119 @@ describe('runHostSessionRuntime', () => {
     expect(listeners.size).toBe(0);
   });
 
+  it('admits manual compaction during a turn and deduplicates RPC and text until native lifecycle settlement', async () => {
+    const { createNativeAgentSessionInteractionOperations } = await import('@/agent/runtime/registry/engineRegistry/nativeAgentSession');
+    const harness = createHarness('manual-compaction-host');
+    delete harness.deps.createPermissionModeQueueStateFn;
+    harness.session.hasPendingProviderInput.mockReturnValue(false);
+    const turnStarted = createDeferred<void>();
+    const finishTurn = createDeferred<void>();
+    let turnSettled = false;
+    harness.runtime.sendPrompt.mockImplementation(async () => {
+      turnStarted.resolve();
+      await finishTurn.promise;
+      turnSettled = true;
+    });
+    const listeners = new Set<(event: AgentSessionRuntimeEvent) => void>();
+    const emit = (event: AgentSessionRuntimeEvent) => {
+      for (const listener of listeners) listener(event);
+    };
+    // Only the plugin/native boundary is faked. Preserve the real descriptor,
+    // slash-command adapter and runtime event projection above that boundary.
+    const compact = vi.fn<NonNullable<AgentSessionRuntime['compact']>>(async request => {
+      expect(turnSettled).toBe(true);
+      emit({ kind: 'context-compaction', phase: 'started',
+        trigger: 'manual', compactionId: request.compactionId, sessionId: harness.session.sessionId,
+        sequence: 1, emittedAtMs: 1 });
+      return { status: 'admitted' };
+    });
+    const native: AgentSessionRuntime = {
+      compact,
+      send: async () => { throw new Error('Compaction must not send an ordinary native prompt'); },
+      watch: listener => { listeners.add(listener); return { dispose: () => { listeners.delete(listener); } }; },
+      dispose() {},
+    };
+    const opened = createNativeAgentSessionInteractionOperations({ session: native,
+      sessionId: harness.session.sessionId, cwd: '/tmp/workspace',
+      context: { signal: new AbortController().signal, agent: { id: 'fixture' } } as AgentSessionRuntimeContext,
+      capabilities: { open: ['create'], delivery: ['newTurn'], compaction: { manual: true, events: true } },
+    });
+    harness.runtime.compactContext = opened.compactContext;
+    const unsubscribe = opened.subscribeRuntimeEvents(harness.runtime.emitRuntimeMessage);
+    onTestFinished(async () => { unsubscribe(); await opened.resetOrDisposeRuntime(); });
+    harness.deps.runPermissionModePromptLoopFn = async (params: Parameters<typeof runPermissionModePromptLoop>[0]) => {
+      const receiveText = harness.session.onUserMessage.mock.calls.at(-1)?.[0];
+      expect(receiveText).toBeTypeOf('function');
+      params.messageQueue.push({ text: 'Finish current work', localId: null }, { permissionMode: 'default' });
+      let readyCount = 0;
+      let stopped = false;
+      const compactAdmitted = createDeferred<void>();
+      const loop = runPermissionModePromptLoop({ ...params,
+        shouldExit: () => stopped,
+        sendReady: () => {
+          readyCount += 1;
+          if (readyCount === 2) compactAdmitted.resolve();
+          if (readyCount === 3) stopped = true;
+        },
+        formatPromptErrorMessage: error => { throw error; },
+      });
+      try {
+        await Promise.race([turnStarted.promise, loop.then(() => {
+          throw new Error('Prompt loop ended before the native turn began');
+        })]);
+        const requestCompact = harness.handlers.get(SESSION_RPC_METHODS.SESSION_COMPACT);
+        expect(requestCompact).toBeTypeOf('function');
+        expect(await requestCompact!({ instructions: 'Keep current decisions' })).toEqual({ status: 'admitted' });
+        expect(turnSettled).toBe(false);
+        expect(compact).not.toHaveBeenCalled();
+        expect(await requestCompact!({})).toEqual({ status: 'already_pending' });
+        receiveText({ role: 'user', content: { type: 'text', text: '/compact Duplicate composer request' },
+          localId: 'duplicate-compact', meta: {} });
+        expect(harness.session.observeProviderInputSettlement).toHaveBeenCalledWith(expect.objectContaining({
+          kind: 'rejected_before_effect', localId: 'duplicate-compact',
+        }));
+        expect(harness.session.confirmUserMessageLocallyConsumed).toHaveBeenCalledWith(expect.objectContaining({
+          localIds: ['duplicate-compact'],
+        }));
+        finishTurn.resolve();
+        await compactAdmitted.promise;
+        expect(compact).toHaveBeenCalledExactlyOnceWith({
+          trigger: 'manual', instructions: 'Keep current decisions', compactionId: expect.any(String),
+        });
+        expect(params.messageQueue.size()).toBe(0);
+        // Queue removal and native admission must not release a running control.
+        expect(await requestCompact!({})).toEqual({ status: 'already_pending' });
+        emit({ kind: 'context-compaction', phase: 'completed',
+          trigger: 'manual', compactionId: compact.mock.calls[0]![0].compactionId, sessionId: harness.session.sessionId,
+          sequence: 2, emittedAtMs: 2 });
+        expect(await requestCompact!({})).toEqual({ status: 'admitted' });
+        await loop;
+        expect(compact).toHaveBeenCalledTimes(2);
+        expect(compact).toHaveBeenLastCalledWith({ trigger: 'manual', compactionId: expect.any(String) });
+      } finally {
+        stopped = true;
+        finishTurn.resolve();
+        params.messageQueue.close();
+        await loop;
+      }
+    };
+    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+  });
+
+  it('refuses manual compaction for an opened runtime without native manual support', async () => {
+    const harness = createHarness('manual-compaction-unsupported');
+    delete harness.deps.createPermissionModeQueueStateFn;
+    harness.session.hasPendingProviderInput.mockReturnValue(false);
+    harness.deps.runPermissionModePromptLoopFn = async (params: Parameters<typeof runPermissionModePromptLoop>[0]) => {
+      const requestCompact = harness.handlers.get(SESSION_RPC_METHODS.SESSION_COMPACT);
+      expect(requestCompact).toBeTypeOf('function');
+      expect(await requestCompact!({ instructions: 'Keep decisions' })).toEqual({ status: 'unsupported' });
+      expect(params.messageQueue.size()).toBe(0);
+      expect(harness.runtime.sendPrompt).not.toHaveBeenCalled();
+    };
+    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+  });
+
   it.each(['idle', 'missing'] as const)('admits idle compaction through the real host input and child owners only with a proven native producer (%s)', async producer => {
     const harness = createHarness(`idle-compaction-${producer}`);
     harness.config.runtimeActivityApplicability = 'supported';

@@ -8471,7 +8471,7 @@ describe('native Agent session host adapter', () => {
         const signal = new AbortController().signal;
         const session = createMutableApiSessionClientFixture({ sessionId: 'tools-title-parent', metadata: createTestMetadata() });
         const settings = accountSettingsParse({});
-        let behavior: CodingPromptBehaviorV1 = { v: 1, sessionTitleUpdates: 'disabled', responseOptions: 'agent' };
+        let behavior: CodingPromptBehaviorV1 = { v: 1, sessionTitleUpdates: 'disabled', responseOptions: 'agent', sessionCompactionNudge: false };
         const controls: Partial<SessionRuntimeControls> = {};
         const published = { readCodingPromptBehavior: () => behavior };
         applySessionRuntimeControls(controls, published);

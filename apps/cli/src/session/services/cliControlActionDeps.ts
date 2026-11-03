@@ -13,12 +13,12 @@ import { SessionRunnerRuntimeStateV1Schema } from '@happier-dev/protocol/session
 import type { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import type { callSessionRpc } from '@/session/transport/rpc/sessionRpc';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS } from '@happier-dev/protocol/rpc';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import type { CliMachineActionCall } from '@/session/actions/cliActionDeps/machineTransport';
-type FamilyActionDeps = Pick<ActionExecutorDeps, 'sessionExchangePrepare' | 'sessionExchangeControl' | 'sessionTurnCancel' | 'sessionRuntimeRefresh' | 'sessionStop' | 'sessionControlSwitch' | 'sessionModeSet'>;
+type FamilyActionDeps = Pick<ActionExecutorDeps, 'sessionExchangePrepare' | 'sessionExchangeControl' | 'sessionTurnCancel' | 'sessionCompact' | 'sessionRuntimeRefresh' | 'sessionStop' | 'sessionControlSwitch' | 'sessionModeSet'>;
 
 export function createCliControlActionDeps(
   params: CliActionDepsParams,
@@ -77,6 +77,44 @@ export function createCliControlActionDeps(
         ? response.result
         : { ok: false, errorCode: 'exchange_unavailable', error: 'exchange_unavailable' };
     },
+
+    sessionCompact: async ({ sessionId, serverId, instructions, context, signal: callerSignal }) => withProjectHome(async () => {
+      if (!params.credentials) return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
+      const signal = callerSignal ?? context.signal;
+      const homeServerId = params.serverId ?? configuration.activeServerId;
+      const { isServerProfileHomeIdentity } = await import('@/server/serverProfiles');
+      if ((serverId && !await isServerProfileHomeIdentity(homeServerId, serverId))
+        || (context.serverId && !await isServerProfileHomeIdentity(homeServerId, context.serverId))) {
+        return { ok: false, errorCode: 'server_scope_mismatch', error: 'server_scope_mismatch' };
+      }
+      const externalRequest = context.externalActionCredential !== undefined
+        || context.externalActionExecutionAuthorization !== undefined;
+      if (externalRequest && (!params.externalActionMachineRequestPrivateKey
+        || !params.externalActionMachineInstallationId
+        || !resolveServerRequestHeaders(context, 'session.compact', { method: 'GET', path: '/v1/account/encryption/currentness' }))) {
+        return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
+      }
+      const transport = await resolveTransportForSession(sessionId, signal,
+        externalRequest ? { context, actionId: 'session.compact' } : undefined);
+      if (!transport.ok) return { ok: false, errorCode: transport.code, error: transport.code,
+        ...(transport.candidates ? { candidates: transport.candidates } : {}) };
+      try {
+        const { callSessionRpc } = await import('@/session/transport/rpc/sessionRpc');
+        return await callSessionRpc({ ...transport, token: params.credentials.token, sessionId: transport.sessionId,
+          method: `${transport.sessionId}:${SESSION_RPC_METHODS.SESSION_COMPACT}`,
+          request: { ...(instructions !== undefined ? { instructions } : {}) },
+          ...(context.authority !== 'present_user' ? { authorityCeiling: 'account_automation' as const } : {}),
+          ...((context.externalActionCredential || context.externalActionExecutionAuthorization)
+            && params.externalActionMachineRequestPrivateKey && params.externalActionMachineInstallationId
+            ? { externalAction: { context, effectActionId: 'session.compact',
+              installationId: params.externalActionMachineInstallationId, privateKey: params.externalActionMachineRequestPrivateKey } } : {}),
+          ...(signal ? { signal } : {}),
+        });
+      } catch (error) {
+        const errorCode = readRpcErrorCode(error) ?? 'session_rpc_failed';
+        return { ok: false, errorCode, error: errorCode };
+      }
+    }),
 
     sessionTurnCancel: async ({ sessionId, serverId, context, signal: callerSignal }) => {
       if (!params.credentials) {

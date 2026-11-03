@@ -11869,6 +11869,8 @@ settingsSession: {
           promptPersonalization: {
               title: 'Personalització ràpida',
               footer: 'Trieu quines instruccions integrades Happier s\'afegeixen a les sessions d\'agent noves. Això no amaga les opcions que un agent ja envia.',
+              sessionCompactionNudgeTitle: "Suggereix la compactació de la conversa",
+              sessionCompactionNudgeDescription: "Permet que l’agent compacti la conversa després d’una part important de la feina en una sessió llarga.",
               askAgentToRenameSessionsTitle: 'Actualitzacions del títol de la sessió',
               askAgentToRenameSessionsNeverTitle: 'Mai',
               askAgentToRenameSessionsNeverSubtitle: 'No demaneu als agents que estableixin títols de sessió.',

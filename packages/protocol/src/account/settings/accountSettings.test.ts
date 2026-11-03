@@ -1241,6 +1241,7 @@ describe('accountSettings', () => {
     expect(parsed.codingPromptBehaviorV1).toEqual({
       v: 1,
       sessionTitleUpdates: 'initial',
+      sessionCompactionNudge: false,
       responseOptions: 'agent',
     });
   });
@@ -1257,6 +1258,7 @@ describe('accountSettings', () => {
     expect(parsed.codingPromptBehaviorV1).toEqual({
       v: 1,
       sessionTitleUpdates: 'ongoing',
+      sessionCompactionNudge: false,
       responseOptions: 'agent',
     });
   });
@@ -1273,6 +1275,7 @@ describe('accountSettings', () => {
     expect(parsed.codingPromptBehaviorV1).toEqual({
       v: 1,
       sessionTitleUpdates: 'initial',
+      sessionCompactionNudge: false,
       responseOptions: 'agent',
     });
   });
@@ -1289,6 +1292,7 @@ describe('accountSettings', () => {
     expect(parsed.codingPromptBehaviorV1).toEqual({
       v: 1,
       sessionTitleUpdates: 'disabled',
+      sessionCompactionNudge: false,
       responseOptions: 'disabled',
     });
   });

@@ -19,7 +19,7 @@ import type { SavedSecretOperationContextV1 } from '@/settings/secrets/hydrateSa
 import { configuration } from '@/configuration';
 import { SESSION_CAPABILITY_NOTICE_SIDECAR_KEY, SessionCapabilityNoticeV1Schema } from '@happier-dev/protocol/sessions/messages/sessionCapabilityNoticeV1';
 import { logger } from '@/ui/logger';
-import { isSessionAgentChangeTitleToolAvailable } from '@/agent/tools/happierTools/resolveSessionNativeToolBridge';
+import { isSessionAgentChangeTitleToolAvailable, isSessionAgentToolAvailable } from '@/agent/tools/happierTools/resolveSessionNativeToolBridge';
 
 type PromptPreparationAccountSnapshot = ReturnType<typeof getActiveAccountSettingsSnapshot>;
 
@@ -36,10 +36,13 @@ function readPromptPreparationSettingsBasis(settings: Record<string, unknown> | 
   const enabledById = settings?.profileEnabledById;
   return {
     codingPromptBehaviorV1: settings?.codingPromptBehaviorV1,
-    // Actions policy contributes only title-tool guidance to this plan. Other
+    // Actions policy contributes title and opted-in compaction guidance. Other
     // Actions (including their approval policy) remain live at their own owner.
     sessionTitleToolAvailable: isSessionAgentChangeTitleToolAvailable({
       accountSettings: settings ?? {}, codingPromptBehavior: behavior,
+    }),
+    sessionCompactionToolAvailable: behavior.sessionCompactionNudge && isSessionAgentToolAvailable({
+      accountSettings: settings ?? {}, codingPromptBehavior: behavior, toolName: 'session_compact',
     }),
     profiles: profileId ? settings?.profiles : undefined,
     profileEnabled: profileId && enabledById && typeof enabledById === 'object'
@@ -157,6 +160,7 @@ export function createSessionPromptPlanResolver(params: Readonly<{
     // Plugin augmentation and Account/Project source admission have independent
     // transports. Join them before composition, retaining the final Account
     // fences rather than serializing these reads or reusing an older plan.
+    const sessionMetadata = params.session.getMetadataSnapshot();
     const [promptPreparation, stackPreparation] = await Promise.allSettled([
       (async () => params.daemonBridge
         ? await params.daemonBridge.resolvePrompt(scope)
@@ -169,7 +173,7 @@ export function createSessionPromptPlanResolver(params: Readonly<{
             ),
           })(),
       prepareSessionPromptStackInputs({
-        credentials: params.opts.credentials, metadata: params.session.getMetadataSnapshot(), sessionId: params.session.sessionId,
+        credentials: params.opts.credentials, metadata: sessionMetadata, sessionId: params.session.sessionId,
         machineId: params.machineId, directory: params.directory, signal, serverId,
         operationContext,
         accountContext: { ...accountContext, settings: params.opts.accountSettingsContext?.settings ?? null },
@@ -187,6 +191,7 @@ export function createSessionPromptPlanResolver(params: Readonly<{
       ? renderSkillIndexV1(skills.indexItems, params.session.sessionId) : '';
     const plan = await resolveEffectiveCodingPromptPlan({
       ...stackInputs,
+      sessionMetadata,
       compositionScope,
       signal,
       baseOverride,

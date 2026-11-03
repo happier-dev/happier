@@ -19,7 +19,9 @@ import { readAdmittedHappierStructuredInputV1FromMeta } from '@happier-dev/proto
 import { isAbortLikeError } from '@/agent/runtime/lifecycle/classifyAbortLikeError';
 import { logger } from '@/ui/logger';
 import { configuration } from '@/configuration';
-import { pushMessageToQueueWithSpecialCommands, type SpecialCommandQueue } from '@/agent/runtime/queueSpecialCommands';
+import { pushMessageToQueueWithSpecialCommands, type SpecialCommandQueue, type ManualCompactionQueue } from '@/agent/runtime/queueSpecialCommands';
+import { confirmLocallyConsumedPrompt, observeLocalSpecialCommandSettlement } from './localSpecialCommandSettlement';
+import type { ApiSessionClient } from '@/api/session/sessionClient';
 import { resolveAppendSystemPromptModeOverride } from '@/agent/runtime/permissions/appendSystemPrompt';
 import { resolveProviderPromptWithReplaySeed } from '@/agent/runtime/replaySeed/replaySeedV1';
 import type { DurableProviderInputAcceptanceV1 } from '@/agent/runtime/session/input/providerInputOutcome';
@@ -28,7 +30,7 @@ import type {
   ReplaySeedSettlement,
   UnsettledReplaySeedRetirement,
 } from '@/agent/runtime/replaySeed/unsettledReplaySeedRetirement';
-import { isNonSteerablePromptPayload } from '@/cli/parsers/specialCommands';
+import { isNonSteerablePromptPayload, parseSpecialCommand } from '@/cli/parsers/specialCommands';
 import { readAdmittedSessionMediaInputForDispatchV1 } from '@/session/services/admitSessionStructuredInputV1';
 
 import { normalizePermissionModeToIntent } from './modeCanonical';
@@ -178,6 +180,7 @@ export function registerPermissionModeMessageQueueBinding(opts: {
   getCurrentPermissionMode: () => PermissionMode | undefined;
   setCurrentPermissionMode: (mode: PermissionMode | undefined) => void;
   inFlightSteer?: InFlightSteerController | null;
+  manualCompaction?: ManualCompactionQueue<PermissionModeQueuedPromptMode, PermissionModeQueuedPrompt>;
   /** Session-scoped hold for an accepted seed whose metadata retirement has not succeeded. */
   replaySeedRetirement?: UnsettledReplaySeedRetirement;
 }): {
@@ -459,7 +462,19 @@ export function registerPermissionModeMessageQueueBinding(opts: {
     }
 
     const enqueuePrompt = (): void => {
-      if (structuredInput || attachments.length) {
+      if (!structuredInput && !attachments.length && parseSpecialCommand(text).type === 'compact' && opts.manualCompaction) {
+        const result = opts.manualCompaction.enqueue(queuedPrompt, queueMode);
+        if (result.status !== 'admitted') {
+          observeLocalSpecialCommandSettlement({ session, message: queuedPrompt, outcome: {
+            kind: 'rejected_before_effect',
+            diagnosticMessage: result.status === 'already_pending'
+              ? 'A compaction is already queued or running.'
+              : 'Manual compaction is unavailable for this Session.',
+          } });
+          confirmLocallyConsumedPrompt(session, queuedPrompt);
+          return;
+        }
+      } else if (structuredInput || attachments.length) {
         opts.queue.pushIsolate(queuedPrompt, queueMode);
       } else {
         pushMessageToQueueWithSpecialCommands({
@@ -959,6 +974,8 @@ function resolveModelOverrideFromUserMessage(
 }
 
 type PermissionModeQueueSessionBinding = {
+  observeProviderInputSettlement?: ApiSessionClient['observeProviderInputSettlement'];
+  confirmUserMessageLocallyConsumed?: ApiSessionClient['confirmUserMessageLocallyConsumed'];
   sessionId: string;
   onUserMessage: (handler: SessionProviderInputConsumer) => void;
   updateMetadata: (updater: (current: Metadata) => Metadata) => Promise<void> | void;

@@ -57,6 +57,7 @@ export const CURRENT_SESSION_CONTEXT_ACTION_IDS = new Set<ActionId>([
   'review.engines.list',
   'session.message.send',
   'session.turn.cancel',
+  'session.compact',
   'session.stop',
   'session.runtime.refresh',
   'session.control.switch',

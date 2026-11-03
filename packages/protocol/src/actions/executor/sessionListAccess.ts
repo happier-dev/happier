@@ -141,6 +141,9 @@ export async function resolveActionCurrentSessionScopeFailure(
     }
     return null;
   }
+  // Compact's contextual safety admission owns own-versus-other approval.
+  // A current-Session default is selection, not a restriction on this control.
+  if (actionId === 'session.compact' && context.surface === 'agent') return null;
   if (!defaultSessionId) {
     return refuse('default_session_unavailable');
   }

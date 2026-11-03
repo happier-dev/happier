@@ -126,6 +126,7 @@ describe('settings', () => {
             expect((settings as any).codingPromptBehaviorV1).toEqual({
                 v: 1,
                 sessionTitleUpdates: 'initial',
+                sessionCompactionNudge: false,
                 responseOptions: 'agent',
             });
         });

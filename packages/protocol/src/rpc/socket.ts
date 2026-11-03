@@ -480,6 +480,7 @@ type DeclaredSessionRpcMethod = (typeof SESSION_RPC_METHODS)[keyof typeof SESSIO
  * method is a compile error, rather than silently granting submitAgentInput.
  */
 const SESSION_RPC_DECLARED_AUTHORITIES = Object.freeze({
+  [SESSION_RPC_METHODS.SESSION_COMPACT]: { authority: 'submitAgentInput', actionId: 'session.compact' },
   [SESSION_RPC_METHODS.SESSION_WORKFLOW_STEP_WITHDRAW]: 'sessionOwner',
   [SESSION_RPC_METHODS.SESSION_USER_MESSAGE_SEND]: { authority: 'submitAgentInput', actionId: 'session.message.send' },
   [SESSION_RPC_METHODS.SESSION_AGENT_TOOL_CALL_V1]: 'sessionOwner',

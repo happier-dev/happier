@@ -952,6 +952,7 @@ export const ru = {
     sessions_spawn_mcp_servers_preview: "Предварительно просмотреть серверы MCP для запуска",
     session_message_send: "Отправить сообщение в сессию",
     session_turn_cancel: "Остановить текущий ход",
+    session_compact: "Сжать беседу",
     session_terminalComposer_clear: "Очистить поле ввода терминала",
     session_pending_markHandled: "Отметить ожидающую доставку как обработанную",
     session_pending_dismiss: "Скрыть ожидающую доставку с неопределённым результатом",

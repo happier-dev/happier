@@ -12613,6 +12613,8 @@ settingsSession: {
           promptPersonalization: {
               title: 'Prompt-Anpassung',
               footer: 'Lege fest, welche eingebauten Anweisungen Happier neuen Agent-Sessions mitgibt. Optionen, die ein Agent ohnehin sendet, werden dadurch nicht ausgeblendet.',
+              sessionCompactionNudgeTitle: "Gesprächskompaktierung vorschlagen",
+              sessionCompactionNudgeDescription: "Lass den Agenten nach einem großen Arbeitsschritt in einer langen Session das Gespräch zusammenfassen.",
               askAgentToRenameSessionsTitle: 'Aktualisierung von Session-Titeln',
               askAgentToRenameSessionsNeverTitle: 'Nie',
               askAgentToRenameSessionsNeverSubtitle: 'Agents nicht bitten, Session-Titel zu setzen.',

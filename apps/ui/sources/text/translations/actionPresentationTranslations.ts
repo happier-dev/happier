@@ -957,6 +957,7 @@ const en = {
         sessions_spawn_mcp_servers_preview: "Preview spawn MCP servers",
         session_message_send: "Send a message to a session",
         session_turn_cancel: "Stop current turn",
+        session_compact: "Compact conversation",
         session_terminalComposer_clear: "Clear terminal composer",
         session_pending_markHandled: "Mark pending delivery handled",
         session_pending_dismiss: "Dismiss uncertain pending delivery",

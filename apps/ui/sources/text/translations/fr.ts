@@ -12620,6 +12620,8 @@ settingsSession: {
           promptPersonalization: {
               title: 'Personnalisation du prompt',
               footer: 'Choisis quelles instructions intégrées Happier ajoute aux nouvelles sessions d’agent. Cela ne masque pas les options qu’un agent envoie déjà.',
+              sessionCompactionNudgeTitle: "Suggérer la condensation de la conversation",
+              sessionCompactionNudgeDescription: "Autoriser l’agent à condenser la conversation après une étape de travail importante dans une longue session.",
               askAgentToRenameSessionsTitle: 'Mise à jour des titres de session',
               askAgentToRenameSessionsNeverTitle: 'Jamais',
               askAgentToRenameSessionsNeverSubtitle: 'Ne demande pas aux agents de définir les titres de session.',

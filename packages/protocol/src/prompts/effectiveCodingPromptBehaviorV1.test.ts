@@ -21,6 +21,13 @@ function launchProfile(overrides: unknown): unknown {
 }
 
 describe('resolveEffectiveCodingPromptBehaviorV1', () => {
+  it('defaults compaction advice off and keeps the Account preference through sparse profile overrides', () => {
+    expect(resolveEffectiveCodingPromptBehaviorV1({ settings: {} }).sessionCompactionNudge).toBe(false);
+    expect(resolveEffectiveCodingPromptBehaviorV1({ settings: {
+      codingPromptBehaviorV1: { sessionCompactionNudge: true },
+      profiles: [launchProfile({ sessionTitleUpdates: 'disabled' })],
+    }, profileId: 'focused' })).toMatchObject({ sessionCompactionNudge: true, sessionTitleUpdates: 'disabled' });
+  });
   it('uses the admitted Profile instead of stale Settings and honors authoritative absence', () => {
     const profile = { v: 2, id: 'focused', name: 'Focused', extraEnvironmentVariables: [],
       defaultPermissionModeByTargetKey: {}, defaultPersistenceModeByTargetKey: {}, compatibilityByTargetKey: {},
@@ -28,15 +35,15 @@ describe('resolveEffectiveCodingPromptBehaviorV1', () => {
     const settings = { codingPromptBehaviorV1: { v: 1, sessionTitleUpdates: 'initial', responseOptions: 'agent' },
       profiles: [launchProfile({ sessionTitleUpdates: 'disabled' })] };
     expect(resolveEffectiveCodingPromptBehaviorV1({ settings, profileId: profile.id, selectedProfile: profile }))
-      .toEqual({ v: 1, sessionTitleUpdates: 'initial', responseOptions: 'disabled' });
+      .toEqual({ v: 1, sessionTitleUpdates: 'initial', responseOptions: 'disabled', sessionCompactionNudge: false });
     expect(resolveEffectiveCodingPromptBehaviorV1({ settings, profileId: profile.id, selectedProfile: null }))
-      .toEqual({ v: 1, sessionTitleUpdates: 'initial', responseOptions: 'agent' });
+      .toEqual({ v: 1, sessionTitleUpdates: 'initial', responseOptions: 'agent', sessionCompactionNudge: false });
   });
   it('returns the Account default when no profile is selected', () => {
     expect(resolveEffectiveCodingPromptBehaviorV1({
       settings: { codingPromptBehaviorV1: { v: 1, sessionTitleUpdates: 'initial', responseOptions: 'disabled' } },
       profileId: null,
-    })).toEqual({ v: 1, sessionTitleUpdates: 'initial', responseOptions: 'disabled' });
+    })).toEqual({ v: 1, sessionTitleUpdates: 'initial', responseOptions: 'disabled', sessionCompactionNudge: false });
   });
 
   it.each([
@@ -45,7 +52,7 @@ describe('resolveEffectiveCodingPromptBehaviorV1', () => {
     { codingPromptBehaviorV1: { sessionTitleUpdates: 'invalid' } },
   ])('defaults absent or invalid Account title preferences to session start for %j', (settings) => {
     expect(resolveEffectiveCodingPromptBehaviorV1({ settings, profileId: null }))
-      .toEqual({ v: 1, sessionTitleUpdates: 'initial', responseOptions: 'agent' });
+      .toEqual({ v: 1, sessionTitleUpdates: 'initial', responseOptions: 'agent', sessionCompactionNudge: false });
     expect(DEFAULT_CODING_PROMPT_BEHAVIOR_V1.sessionTitleUpdates).toBe('initial');
   });
 
@@ -56,7 +63,7 @@ describe('resolveEffectiveCodingPromptBehaviorV1', () => {
         profiles: [launchProfile({ sessionTitleUpdates: 'disabled' })],
       },
       profileId: 'focused',
-    })).toEqual({ v: 1, sessionTitleUpdates: 'disabled', responseOptions: 'agent' });
+    })).toEqual({ v: 1, sessionTitleUpdates: 'disabled', responseOptions: 'agent', sessionCompactionNudge: false });
   });
 
   it.each(['owner', 'view'] as const)('resolves the selected %s published profile through the authorized Artifact collection', (access) => {
@@ -68,9 +75,9 @@ describe('resolveEffectiveCodingPromptBehaviorV1', () => {
       profiles: access === 'owner' ? [{ artifactId: artifact.artifactId }] : [] };
     const input = { settings, profileId: 'focused', artifactsById: new Map([[artifact.artifactId, artifact]]) };
     expect(resolveEffectiveCodingPromptBehaviorV1(input))
-      .toEqual({ v: 1, sessionTitleUpdates: 'disabled', responseOptions: 'disabled' });
+      .toEqual({ v: 1, sessionTitleUpdates: 'disabled', responseOptions: 'disabled', sessionCompactionNudge: false });
     expect(resolveEffectiveCodingPromptBehaviorV1({ ...input, artifactsById: new Map() }))
-      .toEqual({ v: 1, sessionTitleUpdates: 'initial', responseOptions: 'disabled' });
+      .toEqual({ v: 1, sessionTitleUpdates: 'initial', responseOptions: 'disabled', sessionCompactionNudge: false });
   });
 
   it('inherits every key the profile does not override', () => {
@@ -80,7 +87,7 @@ describe('resolveEffectiveCodingPromptBehaviorV1', () => {
         profiles: [launchProfile({})],
       },
       profileId: 'focused',
-    })).toEqual({ v: 1, sessionTitleUpdates: 'initial', responseOptions: 'disabled' });
+    })).toEqual({ v: 1, sessionTitleUpdates: 'initial', responseOptions: 'disabled', sessionCompactionNudge: false });
   });
 
   it('applies the moving predecessor legacy profile override through the canonical collection reader', () => {
@@ -107,7 +114,7 @@ describe('resolveEffectiveCodingPromptBehaviorV1', () => {
         }],
       },
       profileId: 'remote-dev-profile',
-    })).toEqual({ v: 1, sessionTitleUpdates: 'initial', responseOptions: 'disabled' });
+    })).toEqual({ v: 1, sessionTitleUpdates: 'initial', responseOptions: 'disabled', sessionCompactionNudge: false });
   });
 
   it('ignores an unknown profile id and a profile that expresses no override', () => {
@@ -116,8 +123,8 @@ describe('resolveEffectiveCodingPromptBehaviorV1', () => {
       profiles: [launchProfile(undefined)],
     };
     expect(resolveEffectiveCodingPromptBehaviorV1({ settings, profileId: 'missing' }))
-      .toEqual({ v: 1, sessionTitleUpdates: 'ongoing', responseOptions: 'agent' });
+      .toEqual({ v: 1, sessionTitleUpdates: 'ongoing', responseOptions: 'agent', sessionCompactionNudge: false });
     expect(resolveEffectiveCodingPromptBehaviorV1({ settings, profileId: 'focused' }))
-      .toEqual({ v: 1, sessionTitleUpdates: 'ongoing', responseOptions: 'agent' });
+      .toEqual({ v: 1, sessionTitleUpdates: 'ongoing', responseOptions: 'agent', sessionCompactionNudge: false });
   });
 });

@@ -952,6 +952,7 @@ export const pl = {
     sessions_spawn_mcp_servers_preview: "Wyświetl podgląd serwerów MCP przy uruchamianiu",
     session_message_send: "Wyślij wiadomość do sesji",
     session_turn_cancel: "Zatrzymaj bieżącą turę",
+    session_compact: "Podsumuj rozmowę",
     session_terminalComposer_clear: "Wyczyść edytor wiadomości terminala",
     session_pending_markHandled: "Oznacz oczekujące dostarczenie jako obsłużone",
     session_pending_dismiss: "Odrzuć oczekujące dostarczenie o niepewnym stanie",

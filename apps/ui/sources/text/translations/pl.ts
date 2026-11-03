@@ -12539,6 +12539,8 @@ settingsSession: {
           promptPersonalization: {
               title: 'Szybka personalizacja',
               footer: 'Wybierz, które wbudowane instrukcje Happier mają być dodawane do nowych sesji agenta. Nie powoduje to ukrycia opcji, które agent już wysłał.',
+              sessionCompactionNudgeTitle: "Sugeruj skracanie rozmowy",
+              sessionCompactionNudgeDescription: "Pozwól agentowi skrócić rozmowę po ukończeniu dużej części pracy w długiej sesji.",
               askAgentToRenameSessionsTitle: 'Aktualizacje tytułów sesji',
               askAgentToRenameSessionsNeverTitle: 'Nigdy',
               askAgentToRenameSessionsNeverSubtitle: 'Nie monituj agentów o ustawienie tytułów sesji.',

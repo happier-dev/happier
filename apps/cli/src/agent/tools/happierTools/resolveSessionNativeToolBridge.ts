@@ -23,16 +23,17 @@ function projectJsonSchema(schema: unknown) {
   return AgentRuntimeJsonValueV1Schema.parse(objectSchema);
 }
 
-function isSessionAgentChangeTitleToolAvailableWithSettings(params: Readonly<{
+function isSessionAgentToolAvailableWithSettings(params: Readonly<{
+  toolName: string;
   accountSettings: Readonly<Record<string, unknown>>;
   profileId?: string | null;
   codingPromptBehavior?: CodingPromptBehaviorV1 | null;
   actionsSettings: ActionsSettingsV1;
 }>): boolean {
-  if (params.codingPromptBehavior === null || (params.codingPromptBehavior ?? resolveEffectiveCodingPromptBehaviorV1({
+  if (params.toolName === 'change_title' && (params.codingPromptBehavior === null || (params.codingPromptBehavior ?? resolveEffectiveCodingPromptBehaviorV1({
     settings: params.accountSettings,
     profileId: params.profileId ?? null,
-  })).sessionTitleUpdates === 'disabled') {
+  })).sessionTitleUpdates === 'disabled')) {
     return false;
   }
   const actionsSettings = params.actionsSettings;
@@ -45,18 +46,23 @@ function isSessionAgentChangeTitleToolAvailableWithSettings(params: Readonly<{
     surface: 'agent',
     actionsSettings,
     isActionEnabled,
-  }).some((tool) => tool.name === 'change_title');
+  }).some((tool) => tool.name === params.toolName);
 }
 
-export function isSessionAgentChangeTitleToolAvailable(params: Readonly<{
+export function isSessionAgentToolAvailable(params: Readonly<{
+  toolName: string;
   accountSettings: Readonly<Record<string, unknown>>;
   profileId?: string | null;
   codingPromptBehavior?: CodingPromptBehaviorV1 | null;
 }>): boolean {
-  return isSessionAgentChangeTitleToolAvailableWithSettings({
+  return isSessionAgentToolAvailableWithSettings({
     ...params,
     actionsSettings: resolveActionsSettingsWithEnvironmentOverride(params.accountSettings),
   });
+}
+
+export function isSessionAgentChangeTitleToolAvailable(params: Omit<Parameters<typeof isSessionAgentToolAvailable>[0], 'toolName'>): boolean {
+  return isSessionAgentToolAvailable({ ...params, toolName: 'change_title' });
 }
 
 export function resolveSessionNativeToolDescriptors(params: Readonly<{
@@ -80,7 +86,8 @@ export function resolveSessionNativeToolDescriptors(params: Readonly<{
     actionsSettings,
     { surface: 'agent', placement: null },
   );
-  const titleUpdatesEnabled = isSessionAgentChangeTitleToolAvailableWithSettings({
+  const titleUpdatesEnabled = isSessionAgentToolAvailableWithSettings({
+    toolName: 'change_title',
     accountSettings: params.accountSettings,
     profileId: params.profileId,
     codingPromptBehavior: params.codingPromptBehavior,

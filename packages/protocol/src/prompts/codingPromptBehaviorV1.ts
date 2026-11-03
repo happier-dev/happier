@@ -14,10 +14,12 @@ export const CodingPromptBehaviorV1Schema = lazyZodSchema(() => z.catch(z
   .object({
     v: z._default(z.literal(1), 1),
     sessionTitleUpdates: z._default(CodingPromptSessionTitleUpdatesInputV1Schema, 'initial'),
+    sessionCompactionNudge: z._default(z.boolean(), false),
     responseOptions: z._default(CodingPromptBehaviorModeV1Schema, 'agent'),
   }), {
     v: 1,
     sessionTitleUpdates: 'initial',
+    sessionCompactionNudge: false,
     responseOptions: 'agent',
   }));
 

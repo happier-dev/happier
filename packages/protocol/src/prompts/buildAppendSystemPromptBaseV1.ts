@@ -8,6 +8,9 @@ export function buildCodingSessionPromptPlanBaseV1(args: Readonly<{
   executionRunsFeatureEnabled: boolean;
   memoryRecallGuidanceEnabled?: boolean;
   sessionTitleToolAvailable?: boolean;
+  sessionCompactionToolAvailable?: boolean;
+  sessionCompactionToolName?: string;
+  sessionMetadata?: unknown;
   createdAsBot?: boolean;
 }>): PromptPlanV1 {
   const settings = args.settings && typeof args.settings === 'object' && !Array.isArray(args.settings)
@@ -18,6 +21,9 @@ export function buildCodingSessionPromptPlanBaseV1(args: Readonly<{
     : buildHappierBaseSystemPromptV1({
         settings,
         sessionTitleToolAvailable: args.sessionTitleToolAvailable,
+        sessionCompactionToolAvailable: args.sessionCompactionToolAvailable,
+        sessionCompactionToolName: args.sessionCompactionToolName,
+        sessionMetadata: args.sessionMetadata,
         createdAsBot: args.createdAsBot,
       });
 
@@ -44,6 +50,9 @@ export function buildAppendSystemPromptBaseV1(args: Readonly<{
   executionRunsFeatureEnabled: boolean;
   memoryRecallGuidanceEnabled?: boolean;
   sessionTitleToolAvailable?: boolean;
+  sessionCompactionToolAvailable?: boolean;
+  sessionCompactionToolName?: string;
+  sessionMetadata?: unknown;
   createdAsBot?: boolean;
 }>): string {
   return renderPromptPlanV1(buildCodingSessionPromptPlanBaseV1(args));

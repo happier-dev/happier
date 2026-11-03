@@ -6,6 +6,9 @@ import { resolveRuntimeCheckpointToolProtocol } from '@happier-dev/agents/sessio
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { AgentSessionRuntimeEventSchema } from '@happier-dev/protocol/runtime/agentSessionV1';
 import { isRecord } from '@happier-dev/plugin-sdk';
+import { SessionCompactRequestV1Schema } from '@happier-dev/protocol/sessions/control/index';
+import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import type { ManualCompactionQueue } from '@/agent/runtime/queueSpecialCommands';
 import { validatePluginHookPayloadV1 } from '@happier-dev/protocol/plugins/hooks';
 import type { AgentSessionRuntimeEvent, ProviderBoundModelRef, SessionModelTransitionResultV1, SessionTurnFactsV1, SessionRolePromptContextV1, SessionRuntimeTeamCredentialDenialDetailsV1 } from '@happier-dev/protocol';
 import type { render } from 'ink';
@@ -248,6 +251,7 @@ export type SessionLoopLifecycleParams = Readonly<{
     setCurrentPermissionMode: (mode: PermissionMode | undefined) => void;
     setCurrentPermissionModeUpdatedAt: (updatedAt: number) => void;
     messageQueue: MessageQueue2<PermissionModeQueuedPromptMode, PermissionModeQueuedPrompt>;
+    manualCompaction: ManualCompactionQueue<PermissionModeQueuedPromptMode, PermissionModeQueuedPrompt>;
     replaySeedRetirement: UnsettledReplaySeedRetirement;
   }>;
   sessionSwapStrategy: HostSessionRuntimeSessionSwapStrategy;
@@ -361,7 +365,10 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
       cancelTurn: hookRuntimeForCallbacks.cancelTurn.bind(hookRuntimeForCallbacks),
       readSessionIdentity: hookRuntimeForCallbacks.readSessionIdentity.bind(hookRuntimeForCallbacks),
       updateSessionRuntimeConfig: hookRuntimeForCallbacks.updateSessionRuntimeConfig.bind(hookRuntimeForCallbacks),
-      resetOrDisposeRuntime: hookRuntimeForCallbacks.resetOrDisposeRuntime.bind(hookRuntimeForCallbacks),
+      resetOrDisposeRuntime: async (...args) => {
+        await hookRuntimeForCallbacks.resetOrDisposeRuntime(...args);
+        params.permissionModeState.manualCompaction.setRunning(false);
+      },
       sendTurnPrompt: (prompt, meta) => {
         const starterDepth = params.session.getWorkDepth?.();
         const turnDepth = preparedTurnFacts?.workDepth;
@@ -1245,6 +1252,16 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
   };
 
   params.session.rpcHandlerManager.registerHandler('abort', handleAbort);
+  params.session.rpcHandlerManager.registerHandler(SESSION_RPC_METHODS.SESSION_COMPACT, async (request: unknown) => {
+    const { instructions } = SessionCompactRequestV1Schema.parse(request);
+    return params.permissionModeState.manualCompaction.enqueue({
+      text: instructions === undefined ? '/compact' : `/compact ${instructions}`,
+      localId: null,
+    }, {
+      permissionMode: params.permissionModeState.getCurrentPermissionMode() ?? params.opts.permissionMode ?? 'default',
+      suppressUserEcho: true,
+    });
+  });
   const requestRuntimeStop = async () => {
     logger.debug(`${params.config.uiLogPrefix} Kill session requested`);
     await requestExplicitRunnerStop({
@@ -1493,6 +1510,7 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
       explicitPermissionMode: params.opts.permissionMode,
       session: params.session,
       messageQueue: params.permissionModeState.messageQueue,
+      manualCompaction: params.permissionModeState.manualCompaction,
       replaySeedRetirement: params.permissionModeState.replaySeedRetirement,
       permissionHandler: params.permissionHandler,
       runtime: runtimeForPromptLoop,

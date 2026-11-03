@@ -12559,6 +12559,8 @@ settingsSession: {
           promptPersonalization: {
               title: 'Оперативная персонализация',
               footer: 'Выберите, какие встроенные инструкции Happier добавляют в новые сеансы агента. Это не скрывает параметры, которые уже отправляет агент.',
+              sessionCompactionNudgeTitle: "Предлагать сжатие беседы",
+              sessionCompactionNudgeDescription: "Разрешить агенту сжимать беседу после завершения крупной части работы в долгом сеансе.",
               askAgentToRenameSessionsTitle: 'Обновления названия сеанса',
               askAgentToRenameSessionsNeverTitle: 'Никогда',
               askAgentToRenameSessionsNeverSubtitle: 'Не предлагайте агентам устанавливать названия сеансов.',

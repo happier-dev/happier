@@ -10443,6 +10443,8 @@ settingsSession: {
           promptPersonalization: {
               title: '及時個性化',
               footer: '選擇將哪些內建指令 Happier 新增到新代理會話中。這不會隱藏代理已發送的選項。',
+              sessionCompactionNudgeTitle: "建議壓縮對話",
+              sessionCompactionNudgeDescription: "允許代理在長會話中完成一大段工作後壓縮對話。",
               askAgentToRenameSessionsTitle: '會議標題更新',
               askAgentToRenameSessionsNeverTitle: '從來沒有',
               askAgentToRenameSessionsNeverSubtitle: '不要提示客服人員設定會話標題。',

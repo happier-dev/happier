@@ -14,6 +14,16 @@ size, and an optional cache-window override. These use the existing settings
 Actions; plugins do not add their own settings or watch the preference store.
 Changes apply to newly started Sessions.
 
+In 0.3 development, manual `session.compact` Action requests and materialized
+composer `/compact` text converge at the host's compact queue insertion. The
+host checks manual support, isolates the item from ordinary input, and deduplicates
+queued or running compaction. The loop's existing compaction lifecycle tracks
+running work; native execution and lifecycle projection remain plugin-owned.
+Action admission reports queueing rather than completion. Unlike composer Pending
+text, a queued Action request is held in host memory and can be retried after a
+host restart. Manual admission has no minimum context-size floor and does not
+change idle scheduling.
+
 For host mode, the latest attributed `usage-observed.promptCache` supplies
 `lastUseAtMs` and optional `ttlMs`. A clock without a lifetime is useful when the
 person chooses a cache window; an override replaces the detected lifetime.

@@ -1,6 +1,7 @@
 import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { PermissionMode } from '@/api/types';
 import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
+import { createManualCompactionQueue, type ManualCompactionQueue } from './queueSpecialCommands';
 import { hashObject } from '@/utils/deterministicJson';
 import { registerPermissionModeMessageQueueBinding, type InFlightSteerController } from '@/agent/runtime/permissions/bindModeQueue';
 import {
@@ -22,6 +23,7 @@ export function createPermissionModeQueueState(opts: {
   agentTargetKey: string;
   initialPermissionMode: PermissionMode;
   inFlightSteer?: InFlightSteerController | null;
+  readManualCompactionAvailable?: () => boolean;
   /**
    * Optional: provide a stable key used to batch messages and detect "effective" mode changes.
    *
@@ -31,6 +33,7 @@ export function createPermissionModeQueueState(opts: {
   resolvePermissionModeQueueKey?: (permissionMode: PermissionMode) => string;
 }): {
   messageQueue: MessageQueue2<PermissionModeQueuedPromptMode, PermissionModeQueuedPrompt>;
+  manualCompaction: ManualCompactionQueue<PermissionModeQueuedPromptMode, PermissionModeQueuedPrompt>;
   rebindSession: (session: ApiSessionClient) => void;
   releaseRejectedBeforeProviderPromptIdentity: (
     session: ApiSessionClient,
@@ -77,11 +80,17 @@ export function createPermissionModeQueueState(opts: {
   let currentPermissionModeUpdatedAt = currentPermissionIntent?.updatedAt ?? 0;
 
   const replaySeedRetirement = createUnsettledReplaySeedRetirement();
+  const manualCompaction = createManualCompactionQueue({
+    queue: messageQueue,
+    readText: (message: PermissionModeQueuedPrompt) => message.text,
+    isAvailable: () => opts.readManualCompactionAvailable?.() === true,
+  });
 
   const binding = registerPermissionModeMessageQueueBinding({
     session: opts.session,
     agentTargetKey: opts.agentTargetKey,
     queue: messageQueue,
+    manualCompaction,
     getCurrentPermissionMode: () => currentPermissionMode,
     setCurrentPermissionMode: (mode) => {
       currentPermissionMode = mode;
@@ -92,6 +101,7 @@ export function createPermissionModeQueueState(opts: {
 
   return {
     messageQueue,
+    manualCompaction,
     rebindSession: (session) => {
       binding.bindSession(session);
     },

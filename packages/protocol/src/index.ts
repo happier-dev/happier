@@ -80,6 +80,8 @@ export { QualifiedConnectedAccountCredentialDeleteResponseV4Schema } from './con
 export * from './machines/managed/actionsV1.js';
 export * from './machines/managed/managedPolicyV1.js';
 export * from './sessions/control/pendingWithdrawV1.js';
+export { SessionCompactRequestV1Schema, SessionCompactResultV1Schema,
+  type SessionCompactRequestV1, type SessionCompactResultV1 } from './sessions/control/index.js';
 export { createStoredReadSchema } from './json/storedReadSchema.js';
 export { resolveConnectedServiceQuotaMeterLabel } from './connect/connectedServiceQuotaMeterLabel.js';
 export * from './plugins/actions/clientInvocationV1.js';

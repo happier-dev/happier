@@ -1066,6 +1066,7 @@ const ACTION_TITLE_KEYS = {
     'sessions.spawn.mcp_servers.preview': 'actionPresentation.titles.sessions_spawn_mcp_servers_preview',
     'session.message.send': 'actionPresentation.titles.session_message_send',
     'session.turn.cancel': 'actionPresentation.titles.session_turn_cancel',
+    'session.compact': 'actionPresentation.titles.session_compact',
     'session.terminalComposer.clear': 'actionPresentation.titles.session_terminalComposer_clear',
     'session.pending.markHandled': 'actionPresentation.titles.session_pending_markHandled',
     'session.pending.dismiss': 'actionPresentation.titles.session_pending_dismiss',

@@ -66,6 +66,36 @@ Call the title tool again if the task changes significantly.`;
 });
 
 describe('HAPPIER_BASE_SYSTEM_PROMPT_V1', () => {
+  it('includes one opt-in compaction nudge only with manual support and an available tool, and strips it from echoes', () => {
+    const sessionMetadata = { agentRuntimeCapabilitiesV1: { sessionCapabilities: {
+      sessionListing: 'unsupported', sessionFork: { conversation: 'unsupported', fromMessage: 'unsupported' },
+      sessionRollback: { conversation: 'unsupported' }, compaction: { events: true, manual: true },
+    } } };
+    const args = { settings: { codingPromptBehaviorV1: { sessionCompactionNudge: true } },
+      sessionMetadata, sessionCompactionToolAvailable: true };
+    for (const sessionCompactionToolName of ['mcp__happier__session_compact', 'session_compact']) {
+      const enabled = buildHappierBaseSystemPromptV1({ ...args, sessionCompactionToolName });
+      expect(enabled.match(/In long sessions,/g)).toHaveLength(1);
+      expect(enabled).toContain(`call \`${sessionCompactionToolName}\`.`);
+      for (const input of [`${enabled}\n\nContinue the work`, `${enabled}\n\nContinue the work`.replace(/\s+/g, ' ')]) {
+        expect(readSessionInputPromptUserTextV1(input)).toBe('Continue the work');
+      }
+    }
+    for (const omitted of [
+      { ...args, settings: {} },
+      { ...args, settings: { codingPromptBehaviorV1: { sessionCompactionNudge: 'true' } } },
+      { ...args, sessionMetadata: {} },
+      { ...args, sessionMetadata: { agentRuntimeCapabilitiesV1: { sessionCapabilities: {
+        ...sessionMetadata.agentRuntimeCapabilitiesV1.sessionCapabilities, compaction: { events: true },
+      } } } },
+      { ...args, sessionMetadata: { agentRuntimeCapabilitiesV1: { sessionCapabilities: {
+        ...sessionMetadata.agentRuntimeCapabilitiesV1.sessionCapabilities, compaction: { events: true, manual: false },
+      } } } },
+      { ...args, sessionMetadata: { ...sessionMetadata, mcpSelectionV1: { happierToolsEnabled: false } } },
+      { ...args, sessionCompactionToolAvailable: false },
+    ]) expect(buildHappierBaseSystemPromptV1(omitted)).not.toContain('session_compact');
+  });
+
   it('documents inline @path workspace file references', () => {
     expect(HAPPIER_BASE_SYSTEM_PROMPT_V1).toContain('Linked workspace files');
     expect(HAPPIER_BASE_SYSTEM_PROMPT_V1).toContain('`@path`');

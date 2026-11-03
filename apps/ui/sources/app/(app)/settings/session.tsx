@@ -7,8 +7,7 @@ import React from 'react';
 import { Platform } from 'react-native';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import {
-    DEFAULT_CODING_PROMPT_BEHAVIOR_V1,
-    type CodingPromptBehaviorV1,
+    CodingPromptBehaviorV1Schema,
     type CodingPromptSessionTitleUpdatesModeV1,
 } from '@happier-dev/protocol/prompts/codingPromptBehaviorV1';
 
@@ -90,18 +89,7 @@ export const WorkspaceRouteBody = React.memo(function SessionSettingsScreen() {
     const [openTitleUpdatesModeMenu, setOpenTitleUpdatesModeMenu] = React.useState(false);
     const rememberProjectSelectionsEnabled = rememberLastProjectSessionSelections !== false;
     const rememberEngineSelectionsEnabled = rememberLastEngineSelections !== false;
-    const normalizedCodingPromptBehavior = React.useMemo<CodingPromptBehaviorV1>(() => {
-        const raw = codingPromptBehavior && typeof codingPromptBehavior === 'object' && !Array.isArray(codingPromptBehavior)
-            ? codingPromptBehavior as Partial<CodingPromptBehaviorV1>
-            : {};
-        return {
-            ...DEFAULT_CODING_PROMPT_BEHAVIOR_V1,
-            ...(raw.sessionTitleUpdates === 'disabled' || raw.sessionTitleUpdates === 'initial' || raw.sessionTitleUpdates === 'ongoing'
-                ? { sessionTitleUpdates: raw.sessionTitleUpdates }
-                : {}),
-            ...(raw.responseOptions === 'disabled' ? { responseOptions: 'disabled' as const } : {}),
-        };
-    }, [codingPromptBehavior]);
+    const normalizedCodingPromptBehavior = React.useMemo(() => CodingPromptBehaviorV1Schema.parse(codingPromptBehavior), [codingPromptBehavior]);
     const titleUpdatesModeItems = React.useMemo(() => [
         {
             id: 'disabled',
@@ -923,6 +911,20 @@ export const WorkspaceRouteBody = React.memo(function SessionSettingsScreen() {
                         }}
                         items={titleUpdatesModeItems}
                         onSelect={handleSessionTitleUpdatesModeSelect}
+                    />
+                </SettingAnchor>
+                <SettingAnchor setting={SESSION_SETTINGS.settings.suggestCompaction}>
+                    <Item
+                        testID="settings-session-compaction-nudge"
+                        title={t(SESSION_SETTINGS.settings.suggestCompaction.titleKey)}
+                        subtitle={t('settingsSession.promptPersonalization.sessionCompactionNudgeDescription')}
+                        rightElement={<Switch
+                            testID="settings-session-compaction-nudge-switch"
+                            value={normalizedCodingPromptBehavior.sessionCompactionNudge}
+                            onValueChange={(next) => { void setSetting(SESSION_SETTINGS.settings.suggestCompaction, Boolean(next)); }}
+                        />}
+                        showChevron={false}
+                        onPress={() => { void setSetting(SESSION_SETTINGS.settings.suggestCompaction, !normalizedCodingPromptBehavior.sessionCompactionNudge); }}
                     />
                 </SettingAnchor>
                 <SettingAnchor setting={SESSION_SETTINGS.settings.suggestReplyOptions}>

@@ -1434,6 +1434,65 @@ describe('createActionExecutor (session control)', () => {
     });
   });
 
+  it('compacts the contextual Session through the live control without rewriting admission outcomes or instructions', async () => {
+    const id = ActionIdSchema.parse('session.compact');
+    const effects: unknown[] = [];
+    let status: 'admitted' | 'already_pending' | 'unsupported' = 'admitted';
+    const executor = createExecutor({ isActionApprovalRequired: undefined,
+      sessionCompact: async input => { effects.push(input); return { status }; },
+      resolveServerIdForSessionId: () => 'home-a',
+    });
+    for (status of ['admitted', 'already_pending', 'unsupported'] as const) {
+      expect(await executor.execute(id, { instructions: 'Keep the API decision' },
+        { surface: 'agent', defaultSessionId: 's1' })).toEqual({ ok: true, result: { status } });
+    }
+    expect(effects).toEqual(Array.from({ length: 3 }, () => ({ sessionId: 's1', serverId: 'home-a',
+      instructions: 'Keep the API decision', context: expect.objectContaining({ surface: 'agent' }) })));
+    expect(await executor.execute(id, {}, { surface: 'cli' }))
+      .toMatchObject({ ok: false, errorCode: 'session_not_selected' });
+    expect(getActionSpec(id).inputSchema.safeParse({ sessionId: 's1', authority: 'present_user' }).success).toBe(false);
+  });
+
+  it('asks for other or unproven compact targets while preserving own-session and saved policy defaults', async () => {
+    const id = ActionIdSchema.parse('session.compact');
+    const effects: string[] = [];
+    const executor = createExecutor({ isActionApprovalRequired: undefined,
+      sessionCompact: async ({ sessionId }) => { effects.push(sessionId); return { status: 'admitted' }; },
+    });
+    const own = { surface: 'agent', defaultSessionId: ' focused-other ',
+      actionCaller: { kind: 'session', sessionId: ' own ', starterDepth: 0, turnDepth: 0 } } as const;
+    for (const input of [{}, { sessionId: 'own' }]) {
+      expect(await executor.execute(id, input, own)).toEqual({ ok: true, result: { status: 'admitted' } });
+    }
+    for (const context of [own, { surface: 'agent' as const }, { surface: 'mcp' as const, defaultSessionId: 'other' }]) {
+      expect(await executor.execute(id, { sessionId: 'other' }, context))
+        .toMatchObject({ ok: false, errorCode: 'approvals_not_supported' });
+    }
+    const requireOwn = normalizeActionsSettingsV1({ v: 1, actions: { [id]: { approvalRequiredSurfaces: ['agent'] } } });
+    expect(await executor.execute(id, {}, { ...own, actionsSettings: requireOwn }))
+      .toMatchObject({ ok: false, errorCode: 'approvals_not_supported' });
+    const deny = normalizeActionsSettingsV1({ v: 1, actions: { [id]: { disabledSurfaces: ['agent', 'mcp'] } } });
+    for (const surface of ['agent', 'mcp'] as const) {
+      expect(await executor.execute(id, { sessionId: 'own' }, { ...own, surface, actionsSettings: deny }))
+        .toMatchObject({ ok: false, errorCode: 'action_disabled' });
+    }
+    expect(await executor.execute(id, { sessionId: 'other' }, { surface: 'mcp', defaultSessionId: 'own', sessionListAccess: 'current_session' }))
+      .toMatchObject({ ok: false, errorCode: 'unsupported_action', details: { cause: 'current_session_only' } });
+    const allowOthers = normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { [id]: ['agent', 'mcp'] } });
+    for (const surface of ['agent', 'mcp'] as const) {
+      expect(await executor.execute(id, { sessionId: 'other' }, { ...own, surface,
+        actionCaller: undefined, actionsSettings: allowOthers })).toMatchObject({ ok: true, result: { status: 'admitted' } });
+    }
+    for (const surface of ['ui', 'cli', 'voice'] as const) {
+      expect(await executor.execute(id, { sessionId: 'other' }, { surface }))
+        .toMatchObject({ ok: true, result: { status: 'admitted' } });
+    }
+    expect(effects).toEqual(['own', 'own', 'other', 'other', 'other', 'other', 'other']);
+    expect(resolveSocketRpcSessionAuthorization('s1:session-compact')).toMatchObject({
+      authority: 'submitAgentInput', actionId: id, routeToSessionOwnerDaemon: true,
+    });
+  });
+
   it('cancels only the current turn through the scoped abort boundary on every requesting surface', async () => {
     const id = ActionIdSchema.parse('session.turn.cancel');
     const spec = getActionSpec(id);

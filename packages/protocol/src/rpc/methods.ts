@@ -598,6 +598,7 @@ export const RPC_METHODS = {
 } as const;
 
 export const SESSION_RPC_METHODS = {
+  SESSION_COMPACT: 'session-compact',
   SESSION_NEEDS_YOU_RAISE: 'session.needs_you.raise',
   /** Lossless structured-answer wire alias retained for supported 0.2 clients. */
   SESSION_STRUCTURED_QUESTION_RESPOND_V1: 'session.structuredQuestion.respond.v1',
