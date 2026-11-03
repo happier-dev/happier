@@ -76,6 +76,8 @@ export const SavedSecretCatalogEntryV1Schema = lazyZodSchema(() => z.strictObjec
   ownerAccountId: z._default(z.optional(z.nullable(z.string().check(z.minLength(1)))), null),
   revision: z.nullable(z.number().check(z.int(), z.nonnegative())),
   materialStatus: SavedSecretCatalogMaterialStatusV1Schema,
+  /** Present only for an explicitly requested resource-reference census. */
+  deploymentReferenceState: z.optional(z.enum(['referenced', 'unreferenced', 'unavailable'])),
   capabilities: z.strictObject({
     use: z.boolean(),
     rename: z.boolean(),

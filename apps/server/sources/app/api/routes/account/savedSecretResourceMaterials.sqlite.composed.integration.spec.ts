@@ -124,6 +124,37 @@ describe("Saved Secret material route (SQLite integration)", () => {
 
     afterAll(async () => harness.close());
 
+    it('selects one exact managed revision before disclosing material and rejects use-only readers', async () => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const recipient = await db.account.create({ data: { encryptionMode: 'plain' } });
+        await db.userRelationship.create({ data: { fromUserId: owner.id, toUserId: recipient.id, status: 'friend' } });
+        for (const resourceId of ['managed-reveal', 'unrelated-reveal']) {
+            expect(await inTx(tx => createSavedSecretResourceInTx(tx, {
+                accountId: owner.id, resourceId, displayName: resourceId, kind: 'password', encryptionMode: 'plain',
+                accountGrants: [recipient.id],
+                storedContent: { t: 'plain', v: { v: 1, name: resourceId, kind: 'password', value: `${resourceId}-sentinel` } },
+            }))).toMatchObject({ ok: true });
+        }
+        let accountId = owner.id;
+        const app = createAuthenticatedTestApp();
+        app.addHook('onRequest', async request => { request.headers['x-test-user-id'] = accountId; });
+        registerSavedSecretResourceRoutes(app);
+        try {
+            const path = '/v1/account/saved-secrets/resources/materials?resourceId=managed-reveal&expectedRevision=1&requireManage=true';
+            const current = await app.inject({ method: 'GET', url: path });
+            expect(current.statusCode).toBe(200);
+            expect(current.json().resources.map((row: { resourceId: string }) => row.resourceId)).toEqual(['managed-reveal']);
+            expect(current.body).not.toContain('unrelated-reveal-sentinel');
+            const stale = await app.inject({ method: 'GET', url: path.replace('expectedRevision=1', 'expectedRevision=2') });
+            expect(stale.statusCode).toBe(409);
+            expect(stale.json()).toEqual({ error: 'resource_changed' });
+            accountId = recipient.id;
+            const useOnly = await app.inject({ method: 'GET', url: path });
+            expect(useOnly.statusCode).toBe(403);
+            expect(useOnly.body).not.toContain('managed-reveal-sentinel');
+        } finally { await app.close(); }
+    });
+
     it.each([true, false])('promotes a personal registry token through the real Action route and refuses its deletion (explicit mapping: %s)', async explicitMapping => {
         const personal = { id: 'registry-personal', name: 'Registry token', kind: 'token' as const,
             encryptedValue: { _isSecretValue: true as const, value: 'private-registry-token' }, createdAt: 1, updatedAt: 1 };

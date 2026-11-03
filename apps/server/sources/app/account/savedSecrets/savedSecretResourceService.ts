@@ -75,6 +75,7 @@ import {
     encodeSensitiveContentForAtRestStorage,
 } from "@/app/encryption/sensitiveContentAtRestStorage";
 import { TransactionReplayRequiredError, type Tx } from "@/storage/inTx";
+import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import { getDbProviderFromEnv } from '@/storage/prisma';
 
 type StoredResourceRow = Readonly<{
@@ -1076,13 +1077,57 @@ export async function listSavedSecretResourceEnvelopeCensusInTx(
 }
 
 /** Returns authorized ciphertext/plain storage plus only the caller's envelope. */
+export async function admitSavedSecretResourceManagementInTx(tx: Tx, input: Readonly<{
+    accountId: string; resourceId: string; expectedRevision?: number;
+}>): Promise<SavedSecretResourceServiceResult<{ ownerAccountId: string; revision: number; displayName: string }>> {
+    // Management is the resource owner's authority, independent of audience/use.
+    const row = await tx.savedSecretResource.findUnique({ where: { id: input.resourceId },
+        select: { ownerAccountId: true, revision: true, displayName: true } });
+    if (!row) return { ok: false, error: 'resource_not_found' };
+    if (row.ownerAccountId !== input.accountId) return { ok: false, error: 'forbidden' };
+    if (input.expectedRevision !== undefined && row.revision !== input.expectedRevision) return { ok: false, error: 'resource_changed' };
+    return { ok: true, value: row };
+}
+
+/** Returns authorized ciphertext/plain storage plus only the caller's envelope. */
+async function readDeploymentSavedSecretReferenceStatesInTx(tx: Tx, resourceIds: readonly string[]) {
+    const states = new Map<string, 'referenced' | 'unreferenced' | 'unavailable'>();
+    const provider = getDbProviderFromEnv(process.env, 'postgres');
+    for (const ids of portableQueryChunks({ values: [...new Set(resourceIds)], bindingsPerValue: 1 })) {
+        const mysql = provider === 'mysql';
+        const sqlite = provider === 'sqlite';
+        const table = mysql ? '`DeploymentEnvironment`' : '"DeploymentEnvironment"';
+        const column = mysql ? 'e.`referencedSavedSecretRevisions`' : 'e."referencedSavedSecretRevisions"';
+        const deleted = mysql ? 'e.`deletedAt`' : 'e."deletedAt"';
+        const alias = mysql ? '`resourceId`' : '"resourceId"';
+        const array = sqlite ? `json_type(${column}) = 'array'` : mysql ? `JSON_TYPE(${column}) = 'ARRAY'` : `jsonb_typeof(${column}) = 'array'`;
+        const value = sqlite ? "json_extract(r.value, '$.resourceId')" : mysql ? 'r.resourceId' : "r.value ->> 'resourceId'";
+        const items = sqlite ? `json_each(${column}) r` : mysql
+            ? `JSON_TABLE(IF(${array}, ${column}, JSON_ARRAY()), '$[*]' COLUMNS(resourceId LONGTEXT PATH '$.resourceId')) r`
+            : `jsonb_array_elements(CASE WHEN ${array} THEN ${column} ELSE '[]'::jsonb END) r(value)`;
+        const placeholders = ids.map((_, index) => sqlite || mysql ? '?' : `$${index + 1}`).join(', ');
+        // Return only the requested identities, not Environment records or unrelated captures.
+        // A legacy/invalidated opaque document cannot prove absence for any resource.
+        const query = `SELECT DISTINCT ${value} AS ${alias} FROM ${table} e, ${items} WHERE ${deleted} IS NULL AND ${array} AND ${value} IN (${placeholders})
+            UNION ALL SELECT NULL AS ${alias} WHERE EXISTS (SELECT 1 FROM ${table} e WHERE ${deleted} IS NULL AND (${column} IS NULL OR NOT (${array})))`;
+        const rows = await tx.$queryRawUnsafe<Array<{ resourceId: string | null }>>(query, ...ids);
+        const unknown = rows.some(row => row.resourceId === null);
+        const referenced = new Set(rows.flatMap(row => row.resourceId === null ? [] : [row.resourceId]));
+        for (const id of ids) states.set(id, referenced.has(id) ? 'referenced' : unknown ? 'unavailable' : 'unreferenced');
+    }
+    return states;
+}
+
+/** Returns authorized ciphertext/plain storage plus only the caller's envelope. */
 export async function listSavedSecretResourceMaterialsForAccountInTx(
     tx: Tx,
     accountId: string,
     authentication?: TeamOperationAuthenticationContext,
+    resourceIds?: readonly string[],
+    includeReferenceCensus = false,
 ): Promise<readonly SavedSecretResourceMaterialProjection[]> {
     const [rows, account] = await Promise.all([tx.savedSecretResource.findMany({
-        where: authorizedSavedSecretRowWhere(accountId),
+        where: resourceIds ? { id: { in: [...resourceIds] } } : authorizedSavedSecretRowWhere(accountId),
         orderBy: { updatedAt: "desc" },
         select: authorizedSavedSecretRowSelect(accountId),
     }), tx.account.findUnique({
@@ -1095,6 +1140,8 @@ export async function listSavedSecretResourceMaterialsForAccountInTx(
         },
     })]);
     const authorized = await retainQualifiedSavedSecretRowsInTx(tx, { rows, accountId, authentication });
+    const deploymentReferences = includeReferenceCensus
+        ? await readDeploymentSavedSecretReferenceStatesInTx(tx, authorized.rows.map(row => row.id)) : null;
     const readiness = account && authorized.rows.length > 0
         ? deriveAccountRecipientEnvelopeReadinessFromRow(account)
         : null;
@@ -1115,7 +1162,7 @@ export async function listSavedSecretResourceMaterialsForAccountInTx(
         const usableEnvelope = readUsableRecipientEnvelope(envelope);
         projectedRows.push({
             resourceId: row.id,
-            entry,
+            entry: deploymentReferences ? { ...entry, deploymentReferenceState: deploymentReferences.get(row.id) ?? 'unavailable' } : entry,
             encryptionMode: row.encryptionMode === "plain" ? "plain" : "e2ee",
             storedContent: readStoredContent(row.id, row.storedContent),
             encryptedDataKey: usableEnvelope?.encryptedDataKey ?? null,

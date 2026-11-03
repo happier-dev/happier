@@ -10,6 +10,7 @@ import { type Fastify } from "../../types";
 import { requirePresentUser, PresentUserRequiredResponseSchema } from "@/app/api/utils/requirePresentUser";
 import {
     createSavedSecretResourceInTx,
+    admitSavedSecretResourceManagementInTx,
     deleteSavedSecretResourceInTx,
     listSavedSecretResourceMaterialsForAccountInTx,
     listSavedSecretResourceEnvelopeCensusInTx,
@@ -23,6 +24,7 @@ import {
 } from "@/app/account/savedSecrets/savedSecretResourceService";
 import { homeDomainActionPathForMethod } from "@/app/api/routes/actions/homeDomainActionRoute";
 import { readTeamOperationAuthenticationFromRequest } from "@/app/teams/actorContext";
+import { SavedSecretResourceMaterialSelectionV1Schema } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
 
 function copyBytes(bytes: Uint8Array): Uint8Array<ArrayBuffer> {
     const copy = new Uint8Array(bytes.byteLength);
@@ -111,15 +113,32 @@ export function registerSavedSecretResourceRoutes(app: Fastify): void {
 
     routes.get("/v1/account/saved-secrets/resources/materials", {
         preHandler: app.authenticate,
-        schema: { response: { 200: SavedSecretResourceMaterialsResponseV1Schema, 403: SavedSecretResourceActionErrorV1Schema, 500: SavedSecretResourceActionErrorV1Schema } },
+        schema: { querystring: SavedSecretResourceMaterialSelectionV1Schema, response: { 200: SavedSecretResourceMaterialsResponseV1Schema, 400: SavedSecretResourceActionErrorV1Schema, 403: SavedSecretResourceActionErrorV1Schema, 404: SavedSecretResourceActionErrorV1Schema, 409: SavedSecretResourceActionErrorV1Schema, 500: SavedSecretResourceActionErrorV1Schema } },
     }, async (request, reply) => {
         try {
             const authentication = readTeamOperationAuthenticationFromRequest(request);
-            const rows = await inReadSnapshot((tx) => listSavedSecretResourceMaterialsForAccountInTx(
-                tx,
-                request.userId,
-                authentication,
-            ));
+            const selection = request.query;
+            if (selection.requireManage && (request.authTokenKind !== 'account' || request.authAuthority !== 'present_user')) {
+                return reply.code(403).send({ error: 'forbidden' });
+            }
+            const result = await inReadSnapshot(async tx => {
+                if (selection.resourceId) {
+                    // Check management and exact currentness without reading the body.
+                    if (selection.requireManage) {
+                        const current = await admitSavedSecretResourceManagementInTx(tx, { accountId: request.userId,
+                            resourceId: selection.resourceId, expectedRevision: selection.expectedRevision });
+                        if (!current.ok) return current;
+                    } else if (selection.expectedRevision !== undefined) {
+                        const current = await tx.savedSecretResource.findUnique({ where: { id: selection.resourceId }, select: { revision: true } });
+                        if (!current) return { ok: false as const, error: 'resource_not_found' as const };
+                        if (current.revision !== selection.expectedRevision) return { ok: false as const, error: 'resource_changed' as const };
+                    }
+                }
+                return { ok: true as const, rows: await listSavedSecretResourceMaterialsForAccountInTx(tx, request.userId, authentication,
+                    selection.resourceId ? [selection.resourceId] : undefined, selection.includeReferenceCensus === true) };
+            });
+            if (!result.ok) return reply.code(savedSecretResourceErrorHttpStatus(result.error, 404)).send({ error: result.error });
+            const rows = result.rows;
             return reply.send({
                 resources: rows.map((row) => {
                     if (!("resourceId" in row)) return { entry: row.entry };

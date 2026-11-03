@@ -122,6 +122,18 @@ export const SavedSecretResourceRecipientEnvelopeInputV1Schema = lazyZodSchema((
 }));
 
 export const SharedSavedSecretListInputV1Schema = lazyZodSchema(() => z.strictObject({}));
+/** Exact material demand shares the incumbent loader; omitted selection retains catalog-use reads. */
+export const SavedSecretResourceMaterialSelectionV1Schema = lazyZodSchema(() => z.strictObject({
+  includeReferenceCensus: z.optional(z.pipe(z.union([z.literal('true'), z.literal(true)]), z.transform(() => true as const))),
+  resourceId: z.optional(ResourceIdSchema),
+  expectedRevision: z.optional(z.coerce.number().check(z.int(), z.positive())),
+  requireManage: z.optional(z.pipe(z.union([z.literal('true'), z.literal(true)]), z.transform(() => true as const))),
+}).check(z.superRefine((value, ctx) => {
+  if ((value.expectedRevision !== undefined || value.requireManage) && !value.resourceId) ctx.addIssue({ code: 'custom', message: 'Exact resource identity required' });
+  if (value.requireManage && value.expectedRevision === undefined) ctx.addIssue({ code: 'custom', message: 'Exact revision required for disclosure' });
+})));
+export type SavedSecretResourceMaterialSelectionV1 = z.infer<typeof SavedSecretResourceMaterialSelectionV1Schema>;
+
 export const SharedSavedSecretListOutputV1Schema = lazyZodSchema(() => z.strictObject({
   resources: z.array(SavedSecretCatalogResultV1Schema),
 }));
