@@ -87,11 +87,10 @@ import {
 import { resolveSessionCockpitMobileCatalog } from './sessionCockpitMobileCatalog';
 import { SessionServicesSurfaceScreen } from './SessionServicesSurfaceScreen';
 import { useSessionCockpitSurfaceNavigation } from './SessionCockpitSurfaceNavigation';
-import { PhoneAskSheet } from '@/components/sessions/composer/phoneAsk/PhoneAskSheet';
+import { resolveSessionCockpitComposerRenderer } from './sessionCockpitComposerRenderer';
 import { PhoneWorkingCapsule } from '@/components/sessions/composer/phoneAsk/PhoneWorkingCapsule';
 import { PageBottomBarSeatProvider } from '@/components/ui/layout/useFloatingChromeClearance';
 import { usePhoneAskSheet } from '@/components/sessions/composer/phoneAsk/phoneAskSheetState';
-import type { SessionComposerRenderer } from '@/components/sessions/composer/sessionComposerModel';
 import { useWorkspaceFileOpener } from '@/components/workspaces/files/useWorkspaceFileOpener';
 
 // The one Work tab the desktop sidebar mounts too.
@@ -162,10 +161,7 @@ const SessionCockpitSurfaceScreenContent = React.memo((props: SessionCockpitSurf
     const phoneAsk = usePhoneAskSheet();
     const phoneAskComposerHost = phoneAsk !== null && props.surface === 'chat';
     const askSheetOpen = phoneAskComposerHost && phoneAsk?.phase === 'open';
-    const renderPhoneAskComposer = React.useMemo<SessionComposerRenderer | undefined>(
-        () => phoneAskComposerHost ? (composer) => <PhoneAskSheet composer={composer} /> : undefined,
-        [phoneAskComposerHost],
-    );
+    const renderPhoneAskComposer = resolveSessionCockpitComposerRenderer(props.surface);
     const enclosingNavigation = usePluginSurfaceDestinationNavigationBinding();
     const registerCockpitChrome = useSessionCockpitChromeRegister();
     const openDetailsTabCount = useDetailsTabCount(props.scopeId);
