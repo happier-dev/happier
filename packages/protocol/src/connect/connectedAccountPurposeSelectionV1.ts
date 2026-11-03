@@ -100,6 +100,12 @@ export function resolveConnectedAccountPurposeSelectedAccountV1(input: Readonly<
   return group && authentication ? resolveQualifiedConnectedAccountGroupActiveAccountV4({ group, authentication, accounts: input.accounts, now: input.now }) : null;
 }
 
+/** A supplied Machine selects its exact declaration origin; omission selects the Account. */
+export function resolveConnectedAccountPurposeDefaultOriginV1(input: Readonly<{ machineId?: string }>):
+  Readonly<{ kind: 'account' }> | Readonly<{ kind: 'machine'; machineId: string }> {
+  return input.machineId === undefined ? { kind: 'account' } : { kind: 'machine', machineId: input.machineId };
+}
+
 /** Configuration admission shares one declaration/target decision across Account and Machine hosts. */
 export function resolveConnectedAccountPurposeDefaultTargetV1(input: Readonly<{
   declaration: Parameters<typeof readDeclaredConnectedAccountPurposeV1>[0];

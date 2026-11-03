@@ -78,7 +78,7 @@ export const CONNECTED_SERVICE_CONFIGURATION_ACTION_INPUT_SCHEMAS_V1 = {
     }
   })),
   'connectedServices.purposes.default.set': z.strictObject({
-    machineId: z.string().check(z.trim(), z.minLength(1)), purpose: QualifiedConnectedAccountPurposeV1Schema,
+    machineId: z.optional(z.string().check(z.trim(), z.minLength(1))), purpose: QualifiedConnectedAccountPurposeV1Schema,
     target: QualifiedConnectedAccountPurposeBindingTargetV1Schema,
   }),
   'connectedServices.pools.create': lazyZodSchema(() => z.extend(QualifiedConnectedAccountGroupCreateV4Schema, { group: z.omit(QualifiedConnectedAccountGroupCreateV4Schema.shape.group, { state: true }) })),

@@ -15,6 +15,7 @@ import { readAccountProviderDeclarations } from '@/providers/catalog/accountProv
 import { getConnectedServiceRegistrySnapshot } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { projectConnectedAccountDescriptorV1 } from '@happier-dev/protocol/connect/connectedAccountUiProjectionV1';
+import { resolveConnectedAccountPurposeDefaultTargetV1, resolveConnectedAccountPurposeDefaultOriginV1 } from '@happier-dev/protocol/connect/connectedAccountPurposeSelectionV1';
 
 export function createUiConnectedServiceAction(account: LazyActionAccountContext, quotaReadOptions?: Pick<ProviderAccountUsageQuotaReadOptions, 'readAllHistory' | 'projectionDocuments' | 'includePendingWork'>): NonNullable<ActionExecutorDeps['connectedServiceAction']> {
     const invoke = async ({ actionId, input, signal }: Parameters<NonNullable<ActionExecutorDeps['connectedServiceAction']>>[0], prepare: boolean) => {
@@ -81,35 +82,51 @@ export function createUiConnectedServiceAction(account: LazyActionAccountContext
                     await mutateConnectedAccountPurposeDefaultsInContext(account, mutate, signal);
                 },
                 admitPurposeTarget: async input => {
-                    const [{ loadDaemonMergedProjectionCacheEntry }, { resolvePluginUiProjectionPlatform },
-                        { getMachineContributionRegistryProjectionRevision },
-                        { isConnectedAccountPurposeSetupTargetCurrent }, { getActiveServerAccountScope }, { storage }] = await Promise.all([
-                        import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs'),
-                        import('@/sync/domains/plugins/ui/projection'),
-                        import('@/sync/ops/machineContributionRegistryProjectionRevision'),
-                        import('@/sync/domains/connectedServices/connectedAccountPurposeSetup'),
+                    const [{ readPluginAccountAvailability }, { getActiveServerAccountScope },
+                        { areServerAccountScopesEqual }, { storage }] = await Promise.all([
+                        import('@/sync/domains/plugins/availability/projection'),
                         import('@/sync/domains/scope/activeServerAccountScope'),
+                        import('@/sync/domains/scope/serverAccountScope'),
                         import('@/sync/domains/state/storage'),
                     ]);
-                    const target = { machineId: input.machineId, serverId: account.serverId };
-                    const revision = getMachineContributionRegistryProjectionRevision(target);
-                    // A retained/offline presentation is not consumer declaration authority.
-                    const entry = await loadDaemonMergedProjectionCacheEntry({ ...target,
-                        accountLifetime: account.accountLifetime, reuseFreshReady: false, signal });
-                    assertCurrent();
-                    if (entry?.kind !== 'ready' || !entry.inputs.pluginProjectionV2) return null;
-                    const request = { scope: account.accountLifetime.scope, machineId: input.machineId, purpose: input.purpose };
-                    const runtime = { ...target, pluginUiProjection: entry.inputs.pluginUiProjection, pluginBrowserProjection: null,
-                        phase: 'current' as const, interactionEnabled: true, platform: resolvePluginUiProjectionPlatform(),
-                        accountLifetime: account.accountLifetime, connectedAccountProjection: entry.inputs.connectedAccountProjection };
-                    const isCurrent = () => getMachineContributionRegistryProjectionRevision(target) === revision
-                        && isConnectedAccountPurposeSetupTargetCurrent({ request, viewer: getActiveServerAccountScope(), runtime,
-                            profile: storage.getState().profile, target: input.target });
-                    if (!isCurrent()) return null;
-                    return () => {
+                    type Admission = Parameters<typeof resolveConnectedAccountPurposeDefaultTargetV1>[0];
+                    let declaration: Admission['declaration'];
+                    let readAuthentication: Admission['readAuthentication'];
+                    let accountServiceSelection: Admission['accountServiceSelection'];
+                    const origin = resolveConnectedAccountPurposeDefaultOriginV1(input);
+                    if (origin.kind === 'account') {
+                        const reader = readPluginAccountAvailability(account.accountLifetime.scope);
+                        const selection = await reader.ensureCurrentAccountExecution(input.purpose.consumer.pluginId);
                         assertCurrent();
-                        if (!isCurrent()) throw Object.assign(new Error('scope-retired'), { code: 'scope-retired' });
-                    };
+                        if (selection.kind !== 'available') return null;
+                        declaration = { purpose: input.purpose, accountSelection: selection };
+                        if (input.target.kind === 'group' && input.target.service.pluginId !== input.purpose.consumer.pluginId) {
+                            accountServiceSelection = await reader.ensureCurrentAccountExecution(input.target.service.pluginId);
+                            assertCurrent();
+                        }
+                    } else {
+                        const { loadDaemonMergedProjectionCacheEntry } = await import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs');
+                        // Explicit Machine inputs never borrow Account declarations or retained/offline projections.
+                        const entry = await loadDaemonMergedProjectionCacheEntry({ machineId: origin.machineId, serverId: account.serverId,
+                            accountLifetime: account.accountLifetime, reuseFreshReady: false, signal });
+                        assertCurrent();
+                        if (entry?.kind !== 'ready' || !entry.inputs.pluginUiProjection) return null;
+                        declaration = { purpose: input.purpose, projection: entry.inputs.pluginUiProjection,
+                            machineProvisionersById: entry.inputs.pluginUiProjection.machineProvisionersById };
+                        const descriptors = entry.inputs.connectedAccountProjection;
+                        readAuthentication = service => descriptors?.kind === 'ready'
+                            ? descriptors.descriptors.find(entry => entry.pluginId === service.pluginId && entry.id === service.localId
+                                && entry.availability.state === 'available')?.authentication ?? null : null;
+                    }
+                    assertCurrent();
+                    const profile = storage.getState().profile;
+                    if (profile.id !== account.accountId
+                        || !areServerAccountScopesEqual(getActiveServerAccountScope(), account.accountLifetime.scope)) return null;
+                    if (!resolveConnectedAccountPurposeDefaultTargetV1({ declaration, target: input.target,
+                        accounts: profile.connectedAccountsV4, groups: profile.connectedAccountGroupsV4,
+                        accountServiceSelection, readAuthentication, now: Date.now() })) return null;
+                    // The Action owns admission once; its existing Account lifetime and CAS own settlement.
+                    return assertCurrent;
                 },
                 setConnectedLabel: async input => {
                     const { setConnectedLabelInContext } = await import('@/sync/api/account/apiConnectedMetadataCatalog');

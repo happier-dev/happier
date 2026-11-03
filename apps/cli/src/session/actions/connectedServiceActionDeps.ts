@@ -18,9 +18,8 @@ import type { resolveServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/c
 import type { resolveConnectedServicesServerApiTimeoutMs } from '@/api/client/connectedServicesServerApiTimeout';
 import type { classifyActionTransportFailure } from '@/api/client/classifyServerEndpointError';
 import { ConnectedPurposeCatalogV1Schema } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
-import { readDeclaredConnectedAccountPurposeV1, resolveConnectedAccountPurposeSelectedAccountV1 } from '@happier-dev/protocol/connect/connectedAccountPurposeSelectionV1';
-import { ConnectedAccountUiProjectionEntryV1Schema } from '@happier-dev/protocol/connect/connectedAccountUiProjectionV1';
-import { DaemonContributionRegistryProjectionDescribeRequestSchema, DaemonContributionRegistryProjectionDescribeResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { admitCliConnectedAccountPurposeDefaultTarget } from './purposeDefaultAdmission';
+import { DaemonContributionRegistryProjectionDescribeRequestSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
 import type { SavedSecretOperationContextV1 } from '@/settings/secrets/hydrateSavedSecretCatalog';
 import type { captureSavedSecretReferencesForOperation } from "@/settings/secrets/savedSecretCatalogRead";
@@ -223,48 +222,20 @@ export function createCliConnectedServiceAction(params: Readonly<{
       },
       admitPurposeTarget: async input => {
         await assertReadCurrent();
-        const request = DaemonContributionRegistryProjectionDescribeRequestSchema.parse({
-          machineId: input.machineId,
-          selection: 'connectedAccountAdmission',
-        });
-        let rawProjection: unknown;
-        try {
-          rawProjection = await params.callMachineAction({ machineId: input.machineId,
+        const admitted = await admitCliConnectedAccountPurposeDefaultTarget({ input,
+          runtime: { credentials: params.credentials, serverHttpBaseUrl,
+            isCurrent: async () => { await assertReadCurrent(); return true; } },
+          ...(signal ? { signal } : {}),
+          readProfile: () => host.request({ method: 'GET', path: '/v1/account/profile' }),
+          readMachineProjection: machineId => params.callMachineAction({ machineId,
             ...(params.serverId ? { serverId: params.serverId } : {}),
             method: RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE,
-            request, ...(signal ? { signal } : {}),
+            request: DaemonContributionRegistryProjectionDescribeRequestSchema.parse({ machineId, selection: 'connectedAccountAdmission' }),
+            ...(signal ? { signal } : {}),
             authority: context.authority, authorization: context.rpcSessionAuthorization, context, effectActionId: actionId, exactMachine: true,
-          });
-        } catch {
-          await assertReadCurrent();
-          return null;
-        }
-        await assertReadCurrent();
-        const described = DaemonContributionRegistryProjectionDescribeResponseSchema.safeParse(rawProjection);
-        if (!described.success) return null;
-        const projection = described.data.projection;
-        const declaration = readDeclaredConnectedAccountPurposeV1({ purpose: input.purpose, projection,
-          machineProvisionersById: projection.familiesById.machineProvisioners?.entriesById ?? {} });
-        if (!declaration || declaration.consumerKind === 'machineProvisioner') return null;
-        let rawProfile: unknown;
-        try { rawProfile = await host.request({ method: 'GET', path: '/v1/account/profile' }); }
-        catch { await assertReadCurrent(); return null; }
-        await assertReadCurrent();
-        const profile = AccountProfileSchema.safeParse(rawProfile);
-        if (!profile.success) return null;
-        const descriptors = Object.values(projection.familiesById.connectedAccounts?.entriesById ?? {}).flatMap(entry => {
-          const parsed = ConnectedAccountUiProjectionEntryV1Schema.safeParse(entry);
-          return parsed.success && parsed.data.availability.state === 'available' ? [parsed.data] : [];
+          }),
         });
-        const selected = resolveConnectedAccountPurposeSelectedAccountV1({ purpose: input.purpose,
-          serviceRefs: declaration.serviceRefs, bindings: { v: 1, bindings: [{ purpose: input.purpose, target: input.target }] },
-          accounts: profile.data.connectedAccountsV4, groups: profile.data.connectedAccountGroupsV4, now: Date.now(),
-          readAuthentication: service => {
-            const matching = descriptors.filter(descriptor => descriptor.pluginId === service.pluginId && descriptor.serviceId === service.localId);
-            return matching.length === 1 ? matching[0]!.authentication : null;
-          },
-        });
-        if (!selected) return null;
+        if (!admitted) return null;
         // This is a preference, not consumer permission. Its runtime re-admits the
         // declaration; the existing catalog transport fences captured Account CAS.
         return () => catalogStore.assertCurrent();

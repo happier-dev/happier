@@ -1,5 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { reorderConnectedServicePoolMembersV1 } from './configurationActionsV1.js';
+import { CONNECTED_SERVICE_CONFIGURATION_ACTION_INPUT_SCHEMAS_V1, reorderConnectedServicePoolMembersV1 } from './configurationActionsV1.js';
+
+it('accepts Account-origin purpose defaults without a Machine while retaining exact Machine inputs', () => {
+    const schema = CONNECTED_SERVICE_CONFIGURATION_ACTION_INPUT_SCHEMAS_V1['connectedServices.purposes.default.set'];
+    const input = { purpose: { consumer: { pluginId: 'com.acme.source', localId: 'discover' }, purpose: 'api' },
+        target: { kind: 'account', account: { service: { pluginId: 'com.acme.source', localId: 'api' }, accountId: 'own' } } };
+    expect(schema.safeParse(input).success).toBe(true);
+    expect(schema.parse({ ...input, machineId: 'selected-machine' })).toEqual({ ...input, machineId: 'selected-machine' });
+    expect(schema.safeParse({ ...input, machineId: '' }).success).toBe(false);
+    expect(schema.safeParse({ ...input, anotherAccount: 'foreign' }).success).toBe(false);
+});
 
 describe('Pool member order owner', () => {
     it('uses the member-id tiebreaker for a semantic move without moving tied neighbours', async () => {

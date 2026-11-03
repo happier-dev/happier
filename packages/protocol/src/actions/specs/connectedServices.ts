@@ -162,11 +162,11 @@ export const CONNECTED_SERVICE_CONFIGURATION_ACTION_SPECS = [
       { path: 'onlyIfUnset', title: 'Keep an intervening default', widget: 'boolean' },
     ] } },
   { ...common, id: 'connectedServices.purposes.default.set', approval: {result: 'required'}, approvalPolicy: { uiConfirmation: 'direct' }, title: 'Choose default connected account',
-    description: 'Choose the active personal account or pool for one purpose declared by an installed Resource or Action on the selected machine.',
+    description: 'Choose the active personal account or pool for one purpose declared by an Account Resource or Action, or by the exact selected machine.',
     bindings: { mcpToolName: 'connected_services_purposes_default_set' },
     inputSchema: inputs['connectedServices.purposes.default.set'], outputSchema: outputs['connectedServices.purposes.default.set'],
     inputHints: { fields: [
-      { path: 'machineId', title: 'Declaration machine', widget: 'text', required: true },
+      { path: 'machineId', title: 'Declaration machine (omit for Account)', widget: 'text' },
       { path: 'purpose', title: 'Qualified consumer purpose', widget: 'json', required: true },
       { path: 'target', title: 'Qualified account or pool', widget: 'json', required: true },
     ] } },
