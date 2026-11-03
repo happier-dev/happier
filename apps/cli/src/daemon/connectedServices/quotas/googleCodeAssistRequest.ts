@@ -6,6 +6,7 @@ export type GoogleCodeAssistFetchRuntime = (url: string, init: RequestInit) => P
 export async function requestGoogleCodeAssist(params: Readonly<{
   fetchRuntime: GoogleCodeAssistFetchRuntime;
   accessToken: string;
+  userAgent?: string;
   endpoint: string;
   method: 'loadCodeAssist' | 'retrieveUserQuota' | 'retrieveUserQuotaSummary';
   body: unknown;
@@ -15,7 +16,11 @@ export async function requestGoogleCodeAssist(params: Readonly<{
   try {
     response = await params.fetchRuntime(`${params.endpoint}/v1internal:${params.method}`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${params.accessToken}`, 'content-type': 'application/json' },
+      headers: {
+        authorization: `Bearer ${params.accessToken}`,
+        'content-type': 'application/json',
+        ...(params.userAgent ? { 'user-agent': params.userAgent } : {}),
+      },
       body: JSON.stringify(params.body),
       signal: params.signal,
     });
