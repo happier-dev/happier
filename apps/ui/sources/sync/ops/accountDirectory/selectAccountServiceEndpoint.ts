@@ -1,5 +1,6 @@
 import {
     accountDirectoryAuthClient,
+    type AccountDirectoryAuthMethodDiscoveryResult,
     type AccountDirectoryAuthMethodDiscovery,
     type AccountDirectoryAuthTransport,
 } from '@/auth/accountDirectory/accountDirectoryAuthClient';
@@ -11,6 +12,7 @@ import {
 } from '@/sync/domains/server/serverProfiles';
 
 export type CheckAccountServiceEndpointResult =
+    | Extract<AccountDirectoryAuthMethodDiscoveryResult, { kind: 'organization_policy_locked' | 'organization_policy_invalid' }>
     | Readonly<{
         kind: 'verified';
         /** The selection to persist on "use": the observed address, identity and name. */
@@ -26,7 +28,7 @@ export type CheckAccountServiceEndpointResult =
 
 export type SelectAccountServiceEndpointResult =
     | Readonly<{ kind: 'selected' }>
-    | Extract<CheckAccountServiceEndpointResult, { kind: 'home_endpoint' }>
+    | Extract<CheckAccountServiceEndpointResult, { kind: 'home_endpoint' | 'organization_policy_locked' | 'organization_policy_invalid' }>
     | Readonly<{ kind: 'invalid' | 'unsupported' | 'unavailable' }>;
 
 /**
@@ -48,6 +50,7 @@ export async function checkAccountServiceEndpoint(
             ...transport,
             signal,
         });
+        if (discovery.kind === 'organization_policy_locked' || discovery.kind === 'organization_policy_invalid') return discovery;
         if (discovery.kind === 'not_account_service') {
             const homeServerIdentityId = discovery.serverIdentityId?.trim() ?? '';
             const homeUrl = normalizeAccountDirectoryEndpoint(

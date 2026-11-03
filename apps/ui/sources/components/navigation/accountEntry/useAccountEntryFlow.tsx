@@ -1,3 +1,4 @@
+import { OrganizationPolicyDiagnostic, OrganizationPolicyFieldNotice } from '@/components/organizationPolicy/OrganizationPolicyFieldNotice';
 import * as React from 'react';
 import { accountDirectoryAuthClient, createVerifiedAccountServiceAuthority, type AccountDirectoryAuthMethodDiscovery, type AccountDirectoryAuthTransport } from '@/auth/accountDirectory/accountDirectoryAuthClient';
 import { AccountServiceAuthenticationFlow } from '@/components/account/auth/AccountServiceAuthenticationFlow';
@@ -15,6 +16,8 @@ import { AUTHENTICATED_ACCOUNT_ENTRY_ROUTE, type AuthenticatedAccountEntryReques
 type State =
     | Readonly<{ kind: 'loading' }>
     | Readonly<{ kind: 'unavailable' }>
+    | Readonly<{ kind: 'organization_policy_locked' }>
+    | Readonly<{ kind: 'organization_policy_invalid' }>
     | Readonly<{ kind: 'methods'; discovery: AccountDirectoryAuthMethodDiscovery; intent: AccountPostAuthInput['intent'] }>
     | Readonly<{ kind: 'continuation'; input: AccountPostAuthInput; result: AccountPostAuthResult }>
     | Readonly<{ kind: 'home_auth'; input: AccountPostAuthInput; previous: AccountPostAuthResult; homeServerIdentityId: string }>;
@@ -126,7 +129,8 @@ export function useAccountEntryFlow(props: Readonly<{
             });
             if (controller.signal.aborted || operation !== activeOperationRef.current) return;
             if (discovery.kind !== 'supported_account_service') {
-                setState({ kind: 'unavailable' });
+                setState({ kind: discovery.kind === 'organization_policy_locked' || discovery.kind === 'organization_policy_invalid'
+                    ? discovery.kind : 'unavailable' });
                 return;
             }
             setState({ kind: 'methods', discovery, intent: props.request.intent });
@@ -155,7 +159,8 @@ export function useAccountEntryFlow(props: Readonly<{
             });
             if (controller.signal.aborted || operation !== activeOperationRef.current) return;
             if (discovery.kind !== 'supported_account_service') {
-                setState({ kind: 'unavailable' });
+                setState({ kind: discovery.kind === 'organization_policy_locked' || discovery.kind === 'organization_policy_invalid'
+                    ? discovery.kind : 'unavailable' });
                 return;
             }
             setState({ kind: 'methods', discovery, intent: input.intent });
@@ -178,6 +183,10 @@ export function useAccountEntryFlow(props: Readonly<{
         // rather than left as an unlabeled spinner.
         content = <SurfaceStateCard testID="authenticated-account-entry-loading" kind="loading"
             title={t('settingsAccount.accountServiceOAuth.stages.findingHomes')} accessibilitySemantics="status" />;
+    } else if (state.kind === 'organization_policy_locked' || state.kind === 'organization_policy_invalid') {
+        content = state.kind === 'organization_policy_locked'
+            ? <OrganizationPolicyFieldNotice field="accountService" />
+            : <OrganizationPolicyDiagnostic />;
     } else if (state.kind === 'unavailable') {
         content = <SurfaceStateCard testID="authenticated-account-entry-unavailable" kind="error" title={t('welcome.signInServiceUnavailableTitle')}
             reason={t('settingsAccount.accountServiceDiscoveryUnavailableDescription')} accessibilitySemantics="alert"

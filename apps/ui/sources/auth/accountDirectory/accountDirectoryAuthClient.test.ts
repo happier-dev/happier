@@ -1,3 +1,5 @@
+import { resolveNativeAppLinkHref } from '@/utils/url/nativeAppLink';
+import { parseAuthenticatedAccountEntryRoute } from '@/components/navigation/accountEntry/authenticatedAccountEntryRoute';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { installTokenStorageTestIsolation, installTokenStorageWebPlatformMocks } from '@/auth/storage/tokenStorage.testHelpers';
 import { installLocalStorageMock, installWebLockManagerMock, type LocalStorageMockHandle } from '@/auth/storage/tokenStorage.web.testHelpers';
@@ -132,6 +134,43 @@ describe('accountDirectoryAuthClient', () => {
     afterEach(() => {
         restoreLocks();
         storage.restore();
+        vi.unstubAllGlobals();
+    });
+
+    it.each([true, false, undefined])('admits a deep-linked Account service according to the organization lock (%s)', async (locked) => {
+        vi.stubGlobal('isTauri', true);
+        vi.stubGlobal('document', {});
+        vi.stubGlobal('window', { __HAPPIER_WEB_RUNTIME_CONFIG__: locked === undefined ? {} : {
+            organizationPolicyJson: JSON.stringify({ schemaVersion: 1, organization: 'Example',
+                accountService: { url: 'https://managed.example.test', locked } }),
+        } });
+        const link = new URL('happier://homes/sign-in');
+        link.searchParams.set('accountServiceEndpoint', 'https://foreign.example.test');
+        link.searchParams.set('accountServiceIdentity', 'srv_directory_1');
+        link.searchParams.set('accountIntent', JSON.stringify({ kind: 'refresh' }));
+        link.searchParams.set('accountEntryReturnTo', '/settings/account');
+        const href = resolveNativeAppLinkHref(link.href);
+        expect(href).not.toBeNull();
+        const route = new URL(href!, 'https://app.example.test');
+        const request = parseAuthenticatedAccountEntryRoute(Object.fromEntries(route.searchParams));
+        expect(request).not.toBeNull();
+        const discovery = await accountDirectoryAuthClient.discoverAuthenticationMethods({
+            endpointUrl: request!.service.endpointUrl,
+            expectedServerIdentityId: request!.service.serverIdentityId,
+        });
+        expect(discovery.kind).toBe(locked === true ? 'organization_policy_locked' : 'supported_account_service');
+        const foreignRequests = network.calls.filter(({ endpoint }) => endpoint === 'https://foreign.example.test');
+        if (locked === true) expect(foreignRequests).toEqual([]);
+        else expect(foreignRequests.length).toBeGreaterThan(0);
+
+        network.calls.length = 0;
+        expect((await checkAccountServiceEndpoint('https://foreign.example.test', { signal: new AbortController().signal })).kind)
+            .toBe(locked === true ? 'organization_policy_locked' : 'verified');
+        if (locked === true) expect(network.calls).toEqual([]);
+
+        // Locking a service must still allow that service's real discovery path.
+        expect((await accountDirectoryAuthClient.discoverAuthenticationMethods({ endpointUrl: 'https://managed.example.test' })).kind)
+            .toBe('supported_account_service');
     });
 
     it('constructs authority only from supported identity-checked discovery fields', async () => {
@@ -150,6 +189,33 @@ describe('accountDirectoryAuthClient', () => {
             capability: features.capabilities.accountDirectory,
             snapshot: discovery.snapshot,
         });
+    });
+
+    it('refuses key, password and OAuth sign-in to an unapproved service before sending credentials', async () => {
+        const discovery = await accountDirectoryAuthClient.discoverAuthenticationMethods({ endpointUrl: 'https://foreign.example.test' });
+        expect(discovery.kind).toBe('supported_account_service');
+        if (discovery.kind !== 'supported_account_service') throw new Error('Account-service fixture must be available');
+        vi.stubGlobal('isTauri', true);
+        vi.stubGlobal('document', {});
+        vi.stubGlobal('window', { __HAPPIER_WEB_RUNTIME_CONFIG__: {
+            organizationPolicyJson: JSON.stringify({ schemaVersion: 1, organization: 'Example',
+                accountService: { url: 'https://managed.example.test', locked: true } }),
+        } });
+        network.calls.length = 0;
+        const target = {
+            endpointUrl: discovery.endpointUrl,
+            endpointServerIdentityId: discovery.serverIdentityId,
+            canonicalServerUrl: discovery.canonicalServerUrl,
+            verifiedServerFeaturesSnapshot: discovery.snapshot,
+        };
+        await expect(accountDirectoryAuthClient.loginWithKey({ ...target, secret: new Uint8Array(32).fill(1) }))
+            .rejects.toMatchObject({ code: 'organization_policy_locked' });
+        await expect(accountDirectoryAuthClient.loginWithPassword({ ...target, email: 'person@example.test', password: 'test-only' }))
+            .rejects.toMatchObject({ code: 'organization_policy_locked' });
+        await expect(accountDirectoryAuthClient.startOAuth({ ...target, providerId: 'github', mode: 'keyless',
+            entryIntent: { kind: 'refresh' }, returnTo: '/homes/sign-in' }))
+            .rejects.toMatchObject({ code: 'organization_policy_locked' });
+        expect(network.calls).toEqual([]);
     });
 
     it('discovers explicit endpoint methods with another Home focused without active credential or focus dependence', async () => {

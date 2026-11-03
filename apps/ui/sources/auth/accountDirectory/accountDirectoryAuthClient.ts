@@ -1,3 +1,5 @@
+import { assertOrganizationPolicyEndpointAllowed, OrganizationPolicyActionError } from '@happier-dev/protocol/organizationPolicy/organizationPolicyV1';
+import { readOrganizationPolicy } from '@/sync/domains/organizationPolicy/organizationPolicy';
 import {
     normalizeAccountDirectoryEndpoint,
     isTokenOnlyAuthCredentials,
@@ -194,7 +196,13 @@ export function createVerifiedAccountServiceAuthority(
     });
 }
 
+type AccountDirectoryPolicyRefusal = Readonly<{
+    kind: 'organization_policy_locked' | 'organization_policy_invalid';
+    snapshot?: never;
+}>;
+
 export type AccountDirectoryAuthMethodDiscoveryResult =
+    | AccountDirectoryPolicyRefusal
     | Readonly<{
         kind: 'endpoint_unavailable';
         endpointUrl: string;
@@ -234,6 +242,7 @@ export type AccountDirectoryAuthMethodDiscoveryResult =
     }> & AccountDirectoryAuthMethodDiscovery);
 
 export type AccountDirectoryEndpointVerificationResult =
+    | AccountDirectoryPolicyRefusal
     | Extract<AccountDirectoryAuthMethodDiscoveryResult, { kind: 'endpoint_unavailable' | 'identity_mismatch' }>
     | Readonly<{
         kind: 'invalid_endpoint_metadata';
@@ -327,12 +336,27 @@ function buildSupportedDiscoveryFromAuthEntry(
     };
 }
 
+/** Every Account-service contact admits its explicit endpoint through the machine policy owner. */
+function resolveAccountServiceContactEndpoint(rawEndpoint: string): string | null {
+    const endpoint = normalizeAccountDirectoryEndpoint(rawEndpoint);
+    assertOrganizationPolicyEndpointAllowed(readOrganizationPolicy(), 'accountService', endpoint ?? '');
+    return endpoint;
+}
+
 async function verifyAccountDirectoryEndpoint(input: Readonly<{
     endpointUrl: string;
     expectedServerIdentityId?: string | null;
     signal?: AbortSignal;
 }> & AccountDirectoryAuthTransport): Promise<AccountDirectoryEndpointVerificationResult> {
-    const endpointUrl = normalizeAccountDirectoryEndpoint(input.endpointUrl) ?? '';
+    let endpointUrl: string;
+    try {
+        endpointUrl = resolveAccountServiceContactEndpoint(input.endpointUrl) ?? '';
+    } catch (error) {
+        if (error instanceof OrganizationPolicyActionError && error.code !== 'organization_policy_off') {
+            return { kind: error.code };
+        }
+        throw error;
+    }
     if (!endpointUrl) {
         return { kind: 'endpoint_unavailable', endpointUrl, reason: 'invalid_endpoint' };
     }
@@ -496,7 +520,7 @@ export const accountDirectoryAuthClient = {
 
     async loginWithKey(input: AccountDirectoryKeyLoginInput): Promise<TokenOnlyAuthCredentials> {
         input.signal?.throwIfAborted();
-        const endpointUrl = normalizeAccountDirectoryEndpoint(input.endpointUrl);
+        const endpointUrl = resolveAccountServiceContactEndpoint(input.endpointUrl);
         const endpointServerIdentityId = input.endpointServerIdentityId.trim();
         const canonicalServerUrl = normalizeAccountDirectoryEndpoint(input.canonicalServerUrl);
         if (!endpointUrl || !endpointServerIdentityId || !canonicalServerUrl) {
@@ -553,7 +577,7 @@ export const accountDirectoryAuthClient = {
         keyAuthSecret: Uint8Array | null;
     }>> {
         input.signal?.throwIfAborted();
-        const endpointUrl = normalizeAccountDirectoryEndpoint(input.endpointUrl);
+        const endpointUrl = resolveAccountServiceContactEndpoint(input.endpointUrl);
         const serverIdentityId = input.endpointServerIdentityId.trim();
         const canonicalServerUrl = normalizeAccountDirectoryEndpoint(input.canonicalServerUrl);
         if (!endpointUrl || !serverIdentityId || !canonicalServerUrl) {
@@ -650,6 +674,9 @@ export const accountDirectoryAuthClient = {
                 ...transport,
                 runtimeOrigin: transport.runtimeOrigin ?? undefined,
             });
+            if (verified.kind === 'organization_policy_locked' || verified.kind === 'organization_policy_invalid') {
+                return failed(verified.kind);
+            }
             if (verified.kind !== 'verified_endpoint') return failed(
                 verified.kind === 'identity_mismatch' ? 'identity-changed' : 'service-unavailable',
                 verified.snapshot !== undefined && isServerFeaturesProbeRetryable(verified.snapshot),
@@ -747,7 +774,7 @@ export const accountDirectoryAuthClient = {
         const accountEntryReturnTo = normalizeInternalReturnPath(input.accountEntryReturnTo);
         if (input.accountEntryReturnTo !== undefined && !accountEntryReturnTo) throw new Error('Invalid Account entry return destination');
         if (!intent || !returnTo) throw new Error('Account Service OAuth requires a recorded intent and invoking surface');
-        const endpointUrl = normalizeAccountDirectoryEndpoint(input.endpointUrl);
+        const endpointUrl = resolveAccountServiceContactEndpoint(input.endpointUrl);
         const endpointServerIdentityId = input.endpointServerIdentityId.trim();
         const canonicalServerUrl = normalizeAccountDirectoryEndpoint(input.canonicalServerUrl);
         if (!endpointUrl || !endpointServerIdentityId || !canonicalServerUrl) {

@@ -1,3 +1,5 @@
+import { parseAuthenticatedAccountEntryRoute } from './authenticatedAccountEntryRoute';
+import { resolveNativeAppLinkHref } from '@/utils/url/nativeAppLink';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, expect, it, vi } from 'vitest';
@@ -60,6 +62,29 @@ async function installStorageGlobals() {
 }
 
 const json = (value: unknown) => new Response(JSON.stringify(value), { headers: { 'Content-Type': 'application/json' } });
+
+it('shows the managed Account-service affordance for a foreign desktop deep link before contacting it', async () => {
+    await installStorageGlobals();
+    vi.stubGlobal('isTauri', true);
+    Object.assign(window, { __HAPPIER_WEB_RUNTIME_CONFIG__: {
+        organizationPolicyJson: JSON.stringify({ schemaVersion: 1, organization: 'Example',
+            accountService: { url: 'https://managed.example.test', locked: true } }),
+    } });
+    const link = new URL('happier://homes/sign-in');
+    link.searchParams.set('accountServiceEndpoint', 'https://foreign.example.test');
+    link.searchParams.set('accountServiceIdentity', 'srv_foreign');
+    link.searchParams.set('accountIntent', JSON.stringify({ kind: 'refresh' }));
+    link.searchParams.set('accountEntryReturnTo', '/settings/account');
+    const href = resolveNativeAppLinkHref(link.href);
+    expect(href).not.toBeNull();
+    const params = Object.fromEntries(new URL(href!, 'https://app.example.test').searchParams);
+    const request = parseAuthenticatedAccountEntryRoute(params);
+    expect(request).not.toBeNull();
+    screen = await renderScreen(<AuthenticatedAccountEntryRouteSurface request={request!} routeParams={params} onExit={() => {}} />);
+    await vi.waitFor(() => expect(screen?.findByTestId('organization-policy-accountService'), screen?.getTextContent()).not.toBeNull());
+    expect(screen.findByTestId('account-service-auth-key_challenge-login-keyed')).toBeNull();
+    expect(boundary.request.mock.calls.filter(([endpoint]) => endpoint === 'https://foreign.example.test')).toEqual([]);
+});
 
 /** Answers the probe, challenge and auth legs every exact endpoint needs; the directory fixture owns the rest. */
 function answerCommonEndpointRequest(fixture: ReturnType<typeof createDirectoryHttpFixture>, homeAIdentity: Readonly<{ serverUrl: string }>, homeBUrl: string, endpoint: string, path: string): Response | null {
