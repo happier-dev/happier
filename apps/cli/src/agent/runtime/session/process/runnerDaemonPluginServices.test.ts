@@ -66,6 +66,35 @@ it('returns typed unavailability for native observation and saved health without
 });
 
 
+it('refuses unsupported runner HTTP streaming without dispatching to the daemon', async () => {
+    const dispatch = vi.fn(async (operation: RunnerDaemonPluginServiceOperationV1) => {
+        if (operation.kind === 'plugin_services.prepare_v1') {
+            const snapshot = preparedSnapshot();
+            return { ...snapshot, availability: { ...snapshot.availability, http: { status: 'available' } } };
+        }
+        if (operation.kind === 'plugin_fetch.request_v1') {
+            return { status: 200, finalUrl: operation.request.url, headers: {}, body: new Uint8Array([111, 107]) };
+        }
+        throw new Error(`Unexpected HTTP stream transport: ${operation.kind}`);
+    });
+    const services = await prepareRunnerDaemonPluginServices({
+        invocationId: 'runner-http-stream-unavailable',
+        signal: new AbortController().signal,
+        local: createUnavailablePluginServices(),
+        readActiveTurnAdmissionWitness: () => witness,
+        dispatch,
+    });
+    dispatch.mockClear();
+
+    await expect(Promise.resolve().then(() => services.http.requestStream({
+        url: 'https://example.test/stream', redirect: 'error',
+    }))).rejects.toMatchObject({ code: 'plugin_service_unavailable' });
+    expect(dispatch).not.toHaveBeenCalled();
+    await expect(services.http.request({
+        url: 'https://example.test/finite', redirect: 'error',
+    })).resolves.toMatchObject({ status: 200, body: new Uint8Array([111, 107]) });
+});
+
 function createSeparatelyBundledPluginError(input: Readonly<{
     code: string;
     message: string;

@@ -15,6 +15,8 @@ import type {
     PluginCancellationOptions,
     PluginServices } from '@happier-dev/plugin-sdk';
 import type {
+    HttpPreparedReadInput,
+    PreparedHttpRead,
     PluginFetchCredentialBinding } from '@happier-dev/plugin-sdk/http';
 import type {
     PluginInvocableActionId } from '@happier-dev/plugin-sdk/actions';
@@ -151,6 +153,7 @@ type Invocation = {
     readonly disposeOwner: () => void | Promise<void>;
     readonly controller: AbortController;
     readonly mcpClients: Map<string, PluginMcpClient>;
+    readonly preparedHttpReads: Map<string, PreparedHttpRead>;
     readonly subscriptions: Map<string, Subscription>;
     readonly storageTransactions:
         Map<string, StorageTransactionState>;
@@ -774,6 +777,11 @@ export function createRunnerDaemonPluginServicesHost(input: Readonly<{
                         ? [result.reason]
                         : []),
             );
+            const httpCleanupResults = await Promise.allSettled(
+                [...invocation.preparedHttpReads.values()].map(read => read.dispose()),
+            );
+            invocation.preparedHttpReads.clear();
+            cleanupFailures.push(...httpCleanupResults.flatMap(result => result.status === 'rejected' ? [result.reason] : []));
             for (
                 const authorization
                 of invocation.execAuthorizations.values()
@@ -1006,6 +1014,7 @@ export function createRunnerDaemonPluginServicesHost(input: Readonly<{
                 disposeOwner: created.dispose,
                 controller,
                 mcpClients: new Map(),
+                preparedHttpReads: new Map(),
                 subscriptions: new Map(),
                 storageTransactions: new Map(),
                 systemToolResolutions: new Map(),
@@ -1117,6 +1126,7 @@ export function createRunnerDaemonPluginServicesHost(input: Readonly<{
             && operation.kind
                 !== 'plugin_services.subscription.close_v1'
             && operation.kind !== 'plugin_mcp.client.close_v1'
+            && operation.kind !== 'plugin_fetch.prepared_read.dispose_v1'
             && operation.kind !== 'plugin_exec.launch.release_v1'
             && operation.kind !== 'plugin_sessions.external.close_list_v1'
             && operation.kind
@@ -1727,6 +1737,39 @@ export function createRunnerDaemonPluginServicesHost(input: Readonly<{
                     true,
                 );
                 return result(operation, null);
+            case 'plugin_fetch.prepare_read_v1': {
+                const { body, ...request } = operation.request;
+                // The canonical HTTP producer owns intent/method admission;
+                // the private wire deliberately accepts all HTTP methods.
+                const input = { ...request, ...(body === undefined ? {} : { body: new Uint8Array(Buffer.from(body, 'base64')) }) } as HttpPreparedReadInput;
+                const read = await services.http.prepareRead(input, operationOptions);
+                if (invocation.disposed || signal?.aborted) {
+                    await read.dispose();
+                    if (signal?.aborted) throw signal.reason;
+                    return fail('plugin_services_invocation_unavailable', 'Runner PluginServices invocation is unavailable');
+                }
+                const readId = randomUUID();
+                invocation.preparedHttpReads.set(readId, read);
+                return result(operation, { readId });
+            }
+            case 'plugin_fetch.prepared_read.request_v1': {
+                const read = invocation.preparedHttpReads.get(operation.readId);
+                if (!read) return fail('plugin_fetch_prepared_read_unavailable', 'Prepared HTTP read is unavailable');
+                try {
+                    return result(operation, await read.request({ signal: signal ?? invocation.controller.signal }));
+                } finally {
+                    invocation.preparedHttpReads.delete(operation.readId);
+                    await read.dispose();
+                }
+            }
+            case 'plugin_fetch.prepared_read.dispose_v1': {
+                const read = invocation.preparedHttpReads.get(operation.readId);
+                if (read) {
+                    invocation.preparedHttpReads.delete(operation.readId);
+                    await read.dispose();
+                }
+                return result(operation, null);
+            }
             case 'plugin_fetch.request_v1':
                 {
                 const {

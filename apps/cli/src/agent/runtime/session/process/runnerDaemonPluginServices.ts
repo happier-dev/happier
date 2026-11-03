@@ -13,6 +13,7 @@ import type {
     PluginInvocableActionId } from '@happier-dev/plugin-sdk/actions';
 import type {
     McpClient as PluginMcpClient } from '@happier-dev/plugin-sdk/mcp';
+import type { PreparedHttpRead } from '@happier-dev/plugin-sdk/http';
 import type {
     PluginCancellationOptions,
     PluginContributionRef,
@@ -645,6 +646,7 @@ export async function prepareRunnerDaemonPluginServices(
             || operation.kind
                 === 'plugin_services.subscription.close_v1'
             || operation.kind === 'plugin_mcp.client.close_v1'
+            || operation.kind === 'plugin_fetch.prepared_read.dispose_v1'
             || operation.kind
                 === 'plugin_exec.launch.release_v1'
             || operation.kind === 'plugin_sessions.external.close_list_v1'
@@ -1658,6 +1660,33 @@ export async function prepareRunnerDaemonPluginServices(
         host: hostEvents,
     } satisfies PluginServices['events']);
     const httpService: PluginServices['http'] = Object.freeze({
+        requestStream: PLUGIN_SERVICE_DESCRIPTORS.http.createUnavailable().requestStream,
+        async prepareRead(readInput, options) {
+            assertAvailable('http');
+            const { body, ...request } = readInput;
+            const { readId } = await dispatch<Readonly<{ readId: string }>>({
+                kind: 'plugin_fetch.prepare_read_v1',
+                ...requestBase(),
+                request: { ...request, ...(body === undefined ? {} : { body: Buffer.from(body).toString('base64') }) },
+            }, options?.signal ? { signal: options.signal } : undefined);
+            let consumed = false;
+            let disposed = false;
+            return Object.freeze({
+                async request({ signal }) {
+                    if (consumed) throw new PluginError({ code: 'plugin_fetch_prepared_read_consumed', message: 'A prepared read can be requested only once' });
+                    consumed = true;
+                    return await dispatch<Awaited<ReturnType<PluginServices['http']['request']>>>({
+                        kind: 'plugin_fetch.prepared_read.request_v1', ...requestBase(), readId,
+                    }, { signal });
+                },
+                async dispose() {
+                    if (disposed) return;
+                    await dispatch<null>({ kind: 'plugin_fetch.prepared_read.dispose_v1',
+                        requestId: randomUUID(), invocationId: input.invocationId, readId });
+                    disposed = true;
+                },
+            } satisfies PreparedHttpRead);
+        },
         async request(request, options) {
             assertAvailable('http');
             return await dispatch<Awaited<ReturnType<

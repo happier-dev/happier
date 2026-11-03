@@ -12,12 +12,9 @@ export type {
     HttpStreamResponse,
     HttpPreparedReadInput,
     PreparedHttpRead,
+    HttpService,
 } from '@happier-dev/cli-common/plugins/http/contracts';
 
-export type HttpService = Pick<
-    import('@happier-dev/cli-common/plugins/http/contracts').HttpService,
-    'request' | 'openWebSocket'
->;
 /** @moduleRealm daemon */
 import type { PluginDiagnosticData } from '../diagnostics.js';
 import type { JsonValue, PluginContributionRef } from '../identity.js';

@@ -515,6 +515,8 @@ export const PLUGIN_SERVICE_DESCRIPTORS = Object.freeze({
         id: 'http', publicProperty: 'http', availabilityOwner: 'binding', requiredHostAccessCapability: ['network', 'network.client'], unavailableCode: PLUGIN_SERVICE_UNAVAILABLE_CODE, deniedCode: PLUGIN_SERVICE_RESOURCE_NOT_SELECTED_CODE,
         createUnavailable: (code?: string, diagnostic?: PluginServiceUnavailableDiagnostic): HttpService => Object.freeze({
             request: unavailableMethod('http', code, diagnostic),
+            requestStream: unavailableMethod('http', code, diagnostic),
+            prepareRead: unavailableMethod('http', code, diagnostic),
             openWebSocket: unavailableMethod('http', code, diagnostic),
         }),
         createAvailable({ seed, binding, params }): HttpService | null {

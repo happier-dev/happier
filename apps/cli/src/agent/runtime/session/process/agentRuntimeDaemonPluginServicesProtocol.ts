@@ -767,6 +767,31 @@ export const RUNNER_DAEMON_PLUGIN_SERVICE_OPERATION_V1_SCHEMAS = [
         }),
     })),
     lazyZodSchema(() => z.strictObject({
+        kind: z.literal('plugin_fetch.prepare_read_v1'),
+        ...OperationBaseSchema,
+        ...OptionalWitnessSchema,
+        request: z.strictObject({
+            intent: z.enum(['get', 'graphqlQuery']),
+            url: z.string().check(z.url(), z.maxLength(8_192)),
+            method: z.optional(HttpMethodSchema),
+            headers: z.optional(StringRecordSchema),
+            body: z.optional(Base64Schema),
+            redirect: z.enum(['error', 'follow', 'manual']),
+            timeoutMs: z.optional(SafeNonNegativeIntegerSchema),
+        }),
+    })),
+    lazyZodSchema(() => z.strictObject({
+        kind: z.literal('plugin_fetch.prepared_read.request_v1'),
+        ...OperationBaseSchema,
+        ...OptionalWitnessSchema,
+        readId: BoundedIdSchema,
+    })),
+    lazyZodSchema(() => z.strictObject({
+        kind: z.literal('plugin_fetch.prepared_read.dispose_v1'),
+        ...OperationBaseSchema,
+        readId: BoundedIdSchema,
+    })),
+    lazyZodSchema(() => z.strictObject({
         kind: z.literal('plugin_actions.execute_v1'),
         ...OperationBaseSchema,
         ...OptionalWitnessSchema,

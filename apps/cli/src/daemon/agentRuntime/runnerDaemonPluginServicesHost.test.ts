@@ -1,3 +1,5 @@
+import { createPluginInvocationServiceBinding } from '@/plugins/runtime/invocation/services/factory';
+import { createStablePluginHttpHost } from '@/plugins/runtime/fetch/service';
 import { describe, expect, it, vi } from 'vitest';
 
 import { PluginError } from '@happier-dev/plugin-sdk';
@@ -199,6 +201,84 @@ function isWireRecord(
 }
 
 describe('runner daemon PluginServices host', () => {
+    it('prepares Session HTTP reads once through the canonical host before executing and preserves typed refusals', async () => {
+        const unavailable = createUnavailablePluginServices();
+        let transportSignal: AbortSignal | undefined;
+        const transport = vi.fn(async (request: Parameters<PluginServices['http']['request']>[0], options?: { signal?: AbortSignal }) => {
+            if (request.url.endsWith('/blocked')) {
+                const signal = options?.signal;
+                if (!signal) throw new Error('Prepared transport requires its request owner signal');
+                transportSignal = signal;
+                await new Promise<never>((_resolve, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true }));
+            }
+            return { status: 200, finalUrl: request.url, headers: {}, body: request.body ?? new Uint8Array() };
+        });
+        const httpHost = createStablePluginHttpHost({ adapter: { request: transport,
+            async openWebSocket() { throw new Error('Session read must not open a socket'); } } });
+        const httpBinding = createPluginInvocationServiceBinding('runner-http', 'runner-http-binding');
+        const host = createRunnerDaemonPluginServicesHost({ async createInvocation({ signal }) { return {
+            services: { ...unavailable, availability: id => id === 'http' ? { status: 'available' } : unavailable.availability(id),
+                http: httpHost.bind({ plugin: { id: 'fixture.plugin', version: '1.0.0' },
+                    contribution: { id: 'read', qualifiedId: 'fixture.plugin/actions/read' },
+                    occurrenceId: 'runner-http', correlationId: 'runner-http', surface: 'agent', signal,
+                    isOccurrenceCurrent: () => true }, httpBinding) },
+            resourceDescriptors: {},
+            subscriptionCapabilities: { settingsWatch: false, eventSubscriptions: [], resourceWatches: [], notificationPreferencesWatch: false },
+            dispose() {}, authorizeOperation: () => true, executeCurrentGlobalAction: unavailable.actions.execute,
+            currentGlobalMcp: unavailable.mcp, currentGlobalExternalSessions: unavailable.sessions.external,
+        }; } });
+        const operations: string[] = [];
+        const services = await prepareRunnerDaemonPluginServices({ invocationId: 'invocation-1',
+            signal: new AbortController().signal, local: unavailable,
+            readActiveTurnAdmissionWitness: () => witness,
+            dispatch: async (operation, options) => {
+                operations.push(operation.kind);
+                const response = await host.dispatch({ ...direct, operation: RunnerDaemonPluginServiceOperationV1Schema.parse(operation),
+                    signal: options?.signal });
+                return decodeRunnerDaemonPluginServiceWireValueV1(response.value);
+            },
+        });
+        try {
+            const body = new TextEncoder().encode('query { viewer { login } }');
+            const preparation = new AbortController();
+            const read = await services.http.prepareRead({ intent: 'graphqlQuery', method: 'POST',
+                url: 'https://api.example.test/graphql', redirect: 'error', body }, { signal: preparation.signal });
+            expect(transport).not.toHaveBeenCalled();
+            expect(operations.filter(kind => kind === 'plugin_fetch.prepare_read_v1')).toHaveLength(1);
+            body.fill(0);
+            preparation.abort();
+            await expect(read.request({ signal: new AbortController().signal })).resolves.toMatchObject({
+                status: 200, body: new TextEncoder().encode('query { viewer { login } }'),
+            });
+            expect(transport).toHaveBeenCalledOnce();
+            await expect(read.request({ signal: new AbortController().signal })).rejects.toMatchObject({
+                code: 'plugin_fetch_prepared_read_consumed',
+            });
+            await read.dispose();
+            const mutation = { intent: 'get' as const, method: 'DELETE' as const,
+                url: 'https://api.example.test/read', redirect: 'error' as const };
+            // @ts-expect-error JavaScript callers still receive the canonical preparation refusal.
+            await expect(services.http.prepareRead(mutation)).rejects.toMatchObject({ code: 'plugin_fetch_prepared_read_invalid' });
+            const blocked = await services.http.prepareRead({ intent: 'get', url: 'https://api.example.test/blocked', redirect: 'error' });
+            const pending = blocked.request({ signal: new AbortController().signal });
+            const aborted = expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+            await vi.waitFor(() => expect(transportSignal).toBeDefined());
+            await blocked.dispose();
+            await aborted;
+            expect(transportSignal?.aborted).toBe(true);
+            const unused = await services.http.prepareRead({ intent: 'get', url: 'https://api.example.test/unused', redirect: 'error' });
+            await unused.dispose();
+            await expect(unused.request({ signal: new AbortController().signal })).rejects.toMatchObject({ code: 'plugin_fetch_prepared_read_unavailable' });
+            expect(transport).toHaveBeenCalledTimes(2);
+            const closing = await services.http.prepareRead({ intent: 'get', url: 'https://api.example.test/blocked', redirect: 'error' });
+            const stopped = expect(closing.request({ signal: new AbortController().signal })).rejects.toMatchObject({ name: 'AbortError' });
+            await vi.waitFor(() => expect(transport).toHaveBeenCalledTimes(3));
+            await host.dispose();
+            await stopped;
+            expect(transportSignal?.aborted).toBe(true);
+        } finally { await host.dispose(); }
+    });
+
     it('retires a resumed Run snapshot before preparation and rejects stale or foreign cleanup', async () => {
         const services = createUnavailablePluginServices();
         const disposed: string[] = [];
