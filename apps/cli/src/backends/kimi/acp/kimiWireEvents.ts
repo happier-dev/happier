@@ -1,4 +1,5 @@
 import type { ToolCallContent } from '@agentclientprotocol/sdk';
+import { lazySchema } from '@happier-dev/protocol';
 import { z } from 'zod';
 
 import type { AcpTurnOutcome } from '@/agent/acp/backend/turn/_types';
@@ -14,36 +15,36 @@ export type KimiWireEvent =
   }>
   | Readonly<{ kind: 'turn-end'; turnId: string; outcome: AcpTurnOutcome }>;
 
-const identifier = z.string().refine(value => value.trim().length > 0);
-const turnIdSchema = z.union([z.number().int().nonnegative(), z.string().regex(/^(0|[1-9]\d*)$/)]).transform(String);
-const turnStartSchema = z.object({ turnId: turnIdSchema, origin: z.object({ kind: identifier, taskId: identifier.optional() }) });
-const taskSchema = z.object({ info: z.object({ taskId: identifier, parentToolCallId: identifier, detached: z.literal(true) }) });
-const turnEndSchema = z.object({
+const identifier = lazySchema(() => z.string().refine(value => value.trim().length > 0));
+const turnIdSchema = lazySchema(() => z.union([z.number().int().nonnegative(), z.string().regex(/^(0|[1-9]\d*)$/)]).transform(String));
+const turnStartSchema = lazySchema(() => z.object({ turnId: turnIdSchema, origin: z.object({ kind: identifier, taskId: identifier.optional() }) }));
+const taskSchema = lazySchema(() => z.object({ info: z.object({ taskId: identifier, parentToolCallId: identifier, detached: z.literal(true) }) }));
+const turnEndSchema = lazySchema(() => z.object({
   turnId: turnIdSchema, reason: z.enum(['completed', 'cancelled', 'blocked', 'failed']),
   error: z.object({ code: z.string().optional(), message: z.string().optional() }).optional(),
-});
-const contentSchema = z.object({
+}));
+const contentSchema = lazySchema(() => z.object({
   turnId: turnIdSchema,
   part: z.discriminatedUnion('type', [
     z.object({ type: z.literal('text'), text: z.string() }),
     z.object({ type: z.literal('think'), think: z.string(), hidden: z.boolean().optional() }),
   ]),
-});
-const tokenCountSchema = z.number().finite().nonnegative();
-const stepUsageSchema = z.object({ uuid: identifier, turnId: turnIdSchema, usage: z.object({
+}));
+const tokenCountSchema = lazySchema(() => z.number().finite().nonnegative());
+const stepUsageSchema = lazySchema(() => z.object({ uuid: identifier, turnId: turnIdSchema, usage: z.object({
   inputOther: tokenCountSchema, output: tokenCountSchema,
   inputCacheRead: tokenCountSchema, inputCacheCreation: tokenCountSchema,
-}) });
-const toolCallSchema = z.object({ turnId: turnIdSchema, uuid: identifier, toolCallId: identifier, name: identifier, args: z.unknown(), display: z.unknown().optional() });
-const toolResultSchema = z.object({
+}) }));
+const toolCallSchema = lazySchema(() => z.object({ turnId: turnIdSchema, uuid: identifier, toolCallId: identifier, name: identifier, args: z.unknown(), display: z.unknown().optional() }));
+const toolResultSchema = lazySchema(() => z.object({
   parentUuid: identifier, toolCallId: identifier,
   result: z.object({ output: z.unknown(), isError: z.boolean().optional() }),
-});
-const diffSchema = z.object({ kind: z.enum(['diff', 'file_io']), path: identifier, before: z.string(), after: z.string() });
-const planSchema = z.object({ kind: z.literal('todo_list'), items: z.array(z.object({
+}));
+const diffSchema = lazySchema(() => z.object({ kind: z.enum(['diff', 'file_io']), path: identifier, before: z.string(), after: z.string() }));
+const planSchema = lazySchema(() => z.object({ kind: z.literal('todo_list'), items: z.array(z.object({
   title: identifier, status: z.enum(['pending', 'in_progress', 'done', 'completed']),
-})).min(1) });
-const planReviewSchema = z.object({ kind: z.literal('plan_review'), plan: identifier, path: identifier.optional() });
+})).min(1) }));
+const planReviewSchema = lazySchema(() => z.object({ kind: z.literal('plan_review'), plan: identifier, path: identifier.optional() }));
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
