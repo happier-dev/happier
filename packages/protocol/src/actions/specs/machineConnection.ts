@@ -335,6 +335,7 @@ export const MACHINE_CONNECTION_ACTION_SPECS = [
         { path: 'approved', title: 'Approve this installation step', widget: 'boolean' },
       ] },
       technicalInputPaths: ['serverId', 'homeId', 'operationId', 'taskId', 'purpose', 'promptId', 'approved'],
+      codeInputPaths: ['fingerprint', 'existingFingerprint'],
       summary: () => 'Answer managed machine installation prompt.',
     },
     inputHints: { fields: [

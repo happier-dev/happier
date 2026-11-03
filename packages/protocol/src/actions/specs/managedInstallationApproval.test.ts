@@ -18,7 +18,9 @@ describe('managed installation approval presentation', () => {
       }
       expect(fields.rows).toContainEqual(expect.objectContaining({ path: 'question', value: 'Trust this machine?' }));
       expect(fields.rows).toContainEqual(expect.objectContaining({ path: 'host', value: 'guest.example' }));
-      expect(fields.rows).toContainEqual(expect.objectContaining({ path: 'fingerprint', value: 'SHA256:guest' }));
+      // A host key is compared character by character: it reads in the code face, the address does not.
+      expect(fields.rows).toContainEqual(expect.objectContaining({ path: 'fingerprint', value: 'SHA256:guest', valueFormat: 'code' }));
+      expect(fields.rows.find(row => row.path === 'host')).not.toHaveProperty('valueFormat');
       expect(fields.rows.some(row => row.kind === 'value' && row.value.includes('ssh.trustHost'))).toBe(false);
     }
   });

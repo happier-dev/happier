@@ -143,7 +143,7 @@ export type ApprovalActionFieldRow =
   | Readonly<{
     kind: 'value'; path: string; title: string; value: string; reference?: ApprovalActionReference;
     /** A boolean choice reads through the client's localized yes/no labels. */
-    valueFormat?: 'boolean' | 'unavailable' | 'confidential' | 'timestamp';
+    valueFormat?: 'boolean' | 'unavailable' | 'confidential' | 'timestamp' | 'code';
     /** Declared choices carry their localization keys; clients never infer labels from enum values. */
     selectedOptions?: readonly Pick<ActionInputOption, 'label' | 'labelKey'>[];
     /** A readable reading of a structured (JSON) value; `value` stays the exact literal. */
@@ -820,6 +820,7 @@ export function describeApprovalActionFields(input: Readonly<{
   const paths = resolved.map((field) => field.path);
   // The Action declares which operands only identify or route the request; they read under Technical details.
   const technicalPaths = spec.approvalPresentation?.technicalInputPaths ?? [];
+  const codePaths = spec.approvalPresentation?.codeInputPaths ?? [];
   const structuredAnswerPath = STRUCTURED_ANSWER_FIELD_PATH_BY_ACTION_ID[input.actionId];
   const rows: ApprovalActionFieldRow[] = [];
   let unrepresentable: ApprovalActionFieldsPresentation['unrepresentable'] = resolved.length === 0
@@ -930,7 +931,8 @@ export function describeApprovalActionFields(input: Readonly<{
         label, ...(labelKey ? { labelKey } : {}),
       })) } : {}),
       ...(reference ? { reference } : {}),
-      ...(values.length === 1 && typeof values[0] === 'boolean' ? { valueFormat: 'boolean' as const } : {}),
+      ...(values.length === 1 && typeof values[0] === 'boolean' ? { valueFormat: 'boolean' as const }
+        : codePaths.includes(field.path) ? { valueFormat: 'code' as const } : {}),
       ...(entries ? { entries } : {}),
       ...(technical ? { technical: true as const } : {}),
     });

@@ -246,6 +246,8 @@ machineRuntimeDemandForInput: z.optional(z.custom<(input: unknown, context: Acti
      * `field.member` marks that direct member of a structured value.
      */
     technicalInputPaths: z.optional(z.readonly(z.array(z.string().check(z.minLength(1))))),
+    /** Input paths whose literal people compare character by character (a host key fingerprint): clients set it in the code face. */
+    codeInputPaths: z.optional(z.readonly(z.array(z.string().check(z.minLength(1))))),
     /** Private approval review can disclose operands that must stay out of shared Action observations. */
     projectInput: z.optional(z.custom<(input: unknown, context?: ApprovalPresentationContext) => unknown>((value) => typeof value === 'function')),
     /** Admits private review/history operands when they intentionally differ from executable input. */
