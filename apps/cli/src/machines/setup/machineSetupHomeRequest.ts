@@ -2,6 +2,16 @@ import axios from '@/api/client/credentialAxios';
 import type { ApiMachineClient } from '@/api/apiMachine';
 import { resolveExternalActionServerRequestHeaders, type ExternalActionMachineRequestSigningKey } from '@/api/externalActionExecutionAuthorization';
 import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAdapter';
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { MachineSetupTargetUnavailableFailureV1 } from '@happier-dev/protocol/actions/operations/v1';
+
+/** Setup is Machine administration; these diagnostics contain no native or Account data. */
+export function machineSetupTargetUnavailable(branch: MachineSetupTargetUnavailableFailureV1['branch'],
+  reason?: MachineSetupTargetUnavailableFailureV1['reason']): ActionExecuteFailure {
+  return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable',
+    details: { kind: 'machineSetup', failure: { kind: 'target_unavailable',
+      phase: 'machine_setup_target', branch, ...(reason ? { reason } : {}) } } };
+}
 
 export type MachineSetupInstallation = Readonly<{ installationId: string; privateKey: ExternalActionMachineRequestSigningKey }>;
 

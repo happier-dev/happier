@@ -4064,6 +4064,13 @@ Matching development readers must refresh together because earlier strict curren
 readers reject the new detail kind. Failure codes and uncertainty semantics stay
 unchanged. No wire epoch, runtime ABI, migration or compatibility adapter is added.
 
+Pre-native Setup refusals use the same closed diagnostic with
+`failure: { kind: 'target_unavailable', phase: 'machine_setup_target', branch, reason? }`.
+The branch identifies installed-runtime or finite-terminal availability; the optional
+reason is a fixed, content-free predicate name. Matching development Protocol,
+daemon, CLI and UI readers must refresh together to retain this additional failure
+shape. It changes neither admission nor the native execution identity.
+
 Unreleased 0.3 Machine isolation unavailable status adds optional
 `prerequisite: { reason, requiredFact, remedy }` for preparation refusals before
 native CHECK. The reason and required fact are closed; the remedy is non-secret

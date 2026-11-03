@@ -67,6 +67,18 @@ describe('Action operation v1 contract', () => {
     expect(ActionOperationFailureV1Schema.safeParse({ errorCode: 'platform_unsupported', error: 'platform_unsupported',
       details: { kind: 'machineSetup', failure: { kind: 'native_effect_failed' } } }).success).toBe(true);
   });
+  it('retains the pre-native Setup refusal branch without credentials or native content', () => {
+    const failure = { kind: 'target_unavailable', phase: 'machine_setup_target', branch: 'installed_runtime', reason: 'credentials' };
+    const error = { errorCode: 'target_unavailable', error: 'target_unavailable', details: { kind: 'machineSetup', failure } };
+    const current = ActionOperationSnapshotV1Schema.parse({ ...baseSnapshot, actionId: 'machines.setup.apply',
+      state: 'failed', startedAt: 110, settledAt: 120, error });
+    expect(current.error).toEqual(error);
+    expect(projectActionOperationSnapshotForV1Reader(current).error).toEqual({ errorCode: error.errorCode, error: error.error });
+    for (const extra of [{ token: 'private' }, { stderr: 'private' }, { phase: 'unknown' }, { branch: 'unknown' }, { reason: 'private prose' }]) {
+      expect(ActionOperationFailureV1Schema.safeParse({ ...error, details: { ...error.details,
+        failure: { ...failure, ...extra } } }).success).toBe(false);
+    }
+  });
   it('carries the exact blocking Ask only during its approval wait and omits the reference for V1 readers', () => {
     const approval = { kind: 'approval_request_created', artifactId: 'stop-ask', actionId: 'machines.managed.power.set' };
     const progress = { kind: 'phase', phase: 'waiting_for_approval', label: 'Waiting for approval', approval };

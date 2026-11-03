@@ -89,6 +89,7 @@ export async function createNativeSoftwareInstallFixture(options: Readonly<{
   scenario: NativeSoftwareScenario;
   unprivilegedPackageFactUnavailable?: 'presence' | 'locks';
   accountEncryptionMode?: 'plain' | 'e2ee';
+  agentIsolation?: import('@/api/apiMachine').ApiMachineClientLifecycleDependencies['agentIsolation'];
   machineId?: string;
   homeId?: string;
   accountId?: string;
@@ -179,6 +180,7 @@ export async function createNativeSoftwareInstallFixture(options: Readonly<{
   }), metadata: {
     host: 'worker', platform: 'linux', happyCliVersion: 'dev', homeDir: directory, happyHomeDir: configuration.happyHomeDir,
     adminAccess: { version: 1, mode: scenario === 'apt' || firstPresence || excludedToSelected || nativeConfirmed ? 'preauthorized' : 'none' },
+    ...(options.agentIsolation ? { agentIsolation: { enabled: true } } : {}),
     ...(initialDesired ? { setup: initialDesired } : {}),
   }, metadataVersion: 0, daemonState: { status: 'running' }, daemonStateVersion: 0 };
   const codec = createMachineContentCodec(machine);
@@ -188,7 +190,8 @@ export async function createNativeSoftwareInstallFixture(options: Readonly<{
   let publishedCapabilities: MachineOperationProtocolCapabilitiesV1 | undefined;
   let capabilitiesRevision = 0;
   recordFixturePhase('machine_client.begin');
-  const client = new ApiMachineClient(token, machine);
+  const client = new ApiMachineClient(token, machine, undefined,
+    options.agentIsolation ? { agentIsolation: options.agentIsolation } : undefined);
   recordFixturePhase('machine_client.end');
   recordFixturePhase('initial_rpc_registration.begin');
   let registration = client.setRPCHandlers({ spawnSession: async () => { throw new Error('Not a Session'); },

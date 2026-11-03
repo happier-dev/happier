@@ -64,7 +64,7 @@ import { createAccountScopedCryptoMaterialSnapshotV1, sealAccountScopedBlobCiphe
 import { EXTERNAL_SESSION_SOURCE_UNAVAILABLE_OCCURRENCE_EVENT_V1 } from '@happier-dev/protocol/sessions/external/secureRefreshV1';
 import { readServerEnabledBit } from '@happier-dev/protocol/features/serverEnabledBit';
 import type { FeaturesResponse, IrohEndpointDescriptorV1, ActionOperationRevisionEphemeralV1, ConnectedServiceExecutionAuthorityV1, ExternalSessionSourceUnavailableOccurrenceV1 } from '@happier-dev/protocol';
-import { ACTION_OPERATION_REVISION_EPHEMERAL_EVENT_V1, projectActionOperationSnapshotForV1Reader } from '@happier-dev/protocol/actions/operations/v1';
+import { ACTION_OPERATION_REVISION_EPHEMERAL_EVENT_V1, projectActionOperationSnapshotForV1Reader, type MachineSetupTargetUnavailableFailureV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { signExternalActionMachineRpcRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { fetchAccountProfile } from './accountProfile';
 import { fetchAccountEncryptionCurrentness, AccountEncryptionCurrentnessUnavailableError } from './client/connectedServiceCredentialApi';
@@ -871,42 +871,56 @@ export class ApiMachineClient {
         return this.resolveInstalledMachineAccountRuntime(ingress);
     }
 
-    private async resolveInstalledMachineAccountRuntime(ingress: Pick<RpcHandlerContext, 'machineAdmission' | 'verifyMachineAdmissionCurrent'> & Readonly<{ signal?: AbortSignal }>): Promise<(MachineTerminalAccountReadRuntime & Readonly<{ isCustodyCurrent(): Promise<boolean> }>) | null> {
+    private async resolveInstalledMachineAccountRuntime(ingress: Parameters<ApiMachineClient['resolveMachineSetupRuntime']>[0]): Promise<(MachineTerminalAccountReadRuntime & Readonly<{ isCustodyCurrent(): Promise<boolean> }>) | null> {
+        const unavailable = (reason: Parameters<NonNullable<typeof ingress.onUnavailable>>[0]) => {
+            ingress.onUnavailable?.(reason);
+            return null;
+        };
         const admission = ingress.machineAdmission;
         if (!admission || !ingress.verifyMachineAdmissionCurrent
             || admission.machineId !== this.machine.id
             || !this.machineRuntimeInstallationId
-            || admission.installationId !== this.machineRuntimeInstallationId) return null;
+            || admission.installationId !== this.machineRuntimeInstallationId) return unavailable('admission');
         try {
-            if (!ingress.signal || ingress.signal.aborted) return null;
-            const runtime = await this.resolveInstalledAccountRuntime(ingress.signal, admission.custodianAccountId);
-            if (!runtime || !await runtime.isCurrent()) return null;
+            if (!ingress.signal || ingress.signal.aborted) return unavailable('lifetime');
+            const runtime = await this.resolveInstalledAccountRuntime(ingress.signal, admission.custodianAccountId, ingress.onUnavailable);
+            if (!runtime) return null;
+            if (!await runtime.isCurrent()) return unavailable('runtime_closed');
             // The ingress already admitted this finite operation. Retain local
             // lifetime/installation pins without re-reading Home admission.
             return runtime;
-        } catch { return null; }
+        } catch { return unavailable('exception'); }
     }
 
-    private async resolveInstalledAccountRuntime(signal: AbortSignal, expectedAccountId?: string): Promise<(MachineTerminalAccountReadRuntime & Readonly<{ isCurrent(): Promise<boolean>; isCustodyCurrent(): Promise<boolean> }>) | null> {
-        if (!this.machineRuntimeInstallationId) return null;
+    private async resolveInstalledAccountRuntime(signal: AbortSignal, expectedAccountId?: string,
+        onUnavailable?: Parameters<ApiMachineClient['resolveMachineSetupRuntime']>[0]['onUnavailable']): Promise<(MachineTerminalAccountReadRuntime & Readonly<{ isCurrent(): Promise<boolean>; isCustodyCurrent(): Promise<boolean> }>) | null> {
+        const unavailable = (reason: Parameters<NonNullable<typeof onUnavailable>>[0]) => {
+            onUnavailable?.(reason);
+            return null;
+        };
+        if (!this.machineRuntimeInstallationId) return unavailable('installation');
         const ownerCurrent = () => !this.projectionSchedulingClosed
             && configuration.activeServerId === this.machineRuntimeServerId;
         try {
-            if (signal.aborted || !ownerCurrent()
-                || readInstallationIdentityIfExistsSync()?.installationId !== this.machineRuntimeInstallationId) return null;
+            if (signal.aborted) return unavailable('lifetime');
+            if (!ownerCurrent()) return unavailable('runtime_closed');
+            if (readInstallationIdentityIfExistsSync()?.installationId !== this.machineRuntimeInstallationId) return unavailable('installation');
             const accountId = await runWithServerHttpBaseUrl(this.machineRuntimeServerHttpBaseUrl,
                 () => this.getAccountId(signal));
-            if (!accountId || !ownerCurrent() || expectedAccountId !== undefined && accountId !== expectedAccountId) return null;
+            if (!accountId || expectedAccountId !== undefined && accountId !== expectedAccountId) return unavailable('account');
+            if (!ownerCurrent()) return unavailable('runtime_closed');
             const credentials = await readStoredCredentialsForServerId(this.machineRuntimeServerId);
             // Credentials are admitted once for this finite operation. Effects
             // that require current installed custody use isCustodyCurrent.
-            if (!credentials || credentials.token !== this.token || signal.aborted || !ownerCurrent()) return null;
+            if (!credentials || credentials.token !== this.token) return unavailable('credentials');
+            if (signal.aborted) return unavailable('lifetime');
+            if (!ownerCurrent()) return unavailable('runtime_closed');
             const credentialsCurrent = async () => ownerCurrent() && sameStoredCredentials(credentials,
                 await readStoredCredentialsForServerId(this.machineRuntimeServerId).catch(() => null)) && ownerCurrent();
             const isCurrent = async () => !signal.aborted && ownerCurrent();
             return { serverId: this.machineRuntimeServerId, machineId: this.machine.id, accountId,
                 credentials, serverHttpBaseUrl: this.machineRuntimeServerHttpBaseUrl, isCurrent, isCustodyCurrent: credentialsCurrent };
-        } catch { return null; }
+        } catch { return unavailable('exception'); }
     }
 
     /** Both mounted Action ingresses read the same current installed Account custody. */
@@ -6201,9 +6215,13 @@ export class ApiMachineClient {
         }, { runImmediately: true });
     }
 
-async resolveMachineSetupRuntime(ingress: Pick<RpcHandlerContext, 'machineAdmission' | 'verifyMachineAdmissionCurrent'> & Readonly<{ signal?: AbortSignal }>): Promise<(MachineTerminalAccountReadRuntime & Readonly<{ isCustodyCurrent(): Promise<boolean> }>) | null> {
+async resolveMachineSetupRuntime(ingress: Pick<RpcHandlerContext, 'machineAdmission' | 'verifyMachineAdmissionCurrent'> & Readonly<{
+        signal?: AbortSignal;
+        onUnavailable?: (reason: NonNullable<MachineSetupTargetUnavailableFailureV1['reason']>) => void;
+    }>): Promise<(MachineTerminalAccountReadRuntime & Readonly<{ isCustodyCurrent(): Promise<boolean> }>) | null> {
         return this.resolveInstalledMachineAccountRuntime(ingress);
     }
+
 
 preparePendingDeploymentObservation(request: Parameters<HostActionOperationRuntime['preparePendingDeploymentObservation']>[0]) {
         return this.actionOperationRuntime.preparePendingDeploymentObservation(request);

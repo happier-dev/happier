@@ -17,7 +17,7 @@ import { createProjectNativeInvocationCustody, type ProjectSetupOperationContext
 import { logger } from '@/ui/logger';
 import { resolveInstalledMachineEffectCli } from '../adminAccess/runElevatedEffect';
 import { applyMachineSetupUpdates } from './applyMachineSetup';
-import type { MachineSetupInstallation } from './machineSetupHomeRequest';
+import { machineSetupTargetUnavailable, type MachineSetupInstallation } from './machineSetupHomeRequest';
 
 /** Exact candidate versions use the incumbent package checker and plan digest. */
 export async function prepareMachineSetupUpdatesPlanV1(params: Readonly<{
@@ -67,13 +67,16 @@ export function createMachineSetupUpdatesAction(params: Readonly<{
     const admission = context.machineAdmission;
     if (admission && (admission.machineId !== params.machineId || admission.installationId !== params.installation.installationId
       || !context.verifyMachineAdmissionCurrent)) return fail('machine_admission_changed');
+    let runtimeRefusal: Parameters<typeof machineSetupTargetUnavailable>[1];
     const runtime = await params.apiMachine.resolveMachineSetupRuntime({ signal: lifetime,
+      onUnavailable: reason => { runtimeRefusal = reason; },
       ...(admission ? { machineAdmission: admission } : {}),
       ...(context.verifyMachineAdmissionCurrent ? { verifyMachineAdmissionCurrent: context.verifyMachineAdmissionCurrent } : {}),
     });
-    if (!runtime || runtime.machineId !== params.machineId || !runtime.isCurrent || !await runtime.isCurrent()) return fail('target_unavailable');
+    if (!runtime || runtime.machineId !== params.machineId || !runtime.isCurrent || !await runtime.isCurrent())
+      return machineSetupTargetUnavailable('installed_runtime', runtimeRefusal);
     const terminalSessions = params.apiMachine.getFiniteTerminalSessions();
-    if (!terminalSessions) return fail('target_unavailable');
+    if (!terminalSessions) return machineSetupTargetUnavailable('finite_terminal');
     const custodianAccountId = readAccountIdFromToken(runtime.credentials.token);
     if (!custodianAccountId || admission && admission.custodianAccountId !== custodianAccountId) return fail('credential_unavailable');
     const requesterAccountId = admission?.actorAccountId ?? custodianAccountId;

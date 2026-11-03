@@ -157,9 +157,18 @@ export const ManagedAgentIsolationFailureDetailsV1Schema = lazyZodSchema(() => z
   status: MachineAgentIsolationUnavailableStatusV1Schema,
 }));
 export type ManagedAgentIsolationFailureDetailsV1 = Readonly<z.infer<typeof ManagedAgentIsolationFailureDetailsV1Schema>>;
-/** Reuse the elevation owner's closed diagnostic; native output remains private. */
+/** Pre-native Setup availability facts only; no Account, installation or native content. */
+export const MachineSetupTargetUnavailableFailureV1Schema = lazyZodSchema(() => z.strictObject({
+  kind: z.literal('target_unavailable'),
+  phase: z.literal('machine_setup_target'),
+  branch: z.enum(['installed_runtime', 'finite_terminal']),
+  reason: z.optional(z.enum(['admission', 'lifetime', 'installation', 'account', 'credentials', 'runtime_closed', 'exception'])),
+}));
+export type MachineSetupTargetUnavailableFailureV1 = Readonly<z.infer<typeof MachineSetupTargetUnavailableFailureV1Schema>>;
+/** Reuse the native owner's diagnostic alongside the pre-native Setup refusal. */
 export const MachineSetupFailureDetailsV1Schema = lazyZodSchema(() => z.strictObject({
-  kind: z.literal('machineSetup'), failure: MachineElevationFailureV1Schema,
+  kind: z.literal('machineSetup'),
+  failure: z.union([MachineElevationFailureV1Schema, MachineSetupTargetUnavailableFailureV1Schema]),
 }));
 export const ActionOperationFailureV1Schema = lazyZodSchema(() => z.strictObject({
   errorCode: ActionOperationErrorCodeV1Schema,

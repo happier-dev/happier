@@ -26,7 +26,7 @@ import { buildPluginProjectionFamilyV2 } from '@/plugins/projection/families';
 import { machineRecipesProjectionFamily, machineSetupPresetsProjectionFamily } from '@/plugins/projection/registry/machineRecipes';
 import type { MachineSetupNativeCommand, MachineSetupNativeCommandResult } from '@happier-dev/cli-common/machineSetup';
 import { resolveInstalledMachineEffectCli } from '../adminAccess/runElevatedEffect';
-import { requestMachineSetupHome, type MachineSetupInstallation } from './machineSetupHomeRequest';
+import { machineSetupTargetUnavailable, requestMachineSetupHome, type MachineSetupInstallation } from './machineSetupHomeRequest';
 import { prepareMachineSetupApps, type MachineSetupAppPreparationHost } from './prepareMachineSetupApps';
 import { prepareMachineSetupAcceptedAppRuns } from './acceptedAppRuns';
 import { machineSetupPlansRequireAdministratorV1, readMachineSetupInitialPresenceV1 } from '@happier-dev/cli-common/machineSetup';
@@ -179,12 +179,15 @@ function createMachineSetupTargetAction(params: MachineSetupActionParameters, mo
     if (!context.externalActionExecutionAuthorization) return fail('admission_unavailable');
     if (admission && (admission.machineId !== params.machineId || admission.installationId !== params.installation.installationId
       || !context.verifyMachineAdmissionCurrent)) return fail('machine_admission_changed');
+    let runtimeRefusal: Parameters<typeof machineSetupTargetUnavailable>[1];
     const runtime = await params.apiMachine.resolveMachineSetupRuntime({ signal: lifetime,
+      onUnavailable: reason => { runtimeRefusal = reason; },
       ...(admission ? { machineAdmission: admission } : {}),
       ...(context.verifyMachineAdmissionCurrent ? { verifyMachineAdmissionCurrent: context.verifyMachineAdmissionCurrent } : {}) });
-    if (!runtime || runtime.machineId !== params.machineId || !runtime.isCurrent || !await runtime.isCurrent()) return fail('target_unavailable');
+    if (!runtime || runtime.machineId !== params.machineId || !runtime.isCurrent || !await runtime.isCurrent())
+      return machineSetupTargetUnavailable('installed_runtime', runtimeRefusal);
     const terminalSessions = params.apiMachine.getFiniteTerminalSessions();
-    if (!terminalSessions) return fail('target_unavailable');
+    if (!terminalSessions) return machineSetupTargetUnavailable('finite_terminal');
     const custodianAccountId = readAccountIdFromToken(runtime.credentials.token);
     if (!custodianAccountId || admission && admission.custodianAccountId !== custodianAccountId) return fail('credential_unavailable');
     const requesterAccountId = admission?.actorAccountId ?? custodianAccountId;
