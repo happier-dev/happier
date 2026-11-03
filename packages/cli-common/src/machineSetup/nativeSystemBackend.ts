@@ -73,6 +73,7 @@ export function createNativeSystemBackend(run: NativeRun, runAsDaemonUser?: Nati
             const actual = [...new Set(ids.filter(id => id !== row[3]))].sort();
             groupsMatch = JSON.stringify(actual) === JSON.stringify([...new Set(expected)].sort());
             facts.supplementaryGroupIds = actual;
+            facts.desiredSupplementaryGroupIds = [...new Set(expected)].sort();
         }
         if (step.locked !== undefined) {
             const status = await run('passwd', ['--status', step.username], locale);

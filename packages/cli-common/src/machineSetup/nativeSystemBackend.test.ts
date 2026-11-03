@@ -183,6 +183,26 @@ describe('machine setup native typed effects', () => {
         expect(await apply([remove], run)).toMatchObject({ status: 'applied', completedStepIds: [] });
         expect(effects).toEqual([]);
     });
+    it('requests refresh when a user declaration changes the daemon supplementary groups', async () => {
+        let groups = '900';
+        let home = '/home/happier';
+        const run = async (command: MachineSetupNativeCommand) => {
+            if (command.executable === 'getent') return ok(command.args.includes('group')
+                ? 'docker:x:109:\n' : `happier:x:900:900::${home}:/bin/bash\n`);
+            if (command.executable === 'id') return ok(`${groups}\n`);
+            if (command.executable === 'usermod') {
+                groups = '900 109';
+                const at = command.args.indexOf('--home');
+                if (at !== -1) home = command.args[at + 1]!;
+                return ok();
+            }
+            throw new Error(`Unexpected native command ${command.executable}`);
+        };
+        expect(await apply([{ id: 'engine-access', kind: 'user', username: 'happier', supplementaryGroups: ['docker'] }], run))
+            .toMatchObject({ status: 'applied', daemonRestartRequired: true });
+        expect(await apply([{ id: 'engine-access', kind: 'user', username: 'happier', home: '/changed-home', supplementaryGroups: ['docker'] }], run))
+            .toMatchObject({ status: 'applied', daemonRestartRequired: false });
+    });
     it('refuses a same-name foreign account before mutation or owned removal', async () => {
         const effects: string[] = [];
         let ownerMarker = 'Unrelated account', primaryGid = 900;

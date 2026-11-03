@@ -1343,6 +1343,20 @@ These are development-source contracts. Shared-development migration deployment,
 integrated package validation and composed loaded-runtime qualification are
 owned by the corridor integration boundary, not evidence of released availability.
 
+Development Software Apply uses the same lifecycle owner to expose group refresh
+as a reviewed, manual recovery step. A daemon group grant (including a user
+declaration's supplementary groups) adds `review.requiresSessionRefresh` and
+possible downtime to Plan. After native effects, Apply returns
+`requires_session_refresh` with a typed `requiredStep` instead of running later
+scripts or reporting readiness. A no-op retry still requires recovery when the
+account membership is correct but the daemon's kernel groups are stale.
+On Linux, a daemon inside `user@<uid>.service` requires an administrator to
+restart that manager, interrupting all its user services; restarting only the
+daemon cannot refresh the manager's groups. A system-service install names the
+existing daemon unit restart instead. An unrecognized/manual installation names
+a fresh login session. Apply never performs these disruptive restarts implicitly.
+After recovery and reconnect, review a new Plan to establish usable membership.
+
 ### Devcontainer native roles (0.3 development)
 
 `packages/plugins/devcontainer` contributes through the existing

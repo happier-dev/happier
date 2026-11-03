@@ -328,10 +328,19 @@ export const MachineSetupAppReviewV1Schema = lazyZodSchema(() => z.strictObject(
   review: DeploymentTemplateInstantiationReviewV1Schema,
 }));
 
+/** A visible recovery step, never an instruction Apply executes implicitly. */
+export const MachineSetupSessionRefreshV1Schema = lazyZodSchema(() => z.strictObject({
+  kind: z.literal('requiresSessionRefresh'), username: id(),
+  scope: z.enum(['userServices', 'daemonService', 'loginSession']),
+  requiresAdministrator: z.boolean(),
+  command: z.optional(z.strictObject({ executable: id(), args: z.array(z.string()) })),
+}));
+export type MachineSetupSessionRefreshV1 = z.infer<typeof MachineSetupSessionRefreshV1Schema>;
 export const MachineSetupPlanReviewV1Schema = lazyZodSchema(() => z.strictObject({
   target: z.strictObject({ homeId: id(), machineId: id() }),
   administratorRequired: z.nullable(z.boolean()),
   downtime: z.enum(['none', 'possible', 'unknown']),
+  requiresSessionRefresh: z.optional(MachineSetupSessionRefreshV1Schema),
   apps: z.optional(z.array(z.strictObject({ sourceIndex: revision(), itemIndex: revision(),
     kind: z.enum(['new', 'completed', 'not_completed', 'failed', 'unknown']), environmentId: z.optional(id()),
   }))),

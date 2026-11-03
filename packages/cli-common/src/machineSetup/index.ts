@@ -15,6 +15,12 @@ export * from './effectInternalProtocol.js';
 export { MANAGED_SUDOERS_PATH, buildManagedSudoersSteps, recognizeManagedSudoersDropIn } from './managedSudoers.js';
 export { assertAgentIsolationLaunchPrincipal, buildAgentIsolationBootstrapSteps, buildAgentIsolationToolsRootStep } from './agentIsolationBootstrap.js';
 export { buildUserManagerGroupRefreshStep } from './userManagerGroups.js';
+
+/** Both declarations can change the daemon account's supplementary groups. */
+export function machineSetupStepChangesDaemonGroupsV1(step: MachineRecipeStepV1, daemonUsername: string): boolean {
+    return step.kind === 'group' ? step.members.includes(daemonUsername)
+        : step.kind === 'user' && step.username === daemonUsername && step.supplementaryGroups !== undefined;
+}
 export { createMachineFirewallTransitionObservationStepV1, readMachineFirewallTransitionFactsV1,
     materializeMachineFirewallTransitionV1, type MachineFirewallTransitionFactsV1,
     type MachineFirewallTransitionMaterializationV1 } from './nativeFirewallTransition.js';
@@ -381,7 +387,11 @@ export async function applyMachineSetupEffectPlans(input: Readonly<{
                     // Keep completed effects and raw diagnostics inside this boundary.
                     return result('outcome_unknown', step.id, 'native_effect_failed');
                 }
-                if (step.kind === 'group' && daemonUsername && step.members.includes(daemonUsername)) daemonRestartRequired = true;
+                if (daemonUsername && machineSetupStepChangesDaemonGroupsV1(step, daemonUsername)
+                    && (step.kind !== 'user' || !Array.isArray(observed.facts.desiredSupplementaryGroupIds)
+                        || JSON.stringify(observed.facts.supplementaryGroupIds) !== JSON.stringify(observed.facts.desiredSupplementaryGroupIds))) {
+                    daemonRestartRequired = true;
+                }
                 // Native command acceptance is dispatch only. Restoration is
                 // observed by the reboot Action after the Machine reconnects.
                 if (step.kind === 'reboot') continue;

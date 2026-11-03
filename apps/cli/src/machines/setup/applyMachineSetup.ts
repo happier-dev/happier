@@ -12,6 +12,8 @@ import { selectMachineSetupRecipeItemsV1,
   type MachineSetupExclusionV1, type MachineSetupSourceV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
 import { runElevatedEffect, type MachineElevationDependencies } from '../adminAccess/runElevatedEffect';
 import { resolveMachineSetupNativeEffectKeys } from './machineSetupNativeEffects';
+import { readMachineSetupSessionRefreshRequirement, describeMachineSetupSessionRefresh,
+  type DaemonGroupRefreshNative } from '@/daemon/service/userManagerGroups';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { ProjectSetupOperationContext } from '@/workspaces/projectSetup/projectSetupExecution';
 import type { ProjectNativeToolchainIo } from '@/workspaces/toolchain/prepareProjectNativeToolchain';
@@ -42,6 +44,7 @@ export type ApplyMachineSetupInput = Readonly<{
   /** Captured by the receiving target, never supplied as caller authority. */
   sourceChange?: Readonly<{ currentSources: MachineSetupSourceV1; currentExclusions: readonly MachineSetupExclusionV1[]; sources: MachineSetupSourceV1 }>;
   elevation?: MachineElevationDependencies;
+  groupRefreshNative?: DaemonGroupRefreshNative;
   operation: ProjectSetupOperationContext;
   terminalSessions: Pick<TerminalPtySessionManager, 'ensure' | 'waitForExit' | 'requestStop' | 'observeOutput'>;
   environmentIo: ProjectNativeToolchainIo;
@@ -231,10 +234,12 @@ async function applyAdmittedMachineSetup(input: AdmittedMachineSetupInput): Prom
   input.operation.operationOwnerUpdate.update({ domainRef: attachment });
   if (input.plans.length) {
     const plans = input.plans.map(plan => ({ plan }));
+    let daemonRestartRequired = false;
     if (machineSetupPlansRequireAdministratorV1(input.plans)) {
       if (!input.elevation) return fail('admin_access_unavailable');
       const elevated = await runElevatedEffect({ machineId: input.machineId, operationId, signal,
         effect: { kind: 'setupOperation', plans },
+        onSetupApplied: result => { daemonRestartRequired = result.daemonRestartRequired; },
       }, input.elevation);
       if (elevated.outcome !== 'applied') return fail(elevated.outcome === 'not_applied'
         ? elevated.reasonCode === 'plan_stale' ? 'plan_changed' : elevated.reasonCode : elevated.outcome);
@@ -249,12 +254,16 @@ async function applyAdmittedMachineSetup(input: AdmittedMachineSetupInput): Prom
             ...(event.reason ? { reason: event.reason } : {}) } }),
       });
       input.emit?.({ type: 'machine.setup.result', data: result });
+      daemonRestartRequired = result.daemonRestartRequired;
       if (result.status !== 'applied') {
         if (signal.aborted) return fail('cancelled');
         return fail(result.status === 'plan_changed' ? 'plan_changed' : result.reason ?? result.status);
       }
     }
     if (signal.aborted) return fail('cancelled');
+    const requiredStep = await readMachineSetupSessionRefreshRequirement(input.plans, input.groupRefreshNative, daemonRestartRequired);
+    if (requiredStep) return { ok: false, errorCode: 'requires_session_refresh',
+      error: describeMachineSetupSessionRefresh(requiredStep), details: { requiredStep } };
   }
   let terminalId: string | undefined;
   const terminals: { install?: string; setup?: string } = {};

@@ -12,6 +12,7 @@ import { createMachineSetupNativeBackend, findMachineSetupBlockingObservationV1,
 import { readMachineSetupStepImpact } from './machineSetupImpacts';
 import { prepareMachineRecipeProgramV1 } from './prepareMachineRecipeProgram';
 import { prepareMachineSetupRemovalsV1 } from './prepareMachineSetupRemovals';
+import { readMachineSetupSessionRefreshRequirement, type DaemonGroupRefreshNative } from '@/daemon/service/userManagerGroups';
 
 /** Saved-copy reads stay inert; newly selected declarations use the native observer. */
 export async function prepareMachineSetupPlanV1(params: Readonly<{
@@ -23,6 +24,7 @@ export async function prepareMachineSetupPlanV1(params: Readonly<{
   readAdminAccessObservation?: () => Promise<MachineAdminAccessObservationV1>;
   signal?: AbortSignal;
   runNative?: (command: MachineSetupNativeCommand) => Promise<MachineSetupNativeCommandResult>;
+  groupRefreshNative?: DaemonGroupRefreshNative;
 }>): Promise<MachineSetupPlanResultV1 | ActionExecuteFailure> {
   const fail = (code: string): ActionExecuteFailure => ({ ok: false, errorCode: code, error: code });
   const input = MachineSetupPlanInputV1Schema.parse(params.input);
@@ -152,12 +154,14 @@ export async function prepareMachineSetupPlanV1(params: Readonly<{
   }
   const selectedPlans = [...recipePlans.map(entry => entry.plan),
     ...(removals?.ok ? removals.removalPlans.map(entry => entry.plan) : [])];
+  const requiresSessionRefresh = input.mode
+    ? await readMachineSetupSessionRefreshRequirement(selectedPlans, params.groupRefreshNative) : undefined;
   const review = input.mode ? (() => {
     const executingSetups = executionSources ?? sources.map(source => source.setup);
     const unsupportedScriptCheck = executingSetups.some(setup => setup.scripts?.some(script => script.body && script.check?.requiredFacts?.length));
     const incomplete = support.some(entry => entry.status === 'unsupported' || entry.status === 'unavailable')
       || support.length !== recipePlans.length || unsupportedScriptCheck;
-    let possible = false;
+    let possible = requiresSessionRefresh !== undefined;
     let unknown = incomplete;
     for (const setup of executingSetups) {
       if (setup.toolchain) unknown = true;
@@ -181,6 +185,7 @@ export async function prepareMachineSetupPlanV1(params: Readonly<{
     return { target: { homeId: input.homeId, machineId: input.machineId },
       // This is the execution owner's existing gate, not an OS/user guess.
       administratorRequired: machineSetupPlansRequireAdministratorV1(selectedPlans) ? true : incomplete ? null : false,
+      ...(requiresSessionRefresh ? { requiresSessionRefresh } : {}),
       downtime: possible ? 'possible' : unknown ? 'unknown' : 'none' };
   })() : undefined;
   // Reuse this Plan's admitted declaration read. Labels never create catalog
