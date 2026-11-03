@@ -6885,6 +6885,11 @@
       "types": "./dist/mcp/remoteUrlV1.d.ts",
       "default": "./dist/mcp/remoteUrlV1.js"
     },
+    "./mcp/servers/actionSchemasV1": {
+      "happier-source": "./src/mcp/servers/actionSchemasV1.ts",
+      "types": "./dist/mcp/servers/actionSchemasV1.d.ts",
+      "default": "./dist/mcp/servers/actionSchemasV1.js"
+    },
     "./mcp/servers/authModeV1": {
       "happier-source": "./src/mcp/servers/authModeV1.ts",
       "types": "./dist/mcp/servers/authModeV1.d.ts",
