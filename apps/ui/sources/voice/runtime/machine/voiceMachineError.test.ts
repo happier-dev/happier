@@ -1,4 +1,7 @@
 import { describe, expect, expectTypeOf, it } from 'vitest';
+import { createRpcCallError } from '@/sync/runtime/rpcErrors';
+import { createVoiceTextTurnRejectedBeforeEffectError } from '@/voice/session/types';
+import { resolveVoiceMachineErrorTranslationKey } from './voiceMachineErrorCopy';
 
 import {
     classifyMicSessionFailure,
@@ -10,11 +13,24 @@ import {
 } from './voiceMachineError';
 
 describe('createVoiceMachineError', () => {
+    it.each(['VOICE_AGENT_STARTUP_INSTRUCTIONS_UNSUPPORTED', 'execution_run_protocol_unsupported'])(
+        'keeps the backend refusal %s actionable through first-Send rejection', code => {
+            const refusal = createRpcCallError({ error: 'private backend details', errorCode: code });
+            const rejected = createVoiceTextTurnRejectedBeforeEffectError(refusal, 'provider_unavailable_before_acceptance');
+            const failure = classifyVoiceMachineError(rejected, { kind: 'provider_error' });
+            expect(failure).toMatchObject({
+                kind: 'provider_setup_required', reason: code, phase: 'preflight',
+                recoveryAction: 'open_settings', presentation: 'error',
+            });
+            expect(resolveVoiceMachineErrorTranslationKey(failure.kind, failure.reason))
+                .toBe('settingsVoice.local.machineErrors.agent_selection_unavailable');
+        },
+    );
     it('keeps an unavailable Agent selection actionable without a provider Retry', () => {
         expect(classifyVoiceMachineError(Object.assign(new Error('voice_agent_selection_unavailable'), {
             code: 'VOICE_AGENT_SELECTION_UNAVAILABLE',
         }), { kind: 'provider_error' })).toMatchObject({ kind: 'provider_setup_required',
-            reason: 'voice_agent_selection_unavailable', recoveryAction: 'open_settings', presentation: 'error' });
+            reason: 'VOICE_AGENT_SELECTION_UNAVAILABLE', recoveryAction: 'open_settings', presentation: 'error' });
     });
     it.each(['VOICE_AGENT_TARGET_MACHINE_OFFLINE', 'VOICE_AGENT_TARGET_MACHINE_KEY_UNAVAILABLE', 'daemon_streaming_stt_machine_unreachable'])(
         'keeps the unavailable Machine remedy for %s instead of a generic provider retry', (reason) => {

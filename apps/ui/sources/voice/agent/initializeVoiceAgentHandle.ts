@@ -64,7 +64,8 @@ import { resolveSelectedVoiceWelcomeText } from '@/voice/agent/voiceWelcomeText'
 import { readSessionDisplayTitle } from '@/utils/sessions/sessionDisplayTitle';
 import { resolveVoiceSessionModelSelection } from '@/voice/agent/resolveVoiceSessionModelSelection';
 import { resolveSessionActionDefaultBackend, resolveSessionActionDefaultTarget } from '@/sync/domains/session/resolveSessionActionDefaultBackend';
-import { readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { convertBackendTargetRefV2ToV1, readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { resolveVoiceConfiguredAgentTarget } from '@/voice/agent/resolveVoiceConfiguredAgentTarget';
 import { requireVoiceSessionAgentSelection, resolveVoiceSessionAgentSelection } from '@/voice/agent/resolveVoiceSessionAgentSelection';
 import { isVoiceConversationSystemSessionMetadata } from '@/voice/persistence/voiceConversationSystemSessionLookup';
 import { readPersistentVoiceTranscriptEpoch } from '@/voice/persistence/voiceTranscriptMemory';
@@ -434,11 +435,27 @@ export async function initializeVoiceAgentHandle({
     // configured ACP definitions. Only the explicit fixed source reads the saved Agent.
     // Start admits this fact before capture; text-only entry points admit here.
     // Recovery consumes the admitted Agent rather than reading a different one.
-    const admittedBackendTarget: BackendTargetRefV1 = agentSource === 'agent'
-        ? { kind: 'builtInAgent', agentId: String(agentId ?? '').trim() || DEFAULT_AGENT_ID }
-        : admittedSessionAgentTarget ?? requireVoiceSessionAgentSelection(resolveVoiceSessionAgentSelection(
+    let admittedBackendTarget: BackendTargetRefV1;
+    if (agentSource === 'agent') {
+        const resolved = await resolveVoiceConfiguredAgentTarget({
+            machineId: readVoiceSessionOwnerMetadataFromState(
+                storage.getState(), rpcSessionId,
+            )?.machineId,
+            accountScope: accountLifetime.scope,
+            signal,
+            selection: {
+                agentId: String(agentId ?? '').trim() || DEFAULT_AGENT_ID,
+                agentTargetKey: agentCfg?.agentTargetKey ?? null,
+                agentIdentity: agentCfg?.agentIdentity ?? null,
+            },
+        });
+        if (!resolved.ok) throw createRpcCallError({ errorCode: resolved.errorCode, error: resolved.errorCode });
+        admittedBackendTarget = convertBackendTargetRefV2ToV1(resolved.backendTarget);
+    } else {
+        admittedBackendTarget = admittedSessionAgentTarget ?? requireVoiceSessionAgentSelection(resolveVoiceSessionAgentSelection(
             readVoiceSessionOwnerMetadataFromState(storage.getState(), boundTargetSessionAddress ?? rpcSessionId),
         ));
+    }
     let chatModelId: string | undefined;
     let commitModelId: string | undefined;
     let chatModelSelection: ProviderBoundModelRef | undefined;

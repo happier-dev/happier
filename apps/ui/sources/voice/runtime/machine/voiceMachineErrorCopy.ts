@@ -31,6 +31,8 @@ export const VOICE_MACHINE_ERROR_TRANSLATION_KEYS = {
 export const VOICE_MACHINE_ERROR_REASON_TRANSLATION_KEYS = {
     voice_previous_session_stop_failed: 'settingsVoice.local.machineErrors.previous_session_stop_failed',
     voice_agent_selection_unavailable: 'settingsVoice.local.machineErrors.agent_selection_unavailable',
+    voice_agent_startup_instructions_unsupported: 'settingsVoice.local.machineErrors.agent_selection_unavailable',
+    execution_run_protocol_unsupported: 'settingsVoice.local.machineErrors.agent_selection_unavailable',
 } as const;
 
 export type VoiceMachineErrorTranslationKey =

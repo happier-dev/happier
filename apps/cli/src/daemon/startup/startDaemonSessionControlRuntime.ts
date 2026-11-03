@@ -466,7 +466,7 @@ import {
 } from '../sessions/disconnectedTerminalHostSupervision';
 import { resolveTrackedSessionTerminalPresentation } from '../sessions/resolveTrackedSessionTerminalPresentation';
 import { createDisconnectedTerminalHostResumeLifecycle } from './disconnectedTerminalHostResumeLifecycle';
-import { resolveTrackedSessionCatalogAgentId } from '../sessions/resolveTrackedSessionCatalogAgentId';
+import { resolveTrackedSessionCatalogAgentId, resolveTrackedSessionRuntimeAgentId } from '../sessions/resolveTrackedSessionCatalogAgentId';
 import { findTrackedSessionByRunnerPid } from '../sessions/sessionReportCorrelation';
 import { resolveTrackedSessionRunnerIdentity } from '../sessions/sessionReportCorrelation';
 import { processGenerationMatches, readProcessIdentityByPid } from '../processIdentity';
@@ -15544,7 +15544,7 @@ daemonWorkSignal: AbortSignal;
           ?? findTrackedSessionByRunnerPid(params.pidToTrackedSession, input.runnerPid);
         const tracked = resolveTracked();
         if (!tracked || tracked.happySessionId !== input.sessionId
-          || resolveTrackedSessionCatalogAgentId(tracked) !== input.agentId) return { status: 'unavailable' };
+          || resolveTrackedSessionRuntimeAgentId(tracked) !== input.agentId) return { status: 'unavailable' };
         try {
           phase = 'account_context';
           return await withSessionAccountContext(input.sessionId, async (accountContext) => {

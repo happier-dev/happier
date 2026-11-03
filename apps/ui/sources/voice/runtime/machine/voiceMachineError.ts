@@ -2,6 +2,7 @@ import { isMicrophoneUnavailableError, isPermissionDeniedMicrophoneError } from 
 import type { MicSessionFailure } from '@/voice/runtime/mic/MicSession';
 import { readVoiceProviderCredentialRemediationCode } from '@happier-dev/protocol/voice/providerOperations';
 import { CONNECTED_SERVICE_UX_DIAGNOSTIC_ACTIONS, readConnectedServiceUxDiagnosticFromError, type ConnectedServiceUxDiagnosticV1 } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
+import { readSafeVoiceRuntimeFailureCode } from '@/voice/runtime/voiceRuntimeFailureCode';
 
 import type {
     VoiceMachineError,
@@ -70,6 +71,8 @@ export function resolveVoiceMachineErrorKind(reason: string, preferredKind?: Voi
     if (reason === 'agent_signed_out') return 'authentication_required';
     if (reason === 'held_by_person') return 'session_unavailable';
     if (reason === 'provider_setup_required' || reason === 'realtime_byo_not_configured' || reason === 'realtime_agent_update_required'
+        || reason === 'VOICE_AGENT_STARTUP_INSTRUCTIONS_UNSUPPORTED'
+        || reason === 'execution_run_protocol_unsupported'
         || reason === 'VOICE_AGENT_TEAM_MODEL_UNSUPPORTED'
         || reason === 'VOICE_AGENT_SELECTION_UNAVAILABLE'
         || reason === 'voice_agent_selection_unavailable') return 'provider_setup_required';
@@ -187,10 +190,12 @@ export function classifyVoiceMachineError(
     }
     // Typed authentication/setup refusals need their existing preflight remedy;
     // retrying cannot supply a sign-in or a missing client capability.
-    const code = error && typeof error === 'object' && 'code' in error ? error.code : null;
-    const kind = resolveVoiceMachineErrorKind(typeof code === 'string' ? code : '', fallback.kind);
+    const code = readSafeVoiceRuntimeFailureCode(error);
+    const kind = resolveVoiceMachineErrorKind(code ?? '', fallback.kind);
     return createVoiceMachineError({
         kind,
-        reason: readErrorReason(error, fallback.reason ?? kind),
+        // A specific owner code survives a generic pre-effect wrapper. A family
+        // code keeps its more specific existing reason (for example missing text segmentation).
+        reason: code && code !== kind ? code : readErrorReason(error, fallback.reason ?? kind),
     });
 }

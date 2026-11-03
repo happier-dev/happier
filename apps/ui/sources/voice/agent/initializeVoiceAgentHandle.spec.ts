@@ -27,6 +27,9 @@ import { createDeferred } from '@/dev/testkit';
 import { createAccountKvHttpFixture } from '@/dev/testkit/fixtures/accountKvHttpFixture';
 import { encodeBase64StoredJsonContentEnvelope } from '@/sync/encryption/base64StoredJsonContent';
 import { VOICE_TRANSCRIPT_MEMORY_KEY } from '@/voice/persistence/voiceTranscriptMemory';
+import { ACP_CATALOG_ROWS_ROUTE_V1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
+import { AcpBackendDefinitionV1Schema } from '@happier-dev/protocol/acp/catalog/settingsV1';
+import { resetAcpCatalogSnapshotsForTests } from '@/sync/store/settings/acpCatalogSnapshot';
 
 // Synthetic daemon ACKs only; the client, Run operations and installable owners stay real.
 const start = vi.fn(async (_request: ExecutionRunEnsureOrStartRequest) => ({ ok: true as const, runId: 'voice-agent-1', created: true }));
@@ -181,6 +184,7 @@ describe('initializeVoiceAgentHandle', () => {
         vi.restoreAllMocks();
     });
     beforeEach(async () => {
+        resetAcpCatalogSnapshotsForTests();
         transcriptMemory.reset();
         const previousServerId = state.profileScope?.serverId ?? 'server-a';
         sessionHttp = createSessionMetadataHttpBoundary(() => Object.fromEntries(
@@ -203,6 +207,11 @@ describe('initializeVoiceAgentHandle', () => {
                 if (path === '/v1/features' || path === '/v1/features/authenticated') return respond(FeaturesResponseSchema.parse({ features: { voice: { enabled: true } }, capabilities: {} }));
                 if (path === '/v1/account/encryption') return respond({ mode: 'plain', updatedAt: 0 });
                 if (path === '/v2/account/settings') return respond({ content: { t: 'plain', v: state.settings }, version: 1 });
+                if (path === ACP_CATALOG_ROWS_ROUTE_V1) return respond({ status: 'present', revision: 1,
+                    content: { t: 'plain', v: { v: 1, definitions: [AcpBackendDefinitionV1Schema.parse({
+                        id: 'qa-c-exact-args', name: 'qa-c-exact-args', title: 'QA configured ACP',
+                        launch: { kind: 'command', command: 'opencode', args: ['acp'] }, createdAt: 1, updatedAt: 1,
+                    })] } } });
                 if (path === '/v1/machines') return respond([createPlainMachineRowFixture({ id: 'machine-1', accountId: 'account-a' })]);
                 if (path === '/v1/machines/read-batch' && init?.method === 'POST') return createMachineReadBatchResponseFixture(init.body,
                     id => id === 'machine-1' ? createPlainMachineRowFixture({ id, accountId: 'account-a' }) : null);
@@ -597,7 +606,10 @@ describe('initializeVoiceAgentHandle', () => {
         }
     });
 
-    it.each([false, true])('starts R40 with its configured ACP Session Agent despite a saved Codex tuple (bound=%s)', async bound => {
+    it.each([
+        { bound: false, source: 'session' }, { bound: true, source: 'session' },
+        { bound: false, source: 'agent' }, { bound: true, source: 'agent' },
+    ] as const)('starts the exact configured ACP definition from $source (bound=$bound)', async ({ bound, source }) => {
         const { voiceSessionBindingStore } = await import('@/voice/binding/voiceConversationBindingStore');
         const { VOICE_AGENT_GLOBAL_SESSION_ID } = await import('@/voice/agent/voiceAgentGlobalSessionId');
         const { initializeVoiceAgentHandle } = await import('./initializeVoiceAgentHandle');
@@ -613,8 +625,8 @@ describe('initializeVoiceAgentHandle', () => {
             }),
         }, settings: { ...previousSettings, voice: voiceSettingsParse({ ...previousSettings.voice,
             providers: { ...previousSettings.voice.providers, local_conversation: { schemaVersion: 1, config: {
-                ...local, agent: { ...local.agent, agentSource: 'session', agentId: 'codex',
-                    agentTargetKey: 'agent:happier.agent.codex/codex', agentIdentity: null,
+                ...local, agent: { ...local.agent, agentSource: source, agentId: source === 'agent' ? 'custom-acp' : 'codex',
+                    agentTargetKey: source === 'agent' ? 'agent:happier.agent.custom-acp/custom-acp:definition:qa-c-exact-args' : 'agent:happier.agent.codex/codex', agentIdentity: null,
                     chatModelSource: 'custom', chatModelId: 'gpt-6-luna' },
             } } },
         }) } });

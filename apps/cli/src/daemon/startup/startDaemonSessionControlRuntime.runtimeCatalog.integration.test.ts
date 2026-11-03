@@ -1589,6 +1589,55 @@ describe('startDaemonSessionControlRuntime', () => {
                 .toEqual({ status: 'unavailable' });
         } finally { await runtime.stopControlServer(); }
     });
+    it('registers and reads the applied selection of a configured ACP parent without changing its catalog identity', async () => {
+        const directory = await mkdtemp(join(tmpdir(), 'happier-configured-acp-parent-'));
+        const originalConfiguration = { happyHomeDir: configuration.happyHomeDir,
+            deviceLocalSecretKeyFile: configuration.deviceLocalSecretKeyFile };
+        Object.assign(configuration, { happyHomeDir: directory, deviceLocalSecretKeyFile: join(directory, 'device.key') });
+        onTestFinished(async () => { Object.assign(configuration, originalConfiguration);
+            await rm(directory, { recursive: true, force: true }); });
+        const registry = new ConnectedServiceRuntimeRegistry();
+        const identity = await readProcessIdentityByPid(process.pid);
+        if (!identity?.processStartTimeMs || !identity.command) throw new Error('Expected the live fixture runner identity');
+        const tracked: TrackedSession = { pid: process.pid, startedBy: 'daemon', happySessionId: 'configured-acp-parent',
+            runnerProcessIdentity: { pid: process.pid, processStartTimeMs: identity.processStartTimeMs,
+                processCommandHash: hashProcessCommand(identity.command) },
+            happySessionMetadataFromLocalWebhook: createTestMetadata({ runtimeDescriptorV1: {
+                v: 1, agentId: 'custom-acp', agent: { definitionId: 'review-bot' },
+            } }),
+            spawnOptions: { directory: '/repo', backendTarget: { kind: 'backend', backendId: 'review-bot',
+                configuredBackendId: 'review-bot', sourceKind: 'configured' } } };
+        const runtime = await startDaemonSessionControlRuntime({ machineId: 'machine',
+            credentials: { token: 'daemon-fixture', encryption: null }, api: {} as never,
+            connectedServicesMaterializationBaseDir: '/tmp/connected-services',
+            getConnectedServiceRefreshCoordinator: () => null, getConnectedServiceQuotasCoordinator: () => null,
+            connectedServiceRuntimeRegistry: registry, pidToTrackedSession: new Map([[tracked.pid, tracked]]),
+            pidToAwaiter: new Map(), pidToSpawnResultResolver: new Map(), pidToSpawnWebhookTimeout: new Map(),
+            getApiMachineForSessions: () => null, spawnResourceCleanupByPid: new Map(), sessionAttachCleanupByPid: new Map(),
+            connectedServicesRestartRequestedPids: new Set(), beforeShutdown: async () => {},
+            onHappySessionWebhook: async () => {}, requestShutdown: () => {}, processEnv: {},
+        });
+        try {
+            const read = vi.mocked(startDaemonControlServer).mock.calls.at(-1)?.[0].readAppliedSessionConnectedServices;
+            if (!read) throw new Error('Production applied-parent reader was not registered');
+            const { ConnectedServiceAppliedParentSelectionRequestSchema, ConnectedServiceAppliedParentSelectionResultSchema } =
+                await import('../connectedServices/runs/materializeContract');
+            const request = ConnectedServiceAppliedParentSelectionRequestSchema.parse({
+                runnerPid: process.pid, sessionId: tracked.happySessionId, agentId: 'custom-acp',
+            });
+            for (const changed of [{ agentId: 'claude' }, { agentId: 'review-bot' },
+                { sessionId: 'another-parent' }, { runnerPid: process.ppid }]) {
+                expect(await read({ ...request, ...changed, initialEmpty: true })).toEqual({ status: 'unavailable' });
+            }
+            expect(registry.getByPid(tracked.pid)).toBeNull();
+            const applied = { status: 'applied', connectedServices: { v: 2, bindingsByServiceId: {} } };
+            expect(ConnectedServiceAppliedParentSelectionResultSchema.parse(await read({ ...request, initialEmpty: true })))
+                .toEqual(applied);
+            expect(ConnectedServiceAppliedParentSelectionResultSchema.parse(await read(request))).toEqual(applied);
+            registry.unregisterPid(tracked.pid);
+            expect(await read(request)).toEqual({ status: 'unavailable' });
+        } finally { await runtime.stopControlServer(); }
+    });
     async function runPrivateManagedRequesterFixture(finiteWake = false, refreshRequesterPolicy = false,
         finiteRpc?: 'allow' | 'ask' | 'revoked' | 'changed-root' | 'revoked-after-ask' | 'reviewer-retired-after-ask') {
         if (!fetchAccountEncryptionCurrentnessActual.current) throw new Error('Account currentness HTTP owner unavailable');

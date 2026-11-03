@@ -28,3 +28,18 @@ export function resolveTrackedSessionCatalogAgentId(
 
   return resolveAgentIdFromSessionMetadata(tracked.happySessionMetadataFromLocalWebhook);
 }
+
+/** The opened runtime's identity also exists for a configured ACP selection. */
+export function resolveTrackedSessionRuntimeAgentId(
+  tracked: TrackedSessionCatalogIdentityInput | null | undefined,
+): CatalogAgentId | null {
+  const backendTarget = tracked?.spawnOptions?.backendTarget;
+  // Preserve the admitted contribution id, including its retained definition.
+  if (backendTarget?.sourceKind === 'built_in') {
+    return resolveTrackedSessionCatalogAgentId(tracked);
+  }
+  if (normalizeDaemonBackendTargetV2Input(backendTarget)?.sourceKind === 'configured') {
+    return resolveAgentIdFromSessionMetadata(tracked?.happySessionMetadataFromLocalWebhook);
+  }
+  return resolveTrackedSessionCatalogAgentId(tracked);
+}
