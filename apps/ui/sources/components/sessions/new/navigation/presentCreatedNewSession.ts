@@ -11,10 +11,7 @@ import { storage } from '@/sync/domains/state/storage';
 import { captureActiveServerAccountScopeCurrentness } from '@/sync/domains/scope/activeServerAccountScope';
 import type { QualifiedActionOperation } from '@/sync/domains/actionOperations/qualifiedActionOperation';
 import { sync } from '@/sync/sync';
-import {
-    isCreatedSessionUnavailableLocally,
-    requireSpawnedSessionVisibleForRoute,
-} from '@/sync/runtime/orchestration/serverScopedRpc/localSessionRouteReadiness';
+import { requireSpawnedSessionVisibleForRoute } from '@/sync/runtime/orchestration/serverScopedRpc/localSessionRouteReadiness';
 
 type CreatedNewSessionRouter = Readonly<{
     replace(path: unknown, options?: unknown): void;
@@ -78,21 +75,14 @@ export async function presentCreatedNewSession(params: Readonly<{
     operation?: QualifiedActionOperation;
 }>): Promise<PresentCreatedNewSessionResult> {
     const accountCurrentness = captureActiveServerAccountScopeCurrentness();
-    try {
-        await requireSpawnedSessionVisibleForRoute({
-            sessionId: params.sessionId,
-            serverId: params.serverId,
-            getStoredSession: (sessionId) => storage.getState().sessions[sessionId] ?? null,
-            ensureSessionVisibleForMessageRoute: typeof sync.ensureSessionVisibleForMessageRoute === 'function'
-                ? sync.ensureSessionVisibleForMessageRoute
-                : null,
-        });
-    } catch (error) {
-        if (isCreatedSessionUnavailableLocally(error)) {
-            return 'unavailable';
-        }
-        throw error;
-    }
+    await requireSpawnedSessionVisibleForRoute({
+        sessionId: params.sessionId,
+        serverId: params.serverId,
+        getStoredSession: (sessionId) => storage.getState().sessions[sessionId] ?? null,
+        ensureSessionVisibleForMessageRoute: typeof sync.ensureSessionVisibleForMessageRoute === 'function'
+            ? sync.ensureSessionVisibleForMessageRoute
+            : null,
+    });
 
     if (!accountCurrentness.isCurrent() || (params.isStillActive && !params.isStillActive())) {
         return 'inactive';

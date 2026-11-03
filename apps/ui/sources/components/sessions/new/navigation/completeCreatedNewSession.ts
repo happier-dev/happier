@@ -7,7 +7,7 @@ export class CreatedNewSessionCompletionError extends Error {
         readonly stage: CreatedNewSessionCompletionStage,
         readonly originalError: unknown,
     ) {
-        super(`created_new_session_${stage}_failed`);
+        super(originalError instanceof Error ? originalError.message : `created_new_session_${stage}_failed`);
         this.name = 'CreatedNewSessionCompletionError';
     }
 }
@@ -39,10 +39,14 @@ export function createCreatedNewSessionCompletion(input: Readonly<{
     };
     const present = async (): Promise<'opened'> => {
         if (presentationComplete) return 'opened';
-        const result = await input.present();
-        if (result !== 'opened') throw new Error(`created_new_session_presentation_${result}`);
-        presentationComplete = true;
-        return 'opened';
+        try {
+            const result = await input.present();
+            if (result !== 'opened') throw new Error(`created_new_session_presentation_${result}`);
+            presentationComplete = true;
+            return 'opened';
+        } catch (error) {
+            throw new CreatedNewSessionCompletionError('presentation', error);
+        }
     };
     const clearCapturedDraft = async (): Promise<void> => {
         if (draftClearComplete || !input.clearCapturedDraft) return;
@@ -55,11 +59,7 @@ export function createCreatedNewSessionCompletion(input: Readonly<{
         } catch (error) {
             throw new CreatedNewSessionCompletionError('follow_up', error);
         }
-        try {
-            await present();
-        } catch (error) {
-            throw new CreatedNewSessionCompletionError('presentation', error);
-        }
+        await present();
         try {
             await clearCapturedDraft();
         } catch (error) {

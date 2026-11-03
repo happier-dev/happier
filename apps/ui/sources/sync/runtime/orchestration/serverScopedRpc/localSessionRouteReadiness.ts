@@ -1,5 +1,6 @@
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { CREATED_SESSION_NOT_AVAILABLE_LOCALLY_ERROR } from '@/sync/runtime/sessionMessageDeliveryErrors';
+import { HappyError } from '@/utils/errors/errors';
 
 // This grace covers only server-to-client propagation after spawn has already
 // succeeded. Provider startup remains owned by the spawn action.
@@ -27,11 +28,11 @@ export function readRouteHydrationResultKind(value: unknown): string | null {
     return typeof kind === 'string' && kind.trim().length > 0 ? kind.trim() : null;
 }
 
-export function buildRouteHydrationOptions(serverId?: string | null): Readonly<{ forceRefresh: true; serverId?: string }> {
+export function buildRouteHydrationOptions(serverId?: string | null, forceRefresh = true): Readonly<{ forceRefresh: boolean; serverId?: string }> {
     const normalizedServerId = normalizeServerScopeId(serverId);
     return normalizedServerId
-        ? { forceRefresh: true, serverId: normalizedServerId }
-        : { forceRefresh: true };
+        ? { forceRefresh, serverId: normalizedServerId }
+        : { forceRefresh };
 }
 
 export async function requireLocalSessionVisibleForRoute(params: Readonly<{
@@ -39,6 +40,7 @@ export async function requireLocalSessionVisibleForRoute(params: Readonly<{
     serverId?: string | null;
     getStoredSession: (sessionId: string) => Session | null;
     ensureSessionVisibleForMessageRoute?: EnsureSessionVisibleForMessageRoute | null;
+    forceRefresh?: boolean;
     /**
      * Consumer-specific proof required after the one authoritative hydration
      * attempt. This stays here so route consumers do not grow local polling or
@@ -49,11 +51,16 @@ export async function requireLocalSessionVisibleForRoute(params: Readonly<{
     if (typeof params.ensureSessionVisibleForMessageRoute === 'function') {
         const hydration = await params.ensureSessionVisibleForMessageRoute(
             params.sessionId,
-            buildRouteHydrationOptions(params.serverId),
+            buildRouteHydrationOptions(params.serverId, params.forceRefresh),
         );
         const hydrationKind = readRouteHydrationResultKind(hydration);
         if (hydrationKind && hydrationKind !== 'available') {
-            throw new Error(CREATED_SESSION_NOT_AVAILABLE_LOCALLY_ERROR);
+            const code = hydration && typeof hydration === 'object' && 'errorCode' in hydration
+                && typeof hydration.errorCode === 'string' ? hydration.errorCode : undefined;
+            throw new HappyError(CREATED_SESSION_NOT_AVAILABLE_LOCALLY_ERROR, hydrationKind === 'retryable_failure' || code === 'not_found', {
+                code,
+                details: hydration,
+            });
         }
     }
 
@@ -73,16 +80,20 @@ export async function requireSpawnedSessionVisibleForRoute(params: Readonly<{
     getStoredSession: (sessionId: string) => Session | null;
     ensureSessionVisibleForMessageRoute?: EnsureSessionVisibleForMessageRoute | null;
 }>): Promise<Session> {
+    // Hydration already owns created-row publication and freshness. Presentation
+    // consumes it; follow-up mutation consumers retain their explicit refresh.
+    const readiness = { ...params, forceRefresh: false };
     if (typeof params.ensureSessionVisibleForMessageRoute !== 'function') {
-        return await requireLocalSessionVisibleForRoute(params);
+        return await requireLocalSessionVisibleForRoute(readiness);
     }
 
     const deadline = Date.now() + POST_SPAWN_SESSION_VISIBILITY_GRACE_MS;
     while (true) {
         try {
-            return await requireLocalSessionVisibleForRoute(params);
+            return await requireLocalSessionVisibleForRoute(readiness);
         } catch (error) {
-            if (!isCreatedSessionUnavailableLocally(error)) {
+            if (!isCreatedSessionUnavailableLocally(error)
+                || (error instanceof HappyError && !error.canTryAgain)) {
                 throw error;
             }
             const remainingMs = deadline - Date.now();

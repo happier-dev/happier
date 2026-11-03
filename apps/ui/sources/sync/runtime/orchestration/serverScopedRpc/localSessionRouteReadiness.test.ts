@@ -37,7 +37,7 @@ describe('requireLocalSessionVisibleForRoute', () => {
                     visibleSession = stored;
                     return { kind: 'available' };
                 }
-                return { kind: 'missing' };
+                return { kind: 'missing', errorCode: 'not_found' };
             });
 
             const visibility = requireSpawnedSessionVisibleForRoute({

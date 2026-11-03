@@ -13,7 +13,6 @@ import { actionOperationStore } from '@/sync/domains/actionOperations/actionOper
 import { useAccountSettingsScope, useApplyAuthoringMemoryDelta } from '@/sync/store/settingsWriters';
 import { storage } from '@/sync/domains/state/storage';
 import { resolveTerminalSpawnOptions } from '@/sync/domains/settings/terminalSettings';
-import { CREATED_SESSION_NOT_AVAILABLE_LOCALLY_ERROR } from '@/sync/runtime/sessionMessageDeliveryErrors';
 import { areServerProfileIdentifiersEquivalent, getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { resolveNewSessionServerTarget } from '@/sync/domains/server/selection/serverSelectionResolver';
 import { getMissingRequiredConfigEnvVarNames } from '@/utils/profiles/profileConfigRequirements';
@@ -2235,13 +2234,13 @@ export function useCreateNewSession(params: Readonly<{
                 if (!createdSessionRouteOpened && isLaunchScopeStillActive()) {
                     try {
                         await createdSessionCompletion.present();
-                    } catch {
+                    } catch (error) {
                         if (!isLaunchScopeStillActive()) {
                             publishLaunchAttempt(null);
                             current.setIsCreating(false);
                             return;
                         }
-                        throw new Error(CREATED_SESSION_NOT_AVAILABLE_LOCALLY_ERROR);
+                        throw error;
                     }
                 }
                 if (manualActionCustody) {
