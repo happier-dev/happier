@@ -34,6 +34,8 @@ import { WidgetBindingResolutionV1Schema, WidgetInstanceActionInputSchemasV1 } f
 import { WidgetInstanceActionIdV1Schema } from '../widgets/actionIdsV1.js';
 import { isProviderActionIdV1, PROVIDER_ACTION_INPUT_SCHEMAS_V1 } from '../providers/providerActionsV1.js';
 import { ProviderErrorV1Schema } from '../providers/errors.js';
+import { DeploymentEnvironmentCreateIntentInputV1Schema } from '../deployments/deploymentActionsV1.js';
+import { DeploymentTemplateInstantiateInputV1Schema, DeploymentTemplateInstantiationPartialV1Schema } from '../deployments/deploymentTemplateInstantiationV1.js';
 import type {
   ApprovalExecutionV2,
   ApprovalRequest,
@@ -87,6 +89,28 @@ function parseStrictApprovalFailure(input: Readonly<{
     const details = (storedRead ? createStoredReadSchema(ApprovalStaleFailureDetailsSchema)
       : ApprovalStaleFailureDetailsSchema).safeParse(input.failure.details);
     return details.success ? { ...input.failure, details: details.data } : null;
+  }
+  if (input.request.actionId === 'deployments.templates.instantiate'
+    || input.request.actionId === 'deployments.environments.create') {
+    const details = (storedRead ? createStoredReadSchema(DeploymentTemplateInstantiationPartialV1Schema)
+      : DeploymentTemplateInstantiationPartialV1Schema).safeParse(input.failure.details);
+    if (details.success) {
+      if (details.data.errorCode !== input.failure.errorCode) return null;
+      if (input.request.actionId === 'deployments.templates.instantiate') {
+        const args = (storedRead ? createStoredReadSchema(DeploymentTemplateInstantiateInputV1Schema)
+          : DeploymentTemplateInstantiateInputV1Schema).safeParse(input.request.actionArgs);
+        if (!args.success || args.data.mode !== 'apply'
+          || args.data.environment.kind === 'existing' && details.data.environmentId !== undefined
+            && details.data.environmentId !== args.data.environment.environmentId
+          || args.data.target.kind === 'existing' && details.data.targetLinkId !== undefined
+            && details.data.targetLinkId !== args.data.target.targetLinkId) return null;
+      } else {
+        const args = (storedRead ? createStoredReadSchema(DeploymentEnvironmentCreateIntentInputV1Schema)
+          : DeploymentEnvironmentCreateIntentInputV1Schema).safeParse(input.request.actionArgs);
+        if (!args.success || args.data.mode === 'preview' || args.data.definition?.from !== 'catalogApp') return null;
+      }
+      return { ...input.failure, details: details.data };
+    }
   }
   if (input.failure.errorCode === 'widget_inputs_invalid') {
     const action = WidgetInstanceActionIdV1Schema.safeParse(input.request.actionId);

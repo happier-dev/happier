@@ -1,3 +1,4 @@
+import { readApprovalExecutionFailure } from '../approvals/approvalExecutionFailure.js';
 import { StructuredQuestionAnswersV1Schema } from '../tools/structuredQuestionAnswersV1.js';
 import { ApprovalRequestSchema, ApprovalRequestV1Schema, ApprovalRequestV2Schema, type ApprovalExecutionOriginV1, type ApprovalRequest } from '../approvals/approvalRequestV1.js';
 import { TargetActionApprovalRequestV1Schema, type TargetActionApprovalRequestV1 } from '../approvals/targetActionApprovalRequestV1.js';
@@ -51,6 +52,7 @@ export function projectApprovalExecutionForObservation(request: ApprovalRequest 
   const target = request.v === 1 ? TargetActionApprovalRequestV1Schema.safeParse(request) : null;
   const currentExecution = request.v === 2 ? request.execution : target?.success ? target.data.execution : undefined;
   const operationCredentialUses = currentExecution?.operationCredentialUses;
+  const failureDetails = request.v === 2 && !execution.ok ? readApprovalExecutionFailure(request)?.details : undefined;
   return {
     executedAtMs: execution.executedAtMs, ok: execution.ok,
     ...(currentExecution?.effectAttempted !== undefined
@@ -58,7 +60,7 @@ export function projectApprovalExecutionForObservation(request: ApprovalRequest 
     ...(execution.ok && execution.result !== undefined ? { result: project ? project(execution.result) : execution.result } : {}),
     ...(execution.errorCode === undefined ? {} : { errorCode: execution.errorCode }),
     ...(execution.error === undefined ? {} : { error: execution.error }),
-    ...(request.v === 2 && request.execution?.details !== undefined ? { details: request.execution.details } : {}),
+    ...(failureDetails === undefined ? {} : { details: failureDetails }),
     ...(operationCredentialUses?.length ? { operationCredentialUses } : {}),
   };
 }
