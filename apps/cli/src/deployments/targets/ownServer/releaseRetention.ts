@@ -3,7 +3,7 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { isDeploymentSettledV1, getDeploymentTargetLinkLineageV1,
     type DeploymentEnvironmentDetailV1, type DeploymentReceiptDetailV1, type DeploymentImageV1,
     type DeploymentTargetLinkHeaderV1, type OwnServerDeploymentSourceV1 } from '@happier-dev/deployment-protocol';
-import { deriveDeploymentMemberVersionsV1 } from '@happier-dev/deployments';
+import { deriveDeploymentMemberVersionsV1, selectDeploymentRetainedPreviousV1 } from '@happier-dev/deployments';
 import { authorizePluginExecLaunchForHost } from '@/plugins/runtime/invocation/services/exec';
 import { createNativeComposeIncumbentBindReader } from '@/daemon/local/services/launch/nativeComposeSharedData';
 import { readNativeComposeEngine } from '@/daemon/local/services/launch/nativeComposeEngine';
@@ -54,11 +54,9 @@ export function projectOwnServerDeploymentRetention(input: Readonly<{
             if (id) { protectedIds.add(id); unsettledIds.add(id); }
         }
     }
-    const previous = input.receipts.filter(receipt => receipt.deployment.id !== input.link.activeDeploymentId
-        && ['succeeded', 'running_unverified'].includes(receipt.deployment.state))
-        .sort((left, right) => right.deployment.requestedAtMs - left.deployment.requestedAtMs)
-        .slice(0, input.environment.content.retainPreviousDeployments);
-    for (const receipt of previous) protectedIds.add(receipt.deployment.id);
+    const previous = selectDeploymentRetainedPreviousV1(input.receipts.map(receipt => receipt.deployment),
+        input.link.activeDeploymentId, input.environment.content.retainPreviousDeployments);
+    for (const receipt of previous) protectedIds.add(receipt.id);
     const receiptsById = new Map(input.receipts.map(receipt => [receipt.deployment.id, receipt]));
     const missingImageCustody = [...protectedIds].filter(id => {
         const receipt = receiptsById.get(id);

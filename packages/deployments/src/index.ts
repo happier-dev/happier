@@ -7,7 +7,9 @@ export * from './projection/environmentSecretBindingsProjection.js';
 export * from './projection/deploymentStepProjection.js';
 export * from './projection/deploymentSelectors.js';
 export type { DeploymentActivityV1, DeploymentChipV1 } from './projection/deploymentSurfaceFacts.js';
-export { projectDeploymentReceiptFactsV1 } from './projection/deploymentReceiptFacts.js';
+export { projectDeploymentReceiptFactsV1, projectDeploymentReceiptHistoryEntryV1,
+    selectDeploymentReceiptRetainedHistoryV1, selectDeploymentRetainedPreviousV1,
+    deploymentRevisionLabelV1 } from './projection/deploymentReceiptFacts.js';
 export type { DeploymentReceiptFactsV1, DeploymentReceiptLogFactV1, DeploymentReceiptStepLogFactV1 } from './projection/deploymentReceiptFacts.js';
 export { projectDeploymentReceiptActivityV1 } from './projection/deploymentSurfaceFacts.js';
 export * from './projection/deploymentEnvironmentNavigation.js';

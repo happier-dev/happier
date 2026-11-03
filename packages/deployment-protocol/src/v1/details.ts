@@ -5,6 +5,7 @@ import { DeploymentTargetLinkContentV1Schema, DeploymentTargetLinkHeaderV1Schema
 import { DeploymentContentV1Schema, DeploymentReceiptHeaderV1Schema, DeploymentStepV1Schema } from './deployment.js';
 import { DeploymentIdentifierV1Schema } from './ids.js';
 import { DeploymentEnvironmentHealthAggregateV1Schema } from './health.js';
+import { DeploymentReviewRevisionV1Schema } from './review.js';
 
 /** Labels come from admitted Source metadata and private Artifact headers, never their bodies. */
 export const DeploymentEnvironmentCollectionV1Schema = z.strictObject({
@@ -22,9 +23,10 @@ export const DeploymentEnvironmentCollectionV1Schema = z.strictObject({
 });
 export type DeploymentEnvironmentCollectionV1 = z.infer<typeof DeploymentEnvironmentCollectionV1Schema>;
 
-/** Header-only history labels; old/source test transports may omit the opened label. */
+/** Visible history facts projected from the page's opened contents; older transports may omit them. */
 export const DeploymentReceiptHistoryV1Schema = z.strictObject({
-    ok: z.literal(true), items: z.array(z.extend(DeploymentReceiptHeaderV1Schema, { title: z.optional(z.string()) })),
+    ok: z.literal(true), items: z.array(z.extend(DeploymentReceiptHeaderV1Schema, { title: z.optional(z.string()),
+        source: z.optional(z.nullable(DeploymentReviewRevisionV1Schema)) })),
     nextCursor: z.nullable(DeploymentIdentifierV1Schema),
 });
 export type DeploymentReceiptHistoryV1 = z.infer<typeof DeploymentReceiptHistoryV1Schema>;
