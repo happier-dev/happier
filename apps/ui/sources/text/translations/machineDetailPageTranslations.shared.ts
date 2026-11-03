@@ -1807,6 +1807,9 @@ export const english = {
             select: ({ name }: { name: string }) => `Clean up ${name}`,
         },
     },
+    machineServices: {
+        kind: { systemd: 'systemd', compose: 'Compose' },
+    },
 };
 
 

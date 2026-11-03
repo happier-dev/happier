@@ -253,6 +253,56 @@ describe('Compose exact native resource lifetime', () => {
         expect(requests.filter(request => request.includes('logs'))).toHaveLength(reads);
     });
 
+    it('observes and controls only the admitted Environment service without reactivating its project', async () => {
+        const requests: string[][] = [];
+        let dbState = 'running';
+        let dbHealth = 'unhealthy';
+        const web = { ...container('a', 'running'), Config: { Labels: {
+            'com.docker.compose.project': 'happier-test', 'com.docker.compose.service': 'web',
+        } }, State: { Status: 'running', Health: { Status: 'healthy' } } };
+        const db = () => ({ ...container('b', dbState), Config: { Labels: {
+            'com.docker.compose.project': 'happier-test', 'com.docker.compose.service': 'db',
+        } }, State: { Status: dbState, Health: { Status: dbHealth } } });
+        const io: Pick<ProjectNativeToolchainIo, 'run'> = { async run(request) {
+            const args = [...request.args];
+            requests.push(args);
+            const rows = args.includes('label=com.docker.compose.service=web') ? [web]
+                : args.includes('label=com.docker.compose.service=db') ? [db()] : [web, db()];
+            // A retained Compose file may require app substitutions. Existing
+            // generation controls must not parse it or need that overlay again.
+            if (args.includes('compose')) return { exitCode: 1, stdout: '', stderr: 'SECRET is required' };
+            if (args.includes('stop')) dbState = 'exited';
+            if (args.includes('start') || args.includes('restart')) { dbState = 'running'; dbHealth = 'healthy'; }
+            return { exitCode: 0, stdout: args.includes('ps') ? rows.map(row => row.Id).join('\n')
+                : args.includes('inspect') ? JSON.stringify([web, db()].filter(row => args.includes(row.Id)))
+                    : args.includes('logs') ? args.includes('b'.repeat(64)) ? 'db diagnostic' : 'web diagnostic' : '' };
+        } };
+        const args = ['compose', '--project-name', 'happier-test', '--file', '/release/compose.yaml'];
+        const capture = (composeService: string) => {
+            const control = createNativeComposeLifecycle({ args, io, environment: { composeService,
+                containerIds: [(composeService === 'web' ? 'a' : 'b').repeat(64)] } });
+            control.bindLaunch({ command: '/docker', args, cwd: '/release', env: {},
+                secretRedactionLease: createProviderRedactionLease({ values: [] }), release() {} });
+            return control.lifecycle;
+        };
+        const webLifecycle = capture('web');
+        const dbLifecycle = capture('db');
+        expect(await webLifecycle.inspect()).toMatchObject({ phase: 'running', readiness: 'ready', displayName: 'happier-test' });
+        expect(await dbLifecycle.inspect()).toMatchObject({ phase: 'running', readiness: 'not_ready' });
+        expect(await webLifecycle.logs?.({ kind: 'read', maxBytes: 8192 })).toMatchObject({ kind: 'page', page: { text: 'web diagnostic' } });
+        expect(await dbLifecycle.logs?.({ kind: 'read', maxBytes: 8192 })).toMatchObject({ kind: 'page', page: { text: 'db diagnostic' } });
+        await expect(dbLifecycle.prepareStart?.()).rejects.toMatchObject({ code: 'deployment_generation_required' });
+        expect(await dbLifecycle.stop()).toEqual({ status: 'stopped' });
+        expect(await dbLifecycle.start?.()).toMatchObject({ phase: 'running', readiness: 'ready' });
+        expect(await dbLifecycle.restart?.()).toMatchObject({ phase: 'running', readiness: 'ready' });
+        expect(requests.filter(request => ['start', 'restart', 'stop'].includes(request[0]))).toEqual([
+            ['stop', 'b'.repeat(64)], ['start', 'b'.repeat(64)], ['restart', 'b'.repeat(64)],
+        ]);
+        expect(requests.some(request => request.includes('compose'))).toBe(false);
+        expect(requests.some(request => request.includes('up') || request.includes('down'))).toBe(false);
+        expect(await webLifecycle.inspect()).toMatchObject({ phase: 'running', readiness: 'ready' });
+    });
+
     function fixture() {
         let rows: unknown = [container('a', 'running')];
         let code = 0;

@@ -13,7 +13,7 @@ describe('systemd native source with production Exec', () => {
         expect(await lifecycle.discover!({ serverId: 'home', machineId: 'machine' })).toEqual({ kind: 'unsupported', code: 'systemd_platform_unsupported' });
         expect(await lifecycle.stop(instance)).toEqual({ status: 'unsupported' });
         expect(await lifecycle.start!(instance)).toEqual({ kind: 'unsupported', code: 'systemd_control_unsupported' });
-        expect(await lifecycle.inspect(instance)).toEqual({ phase: 'unknown', readiness: 'not_ready', endpoint: null });
+        expect(await lifecycle.inspect(instance)).toEqual({ phase: 'unknown', readiness: 'not_ready', endpoint: null, displayName: 'worker.service' });
     });
 
     it.skipIf(process.platform !== 'linux')('preserves native state, partial disclosure and exact daemon-user control without optional capabilities', async () => {
@@ -71,20 +71,20 @@ else if(user&&['start','restart','stop'].some(verb=>args.includes(verb))){if(sta
             const beforeFacts = (await readFile(calls, 'utf8')).trim().split('\n').length;
             for (const memory of [4096, 0]) {
                 await writeFile(state, JSON.stringify({ load: 'loaded', active: 'active', sub: 'running', memory, ...sourceClocks }));
-                expect(await lifecycle.inspect(instance, undefined, context)).toEqual({ phase: 'running', readiness: 'not_reported', endpoint: null,
+                expect(await lifecycle.inspect(instance, undefined, context)).toEqual({ phase: 'running', readiness: 'not_reported', endpoint: null, displayName: 'worker.service',
                     accounting: { memoryBytes: memory, startedAtMs: Date.parse(sourceClocks.startedAt) }, healthSince: Date.parse(sourceClocks.activeSince) });
             }
             // Accounting rides the existing inspection; it never adds native reads.
             expect((await readFile(calls, 'utf8')).trim().split('\n').length - beforeFacts).toBe(2);
             await writeFile(state, JSON.stringify({ load: 'loaded', active: 'inactive', sub: 'dead',
                 memory: '18446744073709551615', ...sourceClocks }));
-            expect(await lifecycle.inspect(instance, undefined, context)).toEqual({ phase: 'stopped', readiness: 'not_ready', endpoint: null });
+            expect(await lifecycle.inspect(instance, undefined, context)).toEqual({ phase: 'stopped', readiness: 'not_ready', endpoint: null, displayName: 'worker.service' });
             await writeFile(state, JSON.stringify({ load: 'loaded', active: 'active', sub: 'running',
                 memory: 'invalid', startedAt: 'n/a', activeSince: 'n/a' }));
-            expect(await lifecycle.inspect(instance, undefined, context)).toEqual({ phase: 'running', readiness: 'not_reported', endpoint: null });
+            expect(await lifecycle.inspect(instance, undefined, context)).toEqual({ phase: 'running', readiness: 'not_reported', endpoint: null, displayName: 'worker.service' });
             await writeFile(state, JSON.stringify({ load: 'loaded', active: 'active', sub: 'running', memory: 4096,
                 startedAt: 'Mon 2026-11-02 13:00:00 CET', activeSince: 'Mon 2026-11-02 13:00:02 CET' }));
-            expect(await lifecycle.inspect(instance, undefined, context)).toEqual({ phase: 'running', readiness: 'not_reported', endpoint: null,
+            expect(await lifecycle.inspect(instance, undefined, context)).toEqual({ phase: 'running', readiness: 'not_reported', endpoint: null, displayName: 'worker.service',
                 accounting: { memoryBytes: 4096 } });
             for (const [load, active, sub, phase, readiness] of [
                 ['loaded', 'inactive', 'dead', 'stopped', 'not_ready'], ['loaded', 'failed', 'failed', 'stopped', 'not_ready'],
@@ -92,7 +92,7 @@ else if(user&&['start','restart','stop'].some(verb=>args.includes(verb))){if(sta
                 ['loaded', 'activating', 'start', 'unknown', 'not_ready'], ['loaded', 'active', 'exited', 'running', 'not_reported'],
             ]) {
                 await writeFile(state, JSON.stringify({ load, active, sub }));
-                expect(await lifecycle.inspect(instance, undefined, context)).toEqual({ phase, readiness, endpoint: null });
+                expect(await lifecycle.inspect(instance, undefined, context)).toEqual({ phase, readiness, endpoint: null, displayName: 'worker.service' });
             }
             await writeFile(state, JSON.stringify({ load: 'loaded', active: 'active', sub: 'running', denySystem: true }));
             expect(await lifecycle.discover!({ serverId: 'home', machineId: 'machine' }, undefined, context)).toMatchObject({

@@ -7792,6 +7792,9 @@ const machineDetailPageTranslations = { ja: translated({
                 select: ({ name }) => `${name} を片付ける`,
             },
         },
+        machineServices: {
+            kind: { systemd: 'systemd', compose: 'Compose' },
+        },
     }) };
 
 return { machineDetailPageTranslations };

@@ -37,7 +37,8 @@ export function createMachineServiceRowProjection(watchRevision: (watch: Machine
                 hostPolicy: managedServiceEndpointHostPolicyForMode(snapshot.mode),
             });
             const native = snapshot.mode === 'native'
-                ? { phase: snapshot.nativePhase ?? 'unknown', readiness: snapshot.readiness ?? 'not_reported' } as const
+                ? { phase: snapshot.nativePhase ?? 'unknown', readiness: snapshot.readiness ?? 'not_reported',
+                    ...(snapshot.nativeDisplayName !== undefined ? { displayName: snapshot.nativeDisplayName } : {}) } as const
                 : undefined;
             const facts = handle.readNativeRuntimeFacts?.();
             const freshness = facts?.freshness === 'current' ? 'current' : 'unavailable';

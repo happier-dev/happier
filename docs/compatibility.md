@@ -3986,6 +3986,15 @@ Run-on writer or store is added.
 
 ## SDK protocol evolution
 
+Unreleased 0.3 native service observations add optional `displayName`, retained
+through the existing host snapshot as `nativeDisplayName` and projected as
+`native.displayName` in Machine service rows. The native adapter owns this display
+identity; a person's watch label and the opaque native resource ID retain their
+existing meanings. Matching development Protocol, SDK, CLI and UI readers must
+refresh together because the current native objects are closed. Existing
+observations without a name remain readable. No persisted field, wire epoch,
+runtime ABI, or compatibility adapter is added.
+
 Unreleased 0.3 Action operation readers retain exact native service-control
 subjects and optional reboot Domain subjects in the existing `domainRef`.
 These facts explain a matching health notice only while its already-readable

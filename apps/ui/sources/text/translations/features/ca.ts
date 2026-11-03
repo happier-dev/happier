@@ -7797,6 +7797,9 @@ const machineDetailPageTranslations = { ca: translated({
                 select: ({ name }) => `Neteja ${name}`,
             },
         },
+        machineServices: {
+            kind: { systemd: 'systemd', compose: 'Compose' },
+        },
     }) };
 
 return { machineDetailPageTranslations };

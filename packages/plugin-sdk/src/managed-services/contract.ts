@@ -321,9 +321,7 @@ export type ManagedServiceNativeInstanceV1 = Readonly<{
     nativeResourceId: string;
 }>;
 
-export type ManagedServiceNativeObservationV1 = Readonly<{
-    phase: 'running' | 'stopped' | 'unknown';
-    readiness: 'ready' | 'not_ready' | 'not_reported';
+export type ManagedServiceNativeObservationV1 = Readonly<import('@happier-dev/protocol/local/services/nativeStateV1').ManagedServiceNativeStateV1 & {
     endpoint: string | null;
     /** Source-reported clocks/counters, never host process totals or synthesized uptime. */
     accounting?: import('@happier-dev/protocol').MachineServiceNativeRuntimeFactsV1['accounting'];
@@ -411,6 +409,7 @@ export type ManagedServiceSnapshot = Readonly<{
     /** Native readiness is independent of an observed HTTP address. */
     readiness?: ManagedServiceNativeObservationV1['readiness'];
     nativePhase?: ManagedServiceNativeObservationV1['phase'];
+    nativeDisplayName?: ManagedServiceNativeObservationV1['displayName'];
     /**
      * The validated base URL required by endpoint-producing contracts such as
      * MCP discovery: a loopback `http:` address for a service the host spawned,

@@ -7797,6 +7797,9 @@ const machineDetailPageTranslations = { pt: translated({
                 select: ({ name }) => `Limpar ${name}`,
             },
         },
+        machineServices: {
+            kind: { systemd: 'systemd', compose: 'Compose' },
+        },
     }) };
 
 return { machineDetailPageTranslations };

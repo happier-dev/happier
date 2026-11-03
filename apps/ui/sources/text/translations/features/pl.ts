@@ -7815,6 +7815,9 @@ const machineDetailPageTranslations = { pl: translated({
                 select: ({ name }) => `Posprzątaj ${name}`,
             },
         },
+        machineServices: {
+            kind: { systemd: 'systemd', compose: 'Compose' },
+        },
     }) };
 
 return { machineDetailPageTranslations };

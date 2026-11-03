@@ -1716,6 +1716,7 @@ function translateSnapshot(
         mode: value.mode === 'managedSpawn' ? 'spawn' : value.mode === 'native' ? 'native' : 'attach',
         ...(value.readiness ? { readiness: value.readiness } : {}),
         ...(value.nativePhase ? { nativePhase: value.nativePhase } : {}),
+        ...(value.nativeDisplayName !== undefined ? { nativeDisplayName: value.nativeDisplayName } : {}),
         baseUrl: value.baseUrl,
         startedAtMs: value.startedAtMs,
         lastHealthyAtMs: value.lastHealthyAtMs,

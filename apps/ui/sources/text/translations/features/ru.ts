@@ -7824,6 +7824,9 @@ const machineDetailPageTranslations = { ru: translated({
                 select: ({ name }) => `Очистить ${name}`,
             },
         },
+        machineServices: {
+            kind: { systemd: 'systemd', compose: 'Compose' },
+        },
     }) };
 
 return { machineDetailPageTranslations };

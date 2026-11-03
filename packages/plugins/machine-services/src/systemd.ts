@@ -18,13 +18,13 @@ function parseInstance(instance: ManagedServiceNativeInstanceV1): Readonly<{ sco
 }
 
 /** Native liveness is not application readiness. Unknown platform states stay unknown. */
-function observation(load: string | undefined, active: string | undefined, sub: string | undefined): ManagedServiceNativeObservationV1 {
-    if (load !== 'loaded') return { phase: 'unknown', readiness: 'not_ready', endpoint: null };
-    if (active === 'inactive' || active === 'failed') return { phase: 'stopped', readiness: 'not_ready', endpoint: null };
+function observation(load: string | undefined, active: string | undefined, sub: string | undefined, displayName: string): ManagedServiceNativeObservationV1 {
+    if (load !== 'loaded') return { phase: 'unknown', readiness: 'not_ready', endpoint: null, displayName };
+    if (active === 'inactive' || active === 'failed') return { phase: 'stopped', readiness: 'not_ready', endpoint: null, displayName };
     if (active === 'active' && (sub === 'running' || sub === 'exited')) {
-        return { phase: 'running', readiness: 'not_reported', endpoint: null };
+        return { phase: 'running', readiness: 'not_reported', endpoint: null, displayName };
     }
-    return { phase: 'unknown', readiness: 'not_ready', endpoint: null };
+    return { phase: 'unknown', readiness: 'not_ready', endpoint: null, displayName };
 }
 
 function sourceTimestamp(value: string | undefined): number | undefined {
@@ -50,14 +50,14 @@ async function command(scope: Scope, args: readonly string[], options: PluginCan
 
 async function inspect(instance: ManagedServiceNativeInstanceV1, options?: PluginCancellationOptions, context?: PluginInvocationContext) {
     const selected = parseInstance(instance);
-    if (process.platform !== 'linux') return observation(undefined, undefined, undefined);
+    if (process.platform !== 'linux') return observation(undefined, undefined, undefined, selected.unit);
     const result = await command(selected.scope, ['show', '--no-pager', '--property=LoadState,ActiveState,SubState,MemoryCurrent,ExecMainStartTimestamp,ActiveEnterTimestamp', '--', selected.unit], options, context);
-    if (!result.complete) return observation(undefined, undefined, undefined);
+    if (!result.complete) return observation(undefined, undefined, undefined, selected.unit);
     const properties = new Map(result.output.split(/\r?\n/u).flatMap(line => {
         const separator = line.indexOf('=');
         return separator < 0 ? [] : [[line.slice(0, separator), line.slice(separator + 1)] as const];
     }));
-    const current = observation(properties.get('LoadState'), properties.get('ActiveState'), properties.get('SubState'));
+    const current = observation(properties.get('LoadState'), properties.get('ActiveState'), properties.get('SubState'), selected.unit);
     if (current.phase !== 'running') return current;
     const memory = properties.get('MemoryCurrent');
     const memoryBytes = memory && /^\d+$/u.test(memory) && Number.isSafeInteger(Number(memory)) ? Number(memory) : undefined;
@@ -114,7 +114,7 @@ const lifecycle: ManagedServiceNativeLifecycleV1 = {
                 const unit = fields[0];
                 if (!unit || !/^[a-zA-Z0-9:_.@\\-]+\.service$/u.test(unit) || fields.length < 4) continue;
                 candidates.push({ instance: { adapter, nativeResourceId: `${scope}/${unit}` }, name: unit,
-                    observation: observation(fields[1], fields[2], fields[3]) });
+                    observation: observation(fields[1], fields[2], fields[3], unit) });
             }
         }
         return { kind: failures.length ? 'partial' : 'ready', candidates, failures };

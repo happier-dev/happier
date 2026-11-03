@@ -70,6 +70,7 @@ else process.exitCode=17;
                 candidateId: candidate.candidateId, expectedRevision: candidate.revision, lifecyclePurpose: 'infrastructure' } })).toMatchObject({ kind: 'applied' });
             const listed = MachineServicesListResultV1Schema.parse(await runtime.execute({ actionId: 'machines.services.list', input: target, context }));
             expect(listed).toMatchObject({ kind: 'snapshot', services: [{ authority: 'machine', state: 'running',
+                native: { displayName: 'worker.service' },
                 accounting: { memoryBytes: sourceFacts.memoryBytes, startedAtMs: Date.parse(sourceFacts.startedAt) },
                 health: { since: Date.parse(sourceFacts.activeSince) },
                 capabilities: { start: true, stop: true, restart: true, logs: true, accounting: false } }] });
@@ -124,7 +125,7 @@ else process.exitCode=17;
                     ['loaded', 'active', 'exited', 'running', 'not_reported'],
                 ]) {
                     await Promise.all([writeFile(loadPath, load!), writeFile(statePath, active!), writeFile(subPath, sub!)]);
-                    expect(await captured.lifecycle.inspect(candidate)).toEqual({ phase, readiness, endpoint: null });
+                    expect(await captured.lifecycle.inspect(candidate)).toEqual({ phase, readiness, endpoint: null, displayName: candidate.name });
                 }
                 await Promise.all([writeFile(loadPath, 'loaded'), writeFile(statePath, 'active'), writeFile(subPath, 'running')]);
             } finally { await captured.release(); }

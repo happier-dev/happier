@@ -1181,18 +1181,20 @@ function createNativeComposeServiceCapture(input: NativeComposeServiceInput) {
         if (ids && rows.some(row => !ids!.includes(row.id))) return null;
         return rows;
     };
+    const unknownObservation = { ...unknown, displayName: project };
+    const stoppedObservation = { ...stopped, displayName: project };
     const observe = (rows: readonly Container[] | null): ManagedServiceNativeObservationV1 => {
-        if (cleared) return stopped;
-        if (!rows) return unknown;
+        if (cleared) return stoppedObservation;
+        if (!rows) return unknownObservation;
         // A missing deployment generation is not a stopped incumbent that can
         // be started again. Only deploy/rollback can recreate missing resources.
-        if (input.environment && rows.length === 0) return unknown;
-        if (rows.every(row => ['created', 'exited', 'dead'].includes(row.state))) return stopped;
+        if (input.environment && rows.length === 0) return unknownObservation;
+        if (rows.every(row => ['created', 'exited', 'dead'].includes(row.state))) return stoppedObservation;
         const selected = rows.filter(row => row.service === target);
         if (!selected.length || selected.some(row => row.state !== 'running')
-            || rows.some(row => !['running', 'exited', 'dead'].includes(row.state))) return unknown;
+            || rows.some(row => !['running', 'exited', 'dead'].includes(row.state))) return unknownObservation;
         return { phase: 'running', readiness: selected.every(row => row.health === 'healthy') ? 'ready'
-            : selected.some(row => row.health === 'starting' || row.health === 'unhealthy') ? 'not_ready' : 'not_reported', endpoint: endpoint(selected) };
+            : selected.some(row => row.health === 'starting' || row.health === 'unhealthy') ? 'not_ready' : 'not_reported', endpoint: endpoint(selected), displayName: project };
     };
     const afterControl = async (signal?: AbortSignal) => {
         if (!engineSubscription) return observe(await read(signal));

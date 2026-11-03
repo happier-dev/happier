@@ -67,7 +67,7 @@ else process.exitCode=19;
             } })).toMatchObject({ kind: 'applied' });
             const listed = MachineServicesListResultV1Schema.parse(await runtime.execute({ actionId: 'machines.services.list', input: target, context }));
             expect(listed).toMatchObject({ kind: 'snapshot', services: [{ authority: 'machine',
-                capabilities: { start: false, restart: false, logs: true }, native: { phase: 'running' },
+                capabilities: { start: false, restart: false, logs: true }, native: { phase: 'running', displayName: native.project },
             }] });
             const selected = await fixture.registry.resolveProjectNativeAdapter(adapter, 'nativeServiceLifecycle');
             if (selected.kind !== 'ready') throw new Error('Compose lifecycle did not activate');
@@ -138,7 +138,8 @@ else process.exitCode=19;
                     .toMatchObject({ kind: 'snapshot', candidates: [], failures: [] });
                 expect(await coldRuntime.execute({ actionId: 'machines.services.list', input: target, context,
                     canReadEnvironments: async ids => new Set(ids) }))
-                    .toMatchObject({ kind: 'snapshot', services: [{ authority: 'project', environmentId: 'production' }] });
+                    .toMatchObject({ kind: 'snapshot', services: [{ authority: 'project', environmentId: 'production',
+                        native: { displayName: native.project } }] });
                 // A similar name is not ownership. Retain the human Compose name
                 // separately from its opaque engine/project identity.
                 const unownedProject = 'happier-unowned';

@@ -7787,6 +7787,9 @@ const machineDetailPageTranslations = { 'zh-Hans': translated({
                 select: ({ name }) => `清理 ${name}`,
             },
         },
+        machineServices: {
+            kind: { systemd: 'systemd', compose: 'Compose' },
+        },
     }) };
 
 return { machineDetailPageTranslations };

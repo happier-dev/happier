@@ -7795,6 +7795,9 @@ const machineDetailPageTranslations = { fr: translated({
                 select: ({ name }) => `Nettoyer ${name}`,
             },
         },
+        machineServices: {
+            kind: { systemd: 'systemd', compose: 'Compose' },
+        },
     }) };
 
 return { machineDetailPageTranslations };

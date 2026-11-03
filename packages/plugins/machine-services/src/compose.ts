@@ -93,12 +93,13 @@ async function containers(context: PluginInvocationContext, options?: PluginCanc
 
 function observation(rows: readonly Container[]): ManagedServiceNativeObservationV1 {
     if (!rows.length) return unknown;
+    const displayName = rows[0]!.project;
     if (rows.every(row => ['created', 'exited', 'dead'].includes(row.state))) {
-        return { phase: 'stopped', readiness: 'not_reported', endpoint: null };
+        return { phase: 'stopped', readiness: 'not_reported', endpoint: null, displayName };
     }
-    if (rows.some(row => row.state !== 'running')) return unknown;
+    if (rows.some(row => row.state !== 'running')) return { ...unknown, displayName };
     return { phase: 'running', readiness: rows.every(row => row.health === 'healthy') ? 'ready'
-        : rows.some(row => row.health === 'unhealthy' || row.health === 'starting') ? 'not_ready' : 'not_reported', endpoint: null };
+        : rows.some(row => row.health === 'unhealthy' || row.health === 'starting') ? 'not_ready' : 'not_reported', endpoint: null, displayName };
 }
 
 async function current(instance: ManagedServiceNativeInstanceV1, context: PluginInvocationContext,

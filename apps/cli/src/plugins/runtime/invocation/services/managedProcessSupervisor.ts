@@ -277,6 +277,7 @@ export type ManagedServiceProcessSnapshot = Readonly<{
     mode: 'managedSpawn' | 'externalAttach' | 'native';
     readiness?: ManagedServiceNativeObservationV1['readiness'];
     nativePhase?: ManagedServiceNativeObservationV1['phase'];
+    nativeDisplayName?: ManagedServiceNativeObservationV1['displayName'];
     /** Admitted native desired stop, retained until a start or restart changes it. */
     expectedDown?: 'stop';
     baseUrl: string | null;
@@ -1847,7 +1848,8 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
             if (!observation
                 || !['running', 'stopped', 'unknown'].includes(observation.phase)
                 || !['ready', 'not_ready', 'not_reported'].includes(observation.readiness)
-                || (observation.endpoint !== null && typeof observation.endpoint !== 'string')) {
+                || (observation.endpoint !== null && typeof observation.endpoint !== 'string')
+                || (observation.displayName !== undefined && (typeof observation.displayName !== 'string' || observation.displayName.length === 0))) {
                 fail('plugin_managed_service_unavailable', 'Native observation is invalid');
             }
         }
@@ -1899,6 +1901,7 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
                     state,
                     readiness: observation.readiness,
                     nativePhase: observation.phase,
+                    nativeDisplayName: observation.displayName,
                     baseUrl: endpoint?.baseUrl ?? null,
                     port: endpoint?.port ?? null,
                     ...(observation.phase === 'running' && observation.readiness === 'ready'
@@ -1909,6 +1912,7 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
                 if (snapshot.state !== next.state
                     || snapshot.readiness !== next.readiness
                     || snapshot.nativePhase !== next.nativePhase
+                    || snapshot.nativeDisplayName !== next.nativeDisplayName
                     || snapshot.expectedDown !== next.expectedDown
                     || snapshot.baseUrl !== next.baseUrl
                     || snapshot.port !== next.port) {
@@ -2791,7 +2795,8 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
                         }
                         if (result.status === 'accepted') return { kind: 'accepted' };
                         if (result.status === 'termination_incomplete') return { kind: 'outcome_unknown' };
-                        observation = { phase: 'stopped', readiness: 'not_reported', endpoint: null };
+                        observation = { phase: 'stopped', readiness: 'not_reported', endpoint: null,
+                            ...(snapshot.nativeDisplayName !== undefined ? { displayName: snapshot.nativeDisplayName } : {}) };
                     } else {
                         observation = await spec.mode.builtinLifecycle[operation]!(options);
                     }

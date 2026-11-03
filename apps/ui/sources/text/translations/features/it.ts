@@ -7797,6 +7797,9 @@ const machineDetailPageTranslations = { it: translated({
                 select: ({ name }) => `Ripulisci ${name}`,
             },
         },
+        machineServices: {
+            kind: { systemd: 'systemd', compose: 'Compose' },
+        },
     }) };
 
 return { machineDetailPageTranslations };
