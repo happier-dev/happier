@@ -19,6 +19,7 @@ import {
   maybeSignFile,
   writeChecksumsFile,
 } from './lib/binary-release.mjs';
+import { resolveUiWebBuildEnvForChannel } from './lib/public-release-rings.mjs';
 
 async function main() {
   const repoRoot = resolveRepoRoot();
@@ -68,6 +69,8 @@ async function main() {
       entrypoint,
       externals,
       buildDbProviders,
+      // The embedded ui-web/current must match the server's channel (#846).
+      env: { ...process.env, ...resolveUiWebBuildEnvForChannel(channel, process.env) },
     });
     const artifact = await packagePreparedTargetBinary({
       product: 'happier-server',

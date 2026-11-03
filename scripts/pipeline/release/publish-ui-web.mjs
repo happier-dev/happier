@@ -12,7 +12,7 @@ import {
   getPublicReleaseRingEntry,
   normalizePublicReleaseChannel,
   resolveEmbeddedPolicyForChannel,
-  resolveExpoAppEnvironmentForChannel,
+  resolveUiWebBuildEnvForChannel,
   resolveRollingPrerelease,
   resolveRollingReleaseLabel,
   resolveRollingReleaseTagSuffix,
@@ -275,9 +275,8 @@ async function main() {
     ? authorizedSha
     : authorizedSha || run(opts, 'git', ['rev-parse', 'HEAD'], { cwd: repoRoot, stdio: 'pipe' }).trim() || 'UNKNOWN_SHA';
 
-  const appEnv = resolveExpoAppEnvironmentForChannel(channel);
+  const uiWebBuildEnv = resolveUiWebBuildEnvForChannel(channel, process.env);
   const embeddedPolicy = resolveEmbeddedPolicyForChannel(channel);
-  const updatesChannel = releaseRing.expoUpdatesChannel;
 
   console.log(`[pipeline] ui-web: tag=${tag} target=${targetSha}`);
 
@@ -339,8 +338,7 @@ async function main() {
         cwd: repoRoot,
         env: {
           ...process.env,
-          APP_ENV: process.env.APP_ENV ?? appEnv,
-          EXPO_UPDATES_CHANNEL: process.env.EXPO_UPDATES_CHANNEL ?? updatesChannel,
+          ...uiWebBuildEnv,
           HAPPIER_EMBEDDED_POLICY_ENV: process.env.HAPPIER_EMBEDDED_POLICY_ENV ?? embeddedPolicy,
         },
       },
