@@ -191,6 +191,7 @@ export async function runAdmissionCommand({ root, className, floorKiB, machine, 
       try {
         for await (const response of brokerResponses(control, request, cancellation.signal)) {
           if (response.kind === 'refused') return failure(response.reason, failureId);
+          if (response.kind === 'capacity-wait') priorityScope?.suspend();
           if (response.kind === 'reserved') {
             selectedFloorKiB = response.floorKiB;
             selectedWorkers = response.workers;

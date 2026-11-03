@@ -268,6 +268,9 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
       if (item.floorOptions ? !fitting : item.floorKiB > availableMemoryKiB) {
         if (item.noWait) refuse(item, 'HSTACK_MEMORY_BUSY');
         else {
+          // Publication preference cannot block admitted work while this
+          // request waits for that work to release its memory reservation.
+          if (item.locks.length) send(item.socket, { kind: 'capacity-wait' });
           // A head that cannot fit has not reached the client's resource
           // attempt yet. An active publication must not reserve its floor.
           const resources = item.observation.readState();

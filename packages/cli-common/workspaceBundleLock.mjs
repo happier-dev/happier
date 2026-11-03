@@ -782,14 +782,14 @@ function createWorkspaceBundleLockOwnershipLostError(lockPath) {
   return error;
 }
 
-function assertWorkspaceLockMayWait(options, lockPath) {
+function assertWorkspaceLockMayWait(options, lockPath, snapshot) {
   // Native admission alone marks charged payloads. This restriction cannot
   // admit a process or transfer a lease; even an explicit wait:true must not
   // let a lock-only consumer wait while its ancestor's envelope is charged.
   const admitted = options.env?.HAPPIER_WORKSPACE_DIST_BUILD_LOCK_WAIT_ALLOWED === '0'
     || process.env.HAPPIER_WORKSPACE_DIST_BUILD_LOCK_WAIT_ALLOWED === '0';
   if (options.wait !== false && !admitted) return;
-  const error = new Error(`${admitted ? 'HSTACK_WORKSPACE_ADMISSION_ORDER: ' : ''}Workspace publication lease is busy: ${lockPath}`);
+  const error = new Error(`${admitted ? 'HSTACK_WORKSPACE_ADMISSION_ORDER: ' : ''}Workspace publication lease is busy: ${lockPath} (${describeLockOwner(snapshot, Date.now())})`);
   error.code = WORKSPACE_BUNDLE_LOCK_BUSY_ERROR_CODE;
   throw error;
 }
@@ -986,7 +986,7 @@ export async function withWorkspaceBundleLock(fn, options = {}) {
         }
         if (claimSnapshot.exists) {
           const waitSnapshot = lockSnapshot.exists ? lockSnapshot : claimSnapshot;
-          assertWorkspaceLockMayWait(options, lockPath);
+          assertWorkspaceLockMayWait(options, lockPath, waitSnapshot);
           if (ownPriorityScope) priorityScope.activate();
           if (workspaceBundleLockWaitTimedOut(
             lockSnapshot.exists ? lockPath : claimPath,
@@ -1028,7 +1028,7 @@ export async function withWorkspaceBundleLock(fn, options = {}) {
           continuedThroughPriority = !lockSnapshot.exists
             && workspaceBundlePriority.canContinue(priorityScope, predecessor, options);
           if (!continuedThroughPriority) {
-            assertWorkspaceLockMayWait(options, lockPath);
+            assertWorkspaceLockMayWait(options, lockPath, predecessor.snapshot);
             if (ownPriorityScope) priorityScope.activate();
             waited = true;
             notifyWaiter(options, lockPath, predecessor.snapshot, startedAt, staleAfterMs, timeoutMs);
@@ -1108,7 +1108,7 @@ export async function withWorkspaceBundleLock(fn, options = {}) {
             throw new Error(`Failed to safely reclaim workspace bundle lock: ${lockPath}`);
           }
         }
-        assertWorkspaceLockMayWait(continuedThroughPriority ? { ...options, wait: false } : options, lockPath);
+        assertWorkspaceLockMayWait(continuedThroughPriority ? { ...options, wait: false } : options, lockPath, snapshot);
         if (ownPriorityScope) priorityScope.activate();
         if (ownClaimRaw === null && !options.priorityScope
           && (!priorityScope || !workspaceBundlePriority.observation(lockPath, priorityScope, options).predecessor)) {
@@ -1289,7 +1289,7 @@ export function withWorkspaceBundleLockSync(fn, options = {}) {
         }
         if (claimSnapshot.exists) {
           const waitSnapshot = lockSnapshot.exists ? lockSnapshot : claimSnapshot;
-          assertWorkspaceLockMayWait(options, lockPath);
+          assertWorkspaceLockMayWait(options, lockPath, waitSnapshot);
           if (ownPriorityScope) priorityScope.activate();
           if (workspaceBundleLockWaitTimedOut(
             lockSnapshot.exists ? lockPath : claimPath,
@@ -1316,7 +1316,7 @@ export function withWorkspaceBundleLockSync(fn, options = {}) {
           continuedThroughPriority = !readLockOwnerSnapshot(lockPath).exists
             && workspaceBundlePriority.canContinue(priorityScope, predecessor, options);
           if (!continuedThroughPriority) {
-            assertWorkspaceLockMayWait(options, lockPath);
+            assertWorkspaceLockMayWait(options, lockPath, predecessor.snapshot);
             if (ownPriorityScope) priorityScope.activate();
             waited = true;
             notifyWaiter(options, lockPath, predecessor.snapshot, startedAt, staleAfterMs, timeoutMs);
@@ -1392,7 +1392,7 @@ export function withWorkspaceBundleLockSync(fn, options = {}) {
             throw new Error(`Failed to safely reclaim workspace bundle lock: ${lockPath}`);
           }
         }
-        assertWorkspaceLockMayWait(continuedThroughPriority ? { ...options, wait: false } : options, lockPath);
+        assertWorkspaceLockMayWait(continuedThroughPriority ? { ...options, wait: false } : options, lockPath, snapshot);
         if (ownPriorityScope) priorityScope.activate();
         if (ownClaimRaw === null && !options.priorityScope
           && (!priorityScope || !workspaceBundlePriority.observation(lockPath, priorityScope, options).predecessor)) {

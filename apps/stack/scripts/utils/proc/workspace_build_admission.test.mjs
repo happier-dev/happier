@@ -66,6 +66,52 @@ test('broker publication wait preserves its existing priority ahead of a newer s
   }
 });
 
+test('capacity waiting withdraws publication priority so admitted work can release its reservation', {
+  skip: process.platform !== 'linux', timeout: 20_000,
+}, async t => {
+  withPatchedProcessEnv(t, { HAPPIER_WORKSPACE_DIST_BUILD_LOCK_WAIT_ALLOWED: undefined });
+  const fixture = await createTempFixture(t, { prefix: 'hstack-capacity-publication-cycle-' });
+  const native = await installWorkspaceAdmissionProcessFixture(t, fixture.root);
+  const lockPath = fixture.path('publication.lock');
+  const floor = resolveHeavyweightMemoryFloorKiB('compilation');
+  const cancellation = new AbortController();
+  const cancel = () => cancellation.abort(t.signal.reason);
+  t.signal.addEventListener('abort', cancel, { once: true });
+  let pending, holder;
+  try {
+    await withWorkspaceBundleLock(async () => {
+      pending = runWorkspaceBuildAdmission({
+        command: process.execPath, args: ['-e', 'process.stdout.write("published")'],
+        launcherPath: native.launcher, admissionClass: 'compilation',
+        locks: [{ path: lockPath }], env: buildNativeAdmissionFixtureEnv(native.env),
+        signal: cancellation.signal, stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      await waitForBrokerState(native, state => state.waitingCount === 1, t.signal);
+      assert.notEqual(observeWorkspaceBundleLockPriority(lockPath), '[]');
+      holder = await holdNativeAdmissionFixtureMemory(t, native, { totalKiB: floor * 4, availableKiB: 0 });
+    }, { lockPath, signal: cancellation.signal });
+    await waitForBrokerState(native, state => state.activeCount === 1 && state.waitingCount === 1, t.signal);
+    // Allow the broker's existing resource catch-up to observe the released
+    // publication and push its capacity decision to the real waiting client.
+    await delay(2 * DEFAULT_FILE_CHANGE_CATCH_UP_MS, undefined, { signal: t.signal });
+    assert.equal(observeWorkspaceBundleLockPriority(lockPath), '[]',
+      'a capacity waiter must not retain publication preference over admitted work');
+    assert.equal(await withWorkspaceBundleLock(() => 'admitted-work-finished', {
+      lockPath, wait: false,
+    }), 'admitted-work-finished');
+    await holder.release();
+    const result = await pending;
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout, 'published', 'the original waiter resumes and publishes once');
+    await assertBrokerIdle(native);
+  } finally {
+    cancellation.abort();
+    await holder?.release();
+    await pending;
+    t.signal.removeEventListener('abort', cancel);
+  }
+});
+
 test('broker admission reclaims a dead same-host holder without a filesystem release event', {
   skip: process.platform !== 'linux', timeout: 15_000,
 }, async t => {

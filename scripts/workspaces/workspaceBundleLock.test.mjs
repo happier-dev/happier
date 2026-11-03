@@ -10,12 +10,47 @@ import { fileURLToPath } from 'node:url';
 
 import {
   DEFAULT_WORKSPACE_BUNDLE_LOCK_TIMEOUT_MS,
+  WORKSPACE_BUNDLE_LOCK_BUSY_ERROR_CODE,
   WORKSPACE_BUNDLE_LOCK_TIMEOUT_ERROR_CODE,
+  createWorkspaceBundleLockPriorityScope,
   withWorkspaceBundleLock,
   withWorkspaceBundleLockSync,
 } from './workspaceBundleLock.mjs';
 import { withOptionalCliSharedDepsBuildLock } from '../../apps/cli/scripts/optionalWorkspaceBundleLock.mjs';
 import { withPatchedProcessEnv } from '../../apps/stack/scripts/testkit/core/env_scope.mjs';
+
+for (const mode of ['async', 'sync']) for (const blocker of ['priority scope', 'priority claim']) {
+  test(`workspace bundle ${mode} busy diagnostic identifies the ${blocker} with no base lease`, async t => {
+    const root = mkdtempSync(join(tmpdir(), 'workspace-busy-owner-'));
+    const lockPath = join(root, 'publication.lock');
+    let now = Date.now();
+    t.mock.method(Date, 'now', () => now++);
+    const predecessor = createWorkspaceBundleLockPriorityScope({ resources: [{ path: lockPath }] });
+    const contender = createWorkspaceBundleLockPriorityScope({ resources: [{ path: lockPath }] });
+    try {
+      if (blocker === 'priority scope') predecessor.activate();
+      else {
+        let owner;
+        withWorkspaceBundleLockSync(() => { owner = readFileSync(lockPath, 'utf8'); }, { lockPath });
+        writeFileSync(`${lockPath}.priority-claim`, owner);
+      }
+      assert.equal(existsSync(lockPath), false);
+      const options = { lockPath, wait: false, priorityScope: contender };
+      const checkError = error => {
+        assert.equal(error.code, WORKSPACE_BUNDLE_LOCK_BUSY_ERROR_CODE);
+        assert.ok(error.message.includes(`pid=${process.pid}`), 'busy diagnostic must name the actual priority blocker');
+        return true;
+      };
+      const publish = () => assert.fail('a live priority blocker must prevent publication');
+      if (mode === 'async') await assert.rejects(withWorkspaceBundleLock(publish, options), checkError);
+      else assert.throws(() => withWorkspaceBundleLockSync(publish, options), checkError);
+    } finally {
+      contender.dispose();
+      predecessor.dispose();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+}
 
 // These temporary-lock fixtures exercise standalone contention. The routed
 // runner's charged-payload restriction belongs to its real workspace leases,

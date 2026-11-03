@@ -452,6 +452,13 @@ holding it. Invalid soft-preference records grant no ordering authority and do
 not make live records reapable. Observers exclude their own preference changes;
 they still observe other participants and real resource changes. Already-loaded
 publishers do not adopt this ordering until a new invocation loads current code.
+Capacity denial is pushed from the host admission broker to the waiting client's
+existing priority scope. Tooling updates to this path require a new broker process
+and new queued client invocations; restarting only the broker cannot update a
+client's loaded code. Admitted payloads retain their reservation across broker
+replacement and are not replayed. Busy publication diagnostics identify the
+blocking lease, priority claim or priority predecessor, even when the base lease
+is absent.
 
 `hstack-exec --cwd=REPO_RELATIVE_PATH -- COMMAND ...` also works with AUTO
 placement. The selected target resolves the path against its repository; AUTO
