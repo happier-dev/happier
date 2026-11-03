@@ -139,9 +139,11 @@ export function SecretsList(props: SecretsListProps) {
 
     const renderSharedEntry = (entry: SavedSecretCatalogEntryV1, idx: number, total: number) => {
         const resolvedStatus = props.resolveSharedReference?.(entry.ref).status ?? entry.materialStatus;
-        const provenance = sharedSecretProvenanceSegments(entry);
+        // A passkey is a key for a browser profile, not a value a field can use: listed, not choosable.
+        const passkey = entry.storage?.kind === 'passkey';
+        const provenance = [...(passkey ? [t('secretsSettings.kindPasskey')] : []), ...sharedSecretProvenanceSegments(entry)];
         const ready = resolvedStatus === 'ready'
-            && entry.capabilities.use;
+            && entry.capabilities.use && !passkey;
         return (
             <Item
                 key={entry.ref}

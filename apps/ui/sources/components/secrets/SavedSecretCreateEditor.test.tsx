@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { SharedSavedSecretCreateInputV1Schema } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
 import { StoredApprovalRequestSchema } from '@happier-dev/protocol';
+import { PluginManifestV2Schema } from '@happier-dev/protocol/plugins/manifest';
 
 import { createDeferred, flushHookEffects, invokeTestInstanceHandler, renderScreen, standardCleanup } from '@/dev/testkit';
 import { installSettingsViewCommonModuleMocks } from '@/components/settings/settingsViewTestHelpers';
@@ -67,6 +68,73 @@ async function startAdding(screen: Awaited<ReturnType<typeof renderScreen>>) {
 }
 
 describe('SavedSecretCreateEditor', () => {
+    it('links a personal secret to a field in an installed secret source instead of storing a value', async () => {
+        const { replacePluginAccountAvailabilityProjection } = await import('@/sync/domains/plugins/availability/projection');
+        const contribution = { pluginId: 'happier.secret-source.onepassword', localId: 'onepassword' };
+        // Account availability is the declaration owner; a Machine materialization carries the admitted manifest.
+        replacePluginAccountAvailabilityProjection({ scope: scopeA, snapshot: {
+            availabilityCursor: 1, intentReads: [], snapshots: [], materializations: [{
+                serverIdentityId: 'srv_fixture', machineId: 'machine-a', materializationId: 'bundled-onepassword',
+                pluginId: contribution.pluginId, version: '0.0.0', sourceClass: 'localPath', portableRelease: false,
+                uiArtifacts: [], enabled: true, trustState: 'trusted', observedAt: 1,
+                declaredManifest: PluginManifestV2Schema.parse({ schemaVersion: 2, id: contribution.pluginId, version: '0.0.0', displayName: '1Password',
+                    engines: { happier: '^1.0.0' }, runtime: { apiVersion: 1 },
+                    contributes: { secretSources: [{ id: contribution.localId, title: '1Password' }] } }),
+            }],
+        } });
+        const onCreatePersonal = vi.fn(async () => 'personal-linked');
+        const onCreated = vi.fn(async () => {});
+        const requestApproval = vi.fn();
+        const { SavedSecretCreateEditor } = await import('./SavedSecretCreateEditor');
+        const screen = await renderScreen(
+            <SavedSecretCreateEditor
+                scope={scopeA}
+                onCreatePersonal={onCreatePersonal}
+                approvalPending={false}
+                requestApproval={requestApproval}
+                onCancel={vi.fn()}
+                onCreated={onCreated}
+            />,
+        );
+
+        const sourceTab = 'saved-secret-create-origin:happier.secret-source.onepassword/onepassword';
+        await vi.waitFor(() => expect(screen.findByTestId(sourceTab)).toBeTruthy());
+        await screen.pressByTestIdAsync(sourceTab);
+        // A linked secret has no value to type and stays personal.
+        expect(screen.findByTestId('saved-secret-create-value')).toBeFalsy();
+        expect(screen.findByTestId('saved-secret-create-storage:shared')).toBeFalsy();
+        screen.changeTextByTestId('saved-secret-create-name', 'Deploy token');
+        screen.changeTextByTestId('saved-secret-create-link-account', ' my-team.1password.com ');
+        screen.changeTextByTestId('saved-secret-create-link-reference', 'op://Deploy/Token/credential');
+        await flushHookEffects();
+        await screen.pressByTestIdAsync('saved-secret-create-submit');
+
+        expect(onCreatePersonal).toHaveBeenCalledWith(
+            { name: 'Deploy token', source: { kind: 'external', contribution,
+                account: 'my-team.1password.com', reference: 'op://Deploy/Token/credential' } },
+            { onApprovalPending: requestApproval },
+        );
+        expect(createWrites()).toHaveLength(0);
+        expect(onCreated).toHaveBeenCalledWith('personal-linked', 'personal');
+    });
+
+    it('offers no link choice when no secret source is installed', async () => {
+        const { SavedSecretCreateEditor } = await import('./SavedSecretCreateEditor');
+        const screen = await renderScreen(
+            <SavedSecretCreateEditor
+                scope={scopeA}
+                onCreatePersonal={vi.fn(async () => 'personal-new')}
+                approvalPending={false}
+                requestApproval={vi.fn()}
+                onCancel={vi.fn()}
+                onCreated={vi.fn(async () => {})}
+            />,
+        );
+        await flushHookEffects();
+        expect(screen.findByTestId('saved-secret-create-origin:happier.secret-source.onepassword/onepassword')).toBeFalsy();
+        expect(screen.findByTestId('saved-secret-create-value')).toBeTruthy();
+    });
+
     it('creates an owner-only resource from one name, kind, and value entry', async () => {
         const onCreated = vi.fn(async () => {});
         const { SavedSecretCreateEditor } = await import('./SavedSecretCreateEditor');

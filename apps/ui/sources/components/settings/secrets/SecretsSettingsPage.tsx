@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { isSavedSecretVaultExportCandidate } from '@/components/secrets/vault/SavedSecretVaultExportSheet';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import type { SavedSecretCatalogCorruptEntryV1, SavedSecretCatalogEntryV1 } from '@happier-dev/protocol';
@@ -65,6 +66,7 @@ export type SecretsSettingsPageProps = Readonly<{
     onManageAccessShared?: (entry: SavedSecretCatalogEntryV1) => void;
     onDeleteShared?: (entry: SavedSecretCatalogEntryV1) => void;
     onDeleteCorruptShared?: (entry: CorruptOwnerEntry) => void;
+    moveToVault?: Readonly<{ label: string; onMove: (entry: SavedSecretCatalogEntryV1) => void }>;
     sharedMutationsDisabled: boolean;
 
     approvalId: string | null;
@@ -82,6 +84,26 @@ export type SecretsSettingsPageProps = Readonly<{
 /** A secret's type; shared rows the Home cannot fully read may not carry one. */
 function kindLabel(kind: SavedSecret['kind'] | null): string | null {
     return kind ? t(`secrets.catalog.kinds.${kind}`) : null;
+}
+
+/**
+ * A resource's type, read from the catalog's value-free storage fact: a transferred passkey is saved
+ * with the generic kind, so its storage says what it is. Content is never opened to label a row.
+ */
+function entryKindLabel(entry: SavedSecretCatalogEntryV1): string | null {
+    return entry.storage?.kind === 'passkey' ? t('secretsSettings.kindPasskey') : kindLabel(entry.kind);
+}
+
+/** The installed source a linked resource reads from, named by its admitted declaration; null when unknown. */
+function linkedProvider(entry: SavedSecretCatalogEntryV1): string | null {
+    return entry.storage?.kind === 'external' ? entry.storage.providerLabel ?? null : null;
+}
+
+/** Where the value lives: a vault-linked resource keeps only which field to read, under the Account's mode. */
+function entryStorageLabel(entry: SavedSecretCatalogEntryV1): string | null {
+    if (entry.storage?.kind !== 'external') return storageLabel(entry.encryptionMode);
+    const provider = linkedProvider(entry);
+    return provider ? t('secretsSettings.storageLinkedTo', { provider }) : t('secretsSettings.storageLinked');
 }
 
 function sharedRowStatus(resolution: SavedSecretReferenceResolution, entry: SavedSecretCatalogEntryV1) {
@@ -131,13 +153,20 @@ function usePersonalSecretStorageMode(enabled: boolean): SavedSecretCatalogEntry
 /** The storage explanation is shared by personal and owned resource rows. */
 function SecretStorageRow(props: Readonly<{
     mode: SavedSecretCatalogEntryV1['encryptionMode'];
+    /** A linked resource's source: its declared name, or null while that is unknown. */
+    linked?: Readonly<{ provider: string | null }>;
     action?: React.ReactNode;
 }>) {
-    const storage = storageLabel(props.mode);
+    const provider = props.linked?.provider ?? null;
+    const storage = props.linked
+        ? provider ? t('secretsSettings.storageLinkedTo', { provider }) : t('secretsSettings.storageLinked')
+        : storageLabel(props.mode);
     if (!storage) return null;
+    const linkedDescription = provider ? t('secretsSettings.storageLinkedToDescription', { provider })
+        : t('secretsSettings.storageLinkedDescription');
     return <Item
         title={t('secretsSettings.storageTitle')}
-        subtitle={`${storage}. ${props.mode === 'e2ee'
+        subtitle={`${storage}. ${props.linked ? linkedDescription : props.mode === 'e2ee'
             ? t('secretsSettings.storageE2eeDescription')
             : t('secretsSettings.storagePlainDescription')}`}
         subtitleLines={0}
@@ -270,6 +299,7 @@ export const SecretsSettingsPage = React.memo(function SecretsSettingsPage(props
                         onEncrypt={props.onEncryptShared}
                         onManageAccess={props.onManageAccessShared}
                         onDelete={props.onDeleteShared}
+                        moveToVault={props.moveToVault && isSavedSecretVaultExportCandidate(entry) ? props.moveToVault : undefined}
                     />
                 ))}
                 {ownerCorrupt.map((entry, idx) => (
@@ -322,11 +352,12 @@ function AddSecretAction(props: Readonly<{ disabled: boolean; onPress: () => voi
 }
 
 /** The value row every secret shares: saved, never shown, replaceable when the capability allows. */
-function SecretValueRow(props: Readonly<{ replaceTestID: string; onReplace?: () => void; disabled?: boolean }>) {
+function SecretValueRow(props: Readonly<{ replaceTestID: string; onReplace?: () => void; disabled?: boolean; subtitle?: string }>) {
     return (
         <Item
             title={t('secretsSettings.valueTitle')}
-            subtitle={t('secretsSettings.valueSaved')}
+            subtitle={props.subtitle ?? t('secretsSettings.valueSaved')}
+            subtitleLines={0}
             showChevron={false}
             showDivider={false}
             rightElement={props.onReplace ? (
@@ -517,15 +548,19 @@ const OwnedSharedSecretRow = React.memo(function OwnedSharedSecretRow(props: Rea
     onEncrypt?: (entry: SavedSecretCatalogEntryV1) => void;
     onManageAccess?: (entry: SavedSecretCatalogEntryV1) => void;
     onDelete?: (entry: SavedSecretCatalogEntryV1) => void;
+    moveToVault?: Readonly<{ label: string; onMove: (entry: SavedSecretCatalogEntryV1) => void }>;
 }>) {
     const { entry, status } = props;
     const [editing, setEditing] = React.useState<'rename' | 'rotate' | null>(null);
     React.useEffect(() => { if (!props.expanded || props.accessEditor) setEditing(null); }, [props.expanded, props.accessEditor]);
     const beginEdit = (mode: 'rename' | 'rotate') => { void runGuardedNavigation(() => { props.onBeginEdit?.(); setEditing(mode); }); };
     const name = entry.name ?? t('secrets.catalog.unavailableName');
-    const storage = storageLabel(entry.encryptionMode);
+    const storage = entryStorageLabel(entry);
+    const passkey = entry.storage?.kind === 'passkey';
+    const linked = entry.storage?.kind === 'external';
+    const provider = linkedProvider(entry);
     const summary = [
-        kindLabel(entry.kind),
+        entryKindLabel(entry),
         storage,
         audienceSummary(entry),
     ].filter((part): part is string => Boolean(part)).join(' · ');
@@ -555,18 +590,32 @@ const OwnedSharedSecretRow = React.memo(function OwnedSharedSecretRow(props: Rea
                 />
             )}
         >
-            <SecretValueRow
-                replaceTestID={`saved-secret:${entry.ref}:rotate`}
-                onReplace={entry.capabilities.rotate && props.onRotate ? () => beginEdit('rotate') : undefined}
-                disabled={props.disabled}
-            />
+            {passkey || linked ? (
+                // A passkey's key is never shown or replaced; a linked value lives in the vault, and
+                // replacing it stores a value in Happier instead.
+                <SecretValueRow
+                    replaceTestID={`saved-secret:${entry.ref}:rotate`}
+                    subtitle={passkey ? t('secretsSettings.valuePasskey') : provider
+                        ? t('secretsSettings.valueLinkedTo', { provider })
+                        : t('secretsSettings.valueLinked')}
+                    onReplace={!passkey && entry.capabilities.rotate && props.onRotate ? () => beginEdit('rotate') : undefined}
+                    disabled={props.disabled}
+                />
+            ) : (
+                <SecretValueRow
+                    replaceTestID={`saved-secret:${entry.ref}:rotate`}
+                    onReplace={entry.capabilities.rotate && props.onRotate ? () => beginEdit('rotate') : undefined}
+                    disabled={props.disabled}
+                />
+            )}
             {editing ? <SecretFieldEditor key={editing} testID={`saved-secret:${entry.ref}`} mode={editing} name={name}
                 disabled={props.disabled}
                 onSave={(value) => editing === 'rename' ? props.onRename?.(entry, value) : props.onRotate?.(entry, value)}
                 onCancel={() => setEditing(null)} /> : null}
             <SecretStorageRow
                 mode={entry.encryptionMode}
-                action={canConvert ? (
+                linked={linked ? { provider } : undefined}
+                action={canConvert && !linked ? (
                     <RoundButton
                         testID={`saved-secret:${entry.ref}:convertMode`}
                         size="small"
@@ -589,7 +638,7 @@ const OwnedSharedSecretRow = React.memo(function OwnedSharedSecretRow(props: Rea
                     editor={props.accessEditor}
                 />
             ) : null}
-            {canRename || canDelete ? (
+            {canRename || canDelete || props.moveToVault ? (
                 <SecretActionsRow
                     destructive={canDelete ? (
                         <DeleteButton testID={`saved-secret:${entry.ref}:delete`} disabled={props.disabled} onPress={() => props.onDelete?.(entry)} />
@@ -597,6 +646,16 @@ const OwnedSharedSecretRow = React.memo(function OwnedSharedSecretRow(props: Rea
                 >
                     {canRename ? (
                         <RenameButton testID={`saved-secret:${entry.ref}:rename`} disabled={props.disabled} onPress={() => beginEdit('rename')} />
+                    ) : null}
+                    {props.moveToVault ? (
+                        <RoundButton
+                            testID={`saved-secret:${entry.ref}:moveToVault`}
+                            size="small"
+                            display="secondary"
+                            title={props.moveToVault.label}
+                            disabled={props.disabled}
+                            onPress={() => props.moveToVault?.onMove(entry)}
+                        />
                     ) : null}
                 </SecretActionsRow>
             ) : null}

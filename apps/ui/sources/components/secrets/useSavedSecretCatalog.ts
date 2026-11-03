@@ -11,8 +11,10 @@ import { Modal } from '@/modal';
 import { t } from '@/text';
 import { awaitActionApprovalResult, type ActionApprovalRegistration } from '@/components/approvals/actionApprovalContinuation';
 import { isTeamActionApprovalPendingError } from '@/sync/ops/teams/teamActionClient';
-import { runTeamAction } from '@/sync/ops/teams/teamActionClient';
-import { PERSONAL_SAVED_SECRET_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/account/settings/personalSavedSecretActionsV1';
+import { runTeamAction, type TeamActionOutcome } from '@/sync/ops/teams/teamActionClient';
+import { PERSONAL_SAVED_SECRET_ACTION_INPUT_SCHEMAS_V1, PERSONAL_SAVED_SECRET_ACTION_OUTPUT_SCHEMAS_V1,
+  type SavedSecretVaultTargetV1 } from '@happier-dev/protocol/account/settings/personalSavedSecretActionsV1';
+import type { SavedSecretExternalSourceV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
 import {
     observeSavedSecretCatalog,
     refreshSavedSecretCatalog,
@@ -41,6 +43,15 @@ type SavedSecretCreateActionResult = ReturnType<
     (typeof PERSONAL_SAVED_SECRET_ACTION_OUTPUT_SCHEMAS_V1)['secrets.create']['parse']
 >;
 
+/** A personal secret holds its value, or links to a field in a declared secret source (never both). */
+export type SavedSecretPersonalCreateInput =
+  | Readonly<{ name: string; value: string; storeIn?: SavedSecretVaultTargetV1 }>
+  | Readonly<{ name: string; source: SavedSecretExternalSourceV1 }>;
+
+type VaultActionId = 'secrets.link' | 'secrets.export';
+type VaultInput<T extends VaultActionId> = ReturnType<(typeof PERSONAL_SAVED_SECRET_ACTION_INPUT_SCHEMAS_V1)[T]['parse']>;
+type VaultOutput<T extends VaultActionId> = ReturnType<(typeof PERSONAL_SAVED_SECRET_ACTION_OUTPUT_SCHEMAS_V1)[T]['parse']>;
+
 export type SavedSecretPrivateCreationApprovalOptions = Readonly<{
     onApprovalPending: (registration: ActionApprovalRegistration) => void;
     /** The person rejected or canceled the approval: a decision, not a failure to present. */
@@ -53,7 +64,7 @@ export type SavedSecretCatalogProjection = Readonly<{
     personalSecrets: readonly SavedSecret[];
     personalMutationsAvailable: boolean;
     personalMutations: Readonly<{
-        create: (input: Readonly<{ name: string; value: string }>, approval?: SavedSecretPrivateCreationApprovalOptions) => Promise<string | null>;
+        create: (input: SavedSecretPersonalCreateInput, approval?: SavedSecretPrivateCreationApprovalOptions) => Promise<string | null>;
         rename: (secret: SavedSecret, name?: string) => Promise<boolean>;
         rotate: (secret: SavedSecret, value?: string) => Promise<boolean>;
         delete: (secret: SavedSecret) => Promise<boolean>;
@@ -63,6 +74,8 @@ export type SavedSecretCatalogProjection = Readonly<{
     sharedEntries: readonly SavedSecretCatalogEntryV1[];
     /** All resources keep their storage/access management metadata, including private resources. */
     updateResource: (input: Omit<Parameters<typeof updateSavedSecretResource>[0], 'scope'>) => ReturnType<typeof updateSavedSecretResource>;
+  linkVaultItems: (input: VaultInput<'secrets.link'>, signal?: AbortSignal) => Promise<TeamActionOutcome<VaultOutput<'secrets.link'>>>;
+  exportResourcesToVault: (input: VaultInput<'secrets.export'>, signal?: AbortSignal) => Promise<TeamActionOutcome<VaultOutput<'secrets.export'>>>;
     /** Selection rows retain private editing without reclassifying resource-management targets. */
     picker: Readonly<{
         personalSecrets: readonly SavedSecret[];
@@ -176,9 +189,9 @@ export function useSavedSecretCatalog(options?: Readonly<{
             return false;
         }
     }, [scope, scopeIsActive, catalogEnabled, sharedEntries]);
-    const createPersonal = React.useCallback(async (input: Readonly<{ name: string; value: string }>, approval?: SavedSecretPrivateCreationApprovalOptions) => {
+    const createPersonal = React.useCallback(async (input: SavedSecretPersonalCreateInput, approval?: SavedSecretPrivateCreationApprovalOptions) => {
         const name = input.name.trim();
-        if (!name || input.value.length === 0) return null;
+        if (!name || ('value' in input ? input.value.length === 0 : false)) return null;
         if (!scope || !scopeIsActive || !catalogEnabled) return null;
         const noteDeclinedApproval = (code: string | null | undefined) => {
             if (isActionApprovalDeclinedErrorCode(code)) approval?.onApprovalDeclined?.();
@@ -187,7 +200,8 @@ export function useSavedSecretCatalog(options?: Readonly<{
             onApprovalSucceeded: (result: Extract<SavedSecretCreationResult, { ok: true }>) => void;
             onApprovalFailed: (code: string) => void;
         }>): Promise<SavedSecretCreationResult> => {
-            const result=await runTeamAction<SavedSecretCreateActionResult>({scope,actionId:'secrets.create',input:{name,kind:'apiKey',value:input.value},
+            const result=await runTeamAction<SavedSecretCreateActionResult>({scope,actionId:'secrets.create',input: 'value' in input ? { name, kind: 'apiKey', value: input.value,
+            ...(input.storeIn ? { storeIn: input.storeIn } : {}) } : { name, kind: 'apiKey', source: input.source },
                 parse:value=>PERSONAL_SAVED_SECRET_ACTION_OUTPUT_SCHEMAS_V1['secrets.create'].parse(value),
                 ...(approval ? { signal: approval.signal, executorOptions: {
                     // The personal Action retains its plaintext input on the live
@@ -257,6 +271,18 @@ export function useSavedSecretCatalog(options?: Readonly<{
         if (result.kind==='failed' && result.failure.kind==='outcome_unknown') await refreshSavedSecretCatalog(scope).catch(() => undefined);
         return result.kind==='succeeded';
     }, [scope, scopeIsActive, catalogEnabled, sharedEntries]);
+  const linkVaultItems = React.useCallback(async (input: VaultInput<'secrets.link'>, signal?: AbortSignal) => {
+    if (!scope || !scopeIsActive || !catalogEnabled) return { kind: 'failed' as const,
+      failure: { kind: 'unreachable' as const, code: 'unavailable', retryable: true } };
+    return runTeamAction({ scope, actionId: 'secrets.link', input, signal,
+      parse: value => PERSONAL_SAVED_SECRET_ACTION_OUTPUT_SCHEMAS_V1['secrets.link'].parse(value) });
+  }, [scope, scopeIsActive, catalogEnabled]);
+  const exportResourcesToVault = React.useCallback(async (input: VaultInput<'secrets.export'>, signal?: AbortSignal) => {
+    if (!scope || !scopeIsActive || !catalogEnabled) return { kind: 'failed' as const,
+      failure: { kind: 'unreachable' as const, code: 'unavailable', retryable: true } };
+    return runTeamAction({ scope, actionId: 'secrets.export', input, signal,
+      parse: value => PERSONAL_SAVED_SECRET_ACTION_OUTPUT_SCHEMAS_V1['secrets.export'].parse(value) });
+  }, [scope, scopeIsActive, catalogEnabled]);
     const personalMutations = React.useMemo(() => Object.freeze({
         create: createPersonal,
         rename: renamePersonal,
@@ -307,6 +333,8 @@ export function useSavedSecretCatalog(options?: Readonly<{
         personalSecrets,
         personalMutationsAvailable: scopeIsActive && catalogEnabled,
         personalMutations,
+    linkVaultItems,
+    exportResourcesToVault,
         collisionMigrationStatus: 'not_required',
         entries,
         sharedEntries: displayedSharedEntries,

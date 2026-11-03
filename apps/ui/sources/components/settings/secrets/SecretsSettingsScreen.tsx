@@ -5,6 +5,8 @@ import { parseSavedSecretCatalogReferenceV1, type SavedSecretCatalogCorruptEntry
 
 import { SavedSecretAccessEditor } from '@/components/secrets/SavedSecretAccessEditor';
 import { SavedSecretCreateEditor } from '@/components/secrets/SavedSecretCreateEditor';
+import { isSavedSecretVaultExportCandidate, presentSavedSecretVaultExportSheet } from '@/components/secrets/vault/SavedSecretVaultExportSheet';
+import { useSavedSecretSources } from '@/components/secrets/vault/useSavedSecretSources';
 import { SecretsSettingsPage } from '@/components/settings/secrets/SecretsSettingsPage';
 import { reviewManagedResourceRemoval } from '@/components/settings/machines/managed/reviewManagedResourceRemoval';
 import { useActionApprovalContinuation } from '@/components/approvals/useActionApprovalContinuation';
@@ -343,10 +345,24 @@ export const SecretsSettingsScreen = React.memo(function SecretsSettingsScreen()
         return null;
     })();
 
+    // A source that lists and stores can take a private value: the row offers to move it there.
+    const vaultSources = useSavedSecretSources(scope, catalog.personalMutationsAvailable);
+    const storeSource = vaultSources.find(source => source.capabilities?.list && source.capabilities.store) ?? null;
+    const moveToVault = storeSource && scope && catalog.personalMutationsAvailable ? {
+        label: t('secretsSettings.exportAction', { provider: storeSource.title }),
+        onMove: (entry: SavedSecretCatalogEntryV1) => presentSavedSecretVaultExportSheet({
+            scope, source: storeSource, initialRef: entry.ref,
+            candidates: catalog.entries.filter(isSavedSecretVaultExportCandidate),
+            exportResources: catalog.exportResourcesToVault, requestApproval: approval.requestApproval,
+            onSettled: () => { void catalog.reload().catch(() => undefined); },
+        }),
+    } : undefined;
+
     const createEditor = creating ? (
         <SavedSecretCreateEditor
             scope={scope}
             onCreatePersonal={catalog.personalMutations.create}
+            onLinkVault={catalog.personalMutationsAvailable ? catalog.linkVaultItems : undefined}
             sharedAvailable={catalog.sharedEnabled}
             approvalPending={approval.approvalPending}
             approvalId={approvalId}
@@ -402,6 +418,7 @@ export const SecretsSettingsScreen = React.memo(function SecretsSettingsScreen()
                 ? (entry) => selectEditor(() => setAccessSelection({ scopeKey, ref: entry.ref })) : undefined}
             onDeleteShared={catalog.sharedEnabled ? (entry) => { void removeShared(entry); } : undefined}
             onDeleteCorruptShared={catalog.sharedEnabled ? (entry) => { void removeCorruptShared(entry); } : undefined}
+            moveToVault={moveToVault}
             onAdd={() => selectEditor(() => setCreating(true))}
             onCancelAdd={() => { void runGuardedNavigation(clearEditors); }}
             createEditor={createEditor}

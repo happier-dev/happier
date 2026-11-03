@@ -1,11 +1,18 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import type { SavedSecret } from '@happier-dev/protocol';
+import type { SavedSecret } from '@happier-dev/protocol/profiles/backendProfileSchema';
 
 import type { ActionApprovalRegistration } from '@/components/approvals/actionApprovalContinuation';
 import { ActionApprovalPendingNotice } from '@/components/approvals/ActionApprovalPendingNotice';
-import type { SavedSecretPrivateCreationApprovalOptions } from './useSavedSecretCatalog';
+import type { SavedSecretCatalogProjection, SavedSecretPersonalCreateInput, SavedSecretPrivateCreationApprovalOptions } from './useSavedSecretCatalog';
+import {
+    SavedSecretVaultFields,
+    SavedSecretVaultItemsField,
+    useSavedSecretVaultChoice,
+    type SavedSecretVaultItemSelection,
+} from './vault/SavedSecretVaultFields';
+import { useSavedSecretSources } from './vault/useSavedSecretSources';
 import { RoundButton, RoundButtonSizeScope } from '@/components/ui/buttons/RoundButton';
 import { FieldItem } from '@/components/ui/forms/FieldItem';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
@@ -26,6 +33,11 @@ import { SavedSecretShareSheet } from '@/components/sharing/secrets/SavedSecretS
 const SECRET_KINDS = ['apiKey', 'token', 'password', 'other'] as const satisfies readonly SavedSecret['kind'][];
 
 type SecretStorage = 'personal' | 'shared';
+/** Where the value comes from: typed into Happier, or read from a declared secret source's field. */
+const VALUE_ORIGIN = 'value';
+
+/** From a vault that can list its items: link ones it has, or save a new value into it. */
+type VaultMode = 'existing' | 'new';
 
 /**
  * The one editor that adds a Saved Secret, shown in the draft row of the Secrets collection.
@@ -37,8 +49,10 @@ type SecretStorage = 'personal' | 'shared';
 export const SavedSecretCreateEditor = React.memo(function SavedSecretCreateEditor(props: Readonly<{
     /** The admitted Home and Account for resource creation. */
     scope: ServerAccountScope | null;
+    /** Links a vault's items (all, or the chosen ones) as personal secrets; absent where vaults cannot be browsed. */
+    onLinkVault?: SavedSecretCatalogProjection['linkVaultItems'];
     /** The catalog's private-create port; absent where only the grant-aware choice is offered. */
-    onCreatePersonal?: (input: Readonly<{ name: string; value: string }>, approval?: SavedSecretPrivateCreationApprovalOptions) => Promise<string | null>;
+    onCreatePersonal?: (input: SavedSecretPersonalCreateInput, approval?: SavedSecretPrivateCreationApprovalOptions) => Promise<string | null>;
     /** Whether this Home allows shared secrets. Defaults to available when a scope is given. */
     sharedAvailable?: boolean;
     approvalPending: boolean;
@@ -54,15 +68,41 @@ export const SavedSecretCreateEditor = React.memo(function SavedSecretCreateEdit
     const sharedAvailable = props.scope !== null && props.sharedAvailable !== false;
     const personalAvailable = Boolean(props.onCreatePersonal);
     const [chosenStorage, setChosenStorage] = React.useState<SecretStorage>('personal');
-    const storage: SecretStorage = !personalAvailable ? 'shared' : !sharedAvailable ? 'personal' : chosenStorage;
+    const sources = useSavedSecretSources(props.scope, personalAvailable);
+    const [chosenOrigin, setChosenOrigin] = React.useState<string>(VALUE_ORIGIN);
+    // A source that is no longer installed falls back to a typed value rather than a form that cannot succeed.
+    const linkedSource = sources.find(source => source.key === chosenOrigin) ?? null;
+    // Linked secrets are personal-only: the Machine that uses one reads it from the owner's vault.
+    const storage: SecretStorage = linkedSource ? 'personal' : !personalAvailable ? 'shared' : !sharedAvailable ? 'personal' : chosenStorage;
     const [name, setName] = React.useState('');
     const [value, setValue] = React.useState('');
+    const [linkAccount, setLinkAccount] = React.useState('');
+    const [linkReference, setLinkReference] = React.useState('');
+    // A source that lists its vault is browsed rather than typed; one that can also store offers a new item.
+    const browseable = Boolean(linkedSource?.capabilities?.list && props.onLinkVault);
+    const storable = browseable && linkedSource?.capabilities?.store === true;
+    const [chosenVaultMode, setVaultMode] = React.useState<VaultMode>('existing');
+    const vaultMode: VaultMode | null = !browseable ? null : storable ? chosenVaultMode : 'existing';
+    const vaultChoice = useSavedSecretVaultChoice({ scope: props.scope, source: browseable ? linkedSource : null,
+        onApprovalPending: props.requestApproval });
+    const vault = vaultChoice.state.status === 'ready' ? vaultChoice.vault : null;
+    // Each vault starts with all of its items chosen.
+    const [chosenItems, setChosenItems] = React.useState<Readonly<{ vaultId: string | null; selection: SavedSecretVaultItemSelection }>>(
+        { vaultId: null, selection: 'all' });
+    const itemSelection: SavedSecretVaultItemSelection = vault && chosenItems.vaultId === vault.id ? chosenItems.selection : 'all';
+    const chosenItemCount = itemSelection === 'all' ? vaultChoice.items.length : itemSelection.size;
+    const material = vaultMode === 'existing' ? vaultChoice.target !== null && chosenItemCount > 0
+        : vaultMode === 'new' ? vaultChoice.target !== null && value.length > 0
+        : linkedSource ? linkAccount.trim().length > 0 && linkReference.trim().length > 0 : value.length > 0;
+    // Linked items take their names from the vault ("GitHub / token"); the other choices are named here.
+    const named = vaultMode !== 'existing';
     const [kind, setKind] = React.useState<SavedSecret['kind']>('apiKey');
     const [grants, setGrants] = React.useState(createEmptySavedSecretGrantDraft);
     const [submitting, setSubmitting] = React.useState(false);
     const [failure, setFailure] = React.useState<string | null>(null);
     const dirty = name.length > 0 || value.length > 0 || kind !== 'apiKey'
-        || chosenStorage !== 'personal' || grants.length > 0;
+        || chosenStorage !== 'personal' || grants.length > 0
+        || chosenOrigin !== VALUE_ORIGIN || linkAccount.length > 0 || linkReference.length > 0 || vaultChoice.dirty;
     React.useEffect(() => { props.onDirtyChange?.(dirty); }, [dirty, props.onDirtyChange]);
     const operationInFlight = React.useRef(false);
     const scopeKey = props.scope ? `${props.scope.serverId}:${props.scope.accountId}` : 'unscoped';
@@ -80,6 +120,9 @@ export const SavedSecretCreateEditor = React.memo(function SavedSecretCreateEdit
         setDraftScopeKey(scopeKey);
         setName('');
         setValue('');
+        setLinkAccount('');
+        setLinkReference('');
+        setChosenOrigin(VALUE_ORIGIN);
         setKind('apiKey');
         setGrants(createEmptySavedSecretGrantDraft);
     }
@@ -106,7 +149,13 @@ export const SavedSecretCreateEditor = React.memo(function SavedSecretCreateEdit
         try {
             // The original promise is settled by the shared Artifact continuation,
             // not by replaying creation after approval.
-            const createdId = await create({ name: trimmedName, value }, { onApprovalPending: props.requestApproval });
+            const input: SavedSecretPersonalCreateInput = vaultMode === 'new' && vaultChoice.target
+                ? { name: trimmedName, value, storeIn: vaultChoice.target }
+                : linkedSource
+                ? { name: trimmedName, source: { kind: 'external', contribution: linkedSource.contribution,
+                    account: linkAccount.trim(), reference: linkReference.trim() } }
+                : { name: trimmedName, value };
+            const createdId = await create(input, { onApprovalPending: props.requestApproval });
             if (currentScopeKey.current !== scopeKey) return;
             if (createdId) {
                 await finishCreated(createdId, scopeKey, 'personal');
@@ -118,7 +167,35 @@ export const SavedSecretCreateEditor = React.memo(function SavedSecretCreateEdit
         }
         operationInFlight.current = false;
         setSubmitting(false);
-    }, [finishCreated, props.onCreatePersonal, props.requestApproval, scopeKey, value]);
+    }, [finishCreated, linkAccount, linkReference, linkedSource, props.onCreatePersonal, props.requestApproval, scopeKey, value,
+        vaultChoice.target, vaultMode]);
+
+    const submitLink = React.useCallback(async () => {
+        const link = props.onLinkVault;
+        const target = vaultChoice.target;
+        if (!link || !target) return;
+        operationInFlight.current = true;
+        setSubmitting(true);
+        setFailure(null);
+        try {
+            const outcome = await link({ source: target,
+                ...(itemSelection === 'all' ? {} : { itemIds: [...itemSelection] }) });
+            if (currentScopeKey.current !== scopeKey) return;
+            if (outcome.kind === 'succeeded') {
+                const first = outcome.value.secrets[0]?.secretRef;
+                if (first) { await finishCreated(first, scopeKey, 'personal'); return; }
+            } else {
+                setFailure(outcome.failure.kind === 'outcome_unknown'
+                    ? t('secrets.catalog.outcomeUnknown') : t('secretsSettings.vaultLinkFailed'));
+            }
+        } catch (cause) {
+            if (currentScopeKey.current !== scopeKey) return;
+            if (isTeamActionApprovalPendingError(cause)) { props.requestApproval(cause.registration); return; }
+            setFailure(t('secretsSettings.vaultLinkFailed'));
+        }
+        operationInFlight.current = false;
+        setSubmitting(false);
+    }, [finishCreated, itemSelection, props.onLinkVault, props.requestApproval, scopeKey, vaultChoice.target]);
 
     const submitShared = React.useCallback(async (trimmedName: string) => {
         const scope = props.scope;
@@ -178,16 +255,30 @@ export const SavedSecretCreateEditor = React.memo(function SavedSecretCreateEdit
 
     const submit = React.useCallback(async () => {
         const trimmedName = name.trim();
-        if (!trimmedName || value.length === 0 || operationInFlight.current || props.approvalPending) return;
-        if (storage === 'personal') await submitPersonal(trimmedName);
+        if ((named && !trimmedName) || !material || operationInFlight.current || props.approvalPending) return;
+        if (vaultMode === 'existing') await submitLink();
+        else if (storage === 'personal') await submitPersonal(trimmedName);
         else await submitShared(trimmedName);
-    }, [name, props.approvalPending, storage, submitPersonal, submitShared, value.length]);
+    }, [material, name, named, props.approvalPending, storage, submitLink, submitPersonal, submitShared, vaultMode]);
 
     const busy = submitting || props.approvalPending;
     const storageTabs = React.useMemo(() => [
         { id: 'personal' as const, label: t('secretsSettings.keepPersonal') },
         { id: 'shared' as const, label: t('secretsSettings.keepShared') },
     ], []);
+    const originTabs = React.useMemo(() => [
+        { id: VALUE_ORIGIN, label: t('secretsSettings.originHappier') },
+        ...sources.map(source => ({ id: source.key, label: source.title })),
+    ], [sources]);
+    const vaultModeTabs = React.useMemo(() => [
+        { id: 'existing' as const, label: t('secretsSettings.vaultModeExisting') },
+        { id: 'new' as const, label: t('secretsSettings.vaultModeNew') },
+    ], []);
+    const submitTitle = vaultMode === 'existing' && vault
+        ? itemSelection === 'all' ? t('secretsSettings.vaultLinkAll', { vault: vault.name })
+            : t('secretsSettings.vaultLinkCount', { count: chosenItemCount })
+        : vaultMode === 'new' && vault ? t('secretsSettings.vaultSaveTo', { vault: vault.name })
+        : t('secretsSettings.save');
     const kindTabs = React.useMemo(() => SECRET_KINDS.map((candidate) => ({
         id: candidate,
         label: t(`secrets.catalog.kinds.${candidate}`),
@@ -196,7 +287,7 @@ export const SavedSecretCreateEditor = React.memo(function SavedSecretCreateEdit
     return (
         <View style={styles.body} testID="saved-secret-create-editor">
             <View style={styles.fields}>
-                <FieldItem label={t('secrets.fields.name')}>
+                {named ? <FieldItem label={t('secrets.fields.name')}>
                     <FieldTextInput
                         testID="saved-secret-create-name"
                         value={name}
@@ -206,20 +297,104 @@ export const SavedSecretCreateEditor = React.memo(function SavedSecretCreateEdit
                         editable={!busy}
                         autoFocus
                     />
-                </FieldItem>
-                <FieldItem label={t('secrets.fields.value')}>
-                    <FieldTextInput
-                        testID="saved-secret-create-value"
-                        value={value}
-                        onChangeText={setValue}
-                        placeholder={t('secrets.placeholders.valueExample')}
-                        accessibilityLabel={t('secrets.fields.value')}
-                        editable={!busy}
-                        secureTextEntry
-                        monospace
-                    />
-                </FieldItem>
-                {personalAvailable && sharedAvailable ? (
+                </FieldItem> : null}
+                {sources.length > 0 ? (
+                    <FieldItem
+                        label={t('secretsSettings.originTitle')}
+                        supportingText={linkedSource
+                            ? t('secretsSettings.originLinkedDescription', { provider: linkedSource.title })
+                            : undefined}
+                    >
+                        <SegmentedTabBar
+                            labelSize="field"
+                            tabs={originTabs}
+                            activeTabId={linkedSource ? linkedSource.key : VALUE_ORIGIN}
+                            onSelectTab={setChosenOrigin}
+                            disabled={busy}
+                            testIDPrefix="saved-secret-create-origin"
+                        />
+                    </FieldItem>
+                ) : null}
+                {linkedSource && vaultMode ? (
+                    <>
+                        {storable ? (
+                            <FieldItem label={t('secretsSettings.vaultModeTitle')}>
+                                <SegmentedTabBar
+                                    labelSize="field"
+                                    tabs={vaultModeTabs}
+                                    activeTabId={vaultMode}
+                                    onSelectTab={setVaultMode}
+                                    disabled={busy}
+                                    testIDPrefix="saved-secret-create-vault-mode"
+                                />
+                            </FieldItem>
+                        ) : null}
+                        <SavedSecretVaultFields choice={vaultChoice} provider={linkedSource.title} disabled={busy}
+                            testID="saved-secret-create-vault" />
+                        {vaultMode === 'existing' && vault ? (
+                            <SavedSecretVaultItemsField
+                                vault={vault}
+                                items={vaultChoice.items}
+                                selection={itemSelection}
+                                onChange={(selection) => setChosenItems({ vaultId: vault.id, selection })}
+                                disabled={busy}
+                                testID="saved-secret-create-vault-items"
+                            />
+                        ) : null}
+                        {vaultMode === 'new' ? (
+                            <FieldItem label={t('secrets.fields.value')}>
+                                <FieldTextInput
+                                    testID="saved-secret-create-value"
+                                    value={value}
+                                    onChangeText={setValue}
+                                    placeholder={t('secrets.placeholders.valueExample')}
+                                    accessibilityLabel={t('secrets.fields.value')}
+                                    editable={!busy}
+                                    secureTextEntry
+                                    monospace
+                                />
+                            </FieldItem>
+                        ) : null}
+                    </>
+                ) : linkedSource ? (
+                    <>
+                        <FieldItem label={t('secretsSettings.linkAccount')}>
+                            <FieldTextInput
+                                testID="saved-secret-create-link-account"
+                                value={linkAccount}
+                                onChangeText={setLinkAccount}
+                                placeholder={t('secretsSettings.linkAccountPlaceholder')}
+                                accessibilityLabel={t('secretsSettings.linkAccount')}
+                                editable={!busy}
+                            />
+                        </FieldItem>
+                        <FieldItem label={t('secretsSettings.linkReference')}>
+                            <FieldTextInput
+                                testID="saved-secret-create-link-reference"
+                                value={linkReference}
+                                onChangeText={setLinkReference}
+                                placeholder={t('secretsSettings.linkReferencePlaceholder')}
+                                accessibilityLabel={t('secretsSettings.linkReference')}
+                                editable={!busy}
+                                monospace
+                            />
+                        </FieldItem>
+                    </>
+                ) : (
+                    <FieldItem label={t('secrets.fields.value')}>
+                        <FieldTextInput
+                            testID="saved-secret-create-value"
+                            value={value}
+                            onChangeText={setValue}
+                            placeholder={t('secrets.placeholders.valueExample')}
+                            accessibilityLabel={t('secrets.fields.value')}
+                            editable={!busy}
+                            secureTextEntry
+                            monospace
+                        />
+                    </FieldItem>
+                )}
+                {personalAvailable && sharedAvailable && !linkedSource ? (
                     <FieldItem
                         label={t('secretsSettings.keepTitle')}
                         supportingText={storage === 'personal'
@@ -271,18 +446,18 @@ export const SavedSecretCreateEditor = React.memo(function SavedSecretCreateEdit
             ) : null}
             <RoundButtonSizeScope size="normal" presentation="uniform"><View style={styles.actions}>
                 <RoundButton
-                    testID="saved-secret-create-submit"
-                    title={t('secretsSettings.save')}
-                    loading={busy}
-                    disabled={busy || !name.trim() || value.length === 0}
-                    onPress={() => { void submit(); }}
-                />
-                <RoundButton
                     testID="saved-secret-create-cancel"
                     display="secondary"
                     title={t('common.cancel')}
                     disabled={busy}
                     onPress={props.onCancel}
+                />
+                <RoundButton
+                    testID="saved-secret-create-submit"
+                    title={submitTitle}
+                    loading={busy}
+                    disabled={busy || (named && !name.trim()) || !material}
+                    onPress={() => { void submit(); }}
                 />
             </View></RoundButtonSizeScope>
         </View>
@@ -292,6 +467,6 @@ export const SavedSecretCreateEditor = React.memo(function SavedSecretCreateEdit
 const styles = StyleSheet.create(() => ({
     body: { paddingHorizontal: 16, paddingTop: 4, paddingBottom: 16, gap: 14 },
     fields: { gap: 12, width: '100%' },
-    actions: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 8 },
+    actions: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'flex-end', alignItems: 'center', gap: 8 },
     notice: { fontSize: 13, lineHeight: 18 },
 }));
