@@ -60,6 +60,7 @@ import {
     TriageReobserveEntryInputV1Schema,
 } from '../actions/reobserveEntryProtocol.js';
 import { readTriageEntryDetail } from '../actions/readEntryDetail.js';
+import { createTestkitSourceSessionRelations } from '../sessions/testkit/entrySessionTestkit.test-support.js';
 import { listTriagePinnedEntries } from '../actions/userMarks.js';
 import {
     TRIAGE_LIST_PINNED_ENTRIES_ACTION_LOCAL_ID_V1,
@@ -623,8 +624,7 @@ function createHarness(options: Readonly<{
             const result = await readTriageEntryDetail(
                 detailInput,
                 {
-                    sourceInstances: collections.sourceInstances,
-                    sessionLinks: collections.sessionLinks,
+                    sourceRelations: createTestkitSourceSessionRelations({ collections, contributions: admitted }),
                     readSessionSummary: async (sessionId) => ({
                         title: sessionId === finalLinkedSessionId
                             ? 'Linked Session 201'

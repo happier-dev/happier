@@ -9,12 +9,32 @@ import {
     TriageSourceAdministrationActionResultV1Schema,
 } from './sourceAdministration.js';
 import { TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1 } from './bounds.js';
+import { TriageConfiguredSourceInstanceV1Schema } from './instances.js';
+import { projectTriageDisplayTextV1 } from './text.js';
 
 const fixture = createTriageSourceV1Fixture();
 const draft = fixture.listInstancesResult.kind === 'complete'
     ? fixture.listInstancesResult.candidates[0]!
     : undefined;
 const sourceInstanceId = fixture.configuredInstance.instance.sourceInstanceId;
+
+it('keeps persisted source-instance bounds independent of the projected display allocation', () => {
+    // Retained source-instances v4 admits 7,336 bytes in all four fields.
+    // Projection growth may reduce its allocation, but must never narrow these bytes.
+    const text = 'x'.repeat(7_336);
+    const configured = { ...fixture.configuredInstance,
+        configuration: { v: 1, token: text },
+        locator: { v: 1, displayLabel: text, displayPath: text, webUrl: text } };
+    expect(TriageConfiguredSourceInstanceV1Schema.safeParse(configured).success).toBe(true);
+    const projected = projectTriageDisplayTextV1(text);
+    expect(projected.truncated).toBe(true);
+    expect(projected.value.length).toBeLessThan(text.length);
+    expect(TriageConfiguredSourceInstanceV1Schema.parse(configured)).toEqual(configured);
+    for (const field of [
+        TriageConfiguredSourceInstanceV1Schema.jsonSchema.properties!.configuration!.properties!.token!,
+        ...Object.values(TriageConfiguredSourceInstanceV1Schema.jsonSchema.properties!.locator!.properties!).filter(schema => schema.type === 'string'),
+    ]) expect(field['x-happier-max-utf8-bytes']).toBe(7_336);
+});
 
 describe('Triage source administration Action identity', () => {
     it('publishes one exact qualified ref that matches the stable registration id', () => {

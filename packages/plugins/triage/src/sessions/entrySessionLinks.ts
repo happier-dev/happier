@@ -1,4 +1,4 @@
-import { isPluginError, type PluginCancellationOptions } from '@happier-dev/plugin-sdk';
+import { isPluginError, type PluginCancellationOptions, type PluginError } from '@happier-dev/plugin-sdk';
 import type { SessionId } from '@happier-dev/plugin-sdk/sessions';
 import type { TriageEntryLocatorV1, TriageEntryRefV1 } from '@happier-dev/triage-protocol/v1';
 
@@ -41,7 +41,7 @@ import { findTriageEntrySessionLinkV1 } from './readEntrySessionLinks.js';
 export type TriageLinkEntryToSessionResultV1 =
     | Readonly<{ status: 'linked'; linkTag: string }>
     /** The storage boundary refused or lost the write; the caller retries only the link. */
-    | Readonly<{ status: 'failed' }>;
+    | Readonly<{ status: 'failed'; failure?: PluginError }>;
 
 type LinkCollections = Pick<CorpusCollectionsV1, 'sessionLinks'>;
 
@@ -92,11 +92,11 @@ export async function linkEntryToSession(
 ): Promise<TriageLinkEntryToSessionResultV1> {
     try {
         return await writeEntrySessionLink(input);
-    } catch {
+    } catch (error) {
         // The Collection store is a network-backed boundary. A refused or lost
         // write leaves the relationship uncommitted, and the caller retries
         // only this phase — it never respawns or rematerializes.
-        return { status: 'failed' };
+        return { status: 'failed', ...(isPluginError(error) ? { failure: error } : {}) };
     }
 }
 
@@ -150,7 +150,7 @@ export type TriageUnlinkEntryFromSessionResultV1 =
     /** Another writer moved the row's revision; the surface re-reads. */
     | Readonly<{ status: 'conflict'; linkTag: string }>
     /** The storage boundary refused or lost the delete; the caller retries. */
-    | Readonly<{ status: 'failed' }>;
+    | Readonly<{ status: 'failed'; failure?: PluginError }>;
 
 export type TriageUnlinkEntryFromSessionInputV1 = Readonly<{
     collections: LinkCollections;
@@ -213,9 +213,9 @@ export async function unlinkEntryFromSession(
             throw error;
         }
         return { status: 'unlinked', linkTag };
-    } catch {
+    } catch (error) {
         // The Collection store is a network-backed boundary. A refused or lost
         // delete leaves the relationship exactly as it was.
-        return { status: 'failed' };
+        return { status: 'failed', ...(isPluginError(error) ? { failure: error } : {}) };
     }
 }

@@ -1,4 +1,4 @@
-import type { JsonValue, PluginApi, PluginAccountApi, PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import { PluginError, type JsonValue, type PluginApi, type PluginAccountApi, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type { ActionHandler } from '@happier-dev/plugin-sdk/actions';
 import type { PluginAccountCollectionDefinition } from '@happier-dev/plugin-sdk/collections';
 import { describe, expect, it } from 'vitest';
@@ -16,7 +16,8 @@ import { fromCorpusStoredRow } from '../corpus/collections/rowCodec.js';
 import type { CorpusSessionLinkRowV1 } from '../corpus/collections/rows.js';
 import { createTestkitCorpusCollections } from '../corpus/testkit/corpusCollections.test-support.js';
 import { testkitEntryRef, testkitLocator } from '../corpus/testkit/observations.test-support.js';
-import { TRIAGE_LINK_ENTRY_TO_SESSION_ACTION_LOCAL_ID_V1, TRIAGE_READ_SOURCE_SESSION_LINKS_ACTION_LOCAL_ID_V1, TriageReadSourceSessionLinksResultV1Schema } from './sessionLinksProtocol.js';
+import { TRIAGE_LINK_ENTRY_TO_SESSION_ACTION_LOCAL_ID_V1, TRIAGE_READ_SOURCE_SESSION_LINKS_ACTION_LOCAL_ID_V1, TriageReadSourceSessionLinksResultV1Schema,
+    TriageReadSourceSessionLinksActionResultV1Schema, normalizeTriageSourceSessionLinksCoverageV1 } from './sessionLinksProtocol.js';
 import { TRIAGE_START_ENTRY_SESSION_ACTION_LOCAL_ID_V1, TRIAGE_UNLINK_ENTRY_FROM_SESSION_ACTION_LOCAL_ID_V1 } from './entrySessionProtocol.js';
 import { TRIAGE_READ_ENTRY_DETAIL_ACTION_LOCAL_ID_V1, TriageReadEntryDetailResultV1Schema } from './entryDetailProtocol.js';
 import { triageEntryDragSourceRuntime, triageEntrySessionDropTargetRuntime } from '../ui/list/entryDragDrop.js';
@@ -98,6 +99,149 @@ async function readLinkRows(
 }
 
 describe('the session-link writer Action', () => {
+    it('codes a retained configured source missing from the admitted Machine view without invoking credentials', async () => {
+        const { collections, control } = createTestkitCorpusCollections();
+        const base = testkitConfiguredInstance();
+        const configured = { ...base, instance: { ...base.instance,
+            source: { pluginId: 'acme.ledger', localId: 'acme-ledger' } },
+            locator: { ...base.locator, displayLabel: 'acme/ledger' } };
+        control.sourceInstances.seed(toCorpusStoredValue({ instanceTag: 'z'.repeat(43),
+            lifecycle: CORPUS_SOURCE_INSTANCE_LIFECYCLE.active, configuredAtMs: 1,
+            sourceQualifiedId: 'acme.ledger/acme-ledger', configured }));
+        const result = TriageReadSourceSessionLinksResultV1Schema.parse(await registeredLinkHandler(
+            TRIAGE_READ_SOURCE_SESSION_LINKS_ACTION_LOCAL_ID_V1)({ v: 1, sessionId: 'session-a' },
+                { ...createContext(collections), surface: 'api' }));
+        expect(result.lanes).toContainEqual(expect.objectContaining({ source: configured.instance.source,
+            displayLabel: 'acme/ledger', health: { kind: 'failed', failure: {
+                class: 'unsupportedContract', code: 'sessionLinksSourceNotAdmitted',
+            } } }));
+    });
+    it('reads a list of corpus-owned entry links with one set-shaped storage query', async () => {
+        const { collections: backing, control } = createTestkitCorpusCollections();
+        const configured = testkitConfiguredInstance();
+        control.sourceInstances.seed(toCorpusStoredValue({ instanceTag: 'a'.repeat(43),
+            lifecycle: CORPUS_SOURCE_INSTANCE_LIFECYCLE.active, configuredAtMs: 1,
+            sourceQualifiedId: `${configured.instance.source.pluginId}/${configured.instance.source.localId}`, configured,
+        }));
+        const entries = Array.from({ length: 64 }, (_, index) => ({ entryRef: {
+            ...testkitEntryRef(), entryId: String(index + 1),
+        } }));
+        for (const { entryRef } of entries) await linkEntryToSession({ collections: backing, entryRef,
+            sessionId: `session-${entryRef.entryId}`, display: { locator: testkitLocator(), scopeLabel: 'example/repository' }, nowMs: 1 });
+        let reads = 0;
+        const collections: CorpusCollectionsV1 = { ...backing, sessionLinks: { ...backing.sessionLinks,
+            query: async (...args: Parameters<typeof backing.sessionLinks.query>) => {
+                reads++;
+                return backing.sessionLinks.query(...args);
+            },
+        } };
+        const context = { ...createContext(collections), surface: 'api' } as PluginInvocationContext;
+        const result = TriageReadSourceSessionLinksActionResultV1Schema.parse(await registeredLinkHandler(
+            TRIAGE_READ_SOURCE_SESSION_LINKS_ACTION_LOCAL_ID_V1)({ v: 1, entries }, context));
+        expect(result.kind).toBe('entries');
+        if (result.kind !== 'entries') throw new Error('Expected entry results');
+        expect(result.entries.map(entry => entry.result.links.map(link => link.sessionId)))
+            .toEqual(entries.map(({ entryRef }) => [`session-${entryRef.entryId}`]));
+        expect(reads).toBe(1);
+    });
+    it('keeps prior source-wide replies explicitly incomplete instead of guessing kind coverage from their rows', () => {
+        const configured = testkitConfiguredInstance();
+        const prior = TriageReadSourceSessionLinksResultV1Schema.parse({ kind: 'complete', links: [], lanes: [{
+            source: configured.instance.source, sourceInstanceId: configured.instance.sourceInstanceId,
+            displayLabel: 'Prior source', health: { kind: 'complete' },
+        }] });
+        expect(normalizeTriageSourceSessionLinksCoverageV1(prior)).toMatchObject({ kind: 'failed',
+            lanes: [{ health: { kind: 'unavailable' } }],
+        });
+        expect(normalizeTriageSourceSessionLinksCoverageV1({ kind: 'complete', links: [] }).kind).toBe('failed');
+        expect(normalizeTriageSourceSessionLinksCoverageV1({ kind: 'complete', links: [], lanes: [],
+            nextCursor: 'unproven-continuation' }).kind).toBe('failed');
+        expect(TriageReadSourceSessionLinksResultV1Schema.safeParse({ ...prior,
+            lanes: [{ ...prior.lanes![0], kindIds: ['issue', 'issue'] }],
+        }).success).toBe(false);
+    });
+    it('gathers a demanded entry window through one configured and admitted view with independent coverage', async () => {
+        const { collections: backing, control } = createTestkitCorpusCollections();
+        const configured = testkitConfiguredInstance();
+        control.sourceInstances.seed(toCorpusStoredValue({ instanceTag: `a${'0'.repeat(42)}`,
+            lifecycle: CORPUS_SOURCE_INSTANCE_LIFECYCLE.active, configuredAtMs: 1,
+            sourceQualifiedId: `${configured.instance.source.pluginId}/${configured.instance.source.localId}`, configured,
+        }));
+        const entries = Array.from({ length: 100 }, (_, index) => ({ ...testkitEntryRef(), entryId: String(index) }));
+        for (const entryRef of entries) await linkEntryToSession({ collections: backing, entryRef, sessionId: `session-${entryRef.entryId}`,
+            display: { locator: testkitLocator(), scopeLabel: 'example/repository' }, nowMs: 1 });
+        let configurationReads = 0;
+        let admittedReads = 0;
+        let corpusReads = 0;
+        const collections: CorpusCollectionsV1 = { ...backing,
+            sourceInstances: { ...backing.sourceInstances, query: async (...args: Parameters<typeof backing.sourceInstances.query>) => {
+                configurationReads++; return await backing.sourceInstances.query(...args);
+            } },
+            sessionLinks: { ...backing.sessionLinks, query: async (...args: Parameters<typeof backing.sessionLinks.query>) => {
+                corpusReads++; return await backing.sessionLinks.query(...args);
+            } },
+        };
+        const base = createContext(collections);
+        const context = { ...base, surface: 'api', services: { ...base.services,
+            targetedContributions: { observeForSelf: () => ({ readCurrent: async () => {
+                admittedReads++; return testkitReadOnlySourceSnapshot();
+            }, dispose: () => {} }) },
+        } } as unknown as PluginInvocationContext;
+        const result = TriageReadSourceSessionLinksActionResultV1Schema.parse(await registeredLinkHandler(
+            TRIAGE_READ_SOURCE_SESSION_LINKS_ACTION_LOCAL_ID_V1)({ v: 1, entries: [
+                ...entries.map(entryRef => ({ entryRef, sourceInstanceId: configured.instance.sourceInstanceId })),
+                { entryRef: { ...testkitEntryRef(), kindId: 'unknown-kind' }, sourceInstanceId: configured.instance.sourceInstanceId },
+            ] }, context));
+        expect(result.kind).toBe('entries');
+        if (result.kind !== 'entries') throw new Error('Expected independently covered entry relations');
+        expect(result.entries.slice(0, 100).map(({ result }) => result)).toEqual(entries.map(entryRef => expect.objectContaining({
+            kind: 'complete', links: [expect.objectContaining({ entryRef, sessionId: `session-${entryRef.entryId}` })],
+        })));
+        expect(result.entries[100]?.result).toMatchObject({ kind: 'failed', links: [] });
+        expect({ configurationReads, admittedReads, corpusReads }).toEqual({ configurationReads: 1, admittedReads: 1, corpusReads: 1 });
+    });
+    it('keeps per-entry source authority and health when a shared corpus set read fails', async () => {
+        const { collections: backing, control } = createTestkitCorpusCollections();
+        const configured = testkitConfiguredInstance();
+        control.sourceInstances.seed(toCorpusStoredValue({ instanceTag: 'a'.repeat(43),
+            lifecycle: CORPUS_SOURCE_INSTANCE_LIFECYCLE.active, configuredAtMs: 1,
+            sourceQualifiedId: `${configured.instance.source.pluginId}/${configured.instance.source.localId}`, configured,
+        }));
+        const collections = { ...backing, sessionLinks: { ...backing.sessionLinks,
+            query: async () => { throw new Error('Corpus temporarily unavailable'); },
+        } };
+        const base = createContext(collections);
+        const context = { ...base, surface: 'api', services: { ...base.services,
+            targetedContributions: { observeForSelf: () => ({ readCurrent: async () => ({ contributions: [{
+                ...testkitReadOnlySourceSnapshot().contributions[0],
+                descriptor: { v: 1, purpose: 'triage-source', displayName: 'Mixed source',
+                    kinds: [{ id: 'pull-request', workflowSubject: 'pullRequest', displayName: 'PR' },
+                        { id: 'issue', workflowSubject: 'issue', displayName: 'Issue' }],
+                    sessionRelations: { kindIds: ['pull-request'] },
+                },
+                operations: { readSessionLinks: { role: 'readSessionLinks' }, linkSession: { role: 'linkSession' } },
+            }] }), dispose() {} }) },
+            actions: { executeAdmittedTargetedOperation: async (_operation: unknown, input: { localRef: { entryId: string } }) => {
+                if (input.localRef.entryId === 'denied') return { kind: 'failed', failure: { class: 'transient', code: 'sourceDenied' } };
+                return { kind: 'complete', links: [{ localRef: { kindId: 'pull-request',
+                    collisionScope: testkitEntryRef().collisionScope, entryId: input.localRef.entryId },
+                    sessionId: 'session-native', linkedAtMs: 1, displayPath: 'Native PR' }] };
+            } },
+        } } as unknown as PluginInvocationContext;
+        const result = TriageReadSourceSessionLinksActionResultV1Schema.parse(await registeredLinkHandler(
+            TRIAGE_READ_SOURCE_SESSION_LINKS_ACTION_LOCAL_ID_V1)({ v: 1, entries: [
+                { entryRef: { ...testkitEntryRef(), entryId: 'healthy' } },
+                { entryRef: { ...testkitEntryRef(), entryId: 'denied' } },
+                { entryRef: { ...testkitEntryRef(), kindId: 'issue' } },
+            ] }, context));
+        expect(result.kind).toBe('entries');
+        if (result.kind !== 'entries') throw new Error('Expected entry results');
+        expect(result.entries[0]?.result).toMatchObject({ kind: 'complete', links: [{ sessionId: 'session-native' }] });
+        expect(result.entries[1]?.result).toMatchObject({ kind: 'failed', links: [], lanes: [{ health: {
+            kind: 'failed', failure: { code: 'sourceDenied' },
+        } }] });
+        expect(result.entries[2]?.result).toMatchObject({ kind: 'failed', links: [], lanes: [{ health: { kind: 'failed' } }] });
+    });
     it('reads exact detail and source links through one current configuration view', async () => {
         const { collections: backing, control } = createTestkitCorpusCollections();
         let configurationReads = 0;

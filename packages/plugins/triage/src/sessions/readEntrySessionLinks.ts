@@ -9,6 +9,19 @@ import { deriveSessionLinkEntryTag } from '../corpus/identity/tags.js';
 
 export type TriageSessionLinksReaderV1 = Pick<CorpusCollectionHandleV1, 'query' | 'identityTag'>;
 
+/** The same exact indexed selection serves reads and content-free observation. */
+export async function triageSessionLinksSelectionV1(
+  collection: Pick<TriageSessionLinksReaderV1, 'identityTag'>,
+  relation: Readonly<{ entryRef: TriageEntryRefV1 }> | Readonly<{ sessionId: string }> | undefined,
+  options?: PluginCancellationOptions,
+) {
+  const bySession = relation !== undefined && 'sessionId' in relation;
+  const prefix = relation === undefined ? undefined : bySession ? [relation.sessionId]
+    : [await deriveSessionLinkEntryTag(collection, relation.entryRef, options)];
+  return { index: bySession ? CORPUS_SESSION_LINKS_INDEX_ID.bySession : CORPUS_SESSION_LINKS_INDEX_ID.byEntry,
+    ...(prefix === undefined ? {} : { prefix }), order: 'asc' as const };
+}
+
 /** Resolve a current relationship without assuming its immutable storage identity. */
 export async function findTriageEntrySessionLinkV1(
   collection: TriageSessionLinksReaderV1,
@@ -34,17 +47,9 @@ export async function readTriageSessionLinksPageV1(
   }> = {},
   options?: PluginCancellationOptions,
 ): Promise<Readonly<{ links: readonly CorpusSessionLinkRowV1[]; nextCursor?: string }>> {
-  const relation = input.relation;
-  const bySession = relation !== undefined && 'sessionId' in relation;
-  const prefix = relation === undefined
-    ? undefined
-    : bySession
-      ? [relation.sessionId]
-      : [await deriveSessionLinkEntryTag(collection, relation.entryRef, options)];
+  const selection = await triageSessionLinksSelectionV1(collection, input.relation, options);
   const page = await collection.query({
-    index: bySession ? CORPUS_SESSION_LINKS_INDEX_ID.bySession : CORPUS_SESSION_LINKS_INDEX_ID.byEntry,
-    ...(prefix === undefined ? {} : { prefix }),
-    order: 'asc',
+    ...selection,
     limit: MAX_TRIAGE_LINKED_SESSIONS_PAGE_SIZE_V1,
     ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
   }, options);
@@ -52,4 +57,29 @@ export async function readTriageSessionLinksPageV1(
     links: Object.freeze(page.rows.map((row) => fromCorpusStoredRow<CorpusSessionLinkRowV1>(row).value)),
     ...(page.nextCursor === undefined ? {} : { nextCursor: page.nextCursor }),
   });
+}
+
+/** Exact entry-set demand shares the Collection's indexed paging owner. */
+export async function readTriageSessionLinksForEntriesV1(
+  collection: TriageSessionLinksReaderV1,
+  entries: readonly TriageEntryRefV1[],
+  options?: PluginCancellationOptions,
+): Promise<readonly CorpusSessionLinkRowV1[]> {
+  if (entries.length === 0) return [];
+  const tags = await Promise.all(entries.map(entry => deriveSessionLinkEntryTag(collection, entry, options)));
+  const prefixes = [...new Set(tags)].map(tag => [tag]);
+  const links: CorpusSessionLinkRowV1[] = [];
+  const seen = new Set<string>();
+  let cursor: string | undefined;
+  do {
+    const page = await collection.query({ index: CORPUS_SESSION_LINKS_INDEX_ID.byEntry, prefixes,
+      order: 'asc', limit: MAX_TRIAGE_LINKED_SESSIONS_PAGE_SIZE_V1,
+      ...(cursor === undefined ? {} : { cursor }),
+    }, options);
+    links.push(...page.rows.map(row => fromCorpusStoredRow<CorpusSessionLinkRowV1>(row).value));
+    if (page.nextCursor !== undefined && seen.has(page.nextCursor)) throw new Error('triage:sessionLinks:cursorDidNotAdvance');
+    if (page.nextCursor !== undefined) seen.add(page.nextCursor);
+    cursor = page.nextCursor;
+  } while (cursor !== undefined);
+  return links;
 }

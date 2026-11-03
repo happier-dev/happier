@@ -30,6 +30,17 @@ const MINIMAL = Object.freeze({
 });
 
 describe('the V1 source descriptor', () => {
+    it('admits only a nonempty unique subset of declared kinds for source Session relations', () => {
+        const scoped = { ...MINIMAL, sessionRelations: { kindIds: ['pull-request'] } };
+        expect(admitTriageSourceDescriptorV1(scoped)).toMatchObject({ ok: true,
+            descriptor: { sessionRelations: { kindIds: ['pull-request'] } },
+        });
+        for (const kindIds of [[], ['unknown'], ['pull-request', 'pull-request']]) {
+            expect(admitTriageSourceDescriptorV1({ ...MINIMAL, sessionRelations: { kindIds } }).ok).toBe(false);
+        }
+        expect(admitTriageSourceDescriptorV1({ ...MINIMAL, sessionRelations: { authority: 'other' } }).ok).toBe(false);
+        expect(admitTriageSourceDescriptorV1({ ...MINIMAL, sessionRelations: {} })).toMatchObject({ ok: true });
+    });
     it('preserves a separately authored source’s natural selection unit', () => {
         const scopeUnit = { singularLabel: 'Repository', pluralLabel: 'Repositories' };
         const parsed = TriageSourceDescriptorV1Schema.parse({ ...MINIMAL, scopeUnit });

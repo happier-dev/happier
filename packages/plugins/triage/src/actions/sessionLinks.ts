@@ -9,7 +9,7 @@ import type {
     TriageLinkEntryToSessionActionResultV1,
     TriageLinkEntryToSessionInputV1,
     TriageReadSourceSessionLinksInputV1,
-    TriageReadSourceSessionLinksResultV1,
+    TriageReadSourceSessionLinksActionResultV1,
 } from './sessionLinksProtocol.js';
 
 /**
@@ -34,13 +34,16 @@ export function createTriageLinkEntryToSessionActionHandler(): TriageDataActionH
 }
 
 export function createTriageReadSourceSessionLinksActionHandler(): TriageDataActionHandler<
-    TriageReadSourceSessionLinksInputV1, TriageReadSourceSessionLinksResultV1
+    TriageReadSourceSessionLinksInputV1, TriageReadSourceSessionLinksActionResultV1
 > {
     return async (input, context) => {
         if (!isTriageAccountCaller(context)) return { kind: 'failed', links: [] };
         try {
-            const result = await createTriageSourceSessionRelations(context,
-                bindCorpusCollections(requireTriageAccountStorage(context))).read(input);
+            const relations = createTriageSourceSessionRelations(context, bindCorpusCollections(requireTriageAccountStorage(context)));
+            if ('entries' in input) {
+                return { kind: 'entries', entries: await relations.readEntries(input.entries) };
+            }
+            const result = await relations.read(input);
             return { kind: result.kind, links: result.links, lanes: result.lanes };
         } catch { return { kind: 'failed', links: [] }; }
     };

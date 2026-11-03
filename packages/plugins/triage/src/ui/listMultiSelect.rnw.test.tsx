@@ -41,6 +41,7 @@ import {
 import { listTriagePinnedEntries } from '../actions/userMarks.js';
 import { reobserveTriageEntry } from '../actions/reobserveEntry.js';
 import { readTriageEntryDetail } from '../actions/readEntryDetail.js';
+import { createTestkitSourceSessionRelations } from '../sessions/testkit/entrySessionTestkit.test-support.js';
 import { TriageReobserveEntryInputV1Schema } from '../actions/reobserveEntryProtocol.js';
 import { TriageReadEntryDetailInputV1Schema } from '../actions/entryDetailProtocol.js';
 import { toTriageWireObservation } from '../projection/listWindowWire.js';
@@ -419,8 +420,7 @@ function createHarness(options: Readonly<{
         }
         if (action === 'entries/read-detail-v1') {
             return await readTriageEntryDetail(TriageReadEntryDetailInputV1Schema.parse(request.input), {
-                sourceInstances: collections.sourceInstances,
-                sessionLinks: collections.sessionLinks,
+                sourceRelations: createTestkitSourceSessionRelations({ collections, contributions: admitted, signal: request.signal }),
                 readSessionSummary: async () => null,
                 signal: request.signal,
             });

@@ -1,4 +1,5 @@
 import {
+    defineProtocolArray,
     defineProtocolLiteral,
     defineProtocolObject,
     defineProtocolUnion,
@@ -6,7 +7,7 @@ import {
 import { PluginContributionIdentityV1Schema } from '@happier-dev/plugin-sdk/manifest';
 
 import { TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1 } from './bounds.js';
-import { TriageSourceInstanceIdV1Schema } from './identity.js';
+import { TriageSourceInstanceIdV1Schema, TriageTextV1ProtocolSchema } from './identity.js';
 import { TriageSourceInstanceDraftV1Schema } from './instances.js';
 
 /** The Action's target-local id. */
@@ -22,6 +23,14 @@ export const TRIAGE_SOURCES_ADMINISTER_ACTION_REF_V1 = Object.freeze({
     pluginId: TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1,
     localId: TRIAGE_SOURCES_ADMINISTER_ACTION_LOCAL_ID_V1,
 });
+
+/** The admitted source's own setup page; it collects a draft before invoking administration. */
+export const TriageConfigureSourceOfferV1Schema = defineProtocolObject({
+    destination: PluginContributionIdentityV1Schema,
+    displayName: TriageTextV1ProtocolSchema,
+    kindNames: defineProtocolArray(TriageTextV1ProtocolSchema),
+}, { policy: 'closed' });
+export type TriageConfigureSourceOfferV1 = ReturnType<typeof TriageConfigureSourceOfferV1Schema.parse>;
 
 /**
  * The one caller-bound source-administration ABI.

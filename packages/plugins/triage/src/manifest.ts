@@ -107,7 +107,7 @@ import {
   TriageLinkEntryToSessionInputV1Schema,
   TRIAGE_READ_SOURCE_SESSION_LINKS_ACTION_LOCAL_ID_V1,
   TriageReadSourceSessionLinksInputV1Schema,
-  TriageReadSourceSessionLinksResultV1Schema,
+  TriageReadSourceSessionLinksActionResultV1Schema,
 } from './actions/sessionLinksProtocol.js';
 import {
   createTriageAdministerActionActionHandler,
@@ -466,9 +466,10 @@ function createTriagePlugin() {
       [TRIAGE_READ_SOURCE_SESSION_LINKS_ACTION_LOCAL_ID_V1]: {
         title: 'Read source session links',
         description: 'Reads relationships owned by configured sources for the selected session.',
-        surfaces: ['ui', 'agent', 'mcp', 'cli'], placementBindings: [],
+        surfaces: ['plugin', 'ui', 'agent', 'mcp', 'cli'], placementBindings: [],
+        readOnly: true,
         inputSchema: TriageReadSourceSessionLinksInputV1Schema,
-        resultSchema: TriageReadSourceSessionLinksResultV1Schema,
+        resultSchema: TriageReadSourceSessionLinksActionResultV1Schema,
         hostAccess: ['account-storage'],
         execution: TRIAGE_DATA_ACTION_EXECUTION_V1,
         run: createTriageReadSourceSessionLinksActionHandler(),

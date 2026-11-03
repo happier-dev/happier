@@ -35,6 +35,7 @@ import {
 import { TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1, mutateTriageAction } from '../settings/actions.js';
 import { TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1 } from '../settings/savedViews.js';
 import { readTriageEntryDetail } from '../actions/readEntryDetail.js';
+import { createTestkitSourceSessionRelations } from '../sessions/testkit/entrySessionTestkit.test-support.js';
 import { linkEntryToSession } from '../sessions/entrySessionLinks.js';
 import {
     createActionTriageUnlinkTransport,
@@ -545,8 +546,7 @@ describe('durable Account state with no daemon reachable', () => {
             entryRef,
             sourceInstanceId: '00000000-0000-4000-8000-000000000002',
         }, {
-            sourceInstances: harness.corpus.collections.sourceInstances,
-            sessionLinks: harness.corpus.collections.sessionLinks,
+            sourceRelations: createTestkitSourceSessionRelations({ collections: harness.corpus.collections }),
             readSessionSummary: async () => null,
         });
         expect(directDetail.kind === 'read' ? directDetail.linkedSessions : []).toHaveLength(1);

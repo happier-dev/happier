@@ -3,6 +3,7 @@ import {
     defineProtocolLiteral,
     defineProtocolObject,
     defineProtocolUnion,
+    defineProtocolUniqueArray,
 } from '@happier-dev/plugin-sdk/protocol';
 
 import {
@@ -126,12 +127,17 @@ export const TriageSourceDescriptorV1Schema = defineProtocolObject({
      */
     settingsPageId: TriageIdentifierV1ProtocolSchema.optional(),
     scopeUnit: TriageSourceScopeUnitDescriptorV1Schema.optional(),
+    /** Declares relationship ownership independently of executable availability.
+     * Omitted kindIds retains the source's legacy all-kind relation scope. */
+    sessionRelations: defineProtocolObject({
+        kindIds: defineProtocolUniqueArray(TriageIdentifierV1ProtocolSchema, { minItems: 1 }).optional(),
+    }, { policy: 'closed' }).optional(),
 }, { policy: 'additive-open/drop' });
 export type TriageSourceDescriptorV1 = ReturnType<typeof TriageSourceDescriptorV1Schema.parse>;
 
 export type TriageSourceDescriptorAdmissionV1 =
     | Readonly<{ ok: true; descriptor: TriageSourceDescriptorV1 }>
-    | Readonly<{ ok: false; reason: 'invalid' | 'duplicateKindId' | 'duplicateDetailTabId' }>;
+    | Readonly<{ ok: false; reason: 'invalid' | 'duplicateKindId' | 'duplicateDetailTabId' | 'invalidSessionRelationKindIds' }>;
 
 /**
  * The target-owned semantic admission for one source descriptor.
@@ -147,6 +153,10 @@ export function admitTriageSourceDescriptorV1(input: unknown): TriageSourceDescr
     const kindIds = parsed.data.kinds.map((kind) => kind.id);
     if (new Set(kindIds).size !== kindIds.length) {
         return Object.freeze({ ok: false, reason: 'duplicateKindId' });
+    }
+    const relationKinds = parsed.data.sessionRelations?.kindIds;
+    if (relationKinds !== undefined && relationKinds.some((kindId) => !kindIds.includes(kindId))) {
+        return Object.freeze({ ok: false, reason: 'invalidSessionRelationKindIds' });
     }
     // A tab id is what a `panel` request names, so one kind's tab ids must be
     // one unambiguous set: shared and source ids share the namespace.

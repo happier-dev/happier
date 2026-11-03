@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { TRIAGE_DATA_ACTION_EXECUTION_V1 } from '../../accountExecution.js';
 import type { JsonValue, PluginCancellationOptions } from '@happier-dev/plugin-sdk';
-import { usePluginHostApi, usePluginHostReadiness, useSurfaceContext } from '@happier-dev/plugin-ui';
+import { usePluginHostApi, usePluginHostReadiness } from '@happier-dev/plugin-ui';
 import type {
   TriageDetailSurfaceInputV1,
   TriageLinkedSessionProjectionV1,
@@ -13,23 +13,17 @@ import {
   type TriageReadEntryDetailResultV1,
   TriageReadEntryDetailResultV1Schema,
 } from '../../actions/entryDetailProtocol.js';
-import { readTriageEntryDetail } from '../../actions/readEntryDetail.js';
-import type { CorpusCollectionsV1 } from '../../corpus/collections/bindCorpusCollections.js';
 import type { TriageSurfaceSelectionV1 } from '../state/surface.js';
 import { sameTriageEntryRefV1 } from '../state/surface.js';
-import { useTriageDurableAccount } from '../durable/accountDurableState.js';
 import { buildTriageDetailSurfaceInputV1 } from './input.js';
-import { resolveTriageSourceSessionRelationsV1 } from './sourceSurface.js';
 
 /**
  * The selected entry's mounted detail input.
  *
- * Two of the three members the strict boundary requires are Account Collection
- * state. When the mounted Account data client is reachable this hook reads
- * those members through the canonical Collection-backed domain owner. Sources
- * with their own Session relations and mounts without an Account data client
- * use the plugin's own Action transport. The applied observation is already in
- * the reader's device-local projection and is passed in.
+ * The Account Action supplies the configured connection and links through the
+ * composed relation owner. The UI does not select relation ownership from its
+ * local descriptor snapshot or open a parallel raw corpus reader. The applied
+ * observation remains in the reader's device-local projection and is passed in.
  *
  * Descriptor and operation/surface facts deliberately do not travel through
  * this Action. The physical mount's exact targeted snapshot owns them, leaving
@@ -143,31 +137,6 @@ function createActionTriageEntryDetailTransport(
   });
 }
 
-/**
- * Read the durable half of detail directly from the mounted Account authority.
- *
- * This is the same domain owner the Account Action calls, over the same three
- * Collection handles and codecs. The UI does not execute a provider operation
- * and does not recreate Session storage: when the generic Session summary
- * service is unavailable in this realm, the link keeps its canonical
- * `sessionId` and omits only presentation metadata, exactly as
- * `readTriageEntryDetail` specifies for an unavailable summary boundary.
- */
-function createDirectTriageEntryDetailTransport(
-  collections: Pick<CorpusCollectionsV1, 'sourceInstances' | 'sessionLinks'>,
-): TriageEntryDetailTransportV1 {
-  return Object.freeze({
-    async read(input, options) {
-      return await readTriageEntryDetail(input, {
-        sourceInstances: collections.sourceInstances,
-        sessionLinks: collections.sessionLinks,
-        readSessionSummary: async () => null,
-        ...(options?.signal ? { signal: options.signal } : {}),
-      });
-    },
-  });
-}
-
 export type TriageEntryDetailInputSourceV1 = Readonly<{
   selection: Pick<TriageSurfaceSelectionV1, 'entryRef' | 'sourceInstanceId'>;
   /** The host-applied present observation for the selected entry and connection. */
@@ -237,25 +206,10 @@ export function useTriageEntryDetail(
   source: TriageEntryDetailInputSourceV1 | null,
 ): TriageMountedEntryDetailStateV1 | null {
   const hostApi = usePluginHostApi();
-  const durable = useTriageDurableAccount();
-  const { targetedContributions } = useSurfaceContext();
-  const sourceReadSelection = useRef<Readonly<{ identity: string | null; sourceOwned: boolean }>>({ identity: null, sourceOwned: false });
-  const identity = source === null ? null : `${source.selection.entryRef.source.pluginId}/${source.selection.entryRef.source.localId}/${source.selection.sourceInstanceId}`;
-  const admittedSourceRead = source !== null && resolveTriageSourceSessionRelationsV1(targetedContributions, source.selection.entryRef.source, 'readSessionLinks');
-  // Losing admission cannot reinterpret the same mounted source relationship
-  // as an external Collection relation. A different selection starts fresh.
-  sourceReadSelection.current = { identity, sourceOwned: admittedSourceRead
-    || (sourceReadSelection.current.identity === identity && sourceReadSelection.current.sourceOwned) };
-  const sourceOwned = sourceReadSelection.current.sourceOwned;
-  // Source-owned relations use the declared Action even with mounted Collections;
-  // each nested source operation admits its own execution placement.
-  const useActionTransport = durable.collections === null || sourceOwned;
-  const readiness = usePluginHostReadiness(useActionTransport && Object.is(TRIAGE_DATA_ACTION_EXECUTION_V1.target, 'daemon'));
+  const readiness = usePluginHostReadiness(Object.is(TRIAGE_DATA_ACTION_EXECUTION_V1.target, 'daemon'));
   const transport = useMemo<TriageEntryDetailTransportV1>(
-    () => durable.collections !== null && !useActionTransport
-      ? createDirectTriageEntryDetailTransport(durable.collections)
-      : createActionTriageEntryDetailTransport(hostApi),
-    [durable.collections, hostApi, useActionTransport],
+    () => createActionTriageEntryDetailTransport(hostApi),
+    [hostApi],
   );
   const [state, setState] = useState<TriageEntryDetailStateV1 | null>(null);
   const stateRef = useRef<TriageEntryDetailStateV1 | null>(null);

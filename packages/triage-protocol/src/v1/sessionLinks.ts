@@ -9,7 +9,7 @@ import {
 import { SessionIdSchema } from '@happier-dev/plugin-sdk/sessions';
 
 import { TriageSourceFailureV1Schema } from './diagnostics.js';
-import { TriageSourceEntryLocalRefV1Schema, TriageTextV1ProtocolSchema } from './identity.js';
+import { TriageSourceEntryLocalRefV1Schema, TriageTextV1ProtocolSchema, TriageEntryLocatorV1Schema } from './identity.js';
 import {
     TriageConfiguredSourceConnectedAccountInstanceV1Schema,
     TriageConfiguredSourceCredentialInstanceV1Schema,
@@ -52,15 +52,20 @@ export const TriageSourceLinkSessionResultV1Schema = defineProtocolUnion([
 ]);
 export type TriageSourceLinkSessionResultV1 = ReturnType<typeof TriageSourceLinkSessionResultV1Schema.parse>;
 
+const sourceSessionLinks = defineProtocolArray(defineProtocolObject({
+    localRef: TriageSourceEntryLocalRefV1Schema,
+    sessionId: SessionIdSchema,
+    linkedAtMs: defineProtocolNumber({ integer: true }),
+    displayPath: TriageTextV1ProtocolSchema,
+    locator: TriageEntryLocatorV1Schema.optional(),
+}, { policy: 'closed' }));
+
 export const TriageSourceReadSessionLinksResultV1Schema = defineProtocolUnion([
+    defineProtocolObject({ kind: defineProtocolLiteral('complete'), links: sourceSessionLinks }, { policy: 'closed' }),
     defineProtocolObject({
-        kind: defineProtocolLiteral('complete'),
-        links: defineProtocolArray(defineProtocolObject({
-            localRef: TriageSourceEntryLocalRefV1Schema,
-            sessionId: SessionIdSchema,
-            linkedAtMs: defineProtocolNumber({ integer: true }),
-            displayPath: TriageTextV1ProtocolSchema,
-        }, { policy: 'closed' })),
+        kind: defineProtocolLiteral('partial'), links: sourceSessionLinks,
+        /** Only these entries are unreadable; omission elsewhere establishes absence. */
+        unavailableRefs: defineProtocolArray(TriageSourceEntryLocalRefV1Schema, { minItems: 1 }),
     }, { policy: 'closed' }),
     defineProtocolObject({
         kind: defineProtocolLiteral('failed'), failure: TriageSourceFailureV1Schema,

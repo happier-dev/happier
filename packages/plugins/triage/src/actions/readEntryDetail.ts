@@ -1,17 +1,13 @@
 import type { TriageDataActionContext, TriageDataActionHandler } from './dataContext.js';
 import type { PluginCancellationOptions } from '@happier-dev/plugin-sdk';
 import {
-    type TriageEntryRefV1,
     type TriageLinkedSessionProjectionV1,
 } from '@happier-dev/triage-protocol/v1';
 
 import { bindCorpusCollections } from '../corpus/collections/bindCorpusCollections.js';
-import type { CorpusCollectionHandleV1 } from '../corpus/collections/handles.js';
 import {
     CORPUS_SOURCE_INSTANCE_LIFECYCLE,
 } from '../corpus/collections/ids.js';
-import { findConfiguredSourceInstanceRow } from '../corpus/configuration/administerConfiguredSourceInstance.js';
-import { readTriageSessionLinksPageV1 } from '../sessions/readEntrySessionLinks.js';
 import { createTriageSourceSessionRelations, type TriageSourceSessionLinkV1 } from '../sessions/sourceSessionRelations.js';
 import { requireTriageAccountStorage } from '../requiredAccountStorage.js';
 import { isTriageAccountCaller, isTriageHostActionCaller, resolveTriageCallerSource } from './callerSource.js';
@@ -55,37 +51,25 @@ export type TriageLinkedSessionSummaryReaderV1 = (
 ) => Promise<Readonly<{ title?: string; updatedAtMs?: number }> | null>;
 
 export type TriageReadEntryDetailDepsV1 = Readonly<{
-    sourceInstances: Pick<CorpusCollectionHandleV1, 'query'>;
-    sessionLinks: Pick<CorpusCollectionHandleV1, 'query' | 'identityTag'>;
     readSessionSummary: TriageLinkedSessionSummaryReaderV1;
-    sourceRelations?: Pick<ReturnType<typeof createTriageSourceSessionRelations>, 'findConfiguredInstance' | 'read'>;
+    sourceRelations: Pick<ReturnType<typeof createTriageSourceSessionRelations>, 'findConfiguredInstance' | 'read'>;
     signal?: AbortSignal;
 }>;
 
 /**
- * One bounded page of this entry's links, over the declared `by-entry` index.
- *
- * The bound is one generic Collection page. The Collection cursor crosses only
- * this plugin-private Action and is returned untouched; the mounted reader may
- * hand it back, but neither side interprets or persists it.
+ * Project one admitted relationship page; ownership and acquisition stay with
+ * sourceSessionRelations, including corpus paging and its opaque cursor.
  */
 async function readLinkedSessions(
-    entryRef: TriageEntryRefV1,
     deps: TriageReadEntryDetailDepsV1,
-    cursor?: string,
+    sourceLinks: readonly TriageSourceSessionLinkV1[],
     options?: PluginCancellationOptions,
-    sourceLinks?: readonly TriageSourceSessionLinkV1[],
 ): Promise<Readonly<{
     sessions: readonly TriageLinkedSessionProjectionV1[];
     nextCursor?: string;
 }>> {
-    const page = sourceLinks === undefined ? await readTriageSessionLinksPageV1(deps.sessionLinks, {
-        relation: { entryRef },
-        ...(cursor === undefined ? {} : { cursor }),
-    }, options) : { links: sourceLinks, nextCursor: undefined };
-
     const projections: TriageLinkedSessionProjectionV1[] = [];
-    for (const link of page.links) {
+    for (const link of sourceLinks) {
         let summary: Awaited<ReturnType<TriageLinkedSessionSummaryReaderV1>> = null;
         try {
             summary = await deps.readSessionSummary(link.sessionId, options);
@@ -102,7 +86,6 @@ async function readLinkedSessions(
     }
     return Object.freeze({
         sessions: Object.freeze(projections),
-        ...(page.nextCursor === undefined ? {} : { nextCursor: page.nextCursor }),
     });
 }
 
@@ -113,15 +96,7 @@ export async function readTriageEntryDetail(
     const options: PluginCancellationOptions | undefined = deps.signal
         ? { signal: deps.signal }
         : undefined;
-    // Source-role reads already need a current configured view. Use that same
-    // invocation's records; direct Account readers keep their private-id lookup.
-    const row = deps.sourceRelations
-        ? await deps.sourceRelations.findConfiguredInstance(input.sourceInstanceId)
-        : await findConfiguredSourceInstanceRow(
-            deps.sourceInstances,
-            input.sourceInstanceId,
-            options,
-        );
+    const row = await deps.sourceRelations.findConfiguredInstance(input.sourceInstanceId);
     // A retired row is not a connection a detail may be read through. It is kept
     // so an explicit reactivation stays possible, not so a mounted surface can
     // keep opening it.
@@ -137,23 +112,21 @@ export async function readTriageEntryDetail(
         return UNAVAILABLE;
     }
 
-    const sourceLinks = await deps.sourceRelations?.read({ entryRef: input.entryRef, sourceInstanceId: input.sourceInstanceId });
-    if (sourceLinks !== undefined && sourceLinks.kind !== 'complete') throw new Error('triage:sessionLinks:sourceUnavailable');
+    const sourceLinks = await deps.sourceRelations.read({ entryRef: input.entryRef, sourceInstanceId: input.sourceInstanceId,
+        paged: true, readFailure: 'throw', ...(input.linkedSessionsCursor === undefined ? {} : { cursor: input.linkedSessionsCursor }) });
     const linkedSessionPage = await readLinkedSessions(
-        input.entryRef,
         deps,
-        input.linkedSessionsCursor,
+        sourceLinks.links,
         options,
-        sourceLinks?.sourceOwned ? sourceLinks.links : undefined,
     );
 
     return Object.freeze({
         kind: 'read',
         instance: configured,
         linkedSessions: linkedSessionPage.sessions,
-        ...(linkedSessionPage.nextCursor === undefined
+        ...(sourceLinks.nextCursor === undefined
             ? {}
-            : { linkedSessionsNextCursor: linkedSessionPage.nextCursor }),
+            : { linkedSessionsNextCursor: sourceLinks.nextCursor }),
     });
 }
 
@@ -174,8 +147,6 @@ export function createTriageReadEntryDetailActionHandler(): TriageDataActionHand
             requireTriageAccountStorage(context),
         );
         return await readTriageEntryDetail(input, {
-            sourceInstances,
-            sessionLinks,
             sourceRelations: createTriageSourceSessionRelations(context, { sourceInstances, sessionLinks }),
             // Portable Account execution has no Session service. These optional
             // display facts stay absent while authoritative links remain present.

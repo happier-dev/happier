@@ -16,6 +16,8 @@ import {
     testkitLocator,
 } from '../../corpus/testkit/observations.test-support.js';
 import type { TriageEntrySessionLinkDisplayV1 } from '../entrySessionLinks.js';
+import { createTriageSourceSessionRelations } from '../sourceSessionRelations.js';
+import type { CorpusCollectionsV1 } from '../../corpus/collections/bindCorpusCollections.js';
 import type { TriageSessionActionIdV1, TriageSessionActionInvokerV1 } from '../entrySessionOpen.js';
 import type {
     TriagePrepareReviewWorkspaceOperationV1,
@@ -32,6 +34,30 @@ export function testkitReadOnlySourceSnapshot() {
             { id: 'issue', workflowSubject: 'issue', displayName: 'Issue' },
         ] }, operations: {},
     }] };
+}
+
+/** Real relation owner with only its admitted-registry transport replaced. */
+type TestkitRelationOwnerInput = Readonly<{
+    collections: Pick<CorpusCollectionsV1, 'sourceInstances' | 'sessionLinks'>;
+    contributions?: readonly unknown[];
+    signal?: AbortSignal;
+}>;
+export function createTestkitSourceSessionRelations(input: TestkitRelationOwnerInput): ReturnType<typeof createTriageSourceSessionRelations>;
+export function createTestkitSourceSessionRelations(collections: TestkitRelationOwnerInput['collections'], snapshot?: unknown): ReturnType<typeof createTriageSourceSessionRelations>;
+export function createTestkitSourceSessionRelations(
+    input: TestkitRelationOwnerInput | TestkitRelationOwnerInput['collections'],
+    snapshot?: unknown,
+) {
+    const options: TestkitRelationOwnerInput = 'collections' in input ? input : { collections: input };
+    // The boundary fixture supplies the subset of the invocation used by this owner.
+    const context = { signal: options.signal ?? new AbortController().signal, services: {
+        targetedContributions: { observeForSelf: () => ({
+            readCurrent: async () => snapshot ?? { contributions: options.contributions ?? testkitReadOnlySourceSnapshot().contributions },
+            dispose() {},
+        }) },
+        actions: { executeAdmittedTargetedOperation: async () => { throw new Error('No source relation role was scripted'); } },
+    } } as unknown as Parameters<typeof createTriageSourceSessionRelations>[0];
+    return createTriageSourceSessionRelations(context, options.collections);
 }
 
 /**

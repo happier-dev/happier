@@ -14,6 +14,7 @@ import { CORPUS_SOURCE_INSTANCE_LIFECYCLE } from '../corpus/collections/ids.js';
 import { listTriageEntries, type TriageAdmittedSourceV1 } from '../actions/listEntries.js';
 import { TriageListEntriesInputV1Schema, TRIAGE_LIST_ENTRIES_ACTION_LOCAL_ID_V1 } from '../actions/listEntriesProtocol.js';
 import { readTriageEntryDetail } from '../actions/readEntryDetail.js';
+import { createTestkitSourceSessionRelations } from '../sessions/testkit/entrySessionTestkit.test-support.js';
 import { TriageReadEntryDetailInputV1Schema, TRIAGE_READ_ENTRY_DETAIL_ACTION_LOCAL_ID_V1 } from '../actions/entryDetailProtocol.js';
 import { createTriageEphemeralSharedScopeFixture } from './window/ephemeralSharedScope.test-support.js';
 import type { EphemeralInputSettlement } from '@happier-dev/plugin-sdk/ui';
@@ -61,7 +62,7 @@ async function mountPicker(options: Readonly<{ getAvailable?: boolean; wrongIden
             executeScan: async () => native.scanResult, nowMs: () => Date.now(),
           });
           if (requested === TRIAGE_READ_ENTRY_DETAIL_ACTION_LOCAL_ID_V1) return await readTriageEntryDetail(TriageReadEntryDetailInputV1Schema.parse(input), {
-            sourceInstances: collections.sourceInstances, sessionLinks: collections.sessionLinks, readSessionSummary: async () => null,
+            sourceRelations: createTestkitSourceSessionRelations({ collections, contributions: admitted }), readSessionSummary: async () => null,
           });
           expect(requested).toEqual(action);
           getInputs.push(TriageGetInputV1Schema.parse(input));

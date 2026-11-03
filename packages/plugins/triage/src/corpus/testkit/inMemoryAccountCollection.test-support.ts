@@ -104,6 +104,43 @@ export function createInMemoryAccountCollection<TDefinition extends PluginAccoun
     const rows = new Map<string, StoredRow>();
     let changeCursor = 0;
     let getCallCount = 0;
+    type Selection = Parameters<PluginAccountCollection<CorpusStoredValueV1>['watch']>[0];
+    type WatchListener = Parameters<PluginAccountCollection<CorpusStoredValueV1>['watch']>[1];
+    const watchers = new Set<Readonly<{ selection: Selection; listener: WatchListener }>>();
+
+    function admitSelection(selection: Parameters<PluginAccountCollection<CorpusStoredValueV1>['query']>[0]) {
+        const index = indexes.find(candidate => candidate.id === selection.index);
+        if (!index) throw invalidValueError('Collection query names an undeclared index');
+        if ((selection.prefix?.length ?? 0) > index.fields.length) throw invalidValueError('Collection query prefix is too long');
+        return index;
+    }
+
+    function matchesSelection(value: CorpusStoredValueV1, selection: Selection): boolean {
+        if ('kind' in selection) return selection.kind === 'collection' || rowIdOf(value) === selection.rowId;
+        if (selection.prefixes !== undefined) return selection.prefixes.some(prefix => matchesSelection(value,
+            { ...selection, prefix, prefixes: undefined }));
+        const index = admitSelection(selection);
+        const prefix = selection.prefix ?? [];
+        for (const [position, expected] of prefix.entries()) {
+            const field = index.fields[position];
+            if (!field || compareScalar(readScalar(value, field.field), expected) !== 0) return false;
+        }
+        const rangeField = index.fields[prefix.length];
+        if (selection.range && rangeField) {
+            const actual = readScalar(value, rangeField.field);
+            if (selection.range.lower !== undefined && compareScalar(actual, selection.range.lower) < 0) return false;
+            if (selection.range.upper !== undefined && compareScalar(actual, selection.range.upper) > 0) return false;
+        }
+        return true;
+    }
+
+    function publishChanges(values: readonly CorpusStoredValueV1[]) {
+        for (const watcher of watchers) {
+            if (values.some(value => matchesSelection(value, watcher.selection))) {
+                watcher.listener({ kind: 'changed', changeCursor });
+            }
+        }
+    }
 
     // The real host refuses a value its admitted schema does not describe, so a
     // corpus row shape that outgrew its declaration must fail here too.
@@ -182,14 +219,18 @@ export function createInMemoryAccountCollection<TDefinition extends PluginAccoun
         ) {
             const rowId = rowIdOf(value);
             if (conflictFor(rowId, putOptions.expectedRevision)) throw conflictError();
+            const previous = rows.get(rowId);
             const applied = applyOperation({ kind: 'put', value, expectedRevision: putOptions.expectedRevision });
             changeCursor += 1;
+            publishChanges([...(previous && !previous.deleted ? [previous.value] : []), value]);
             return { rowId: applied.rowId, revision: applied.revision, value };
         },
         async delete(rowId: string, deleteOptions: Readonly<{ expectedRevision: number }>) {
             if (conflictFor(rowId, deleteOptions.expectedRevision)) throw conflictError();
+            const previous = rows.get(rowId);
             const applied = applyOperation({ kind: 'delete', rowId, expectedRevision: deleteOptions.expectedRevision });
             changeCursor += 1;
+            if (previous && !previous.deleted) publishChanges([previous.value]);
             return Object.freeze({ rowId: applied.rowId, revision: applied.revision, deleted: true as const });
         },
         async forget(rowId: string, forgetOptions: Readonly<{ expectedRevision: number }>) {
@@ -204,32 +245,17 @@ export function createInMemoryAccountCollection<TDefinition extends PluginAccoun
         async query(request: Readonly<{
             index: string;
             prefix?: readonly ScalarValue[];
+            prefixes?: readonly (readonly ScalarValue[])[];
             range?: Readonly<{ lower?: ScalarValue; upper?: ScalarValue }>;
             order: 'asc' | 'desc';
             cursor?: string;
             limit?: number;
         }>) {
-            const index = indexes.find((candidate) => candidate.id === request.index);
-            if (!index) throw invalidValueError('Collection query names an undeclared index');
-            const prefix = request.prefix ?? [];
-            if (prefix.length > index.fields.length) throw invalidValueError('Collection query prefix is too long');
-            const rangeField = index.fields[prefix.length];
+            const index = admitSelection(request);
             const live = [...rows.entries()]
                 .filter(([, stored]) => !stored.deleted)
                 .map(([rowId, stored]) => ({ rowId, stored }));
-            const matching = live.filter(({ stored }) => {
-                for (const [position, value] of prefix.entries()) {
-                    const field = index.fields[position];
-                    if (!field) return false;
-                    if (compareScalar(readScalar(stored.value, field.field), value) !== 0) return false;
-                }
-                if (request.range && rangeField) {
-                    const value = readScalar(stored.value, rangeField.field);
-                    if (request.range.lower !== undefined && compareScalar(value, request.range.lower) < 0) return false;
-                    if (request.range.upper !== undefined && compareScalar(value, request.range.upper) > 0) return false;
-                }
-                return true;
-            });
+            const matching = live.filter(({ stored }) => matchesSelection(stored.value, request));
             matching.sort((left, right) => {
                 for (const field of index.fields) {
                     const comparison = compareScalar(
@@ -268,8 +294,14 @@ export function createInMemoryAccountCollection<TDefinition extends PluginAccoun
             // A batch is atomic on conflict: if one operation conflicts, none of
             // the request applies and the complete conflict set is returned.
             if (conflicts.length > 0) return { status: 'conflict' as const, conflicts };
+            const changedValues = operations.flatMap(operation => {
+                if (operation.kind === 'assert') return [];
+                const previous = rows.get(operation.kind === 'put' ? rowIdOf(operation.value) : operation.rowId);
+                return [...(previous && !previous.deleted ? [previous.value] : []), ...(operation.kind === 'put' ? [operation.value] : [])];
+            });
             const results = operations.map((operation) => applyOperation(operation));
             changeCursor += 1;
+            publishChanges(changedValues);
             return { status: 'updated' as const, results, changeCursor };
         },
         async limits() {
@@ -293,10 +325,11 @@ export function createInMemoryAccountCollection<TDefinition extends PluginAccoun
                 operationEncodedBytes: operations.map((operation) => 1 + encodedBytes(operation)),
             };
         },
-        watch() {
-            // Watches are level-triggered invalidations the corpus rereads
-            // through; no test here depends on an invalidation stream.
-            return { dispose: () => {} };
+        watch(selection, listener) {
+            if (!('kind' in selection)) admitSelection(selection);
+            const watcher = { selection, listener };
+            watchers.add(watcher);
+            return { dispose: () => { watchers.delete(watcher); } };
         },
     } satisfies PluginAccountCollection<CorpusStoredValueV1>;
 
@@ -308,13 +341,23 @@ export function createInMemoryAccountCollection<TDefinition extends PluginAccoun
         },
         seed: (value) => {
             const rowId = rowIdOf(value);
+            const previous = rows.get(rowId);
             const revision = (rows.get(rowId)?.revision ?? 0) + 1;
             rows.set(rowId, { revision, value, deleted: false });
+            if (watchers.size > 0) {
+                changeCursor += 1;
+                publishChanges([...(previous && !previous.deleted ? [previous.value] : []), value]);
+            }
             return { rowId, revision };
         },
         tombstone: (rowId) => {
+            const previous = rows.get(rowId);
             const revision = (rows.get(rowId)?.revision ?? 0) + 1;
             rows.set(rowId, { revision, value: {}, deleted: true });
+            if (watchers.size > 0 && previous && !previous.deleted) {
+                changeCursor += 1;
+                publishChanges([previous.value]);
+            }
         },
     };
 
