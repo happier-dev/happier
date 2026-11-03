@@ -12,6 +12,7 @@ export type ArtifactAccountEncryptionMigrationOwnershipV1 = z.infer<typeof Artif
 
 export const ArtifactAccountEncryptionMigrationRowV1Schema = z.strictObject({
   id: z.string().check(z.minLength(1)), ownership: ArtifactAccountEncryptionMigrationOwnershipV1Schema,
+  publicAudience: z.enum(['retained', 'none']),
   header: z.string().check(z.minLength(1)), headerVersion: z.number().check(z.int(), z.nonnegative()),
   body: z.string().check(z.minLength(1)), bodyVersion: z.number().check(z.int(), z.nonnegative()), dataEncryptionKey: z.string().check(z.minLength(1)),
   provenance: z.optional(z.nullable(z.string().check(z.minLength(1)))),

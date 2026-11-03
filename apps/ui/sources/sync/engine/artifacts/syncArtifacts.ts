@@ -49,7 +49,7 @@ import type {
 import type { ArtifactHeader } from '@/sync/domains/artifacts/artifactTypes';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, decodePlainArtifactStoredContent, encodePlainArtifactStoredContent, isPlainArtifactDataKeyMarker } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { ArtifactBodyV1Schema, ArtifactBodyEnvelopeV1StoredSchema, ArtifactSavedByV1Schema, type ArtifactBodyEnvelopeV1, type ArtifactSavedByV1, type ArtifactWorkspaceSourceV1, ArtifactBlobReferenceV1Schema, type ArtifactBlobReferenceV1, type ArtifactBodyV1 } from '@happier-dev/protocol/artifacts/artifactBinaryV1';
-import { artifactKindHasSharedWidgetInputsV1, artifactKindRequiresTextBodyV1, getArtifactUseTargetV1, readArtifactSharedAudienceV1 } from '@happier-dev/protocol/artifacts/artifactSharingV1';
+import { artifactKindRequiresSharedAudienceV1, artifactKindRequiresTextBodyV1, getArtifactUseTargetV1, readArtifactSharedAudienceV1 } from '@happier-dev/protocol/artifacts/artifactSharingV1';
 import { runArtifactRecipientKeyPreparationV1, prepareArtifactRecipientKeyEnvelopesV1 } from '@happier-dev/protocol/artifacts/artifactRecipientKeyPreparationV1';
 import { withArtifactExcerptV1 } from '@happier-dev/protocol/artifacts/artifactExcerptV1';
 import { canShareArtifactWriteContentV1, prepareArtifactHeaderForRevisionV1, prepareArtifactHeaderForBodyV1 } from '@happier-dev/protocol/artifacts/artifactHeaderRestorationV1';
@@ -115,7 +115,7 @@ async function sharedArtifactWriteContext(params: Readonly<{
     artifactId: string; current: DecryptedArtifact; header: Readonly<Record<string, unknown>>; candidateBody?: ArtifactBodyV1 | null;
 }>) {
     const currentHeader = params.current.rawHeader;
-    if (!artifactKindHasSharedWidgetInputsV1(currentHeader?.kind) && !artifactKindHasSharedWidgetInputsV1(params.header.kind)) return undefined;
+    if (!artifactKindRequiresSharedAudienceV1(currentHeader?.kind) && !artifactKindRequiresSharedAudienceV1(params.header.kind)) return undefined;
     if (!currentHeader) throw Object.assign(new Error('artifact_content_unavailable'), { code: 'content_unavailable' });
     const candidate = { artifactId: params.artifactId, header: currentHeader,
         ownerAccountId: params.current.ownerAccountId, access: params.current.access };

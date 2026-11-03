@@ -1,3 +1,5 @@
+import { t } from '@/text';
+import { HappyError } from '@/utils/errors/errors';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, decodePlainArtifactStoredContent, encodePlainArtifactStoredContent, isPlainArtifactDataKeyMarker } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { MACHINE_PLAIN_DATA_KEY_MARKER, decodePlainMachineStoredContent, encodePlainMachineStoredContent, isPlainMachineDataKeyMarker } from '@happier-dev/protocol/machines/machineStoredContent';
 import { computeContentPublicKeyFingerprint } from '@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint';
@@ -16,7 +18,7 @@ import type { ReviewCommentAccountEncryptionMigrationInventoryResponseV1 } from 
 import type { SessionOrganizationAccountEncryptionMigrationInventory } from '@happier-dev/protocol/sessions/organization/accountEncryptionMigrationInventory';
 import type { ArtifactAccessRecipientCensusResponseV1 } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import { ArtifactBodyEnvelopeV1StoredSchema, type ArtifactBlobReadResponseV1, type ArtifactBlobStoredContentV1, ArtifactBlobAccountEncryptionStageV1Schema, type ArtifactBlobAccountEncryptionStageV1, type ArtifactRevisionProvenanceV1 } from '@happier-dev/protocol/artifacts/artifactBinaryV1';
-import type { ArtifactAccountEncryptionMigrationOwnershipV1 } from '@happier-dev/protocol/artifacts/artifactAccountEncryptionMigrationV1';
+import type { ArtifactAccountEncryptionMigrationInventoryV1, ArtifactAccountEncryptionMigrationOwnershipV1 } from '@happier-dev/protocol/artifacts/artifactAccountEncryptionMigrationV1';
 import { decodePackageAssetArchiveBodyV1, openPackageAssetArchiveV1 } from '@happier-dev/protocol/plugins/availability';
 import { decodePluginUiArtifactArchiveBodyV1, openPluginUiArtifactArchiveV1 } from '@happier-dev/protocol/plugins/ui';
 
@@ -69,6 +71,7 @@ export type AccountEncryptionMigrationKvRow = Readonly<{
 export type AccountEncryptionMigrationArtifactRow = Readonly<{
     id: string;
     ownership: ArtifactAccountEncryptionMigrationOwnershipV1;
+    publicAudience: ArtifactAccountEncryptionMigrationInventoryV1['items'][number]['publicAudience'];
     header: string;
     headerVersion: number;
     body: string;
@@ -734,6 +737,11 @@ export async function buildAccountEncryptionMigrationStorageDirectives(
     }>,
 ): Promise<AccountEncryptionMigrationStorageDirectives> {
     assertAccountEncryptionMigrationScopeCurrent(params.scope);
+    if (params.artifacts.some(row => row.publicAudience === 'retained')) {
+        throw new HappyError(t('settingsAccount.encryptionConversionLinksRetained'), false, {
+            code: 'migration_incomplete', details: { domain: 'artifacts' },
+        });
+    }
     const machines = await buildMachineDirective({
         toMode: params.toMode,
         rows: params.machines,

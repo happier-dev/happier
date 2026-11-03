@@ -529,7 +529,7 @@ describe('Account encryption historical material custody', () => {
         const encryption = await Encryption.create(new Uint8Array(32).fill(7));
         const dataKey = ArtifactEncryption.generateDataEncryptionKey();
         const artifactEncryption = new ArtifactEncryption(dataKey);
-        const ordinary = { ownership: { kind: 'ordinary' as const }, headerVersion: 1, bodyVersion: 2,
+        const ordinary = { ownership: { kind: 'ordinary' as const }, publicAudience: 'none' as const, headerVersion: 1, bodyVersion: 2,
             header: await artifactEncryption.encryptHeader({ title: 'Document' }),
             body: await artifactEncryption.encryptBody({ body: 'Content' }),
             dataEncryptionKey: encodeBase64(await encryption.encryptEncryptionKey(dataKey), 'base64'), revisions: [] };

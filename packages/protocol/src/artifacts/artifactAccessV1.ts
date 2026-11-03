@@ -1,3 +1,4 @@
+import { BotTemplateVersionV1Schema } from '../bots/templates/templateVersionV1.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod/mini';
 import { ArtifactCoarseKindV1Schema } from './artifactKindV1.js';
@@ -36,7 +37,23 @@ export type ArtifactAccessGrantsListInputV1 = z.infer<typeof ArtifactAccessGrant
 export type ArtifactAccessGrantSetInputV1 = z.infer<typeof ArtifactAccessGrantSetInputV1Schema>;
 export type ArtifactAccessGrantRemoveInputV1 = z.infer<typeof ArtifactAccessGrantRemoveInputV1Schema>;
 
-export const ArtifactAccessGrantRowV1Schema = ResourceAccessGrantRowV1Schema;
+export const ArtifactTemplateAcceptedVersionInputV1Schema = lazyZodSchema(() => z.strictObject({
+  artifactId: z.string().check(z.minLength(1)),
+  /** Existing recipient Session/creation identity; never projected to the template owner. */
+  copyId: z.string().check(z.minLength(1)),
+  acceptedVersion: BotTemplateVersionV1Schema,
+}));
+export type ArtifactTemplateAcceptedVersionInputV1 = z.infer<typeof ArtifactTemplateAcceptedVersionInputV1Schema>;
+export const ArtifactTemplateAcceptedVersionResponseV1Schema = lazyZodSchema(() => z.strictObject({ changed: z.boolean() }));
+export const ArtifactTemplateAcceptedVersionSummaryV1Schema = lazyZodSchema(() => z.strictObject({
+  version: BotTemplateVersionV1Schema,
+  copies: z.number().check(z.int(), z.minimum(1)),
+  reportedAt: z.number().check(z.int(), z.nonnegative()),
+}));
+export const ArtifactAccessGrantRowV1Schema = lazyZodSchema(() => z.extend(ResourceAccessGrantRowV1Schema, {
+  /** Owner-only direct Account reports; absent on other kinds or self-only recipient projections. */
+  acceptedVersions: z.optional(z.array(ArtifactTemplateAcceptedVersionSummaryV1Schema)),
+}));
 export type ArtifactAccessGrantRowV1 = z.infer<typeof ArtifactAccessGrantRowV1Schema>;
 
 export const ArtifactAccessGrantsListResponseV1Schema = lazyZodSchema(() => z.strictObject({

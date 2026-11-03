@@ -1,9 +1,12 @@
+import { StoredContentPublicShareReadResponseV1Schema } from '../sharing/storedContentPublicShareV1.js';
+import { SessionDataKeyRecipientContentKeyV1Schema } from '../sessions/encryption/sessionDataKeyEnvelopes.js';
+import { ResourceRecipientKeyEnvelopeInputV1Schema } from '../teams/resourceGrantAccessV1.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod/mini';
 
 import { StrictJsonValueSchema } from '../json/strictJsonValue.js';
 import { ArtifactCallerAccessV1Schema } from './artifactAccessV1.js';
-import { StoredContentPublicShareAccessLogResponseV1Schema, StoredContentPublicShareCreateRequestV1Schema, StoredContentPublicShareV1Schema, StoredContentPublicSharesListResponseV1Schema } from '../sharing/storedContentPublicShareV1.js';
+import { StoredContentPublicShareAccessLogResponseV1Schema, StoredContentPublicShareCreateRequestV1Schema, StoredContentPublicShareCreateResponseV1Schema, StoredContentPublicShareV1Schema, StoredContentPublicSharesListResponseV1Schema } from '../sharing/storedContentPublicShareV1.js';
 import { ArtifactBodyV1Schema, ArtifactRevisionProvenanceV1Schema } from './artifactBinaryV1.js';
 import { ARTIFACT_ACTION_IDS_V1 } from './artifactActionIdsV1.js';
 export { ARTIFACT_ACTION_IDS_V1 } from './artifactActionIdsV1.js';
@@ -29,6 +32,27 @@ export const ArtifactPublicLinkCreateInputV1Schema = (<T extends z.ZodMiniObject
   expiresAt: true, maxUses: true, isConsentRequired: true,
 })).shape));
 export const ArtifactPublicLinkRevokeInputV1Schema = (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(subject, { shareId: z.string().check(z.minLength(1)) }));
+export const ArtifactSignedInLinkCreateRequestV1Schema = lazyZodSchema(() => z.strictObject({
+  artifactId: z.string().check(z.minLength(1)), lookupId: z.string().check(z.minLength(1)),
+  encryptedDataKey: z.optional(z.string().check(z.minLength(1))), preserveExisting: z.optional(z.literal(true)),
+}));
+export const ArtifactSignedInLinkEnsureResponseV1Schema = lazyZodSchema(() => z.extend(StoredContentPublicShareCreateResponseV1Schema, {
+  created: z.boolean(),
+}));
+export const ArtifactSignedInLinkJoinReadV1Schema = lazyZodSchema(() => z.extend(StoredContentPublicShareReadResponseV1Schema, {
+  artifactId: z.string().check(z.minLength(1)), authorAccountId: z.string().check(z.minLength(1)),
+  recipientAccountId: z.string().check(z.minLength(1)), recipientContentKey: SessionDataKeyRecipientContentKeyV1Schema,
+}).check(z.refine(value => value.subject.kind === 'artifact' && value.content.kind === 'artifact'
+  && value.subject.id === value.artifactId && value.keyDerivation === 'fragment_v1', { message: 'Signed-in link subject mismatch' })));
+export type ArtifactSignedInLinkJoinReadV1 = z.infer<typeof ArtifactSignedInLinkJoinReadV1Schema>;
+export const ArtifactSignedInLinkJoinCommitInputV1Schema = lazyZodSchema(() => z.strictObject({ keyEnvelope: z.optional(ResourceRecipientKeyEnvelopeInputV1Schema) }));
+export const ArtifactSignedInLinkJoinCommitResultV1Schema = lazyZodSchema(() => z.strictObject({
+  artifactId: z.string().check(z.minLength(1)), ownerAccountId: z.string().check(z.minLength(1)), access: ArtifactCallerAccessV1Schema,
+}));
+export const ArtifactSignedInLinkJoinResultV1Schema = lazyZodSchema(() => z.strictObject({
+  artifactId: z.string().check(z.minLength(1)), authorAccountId: z.string().check(z.minLength(1)), follow: z.boolean(),
+  followUnavailableReason: z.optional(z.literal('plain_account')),
+}));
 const upload = { uploadPath: z.string().check(z.minLength(1)), mime: z.optional(z.string().check(z.minLength(1))) };
 export const ArtifactCreateInputV1Schema = lazyZodSchema(() => z.union([
   z.strictObject({ artifactId: z.optional(z.string().check(z.uuid())), header: ArtifactHeaderMetadataV1Schema, body: z.string() }),

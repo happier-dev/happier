@@ -27,7 +27,7 @@ import type { ArtifactCallerAccessV1, ArtifactAccessGrantSetInputV1, ArtifactAcc
 import { ArtifactHeaderMetadataV1Schema, ArtifactPublicAudienceV1ReadSchema, type ArtifactPublicAudienceV1, ArtifactQuotaExceededV1Schema, ArtifactRevisionListResponseV1Schema, ArtifactStorageUsageV1Schema } from '@happier-dev/protocol/artifacts/artifactActionsV1';
 import { canShareArtifactWriteContentV1, prepareArtifactHeaderForRevisionV1, prepareArtifactHeaderForBodyV1 } from '@happier-dev/protocol/artifacts/artifactHeaderRestorationV1';
 import { withArtifactExcerptV1 } from '@happier-dev/protocol/artifacts/artifactExcerptV1';
-import { artifactKindHasSharedWidgetInputsV1, artifactKindRequiresTextBodyV1, readArtifactSharedAudienceV1 } from '@happier-dev/protocol/artifacts/artifactSharingV1';
+import { artifactKindRequiresSharedAudienceV1, artifactKindRequiresTextBodyV1, readArtifactSharedAudienceV1 } from '@happier-dev/protocol/artifacts/artifactSharingV1';
 import { createArtifactPublicLinkActionsV1, readArtifactPublicLinksV1, type ArtifactPublicLinkRequestV1 } from '@happier-dev/protocol/actions/executor/artifactPublicLinkActions';
 import { ArtifactBodyV1Schema, ArtifactBodyEnvelopeV1StoredSchema, ArtifactPrivateRevisionMetadataV1Schema, ArtifactPrivateRevisionMetadataV1StoredSchema, ArtifactBlobReferenceV1Schema, ArtifactBlobReadResponseV1Schema } from '@happier-dev/protocol/artifacts/artifactBinaryV1';
 import { openResourceBinaryContent, sealResourceBinaryContent } from '@/api/encryption/resourceBinaryContent';
@@ -598,7 +598,7 @@ export function createAccountArtifactStore(params: Readonly<{
   const sharedWriteContext = async (stored: StoredArtifact, currentHeader: Readonly<Record<string, unknown>>,
     candidateHeader: Readonly<Record<string, unknown>>, signal?: AbortSignal, candidateBody?: ArtifactBodyV1 | null,
     authorizationHeaders?: ArtifactRequestAuthorizationHeaders) => {
-    if (!artifactKindHasSharedWidgetInputsV1(currentHeader.kind) && !artifactKindHasSharedWidgetInputsV1(candidateHeader.kind)) return undefined;
+    if (!artifactKindRequiresSharedAudienceV1(currentHeader.kind) && !artifactKindRequiresSharedAudienceV1(candidateHeader.kind)) return undefined;
     const current = { artifactId: stored.id, header: currentHeader, ownerAccountId: stored.ownerAccountId, access: stored.access,
       publicAudience: stored.publicAudience };
     if (candidateBody !== undefined && canShareArtifactWriteContentV1(current, candidateHeader, candidateBody)) return undefined;

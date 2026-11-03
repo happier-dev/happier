@@ -1,3 +1,4 @@
+import { ArtifactTemplateAcceptedVersionInputV1Schema, ArtifactTemplateAcceptedVersionResponseV1Schema } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import { createArtifactHttpMutation, updateArtifactHttpMutation } from '@/app/artifacts/artifactMutationHttpResponse';
 import { ARTIFACT_LIST_PAGE_MAX_ITEMS_V1 } from '@happier-dev/protocol/artifacts/artifactListSelectionV1';
 import { registerArtifactUploadRoutes } from './registerArtifactUploadRoutes';
@@ -17,6 +18,7 @@ import {
     readArtifactRecipientCensus,
     removeArtifactAccessGrantInTx,
     setArtifactAccessGrantInTx,
+    reportArtifactTemplateAcceptedVersionInTx,
     type ArtifactForCaller,
     type ArtifactListItemForCaller,
 } from "@/app/artifacts/artifactAccessService";
@@ -252,6 +254,7 @@ export function artifactsRoutes(app: Fastify) {
                 cursor: z.optional(z.string().check(z.minLength(1))),
                 includeBody: z.optional(z.literal('true')),
                 ownerAccountId: z.optional(z.string()),
+                audience: z.optional(z.literal('received')),
                 kind: z.optional(ArtifactCoarseKindV1Schema),
                 kinds: z.optional(z.string()),
                 approvalStates: z.optional(z.string()),
@@ -267,7 +270,7 @@ export function artifactsRoutes(app: Fastify) {
         }
     }, async (request, reply) => {
         const userId = request.userId;
-        const query = request.query as { limit?: number; cursor?: string; includeBody?: 'true'; ownerAccountId?: string;
+        const query = request.query as { limit?: number; cursor?: string; includeBody?: 'true'; ownerAccountId?: string; audience?: 'received';
             kind?: ArtifactCoarseKindV1; kinds?: string; approvalStates?: string; approvalSessionIds?: string;
             browserListed?: 'true'; unclassified?: 'true' | 'coarse' | 'approval' };
         const listLimit = typeof query.limit === "number" ? query.limit : DEFAULT_ARTIFACT_LIST_LIMIT;
@@ -301,17 +304,17 @@ export function artifactsRoutes(app: Fastify) {
         }
 
         const page = await listArtifactHeaderPageForCaller({ actorAccountId: userId, limit: listLimit, cursor,
-            includeBody: query.includeBody === 'true', ownerAccountId: query.ownerAccountId, kind: query.kind, kinds,
+            includeBody: query.includeBody === 'true', ownerAccountId: query.ownerAccountId, audience: query.audience, kind: query.kind, kinds,
             approvalStates, approvalSessionIds,
             ...(query.browserListed ? { browserListed: true } : {}),
             unclassified: query.unclassified === 'coarse' || query.unclassified === 'approval' ? query.unclassified : query.unclassified === 'true' });
 
         const projected = page.items.map(projectArtifactListItem);
         if (query.kind === undefined && kinds === undefined && query.browserListed === undefined && query.unclassified === undefined
-            && approvalStates === undefined && approvalSessionIds === undefined) return reply.send(projected);
+            && approvalStates === undefined && approvalSessionIds === undefined && query.audience === undefined) return reply.send(projected);
         return reply.send({ items: projected, hasUnclassified: page.hasUnclassified,
             ...(kinds !== undefined || query.browserListed !== undefined || query.unclassified !== undefined
-                || approvalStates !== undefined || approvalSessionIds !== undefined ? { coverage: page.coverage } : {}) });
+                || approvalStates !== undefined || approvalSessionIds !== undefined || query.audience !== undefined ? { coverage: page.coverage } : {}) });
     });
 
     // A transport batch reuses independent canonical CAS transactions and publication.
@@ -405,6 +408,18 @@ export function artifactsRoutes(app: Fastify) {
     const accessError = z.strictObject({ error: ArtifactAccessErrorCodeV1Schema });
     const accessErrors = { 400: accessError, 403: accessError, 404: accessError, 409: accessError };
     const accessErrorStatus = artifactAccessHttpFailureStatus;
+    app.put('/v1/artifacts/:id/access/accepted-version', {
+        preHandler: app.authenticate,
+        schema: { params: accessParams, body: ArtifactTemplateAcceptedVersionInputV1Schema,
+            response: { 200: ArtifactTemplateAcceptedVersionResponseV1Schema, ...accessErrors } },
+    }, async (request, reply) => {
+        if (request.body.artifactId !== request.params.id) return reply.code(400).send({ error: 'artifact_not_found' });
+        const result = await inTx(tx => reportArtifactTemplateAcceptedVersionInTx(tx, { ...request.body, actorAccountId: request.userId }), {
+            transactionClass: 'artifact-template-accepted-version',
+        });
+        return result.ok ? reply.send(result.value) : reply.code(accessErrorStatus(result.error)).send({ error: result.error });
+    });
+
     app.get('/v1/artifacts/:id/access/grants', {
         preHandler: app.authenticate,
         schema: { params: accessParams, response: { 200: ArtifactAccessGrantsListResponseV1Schema, ...accessErrors } },

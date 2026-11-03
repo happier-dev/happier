@@ -1,3 +1,4 @@
+import { registerArtifactSignedInLinkRoutes } from './registerArtifactSignedInLinkRoutes';
 import { type Fastify } from "../../types";
 import { z } from "zod/mini";
 import { assertSessionCapabilityInTx } from "@/app/session/access/sessionAccess";
@@ -16,6 +17,7 @@ import { createServerFeatureGatedRouteApp } from "@/app/features/catalog/serverF
  * Public shares are always view-only for security
  */
 export function publicShareRoutes(app: Fastify): void {
+    registerArtifactSignedInLinkRoutes(app);
     // `sharing.public` is the one availability owner for both authenticated
     // management and anonymous publication reads. Apply it to the complete route
     // family so build-policy denial cannot leave a hidden-but-callable endpoint.

@@ -197,6 +197,8 @@ model Account {
     DiscussionMentions            DiscussionMessageMention[]
     DiscussionReadStates          DiscussionReadState[]
     AccountSessionReadStates      AccountSessionReadState[]
+    artifactSignedInLinks  ArtifactSignedInLink[]     @relation("ArtifactSignedInLinks")
+    templateAcceptedVersions ArtifactTemplateAcceptedVersion[]
 }
 
 enum HomeRole {
@@ -3542,6 +3544,8 @@ model Artifact {
     @@index([accountId])
     @@index([accountId, updatedAt])
     @@index([accountId, kind])
+    signedInLink ArtifactSignedInLink?
+    templateAcceptedVersions ArtifactTemplateAcceptedVersion[]
 }
 
 model ArtifactRevision {
@@ -4792,4 +4796,27 @@ model MachineSecretGrant {
     @@index([environmentId, machineId, installationId], map: "MSG_environment_installation_idx")
     @@index([machineId, installationId], map: "MSG_installation_idx")
     @@index([resourceId], map: "MSG_resource_idx")
+}
+
+model ArtifactSignedInLink {
+    artifactId        String   @id
+    artifact          Artifact @relation(fields: [artifactId], references: [id], onDelete: Cascade)
+    createdByUserId   String
+    createdByUser     Account  @relation("ArtifactSignedInLinks", fields: [createdByUserId], references: [id])
+    tokenHash         Bytes    @unique
+    encryptedDataKey  Bytes?
+    createdAt         DateTime @default(now())
+    updatedAt         DateTime @updatedAt
+}
+
+model ArtifactTemplateAcceptedVersion {
+    artifactId          String
+    artifact            Artifact @relation(fields: [artifactId], references: [id], onDelete: Cascade)
+    recipientAccountId  String
+    recipientAccount    Account @relation(fields: [recipientAccountId], references: [id], onDelete: Cascade)
+    copyId              String
+    acceptedVersion     String
+    reportedAt          DateTime @default(now())
+
+    @@id([artifactId, recipientAccountId, copyId])
 }

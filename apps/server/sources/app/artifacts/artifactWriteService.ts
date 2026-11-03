@@ -43,6 +43,7 @@ import {
     acquireArtifactPublicationLocksInTx,
     resolveArtifactPublicationAdmissionIntent,
     applyArtifactRecipientKeyEnvelopesInTx,
+    projectArtifactPublicAudience,
 } from "./artifactAccessService";
 import { admitArtifactMemoryDecisionInTx, type ArtifactMemoryDecisionWriteContext, type MemoryDecisionAdmissionError } from './artifactMemoryDecisionAdmission';
 import { artifactContextStorageAdapter, newArtifactContextStorageAdapter } from './artifactContextInjection';
@@ -106,6 +107,8 @@ export type ArtifactAccountEncryptionMigrationRow = Readonly<{
     currentBlobId: string | null;
     provenance: Uint8Array | null;
     provenanceDataEncryptionKey: Uint8Array | null;
+    publicShare: Readonly<{ expiresAt: Date | null }> | null;
+    signedInLink: Readonly<{ artifactId: string }> | null;
     revisions: readonly Readonly<{ bodyVersion: number; body: Uint8Array; blobId: string | null; provenance: Uint8Array | null }>[];
     blobs: readonly Readonly<{ id: string; storageKey: string; encryptionMode: string; storedSizeBytes: bigint }>[];
     pluginUiArtifact: Readonly<{
@@ -141,6 +144,8 @@ export async function readArtifactAccountEncryptionMigrationRowsInTx(
             currentBlobId: true,
             provenance: true,
             provenanceDataEncryptionKey: true,
+            publicShare: { select: { expiresAt: true } },
+            signedInLink: { select: { artifactId: true } },
             revisions: { select: { bodyVersion: true, body: true, blobId: true, provenance: true } },
             blobs: { select: { id: true, storageKey: true, encryptionMode: true, storedSizeBytes: true } },
             pluginUiArtifact: {
@@ -333,6 +338,12 @@ export async function migrateArtifactAccountEncryptionInTx(params: Readonly<{
         return rows.length === 0
             ? { status: "applied" }
             : { status: "not_empty" };
+    }
+
+    // Issued links retain their audience, but this transition has no local URL
+    // fragment with which to wrap the replacement key. Leave both unchanged.
+    if (rows.some(row => projectArtifactPublicAudience(row.publicShare ?? null, row.signedInLink != null) === 'retained')) {
+        return { status: 'migration_incomplete' };
     }
 
     const itemsById = new Map(

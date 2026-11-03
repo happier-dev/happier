@@ -5,7 +5,7 @@ import { fetchAccountEncryptionMigrationArtifactInventory } from './fetchAccount
 describe('Account transition Artifact inventory', () => {
     const scope = { scope: { serverId: 'home', accountId: 'account' }, isCurrent: () => true };
     const credentials = { token: 'captured' };
-    const row = (index: number) => ({ id: `artifact-${String(index).padStart(4, '0')}`, ownership: { kind: 'ordinary' as const },
+    const row = (index: number) => ({ id: `artifact-${String(index).padStart(4, '0')}`, ownership: { kind: 'ordinary' as const }, publicAudience: 'none' as const,
         header: encodePlainArtifactStoredContent({ title: 'Document' }), headerVersion: 2,
         body: encodePlainArtifactStoredContent({ body: 'Body' }), bodyVersion: 3, dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
         revisions: [{ bodyVersion: 1, body: encodePlainArtifactStoredContent({ body: 'Retained' }) }] });
@@ -20,6 +20,13 @@ describe('Account transition Artifact inventory', () => {
             return Response.json(page(items, remaining.length > items.length ? items.at(-1)!.id : null));
         });
         expect(await fetchAccountEncryptionMigrationArtifactInventory({ credentials, request, scope, encryptionMode: 'plain' })).toEqual(rows);
+    });
+
+    it('refuses an older inventory that cannot establish the retained link audience', async () => {
+        const { publicAudience: _publicAudience, ...legacyRow } = row(0);
+        const request = async () => Response.json({ ...page([], null), items: [legacyRow] });
+        await expect(fetchAccountEncryptionMigrationArtifactInventory({ credentials, request, scope, encryptionMode: 'plain' }))
+            .rejects.toThrow();
     });
 
     it.each(['duplicate rows', 'non-advancing cursor'] as const)('refuses %s without a competing refusal hiding it', async failure => {

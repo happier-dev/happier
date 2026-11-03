@@ -1,3 +1,4 @@
+import { HappyError } from '@/utils/errors/errors';
 import { describe, expect, it } from 'vitest';
 import { createHash, randomBytes } from 'node:crypto';
 import { ed25519, x25519 } from '@noble/curves/ed25519';
@@ -157,7 +158,7 @@ describe('buildAccountEncryptionMigrationStorageDirectives', () => {
         });
         if (!archive) throw new Error('Invalid package fixture');
         const encryption = await Encryption.create(new Uint8Array(32).fill(7));
-        const row = { id: 'plugin-archive', ownership: { kind: 'packageAsset' as const, pluginId: 'com.acme.archive', descriptor: archive.descriptor },
+        const row = { id: 'plugin-archive', ownership: { kind: 'packageAsset' as const, pluginId: 'com.acme.archive', descriptor: archive.descriptor }, publicAudience: 'none' as const,
             header: encodePlainArtifactStoredContent(archive.header), body: encodePlainArtifactStoredContent({ body: encodePackageAssetArchiveBodyV1(archive.body) }),
             headerVersion: 1, bodyVersion: 2, dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
             revisions: [{ bodyVersion: 1, body: encodePlainArtifactStoredContent({ body: encodePackageAssetArchiveBodyV1(archive.body) }) }] };
@@ -183,6 +184,23 @@ describe('buildAccountEncryptionMigrationStorageDirectives', () => {
             artifacts: [{ ...row, body: encodePlainArtifactStoredContent({ body: 'corrupt archive' }) }] })).rejects.toThrow();
     });
 
+    it('refuses retained Artifact links before opening content or staging private bytes', async () => {
+        let stages = 0;
+        await expect(buildAccountEncryptionMigrationStorageDirectives({ ...emptyTransitionInventories,
+            fromMode: 'plain', toMode: 'e2ee', sourceEncryption: null, targetEncryption: null,
+            machines: [], todos: [], sessions: [], sessionSourceCredentials: tokenOnlyCredentials,
+            sessionTargetCredentials: legacyCredentials,
+            artifacts: [{ id: 'linked', ownership: { kind: 'ordinary' }, publicAudience: 'retained',
+                header: 'unopened', body: 'unopened', dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+                headerVersion: 1, bodyVersion: 1, revisions: [] }],
+            stageArtifactBlob: async () => { stages += 1; throw new Error('Must not upload'); },
+        })).rejects.toSatisfy((error: unknown) => error instanceof HappyError
+            && error.code === 'migration_incomplete'
+            && error.details !== null && typeof error.details === 'object'
+            && 'domain' in error.details && error.details.domain === 'artifacts');
+        expect(stages).toBe(0);
+    });
+
     it('converts each distinct head and retained binary payload with the replacement Artifact key', async () => {
         const encryption = await Encryption.create(new Uint8Array(32).fill(7));
         const artifactId = '11111111-1111-4111-8111-111111111111';
@@ -192,7 +210,7 @@ describe('buildAccountEncryptionMigrationStorageDirectives', () => {
             mime: index === 0 ? 'image/png' : 'application/pdf', sizeBytes: bytes.length,
             sha256: createHash('sha256').update(bytes).digest('hex'),
         }));
-        const row = { id: artifactId, ownership: { kind: 'ordinary' as const }, header: encodePlainArtifactStoredContent({ kind: 'artifact.legacy', title: 'Binary' }),
+        const row = { id: artifactId, ownership: { kind: 'ordinary' as const }, publicAudience: 'none' as const, header: encodePlainArtifactStoredContent({ kind: 'artifact.legacy', title: 'Binary' }),
             headerVersion: 1, bodyVersion: 3, dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
             body: encodePlainArtifactStoredContent({ body: references[0] }),
             revisions: [references[1], references[0]].map((body, index) => ({ bodyVersion: index + 1, body: encodePlainArtifactStoredContent({ body }) })),
@@ -280,7 +298,7 @@ describe('buildAccountEncryptionMigrationStorageDirectives', () => {
         const headProvenance = { savedBy: { kind: 'person' as const, accountId: 'account-a' }, source };
         expect(workflowDefinitionArtifactSharingAdapterV1.canShare({ artifactId, header: workflowHeader,
             revision: workflowHeader.revision })).toBe(true);
-        const rows = [{ id: artifactId, ownership: { kind: 'ordinary' as const }, header: encodePlainArtifactStoredContent(workflowHeader),
+        const rows = [{ id: artifactId, ownership: { kind: 'ordinary' as const }, publicAudience: 'none' as const, header: encodePlainArtifactStoredContent(workflowHeader),
             body: encodePlainArtifactStoredContent({ body: 'Private content' }), headerVersion: 1, bodyVersion: 3,
             dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
             provenance: await sealArtifactPrivateRevisionMetadata({ mode: 'plain', artifactId, bodyVersion: 3, provenance: headProvenance }),
@@ -376,7 +394,7 @@ describe('buildAccountEncryptionMigrationStorageDirectives', () => {
             const readable = index >= 2;
             expect(workflowDefinitionArtifactSharingAdapterV1.canShare({ artifactId, header,
                 revision: { headerVersion: 1, bodyVersion: 3 } })).toBe(readable);
-            const row = { id: artifactId, ownership: { kind: 'ordinary' as const }, header: encodePlainArtifactStoredContent(header), headerVersion: 1,
+            const row = { id: artifactId, ownership: { kind: 'ordinary' as const }, publicAudience: 'none' as const, header: encodePlainArtifactStoredContent(header), headerVersion: 1,
                 body: encodePlainArtifactStoredContent({ body: 'Private content' }), bodyVersion: 3,
                 dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER, revisions: [] };
             const encrypted = await buildAccountEncryptionMigrationStorageDirectives({ ...inputs,
@@ -412,7 +430,7 @@ describe('buildAccountEncryptionMigrationStorageDirectives', () => {
         const artifactId = '11111111-1111-4111-8111-111111111111';
         const provenance = { savedBy: { kind: 'agent' as const, accountId: 'account-a', sessionId: 'history-only' } };
         const stored = await sealArtifactPrivateRevisionMetadata({ mode: 'plain', artifactId, bodyVersion: 1, provenance });
-        const row = { id: artifactId, ownership: { kind: 'ordinary' as const }, header: encodePlainArtifactStoredContent({ title: 'History' }),
+        const row = { id: artifactId, ownership: { kind: 'ordinary' as const }, publicAudience: 'none' as const, header: encodePlainArtifactStoredContent({ title: 'History' }),
             body: encodePlainArtifactStoredContent({ body: 'Current' }), headerVersion: 1, bodyVersion: 3,
             dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
             revisions: [{ bodyVersion: 1, body: encodePlainArtifactStoredContent({ body: 'Historic' }), provenance: stored }] };
@@ -435,6 +453,7 @@ describe('buildAccountEncryptionMigrationStorageDirectives', () => {
         const encryption = await Encryption.create(new Uint8Array(32).fill(7));
         const row = { id: '11111111-1111-4111-8111-111111111111',
             ownership: { kind: 'ordinary' as const },
+            publicAudience: 'none' as const,
             header: encodePlainArtifactStoredContent({ title: 'Plain head' }), headerVersion: 1,
             body: encodePlainArtifactStoredContent({ body: 'Head' }), bodyVersion: 3,
             dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
@@ -485,6 +504,7 @@ describe('buildAccountEncryptionMigrationStorageDirectives', () => {
                 artifacts: [{
                     id: artifactId,
                     ownership: { kind: 'ordinary' },
+                    publicAudience: 'none',
                     header: encodePlainArtifactStoredContent({
                         title: 'Plain artifact',
                     }),

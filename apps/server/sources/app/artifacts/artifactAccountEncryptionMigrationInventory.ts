@@ -1,3 +1,4 @@
+import { projectArtifactPublicAudience } from './artifactAccessService';
 import type { ArtifactAccountEncryptionMigrationInventoryV1, ArtifactAccountEncryptionMigrationOwnershipV1 } from '@happier-dev/protocol/artifacts/artifactAccountEncryptionMigrationV1';
 import type { Tx } from '@/storage/inTx';
 import { resolveEffectiveAccountEncryptionModeFromAccountRow } from '@/app/encryption/accountEncryptionMode';
@@ -44,7 +45,8 @@ export async function readArtifactAccountEncryptionMigrationInventoryInTx(params
             : await qualifyPluginArtifactAccountEncryptionMigrationInTx({ tx: params.tx, accountId: params.accountId,
                 artifactId: row.id, uiRelease: row.pluginUiArtifact?.release ?? null, packageRelease: row.packageAssetRelease, envelopes });
         if (!ownership) return null;
-        items.push({ id: row.id, ownership, header: Buffer.from(opened.header).toString('base64'), headerVersion: row.headerVersion,
+        items.push({ id: row.id, ownership, publicAudience: projectArtifactPublicAudience(row.publicShare ?? null, row.signedInLink != null),
+            header: Buffer.from(opened.header).toString('base64'), headerVersion: row.headerVersion,
             body: Buffer.from(opened.body).toString('base64'), bodyVersion: row.bodyVersion,
             dataEncryptionKey: Buffer.from(row.dataEncryptionKey).toString('base64'), revisions,
             provenance: provenance ? privacyKit.encodeBase64(provenance) : null,

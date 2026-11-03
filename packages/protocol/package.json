@@ -2880,6 +2880,11 @@
       "types": "./dist/artifacts/artifactActionIdsV1.d.ts",
       "default": "./dist/artifacts/artifactActionIdsV1.js"
     },
+    "./bots/templates/botTemplateV1": {
+      "happier-source": "./src/bots/templates/botTemplateV1.ts",
+      "types": "./dist/bots/templates/botTemplateV1.d.ts",
+      "default": "./dist/bots/templates/botTemplateV1.js"
+    },
     "./artifacts/artifactActionsV1": {
       "happier-source": "./src/artifacts/artifactActionsV1.ts",
       "types": "./dist/artifacts/artifactActionsV1.d.ts",

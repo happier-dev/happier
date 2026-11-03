@@ -916,6 +916,7 @@ export async function deleteAccountForErasure(input: Readonly<{
         await tx.publicShareAccessLog.deleteMany({ where: { userId: input.accountId } });
         await eraseSessionAccessGrantsForAccountInTx(tx, { accountId: input.accountId });
         await eraseDiscussionAccessGrantsForAccountInTx(tx, { accountId: input.accountId });
+        await tx.artifactSignedInLink.deleteMany({ where: { createdByUserId: input.accountId } });
         await tx.publicSessionShare.deleteMany({ where: { createdByUserId: input.accountId } });
         for (const session of sessions) {
             const deleted = await deleteSessionWithRecipientsInTx(tx, {

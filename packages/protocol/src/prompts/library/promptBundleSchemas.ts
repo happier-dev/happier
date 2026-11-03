@@ -27,7 +27,7 @@ export const PromptBundleEntryV1Schema = lazyZodSchema(() => z.looseObject({
 export type PromptBundleEntryV1 = z.infer<typeof PromptBundleEntryV1Schema>;
 
 // Mutation operands are closed even though stored bundle readers retain extensions.
-const PromptBundleActionEntryV1Schema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(PromptBundleEntryV1Schema));
+export const PromptBundleActionEntryV1Schema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(PromptBundleEntryV1Schema));
 const PromptBundleActionEntriesProjectionV1Schema = lazyZodSchema(() => z.array(createStoredReadSchema(PromptBundleActionEntryV1Schema)));
 
 /** Retained annotations are read data, not operands of a current closed mutation. */

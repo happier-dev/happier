@@ -5,7 +5,7 @@ import type { ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRe
 import { readCredentialAuthorityKind } from '@/auth/context/credentialAuthority';
 import { ArtifactAccessRecipientCensusResponseV1Schema, type ArtifactAccessGrantMutationResponseV1, type ArtifactAccessGrantsListResponseV1 } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import { completeArtifactAccessMutationPreparationV1 } from '@happier-dev/protocol/artifacts/artifactRecipientKeyPreparationV1';
-import { artifactKindHasSharedWidgetInputsV1, readArtifactSharedAudienceV1 } from '@happier-dev/protocol/artifacts/artifactSharingV1';
+import { artifactKindRequiresSharedAudienceV1, readArtifactSharedAudienceV1 } from '@happier-dev/protocol/artifacts/artifactSharingV1';
 import { loadAiLaunchProfileArtifacts, readAiLaunchProfileCollection } from '@happier-dev/protocol/profiles/read';
 import type { ArtifactAccessActionTransportV1 } from '@happier-dev/protocol/actions/executor/artifactAccessActions';
 import type { ArtifactActionInputV1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
@@ -505,7 +505,7 @@ export async function captureLazyActionAccountContext(serverIdRaw: string, signa
                 // This promise lives only for this document projection, not beyond its lifetime.
                 let grantsRead: Promise<ArtifactAccessGrantsListResponseV1> | undefined;
                 const readGrants = () => grantsRead ??= accessApi.list({ artifactId }, options?.signal);
-                const sharing = artifactKindHasSharedWidgetInputsV1(header.kind)
+                const sharing = artifactKindRequiresSharedAudienceV1(header.kind)
                     ? { shared: await readArtifactSharedAudienceV1({ current: { artifactId, header, ...access,
                         publicAudience: artifact.publicAudience }, signal: options?.signal,
                         // The audience is a read of this row, not a roster operation: listing through

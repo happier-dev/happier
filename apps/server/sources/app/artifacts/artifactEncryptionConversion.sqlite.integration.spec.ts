@@ -1,3 +1,4 @@
+import { readArtifactAccountEncryptionMigrationInventoryInTx } from './artifactAccountEncryptionMigrationInventory';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createHash, randomUUID } from 'node:crypto';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent, type AccountEncryptionMigrateArtifactsDirective } from '@happier-dev/protocol';
@@ -18,6 +19,48 @@ describe('Artifact private-byte Account conversion (real SQLite and private stor
     beforeEach(() => harness.resetEnv());
     afterAll(async () => { if (harness) await harness.close(); });
     const hash = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex');
+
+    it.each(['anonymous', 'signed_in'] as const)('retains %s links without mutation when conversion cannot rewrap them, then converts after revocation', async audience => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain', ...createSignedAccountContentBinding() } });
+        const artifact = await db.artifact.create({ data: { id: randomUUID(), accountId: owner.id,
+            header: Buffer.from(encodePlainArtifactStoredContent({ title: 'Linked' }), 'base64'),
+            body: Buffer.from(encodePlainArtifactStoredContent({ body: 'Released content' }), 'base64'),
+            dataEncryptionKey: Buffer.from(ARTIFACT_PLAIN_DATA_KEY_MARKER, 'base64'), headerVersion: 1, bodyVersion: 1 } });
+        const tokenHash = createHash('sha256').update(randomUUID()).digest();
+        if (audience === 'signed_in') await db.artifactSignedInLink.create({ data: {
+            artifactId: artifact.id, tokenHash, createdByUserId: owner.id,
+        } });
+        else await db.publicSessionShare.create({ data: { artifactId: artifact.id, tokenHash, createdByUserId: owner.id } });
+        const directive: AccountEncryptionMigrateArtifactsDirective = { action: 'migrate', items: [{
+            artifactId: artifact.id, expectedHeaderVersion: 1, expectedBodyVersion: 1,
+            expectedDataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+            header: Buffer.from([2, 1]).toString('base64'), body: Buffer.from([2, 2]).toString('base64'),
+            dataEncryptionKey: Buffer.from([3, 4]).toString('base64'), recipientKeyEnvelopes: [], revisions: [], blobs: [],
+        }] };
+        const inventory = () => inTx(tx => readArtifactAccountEncryptionMigrationInventoryInTx({ tx, accountId: owner.id, limit: 10 }));
+        const convert = () => inTx(async tx => {
+            const result = await migrateArtifactAccountEncryptionInTx({ tx, accountId: owner.id,
+                fromMode: 'plain', toMode: 'e2ee', directive });
+            if (result.status === 'applied') await tx.account.update({ where: { id: owner.id }, data: { encryptionMode: 'e2ee' } });
+            return result;
+        });
+        expect(await convert()).toEqual({ status: 'migration_incomplete' });
+        expect((await inventory())?.items).toMatchObject([{ id: artifact.id, publicAudience: 'retained' }]);
+        expect(await db.artifact.findUniqueOrThrow({ where: { id: artifact.id } })).toEqual(artifact);
+        expect((await db.account.findUniqueOrThrow({ where: { id: owner.id } })).encryptionMode).toBe('plain');
+        if (audience === 'signed_in') {
+            expect(await db.artifactSignedInLink.findUnique({ where: { artifactId: artifact.id } }))
+                .toMatchObject({ tokenHash: new Uint8Array(tokenHash), encryptedDataKey: null });
+            await db.artifactSignedInLink.delete({ where: { artifactId: artifact.id } });
+        } else {
+            expect(await db.publicSessionShare.findUnique({ where: { artifactId: artifact.id } }))
+                .toMatchObject({ tokenHash: new Uint8Array(tokenHash), encryptedDataKey: null });
+            await db.publicSessionShare.delete({ where: { artifactId: artifact.id } });
+        }
+        expect((await inventory())?.items).toMatchObject([{ id: artifact.id, publicAudience: 'none' }]);
+        expect(await convert()).toEqual({ status: 'applied' });
+        expect((await db.artifact.findUniqueOrThrow({ where: { id: artifact.id } })).bodyVersion).toBe(2);
+    });
 
     async function sourceFixture() {
         const owner = await db.account.create({ data: { encryptionMode: 'e2ee', ...createSignedAccountContentBinding() } });

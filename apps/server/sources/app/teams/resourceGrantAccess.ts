@@ -20,7 +20,7 @@ export interface ResourceGrantAccessFacts {
     ownerAccountId: string;
     encryptionMode: 'plain' | 'e2ee' | null;
     accountGrants: readonly Readonly<{ accountId: string; accessLevel: ResourceAccessLevelV1; account: Readonly<{ status: AccountStatus }> }>[];
-    teamGrants: readonly Readonly<{ accessLevel: ResourceAccessLevelV1; team: Readonly<{ archivedAt: Date | null; memberships: readonly Member[] }> }>[];
+    teamGrants: readonly Readonly<{ teamId?: string; accessLevel: ResourceAccessLevelV1; team: Readonly<{ archivedAt: Date | null; memberships: readonly Member[] }> }>[];
     groupGrants: readonly Readonly<{ accessLevel: ResourceAccessLevelV1; teamGroup: Readonly<{
         archivedAt: Date | null; team: Readonly<{ archivedAt: Date | null }>;
         memberships: readonly Readonly<{ teamMembership: Member }>[];
@@ -322,3 +322,20 @@ export async function applyResourceRecipientKeyEnvelopesInTx<Envelope extends Re
     await adapter.publishRecipientsChangedInTx(tx, input.resourceId, appliedRecipientAccountIds);
     return { appliedRecipientAccountIds, skippedRecipientAccountIds };
 }
+
+function hasEffectiveTeamGrant(grant: ResourceGrantAccessFacts['teamGrants'][number], actorAccountId: string): boolean {
+    return grant.team.memberships.some(member => member.accountId === actorAccountId && isEffectiveTeamMembership({
+        accountStatus: member.account.status, membershipStatus: member.status, teamArchivedAt: grant.team.archivedAt,
+    }));
+}
+
+/** The caller's direct Team audience, using the same membership policy as access admission. */
+
+export function resolveResourceGrantTeamIdsFromFacts(row: ResourceGrantAccessFacts, actorAccountId: string): string[] {
+    return row.teamGrants.flatMap(grant => grant.teamId !== undefined && hasEffectiveTeamGrant(grant, actorAccountId) ? [grant.teamId] : []);
+}
+
+/** Database projection of the same grant policy below, for candidate lists and aggregate counts.
+ * The actor and lifecycle predicates must match the SAME membership row.
+ * Resource adapters still own visibility and final private-content admission.
+ */

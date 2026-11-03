@@ -1,3 +1,8 @@
+import { projectAdmittedTemplateAcceptedVersionsInTx, writeAdmittedTemplateAcceptedVersionInTx } from './artifactTemplateAcceptedVersionStorage';
+import type { ArtifactTemplateAcceptedVersionInputV1 } from '@happier-dev/protocol/artifacts/artifactAccessV1';
+import { captureReadSnapshot } from "@/storage/captureReadSnapshot";
+import { resolveResourceGrantTeamIdsFromFacts } from '@/app/teams/resourceGrantAccess';
+import { getArtifactGrantInspectionPolicyV1 } from '@happier-dev/protocol/artifacts/artifactSharingV1';
 import { isDeepStrictEqual } from "node:util";
 import type { Prisma } from "@prisma/client";
 import * as privacyKit from "privacy-kit";
@@ -17,7 +22,7 @@ import { resolveResourceGrantAccessFromFacts, resolveResourceGrantAudienceFromFa
     resolveResourceGrantAccessInTx, resolveResourceGrantAudienceInTx,
     type ResourceGrantAccess, projectResourceRecipientEnvelope as projectRecipientEnvelope,
     projectResourceRecipientCensus, validateResourceRecipientEnvelopeCommit, applyResourceRecipientKeyEnvelopesInTx,
-    mayManageResourceGrants, validateResourceGrantPrincipalInTx, readResourceGrantPrincipalAudienceInTx,
+    mayManageResourceGrants, validateResourceGrantPrincipalInTx, readResourceGrantPrincipalAudienceInTx, validateResourceRecipientKeyEnvelopes,
     type ResourceStoredRecipientEnvelope, type ResourceRecipientEnvelopeStorageAdapter } from '@/app/teams/resourceGrantAccess';
 import { acquireAccountChangePublicationLocksInTx, assertAccountChangePublicationAudienceInTx, beforeAccountChangePublication, markAccountsChanged } from "@/app/changes/markAccountChanged";
 import { ACCOUNT_DISPLAY_PROFILE_SELECT, resolveAccountDisplayLabelV1 } from "@/app/account/profile/accountDisplayProfile";
@@ -33,13 +38,14 @@ import { APPROVAL_ARTIFACT_KINDS_V1, type ApprovalArtifactStateV1 } from '@happi
 
 export type ArtifactAccess = ResourceGrantAccess;
 
+/** Retained anonymous or authenticated links both expose replacement Artifact bytes. */
 const artifactAddress = (artifactId: string) => ({ id: artifactId, ...artifactVisibleWhere });
 
 function resolveArtifactAccessFromFacts(row: ArtifactAccessFacts, actorAccountId: string): ArtifactAccess | null {
     return resolveResourceGrantAccessFromFacts(artifactGrantFacts(row), actorAccountId);
 }
 
-/** The sole document access decision: ownership or the highest live grant. */
+/** One inspection decision for grants, census, selected-detail reads and envelope commits. */
 export async function resolveArtifactAccessInTx(tx: Tx, input: Readonly<{
     actorAccountId: string; artifactId: string;
 }>): Promise<ArtifactAccess | null> {
@@ -56,6 +62,7 @@ export async function resolveArtifactAudienceInTx(tx: Tx, artifactId: string): P
     return resolveResourceGrantAudienceInTx(tx, artifactGrantStorageAdapter, artifactId);
 }
 
+/** A retained recipient key or public link still exposes replacement bytes. */
 function resolveArtifactAudienceFromFacts(row: ArtifactAccessFacts): string[] {
     return resolveResourceGrantAudienceFromFacts(artifactGrantFacts(row));
 }
@@ -116,7 +123,9 @@ export interface ArtifactForCaller {
     kind: ArtifactCoarseKindV1 | null;
     kindHint?: string | null;
     ownerAccountId: string;
+    ownerDisplayName?: string | null;
     access: ArtifactCallerAccessV1;
+    sharedTeamIds?: readonly string[];
     encryptionMode: "plain" | "e2ee";
     header: Uint8Array<ArrayBuffer>;
     body: Uint8Array<ArrayBuffer>;
@@ -138,7 +147,7 @@ export type ArtifactListItemForCaller = ArtifactHeaderForCaller & Pick<ArtifactF
     & Partial<Pick<ArtifactForCaller, "body">> & Readonly<{ publicAudience: "retained" | "none" }>;
 export type ArtifactHeaderReadResult = Readonly<{ ok: true; artifact: ArtifactHeaderForCaller }> | ArtifactReadFailure;
 
-/** Project already-authorized Plain bytes once; E2EE remains client-opened. */
+/** Request-private exact content custody produced by authenticated finite-job admission, never by HTTP input. */
 export function projectPlainArtifactSharingResourceV1(artifact: ArtifactForCaller): ArtifactSharingResourceV1 | null {
     if (artifact.encryptionMode !== 'plain') return null;
     const header = ArtifactHeaderMetadataV1Schema.safeParse(decodePlainArtifactStoredContent(privacyKit.encodeBase64(artifact.header)));
@@ -241,7 +250,7 @@ export async function readArtifactForCallerInTx(tx: Tx, input: Readonly<{
     const read = input.projection === 'headers' ? projectArtifactRevisionMetadata(header.artifact, row) : projectArtifactBody(header.artifact, row);
     if (!read.ok) return read;
     const publication = await tx.publicSessionShare.findUnique({ where: { artifactId: input.artifactId }, select: { expiresAt: true } });
-    return { ok: true, artifact: { ...read.artifact, publicAudience: isPublicSessionShareActive(publication) ? "retained" : "none" } };
+    return { ok: true, artifact: { ...read.artifact, publicAudience: projectArtifactPublicAudience(publication, row.signedInLink !== null) } };
 }
 
 /** Re-admit captured content through the same mode and recipient-key owner. */
@@ -266,12 +275,10 @@ export async function readArtifactForCaller(input: Readonly<{ actorAccountId: st
 }
 
 function artifactReadAdmissionSelect(actorAccountId?: string) {
-    return { ...artifactAccessFactsSelect(actorAccountId), ...headerContentSelect,
-        keyEnvelopes: { ...(actorAccountId === undefined ? {} : { where: { recipientAccountId: actorAccountId } }), select: {
-            recipientAccountId: true,
-            encryptedDataKey: true, recipientContentPublicKeyFingerprint: true, recipient: { select: RECIPIENT_READINESS_SELECT },
-            encryptedProvenanceDataKey: true,
-        } } } as const;
+    const facts = artifactAccessFactsSelect(actorAccountId);
+    return { ...facts, ...artifactRecipientReadSelect(actorAccountId),
+        teamGrants: { select: { ...facts.teamGrants.select, teamId: true } },
+    } as const;
 }
 
 function projectArtifactAdmittedHeader(row: Prisma.ArtifactGetPayload<{ select: ReturnType<typeof artifactReadAdmissionSelect> }>, actorAccountId: string,
@@ -316,7 +323,7 @@ function artifactApprovalSelectionWhere(input: Readonly<{ approvalStates?: reado
 
 function artifactListFixedBindings(input: Parameters<typeof listArtifactHeadersForCallerInTx>[1]): number {
     // Access/lifecycle/recipient/keyset/LIMIT operands, then the optional selectors.
-    return 4 + 5 + 4 + 3 + 2 + (input.ownerAccountId === undefined ? 0 : 1)
+    return 4 + 5 + 4 + 3 + 2 + (input.ownerAccountId === undefined ? 0 : 1) + (input.audience === 'received' ? 1 : 0)
         + (input.kind === undefined || input.kind === null ? 0 : 2)
         + (input.browserListed ? browserNonListedStoredKinds.length : 0)
         + (input.approvalStates === undefined ? 0
@@ -333,6 +340,7 @@ function mergeArtifactHeaderPages(rows: readonly ArtifactListItemForCaller[], li
 export async function listArtifactHeadersForCallerInTx(tx: Tx, input: Readonly<{
     actorAccountId: string; limit: number; cursor: Readonly<{ updatedAt: Date; id: string }> | null;
     includeBody?: boolean;
+    audience?: 'received';
     ownerAccountId?: string;
     kind?: ArtifactCoarseKindV1 | null;
     kinds?: readonly string[];
@@ -401,6 +409,7 @@ async function listBrowserArtifactHeadersMysqlInTx(tx: Tx, input: Parameters<typ
             SELECT a.\`id\`, a.\`updatedAt\` FROM \`Artifact\` a
             WHERE a.\`deletedAt\` IS NULL AND ${prismaRuntime.raw(artifactOrdinarySqlPredicate(true))}
                 AND ${access} AND ${listed}
+                ${input.audience === 'received' ? sql`AND a.\`accountId\` <> ${input.actorAccountId}` : prismaRuntime.empty}
                 ${input.ownerAccountId === undefined ? prismaRuntime.empty : sql`AND a.\`accountId\` = ${input.ownerAccountId}`}
                 ${cursor ? sql`AND (a.\`updatedAt\` < ${cursor.updatedAt}
                     OR (a.\`updatedAt\` = ${cursor.updatedAt} AND a.\`id\` < ${cursor.id}))` : prismaRuntime.empty}
@@ -435,6 +444,7 @@ async function listArtifactHeaderSelectionInTx(tx: Tx, input: Parameters<typeof 
                 ...selection,
                 ...(input.ownerAccountId === undefined ? {} : { accountId: input.ownerAccountId }),
                 AND: [artifactCandidateWhere(input.actorAccountId),
+                    ...(input.audience === 'received' ? [{ accountId: { not: input.actorAccountId } }] : []),
                     ...(input.unclassified ? [] : artifactApprovalSelectionWhere(input)), ...(cursor ? [{ OR: [
                     { updatedAt: { lt: cursor.updatedAt } },
                     { updatedAt: cursor.updatedAt, id: { lt: cursor.id } },
@@ -464,7 +474,7 @@ async function listArtifactHeaderSelectionInTx(tx: Tx, input: Parameters<typeof 
                 continue;
             }
             result.push({ ...content.artifact,
-                publicAudience: isPublicSessionShareActive(row.publicShare) ? 'retained' : 'none' });
+                publicAudience: projectArtifactPublicAudience(row.publicShare, row.signedInLink !== null) });
             if (result.length === input.limit) return result;
         }
         if (rows.length < input.limit) break;
@@ -476,11 +486,12 @@ async function listArtifactHeaderSelectionInTx(tx: Tx, input: Parameters<typeof 
 
 /** Completeness is an access fact, never a reason to open unrelated private content. */
 async function countUnclassifiedArtifactsInTx(tx: Tx, input: Readonly<{
-    actorAccountId: string; ownerAccountId?: string; coarseOnly: boolean; includeApprovalState?: boolean;
+    actorAccountId: string; ownerAccountId?: string; audience?: 'received'; coarseOnly: boolean; includeApprovalState?: boolean;
 }>): Promise<number> {
     return tx.artifact.count({ where: { ...artifactVisibleWhere, ...artifactUnclassifiedWhere(input.coarseOnly, input.includeApprovalState),
         ...(input.ownerAccountId === undefined ? {} : { accountId: input.ownerAccountId }),
-        AND: [artifactCandidateWhere(input.actorAccountId)],
+        AND: [artifactCandidateWhere(input.actorAccountId),
+            ...(input.audience === 'received' ? [{ accountId: { not: input.actorAccountId } }] : [])],
     } });
 }
 
@@ -490,7 +501,7 @@ export async function listArtifactHeaderPageForCaller(input: Parameters<typeof l
 }> {
     if (input.approvalSessionIds?.length === 0) return { items: [], hasUnclassified: false, coverage: { status: 'complete', unclassifiedCount: 0 } };
     const readCount = async (tx: Tx) => input.kind !== undefined || input.kinds !== undefined || input.browserListed || input.unclassified
-        || input.approvalStates !== undefined || input.approvalSessionIds !== undefined
+        || input.approvalStates !== undefined || input.approvalSessionIds !== undefined || input.audience !== undefined
         ? await countUnclassifiedArtifactsInTx(tx, { ...input, coarseOnly: input.kind !== undefined || input.unclassified === 'coarse',
             includeApprovalState: !input.browserListed }) : 0;
     const capture = async (tx: Tx, currentCount?: number) => {
@@ -554,21 +565,38 @@ async function captureArtifactBatchInTx(tx: Tx, input: Readonly<{
     actorAccountId: string; artifactIds: readonly string[]; projection?: 'headers';
 }>, includeContent: boolean) {
     const readRows = (artifactIds: readonly string[]) => tx.artifact.findMany({ where: { id: { in: [...artifactIds] }, ...artifactVisibleWhere }, select: {
-        ...artifactReadAdmissionSelect(input.projection === 'headers' ? input.actorAccountId : undefined),
+        ...artifactReadAdmissionSelect(input.actorAccountId),
         body: includeContent && input.projection !== 'headers', bodyVersion: true, provenance: includeContent,
     } });
     const rows: Awaited<ReturnType<typeof readRows>> = [];
-    // One id binding per row plus OFFSET; header relations also bind the caller.
-    // Chunks stay inside this capture's snapshot, including its final readmission.
+    // Admission carries only the caller's grants, memberships and key envelope.
+    // SQL chunks stay inside this request's single admitted capture.
     for (const ids of portableQueryChunks({ values: input.artifactIds, bindingsPerValue: 1,
-        fixedBindings: input.projection === 'headers' ? 2 : 1 })) {
+        fixedBindings: 2 })) {
         rows.push(...await readRows(ids));
     }
-    // Header admission already carries the caller's envelope readiness. Only a
-    // full read needs the complete recipient roster for key preparation.
-    const audienceByArtifact = new Map(input.projection === 'headers' ? [] : rows.flatMap(row =>
-        resolveArtifactAccessFromFacts(row, input.actorAccountId)?.encryptionMode === 'e2ee'
-            ? [[row.id, resolveArtifactAudienceFromFacts(row)] as const] : []));
+    const accessByArtifact = new Map<string, ArtifactAccess>();
+    const audienceByArtifact = new Map<string, string[]>();
+    const fullAudienceIds: string[] = [];
+    for (const row of rows) {
+        const access = resolveArtifactAccessFromFacts(row, input.actorAccountId);
+        if (!access) continue;
+        accessByArtifact.set(row.id, access);
+        if (input.projection === 'headers' || access.encryptionMode !== 'e2ee') continue;
+        if (mayInspectArtifactAudience(row.kind, access)) fullAudienceIds.push(row.id);
+        else audienceByArtifact.set(row.id, [input.actorAccountId]);
+    }
+    const byId = new Map(rows.map(row => [row.id, row]));
+    // Only admitted full-inspection resources collect their complete audience.
+    // Batch this phase so reads do not multiply with the selected Artifact count.
+    for (const ids of portableQueryChunks({ values: fullAudienceIds, bindingsPerValue: 1, fixedBindings: 1 })) {
+        const audienceRows = await tx.artifact.findMany({ where: { id: { in: [...ids] }, ...artifactVisibleWhere },
+            select: { id: true, ...artifactAccessFactsSelect(), keyEnvelopes: artifactRecipientReadSelect().keyEnvelopes } });
+        for (const row of audienceRows) {
+            audienceByArtifact.set(row.id, resolveArtifactAudienceFromFacts(row));
+            byId.get(row.id)!.keyEnvelopes = row.keyEnvelopes;
+        }
+    }
     const recipientIds = [...new Set([...audienceByArtifact.values()].flat())].sort();
     const readAccounts = (ids: readonly string[]) => tx.account.findMany({ where: { id: { in: [...ids] } },
         select: RECIPIENT_READINESS_SELECT, orderBy: { id: 'asc' } });
@@ -584,7 +612,7 @@ async function captureArtifactBatchInTx(tx: Tx, input: Readonly<{
             publications.push(...await readPublications(ids));
         }
     }
-    return { rows, audienceByArtifact, accounts, publications };
+    return { rows, accessByArtifact, audienceByArtifact, accounts, publications };
 }
 
 type ArtifactBatchCapture = Awaited<ReturnType<typeof captureArtifactBatchInTx>>;
@@ -608,76 +636,28 @@ function projectArtifactBatchCensus(captured: ArtifactBatchCapture, row: Artifac
 export async function readArtifactBatchForCaller(input: Readonly<{
     actorAccountId: string; artifactIds: readonly string[]; projection?: 'headers';
 }>): Promise<ArtifactBatchReadItem[]> {
-    return await readSnapshotWithCurrentAdmission<ArtifactBatchReadItem[], ArtifactBatchCapture>({
+    return await captureReadSnapshot<ArtifactBatchReadItem[], ArtifactBatchCapture>({
         capture: tx => captureArtifactBatchInTx(tx, input, true),
-        materialize: async captured => {
-            const byId = new Map(captured.rows.map(row => [row.id, row]));
-            const accounts = projectArtifactBatchAccounts(captured);
-            const publications = new Map(captured.publications.map(row => [row.artifactId, row]));
-            return input.artifactIds.map((artifactId): ArtifactBatchReadItem => {
-                const row = byId.get(artifactId);
-                if (!row) return { artifactId, read: { ok: false, error: 'artifact_not_found' }, census: null };
-                const header = projectArtifactAdmittedHeader(row, input.actorAccountId, accounts.get(input.actorAccountId)?.readiness);
-                if (!header.ok) return { artifactId, read: header, census: null };
-                const content = input.projection === 'headers' ? projectArtifactRevisionMetadata(header.artifact, row)
-                    : projectArtifactBody(header.artifact, row);
-                if (!content.ok) return { artifactId, read: content, census: null };
-                return { artifactId, read: { ok: true, artifact: { ...content.artifact,
-                    publicAudience: isPublicSessionShareActive(publications.get(artifactId) ?? null) ? 'retained' : 'none' } },
-                    census: input.projection !== 'headers' && header.artifact.encryptionMode === 'e2ee'
-                        ? projectArtifactBatchCensus(captured, row, accounts, header.artifact) : null };
-            });
-        },
-    }, async (tx, captured) => {
-        const currentCapture = await captureArtifactBatchInTx(tx, { actorAccountId: input.actorAccountId, projection: input.projection,
-            artifactIds: captured.filter(item => item.read.ok).map(item => item.artifactId) }, false);
-        const byId = new Map(currentCapture.rows.map(row => [row.id, row]));
-        const accounts = projectArtifactBatchAccounts(currentCapture);
-        const items: ArtifactBatchReadItem[] = [];
-        for (const item of captured) {
-            if (!item.read.ok) { items.push(item); continue; }
-            const row = byId.get(item.artifactId);
-            const current = row ? projectArtifactAdmittedHeader(row, input.actorAccountId, accounts.get(input.actorAccountId)?.readiness)
-                : { ok: false, error: 'artifact_not_found' } as const;
-            if (!current.ok) { items.push({ ...item, read: current, census: null }); continue; }
-            if (!artifactContentAdmissionMatches(current.artifact, item.read.artifact)) {
-                items.push({ ...item, read: { ok: false, error: 'artifact_content_unavailable', ownerAccountId: current.artifact.ownerAccountId }, census: null });
-                continue;
-            }
-            let census = item.census;
-            if (census?.ok && row) {
-                const admittedCensus = projectArtifactBatchCensus(currentCapture, row, accounts, current.artifact);
-                census = !admittedCensus.ok ? admittedCensus : isDeepStrictEqual(admittedCensus.value, census.value)
-                    ? census : { ok: false, error: "artifact_content_unavailable" };
-            }
-            items.push({ ...item, read: { ...item.read, artifact: { ...item.read.artifact, access: current.artifact.access } }, census });
-        }
-        return items;
+        materialize: async captured => materializeArtifactBatch(captured, input),
     }, { transactionClass: "artifact-details-read" });
 }
 
 type AccessResult<T> = Readonly<{ ok: true; value: T }> | Readonly<{ ok: false; error: ArtifactAccessErrorCodeV1 }>;
 
-/** Grant inspection is visible to every grantee; owner and admin may manage access. */
+/** Kind-owned inspection scope is selected before loading any grant display profile. */
 export async function listArtifactAccessGrantsInTx(tx: Tx, input: Readonly<{
     actorAccountId: string; artifactId: string;
 }>): Promise<AccessResult<ArtifactAccessGrantsListResponseV1>> {
-    const access = await resolveArtifactAccessInTx(tx, input);
+    const row = await tx.artifact.findFirst({ where: artifactAddress(input.artifactId),
+        select: { ...artifactAccessFactsSelect(input.actorAccountId), kind: true } });
+    if (!row) return { ok: false, error: "artifact_not_found" };
+    const access = resolveArtifactAccessFromFacts(row, input.actorAccountId);
     if (!access) return { ok: false, error: "artifact_not_found" };
-    const [accounts, teams, groups] = await Promise.all([
-        tx.artifactAccountGrant.findMany({ where: { artifactId: input.artifactId }, include: { account: { select: ACCOUNT_DISPLAY_PROFILE_SELECT } } }),
-        tx.artifactTeamGrant.findMany({ where: { artifactId: input.artifactId }, include: { team: { select: { name: true } } } }),
-        tx.artifactGroupGrant.findMany({ where: { artifactId: input.artifactId }, include: { teamGroup: { select: { name: true, teamId: true } } } }),
-    ]);
+    const selfAccountId = mayInspectArtifactAudience(row.kind, access) ? undefined : input.actorAccountId;
+    const grants = await readArtifactAccessGrantsForAdmittedCustodyInTx(tx, input.artifactId, selfAccountId);
     return { ok: true, value: { artifactId: input.artifactId, ownerAccountId: access.ownerAccountId, access: access.level,
-        grants: [
-            ...accounts.map(row => ({ principal: { kind: "account" as const, accountId: row.accountId }, accessLevel: row.accessLevel,
-                createdByAccountId: row.createdByAccountId, createdAt: row.createdAt.getTime(), display: { name: resolveAccountDisplayLabelV1(row.account), username: row.account.username } })),
-            ...teams.map(row => ({ principal: { kind: "team" as const, teamId: row.teamId }, accessLevel: row.accessLevel,
-                createdByAccountId: row.createdByAccountId, createdAt: row.createdAt.getTime(), display: { name: row.team.name } })),
-            ...groups.map(row => ({ principal: { kind: "group" as const, teamId: row.teamGroup.teamId, groupId: row.teamGroupId }, accessLevel: row.accessLevel,
-                createdByAccountId: row.createdByAccountId, createdAt: row.createdAt.getTime(), display: { name: row.teamGroup.name } })),
-        ] } };
+        grants: selfAccountId === undefined && decodeArtifactKindV1(row.kind).kindHint === 'bot_template.v1'
+            ? await projectAdmittedTemplateAcceptedVersionsInTx(tx, input.artifactId, grants) : grants } };
 }
 
 /** Owner/admin idempotent grant writes; only the owner may assign admin. */
@@ -688,27 +668,12 @@ export async function setArtifactAccessGrantInTx(tx: Tx, input: ArtifactAccessGr
     const access = await resolveArtifactAccessInTx(tx, input);
     if (!access) return { ok: false, error: "artifact_not_found" };
     if (!mayManageResourceGrants(access, input.accessLevel)) return { ok: false, error: "artifact_access_forbidden" };
+    const mutation = await readArtifactGrantMutationInTx(tx, input);
     const principal = input.principal;
     const principalError = await validateResourceGrantPrincipalInTx(tx, access.ownerAccountId, principal);
     if (principalError) return { ok: false, error: `artifact_${principalError}` };
-    const data = { accessLevel: input.accessLevel, createdByAccountId: input.actorAccountId };
-    let changed = false;
-    if (principal.kind === "account") {
-        const where = { artifactId_accountId: { artifactId: input.artifactId, accountId: principal.accountId } };
-        const previous = await tx.artifactAccountGrant.findUnique({ where });
-        changed = previous?.accessLevel !== input.accessLevel;
-        if (changed) await tx.artifactAccountGrant.upsert({ where, create: { artifactId: input.artifactId, accountId: principal.accountId, ...data }, update: data });
-    } else if (principal.kind === "team") {
-        const where = { artifactId_teamId: { artifactId: input.artifactId, teamId: principal.teamId } };
-        const previous = await tx.artifactTeamGrant.findUnique({ where });
-        changed = previous?.accessLevel !== input.accessLevel;
-        if (changed) await tx.artifactTeamGrant.upsert({ where, create: { artifactId: input.artifactId, teamId: principal.teamId, ...data }, update: data });
-    } else {
-        const where = { artifactId_teamGroupId: { artifactId: input.artifactId, teamGroupId: principal.groupId } };
-        const previous = await tx.artifactGroupGrant.findUnique({ where });
-        changed = previous?.accessLevel !== input.accessLevel;
-        if (changed) await tx.artifactGroupGrant.upsert({ where, create: { artifactId: input.artifactId, teamGroupId: principal.groupId, ...data }, update: data });
-    }
+    const changed = mutation.previous?.accessLevel !== input.accessLevel;
+    if (changed) await mutation.upsert();
     if (changed) {
         await markAccountsChanged(tx, { accountIds: await resolveArtifactAudienceInTx(tx, input.artifactId), kind: "artifact", entityId: input.artifactId });
     }
@@ -747,14 +712,19 @@ export async function removeArtifactAccessGrantInTx(tx: Tx, input: ArtifactAcces
 
 /** Current audience plus verified binding and envelope state for a key-holding host. */
 export async function readArtifactRecipientCensusInTx(tx: Tx, input: Readonly<{ actorAccountId: string; artifactId: string }>): Promise<AccessResult<ArtifactAccessRecipientCensusResponseV1>> {
-    const access = await resolveArtifactAccessInTx(tx, input);
+    const row = await tx.artifact.findFirst({ where: artifactAddress(input.artifactId), select: {
+        ...artifactAccessFactsSelect(input.actorAccountId), kind: true, dataEncryptionKey: true, provenanceDataEncryptionKey: true,
+    } });
+    if (!row) return { ok: false, error: "artifact_not_found" };
+    const access = resolveArtifactAccessFromFacts(row, input.actorAccountId);
     if (!access) return { ok: false, error: "artifact_not_found" };
     if (!access.encryptionMode) return { ok: false, error: "artifact_content_unavailable" };
-    const row = await tx.artifact.findUniqueOrThrow({ where: { id: input.artifactId }, select: { dataEncryptionKey: true, provenanceDataEncryptionKey: true } });
-    const audience = await resolveArtifactAudienceInTx(tx, input.artifactId);
+    const inspectAudience = mayInspectArtifactAudience(row.kind, access);
+    const audience = inspectAudience ? await resolveArtifactAudienceInTx(tx, input.artifactId) : [input.actorAccountId];
     const [accounts, envelopes] = await Promise.all([
         tx.account.findMany({ where: { id: { in: audience } }, select: RECIPIENT_READINESS_SELECT, orderBy: { id: "asc" } }),
-        tx.artifactKeyEnvelope.findMany({ where: { artifactId: input.artifactId } }),
+        tx.artifactKeyEnvelope.findMany({ where: { artifactId: input.artifactId,
+            ...(inspectAudience ? {} : { recipientAccountId: input.actorAccountId }) } }),
     ]);
     const plain = access.encryptionMode === "plain";
     const callerEnvelopes = !plain && access.level !== 'owner' ? await recipientEnvelopesInTx(tx, input.artifactId, input.actorAccountId) : null;
@@ -801,7 +771,10 @@ export async function commitArtifactRecipientKeyEnvelopesInTx(tx: Tx, input: Art
     if (access.encryptionMode !== "e2ee") return { ok: false, error: "artifact_content_unavailable" };
     const caller = await readArtifactForCallerInTx(tx, input);
     if (!caller.ok) return caller;
-    const row = await tx.artifact.findUniqueOrThrow({ where: { id: input.artifactId }, select: { dataEncryptionKey: true, provenanceDataEncryptionKey: true } });
+    const row = await tx.artifact.findUniqueOrThrow({ where: { id: input.artifactId }, select: { kind: true, dataEncryptionKey: true, provenanceDataEncryptionKey: true } });
+    if (!mayInspectArtifactAudience(row.kind, access) && input.recipientKeyEnvelopes.some(envelope => envelope.recipientAccountId !== input.actorAccountId)) {
+        return { ok: false, error: 'artifact_access_forbidden' };
+    }
     const envelopeCommitError = validateResourceRecipientEnvelopeCommit({ ownerDataEncryptionKey: row.dataEncryptionKey, ...input });
     if (envelopeCommitError === 'data_key_changed') {
         return { ok: false, error: "artifact_data_key_changed" };
@@ -851,3 +824,160 @@ const artifactRecipientEnvelopeStorageAdapter: ResourceRecipientEnvelopeStorageA
         await markAccountsChanged(tx, { accountIds: [...accountIds], kind: 'artifact', entityId: artifactId });
     },
 };
+
+export function projectArtifactPublicAudience(publication: Parameters<typeof isPublicSessionShareActive>[0], signedInLinkPresent: boolean): 'retained' | 'none' {
+    return signedInLinkPresent || isPublicSessionShareActive(publication) ? 'retained' : 'none';
+}
+
+/** Request-private admission carried into the transaction that changes the Artifact. */
+
+function mayInspectArtifactAudience(kind: string | null, access: ArtifactAccess): boolean {
+    return access.level === 'owner' || getArtifactGrantInspectionPolicyV1(decodeArtifactKindV1(kind).kindHint) === 'all';
+}
+
+/** The sole document access decision: ownership or the highest live grant. */
+
+function artifactRecipientReadSelect(actorAccountId?: string) {
+    return { accountId: true, account: { select: { encryptionMode: true, ...ACCOUNT_DISPLAY_PROFILE_SELECT } }, ...headerContentSelect,
+        signedInLink: { select: { artifactId: true } },
+        keyEnvelopes: { ...(actorAccountId === undefined ? {} : { where: { recipientAccountId: actorAccountId } }), select: {
+            recipientAccountId: true,
+            encryptedDataKey: true, recipientContentPublicKeyFingerprint: true, recipient: { select: RECIPIENT_READINESS_SELECT },
+            encryptedProvenanceDataKey: true,
+        } } } as const;
+}
+
+
+function projectArtifactHeaderForRecipient(row: Prisma.ArtifactGetPayload<{ select: ReturnType<typeof artifactRecipientReadSelect> }>,
+    actorAccountId: string, access: ArtifactAccess, recipientReadiness?: AccountRecipientEnvelopeReadiness): ArtifactHeaderReadResult {
+    const envelope = row.keyEnvelopes.find(envelope => envelope.recipientAccountId === actorAccountId);
+    const readiness = envelope ? recipientReadiness ?? deriveAccountRecipientEnvelopeReadinessFromRow(envelope.recipient) : undefined;
+    const key = access.level === "owner" || access.encryptionMode === "plain" ? new Uint8Array(row.dataEncryptionKey)
+        : envelope ? projectRecipientEnvelope(envelope.recipient, envelope, readiness) : null;
+    const privateKey = access.encryptionMode === "plain" ? null : access.level === "owner"
+        ? row.provenanceDataEncryptionKey ? new Uint8Array(row.provenanceDataEncryptionKey) : null
+        : envelope?.encryptedProvenanceDataKey ? projectRecipientEnvelope(envelope.recipient, { ...envelope, encryptedDataKey: envelope.encryptedProvenanceDataKey }, readiness) : null;
+    const projected = projectArtifactHeader(row, access, key, privateKey);
+    return projected.ok ? { ok: true, artifact: { ...projected.artifact, ownerDisplayName: resolveAccountDisplayLabelV1(row.account) } } : projected;
+}
+
+
+function materializeArtifactBatch(captured: ArtifactBatchCapture, input: Readonly<{
+    actorAccountId: string; artifactIds: readonly string[]; projection?: 'headers';
+}>): ArtifactBatchReadItem[] {
+    const byId = new Map(captured.rows.map(row => [row.id, row]));
+    const accounts = projectArtifactBatchAccounts(captured);
+    const publications = new Map(captured.publications.map(row => [row.artifactId, row]));
+    return input.artifactIds.map((artifactId): ArtifactBatchReadItem => {
+        const row = byId.get(artifactId);
+        if (!row) return { artifactId, read: { ok: false, error: 'artifact_not_found' }, census: null };
+        const access = captured.accessByArtifact.get(artifactId);
+        if (!access) return { artifactId, read: { ok: false, error: 'artifact_not_found' }, census: null };
+        const header = projectArtifactHeaderForRecipient(row, input.actorAccountId, access, accounts.get(input.actorAccountId)?.readiness);
+        if (!header.ok) return { artifactId, read: header, census: null };
+        const artifact = { ...header.artifact, sharedTeamIds: resolveResourceGrantTeamIdsFromFacts(artifactGrantFacts(row), input.actorAccountId) };
+        const content = input.projection === 'headers' ? projectArtifactRevisionMetadata(artifact, row)
+            : projectArtifactBody(artifact, row);
+        if (!content.ok) return { artifactId, read: content, census: null };
+        return { artifactId, read: { ok: true, artifact: { ...content.artifact,
+            publicAudience: projectArtifactPublicAudience(publications.get(artifactId) ?? null, row.signedInLink !== null) } },
+            census: input.projection !== 'headers' && header.artifact.encryptionMode === 'e2ee'
+                ? projectArtifactBatchCensus(captured, row, accounts, header.artifact) : null };
+    });
+}
+
+/** Parent readers share their transaction's exact admitted headers, without nested snapshots or private bodies. */
+
+export async function readArtifactHeadersForCallerInTx(tx: Tx, input: Readonly<{
+    actorAccountId: string; artifactIds: readonly string[];
+}>): Promise<ArtifactBatchReadItem[]> {
+    const selection = { ...input, artifactIds: [...new Set(input.artifactIds)], projection: 'headers' as const };
+    return materializeArtifactBatch(await captureArtifactBatchInTx(tx, selection, true), selection);
+}
+
+
+export async function readArtifactAccessGrantsForAdmittedCustodyInTx(tx: Tx,
+    artifactId: string, selfAccountId?: string): Promise<ArtifactAccessGrantsListResponseV1['grants']> {
+    const [accounts, teams, groups] = await Promise.all([
+        tx.artifactAccountGrant.findMany({ where: { artifactId, ...(selfAccountId === undefined ? {} : { accountId: selfAccountId }) },
+            include: { account: { select: ACCOUNT_DISPLAY_PROFILE_SELECT } } }),
+        selfAccountId === undefined ? tx.artifactTeamGrant.findMany({ where: { artifactId }, include: { team: { select: { name: true } } } }) : [],
+        selfAccountId === undefined ? tx.artifactGroupGrant.findMany({ where: { artifactId }, include: { teamGroup: { select: { name: true, teamId: true } } } }) : [],
+    ]);
+    return [
+            ...accounts.map(row => ({ principal: { kind: "account" as const, accountId: row.accountId }, accessLevel: row.accessLevel,
+                createdByAccountId: row.createdByAccountId, createdAt: row.createdAt.getTime(), display: { name: resolveAccountDisplayLabelV1(row.account), username: row.account.username } })),
+            ...teams.map(row => ({ principal: { kind: "team" as const, teamId: row.teamId }, accessLevel: row.accessLevel,
+                createdByAccountId: row.createdByAccountId, createdAt: row.createdAt.getTime(), display: { name: row.team.name } })),
+            ...groups.map(row => ({ principal: { kind: "group" as const, teamId: row.teamGroup.teamId, groupId: row.teamGroupId }, accessLevel: row.accessLevel,
+                createdByAccountId: row.createdByAccountId, createdAt: row.createdAt.getTime(), display: { name: row.teamGroup.name } })),
+        ];
+}
+
+/** Owner/admin idempotent grant writes; only the owner may assign admin. */
+
+export async function reportArtifactTemplateAcceptedVersionInTx(tx: Tx,
+    input: ArtifactTemplateAcceptedVersionInputV1 & { actorAccountId: string },
+): Promise<AccessResult<{ changed: boolean }>> {
+    const row = await tx.artifact.findFirst({ where: artifactAddress(input.artifactId),
+        select: { ...artifactAccessFactsSelect(input.actorAccountId), kind: true } });
+    if (!row) return { ok: false, error: 'artifact_not_found' };
+    const access = resolveArtifactAccessFromFacts(row, input.actorAccountId);
+    if (!access) return { ok: false, error: 'artifact_not_found' };
+    if (decodeArtifactKindV1(row.kind).kindHint !== 'bot_template.v1') return { ok: false, error: 'artifact_kind_not_shareable' };
+    return { ok: true, value: await writeAdmittedTemplateAcceptedVersionInTx(tx, { ...input, ownerAccountId: access.ownerAccountId }) };
+}
+
+export async function joinArtifactSignedInLinkAccessInTx(tx: Tx, input: Readonly<{
+    artifactId: string; authorAccountId: string; actorAccountId: string; encryptionMode: 'plain' | 'e2ee';
+    keyEnvelope?: ArtifactRecipientKeyEnvelopeInputV1;
+}>) {
+    if (input.keyEnvelope && input.keyEnvelope.recipientAccountId !== input.actorAccountId) {
+        return { ok: false, error: 'artifact_access_forbidden' } as const;
+    }
+    const current = await resolveArtifactAccessInTx(tx, input);
+    if (input.actorAccountId === input.authorAccountId) {
+        return { ok: true, value: { artifactId: input.artifactId, ownerAccountId: input.authorAccountId, access: 'owner' } } as const;
+    }
+    if (input.encryptionMode === 'plain') {
+        if (input.keyEnvelope) return { ok: false, error: 'data_key_not_required' } as const;
+    } else {
+        const recipient = await tx.account.findUnique({ where: { id: input.actorAccountId }, select: RECIPIENT_READINESS_SELECT });
+        if (!recipient) return { ok: false, error: 'artifact_access_forbidden' } as const;
+        const readiness = deriveAccountRecipientEnvelopeReadinessFromRow(recipient);
+        if (readiness.status === 'unavailable') return { ok: false, error: 'recipient_key_unavailable', reason: readiness.reason } as const;
+        if (!input.keyEnvelope || !validateResourceRecipientKeyEnvelopes([input.keyEnvelope])) {
+            return { ok: false, error: 'invalid_recipient_envelope' } as const;
+        }
+        if (input.keyEnvelope.recipientContentPublicKeyFingerprint !== readiness.binding.contentPublicKeyFingerprint) {
+            return { ok: false, error: 'recipient_key_changed' } as const;
+        }
+    }
+    const mutation = await readArtifactGrantMutationInTx(tx, { artifactId: input.artifactId, actorAccountId: input.authorAccountId,
+        principal: { kind: 'account', accountId: input.actorAccountId }, accessLevel: 'view' });
+    if (!mutation.previous) await mutation.upsert();
+    if (input.keyEnvelope) await artifactRecipientEnvelopeStorageAdapter.writeRecipientEnvelopeInTx(tx, input.artifactId, input.keyEnvelope);
+    await markAccountsChanged(tx, { accountIds: [input.authorAccountId, input.actorAccountId], kind: 'artifact', entityId: input.artifactId });
+    return { ok: true, value: { artifactId: input.artifactId, ownerAccountId: input.authorAccountId, access: current?.level ?? 'view' } } as const;
+}
+
+async function readArtifactGrantMutationInTx(tx: Tx, input: ArtifactAccessGrantSetStorageInputV1 & { actorAccountId: string }) {
+    const principal = input.principal;
+    const data = { accessLevel: input.accessLevel, createdByAccountId: input.actorAccountId };
+    let previous: Readonly<{ accessLevel: string }> | null;
+    let upsert: () => Promise<unknown>;
+    if (principal.kind === "account") {
+        const where = { artifactId_accountId: { artifactId: input.artifactId, accountId: principal.accountId } };
+        previous = await tx.artifactAccountGrant.findUnique({ where });
+        upsert = () => tx.artifactAccountGrant.upsert({ where, create: { artifactId: input.artifactId, accountId: principal.accountId, ...data }, update: data });
+    } else if (principal.kind === "team") {
+        const where = { artifactId_teamId: { artifactId: input.artifactId, teamId: principal.teamId } };
+        previous = await tx.artifactTeamGrant.findUnique({ where });
+        upsert = () => tx.artifactTeamGrant.upsert({ where, create: { artifactId: input.artifactId, teamId: principal.teamId, ...data }, update: data });
+    } else {
+        const where = { artifactId_teamGroupId: { artifactId: input.artifactId, teamGroupId: principal.groupId } };
+        previous = await tx.artifactGroupGrant.findUnique({ where });
+        upsert = () => tx.artifactGroupGrant.upsert({ where, create: { artifactId: input.artifactId, teamGroupId: principal.groupId, ...data }, update: data });
+    }
+    return { previous, upsert };
+}
