@@ -340,6 +340,10 @@ export function readActionCatalog(repoRoot, recordInput = () => {}, readSource =
         const binding = node.importClause.namedBindings.elements.find(n => n.name.text === name);
         if (binding) return definition(resolve(dirname(path), node.moduleSpecifier.text.replace(/\.js$/u, '.ts')), (binding.propertyName ?? binding.name).text);
       }
+      if (ts.isExportDeclaration(node) && node.moduleSpecifier && node.exportClause && ts.isNamedExports(node.exportClause)) {
+        const binding = node.exportClause.elements.find(n => n.name.text === name);
+        if (binding) return definition(resolve(dirname(path), node.moduleSpecifier.text.replace(/\.js$/u, '.ts')), (binding.propertyName ?? binding.name).text);
+      }
     }
     throw Error(`Unresolved Action catalog declaration: ${name}`);
   };
