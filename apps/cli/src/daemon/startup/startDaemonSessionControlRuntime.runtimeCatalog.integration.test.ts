@@ -15225,7 +15225,7 @@ describe('startDaemonSessionControlRuntime', () => {
             for (const kind of ['navigate', 'goBack', 'goForward', 'reload', 'stop'] as const) {
                 expect(await execute({ actionId: `browser.${kind}`, input: { ...browserView, kind, commandId: `disabled-${kind}`,
                     ...(kind === 'navigate' ? { url: 'https://example.test/disabled' } : {}) },
-                    context: { authority: 'account_automation', bypassApprovals: true } }))
+                    context: { authority: 'account_automation' } }))
                     .toMatchObject({ ok: false, errorCode: 'runtime_action_disabled', error: 'runtime_action_disabled:browser:browser_automation_route_unavailable' });
             }
             // Preserve the generation-bound observation check using the admitted Action path.
