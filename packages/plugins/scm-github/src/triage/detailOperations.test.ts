@@ -1308,8 +1308,8 @@ describe('GitHub pull-request status operation', () => {
       checks: { state: 'complete', passed: 1, failed: 1, pending: 1, total: 3, incomplete: false,
         rows: [{ id: 'github-check-run:9001', name: 'x'.repeat(MAX_TRIAGE_TEXT_UTF8_BYTES_V1), state: 'failed' }, { id: 'github-check-run:9002', state: 'pending' },
           { id: 'github-commit-status:7701', state: 'passed' }] },
-      review: { decision: 'changesRequested', reviewers: [{ name: 'alice', verb: 'changesRequested' },
-        { name: 'bob', verb: 'pending' }], incomplete: true },
+      review: { decision: 'changesRequested', reviewers: [{ id: 'user:alice', name: 'alice', verb: 'changesRequested' },
+        { id: 'user:bob', name: 'bob', verb: 'pending' }], incomplete: true },
       merge: { state: 'blocked', blocker: 'blocked' },
       branch: { head: 'frame-pump', base: 'main', additions: 18, deletions: 3 },
       facts: [

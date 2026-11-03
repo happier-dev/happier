@@ -45,6 +45,8 @@ const review = defineProtocolObject({
         defineProtocolLiteral('reviewRequired'), defineProtocolLiteral(null),
     ]),
     reviewers: defineProtocolArray(defineProtocolObject({
+        // Source-native user/team key, independent of display name and order.
+        id: TriageIdentifierV1ProtocolSchema,
         name: TriageTextV1ProtocolSchema,
         verb: defineProtocolUnion([
             defineProtocolLiteral('approved'), defineProtocolLiteral('changesRequested'),

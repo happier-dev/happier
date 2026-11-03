@@ -27,6 +27,7 @@ import type {
   TriagePullRequestStatusResultV1,
 } from '@happier-dev/triage-protocol/v1';
 import { TriageGetInputV1Schema, TriagePullRequestStatusResultV1Schema } from '@happier-dev/triage-protocol/v1';
+import { TriageIdentifierV1ProtocolSchema } from '@happier-dev/plugin-sdk/protocol';
 import {
   fitActionResultPageV1,
   fitActionResultSequenceV1,
@@ -184,15 +185,21 @@ export async function readGitlabPullRequestStatus(input: unknown, context: Plugi
     const approvedNames = new Set(state.approvedBy);
     const pendingReviewers = read.pullRequest.reviewers.filter((name) => !approvedNames.has(name)).map((name) => boundGitlabText(name));
     textTruncated ||= [...approvedBy, ...pendingReviewers].some((name) => name.truncated);
+    const reviewers: NonNullable<TriagePullRequestStatusV1['review']>['reviewers'][number][] = [];
+    const appendReviewer = (nativeName: string, name: string, verb: 'approved' | 'pending') => {
+      const id = TriageIdentifierV1ProtocolSchema.safeParse(`user:${nativeName}`);
+      if (!id.success) { textTruncated = true; return; }
+      reviewers.push({ id: id.data, name, verb });
+    };
+    state.approvedBy.forEach((name, index) => appendReviewer(name, approvedBy[index]!.text, 'approved'));
+    read.pullRequest.reviewers.filter((name) => !approvedNames.has(name))
+      .forEach((name, index) => appendReviewer(name, pendingReviewers[index]!.text, 'pending'));
     review = {
       decision: read.pullRequest.changesRequested ? 'changesRequested'
         : state.approvalsLeft !== undefined && state.approvalsLeft > 0 ? 'reviewRequired'
           : state.approvalsLeft === 0 && ((state.approvalsRequired ?? 0) > 0 || state.approvedBy.length > 0) ? 'approved' : null,
-      reviewers: [
-        ...approvedBy.map((name) => ({ name: name.text, verb: 'approved' as const })),
-        ...pendingReviewers.map((name) => ({ name: name.text, verb: 'pending' as const })),
-      ],
-      incomplete: state.omittedApproverCount > 0,
+      reviewers,
+      incomplete: state.omittedApproverCount > 0 || reviewers.length < approvedBy.length + pendingReviewers.length,
     };
   } else if (read.pullRequest.changesRequested) {
     review = { decision: 'changesRequested', reviewers: [], incomplete: true };

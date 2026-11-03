@@ -387,7 +387,7 @@ describe('expanded PR status from the exact linked source observation', () => {
                 rows: [{ id: 'web', name: 'ui-tests (web)', state: 'failed' },
                     ...Array.from({ length: 9 }, (_, index) => ({ id: `unit-${index}`, name: `unit-tests ${index}`, state: 'passed' as const }))] },
             review: { decision: 'changesRequested', incomplete: false,
-                reviewers: [{ name: 'Ana', verb: 'changesRequested' }, { name: 'Jonas', verb: 'pending' }] },
+                reviewers: [{ id: 'user:ana', name: 'Ana', verb: 'changesRequested' }, { id: 'user:jonas', name: 'Jonas', verb: 'pending' }] },
             merge: { state: 'blocked', blocker: 'Blocked by the failing check and required review' },
             branch: { head: 'fix/settings-remount', base: 'main', additions: 48, deletions: 12 }, facts: [],
         };

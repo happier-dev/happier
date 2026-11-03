@@ -153,7 +153,8 @@ describe('GitLab shared pull request status', () => {
     expect(status).toMatchObject({ kind: 'status',
       checks: { state: 'complete', passed: 1, failed: 1, pending: 1, total: 4, incomplete: false },
       review: { decision: 'reviewRequired', reviewers: [
-        { name: 'approved-reviewer', verb: 'approved' }, { name: 'pending-reviewer', verb: 'pending' },
+        { id: 'user:approved-reviewer', name: 'approved-reviewer', verb: 'approved' },
+        { id: 'user:pending-reviewer', name: 'pending-reviewer', verb: 'pending' },
       ], incomplete: false },
       merge: { state: 'blocked', blocker: 'not_approved' },
       branch: { head: 'feature/status', base: 'main' },

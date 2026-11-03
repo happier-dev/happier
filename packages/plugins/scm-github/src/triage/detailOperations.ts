@@ -731,7 +731,9 @@ export async function readGithubPullRequestStatus(
         : row.state === 'DISMISSED' ? 'dismissed' : row.state === 'PENDING' ? 'pending' : null;
       const name = text(author);
       if (verb === null || !name) { reviewIncomplete = true; continue; }
-      reviewers.set(`user:${author}`, { name, verb });
+      const id = projectGithubDetailIdentifierV1(`user:${author}`);
+      if (id === null || id.truncated) { projectionTruncated = true; reviewIncomplete = true; continue; }
+      reviewers.set(id.value, { id: id.value, name, verb });
     }
   }
   if (requests.kind === 'requests') {
@@ -739,7 +741,9 @@ export async function readGithubPullRequestStatus(
     for (const row of requests.rows) {
       const name = text(row.subject);
       if (!name) { reviewIncomplete = true; continue; }
-      reviewers.set(`${row.kind}:${row.subject}`, { name, verb: 'pending' });
+      const id = projectGithubDetailIdentifierV1(`${row.kind}:${row.subject}`);
+      if (id === null || id.truncated) { projectionTruncated = true; reviewIncomplete = true; continue; }
+      reviewers.set(id.value, { id: id.value, name, verb: 'pending' });
     }
   }
   const decision = reviews.kind === 'reviews' ? reviews.reviewDecision : null;
