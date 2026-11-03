@@ -45,6 +45,11 @@ function truncate(value: string, limit: number): string {
 
 export type TelemetryHeaders = Readonly<Record<string, string | readonly string[] | undefined>>;
 
+export type RedactedDiagnosticsHeaders = Readonly<{
+  headers: Readonly<Record<string, string>>;
+  truncated: boolean;
+}>;
+
 /**
  * Redact a header bag down to the allowlisted, value-safe header names. Used at every egress site
  * (sidecar, peer-mediation observability, host re-sanitizer) so the allowlist can never drift again.
@@ -53,17 +58,29 @@ export function redactDiagnosticsHeaders(
   headers: TelemetryHeaders | undefined,
   options: Readonly<{ valueLimit?: number }> = {},
 ): Readonly<Record<string, string>> {
-  if (!headers) return {};
+  return redactDiagnosticsHeadersWithResult(headers, options).headers;
+}
+
+/** Report clipping separately from policy-based exclusions of unsafe header values. */
+export function redactDiagnosticsHeadersWithResult(
+  headers: TelemetryHeaders | undefined,
+  options: Readonly<{ valueLimit?: number }> = {},
+): RedactedDiagnosticsHeaders {
+  if (!headers) return { headers: {}, truncated: false };
   const valueLimit = options.valueLimit ?? 256;
   const out: Record<string, string> = {};
+  let truncated = false;
   for (const [name, value] of Object.entries(headers)) {
     const normalized = normalizeTelemetryHeaderName(name);
     if (!SAFE_TELEMETRY_HEADER_NAMES.has(normalized)) continue;
     const values = headerValues(value);
     if (values.length === 0) continue;
-    out[normalized] = truncate(values.join(', '), valueLimit);
+    const joined = values.join(', ');
+    const redacted = truncate(joined, valueLimit);
+    out[normalized] = redacted;
+    truncated ||= redacted !== joined;
   }
-  return out;
+  return { headers: out, truncated };
 }
 
 export type RedactedDiagnosticsUrl = Readonly<{

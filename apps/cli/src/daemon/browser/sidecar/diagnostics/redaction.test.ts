@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
     redactSidecarContextUrl,
     redactSidecarDiagnosticsHeaders,
+    redactSidecarDiagnosticsHeadersWithResult,
     redactSidecarDiagnosticsUrl,
 } from './redaction';
 
@@ -41,6 +42,25 @@ describe('redactSidecarDiagnosticsHeaders', () => {
     it('returns an empty record for absent or empty headers', () => {
         expect(redactSidecarDiagnosticsHeaders(undefined)).toEqual({});
         expect(redactSidecarDiagnosticsHeaders({ Authorization: 'Bearer secret' })).toEqual({});
+    });
+
+    it('reports clipped allowed values without counting excluded secret headers as truncation', () => {
+        const longValue = 'a'.repeat(257);
+        const result = redactSidecarDiagnosticsHeadersWithResult({
+            Accept: longValue,
+            Authorization: 'Bearer secret',
+        });
+
+        expect(result).toEqual({
+            headers: { accept: `${'a'.repeat(253)}...` },
+            truncated: true,
+        });
+        expect(redactSidecarDiagnosticsHeaders({ Accept: longValue })).toEqual(result.headers);
+        expect(redactSidecarDiagnosticsHeadersWithResult({
+            Accept: 'a'.repeat(256),
+            Authorization: longValue,
+        })).toEqual({ headers: { accept: 'a'.repeat(256) }, truncated: false });
+        expect(redactSidecarDiagnosticsHeadersWithResult(undefined)).toEqual({ headers: {}, truncated: false });
     });
 });
 

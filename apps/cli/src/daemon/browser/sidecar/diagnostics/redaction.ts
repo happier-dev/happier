@@ -1,6 +1,10 @@
 import { createHash } from 'node:crypto';
 
-import { redactDiagnosticsHeaders, redactDiagnosticsUrl } from '@happier-dev/protocol/browser/diagnostics/egress/headers';
+import {
+    redactDiagnosticsHeadersWithResult,
+    redactDiagnosticsUrl,
+    type RedactedDiagnosticsHeaders,
+} from '@happier-dev/protocol/browser/diagnostics/egress/headers';
 
 export type SidecarDiagnosticsHeaders = Readonly<Record<string, string | readonly string[] | undefined>>;
 
@@ -16,7 +20,13 @@ export function createSidecarPrivateReference(prefix: string, raw: string): stri
 export function redactSidecarDiagnosticsHeaders(
     headers: SidecarDiagnosticsHeaders | undefined,
 ): Readonly<Record<string, string>> {
-    return redactDiagnosticsHeaders(headers, { valueLimit: 256 });
+    return redactSidecarDiagnosticsHeadersWithResult(headers).headers;
+}
+
+export function redactSidecarDiagnosticsHeadersWithResult(
+    headers: SidecarDiagnosticsHeaders | undefined,
+): RedactedDiagnosticsHeaders {
+    return redactDiagnosticsHeadersWithResult(headers);
 }
 
 export type SidecarRedactedUrl = Readonly<{
