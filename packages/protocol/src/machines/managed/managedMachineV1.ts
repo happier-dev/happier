@@ -140,3 +140,5 @@ export const ManagedMachineSetupV1Schema = lazyDefinition(() => z.strictObject({
 }).check(z.superRefine((value, context) => {
   if (value.state !== 'failed' && value.errorCode !== undefined) context.addIssue({ code: 'custom', path: ['errorCode'], message: 'Only failed setup retains an error.' });
 })));
+
+export { classifyManagedMachineAllocationV1, type ManagedMachineAllocationPresentationV1 } from './managedAllocationPresentationV1.js';
