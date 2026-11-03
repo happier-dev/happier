@@ -405,6 +405,12 @@ jobs:
     env:
       EAS_CLI_VERSION: 18.0.1
     steps:
+      # Same cleanup as build-tauri: run 41640860025 hit ENOSPC installing dependencies here.
+      - name: Free runner disk
+        run: |
+          df -h /
+          sudo rm -rf /usr/local/lib/android /opt/ghc /usr/share/dotnet /opt/hostedtoolcache/CodeQL
+          df -h /
       - name: Checkout exact candidate
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
