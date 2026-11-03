@@ -331,6 +331,21 @@ function resolveFocusReturnRef(props: PopoverProps) {
     return props.focusReturnRef ?? (props.anchor?.kind === 'view' ? props.anchor.ref : props.anchorRef);
 }
 
+/**
+ * `auto` hangs a top/bottom popover from the anchor edge that faces the larger side of its boundary: a trigger
+ * on the left opens rightward (it never spans the sidebar or rail beside it), one on the right opens leftward.
+ */
+function resolvePopoverAnchorEdge(
+    align: NonNullable<PopoverPortalOptions['anchorAlign']>,
+    anchor: Readonly<{ x: number; width: number }>,
+    boundary: Readonly<{ x: number; width: number }>,
+): 'start' | 'center' | 'end' {
+    if (align !== 'auto') return align;
+    const startRoom = boundary.x + boundary.width - anchor.x;
+    const endRoom = anchor.x + anchor.width - boundary.x;
+    return startRoom >= endRoom ? 'start' : 'end';
+}
+
 export function Popover(props: PopoverProps) {
     const deviceType = useDeviceType();
     // Placement measurements belong to the anchored presentation's mounted tree. A sheet
@@ -1511,7 +1526,7 @@ function AnchoredPopover(props: PopoverProps) {
                     // to its trigger rather than sliding away from it to fit.
                     const startFits = anchorRectState.x + desiredWidth <= boundaryRect.x + boundaryRect.width;
                     const endFits = anchorRight - desiredWidth >= boundaryRect.x;
-                    switch (anchorAlignOnPortal) {
+                    switch (resolvePopoverAnchorEdge(anchorAlignOnPortal, anchorRectState, boundaryRect)) {
                         case 'end':
                             return endFits || !startFits ? anchorRight - desiredWidth : anchorRectState.x;
                         case 'center':
@@ -1631,7 +1646,7 @@ function AnchoredPopover(props: PopoverProps) {
                 const startRoom = boundaryRect.x + boundaryRect.width - anchorRectState.x;
                 const endRoom = anchorRight - boundaryRect.x;
                 const fullWidth = Math.min(computed.maxWidth, CONTENT_SIZED_POPOVER_WIDTH.maxPx);
-                const requestedEnd = anchorAlignOnPortal === 'end';
+                const requestedEnd = resolvePopoverAnchorEdge(anchorAlignOnPortal, anchorRectState, boundaryRect) === 'end';
                 const requestedRoom = requestedEnd ? endRoom : startRoom;
                 const otherRoom = requestedEnd ? startRoom : endRoom;
                 const alignEnd = vertical

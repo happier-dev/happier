@@ -46,7 +46,7 @@ export type PopoverPortalOptions = Readonly<{
      * Horizontal alignment relative to the anchor for top/bottom placements.
      * Defaults to 'start' to preserve historical behavior.
      */
-    anchorAlign?: 'start' | 'center' | 'end';
+    anchorAlign?: 'start' | 'center' | 'end' | 'auto';
     /**
      * Vertical alignment relative to the anchor for left/right placements.
      * Defaults to 'center' for menus/tooltips.

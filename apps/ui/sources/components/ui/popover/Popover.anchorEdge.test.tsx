@@ -29,7 +29,7 @@ afterEach(() => {
 type AnchorRect = Readonly<{ left: number; top: number; width: number; height: number }>;
 
 /** A fixed-width picker (520 wide) hung from a chip, as the composer's list pickers are. */
-async function renderPicker(anchor: AnchorRect, anchorAlign: 'start' | 'end') {
+async function renderPicker(anchor: AnchorRect, anchorAlign: 'start' | 'end' | 'auto') {
     const { Popover } = await import('./Popover');
     const { OverlayPortalProvider, OverlayPortalHost } = await import('./OverlayPortal');
     const { PopoverPortalTargetContextProvider } = await import('./PopoverPortalTarget');
@@ -82,5 +82,20 @@ describe('Popover: a fixed-width popover hangs from its anchor edge', () => {
     it('hangs an end-aligned popover from the anchor\'s start edge when the end edge leaves it no room', async () => {
         const { left } = await renderPicker({ left: 100, top: 400, width: 100, height: 32 }, 'end');
         expect(left).toBe(100);
+    });
+});
+
+describe('Popover: an auto-aligned popover opens toward the open side of the window', () => {
+    it('hangs from the start edge of an anchor on the left, so it never spans what sits left of its trigger', async () => {
+        // Both edges leave it its full width; more of the window lies right of this trigger, so it opens there
+        // instead of covering what sits left of it (a rail's "+" beside the Settings sidebar).
+        const { left, width } = await renderPicker({ left: 440, top: 400, width: 100, height: 32 }, 'auto');
+        expect(width).toBe(520);
+        expect(left).toBe(440);
+    });
+
+    it('hangs from the end edge of an anchor on the right, as a page header\'s Share does', async () => {
+        const { left, width } = await renderPicker({ left: 480, top: 400, width: 120, height: 32 }, 'auto');
+        expect(left + width).toBe(600);
     });
 });

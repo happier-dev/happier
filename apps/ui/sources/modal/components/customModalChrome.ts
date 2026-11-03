@@ -1,3 +1,4 @@
+import type { PopoverAnchor } from '@/components/ui/popover/_types';
 import type { CustomModalChromeCardConfig, CustomModalChromeConfig } from '../types';
 
 function areViewportMarginsEqual(a: unknown, b: unknown): boolean {
@@ -52,6 +53,7 @@ export function areChromeConfigsEqual(
             && a.scrollHost === b.scrollHost
             && a.bodyScroll === b.bodyScroll
             && a.phonePresentation === b.phonePresentation
+            && a.anchor === b.anchor
             && areDimensionOptionsEqual(
                 (a.dimensions ?? null) as Record<string, unknown> | null,
                 (b.dimensions ?? null) as Record<string, unknown> | null,
@@ -100,6 +102,7 @@ export function mergeChromeConfig(
             scrollHost: override.scrollHost !== undefined ? override.scrollHost : base.scrollHost,
             bodyScroll: override.bodyScroll !== undefined ? override.bodyScroll : base.bodyScroll,
             phonePresentation: override.phonePresentation !== undefined ? override.phonePresentation : base.phonePresentation,
+            anchor: override.anchor !== undefined ? override.anchor : base.anchor,
             dimensions: mergedDimensions,
         };
     }
@@ -110,6 +113,8 @@ export function mergeChromeConfig(
 /** Modal-owned chrome decisions, independent of the content's render lifecycle. */
 export function resolveCustomModalPresentation(chrome: CustomModalChromeConfig | null | undefined, deviceType: 'phone' | 'tablet'): Readonly<{
     card: CustomModalChromeCardConfig | null;
+    /** The trigger the card hangs from as an anchored popover; null when it is a centred dialog or a phone sheet. */
+    anchor: PopoverAnchor | null;
     phoneSheet: boolean;
     phoneFullscreen: boolean;
     placement: 'fullscreen' | 'bottom' | 'center';
@@ -121,8 +126,15 @@ export function resolveCustomModalPresentation(chrome: CustomModalChromeConfig |
     const card = chrome?.kind === 'card' ? chrome : null;
     const phoneSheet = card?.phonePresentation === 'sheet' && deviceType === 'phone';
     const phoneFullscreen = card?.phonePresentation === 'fullscreen' && deviceType === 'phone';
+    const anchor = card?.anchor;
+    const trigger = anchor?.kind === 'view' ? anchor.ref.current : null;
+    // A card can outlive the menu or control that opened it. A missing or removed trigger
+    // uses the same centred presentation as a programmatic open.
+    const missingTrigger = anchor?.kind === 'view'
+        && (trigger == null || ('isConnected' in trigger && trigger.isConnected === false));
     return {
         card, phoneSheet, phoneFullscreen,
+        anchor: anchor && !missingTrigger && deviceType !== 'phone' ? anchor : null,
         placement: stage || phoneFullscreen ? 'fullscreen' as const : phoneSheet ? 'bottom' as const : 'center' as const,
         scrollHost: stage || card?.scrollHost === 'bounded' ? 'body' as const : card?.scrollHost ?? 'overlay',
         showBackdrop: !stage,

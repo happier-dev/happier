@@ -3,6 +3,7 @@ import { ReactNode, ComponentType } from 'react';
 import type { ModalCardDimensionOptions } from './components/card/useModalCardDimensions';
 import type { ModalPortalTarget } from './portal/ModalPortalTarget';
 import type { FocusReturnRef } from '@/keyboard/focusReturn';
+import type { PopoverAnchor } from '@/components/ui/popover/_types';
 
 export type ModalType = 'alert' | 'confirm' | 'prompt' | 'custom';
 
@@ -120,6 +121,12 @@ export type CustomModalChromeCardConfig = Readonly<{
      * `fullscreen` fills the phone viewport with opaque page chrome and safe-area-inset content.
      */
     phonePresentation?: 'card' | 'sheet' | 'fullscreen';
+    /**
+     * The control that opened the card. On wide layouts the same card hangs from it as an anchored
+     * popover (below it, flipping or sliding to stay in the window) instead of a centred dialog; a phone
+     * keeps `phonePresentation`. Without it the card stays centred.
+     */
+    anchor?: PopoverAnchor;
 }>;
 
 export type CustomModalChromeStageConfig = Readonly<{

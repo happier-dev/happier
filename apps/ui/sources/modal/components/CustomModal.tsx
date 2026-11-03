@@ -2,10 +2,15 @@ import React from 'react';
 import { BaseModal } from './BaseModal';
 import {
     CustomModalConfig,
+    type CustomModalChromeCardConfig,
     type CustomModalChromeConfig,
     type CustomModalDismissReason,
 } from '../types';
 import { ModalCardFrame } from './card/ModalCardFrame';
+import { useModalCardDimensions } from './card/useModalCardDimensions';
+import { Popover } from '@/components/ui/popover/Popover';
+import { POPOVER_PREFERRED_ROOM_PX } from '@/components/ui/popover/popoverPreferredRoom';
+import type { PopoverAnchor } from '@/components/ui/popover/_types';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
 import { areChromeConfigsEqual, mergeChromeConfig, resolveCustomModalPresentation } from './customModalChrome';
@@ -122,6 +127,37 @@ export function CustomModal({ config, onClose, showBackdrop = true, visible, zIn
     ), [Component, config.props, handleComponentClose, setChrome]);
 
     const { phoneSheet, phoneFullscreen } = presentation;
+    // A card hung from its trigger closes like every popover (outside press, Escape, its own Done), so it draws no ×.
+    const frame = (style?: React.ComponentProps<typeof ModalCardFrame>['style'], closeButton = true) => <ModalCardFrame
+        framed={chrome !== null}
+        material={chrome?.material}
+        header={chrome?.header}
+        headerInset={chrome?.headerInset}
+        leading={chrome?.leading}
+        title={chrome?.title}
+        subtitle={chrome?.subtitle}
+        subtitleLines={chrome?.subtitleLines}
+        actions={chrome?.actions}
+        footer={chrome?.footer}
+        testID={chrome?.testID}
+        titleTestID={chrome?.titleTestID}
+        subtitleTestID={chrome?.subtitleTestID}
+        closeButtonTestID={chrome?.closeButtonTestID}
+        scrollHost={chrome?.scrollHost}
+        bodyScroll={chrome?.bodyScroll ?? 'none'}
+        dimensions={chrome?.dimensions}
+        presentation={phoneFullscreen ? 'fullscreen' : phoneSheet ? 'sheet' : 'card'}
+        safeAreaInsets={phoneFullscreen ? insets : undefined}
+        sheetBottomInset={phoneSheet ? insets.bottom : undefined}
+        onClose={chrome && dismissible && closeButton ? handleSharedDismiss : undefined}
+        style={style}
+    >
+        {content}
+    </ModalCardFrame>;
+    if (presentation.anchor) {
+        return <AnchoredModalCard anchor={presentation.anchor} visible={visible} accessibilityLabel={accessibilityLabel}
+            dimensions={chrome?.dimensions} focusReturnRef={config.focusReturnRef} onRequestClose={handleSharedDismiss} frame={frame} />;
+    }
     return (
         <BaseModal
             visible={visible}
@@ -139,31 +175,48 @@ export function CustomModal({ config, onClose, showBackdrop = true, visible, zIn
             placement={presentation.placement}
             scrollHost={presentation.scrollHost}
         >
-            {effectiveChrome?.kind === 'stage' ? content : <ModalCardFrame
-                framed={chrome !== null}
-                material={chrome?.material}
-                header={chrome?.header}
-                headerInset={chrome?.headerInset}
-                leading={chrome?.leading}
-                title={chrome?.title}
-                subtitle={chrome?.subtitle}
-                subtitleLines={chrome?.subtitleLines}
-                actions={chrome?.actions}
-                footer={chrome?.footer}
-                testID={chrome?.testID}
-                titleTestID={chrome?.titleTestID}
-                subtitleTestID={chrome?.subtitleTestID}
-                closeButtonTestID={chrome?.closeButtonTestID}
-                scrollHost={chrome?.scrollHost}
-                bodyScroll={chrome?.bodyScroll ?? 'none'}
-                dimensions={chrome?.dimensions}
-                presentation={phoneFullscreen ? 'fullscreen' : phoneSheet ? 'sheet' : 'card'}
-                safeAreaInsets={phoneFullscreen ? insets : undefined}
-                sheetBottomInset={phoneSheet ? insets.bottom : undefined}
-                onClose={chrome && dismissible ? handleSharedDismiss : undefined}
-            >
-                {content}
-            </ModalCardFrame>}
+            {effectiveChrome?.kind === 'stage' ? content : frame()}
         </BaseModal>
     );
+}
+
+/** The window gap an anchored card keeps, as the other anchored panels do. */
+const ANCHORED_CARD_EDGE_PADDING_PX = 8;
+
+/**
+ * The same card, hung from the control that opened it (a Share button, a ⋯): it opens below that control,
+ * flips above when the room is there, and stays inside the window. No scrim; an outside press, Escape or its
+ * own close dismiss it through the shared handler, and focus returns to the trigger.
+ */
+function AnchoredModalCard(props: Readonly<{
+    anchor: PopoverAnchor;
+    visible: boolean;
+    accessibilityLabel: string | undefined;
+    dimensions: CustomModalChromeCardConfig['dimensions'];
+    focusReturnRef: CustomModalConfig['focusReturnRef'];
+    onRequestClose: () => void;
+    frame: (style: React.ComponentProps<typeof ModalCardFrame>['style'], closeButton: boolean) => React.ReactElement;
+}>) {
+    // The card's own bound (its width and its height ceiling) is the popover's cap, so it reads at the size it has as a dialog.
+    const dimensions = useModalCardDimensions(props.dimensions);
+    return <Popover
+        open={props.visible}
+        anchor={props.anchor}
+        accessibilityLabel={props.accessibilityLabel}
+        focusReturnRef={props.focusReturnRef ?? undefined}
+        autoFocusOnOpen
+        placement="bottom"
+        placementMinSpace={POPOVER_PREFERRED_ROOM_PX}
+        // A designed card keeps its size: it opens below its control, above it when only that side holds it, and
+        // otherwise slides inside the window rather than cramping into the leftover room and hiding its actions.
+        fit="shift"
+        maxHeightCap={dimensions.maxHeight}
+        maxWidthCap={dimensions.width + 2 * ANCHORED_CARD_EDGE_PADDING_PX}
+        edgePadding={ANCHORED_CARD_EDGE_PADDING_PX}
+        // Opens toward the open side: a trigger on the left (a rail's "+") never hangs the card over the sidebar.
+        portal={{ web: true, native: true, matchAnchorWidth: false, anchorAlign: 'auto' }}
+        onRequestClose={props.onRequestClose}
+    >
+        {({ maxHeight, maxWidth }) => props.frame({ maxHeight, width: Math.min(dimensions.width, maxWidth), maxWidth }, false)}
+    </Popover>;
 }
