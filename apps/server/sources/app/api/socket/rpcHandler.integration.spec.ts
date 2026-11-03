@@ -387,4 +387,22 @@ describe("rpcHandler", () => {
             result: { ok: true, result: "{}" },
         });
     });
+
+    // The daemon's raw Browser and Computer control routes admit only present_user (SEC-FIX-1101 S2).
+    it.each([
+        [RPC_METHODS.DAEMON_BROWSER_CONTROL_DISPATCH, "present_user"],
+        [RPC_METHODS.DAEMON_COMPUTER_ACTION_EXECUTE, "present_user"],
+        [RPC_METHODS.DAEMON_BROWSER_CONTROL_DISPATCH, "account_automation"],
+        [RPC_METHODS.DAEMON_COMPUTER_ACTION_EXECUTE, "account_automation"],
+    ] as const)("forwards %s human takeover with the caller credential's %s authority", async (rpcMethod, authAuthority) => {
+        const method = `${machineId}:${rpcMethod}`;
+        const target = createTarget(`takeover-${authAuthority}`, { ok: true });
+        const { io } = createIo({ [`rpc:${accountId}:${method}`]: [[target.socket]] });
+        const callerSocket = createAuthenticatedFakeSocket({ id: `ui-${authAuthority}`, emit: vi.fn(), data: { authAuthority } });
+        rpcHandler(accountId, callerSocket as unknown as Socket, { io });
+        const callback = vi.fn();
+        await getSocketHandler(callerSocket, SOCKET_RPC_EVENTS.CALL)({ method, params: "opaque-control" }, callback);
+        expect(callback).toHaveBeenCalledWith({ ok: true, result: { ok: true } });
+        expect(target.emitWithAck.mock.calls[0]?.[1]).toMatchObject({ method, callerAuthority: authAuthority });
+    });
 });
