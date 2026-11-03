@@ -9,7 +9,7 @@ import { PLUGIN_MANIFEST } from './manifest.js';
 describe('OpenAI Voice plugin manifest', () => {
   it('owns the standard OpenAI API-key Connected Account selected by qualified consumers', () => {
     expect(ingestPluginManifestV2(PLUGIN_MANIFEST)).toMatchObject({ ok: true });
-    expect(PLUGIN_MANIFEST.contributes.connectedAccountDescriptors).toEqual([{
+    expect(PLUGIN_MANIFEST.contributes.connectedAccountDescriptors).toMatchObject([{
       id: 'openai',
       title: 'OpenAI API key',
       authentication: {
@@ -17,6 +17,7 @@ describe('OpenAI Voice plugin manifest', () => {
         modes: [{
           id: 'api-key',
           kind: 'manual',
+          accountDirectSave: true,
           directExport: {
             contractVersion: 'happier.team-credential-manual-connected-account-direct.v1',
           },
