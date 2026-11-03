@@ -35,6 +35,16 @@ normalizeActivitySurfaceLocalSettings(localSettingsDefaultsRecord);
 export const localSettingsDefaults: LocalSettings = localSettingsDefaultsRecord;
 Object.freeze(localSettingsDefaults);
 
+export const RETIRED_DESKTOP_OVERLAY_SETTING_KEYS = [
+    'desktopOverlayPresentationMode',
+    'desktopOverlayPlacementMode',
+    'desktopOverlayAnchor',
+    'desktopOverlayOffsetX',
+    'desktopOverlayOffsetY',
+    'desktopOverlayEnableDragReposition',
+    'desktopOverlayLockPosition',
+] as const;
+
 const deprecatedLocalSettingKeys = [
     'widgetViewerInputSelectionsV1',
     'uiSurfaceExecutableApprovalsV1',
@@ -126,6 +136,13 @@ function syncStringAliasDelta<T extends string>(
 function migrateLegacyDesktopOverlayParseInput(
     settings: LocalSettingsParseRecord,
 ): LocalSettingsParseRecord {
+    if (settings.desktopOverlayDock === undefined) {
+        const anchor = settings.desktopOverlayAnchor;
+        settings.desktopOverlayDock = settings.desktopOverlayPresentationMode === 'floating_overlay'
+            || anchor === 'bottom_left' || anchor === 'bottom_center' || anchor === 'bottom_right'
+            ? 'floating'
+            : anchor === 'left_center' ? 'left' : anchor === 'right_center' ? 'right' : 'top';
+    }
     if (settings.desktopOverlayExpandedBehavior === 'shortcut_only') {
         settings.desktopOverlayExpandedBehavior = 'click';
     }

@@ -5,6 +5,23 @@ import { ACTIVITY_SURFACE_LOCAL_SETTING_DEFINITIONS } from './registry/local/loc
 import { applyLocalSettings, localSettingsDefaults, localSettingsParse } from './localSettings';
 
 describe('localSettingsParse', () => {
+    it.each([
+        [{ desktopOverlayPresentationMode: 'floating_overlay' }, 'floating'],
+        [{ desktopOverlayAnchor: 'bottom_left' }, 'floating'],
+        [{ desktopOverlayAnchor: 'bottom_center' }, 'floating'],
+        [{ desktopOverlayAnchor: 'bottom_right' }, 'floating'],
+        [{ desktopOverlayAnchor: 'left_center' }, 'left'],
+        [{ desktopOverlayAnchor: 'right_center' }, 'right'],
+        [{ desktopOverlayAnchor: 'top_left' }, 'top'],
+        [{ desktopOverlayAnchor: 'top_center' }, 'top'],
+        [{ desktopOverlayAnchor: 'top_right' }, 'top'],
+    ] as const)('migrates legacy notch placement %j to %s once', (legacy, dock) => {
+        const migrated = localSettingsParse({ ...legacy, themePreference: 'dark' });
+        expect(migrated).toMatchObject({ desktopOverlayDock: dock, themePreference: 'dark' });
+        expect(localSettingsParse(migrated).desktopOverlayDock).toBe(dock);
+        expect(localSettingsParse({ ...legacy, desktopOverlayDock: 'right' }).desktopOverlayDock).toBe('right');
+    });
+
     it('keeps remote image consent device-local, tolerant and scoped to the chosen document', () => {
         expect(localSettingsParse({}).remoteImageConsentV1).toEqual([]);
         const input = { remoteImageConsentV1: [['workspace-a', 'README.md'], ['workspace-a', 'README.md'], ['workspace-b', 'README.md'], null, ['only-one'], ['', 'README.md']] };

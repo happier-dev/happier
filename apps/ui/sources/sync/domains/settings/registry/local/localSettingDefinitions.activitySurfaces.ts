@@ -313,6 +313,13 @@ export const ACTIVITY_SURFACE_LOCAL_SETTING_DEFINITIONS = {
         storageScope: 'local',
         analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'device_user' },
     },
+    desktopOverlayDock: {
+        schema: z.enum(['top', 'left', 'right', 'floating']),
+        default: 'top',
+        description: 'The screen edge the desktop notch docks to, or floating anywhere on the display',
+        storageScope: 'local',
+        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'device_user' },
+    },
     desktopOverlayAutoHideEnabled: {
         schema: z.boolean(),
         default: true,
