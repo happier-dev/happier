@@ -1,7 +1,34 @@
+import { PluginUiDestinationReferenceV1Schema, type PluginUiDestinationReferenceV1 } from '@happier-dev/protocol/plugins/ui';
+import { buildPluginSurfaceDestinationId } from '@/components/plugins/surfaces/pluginSurfaceDestinations';
+
 export const PROJECT_PAGES = ['overview', 'code', 'changes', 'scripts', 'services', 'context', 'memory'] as const;
 export type ProjectPageV1 = typeof PROJECT_PAGES[number];
+export type ProjectPageSelection =
+    | Readonly<{ kind: 'builtin'; page: ProjectPageV1 }>
+    | Readonly<{ kind: 'plugin'; destination: PluginUiDestinationReferenceV1; subPath: string }>;
+
+export function projectPageSelectionId(selection: ProjectPageSelection): ProjectPageV1 | `plugin:${string}` {
+    return selection.kind === 'builtin' ? selection.page
+        : buildPluginSurfaceDestinationId(selection.destination.pluginId, selection.destination.localId);
+}
 /** Companion ids are retained registry selections, never alternate Project page routes. */
 export type ProjectMobileSurface = ProjectPageV1 | 'browse' | 'git' | 'tabs' | 'terminal' | 'browser';
+export type ProjectRememberedSelectionId = ProjectMobileSurface | `plugin:${string}`;
+
+/** The existing selection preference stores page identity only, never a page-local location or input. */
+export function readProjectPluginSelectionId(value: string | null | undefined): Extract<ProjectPageSelection, { kind: 'plugin' }> | null {
+    const match = /^plugin:([^:]+):([^:]+)$/.exec(value ?? '');
+    if (!match) return null;
+    const destination = PluginUiDestinationReferenceV1Schema.safeParse({ pluginId: match[1], localId: match[2] });
+    return destination.success ? { kind: 'plugin', destination: destination.data, subPath: '' } : null;
+}
+
+export function normalizeProjectRememberedSelectionId(value: string | null | undefined): ProjectRememberedSelectionId | null {
+    const builtin = normalizeProjectMobileSurface(value);
+    if (builtin) return builtin;
+    const plugin = readProjectPluginSelectionId(value);
+    return plugin ? projectPageSelectionId(plugin) : null;
+}
 export type ProjectRouteKind = ProjectPageV1 | 'index' | 'terminal';
 
 export function normalizeProjectPage(value: string | null | undefined): ProjectPageV1 | null {

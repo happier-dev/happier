@@ -10,6 +10,22 @@ import {
 } from './mobileSurfacePinning';
 
 describe('navigation placements', () => {
+    it('stores one device-local Project layout, retains removed pages and clamps legal placement without rewriting intent', () => {
+        const preferences = { orderedIds: ['removed', 'plugin:external:page', 'overview'], placements: { overview: 'hidden' as const, 'plugin:external:page': 'overflow' as const } };
+        const parsed = NavigationSurfacePlacementsV1Schema.safeParse({ projectTabBar: preferences });
+        expect(parsed.success).toBe(true);
+        const stored = readNavigationSurfacePlacements({ navigationSurfacePlacementsV1: { projectTabBar: { ...preferences, future: true }, futureSurface: {} } });
+        expect(stored).toMatchObject({ projectTabBar: preferences });
+        const pages = [{ id: 'overview', allowedPlacements: ['pinned'] as const }, { id: 'plugin:external:page' }];
+        const placed = resolveNavigationPlacements(pages, preferences);
+        expect(placed.ordered.map(page => page.id)).toEqual(['plugin:external:page', 'overview']);
+        expect(placed.pinned.map(page => page.id)).toEqual(['overview']);
+        expect(placed.overflow.map(page => page.id)).toEqual(['plugin:external:page']);
+        expect(preferences.placements.overview).toBe('hidden');
+        expect(preferences.orderedIds[0]).toBe('removed');
+        expect(NavigationSurfacePlacementsV1Schema.safeParse({ projectTabBar: preferences, futureSurface: {} }).success).toBe(false);
+    });
+
     it('resolves automatic defaults from known content while saved choices win and Automatic clears only its override', () => {
         const items = [
             { id: 'positive', defaultPlacement: 'auto' as const, hasContent: true },

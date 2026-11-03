@@ -15,9 +15,20 @@ export type NavigationPlacementPreferences = Readonly<{
     orderedIds: readonly string[];
     placements: Readonly<Record<string, NavigationPlacement>>;
 }>;
-export const NAVIGATION_SURFACE_IDS = ['appRail', 'sessionRail', 'workspaceRail', 'sessionTabBar', 'phoneLauncher', 'composer'] as const;
+export const NAVIGATION_SURFACE_IDS = ['appRail', 'sessionRail', 'workspaceRail', 'sessionTabBar', 'projectTabBar', 'phoneLauncher', 'composer'] as const;
 export type NavigationSurfaceId = typeof NAVIGATION_SURFACE_IDS[number];
-export type NavigationSurfacePlacementsV1 = Readonly<Partial<Record<NavigationSurfaceId, NavigationPlacementPreferences>>>;
+export type DetailNavigationPlacement = Readonly<{
+    desktop?: Readonly<{ pages?: NavigationPlacementPreferences; companions?: NavigationPlacementPreferences }>;
+    phone?: Readonly<{ items?: NavigationPlacementPreferences }>;
+}>;
+export type NavigationSurfacePlacementsV1 = Readonly<Partial<Record<NavigationSurfaceId, NavigationPlacementPreferences>> & {
+    detailPages?: Readonly<Record<string, DetailNavigationPlacement>>;
+    pageTabs?: Readonly<Record<string, 'bottom' | 'top'>>;
+}>;
+export type DetailNavigationAddress = Readonly<{ pageKind: string }> & (
+    | Readonly<{ device: 'desktop'; section: 'pages' | 'companions' }>
+    | Readonly<{ device: 'phone'; section: 'items' }>);
+export type NavigationPlacementAddress = NavigationSurfaceId | DetailNavigationAddress;
 
 const navigationItemIdSchema = z.string().check(z.trim(), z.minLength(1));
 const completeNavigationPlacementPreferencesSchema = z.strictObject({
@@ -28,11 +39,18 @@ export const NavigationPlacementPreferencesSchema = z.union([
     completeNavigationPlacementPreferencesSchema,
     z.pipe(z.strictObject({}), z.transform(() => ({ orderedIds: [] as string[], placements: {} as Record<string, NavigationPlacement> }))),
 ]);
+const detailNavigationPlacementSchema = z.strictObject({
+    desktop: z.optional(z.strictObject({ pages: z.optional(NavigationPlacementPreferencesSchema), companions: z.optional(NavigationPlacementPreferencesSchema) })),
+    phone: z.optional(z.strictObject({ items: z.optional(NavigationPlacementPreferencesSchema) })),
+});
 export const NavigationSurfacePlacementsV1Schema = z.strictObject({
+    detailPages: z.optional(z.record(navigationItemIdSchema, detailNavigationPlacementSchema)),
+    pageTabs: z.optional(z.record(navigationItemIdSchema, z.enum(['bottom', 'top']))),
     appRail: z.optional(NavigationPlacementPreferencesSchema),
     sessionRail: z.optional(NavigationPlacementPreferencesSchema),
     workspaceRail: z.optional(NavigationPlacementPreferencesSchema),
     sessionTabBar: z.optional(NavigationPlacementPreferencesSchema),
+    projectTabBar: z.optional(NavigationPlacementPreferencesSchema),
     phoneLauncher: z.optional(NavigationPlacementPreferencesSchema),
     composer: z.optional(NavigationPlacementPreferencesSchema),
 });
@@ -41,15 +59,77 @@ const storedNavigationPlacementPreferencesSchema = z.union([
     z.pipe(z.strictObject({}), z.transform(() => ({ orderedIds: [] as string[], placements: {} as Record<string, NavigationPlacement> }))),
 ]);
 export const StoredNavigationSurfacePlacementsV1Schema = (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: undefined }) as z.ZodMiniObject<T['shape'], z.core.$strip>)(z.extend(NavigationSurfacePlacementsV1Schema, {
+    detailPages: z.optional(z.record(navigationItemIdSchema, z.object({
+        desktop: z.optional(z.object({ pages: z.optional(storedNavigationPlacementPreferencesSchema), companions: z.optional(storedNavigationPlacementPreferencesSchema) })),
+        phone: z.optional(z.object({ items: z.optional(storedNavigationPlacementPreferencesSchema) })),
+    }))),
     appRail: z.optional(storedNavigationPlacementPreferencesSchema),
     sessionRail: z.optional(storedNavigationPlacementPreferencesSchema),
     workspaceRail: z.optional(storedNavigationPlacementPreferencesSchema),
     sessionTabBar: z.optional(storedNavigationPlacementPreferencesSchema),
+    projectTabBar: z.optional(storedNavigationPlacementPreferencesSchema),
     phoneLauncher: z.optional(storedNavigationPlacementPreferencesSchema),
     composer: z.optional(storedNavigationPlacementPreferencesSchema),
 }));
 export const EMPTY_NAVIGATION_PLACEMENT_PREFERENCES: NavigationPlacementPreferences = Object.freeze({ orderedIds: Object.freeze([]), placements: Object.freeze({}) });
 export const SESSION_COCKPIT_DEFAULT_BAR_SURFACE_IDS = Object.freeze(['browse', 'git', 'companion', 'terminal'] as const);
+
+/** Existing addresses retain their storage; only missing addresses use detailPages. */
+export function resolveNavigationPlacementAddress(address: NavigationPlacementAddress): NavigationPlacementAddress {
+    if (typeof address === 'string') return address;
+    if (address.pageKind === 'session') {
+        if (address.device === 'phone') return 'sessionTabBar';
+        if (address.section === 'companions') return 'sessionRail';
+    }
+    if (address.pageKind === 'project' && address.device === 'desktop') {
+        return address.section === 'pages' ? 'projectTabBar' : 'workspaceRail';
+    }
+    return address;
+}
+
+export function readNavigationPlacementPreferences(stored: NavigationSurfacePlacementsV1, address: NavigationPlacementAddress): NavigationPlacementPreferences | undefined {
+    const resolved = resolveNavigationPlacementAddress(address);
+    if (typeof resolved === 'string') return stored[resolved];
+    const kind = stored.detailPages?.[resolved.pageKind];
+    return resolved.device === 'phone' ? kind?.phone?.items : kind?.desktop?.[resolved.section];
+}
+
+export function navigationPlacementPatch(address: NavigationPlacementAddress, preferences: NavigationPlacementPreferences): NavigationSurfacePlacementsV1 {
+    const resolved = resolveNavigationPlacementAddress(address);
+    return typeof resolved === 'string' ? { [resolved]: preferences }
+        : { detailPages: { [resolved.pageKind]: { [resolved.device]: { [resolved.section]: preferences } } } };
+}
+
+function samePreferences(a: NavigationPlacementPreferences | undefined, b: NavigationPlacementPreferences): boolean {
+    return a !== undefined && a.orderedIds.length === b.orderedIds.length
+        && a.orderedIds.every((id, index) => id === b.orderedIds[index])
+        && Object.keys(a.placements).length === Object.keys(b.placements).length
+        && Object.entries(a.placements).every(([id, placement]) => b.placements[id] === placement);
+}
+
+/** An admitted sparse settings patch changes only its addressed branches. */
+export function mergeNavigationSurfacePlacements(current: NavigationSurfacePlacementsV1, patch: NavigationSurfacePlacementsV1): NavigationSurfacePlacementsV1 {
+    let next = current;
+    const merge = (address: NavigationPlacementAddress, preferences: NavigationPlacementPreferences | undefined) => {
+        if (!preferences || samePreferences(readNavigationPlacementPreferences(next, address), preferences)) return;
+        const resolved = resolveNavigationPlacementAddress(address);
+        if (typeof resolved === 'string') { next = { ...next, [resolved]: preferences }; return; }
+        const kind = next.detailPages?.[resolved.pageKind];
+        next = { ...next, detailPages: { ...next.detailPages, [resolved.pageKind]: {
+            ...kind, [resolved.device]: { ...kind?.[resolved.device], [resolved.section]: preferences },
+        } } };
+    };
+    for (const id of NAVIGATION_SURFACE_IDS) merge(id, patch[id]);
+    for (const [kind, value] of Object.entries(patch.detailPages ?? {})) {
+        merge({ pageKind: kind, device: 'desktop', section: 'pages' }, value.desktop?.pages);
+        merge({ pageKind: kind, device: 'desktop', section: 'companions' }, value.desktop?.companions);
+        merge({ pageKind: kind, device: 'phone', section: 'items' }, value.phone?.items);
+    }
+    for (const [kind, position] of Object.entries(patch.pageTabs ?? {})) {
+        if (current.pageTabs?.[kind] !== position) next = { ...next, pageTabs: { ...next.pageTabs, [kind]: position } };
+    }
+    return next;
+}
 
 function uniqueIds(ids: readonly string[]): string[] {
     return [...new Set(ids.flatMap(id => {
@@ -159,4 +239,26 @@ function normalizeSurfaceId(value: unknown): string | null {
     if (typeof value !== 'string') return null;
     const normalized = value.trim();
     return normalized.length > 0 ? normalized : null;
+}
+
+
+/** Historical Project companion aliases enter the unified item vocabulary at this input adapter. */
+export function normalizeProjectNavigationItemId(id: string): string {
+    return id === 'git' ? 'changes' : id === 'browse' || id === 'files' ? 'code' : id;
+}
+
+/** Settings initialization only. Presence, including an explicit empty value, completes the seed. */
+export function seedProjectPhoneNavigationPlacements(input: unknown): unknown {
+    if (!input || typeof input !== 'object' || Array.isArray(input)) return input;
+    const source = input as Record<string, unknown>;
+    const parsed = StoredNavigationSurfacePlacementsV1Schema.safeParse(source.navigationSurfacePlacementsV1 ?? {});
+    if (!parsed.success || parsed.data.detailPages?.project?.phone?.items !== undefined) return input;
+    const desktop = parsed.data.projectTabBar;
+    const items: NavigationPlacementPreferences = desktop ? {
+        orderedIds: [...new Set(desktop.orderedIds.map(normalizeProjectNavigationItemId))],
+        placements: Object.fromEntries(Object.entries(desktop.placements).map(([id, placement]) => [normalizeProjectNavigationItemId(id), placement])),
+    } : EMPTY_NAVIGATION_PLACEMENT_PREFERENCES;
+    const stored = (source.navigationSurfacePlacementsV1 ?? {}) as NavigationSurfacePlacementsV1;
+    return { ...source, navigationSurfacePlacementsV1: mergeNavigationSurfacePlacements(stored, navigationPlacementPatch(
+        { pageKind: 'project', device: 'phone', section: 'items' }, items)) };
 }
