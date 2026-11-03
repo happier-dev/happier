@@ -1,5 +1,5 @@
 import { SESSION_ORGANIZATION_MAX_FOLDERS, SESSION_ORGANIZATION_MAX_LABELS, SESSION_ORGANIZATION_MAX_PINNED_SESSIONS, SESSION_ORGANIZATION_MAX_TAGS } from '@happier-dev/protocol/sessions/organization/constants';
-import { type CreateOrUpdateSessionOrganizationFolderRequest, type CreateOrUpdateSessionOrganizationTagRequest, type DeleteSessionOrganizationFolderRequest, type DeleteSessionOrganizationLabelRequest, type DeleteSessionOrganizationTagRequest, type ImportLegacySessionOrganizationRequest, type ImportLegacySessionOrganizationResponse, type MoveSessionFolderAssignmentsResponse, type ReorderSessionOrganizationRequest, type SetSessionPinRequest, type SetSessionTagAssignmentsRequest, type UpsertSessionOrganizationLabelRequest } from '@happier-dev/protocol/sessions/organization/mutations';
+import { type CreateOrUpdateSessionOrganizationFolderRequest, type CreateOrUpdateSessionOrganizationTagRequest, type DeleteSessionOrganizationFolderRequest, type DeleteSessionOrganizationLabelRequest, type DeleteSessionOrganizationTagRequest, type ImportLegacySessionOrganizationRequest, type ImportLegacySessionOrganizationResponse, type MoveSessionFolderAssignmentsResponse, type ReorderSessionOrganizationRequest, type SetSessionPinRequest, type MutateSessionTagAssignmentsRequest, type UpsertSessionOrganizationLabelRequest } from '@happier-dev/protocol/sessions/organization/mutations';
 import { type SetSessionAttentionStandingRequest } from '@happier-dev/protocol/sessions/organization/standings';
 
 import { buildSessionAccessWhere } from "@/app/session/access/sessionAccessWhere";
@@ -1100,7 +1100,7 @@ export async function deleteSessionOrganizationTag(params: Readonly<{
 export async function setSessionTagAssignments(params: Readonly<{
     accountId: string;
     sessionId: string;
-    request: SetSessionTagAssignmentsRequest;
+    request: MutateSessionTagAssignmentsRequest;
     authentication: SessionAccessAuthentication;
 }>): Promise<Readonly<{ sessionId: string; tagIds: string[] }> | { error: "invalid-session-tags" | "session-not-found" }> {
     return await inTx(async (tx) => await setSessionTagAssignmentsInTx(tx, params), { isolationLevel: "ReadCommitted" });
@@ -1109,18 +1109,26 @@ export async function setSessionTagAssignments(params: Readonly<{
 export async function setSessionTagAssignmentsInTx(tx: SessionOrganizationTx, params: Readonly<{
     accountId: string;
     sessionId: string;
-    request: SetSessionTagAssignmentsRequest;
+    request: MutateSessionTagAssignmentsRequest;
     authentication: SessionAccessAuthentication;
 }>): Promise<Readonly<{ sessionId: string; tagIds: string[] }> | { error: "invalid-session-tags" | "session-not-found" }> {
     await acquireSessionOrganizationMutationAdmissionInTx(tx, params.accountId);
     if (!await canAccessSyncedSessionForOrganizationInTx(tx, params)) return { error: "session-not-found" };
-    const uniqueTagIds = await validateSessionOrganizationTagIdsInTx(tx, {
-        accountId: params.accountId,
-        tagIds: params.request.tagIds,
+    const request = params.request;
+    // The existing Account mutation admission serializes this read/modify/write with other tag writes.
+    const current = 'tagIds' in request ? [] : await tx.sessionTagAssignment.findMany({
+        where: { accountId: params.accountId, sessionId: params.sessionId }, select: { tagId: true },
     });
-    if (!uniqueTagIds) {
+    const nextIds = 'tagIds' in request ? request.tagIds : [
+        ...current.map(row => row.tagId).filter(id => !request.removeTagIds.includes(id)), ...request.addTagIds,
+    ];
+    const valid = await validateSessionOrganizationTagIdsInTx(tx, {
+        accountId: params.accountId, tagIds: 'tagIds' in request ? nextIds : [...nextIds, ...request.removeTagIds],
+    });
+    if (!valid) {
         return { error: "invalid-session-tags" };
     }
+    const uniqueTagIds = [...new Set(nextIds)];
 
     await tx.sessionTagAssignment.deleteMany({
         where: { accountId: params.accountId, sessionId: params.sessionId },

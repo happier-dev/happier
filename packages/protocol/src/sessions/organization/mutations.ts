@@ -150,6 +150,16 @@ export const SetSessionTagAssignmentsRequestSchema = lazyZodSchema(() => z.stric
   }));
 export type SetSessionTagAssignmentsRequest = z.infer<typeof SetSessionTagAssignmentsRequestSchema>;
 
+/** Delta writes preserve assignments the caller did not edit, including private memberships. */
+export const PatchSessionTagAssignmentsRequestSchema = lazyZodSchema(() => z.strictObject({
+    addTagIds: z.array(SessionOrganizationIdSchema).check(z.maxLength(SESSION_ORGANIZATION_MAX_ASSIGNMENTS_PER_MUTATION)),
+    removeTagIds: z.array(SessionOrganizationIdSchema).check(z.maxLength(SESSION_ORGANIZATION_MAX_ASSIGNMENTS_PER_MUTATION)),
+}));
+export const MutateSessionTagAssignmentsRequestSchema = lazyZodSchema(() => z.union([
+    SetSessionTagAssignmentsRequestSchema, PatchSessionTagAssignmentsRequestSchema,
+]));
+export type MutateSessionTagAssignmentsRequest = z.infer<typeof MutateSessionTagAssignmentsRequestSchema>;
+
 export const SetSessionTagAssignmentsResponseSchema = SessionTagAssignmentSchema;
 export type SetSessionTagAssignmentsResponse = z.infer<typeof SetSessionTagAssignmentsResponseSchema>;
 

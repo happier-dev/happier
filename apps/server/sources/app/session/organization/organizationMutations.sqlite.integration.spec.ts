@@ -46,6 +46,33 @@ describe("session organization mutations on SQLite", () => {
         await harness.close();
     });
 
+    it('patches only named tag assignments and rejects another Account tag without changing membership', async () => {
+        const account = await db.account.create({ data: { publicKey: randomUUID() } });
+        const foreign = await db.account.create({ data: { publicKey: randomUUID() } });
+        const session = await db.session.create({ data: { accountId: account.id, tag: randomUUID(), metadata: '{}', agentState: null } });
+        const tags = await Promise.all(['ordinary', 'space-a', 'space-b', 'space-c'].map(async tagKey =>
+            await db.sessionOrganizationTag.create({ data: { accountId: account.id, tagKey, tagHash: hashSessionOrganizationKey(tagKey) } })));
+        const foreignTag = await db.sessionOrganizationTag.create({ data: { accountId: foreign.id, tagKey: 'foreign', tagHash: hashSessionOrganizationKey('foreign') } });
+        await db.sessionTagAssignment.createMany({ data: tags.slice(0, 3).map(tag => ({ accountId: account.id, sessionId: session.id, tagId: tag.id })) });
+        const app = createAuthenticatedTestApp();
+        registerSessionOrganizationRoutes(app);
+        await app.ready();
+        const headers = { 'x-test-user-id': account.id };
+        const url = `/v2/session-organization/tag-assignments/${session.id}`;
+        try {
+            const moved = await app.inject({ method: 'PUT', url, headers,
+                payload: { addTagIds: [tags[3]!.id], removeTagIds: [tags[1]!.id] } });
+            expect(moved.statusCode).toBe(200);
+            expect(SetSessionTagAssignmentsResponseSchema.parse(moved.json()).tagIds.slice().sort())
+                .toEqual([tags[0]!.id, tags[2]!.id, tags[3]!.id].sort());
+            const refused = await app.inject({ method: 'PUT', url, headers,
+                payload: { addTagIds: [foreignTag.id], removeTagIds: [tags[0]!.id] } });
+            expect(refused.statusCode).toBe(400);
+            expect((await db.sessionTagAssignment.findMany({ where: { accountId: account.id, sessionId: session.id } })).map(row => row.tagId).sort())
+                .toEqual([tags[0]!.id, tags[2]!.id, tags[3]!.id].sort());
+        } finally { await app.close(); }
+    });
+
     it.each([false, true])("removes only the named folder through HTTP, preserving descendants (nested=%s)", async (nested) => {
         const account = await db.account.create({ data: { publicKey: randomUUID() } });
         const createFolder = async (key: string, parentKey: string | null) => await db.sessionOrganizationFolder.create({
