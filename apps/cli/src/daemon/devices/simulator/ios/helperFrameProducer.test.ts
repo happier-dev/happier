@@ -30,6 +30,7 @@ describe('iOS simulator helper frame producer', () => {
             emitFrame: () => undefined,
             fail: () => undefined,
             reportInputFailure: () => undefined,
+            getPayloadByteLimit: () => overrides.caps?.maxFrameBytes ?? 8_192,
             ...overrides,
         };
     }

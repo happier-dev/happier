@@ -66,6 +66,7 @@ export type SimulatorCaptureFrameProducerStartInput = Readonly<{
     emitFrame: (frame: SimulatorCaptureProducerFrame) => void;
     fail: (reasonCode: string) => void;
     reportInputFailure: (reasonCode: string) => void;
+    getPayloadByteLimit: (frame: Omit<SimulatorCaptureFramePayload, 'payload'>) => number | undefined;
 }>;
 
 export type SimulatorCaptureFrameProducer = Readonly<{
@@ -276,6 +277,12 @@ export function createSimulatorFrameProducerCaptureAdapter(
                     negotiatedCodecId: negotiated.codecId,
                     caps: startInput.caps,
                     startRequest: startInput.startRequest,
+                    getPayloadByteLimit: frame => {
+                        if (!startInput.getFramePayloadByteLimit) return startInput.caps.maxFrameBytes;
+                        const normalized = normalizeProducerFrame({ frame: { ...frame, payload: 'AA==' },
+                            streamId: startInput.streamId, sequence, nowMs: startInput.nowMs, negotiatedCodecId: negotiated.codecId });
+                        return normalized.ok ? startInput.getFramePayloadByteLimit(normalized.frame) : undefined;
+                    },
                     fail: failClosed,
                     reportInputFailure: (reasonCode) => {
                         if (captureClosed) return;

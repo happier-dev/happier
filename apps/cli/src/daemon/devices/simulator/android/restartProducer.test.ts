@@ -108,6 +108,7 @@ function producerStartInput(input: Readonly<{
         negotiatedCodecId: 'h264.avcc',
         caps,
         startRequest: startRequest(),
+        getPayloadByteLimit: () => caps.maxFrameBytes,
         emitFrame: (frame) => {
             if (!('payload' in frame)) throw new Error('Raw Android producer emitted a ready-frame envelope');
             input.emitFrame(frame);
