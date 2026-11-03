@@ -212,7 +212,7 @@ packageExtensionsChecksum: sha256-bjTaqX/KiSINxL/mh2drSc83lIIc2o8Crmovk/IH9uE=
 patchedDependencies:
   '@elevenlabs/client@1.18.0': 5be51d7d24380180cbd1717d8a1edf9ca671646bdbcec45b0141bb8428e9bfd6
   '@expo/metro-config@55.0.13': 97c3688883a4fe49a5bb465243604edebc7b851810ae4bb7969bf949d7f248cd
-  '@legendapp/list@3.3.3': 3d6423256d7d09fe5ed3ce8131cd328bb15be6fa03c8c06ae2925788cb222e05
+  '@legendapp/list@3.3.3': 2a1b7a3cccd6e46e8e44289bbfd9361b41928c7ff94c643bed3cf4cdb7669391
   '@pierre/diffs@1.5.2': 80a5a670f2167aa6c7c8e8545ea2e1709f12b7d02eac31f62b1829ac1847b4e2
   '@prisma/client@6.19.2': e5dd0d3885c73a50f8ad342ae6e59bcbe9b9c972b635b98b4b4d75981fae4f83
   '@react-native/gradle-plugin@0.83.5': c1b594a16e682d621b6a960926f8ce13fc92edfb397884cfe7fcb0518996a784
@@ -1507,7 +1507,7 @@ importers:
         version: 1.0.15(react-native-svg@15.15.3(react-native@0.83.5(patch_hash=5a45238f6b18b21e9affbf51565b68e6a34dfb87088e4b7d2478ebc029de193c)(@babel/core@7.29.0(supports-color@8.1.1))(@types/react@19.2.14)(react@19.2.0)(supports-color@8.1.1))(react@19.2.0))(react-native@0.83.5(patch_hash=5a45238f6b18b21e9affbf51565b68e6a34dfb87088e4b7d2478ebc029de193c)(@babel/core@7.29.0(supports-color@8.1.1))(@types/react@19.2.14)(react@19.2.0)(supports-color@8.1.1))(react@19.2.0)
       '@legendapp/list':
         specifier: 3.3.3
-        version: 3.3.3(patch_hash=3d6423256d7d09fe5ed3ce8131cd328bb15be6fa03c8c06ae2925788cb222e05)(react-dom@19.2.0(react@19.2.0))(react-native@0.83.5(patch_hash=5a45238f6b18b21e9affbf51565b68e6a34dfb87088e4b7d2478ebc029de193c)(@babel/core@7.29.0(supports-color@8.1.1))(@types/react@19.2.14)(react@19.2.0)(supports-color@8.1.1))(react@19.2.0)
+        version: 3.3.3(patch_hash=2a1b7a3cccd6e46e8e44289bbfd9361b41928c7ff94c643bed3cf4cdb7669391)(react-dom@19.2.0(react@19.2.0))(react-native@0.83.5(patch_hash=5a45238f6b18b21e9affbf51565b68e6a34dfb87088e4b7d2478ebc029de193c)(@babel/core@7.29.0(supports-color@8.1.1))(@types/react@19.2.14)(react@19.2.0)(supports-color@8.1.1))(react@19.2.0)
       '@lezer/highlight':
         specifier: 1.2.3
         version: 1.2.3
@@ -19682,7 +19682,7 @@ snapshots:
 
   '@js-sdsl/ordered-map@4.4.2': {}
 
-  '@legendapp/list@3.3.3(patch_hash=3d6423256d7d09fe5ed3ce8131cd328bb15be6fa03c8c06ae2925788cb222e05)(react-dom@19.2.0(react@19.2.0))(react-native@0.83.5(patch_hash=5a45238f6b18b21e9affbf51565b68e6a34dfb87088e4b7d2478ebc029de193c)(@babel/core@7.29.0(supports-color@8.1.1))(@types/react@19.2.14)(react@19.2.0)(supports-color@8.1.1))(react@19.2.0)':
+  '@legendapp/list@3.3.3(patch_hash=2a1b7a3cccd6e46e8e44289bbfd9361b41928c7ff94c643bed3cf4cdb7669391)(react-dom@19.2.0(react@19.2.0))(react-native@0.83.5(patch_hash=5a45238f6b18b21e9affbf51565b68e6a34dfb87088e4b7d2478ebc029de193c)(@babel/core@7.29.0(supports-color@8.1.1))(@types/react@19.2.14)(react@19.2.0)(supports-color@8.1.1))(react@19.2.0)':
     dependencies:
       react: 19.2.0
       use-sync-external-store: 1.6.0(react@19.2.0)

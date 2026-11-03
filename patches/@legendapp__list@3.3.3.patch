@@ -2178,7 +2178,7 @@ index db7841d..846d452 100644
       * Clears internal virtualization caches.
       * @param options - Cache clearing options.
 diff --git a/react-native.web.js b/react-native.web.js
-index 544cca8..70e8a48 100644
+index 544cca8..40e7e02 100644
 --- a/react-native.web.js
 +++ b/react-native.web.js
 @@ -773,9 +773,15 @@ function checkThresholds(ctx, allowedEdge) {
@@ -2980,7 +2980,19 @@ index 544cca8..70e8a48 100644
    }
    if (!prevSize || Math.abs(prevSize - size) > 0.1) {
      setSize(ctx, itemKey, size);
-@@ -5252,7 +5528,10 @@ function createResizeObserver(element, callback) {
+@@ -4916,6 +5192,11 @@ function measureContainersInLayoutEffect(ctx, targetContainerIds = null) {
+     const element = viewRef == null ? void 0 : viewRef.current;
+     if (itemKey !== void 0 && element) {
+       const rect = element.getBoundingClientRect();
++      if (rect.width === 0 && rect.height === 0) {
++        // Not laid out (display: none, detached): the same rule as the observer path. A 0 x 0
++        // size here would make every row fit and grow the container pool without bound.
++        continue;
++      }
+       setContainerLayoutBaseline(element, rect);
+       measurements.push({
+         containerId,
+@@ -5252,7 +5533,10 @@ function createResizeObserver(element, callback) {
      return () => {
      };
    }
@@ -2992,7 +3004,7 @@ index 544cca8..70e8a48 100644
    const callbacks = (_a3 = callbackMap.get(element)) != null ? _a3 : /* @__PURE__ */ new Set();
    if (callbacks.size === 0) {
      callbackMap.set(element, callbacks);
-@@ -5359,7 +5638,8 @@ function processContainerLayout({ containerId, ctx, rectangle, ref, state }) {
+@@ -5359,7 +5643,8 @@ function processContainerLayout({ containerId, ctx, rectangle, ref, state }) {
    const axis = state.horizontal ? "width" : "height";
    const size = roundSize(rectangle[axis]);
    state.lastSize ? roundSize(state.lastSize[axis]) : void 0;
@@ -3002,7 +3014,17 @@ index 544cca8..70e8a48 100644
    const previousSize = coreKnownSize ;
    const applyLayout = () => {
      state.lastSize = layout;
-@@ -6691,6 +6971,8 @@ function checkResetContainers(ctx, dataProp, { didColumnsChange = false } = {})
+@@ -5376,6 +5661,9 @@ function processContainerLayout({ containerId, ctx, rectangle, ref, state }) {
+       if (state.itemKey === currentItemKey) {
+         const element = ref.current;
+         const rect = (_a4 = element == null ? void 0 : element.getBoundingClientRect) == null ? void 0 : _a4.call(element);
++        if (rect && rect.width === 0 && rect.height === 0) {
++          return;
++        }
+         if (rect) {
+           layout = { height: rect.height, width: rect.width };
+         }
+@@ -6691,6 +6979,8 @@ function checkResetContainers(ctx, dataProp, { didColumnsChange = false } = {})
    if (didColumnsChange) {
      state.sizes.clear();
      state.sizesKnown.clear();
@@ -3011,7 +3033,7 @@ index 544cca8..70e8a48 100644
      invalidateContainerFixedItemSizes(state);
      for (const key in state.averageSizes) {
        delete state.averageSizes[key];
-@@ -7110,6 +7392,13 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
+@@ -7110,6 +7400,13 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
    const IMPERATIVE_SCROLL_SETTLE_MAX_WAIT_MS = 800;
    const IMPERATIVE_SCROLL_SETTLE_STABLE_FRAMES = 2;
    let imperativeScrollToken = 0;
@@ -3025,7 +3047,7 @@ index 544cca8..70e8a48 100644
    const isSettlingAfterDataChange = () => !!state.didDataChange || !!state.didColumnsChange || state.queuedMVCPRecalculate !== void 0 || state.ignoreScrollFromMVCP !== void 0;
    const isScrollToIndexReady = (targetIndex, allowEmpty = false) => {
      var _a3;
-@@ -7131,6 +7420,7 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
+@@ -7131,6 +7428,7 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
      const startedAt = Date.now();
      let stableFrames = 0;
      const check = () => {
@@ -3033,7 +3055,7 @@ index 544cca8..70e8a48 100644
        if (token !== imperativeScrollToken) {
          return;
        }
-@@ -7144,9 +7434,10 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
+@@ -7144,9 +7442,10 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
          run();
          return;
        }
@@ -3046,7 +3068,7 @@ index 544cca8..70e8a48 100644
    };
    const runScrollRequest = (token, resolve, run, isReady = () => true) => {
      const runNow = () => {
-@@ -7169,12 +7460,23 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
+@@ -7169,12 +7468,23 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
    };
    const startImperativeScroll = (resolve) => {
      var _a3;
@@ -3070,7 +3092,7 @@ index 544cca8..70e8a48 100644
    const runScrollWithPromise = (run, isReady = () => true) => new Promise((resolve) => {
      const token = startImperativeScroll(resolve);
      runScrollRequest(token, resolve, run, isReady);
-@@ -7215,6 +7517,8 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
+@@ -7215,6 +7525,8 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
      const mode = (_a3 = options == null ? void 0 : options.mode) != null ? _a3 : "sizes";
      state.sizes.clear();
      state.sizesKnown.clear();
@@ -3079,7 +3101,7 @@ index 544cca8..70e8a48 100644
      invalidateContainerFixedItemSizes(state);
      for (const key in state.averageSizes) {
        delete state.averageSizes[key];
-@@ -7235,6 +7539,11 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
+@@ -7235,6 +7547,11 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
      (_b = state.triggerCalculateItemsInView) == null ? void 0 : _b.call(state, { forceFullItemPositions: true });
    };
    return {
@@ -3091,7 +3113,7 @@ index 544cca8..70e8a48 100644
      clearCaches,
      flashScrollIndicators: () => refScroller.current.flashScrollIndicators(),
      getAnimatableRef: () => {
-@@ -7272,7 +7581,10 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
+@@ -7272,7 +7589,10 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
        scroll: state.scroll,
        scrollLength: state.scrollLength,
        scrollVelocity: getScrollVelocity(state),
@@ -3103,7 +3125,7 @@ index 544cca8..70e8a48 100644
        sizes: state.sizesKnown,
        start: state.startNoBuffer,
        startBuffered: state.startBuffered
-@@ -7453,7 +7765,8 @@ function normalizeMaintainScrollAtEnd(value) {
+@@ -7453,7 +7773,8 @@ function normalizeMaintainScrollAtEnd(value) {
    const normalizedTriggers = normalizeMaintainScrollAtEndOn(value.on, "on" in value);
    return {
      ...normalizedTriggers,
@@ -3113,7 +3135,7 @@ index 544cca8..70e8a48 100644
    };
  }
  
-@@ -7583,6 +7896,8 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+@@ -7583,6 +7904,8 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
      estimatedListSize,
      extraData,
      getFixedItemSize,
@@ -3122,7 +3144,7 @@ index 544cca8..70e8a48 100644
      getItemType,
      horizontal,
      rtl,
-@@ -7775,6 +8090,8 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+@@ -7775,6 +8098,8 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
          scrollTime: 0,
          sizes: /* @__PURE__ */ new Map(),
          sizesKnown: /* @__PURE__ */ new Map(),
@@ -3131,7 +3153,7 @@ index 544cca8..70e8a48 100644
          startBuffered: -1,
          startNoBuffer: -1,
          startReachedSnapshot: void 0,
-@@ -7840,6 +8157,8 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+@@ -7840,6 +8165,8 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
      drawDistance,
      estimatedItemSize,
      getFixedItemSize: useWrapIfItem(getFixedItemSize),
@@ -3140,7 +3162,7 @@ index 544cca8..70e8a48 100644
      getItemType: useWrapIfItem(getItemType),
      horizontal: !!horizontal,
      itemsAreEqual,
-@@ -7881,7 +8200,10 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+@@ -7881,7 +8208,10 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
    if (shouldResetFreshDataLayout) {
      resetInitialRenderState(ctx, {
        resetInitialScroll: !!initialScrollProp,
@@ -3152,7 +3174,7 @@ index 544cca8..70e8a48 100644
      });
    }
    const memoizedLastItemKeys = React3.useMemo(() => {
-@@ -8109,10 +8431,20 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+@@ -8109,10 +8439,20 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
          cancelAnimationFrame(state.queuedFullDrawDistancePrewarm);
          state.queuedFullDrawDistancePrewarm = void 0;
        }
@@ -3174,7 +3196,7 @@ index 544cca8..70e8a48 100644
    }, [state]);
    React3.useLayoutEffect(() => {
 diff --git a/react-native.web.mjs b/react-native.web.mjs
-index 6b2d901..929020d 100644
+index 6b2d901..8aaf820 100644
 --- a/react-native.web.mjs
 +++ b/react-native.web.mjs
 @@ -752,9 +752,15 @@ function checkThresholds(ctx, allowedEdge) {
@@ -3976,7 +3998,19 @@ index 6b2d901..929020d 100644
    }
    if (!prevSize || Math.abs(prevSize - size) > 0.1) {
      setSize(ctx, itemKey, size);
-@@ -5231,7 +5507,10 @@ function createResizeObserver(element, callback) {
+@@ -4895,6 +5171,11 @@ function measureContainersInLayoutEffect(ctx, targetContainerIds = null) {
+     const element = viewRef == null ? void 0 : viewRef.current;
+     if (itemKey !== void 0 && element) {
+       const rect = element.getBoundingClientRect();
++      if (rect.width === 0 && rect.height === 0) {
++        // Not laid out (display: none, detached): the same rule as the observer path. A 0 x 0
++        // size here would make every row fit and grow the container pool without bound.
++        continue;
++      }
+       setContainerLayoutBaseline(element, rect);
+       measurements.push({
+         containerId,
+@@ -5231,7 +5512,10 @@ function createResizeObserver(element, callback) {
      return () => {
      };
    }
@@ -3988,7 +4022,7 @@ index 6b2d901..929020d 100644
    const callbacks = (_a3 = callbackMap.get(element)) != null ? _a3 : /* @__PURE__ */ new Set();
    if (callbacks.size === 0) {
      callbackMap.set(element, callbacks);
-@@ -5338,7 +5617,8 @@ function processContainerLayout({ containerId, ctx, rectangle, ref, state }) {
+@@ -5338,7 +5622,8 @@ function processContainerLayout({ containerId, ctx, rectangle, ref, state }) {
    const axis = state.horizontal ? "width" : "height";
    const size = roundSize(rectangle[axis]);
    state.lastSize ? roundSize(state.lastSize[axis]) : void 0;
@@ -3998,7 +4032,17 @@ index 6b2d901..929020d 100644
    const previousSize = coreKnownSize ;
    const applyLayout = () => {
      state.lastSize = layout;
-@@ -6670,6 +6950,8 @@ function checkResetContainers(ctx, dataProp, { didColumnsChange = false } = {})
+@@ -5355,6 +5640,9 @@ function processContainerLayout({ containerId, ctx, rectangle, ref, state }) {
+       if (state.itemKey === currentItemKey) {
+         const element = ref.current;
+         const rect = (_a4 = element == null ? void 0 : element.getBoundingClientRect) == null ? void 0 : _a4.call(element);
++        if (rect && rect.width === 0 && rect.height === 0) {
++          return;
++        }
+         if (rect) {
+           layout = { height: rect.height, width: rect.width };
+         }
+@@ -6670,6 +6958,8 @@ function checkResetContainers(ctx, dataProp, { didColumnsChange = false } = {})
    if (didColumnsChange) {
      state.sizes.clear();
      state.sizesKnown.clear();
@@ -4007,7 +4051,7 @@ index 6b2d901..929020d 100644
      invalidateContainerFixedItemSizes(state);
      for (const key in state.averageSizes) {
        delete state.averageSizes[key];
-@@ -7089,6 +7371,13 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
+@@ -7089,6 +7379,13 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
    const IMPERATIVE_SCROLL_SETTLE_MAX_WAIT_MS = 800;
    const IMPERATIVE_SCROLL_SETTLE_STABLE_FRAMES = 2;
    let imperativeScrollToken = 0;
@@ -4021,7 +4065,7 @@ index 6b2d901..929020d 100644
    const isSettlingAfterDataChange = () => !!state.didDataChange || !!state.didColumnsChange || state.queuedMVCPRecalculate !== void 0 || state.ignoreScrollFromMVCP !== void 0;
    const isScrollToIndexReady = (targetIndex, allowEmpty = false) => {
      var _a3;
-@@ -7110,6 +7399,7 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
+@@ -7110,6 +7407,7 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
      const startedAt = Date.now();
      let stableFrames = 0;
      const check = () => {
@@ -4029,7 +4073,7 @@ index 6b2d901..929020d 100644
        if (token !== imperativeScrollToken) {
          return;
        }
-@@ -7123,9 +7413,10 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
+@@ -7123,9 +7421,10 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
          run();
          return;
        }
@@ -4042,7 +4086,7 @@ index 6b2d901..929020d 100644
    };
    const runScrollRequest = (token, resolve, run, isReady = () => true) => {
      const runNow = () => {
-@@ -7148,12 +7439,23 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
+@@ -7148,12 +7447,23 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
    };
    const startImperativeScroll = (resolve) => {
      var _a3;
@@ -4066,7 +4110,7 @@ index 6b2d901..929020d 100644
    const runScrollWithPromise = (run, isReady = () => true) => new Promise((resolve) => {
      const token = startImperativeScroll(resolve);
      runScrollRequest(token, resolve, run, isReady);
-@@ -7194,6 +7496,8 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
+@@ -7194,6 +7504,8 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
      const mode = (_a3 = options == null ? void 0 : options.mode) != null ? _a3 : "sizes";
      state.sizes.clear();
      state.sizesKnown.clear();
@@ -4075,7 +4119,7 @@ index 6b2d901..929020d 100644
      invalidateContainerFixedItemSizes(state);
      for (const key in state.averageSizes) {
        delete state.averageSizes[key];
-@@ -7214,6 +7518,11 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
+@@ -7214,6 +7526,11 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
      (_b = state.triggerCalculateItemsInView) == null ? void 0 : _b.call(state, { forceFullItemPositions: true });
    };
    return {
@@ -4087,7 +4131,7 @@ index 6b2d901..929020d 100644
      clearCaches,
      flashScrollIndicators: () => refScroller.current.flashScrollIndicators(),
      getAnimatableRef: () => {
-@@ -7251,7 +7560,10 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
+@@ -7251,7 +7568,10 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
        scroll: state.scroll,
        scrollLength: state.scrollLength,
        scrollVelocity: getScrollVelocity(state),
@@ -4099,7 +4143,7 @@ index 6b2d901..929020d 100644
        sizes: state.sizesKnown,
        start: state.startNoBuffer,
        startBuffered: state.startBuffered
-@@ -7432,7 +7744,8 @@ function normalizeMaintainScrollAtEnd(value) {
+@@ -7432,7 +7752,8 @@ function normalizeMaintainScrollAtEnd(value) {
    const normalizedTriggers = normalizeMaintainScrollAtEndOn(value.on, "on" in value);
    return {
      ...normalizedTriggers,
@@ -4109,7 +4153,7 @@ index 6b2d901..929020d 100644
    };
  }
  
-@@ -7562,6 +7875,8 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+@@ -7562,6 +7883,8 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
      estimatedListSize,
      extraData,
      getFixedItemSize,
@@ -4118,7 +4162,7 @@ index 6b2d901..929020d 100644
      getItemType,
      horizontal,
      rtl,
-@@ -7754,6 +8069,8 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+@@ -7754,6 +8077,8 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
          scrollTime: 0,
          sizes: /* @__PURE__ */ new Map(),
          sizesKnown: /* @__PURE__ */ new Map(),
@@ -4127,7 +4171,7 @@ index 6b2d901..929020d 100644
          startBuffered: -1,
          startNoBuffer: -1,
          startReachedSnapshot: void 0,
-@@ -7819,6 +8136,8 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+@@ -7819,6 +8144,8 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
      drawDistance,
      estimatedItemSize,
      getFixedItemSize: useWrapIfItem(getFixedItemSize),
@@ -4136,7 +4180,7 @@ index 6b2d901..929020d 100644
      getItemType: useWrapIfItem(getItemType),
      horizontal: !!horizontal,
      itemsAreEqual,
-@@ -7860,7 +8179,10 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+@@ -7860,7 +8187,10 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
    if (shouldResetFreshDataLayout) {
      resetInitialRenderState(ctx, {
        resetInitialScroll: !!initialScrollProp,
@@ -4148,7 +4192,7 @@ index 6b2d901..929020d 100644
      });
    }
    const memoizedLastItemKeys = useMemo(() => {
-@@ -8088,10 +8410,20 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+@@ -8088,10 +8418,20 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
          cancelAnimationFrame(state.queuedFullDrawDistancePrewarm);
          state.queuedFullDrawDistancePrewarm = void 0;
        }
@@ -4209,7 +4253,7 @@ index db7841d..846d452 100644
       * Clears internal virtualization caches.
       * @param options - Cache clearing options.
 diff --git a/react.js b/react.js
-index 544cca8..70e8a48 100644
+index 544cca8..40e7e02 100644
 --- a/react.js
 +++ b/react.js
 @@ -773,9 +773,15 @@ function checkThresholds(ctx, allowedEdge) {
@@ -5011,7 +5055,19 @@ index 544cca8..70e8a48 100644
    }
    if (!prevSize || Math.abs(prevSize - size) > 0.1) {
      setSize(ctx, itemKey, size);
-@@ -5252,7 +5528,10 @@ function createResizeObserver(element, callback) {
+@@ -4916,6 +5192,11 @@ function measureContainersInLayoutEffect(ctx, targetContainerIds = null) {
+     const element = viewRef == null ? void 0 : viewRef.current;
+     if (itemKey !== void 0 && element) {
+       const rect = element.getBoundingClientRect();
++      if (rect.width === 0 && rect.height === 0) {
++        // Not laid out (display: none, detached): the same rule as the observer path. A 0 x 0
++        // size here would make every row fit and grow the container pool without bound.
++        continue;
++      }
+       setContainerLayoutBaseline(element, rect);
+       measurements.push({
+         containerId,
+@@ -5252,7 +5533,10 @@ function createResizeObserver(element, callback) {
      return () => {
      };
    }
@@ -5023,7 +5079,7 @@ index 544cca8..70e8a48 100644
    const callbacks = (_a3 = callbackMap.get(element)) != null ? _a3 : /* @__PURE__ */ new Set();
    if (callbacks.size === 0) {
      callbackMap.set(element, callbacks);
-@@ -5359,7 +5638,8 @@ function processContainerLayout({ containerId, ctx, rectangle, ref, state }) {
+@@ -5359,7 +5643,8 @@ function processContainerLayout({ containerId, ctx, rectangle, ref, state }) {
    const axis = state.horizontal ? "width" : "height";
    const size = roundSize(rectangle[axis]);
    state.lastSize ? roundSize(state.lastSize[axis]) : void 0;
@@ -5033,7 +5089,17 @@ index 544cca8..70e8a48 100644
    const previousSize = coreKnownSize ;
    const applyLayout = () => {
      state.lastSize = layout;
-@@ -6691,6 +6971,8 @@ function checkResetContainers(ctx, dataProp, { didColumnsChange = false } = {})
+@@ -5376,6 +5661,9 @@ function processContainerLayout({ containerId, ctx, rectangle, ref, state }) {
+       if (state.itemKey === currentItemKey) {
+         const element = ref.current;
+         const rect = (_a4 = element == null ? void 0 : element.getBoundingClientRect) == null ? void 0 : _a4.call(element);
++        if (rect && rect.width === 0 && rect.height === 0) {
++          return;
++        }
+         if (rect) {
+           layout = { height: rect.height, width: rect.width };
+         }
+@@ -6691,6 +6979,8 @@ function checkResetContainers(ctx, dataProp, { didColumnsChange = false } = {})
    if (didColumnsChange) {
      state.sizes.clear();
      state.sizesKnown.clear();
@@ -5042,7 +5108,7 @@ index 544cca8..70e8a48 100644
      invalidateContainerFixedItemSizes(state);
      for (const key in state.averageSizes) {
        delete state.averageSizes[key];
-@@ -7110,6 +7392,13 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
+@@ -7110,6 +7400,13 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
    const IMPERATIVE_SCROLL_SETTLE_MAX_WAIT_MS = 800;
    const IMPERATIVE_SCROLL_SETTLE_STABLE_FRAMES = 2;
    let imperativeScrollToken = 0;
@@ -5056,7 +5122,7 @@ index 544cca8..70e8a48 100644
    const isSettlingAfterDataChange = () => !!state.didDataChange || !!state.didColumnsChange || state.queuedMVCPRecalculate !== void 0 || state.ignoreScrollFromMVCP !== void 0;
    const isScrollToIndexReady = (targetIndex, allowEmpty = false) => {
      var _a3;
-@@ -7131,6 +7420,7 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
+@@ -7131,6 +7428,7 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
      const startedAt = Date.now();
      let stableFrames = 0;
      const check = () => {
@@ -5064,7 +5130,7 @@ index 544cca8..70e8a48 100644
        if (token !== imperativeScrollToken) {
          return;
        }
-@@ -7144,9 +7434,10 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
+@@ -7144,9 +7442,10 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
          run();
          return;
        }
@@ -5077,7 +5143,7 @@ index 544cca8..70e8a48 100644
    };
    const runScrollRequest = (token, resolve, run, isReady = () => true) => {
      const runNow = () => {
-@@ -7169,12 +7460,23 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
+@@ -7169,12 +7468,23 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
    };
    const startImperativeScroll = (resolve) => {
      var _a3;
@@ -5101,7 +5167,7 @@ index 544cca8..70e8a48 100644
    const runScrollWithPromise = (run, isReady = () => true) => new Promise((resolve) => {
      const token = startImperativeScroll(resolve);
      runScrollRequest(token, resolve, run, isReady);
-@@ -7215,6 +7517,8 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
+@@ -7215,6 +7525,8 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
      const mode = (_a3 = options == null ? void 0 : options.mode) != null ? _a3 : "sizes";
      state.sizes.clear();
      state.sizesKnown.clear();
@@ -5110,7 +5176,7 @@ index 544cca8..70e8a48 100644
      invalidateContainerFixedItemSizes(state);
      for (const key in state.averageSizes) {
        delete state.averageSizes[key];
-@@ -7235,6 +7539,11 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
+@@ -7235,6 +7547,11 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
      (_b = state.triggerCalculateItemsInView) == null ? void 0 : _b.call(state, { forceFullItemPositions: true });
    };
    return {
@@ -5122,7 +5188,7 @@ index 544cca8..70e8a48 100644
      clearCaches,
      flashScrollIndicators: () => refScroller.current.flashScrollIndicators(),
      getAnimatableRef: () => {
-@@ -7272,7 +7581,10 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
+@@ -7272,7 +7589,10 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
        scroll: state.scroll,
        scrollLength: state.scrollLength,
        scrollVelocity: getScrollVelocity(state),
@@ -5134,7 +5200,7 @@ index 544cca8..70e8a48 100644
        sizes: state.sizesKnown,
        start: state.startNoBuffer,
        startBuffered: state.startBuffered
-@@ -7453,7 +7765,8 @@ function normalizeMaintainScrollAtEnd(value) {
+@@ -7453,7 +7773,8 @@ function normalizeMaintainScrollAtEnd(value) {
    const normalizedTriggers = normalizeMaintainScrollAtEndOn(value.on, "on" in value);
    return {
      ...normalizedTriggers,
@@ -5144,7 +5210,7 @@ index 544cca8..70e8a48 100644
    };
  }
  
-@@ -7583,6 +7896,8 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+@@ -7583,6 +7904,8 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
      estimatedListSize,
      extraData,
      getFixedItemSize,
@@ -5153,7 +5219,7 @@ index 544cca8..70e8a48 100644
      getItemType,
      horizontal,
      rtl,
-@@ -7775,6 +8090,8 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+@@ -7775,6 +8098,8 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
          scrollTime: 0,
          sizes: /* @__PURE__ */ new Map(),
          sizesKnown: /* @__PURE__ */ new Map(),
@@ -5162,7 +5228,7 @@ index 544cca8..70e8a48 100644
          startBuffered: -1,
          startNoBuffer: -1,
          startReachedSnapshot: void 0,
-@@ -7840,6 +8157,8 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+@@ -7840,6 +8165,8 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
      drawDistance,
      estimatedItemSize,
      getFixedItemSize: useWrapIfItem(getFixedItemSize),
@@ -5171,7 +5237,7 @@ index 544cca8..70e8a48 100644
      getItemType: useWrapIfItem(getItemType),
      horizontal: !!horizontal,
      itemsAreEqual,
-@@ -7881,7 +8200,10 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+@@ -7881,7 +8208,10 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
    if (shouldResetFreshDataLayout) {
      resetInitialRenderState(ctx, {
        resetInitialScroll: !!initialScrollProp,
@@ -5183,7 +5249,7 @@ index 544cca8..70e8a48 100644
      });
    }
    const memoizedLastItemKeys = React3.useMemo(() => {
-@@ -8109,10 +8431,20 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+@@ -8109,10 +8439,20 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
          cancelAnimationFrame(state.queuedFullDrawDistancePrewarm);
          state.queuedFullDrawDistancePrewarm = void 0;
        }
@@ -5205,7 +5271,7 @@ index 544cca8..70e8a48 100644
    }, [state]);
    React3.useLayoutEffect(() => {
 diff --git a/react.mjs b/react.mjs
-index 6b2d901..929020d 100644
+index 6b2d901..8aaf820 100644
 --- a/react.mjs
 +++ b/react.mjs
 @@ -752,9 +752,15 @@ function checkThresholds(ctx, allowedEdge) {
@@ -6007,7 +6073,19 @@ index 6b2d901..929020d 100644
    }
    if (!prevSize || Math.abs(prevSize - size) > 0.1) {
      setSize(ctx, itemKey, size);
-@@ -5231,7 +5507,10 @@ function createResizeObserver(element, callback) {
+@@ -4895,6 +5171,11 @@ function measureContainersInLayoutEffect(ctx, targetContainerIds = null) {
+     const element = viewRef == null ? void 0 : viewRef.current;
+     if (itemKey !== void 0 && element) {
+       const rect = element.getBoundingClientRect();
++      if (rect.width === 0 && rect.height === 0) {
++        // Not laid out (display: none, detached): the same rule as the observer path. A 0 x 0
++        // size here would make every row fit and grow the container pool without bound.
++        continue;
++      }
+       setContainerLayoutBaseline(element, rect);
+       measurements.push({
+         containerId,
+@@ -5231,7 +5512,10 @@ function createResizeObserver(element, callback) {
      return () => {
      };
    }
@@ -6019,7 +6097,7 @@ index 6b2d901..929020d 100644
    const callbacks = (_a3 = callbackMap.get(element)) != null ? _a3 : /* @__PURE__ */ new Set();
    if (callbacks.size === 0) {
      callbackMap.set(element, callbacks);
-@@ -5338,7 +5617,8 @@ function processContainerLayout({ containerId, ctx, rectangle, ref, state }) {
+@@ -5338,7 +5622,8 @@ function processContainerLayout({ containerId, ctx, rectangle, ref, state }) {
    const axis = state.horizontal ? "width" : "height";
    const size = roundSize(rectangle[axis]);
    state.lastSize ? roundSize(state.lastSize[axis]) : void 0;
@@ -6029,7 +6107,17 @@ index 6b2d901..929020d 100644
    const previousSize = coreKnownSize ;
    const applyLayout = () => {
      state.lastSize = layout;
-@@ -6670,6 +6950,8 @@ function checkResetContainers(ctx, dataProp, { didColumnsChange = false } = {})
+@@ -5355,6 +5640,9 @@ function processContainerLayout({ containerId, ctx, rectangle, ref, state }) {
+       if (state.itemKey === currentItemKey) {
+         const element = ref.current;
+         const rect = (_a4 = element == null ? void 0 : element.getBoundingClientRect) == null ? void 0 : _a4.call(element);
++        if (rect && rect.width === 0 && rect.height === 0) {
++          return;
++        }
+         if (rect) {
+           layout = { height: rect.height, width: rect.width };
+         }
+@@ -6670,6 +6958,8 @@ function checkResetContainers(ctx, dataProp, { didColumnsChange = false } = {})
    if (didColumnsChange) {
      state.sizes.clear();
      state.sizesKnown.clear();
@@ -6038,7 +6126,7 @@ index 6b2d901..929020d 100644
      invalidateContainerFixedItemSizes(state);
      for (const key in state.averageSizes) {
        delete state.averageSizes[key];
-@@ -7089,6 +7371,13 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
+@@ -7089,6 +7379,13 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
    const IMPERATIVE_SCROLL_SETTLE_MAX_WAIT_MS = 800;
    const IMPERATIVE_SCROLL_SETTLE_STABLE_FRAMES = 2;
    let imperativeScrollToken = 0;
@@ -6052,7 +6140,7 @@ index 6b2d901..929020d 100644
    const isSettlingAfterDataChange = () => !!state.didDataChange || !!state.didColumnsChange || state.queuedMVCPRecalculate !== void 0 || state.ignoreScrollFromMVCP !== void 0;
    const isScrollToIndexReady = (targetIndex, allowEmpty = false) => {
      var _a3;
-@@ -7110,6 +7399,7 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
+@@ -7110,6 +7407,7 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
      const startedAt = Date.now();
      let stableFrames = 0;
      const check = () => {
@@ -6060,7 +6148,7 @@ index 6b2d901..929020d 100644
        if (token !== imperativeScrollToken) {
          return;
        }
-@@ -7123,9 +7413,10 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
+@@ -7123,9 +7421,10 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
          run();
          return;
        }
@@ -6073,7 +6161,7 @@ index 6b2d901..929020d 100644
    };
    const runScrollRequest = (token, resolve, run, isReady = () => true) => {
      const runNow = () => {
-@@ -7148,12 +7439,23 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
+@@ -7148,12 +7447,23 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
    };
    const startImperativeScroll = (resolve) => {
      var _a3;
@@ -6097,7 +6185,7 @@ index 6b2d901..929020d 100644
    const runScrollWithPromise = (run, isReady = () => true) => new Promise((resolve) => {
      const token = startImperativeScroll(resolve);
      runScrollRequest(token, resolve, run, isReady);
-@@ -7194,6 +7496,8 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
+@@ -7194,6 +7504,8 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
      const mode = (_a3 = options == null ? void 0 : options.mode) != null ? _a3 : "sizes";
      state.sizes.clear();
      state.sizesKnown.clear();
@@ -6106,7 +6194,7 @@ index 6b2d901..929020d 100644
      invalidateContainerFixedItemSizes(state);
      for (const key in state.averageSizes) {
        delete state.averageSizes[key];
-@@ -7214,6 +7518,11 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
+@@ -7214,6 +7526,11 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
      (_b = state.triggerCalculateItemsInView) == null ? void 0 : _b.call(state, { forceFullItemPositions: true });
    };
    return {
@@ -6118,7 +6206,7 @@ index 6b2d901..929020d 100644
      clearCaches,
      flashScrollIndicators: () => refScroller.current.flashScrollIndicators(),
      getAnimatableRef: () => {
-@@ -7251,7 +7560,10 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
+@@ -7251,7 +7568,10 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
        scroll: state.scroll,
        scrollLength: state.scrollLength,
        scrollVelocity: getScrollVelocity(state),
@@ -6130,7 +6218,7 @@ index 6b2d901..929020d 100644
        sizes: state.sizesKnown,
        start: state.startNoBuffer,
        startBuffered: state.startBuffered
-@@ -7432,7 +7744,8 @@ function normalizeMaintainScrollAtEnd(value) {
+@@ -7432,7 +7752,8 @@ function normalizeMaintainScrollAtEnd(value) {
    const normalizedTriggers = normalizeMaintainScrollAtEndOn(value.on, "on" in value);
    return {
      ...normalizedTriggers,
@@ -6140,7 +6228,7 @@ index 6b2d901..929020d 100644
    };
  }
  
-@@ -7562,6 +7875,8 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+@@ -7562,6 +7883,8 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
      estimatedListSize,
      extraData,
      getFixedItemSize,
@@ -6149,7 +6237,7 @@ index 6b2d901..929020d 100644
      getItemType,
      horizontal,
      rtl,
-@@ -7754,6 +8069,8 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+@@ -7754,6 +8077,8 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
          scrollTime: 0,
          sizes: /* @__PURE__ */ new Map(),
          sizesKnown: /* @__PURE__ */ new Map(),
@@ -6158,7 +6246,7 @@ index 6b2d901..929020d 100644
          startBuffered: -1,
          startNoBuffer: -1,
          startReachedSnapshot: void 0,
-@@ -7819,6 +8136,8 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+@@ -7819,6 +8144,8 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
      drawDistance,
      estimatedItemSize,
      getFixedItemSize: useWrapIfItem(getFixedItemSize),
@@ -6167,7 +6255,7 @@ index 6b2d901..929020d 100644
      getItemType: useWrapIfItem(getItemType),
      horizontal: !!horizontal,
      itemsAreEqual,
-@@ -7860,7 +8179,10 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+@@ -7860,7 +8187,10 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
    if (shouldResetFreshDataLayout) {
      resetInitialRenderState(ctx, {
        resetInitialScroll: !!initialScrollProp,
@@ -6179,7 +6267,7 @@ index 6b2d901..929020d 100644
      });
    }
    const memoizedLastItemKeys = useMemo(() => {
-@@ -8088,10 +8410,20 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+@@ -8088,10 +8418,20 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
          cancelAnimationFrame(state.queuedFullDrawDistancePrewarm);
          state.queuedFullDrawDistancePrewarm = void 0;
        }
