@@ -88,6 +88,18 @@ function countRequests(requestLogPath: string, method: StartupMethod): number {
 }
 
 describe('AcpBackend startup timeout retry safety', () => {
+  it('retains a typed startup transport failure when the configured executable exits without speaking ACP', async () => {
+    await withTempDir('happier-acp-closed-startup-', async dir => {
+      const backend = new AcpBackend({ agentName: 'non-acp-command', cwd: dir,
+        command: process.execPath, args: ['-e', 'process.exit(0)'], transportHandler: createAcpTestTransportHandler() });
+      try {
+        await expect(backend.startSession()).rejects.toMatchObject({ code: 'agent_startup_transport_failed' });
+      } finally {
+        await backend.dispose();
+      }
+    });
+  });
+
   it.each(['start', 'load'] as const)('rejects an absent executable as a typed %s failure and keeps other operations usable', async operation => {
     await withTempDir('happier-acp-missing-executable-', async dir => {
       const environment = createAcpSubprocessEnvScope();

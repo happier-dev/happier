@@ -50,6 +50,7 @@ import { extname, isAbsolute, relative, sep } from 'node:path';
 
 import { createAcpBackend, type CreateAcpBackendOptions } from '@/agent/acp/createAcpBackend';
 import { readAcpRequestErrorCode } from '@/agent/acp/withRetry';
+import { readAgentStartupFailureCode } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { AGENT_SESSION_RUNTIME_LIMITS_CANDIDATE_V1 } from '@happier-dev/protocol/runtime/agentSessionLimitsV1';
 import type { AcpBackend, AcpBackendOptions } from '@/agent/acp/AcpBackend';
 import type {
@@ -2516,6 +2517,13 @@ async function createPublicAcpConversationFromAwaitableAdapter(
       throw new AggregateError([error, cleanupError], 'ACP Session startup failed and cleanup is incomplete');
     }
     if (sessionStream) await sessionStream.dispose();
+    if (error instanceof Error) {
+      // Host publication consumes the strict diagnostic rather than this Error.
+      // Keep the backend's typed startup cause through that boundary.
+      const code = readAgentStartupFailureCode('code' in error ? error.code : undefined)
+        ?? 'acp_session_start_failed';
+      Object.assign(error, { diagnostic: diagnostic(code, error.message, error) });
+    }
     throw error;
   }
   } catch (error) {

@@ -33,6 +33,7 @@ import {
   type Stream,
 } from '@agentclientprotocol/sdk';
 import { redactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports/redaction';
+import { AGENT_STARTUP_FAILURE_PREVIEWS } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { randomUUID } from 'node:crypto';
 import { createWriteStream } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -1182,8 +1183,15 @@ export class AcpBackend implements CatalogAcpBackend {
       '[AcpBackend] Initialization failed; cleaning up process/connection',
       createAcpRequestFailureLogRecord({ operation: 'Initialize', error }),
     );
+    // The connection owner knows that the native transport closed. Preserve
+    // explicit RPC/auth refusals and cancellation instead of parsing their text.
+    const failure = !this.disposed && this.connection?.signal.aborted
+      && error instanceof Error && error.name !== 'AbortError' && !('code' in error)
+      ? Object.assign(new Error(AGENT_STARTUP_FAILURE_PREVIEWS.agent_startup_transport_failed, { cause: error }),
+        { code: 'agent_startup_transport_failed' as const })
+      : error;
     await this.cleanupInitializedProcessConnection({ graceMs: 250 });
-    throw error;
+    throw failure;
   }
 }
 
