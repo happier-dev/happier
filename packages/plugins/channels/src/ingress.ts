@@ -1,3 +1,4 @@
+import type { SessionPullRequestProvider } from './sessionPullRequestProvider.js';
 import {
   isPluginError,
   PluginError,
@@ -8075,6 +8076,7 @@ export async function runConversationCheckpointedPollForInvocation(input: Readon
   }
   let execution: Awaited<ReturnType<PluginInvocationContext['services']['actions']['executeAdmittedTargetedOperationWithExecutionOrigin']>>;
   let pollBindings: ConversationPollInputV1['bindings'];
+  let pullRequestProvider: SessionPullRequestProvider | undefined;
   try {
     const provider = await readCurrentProviderContributionForPersistedSelection({
       context: {
@@ -8084,6 +8086,7 @@ export async function runConversationCheckpointedPollForInvocation(input: Readon
       providerPluginId: connection.value.payload.providerPluginId,
       providerContributionSelection: connection.value.payload.providerContributionSelection,
     });
+    pullRequestProvider = provider.descriptor?.pullRequests;
     const poll = provider.operations.observationsPoll;
     if (poll === undefined) {
       throw pluginError(
@@ -8289,7 +8292,9 @@ export async function runConversationCheckpointedPollForInvocation(input: Readon
   let censusSettlements: readonly IngressCensusCheckpointSettlement[] = [];
   try {
     if (result.pullRequestEndpoints !== undefined) {
+      if (!pullRequestProvider) throw pluginError('channels_provider_contribution_unavailable', 'The selected provider has no PR support.', true);
       await refreshSessionPullRequestBindingsForInvocation({ connectionRow: current.row,
+        provider: pullRequestProvider,
         endpoints: result.pullRequestEndpoints }, context);
     }
     if (result.kind === 'batch') {

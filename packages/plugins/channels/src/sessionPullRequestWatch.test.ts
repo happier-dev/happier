@@ -3,12 +3,15 @@ import type { JsonValue, PluginServices } from '@happier-dev/plugin-sdk';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import { PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1 } from '@happier-dev/plugin-sdk/collections';
 import { SessionPullRequestWatchListResultV1Schema } from '@happier-dev/channels-protocol/v1';
+import { GITHUB_PLUGIN } from '../../scm-github/src/manifest.js';
+import { GITHUB_CHANNEL_PULL_REQUESTS } from '../../scm-github/src/githubChannelContribution.js';
+import { channelsProviderDescriptorFixture } from './testkit/operationOnlyTargetedContributionsFixture.js';
 import { CHANNELS_PLUGIN } from './manifest.js';
 import { CHANNEL_STATE_COLLECTION, CHANNEL_STATE_INDEX_ID } from './collections.js';
 import { withChannelStateSessionIdentity } from './collectionMigrations.js';
 import { MemoryCollection } from './testkit/memoryCollection.js';
 import { sessionPullRequestBindingFixture } from './testkit/sessionPullRequestBindingFixture.js';
-import { observeSessionPullRequestWatchAction } from './sessionPullRequestWatch.js';
+import { assembleSessionPullRequestWatchMetadata, observeSessionPullRequestWatchAction } from './sessionPullRequestWatch.js';
 import type { SettingsChange } from '@happier-dev/plugin-sdk/settings';
 
 describe('portable Account PR Watch Action', () => {
@@ -22,6 +25,7 @@ describe('portable Account PR Watch Action', () => {
         const watch = vi.spyOn(state, 'watch');
         const observation = await observeSessionPullRequestWatchAction({ kind: 'get', sessionId: 'session-a' }, invalidate, {
             invokedAtMs: 1, signal: controller.signal, services: {
+                targetedContributions: channelsProviderDescriptorFixture(GITHUB_PLUGIN.manifest),
                 storage: { account: { collection: () => state } } as unknown as PluginServices['storage'],
                 actions: { execute: vi.fn() } as unknown as PluginServices['actions'],
                 settings: { forScope: () => ({ snapshot: async () => ({ scope: { kind: 'account' as const }, revision: '1', values: {} }),
@@ -80,6 +84,7 @@ describe('portable Account PR Watch Action', () => {
         });
         const kit = await createPluginTestkit({ manifest: CHANNELS_PLUGIN.manifest, module: CHANNELS_PLUGIN,
             services: {
+                targetedContributions: channelsProviderDescriptorFixture(GITHUB_PLUGIN.manifest),
                 storage: { account: { collection: (definition: { id: string }) => {
                     if (definition.id !== CHANNEL_STATE_COLLECTION.id) throw new Error('Unexpected Collection');
                     return state;
@@ -114,5 +119,20 @@ describe('portable Account PR Watch Action', () => {
             expect(bindingReads.every(([input]) => input.prefix?.[2] === 'session-a' || input.prefix?.[2] === 'session-b')).toBe(true);
             expect(query.mock.calls.some(([input]) => input.index === CHANNEL_STATE_INDEX_ID.byKind)).toBe(false);
         } finally { await kit.dispose(); }
+    });
+    it('projects retained connection credential loss independently from native PR status', () => {
+        const value = sessionPullRequestBindingFixture('pr-1', 'session-a', 12);
+        for (const stopWhenMerged of [true, false]) {
+            const policy = { mode: 'notify', archiveAfterMerge: true } as const;
+            const retained = { ...value, payload: { ...value.payload, enabled: true, target: { ...value.payload.target,
+                pullRequestWatch: { policy: { ...policy, stopWhenMerged } } } } };
+            const metadata = assembleSessionPullRequestWatchMetadata({ sessionId: 'session-a', provider: GITHUB_CHANNEL_PULL_REQUESTS,
+                rows: [{ rowId: value.id, revision: 1, value: retained }],
+                defaults: { defaultMode: 'notify', fixAttemptLimit: 3, archiveAfterMerge: false },
+                connectionReasons: new Map([['connection-1', 'credentials']]),
+            });
+            expect(metadata.bindings[0]?.watch.reason).toBe('credentials');
+            expect(metadata.bindings[0]?.watch.policy).toEqual(policy);
+        }
     });
 });

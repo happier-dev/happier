@@ -17,6 +17,8 @@ import { readSessionPullRequestLatestUpdateForBinding, type SessionPullRequestLa
 import { observeConversationSessionCollections } from './sessionCollectionObservation.js';
 import type { PluginAccountStorageConsumerContext } from '@happier-dev/plugin-sdk/storage';
 import { deliverSessionPullRequestConfiguredFix } from './sessionPullRequestWatchConfiguredFix.js';
+import { readSessionPullRequestProvider } from './providerContributions.js';
+import type { SessionPullRequestProvider } from './sessionPullRequestProvider.js';
 
 /** The authored declaration and its portable entry select one exact activation target. */
 export const SESSION_PULL_REQUEST_WATCH_ACCOUNT_EXECUTION_V1 = { target: 'account', account: {
@@ -24,7 +26,7 @@ export const SESSION_PULL_REQUEST_WATCH_ACCOUNT_EXECUTION_V1 = { target: 'accoun
 } } as const;
 
 export type SessionPullRequestWatchContext = PluginAccountStorageConsumerContext & Readonly<{
-    services: Pick<PluginAccountActionContext['services'], 'actions' | 'settings'>;
+    services: Pick<PluginAccountActionContext['services'], 'actions' | 'settings' | 'targetedContributions'>;
     signal: AbortSignal; invokedAtMs: number;
 }>;
 
@@ -46,7 +48,7 @@ function bindingSession(binding: ConversationBindingV1): string | undefined {
 }
 /** One assembler for exact Session reads, the paged Inbox index and the shared Resource. */
 export function assembleSessionPullRequestWatchMetadata(input: Readonly<{
-    sessionId: string; rows: readonly ChannelStateRow[]; defaults: SessionPullRequestWatchDefaults;
+    sessionId: string; rows: readonly ChannelStateRow[]; defaults: SessionPullRequestWatchDefaults; provider: SessionPullRequestProvider;
     watchingMachines?: ReadonlyMap<string, { serverId: string; machineId: string; label: string }>;
     latestUpdates?: ReadonlyMap<string, SessionPullRequestLatestUpdateV1 | null>;
     connectionReasons?: ReadonlyMap<string, 'credentials' | 'paused'>;
@@ -55,7 +57,7 @@ export function assembleSessionPullRequestWatchMetadata(input: Readonly<{
     for (const row of input.rows) {
         const { binding } = readConversationBindingUpdateRow({ row, bindingId: row.rowId });
         if (bindingSession(binding) !== input.sessionId || binding.deletionState !== 'none') continue;
-        const link = resolveSessionPullRequestLinksV1([binding]).find(group => group.sessionId === input.sessionId)?.pullRequestLinks[0];
+        const link = resolveSessionPullRequestLinksV1([binding], input.provider).find(group => group.sessionId === input.sessionId)?.pullRequestLinks[0];
         if (!link) continue;
         const policy = readSessionPullRequestWatchPolicy(binding);
         const progress = binding.target.kind === 'session' ? binding.target.pullRequestWatch?.progress : undefined;
@@ -78,6 +80,9 @@ async function readResolvedSessionMetadata(sessionId: string, context: SessionPu
         readSessionPullRequestBindingRows({ collection, sessionId, signal: context.signal }).then(rows => rows.map(value => value.row)),
         defaults ?? readSessionPullRequestWatchDefaults(context),
     ]);
+    if (rows.length === 0) return { kind: 'ready' as const, sessionId, bindings: [] };
+    const { contribution } = await readSessionPullRequestProvider({ targetedContributions: context.services.targetedContributions, signal: context.signal });
+    const provider = contribution.descriptor.pullRequests!;
     const connectionIds = new Set(rows.flatMap(row => typeof row.value[CHANNEL_STATE_FIELD.connectionId] === 'string'
         ? [row.value[CHANNEL_STATE_FIELD.connectionId] as string] : []));
     const watchingMachines = new Map<string, { serverId: string; machineId: string; label: string }>();
@@ -93,11 +98,11 @@ async function readResolvedSessionMetadata(sessionId: string, context: SessionPu
         watchingMachines.set(connectionId, { serverId: connection.transportOrigin.serverIdentityId,
             machineId: connection.transportOrigin.machineId, label: connection.transportOrigin.machineId });
     }));
-    const metadata = assembleSessionPullRequestWatchMetadata({ sessionId, rows, defaults: currentDefaults, watchingMachines, connectionReasons });
+    const metadata = assembleSessionPullRequestWatchMetadata({ sessionId, rows, defaults: currentDefaults, provider, watchingMachines, connectionReasons });
     const latestUpdates = new Map(await Promise.all(metadata.bindings.map(async binding => [binding.bindingId,
         await readSessionPullRequestLatestUpdateForBinding({ sessionId, bindingId: binding.bindingId }, context),
     ] as const)));
-    return assembleSessionPullRequestWatchMetadata({ sessionId, rows, defaults: currentDefaults, watchingMachines, latestUpdates, connectionReasons });
+    return assembleSessionPullRequestWatchMetadata({ sessionId, rows, defaults: currentDefaults, provider, watchingMachines, latestUpdates, connectionReasons });
 }
 export async function readSessionPullRequestWatchForSession(sessionId: string, context: SessionPullRequestWatchContext,
     defaults?: SessionPullRequestWatchDefaults): Promise<SessionPullRequestWatchReadResultV1> {
@@ -114,7 +119,7 @@ export async function manageSessionPullRequestWatchForInvocation(input: JsonValu
         const ids = new Set(page.rows.flatMap(row => {
             const { binding } = readConversationBindingUpdateRow({ row, bindingId: row.rowId });
             const id = bindingSession(binding);
-            return id && binding.deletionState === 'none' && resolveSessionPullRequestLinksV1([binding]).length ? [id] : [];
+            return id && binding.deletionState === 'none' ? [id] : [];
         }));
         const defaults = await readSessionPullRequestWatchDefaults(context);
         const pageIds = new Set(page.rows.map(row => row.rowId));

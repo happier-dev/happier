@@ -1,3 +1,4 @@
+import { executeDefaultActionInCapturedAccount } from './defaultActionExecutor';
 import { createAccountScopedCryptoMaterialSnapshotV1 } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { readServerEnabledBit } from '@happier-dev/protocol/features/serverEnabledBit';
 import { resolveValidatedAutomationAccountEncryptionV1 } from '@happier-dev/protocol/automations/automationAccountCurrentnessV1';
@@ -25,6 +26,9 @@ import {
     SESSION_PULL_REQUEST_BINDING_ACTION_ID_V1,
     SessionPullRequestBindingInputV1Schema,
     SessionPullRequestBindingResultV1Schema,
+    SESSION_PULL_REQUEST_WATCH_ACTION_ID_V1,
+    SessionPullRequestWatchReadResultV1Schema,
+    resolveDistinctPullRequestLinksV1,
     type SessionPullRequestBindingInputV1,
 } from '@happier-dev/channels-protocol/v1';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
@@ -41,8 +45,6 @@ import { getServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeature
 import { isServerFeaturesProbeRetryable } from '@/sync/api/capabilities/serverFeaturesProbeRetryability';
 import { isExplicitlyRetryableError } from '@/sync/runtime/connectivity/transientConnectivityErrors';
 import { createWorkflowRunAccountStorage } from '@/sync/api/automations/apiWorkflowRunStorage';
-import { readActiveSessionPullRequestLinks } from '@/sync/api/plugins/data/sessionPullRequestLinks';
-import { readPluginAccountAvailability } from '@/sync/domains/plugins/availability/projection';
 import { subscribeVisibleWorkflowRunListInvalidation } from '@/sync/domains/workflows/workflowRunListInvalidation';
 import {
     AutomationApiError,
@@ -317,19 +319,14 @@ export function createUiWorkflowAction(params: Readonly<{
         },
         pullRequests: {
             listLinks: async (sessionId, caller) => {
-                const result = await current(() => readActiveSessionPullRequestLinks({
-                    accountLifetime: account.accountLifetime,
-                    readAvailability: () => readPluginAccountAvailability(account.accountLifetime.scope),
-                    sessionIds: [sessionId],
-                    ...(caller?.signal ? { signal: caller.signal } : {}),
-                }));
-                if (result.status !== 'ready') {
-                    const reason = result.status === 'rejected' ? result.code : result.reason;
-                    // Target failures use the strict Agent refusal details contract;
-                    // a collection transport reason is not an Agent admission refusal.
-                    throw Object.assign(new Error(`target_unavailable:${reason}`), { code: 'target_unavailable' });
-                }
-                return result.sessions.find((session) => session.sessionId === sessionId)?.pullRequestLinks.slice() ?? [];
+                const result = await current(() => executeDefaultActionInCapturedAccount(account, 'action.invoke', {
+                    action: { pluginId: 'happier.channels', localId: SESSION_PULL_REQUEST_WATCH_ACTION_ID_V1 },
+                    input: { kind: 'get', sessionId },
+                }, { ...caller, surface: caller?.surface ?? 'ui', defaultSessionId: sessionId }));
+                if (!result.ok) targetUnavailable();
+                const metadata = SessionPullRequestWatchReadResultV1Schema.safeParse(result.result);
+                if (!metadata.success || metadata.data.kind !== 'ready' || metadata.data.sessionId !== sessionId) targetUnavailable();
+                return resolveDistinctPullRequestLinksV1(metadata.data.bindings.map(binding => binding.link)).slice();
             },
             attach: async ({ sessionId, pullRequest, automationId, triggerId, triggerRevision, triggerKind }, caller) => {
                 const result = await invokePullRequestBinding({ kind: 'attach', sessionId, pullRequest,

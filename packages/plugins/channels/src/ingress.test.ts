@@ -1,3 +1,4 @@
+import { GITHUB_CHANNEL_PULL_REQUESTS } from '../../scm-github/src/githubChannelContribution.js';
 import { arePluginMachineExecutionOriginsEqual, definePlugin, PluginError } from '@happier-dev/plugin-sdk';
 import { arePluginMachineExecutionRoutingsEqual, getPluginMachineExecutionRouting, type PluginMachineExecutionOriginV1, type PluginMachineExecutionRoutingV1 } from '@happier-dev/plugin-sdk/actions';
 import type { SessionSendRequest, SessionSummary } from '@happier-dev/plugin-sdk/sessions';
@@ -208,6 +209,8 @@ const telegramConnectionAuthority = {
 } as const satisfies ConversationConnectionFixtureAuthority;
 
 const admittedTelegramProviderContribution = Object.freeze({
+  // This transport fixture also supplies the native PR observations below.
+  descriptor: { v: 1, displayName: 'Ingress fixture', pullRequests: GITHUB_CHANNEL_PULL_REQUESTS },
   contributor: {
     pluginId: telegramProviderPluginId,
     contributionId: 'telegram-test-provider',
@@ -8304,7 +8307,7 @@ describe('Conversation checkpointed-poll ingress', () => {
       target: { ...record(payload.target), pullRequestLink: endpoint.pullRequest } } }));
     const readPublishedLinks = () => resolveSessionPullRequestLinksV1([
       readConversationBindingUpdateRow({ row: jsonStateRow(harness.rows.get('binding-1')), bindingId: 'binding-1' }).binding,
-    ]).map(projection => SessionPullRequestLinksV1Schema.parse(projection));
+    ], GITHUB_CHANNEL_PULL_REQUESTS).map(projection => SessionPullRequestLinksV1Schema.parse(projection));
     await expect(runConversationCheckpointedPollForInvocation({ connectionId: 'connection-1', waitMs: 0 }, harness.context)).resolves.toMatchObject({ kind: 'committed' });
     expect(harness.execute).not.toHaveBeenCalled();
     expect(privateSession).toEqual({ state: 'unread', standing: true });
@@ -8349,7 +8352,7 @@ describe('Conversation checkpointed-poll ingress', () => {
     expect(harness.execute).not.toHaveBeenCalled();
     expect(record(record(harness.rows.get('binding-1')!.value.payload).endpoint).pullRequestState).toEqual({ state: 'unknown', observedAt: 20 });
     const binding = readConversationBindingUpdateRow({ row: jsonStateRow(harness.rows.get('binding-1')), bindingId: 'binding-1' }).binding;
-    expect(resolveSessionPullRequestLinksV1([binding]).map(projection => SessionPullRequestLinksV1Schema.parse(projection)))
+    expect(resolveSessionPullRequestLinksV1([binding], GITHUB_CHANNEL_PULL_REQUESTS).map(projection => SessionPullRequestLinksV1Schema.parse(projection)))
       .toEqual([{ sessionId: 'session-1', pullRequestLinks: [{ provider: 'github', repository: 'acme/widgets', number: 1,
         url: 'https://github.com/acme/widgets/pull/1', state: 'unknown', observedAt: 20 }] }]);
   });

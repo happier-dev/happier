@@ -8,7 +8,11 @@ import {
   type PluginInvocationContext,
 } from '@happier-dev/plugin-sdk';
 import { pluginJsonValuesEqual } from '@happier-dev/plugin-sdk/protocol';
-import type { PluginAccountStorageScope } from '@happier-dev/plugin-sdk/storage';
+import { SessionAcceptedWorkspaceV1Schema, SessionIdSchema } from '@happier-dev/plugin-sdk/sessions';
+import { normalizeScmHostingRepositoryIdentity, sameScmHostingRepositoryIdentity } from '@happier-dev/plugin-sdk/scm';
+import { readSessionPullRequestBindingRows, sessionPullRequestBindingSelection } from './sessionPullRequestBindings.js';
+import { parseSessionPullRequestUrl, sessionPullRequestUrl, type SessionPullRequestProvider } from './sessionPullRequestProvider.js';
+import type { PluginAccountStorageScope, PluginAccountStorageConsumerContext } from '@happier-dev/plugin-sdk/storage';
 import { PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1 } from '@happier-dev/plugin-sdk/collections';
 import { arePluginMachineExecutionRoutingsEqual, isPluginActionApprovalRequestCreated } from '@happier-dev/plugin-sdk/actions';
 import type {
@@ -34,6 +38,10 @@ import {
   ConversationPrincipalResolveInputV1Schema,
   ConversationPrincipalResolveResultV1Schema,
   SessionPullRequestBindingInputV1Schema,
+  SESSION_PULL_REQUEST_LINK_COMPLETIONS_CONTRIBUTION_POINT_REF_V1,
+  SessionPullRequestLinkCompletionResultV1Schema,
+  type SessionPullRequestLinkCompletionInputV1,
+  type SessionPullRequestBindingInputV1,
   resolveSessionPullRequestLinksV1,
   type SessionPullRequestBindingResultV1,
   areConversationEndpointIdentitiesEqual,
@@ -114,6 +122,7 @@ import {
   freezeConversationConnectionTransportOrigin,
   getConversationConnectionTransportOrigin,
   getConversationConnectionExecutionRouting,
+  getSelfStampedPluginCallerExecutionOrigin,
   areConversationConnectionTransportOriginsEqual,
   isConversationPendingEndpointRetarget,
   type ConversationPendingProviderStopV1,
@@ -202,7 +211,7 @@ import {
 import {
   readCurrentProviderContributionForPersistedSelection,
   readSelectedCurrentProviderContribution,
-  readSessionPullRequestProviderSelection,
+  readSessionPullRequestProvider,
 } from './providerContributions.js';
 import { recommendConversationRecovery } from './recoveryRecommendation.js';
 
@@ -405,18 +414,27 @@ async function readCurrentBindingResolutionConnection(input: Readonly<{
   const row = await input.collection.get(input.connectionId, { signal: input.signal });
   assertNotAborted(input.signal);
   if (row === null) return bindingResolutionUnavailable('connectionNotFound');
+  return admitBindingResolutionConnection({ ...input, row });
+}
+
+/** A rejoined row is admitted once; a new row comes from the write result. */
+function admitBindingResolutionConnection(input: Readonly<{
+  row: StateRow;
+  connectionId: string;
+  expectedConnectionRevision?: number;
+}>): BindingResolutionConnectionRead {
   const connection = readConversationConnectionUpdateRow({
-    row,
+    row: input.row,
     connectionId: input.connectionId,
   });
-  if (connection.configurationRevision !== input.expectedConnectionRevision) return bindingResolutionStale();
+  if (input.expectedConnectionRevision !== undefined
+    && connection.configurationRevision !== input.expectedConnectionRevision) return bindingResolutionStale();
   if (connection.lifecycle.deletionState !== 'none') {
     return bindingResolutionUnavailable('connectionDeleting');
   }
-  return { kind: 'current', connection, row };
+  return { kind: 'current', connection, row: input.row };
 }
 
-/** The provider is sourced only from the current admission snapshot, never a stored Action handle. */
 async function readCurrentBindingResolutionProvider(input: Readonly<{
   context: PluginInvocationContext;
   connection: ConversationConnectionUpdateRow;
@@ -4769,26 +4787,12 @@ async function createConversationBindingWithAudience(
 
 async function readSessionPullRequestBindings(sessionId: string | undefined, context: PluginInvocationContext): Promise<Array<{ row: StateRow; binding: ConversationBindingV1 }>> {
   const collection = requireChannelsAccountStorage(context).collection(CHANNEL_STATE_COLLECTION);
-  const bindings: Array<{ row: StateRow; binding: ConversationBindingV1 }> = [];
-  let cursor: string | undefined;
-  do {
-    const page = await collection.query({ index: CHANNEL_STATE_INDEX_ID.byKind, prefix: [CHANNEL_STATE_RECORD_KIND.binding], order: 'asc', limit: PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1, ...(cursor === undefined ? {} : { cursor }) }, { signal: context.signal });
-    for (const candidate of page.rows) {
-      const row = asChannelStateRow(candidate);
-      if (row === undefined) throw pluginError('channels_pr_link_corrupt', 'The binding collection returned an invalid row.');
-      const { binding } = readConversationBindingUpdateRow({ row, bindingId: row.rowId });
-      const scopeSessionId = binding.target.kind === 'session' ? binding.target.sessionId : binding.target.kind === 'automation' ? binding.target.scopedTrigger?.sessionId : undefined;
-      const pr = binding.target.kind === 'session' ? binding.target.pullRequestLink : binding.target.kind === 'automation' ? binding.target.scopedTrigger?.pullRequest : undefined;
-      if (scopeSessionId !== undefined && pr !== undefined && (sessionId === undefined || scopeSessionId === sessionId)
-        && binding.deletionState === 'none') bindings.push({ row, binding });
-    }
-    cursor = page.nextCursor;
-  } while (cursor !== undefined);
-  return bindings;
+  return readSessionPullRequestBindingRows({ collection, sessionId, signal: context.signal });
 }
 
 /** The incumbent poll refreshes retained PR links; the existing Account Actions own settlement. */
 export async function refreshSessionPullRequestBindingsForInvocation(input: Readonly<{
+  provider: SessionPullRequestProvider;
   connectionRow: StateRow;
   endpoints: readonly ConversationResolvedEndpointV1[];
 }>, context: PluginInvocationContext): Promise<void> {
@@ -4806,8 +4810,8 @@ export async function refreshSessionPullRequestBindingsForInvocation(input: Read
     }
     return endpoint === entry.binding.endpoint ? entry : { ...entry, binding: { ...entry.binding, endpoint } };
   });
-  const before = new Map(resolveSessionPullRequestLinksV1(current.map(entry => entry.binding)).map(row => [row.sessionId, row.pullRequestLinks]));
-  for (const { sessionId, pullRequestLinks } of resolveSessionPullRequestLinksV1(next.map(entry => entry.binding))) {
+  const before = new Map(resolveSessionPullRequestLinksV1(current.map(entry => entry.binding), input.provider).map(row => [row.sessionId, row.pullRequestLinks]));
+  for (const { sessionId, pullRequestLinks } of resolveSessionPullRequestLinksV1(next.map(entry => entry.binding), input.provider)) {
     const terminal = (link: typeof pullRequestLinks[number]) => link.state === 'merged' || link.state === 'closed';
     // Standing belongs to a Session. Closing one PR must never hide its other open/unknown PRs.
     if (!pullRequestLinks.every(terminal) || before.get(sessionId)?.every(terminal)) continue;
@@ -4840,65 +4844,390 @@ async function disableSessionPullRequestTriggerBindings(input: Readonly<{ sessio
   }
 }
 
-/** Session/PR links are projections of the incumbent binding rows, never a second store. */
-export async function manageSessionPullRequestBindingForInvocation(input: JsonValue, context: PluginInvocationContext): Promise<SessionPullRequestBindingResultV1> {
+/** Exact source relationship reads use only the canonical retained connection/binding rows. */
+type SessionPullRequestRelationContext = PluginAccountStorageConsumerContext & Pick<PluginInvocationContext, 'signal' | 'caller'>
+  & { services: Pick<PluginInvocationContext['services'], 'targetedContributions'> };
+async function selectSessionPullRequestRelations(
+  input: Extract<SessionPullRequestBindingInputV1, { kind: 'readRelations' }>, context: SessionPullRequestRelationContext,
+) {
+  const collection = requireChannelsAccountStorage(context).collection(CHANNEL_STATE_COLLECTION);
+  const { contribution } = await readSessionPullRequestProvider({ targetedContributions: context.services.targetedContributions, signal: context.signal });
+  const native = contribution.descriptor.pullRequests!;
+  const origin = input.credentialRef === null ? getSelfStampedPluginCallerExecutionOrigin(context.caller) : undefined;
+  if (input.credentialRef === null && (origin === undefined || context.caller?.kind !== 'plugin'
+    || context.caller.pluginId !== contribution.contributor.pluginId)) {
+    throw pluginError('channels_pr_link_native_origin_unavailable', 'Native PR relations require the admitted provider source placement.');
+  }
+  const repositoryIds = new Map<string, string>();
+  const connectionIds = new Set<string>();
+  const matches = (row: StateRow) => {
+    const current = readConversationConnectionUpdateRow({ row, connectionId: row.rowId });
+    const matching = current.providerPluginId === contribution.contributor.pluginId
+      && pluginJsonValuesEqual(current.payload.credentialRef, input.credentialRef)
+      && (input.pullRequest === undefined || current.payload.providerConnectionKey === `${native.repositoryConnectionKeyPrefix}${input.pullRequest.repositoryId}`);
+    if (matching) {
+      const key = current.payload.providerConnectionKey;
+      const suffix = typeof key === 'string' && key.startsWith(native.repositoryConnectionKeyPrefix) ? key.slice(native.repositoryConnectionKeyPrefix.length) : undefined;
+      const repositoryId = suffix !== undefined && /^[1-9][0-9]*$/u.test(suffix) ? suffix : undefined;
+      if (repositoryId === undefined) throw pluginError('channels_pr_link_identity_unavailable', 'The native connection has no exact repository identity.');
+      repositoryIds.set(row.rowId, repositoryId);
+    }
+    return matching;
+  };
+  const entries: Awaited<ReturnType<typeof readSessionPullRequestBindingRows>> = [];
+  if (input.sessionId !== undefined) {
+    const sessionId = SessionIdSchema.parse(input.sessionId);
+    const connections = new Map<string, boolean>();
+    for (const entry of await readSessionPullRequestBindingRows({ collection, sessionId, signal: context.signal })) {
+      connectionIds.add(entry.binding.connectionId);
+      let matching = connections.get(entry.binding.connectionId);
+      if (matching === undefined) {
+        const row = await collection.get(entry.binding.connectionId, { signal: context.signal });
+        if (row === null) throw pluginError('channels_pr_link_connection_missing', 'A retained PR link has no verifiable connection.', true);
+        matching = matches(row);
+        connections.set(entry.binding.connectionId, matching);
+      }
+      if (matching) entries.push(entry);
+    }
+  } else {
+    let cursor: string | undefined;
+    do {
+      const page = await collection.query({ index: CHANNEL_STATE_INDEX_ID.byKind,
+        prefix: [CHANNEL_STATE_RECORD_KIND.connection], order: 'asc', limit: PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1,
+        ...(cursor === undefined ? {} : { cursor }) }, { signal: context.signal });
+      for (const row of page.rows) if (matches(row)) {
+        connectionIds.add(row.rowId);
+        entries.push(...await readSessionPullRequestBindingRows({ collection, connectionId: row.rowId, signal: context.signal }));
+      }
+      cursor = page.nextCursor;
+    } while (cursor !== undefined);
+  }
+  const links: Array<Extract<SessionPullRequestBindingResultV1, { kind: 'relations' }>['links'][number]> = [];
+  for (const { row, binding } of entries) {
+    const sessionId = binding.target.kind === 'session' ? binding.target.sessionId : binding.target.kind === 'automation' ? binding.target.scopedTrigger?.sessionId : undefined;
+    const pullRequest = binding.target.kind === 'session' ? binding.target.pullRequestLink : binding.target.kind === 'automation' ? binding.target.scopedTrigger?.pullRequest : undefined;
+    if (binding.endpoint.kind !== 'githubPullRequest' || sessionId === undefined || pullRequest === undefined
+      || binding.endpoint.parentId === undefined || !/^[1-9][0-9]*$/u.test(binding.endpoint.parentId)
+      || repositoryIds.get(binding.connectionId) !== binding.endpoint.parentId
+      || binding.endpoint.pullRequest?.number !== pullRequest.number
+      || binding.endpoint.pullRequest.repository.toLowerCase() !== pullRequest.repository.toLowerCase()) {
+      throw pluginError('channels_pr_link_identity_unavailable', 'The retained PR relationship has no exact authenticated identity.');
+    }
+    if (input.pullRequest !== undefined && (input.pullRequest.repositoryId !== binding.endpoint.parentId || input.pullRequest.number !== pullRequest.number)) continue;
+    links.push({ sessionId, bindingId: binding.id, revision: row.revision, pullRequest,
+      repositoryId: binding.endpoint.parentId, linkedAtMs: binding.createdAt });
+  }
+  return { result: { kind: 'relations' as const, links }, connectionIds };
+}
+
+/** Observe the same selected native rows as the read; no provider read or repair. */
+export async function observeSessionPullRequestBindingAction(input: JsonValue, invalidate: () => void, context: SessionPullRequestRelationContext) {
   const request = SessionPullRequestBindingInputV1Schema.parse(input);
+  if (request.kind !== 'list' && request.kind !== 'readRelations') {
+    throw pluginError('plugin_action_read_observation_read_only_required', 'Only relationship reads can be observed.');
+  }
+  context.signal.throwIfAborted();
+  const collection = requireChannelsAccountStorage(context).collection(CHANNEL_STATE_COLLECTION);
+  const sessionId = request.sessionId === undefined ? undefined : SessionIdSchema.parse(request.sessionId);
+  const dependencies = new Map<string, { dispose(): void }>();
+  let disposed = false;
+  let pending = false;
+  let refreshing: Promise<void> | undefined;
+  const notify = () => { if (!disposed && !context.signal.aborted) invalidate(); };
+  function refresh(): Promise<void> {
+    pending = true;
+    return refreshing ??= (async () => {
+      try {
+        while (pending && !disposed && !context.signal.aborted && request.kind === 'readRelations') {
+          pending = false;
+          const selected = await selectSessionPullRequestRelations(request, context);
+          if (disposed || context.signal.aborted) return;
+          for (const [id, observation] of dependencies) if (!selected.connectionIds.has(id)) {
+            observation.dispose(); dependencies.delete(id);
+          }
+          let added = false;
+          for (const id of selected.connectionIds) if (!dependencies.has(id)) {
+            dependencies.set(id, collection.watch(sessionId === undefined
+              ? sessionPullRequestBindingSelection({ connectionId: id })
+              : { index: CHANNEL_STATE_INDEX_ID.byConnectionBindingV2,
+                prefix: [id, null, CHANNEL_STATE_RECORD_KIND.connection], order: 'asc' }, notify));
+            added = true;
+          }
+          // Cover the asynchronous dependency acquisition gap with one read invalidation.
+          if (added) notify();
+        }
+      } finally { refreshing = undefined; }
+    })();
+  }
+  const membership = collection.watch(request.kind === 'readRelations' && sessionId === undefined
+    ? { index: CHANNEL_STATE_INDEX_ID.byKind, prefix: [CHANNEL_STATE_RECORD_KIND.connection], order: 'asc' }
+    : sessionPullRequestBindingSelection({ sessionId }), () => {
+      notify();
+      if (request.kind === 'readRelations') void refresh().catch(() => {
+        // The next read reports the typed storage/identity failure, not stale membership.
+        for (const observation of dependencies.values()) observation.dispose();
+        dependencies.clear();
+        notify();
+      });
+    });
+  function dispose() {
+    if (disposed) return;
+    disposed = true;
+    membership.dispose();
+    for (const observation of dependencies.values()) observation.dispose();
+    dependencies.clear();
+    context.signal.removeEventListener('abort', dispose);
+  }
+  context.signal.addEventListener('abort', dispose, { once: true });
+  try {
+    if (request.kind === 'readRelations') await refresh();
+    if (context.signal.aborted) { dispose(); context.signal.throwIfAborted(); }
+    return { dispose };
+  } catch (error) { dispose(); throw error; }
+}
+
+async function completeSessionPullRequestLink(
+  input: SessionPullRequestLinkCompletionInputV1,
+  context: PluginInvocationContext,
+): Promise<void> {
+  const reportUnavailable = (error?: unknown, contributor?: Readonly<{ pluginId: string; contributionId: string }>) => {
+    try {
+      context.services.logger.warn('[Channels] optional PR link completion could not complete', {
+        sessionId: input.session.sessionId,
+        ...(contributor ? { pluginId: contributor.pluginId, contributionId: contributor.contributionId } : {}),
+        ...(isPluginError(error) ? { code: error.code } : {}),
+      });
+    } catch {
+      // Even an unavailable diagnostic sink cannot undo the acknowledged link.
+    }
+  };
+  try {
+    context.signal.throwIfAborted();
+    const observation = context.services.targetedContributions.observeForSelf(
+      SESSION_PULL_REQUEST_LINK_COMPLETIONS_CONTRIBUTION_POINT_REF_V1,
+      { onInvalidated: () => {} },
+    );
+    try {
+      const snapshot = await observation.readCurrent({ signal: context.signal });
+      for (const contribution of snapshot.contributions) {
+        if (context.signal.aborted) break;
+        try {
+          const result = SessionPullRequestLinkCompletionResultV1Schema.parse(
+            await context.services.actions.executeAdmittedTargetedOperation(contribution.operations.complete, input, {
+              signal: context.signal,
+            }),
+          );
+          if (result.kind === 'unavailable') reportUnavailable(undefined, contribution.contributor);
+        } catch (error) {
+          // The original opaque operation still owns currentness, caller and
+          // approval. A held or uncertain completion is never replayed here.
+          reportUnavailable(error, contribution.contributor);
+        }
+      }
+    } finally {
+      await observation.dispose();
+    }
+  } catch (error) {
+    reportUnavailable(error);
+  }
+}
+
+export async function manageSessionPullRequestBindingForInvocation(input: JsonValue, context: PluginInvocationContext): Promise<SessionPullRequestBindingResultV1> {
+  const parsed = SessionPullRequestBindingInputV1Schema.parse(input);
+  if (parsed.kind === 'readRelations') return (await selectSessionPullRequestRelations(parsed, context)).result;
+  const sessionId = SessionIdSchema.parse(parsed.sessionId);
+  let selected = parsed.kind === 'attach' && ('pullRequestUrl' in parsed || 'pullRequestUrls' in parsed)
+    ? await readSessionPullRequestProvider({ targetedContributions: context.services.targetedContributions, signal: context.signal }) : undefined;
+  function resolveRequest() {
+    if (parsed.kind !== 'attach') return { ...parsed, sessionId };
+    const pullRequests = 'pullRequest' in parsed ? [parsed.pullRequest] : 'pullRequests' in parsed ? parsed.pullRequests
+      : ('pullRequestUrl' in parsed ? [parsed.pullRequestUrl] : parsed.pullRequestUrls).map(url => {
+        const target = parseSessionPullRequestUrl(selected!.contribution.descriptor.pullRequests!, url);
+        if (target === null) throw pluginError('channels_pr_link_url_invalid', 'The URL must identify one supported pull request.');
+        return { repository: target.repository, number: target.number };
+      });
+    return { kind: 'attach' as const, sessionId, credentialRef: parsed.credentialRef,
+      expectedRepositoryId: parsed.expectedRepositoryId, target: 'target' in parsed ? parsed.target : undefined,
+      bulk: 'pullRequests' in parsed || 'pullRequestUrls' in parsed, pullRequests, pullRequest: pullRequests[0]! };
+  }
+  const request = resolveRequest();
   // The canonical Action reader retains the invoking caller's Session scope;
   // Account collection access by itself does not authorize this Session.
   const session = await context.services.actions.execute('session.transcript.get', {
-    sessionId: request.sessionId, projection: 'externalShareableV1', limit: 1,
+    sessionId, projection: 'externalShareableV1', limit: 1,
   }, { signal: context.signal });
-  if (isPluginActionApprovalRequestCreated(session) || session.sessionId !== request.sessionId || session.projection !== 'externalShareableV1') {
+  if (isPluginActionApprovalRequestCreated(session) || session.sessionId !== sessionId || session.projection !== 'externalShareableV1') {
     throw pluginError('channels_pr_link_session_not_verified', 'The calling principal could not read the requested Session.');
   }
   const collection = requireChannelsAccountStorage(context).collection(CHANNEL_STATE_COLLECTION);
   if (request.kind !== 'attach') {
+    if (request.kind === 'unlink') {
+      const bindings = await readSessionPullRequestBindings(request.sessionId, context);
+      const pullRequestOf = (binding: ConversationBindingV1) => binding.target.kind === 'session' ? binding.target.pullRequestLink
+        : binding.target.kind === 'automation' ? binding.target.scopedTrigger?.pullRequest : undefined;
+      const relationKey = (binding: ConversationBindingV1) => JSON.stringify([binding.connectionId, pullRequestOf(binding)]);
+      const selectedRelations = new Set<string>();
+      if ('states' in request) {
+        if (bindings.length === 0) return { kind: 'removed' };
+        const { contribution } = await readSessionPullRequestProvider({ targetedContributions: context.services.targetedContributions, signal: context.signal });
+        const links = resolveSessionPullRequestLinksV1(bindings.map(({ binding }) => binding), contribution.descriptor.pullRequests!)
+          .find(link => link.sessionId === request.sessionId)?.pullRequestLinks ?? [];
+        const selectedPullRequests = new Set(links.filter(link => request.states.includes(link.state ?? 'unknown'))
+          .map(link => JSON.stringify([link.repository, link.number])));
+        for (const { binding } of bindings) {
+          const pr = pullRequestOf(binding)!;
+          if (selectedPullRequests.has(JSON.stringify([pr.repository, pr.number]))) selectedRelations.add(relationKey(binding));
+        }
+      } else {
+        const operands = 'bindings' in request ? request.bindings : [request];
+        // Verify the complete explicit selection before the first local mutation.
+        for (const operand of operands) {
+          const selected = bindings.find(({ binding }) => binding.id === operand.bindingId);
+          if (selected === undefined) {
+            const row = await collection.get(operand.bindingId, { signal: context.signal });
+            if (row !== null) {
+              const { binding } = readConversationBindingUpdateRow({ row, bindingId: operand.bindingId });
+              const targetSessionId = binding.target.kind === 'session' ? binding.target.sessionId : binding.target.kind === 'automation' ? binding.target.scopedTrigger?.sessionId : undefined;
+              if (targetSessionId !== request.sessionId || binding.deletionState === 'none') throw pluginError('channels_pr_link_binding_not_verified', 'The binding does not identify this Session’s retained PR link.');
+            }
+            continue;
+          }
+          if (selected.row.revision !== operand.expectedRevision) throw pluginError('channels_pr_link_conflict', 'The retained PR link revision changed.', true);
+          selectedRelations.add(relationKey(selected.binding));
+        }
+      }
+      for (const candidate of bindings) {
+        if (!selectedRelations.has(relationKey(candidate.binding))) continue;
+        // Revocation is the canonical unlink fact. Its incumbent bounded wake
+        // owns physical cleanup; no new finalizer or provider write is added.
+        await deleteConversationBindingForInvocation({ bindingId: candidate.binding.id, expectedRevision: candidate.row.revision }, context);
+      }
+      return { kind: 'removed' };
+    }
     if (request.kind === 'removeTrigger') {
       await disableSessionPullRequestTriggerBindings(request, context);
       return { kind: 'removed' };
     }
     const bindings = await readSessionPullRequestBindings(request.sessionId, context);
-    const projection = resolveSessionPullRequestLinksV1(bindings.map(({ binding }) => binding))
+    if (bindings.length === 0) return { kind: 'links', sessionId: request.sessionId, pullRequestLinks: [] };
+    const { contribution } = await readSessionPullRequestProvider({ targetedContributions: context.services.targetedContributions, signal: context.signal });
+    const projection = resolveSessionPullRequestLinksV1(bindings.map(({ binding }) => binding), contribution.descriptor.pullRequests!)
       .find(({ sessionId }) => sessionId === request.sessionId);
     return { kind: 'links', ...(projection ?? { sessionId: request.sessionId, pullRequestLinks: [] }) };
   }
-  const providerSelection = await readSessionPullRequestProviderSelection({ targetedContributions: context.services.targetedContributions, signal: context.signal });
-  const provider = await readCurrentSelectedProvider({ context, selection: providerSelection });
-  // The provider resolves its native selected SCM credential. The incumbent
-  // connection writer then re-proves that exact credential and source before
-  // creating or rejoining the repository connection.
-  const nativeSetup = await context.services.actions.executeAdmittedTargetedOperationWithExecutionOrigin(provider.setup, { repository: request.pullRequest.repository }, { signal: context.signal });
+  const status = await context.services.actions.execute('session.status.get', {
+    sessionId: request.sessionId, includeAcceptedWorkspace: true,
+  }, { signal: context.signal });
+  selected ??= await readSessionPullRequestProvider({ targetedContributions: context.services.targetedContributions, signal: context.signal });
+  const providerSelection = selected!.selection;
+  const provider = providerFromSelectedContribution(selected!.contribution);
+  const native = selected!.contribution.descriptor.pullRequests!;
+  const requestedRepository = normalizeScmHostingRepositoryIdentity({
+    kind: native.repositoryKind, deployment: native.deployment, repository: request.pullRequest.repository,
+  });
+  // The optional host read projection is external to this plugin. Admit its
+  // closed authority shape before using it, including with an older host.
+  const acceptedWorkspace = isPluginActionApprovalRequestCreated(status) || !('session' in status)
+    ? null : SessionAcceptedWorkspaceV1Schema.safeParse(status.acceptedWorkspace);
+  if (isPluginActionApprovalRequestCreated(status) || !('session' in status)
+    || status.session.id !== request.sessionId || acceptedWorkspace?.success !== true
+    || request.pullRequests.some(pr => !sameScmHostingRepositoryIdentity(normalizeScmHostingRepositoryIdentity(acceptedWorkspace.data.repository),
+      normalizeScmHostingRepositoryIdentity({ kind: native.repositoryKind, deployment: native.deployment, repository: pr.repository })))) {
+    throw pluginError('channels_pr_link_checkout_not_verified', 'The pull request repository does not match the Session’s accepted checkout.');
+  }
+  const sourceOrigin = request.credentialRef === null ? getSelfStampedPluginCallerExecutionOrigin(context.caller) : undefined;
+  if (request.credentialRef === null && (sourceOrigin === undefined || context.caller?.kind !== 'plugin' || context.caller.pluginId !== provider.pluginId)) {
+    throw pluginError('channels_pr_link_native_origin_unavailable', 'Native PR attach requires the admitted provider source placement.');
+  }
+  assertSelectedTransportRoleAvailable({ provider, selectedTransport: 'checkpointedPull' });
+  // Admit the native credential and source once; private continuations consume
+  // these facts without another setup or a public-input bypass.
+  const nativeSetup = await context.services.actions.executeAdmittedTargetedOperationWithExecutionOrigin(provider.setup, {
+    repository: request.pullRequest.repository, ...(request.credentialRef === undefined ? {} : { credentialRef: request.credentialRef }),
+  }, { signal: context.signal, ...(request.credentialRef === undefined ? {} : { expectedSelectedConnectedAccountRef: request.credentialRef }),
+    ...(sourceOrigin === undefined ? {} : { expectedExecutionRouting: getConversationConnectionExecutionRouting(getConversationConnectionTransportOrigin(sourceOrigin), provider.pluginId) }) });
   const setup = ConversationProviderSetupOutcomeV1Schema.parse(nativeSetup.result);
   if ('kind' in setup) throw pluginError('channels_pr_link_provider_not_ready', 'The selected native SCM account is not ready to attach this PR.', true);
-  const connectionResult = await createConversationConnectionForInvocation({ providerSelection, providerSetupInput: { repository: request.pullRequest.repository, credentialRef: setup.credentialRef }, credentialRef: setup.credentialRef, selectedTransport: 'checkpointedPull', maximumObservationAgeMs: setup.recommendedMaximumObservationAgeMs ?? DEFAULT_CONVERSATION_OBSERVATION_AGE_MS }, context);
+  assertProviderSetupTransportFacts(setup);
+  assertProviderExecutionOrigin({ provider, executionOrigin: nativeSetup.executionOrigin, operation: 'setup' });
+  if (request.credentialRef !== undefined && !pluginJsonValuesEqual(request.credentialRef, setup.credentialRef)) throw pluginError('channels_pr_link_credential_mismatch', 'The provider did not authenticate the exact configured credential.');
+  if (request.expectedRepositoryId !== undefined && setup.providerConnectionKey !== `${native.repositoryConnectionKeyPrefix}${request.expectedRepositoryId}`) throw pluginError('channels_pr_link_repository_mismatch', 'The authenticated repository does not match the immutable source identity.');
+  const createInput: ConversationConnectionCreateInputV1 = { providerSelection, providerSetupInput: { repository: request.pullRequest.repository, credentialRef: setup.credentialRef }, credentialRef: setup.credentialRef, selectedTransport: 'checkpointedPull', maximumObservationAgeMs: setup.recommendedMaximumObservationAgeMs ?? DEFAULT_CONVERSATION_OBSERVATION_AGE_MS };
+  const connectionIdForTest = createConnectionId();
+  const prepared = await runProviderConnectionTest({ context, setupInput: createInput, provider, connectionIdForTest,
+    prepared: { kind: 'ready', setup, transportOrigin: nativeSetup.executionOrigin } });
+  if (prepared.kind !== 'ready') throw pluginError('channels_pr_link_connection_not_ready', 'The PR conversation connection is not ready.', true);
+  const connectionResult = await persistPreparedConversationConnection(createInput, provider, prepared, connectionIdForTest, context);
   if (connectionResult.kind !== 'created' && connectionResult.kind !== 'rejoined') throw pluginError('channels_pr_link_connection_not_ready', 'The PR conversation connection is not ready.', true);
   const connectionId = connectionResult.connectionId;
-  const row = await collection.get(connectionId, { signal: context.signal });
-  if (row === null) throw pluginError('channels_pr_link_connection_missing', 'The PR conversation connection is unavailable.', true);
-  const { configurationRevision } = readConversationConnectionUpdateRow({ row, connectionId });
-  const query = `https://github.com/${request.pullRequest.repository}/pull/${request.pullRequest.number}`;
-  const endpoints = await resolveConversationBindingForInvocation({ kind: 'endpoint', connectionId, expectedConnectionRevision: configurationRevision, query, kinds: ['githubPullRequest'] }, context);
-  if (endpoints.kind !== 'endpointCandidates' || endpoints.candidates.length !== 1 || endpoints.candidates[0]?.kind !== 'githubPullRequest') throw pluginError('channels_pr_link_endpoint_unavailable', 'The exact PR endpoint is unavailable.', true);
-  const endpoint = endpoints.candidates[0];
-  if (endpoint.pullRequest === undefined) throw pluginError('channels_pr_link_endpoint_identity_missing', 'The provider did not authenticate the PR identity.');
-  if (!pluginJsonValuesEqual(endpoint.pullRequest, request.pullRequest)) throw pluginError('channels_pr_link_endpoint_identity_mismatch', 'The authenticated PR endpoint does not match the requested PR.');
-  const endpointSelection = { query, kinds: ['githubPullRequest'], selected: { kind: endpoint.kind, audience: endpoint.audience, id: endpoint.id, ...(endpoint.parentId === undefined ? {} : { parentId: endpoint.parentId }) } };
-  const principalQuery = setup.integrationPrincipal.label ?? setup.integrationPrincipal.id;
-  const principals = await resolveConversationBindingForInvocation({ kind: 'principal', connectionId, expectedConnectionRevision: configurationRevision, endpointSelection, query: principalQuery }, context);
-  if (principals.kind !== 'principalCandidates') throw pluginError('channels_pr_link_principal_unavailable', 'The native SCM principal is unavailable.', true);
-  const principal = principals.candidates.find((candidate) => candidate.id === setup.integrationPrincipal.id);
-  if (principal === undefined) throw pluginError('channels_pr_link_principal_unavailable', 'The provider did not authenticate the selected SCM principal.', true);
-  const target: ConversationBindingTargetV1 = request.target === undefined ? {
-    kind: 'session', sessionId: request.sessionId, pullRequestLink: endpoint.pullRequest,
-    policy: { deliveryMode: 'repliesOnly', permissionCeiling: 'read-only', approvals: { kind: 'off' }, newSession: { kind: 'off' } },
-  } : {
-    kind: 'automation', automationId: request.target.automationId, policy: { resultDelivery: 'none' },
-    scopedTrigger: { sessionId: request.sessionId, triggerId: request.target.triggerId, triggerRevision: request.target.triggerRevision, triggerKind: request.target.triggerKind, principalPolicy: 'repositoryWriters', pullRequest: endpoint.pullRequest },
+  const connectionAdmission = admitBindingResolutionConnection({ row: connectionResult.connectionRow, connectionId });
+  if (connectionAdmission.kind !== 'current') throw pluginError('channels_pr_link_connection_not_ready', 'The PR conversation connection is not ready.', true);
+  const connection = connectionAdmission.connection;
+  const { configurationRevision } = connection;
+  // Rejoin retains the connection's transport placement and credential. These
+  // one-shot reads consume this attach's authenticated setup, never persist it.
+  const resolutionConnection: ConversationConnectionUpdateRow = {
+    ...connection,
+    transportOrigin: getConversationConnectionTransportOrigin(prepared.transportOrigin),
+    payload: {
+      ...connection.payload,
+      providerConnectionKey: prepared.setup.providerConnectionKey,
+      providerConfigVersion: prepared.setup.providerConfigVersion,
+      providerConfig: prepared.setup.providerConfig,
+      credentialRef: prepared.setup.credentialRef,
+    },
   };
-  const binding = await createConversationBindingForInvocation({ connectionId, expectedConnectionRevision: configurationRevision, endpointSelection, principalSelection: { query: principalQuery, selected: [{ id: principal.id, kind: principal.kind }] }, target, allowBotSenders: principal.kind === 'bot', inputMode: 'allAllowedMessages', inboundDebounceMs: 0, enabled: request.target !== undefined }, context);
-  if (binding.kind !== 'created') throw pluginError('channels_pr_link_binding_not_ready', 'The PR binding could not be attached.', true);
-  if (request.target !== undefined) await disableSessionPullRequestTriggerBindings({ sessionId: request.sessionId, triggerId: request.target.triggerId, triggerRevision: request.target.triggerRevision, exceptBindingId: binding.binding.id }, context);
-  return { kind: 'attached', bindingId: binding.binding.id };
+  const retainedBindings = (await readSessionPullRequestBindings(request.sessionId, context)).map(({ binding }) => binding);
+  const bindingsById = new Map(retainedBindings.map(binding => [binding.id, binding]));
+  const attachedBindingIds: string[] = [];
+  // Admission proved that every operand has this one repository identity.
+  // The PR number therefore deduplicates aliases as well as identical operands.
+  for (const number of new Set(request.pullRequests.map(pr => pr.number))) {
+    const pullRequest = { repository: request.pullRequest.repository, number };
+    const query = sessionPullRequestUrl(native, pullRequest);
+    const endpoints = await resolveBindingEndpointCandidatesForConnection({ connectionId, connection: resolutionConnection, endpointResolve: provider.endpointResolve, query, kinds: ['githubPullRequest'], context });
+    if (endpoints.kind !== 'endpointCandidates' || endpoints.candidates.length !== 1 || endpoints.candidates[0]?.kind !== 'githubPullRequest') throw pluginError('channels_pr_link_endpoint_unavailable', 'The exact PR endpoint is unavailable.', true);
+    const endpoint = endpoints.candidates[0];
+    if (request.expectedRepositoryId !== undefined && endpoint.parentId !== request.expectedRepositoryId) throw pluginError('channels_pr_link_repository_mismatch', 'The authenticated PR endpoint does not match the immutable source repository.');
+    if (endpoint.pullRequest === undefined) throw pluginError('channels_pr_link_endpoint_identity_missing', 'The provider did not authenticate the PR identity.');
+    if (endpoint.pullRequest.number !== pullRequest.number
+      || !sameScmHostingRepositoryIdentity(normalizeScmHostingRepositoryIdentity({
+        kind: native.repositoryKind, deployment: native.deployment, repository: endpoint.pullRequest.repository,
+      }), requestedRepository)) throw pluginError('channels_pr_link_endpoint_identity_mismatch', 'The authenticated PR endpoint does not match the requested PR.');
+    const principalQuery = setup.integrationPrincipal.label ?? setup.integrationPrincipal.id;
+    const principals = await resolveBindingPrincipalCandidatesForConnection({ connectionId, connection: resolutionConnection, principalResolve: provider.principalResolve, endpoint, query: principalQuery, context });
+    if (principals.kind !== 'principalCandidates') throw pluginError('channels_pr_link_principal_unavailable', 'The native SCM principal is unavailable.', true);
+    const principal = principals.candidates.find((candidate) => candidate.id === setup.integrationPrincipal.id);
+    if (principal === undefined) throw pluginError('channels_pr_link_principal_unavailable', 'The provider did not authenticate the selected SCM principal.', true);
+    // Attaching membership must not replace a retained Watch's policy or turn
+    // it off. The same canonical creation/rejoin owner still proves authority.
+    const retained = request.target === undefined ? retainedBindings
+      .find(binding => binding.connectionId === connectionId && binding.target.kind === 'session'
+        && areConversationEndpointIdentitiesEqual(binding.endpoint, endpoint)
+        && pluginJsonValuesEqual(binding.target.pullRequestLink, endpoint.pullRequest)) : undefined;
+    const target: ConversationBindingTargetV1 = retained?.target ?? (request.target === undefined ? {
+      kind: 'session', sessionId: request.sessionId, pullRequestLink: endpoint.pullRequest,
+      policy: { deliveryMode: 'repliesOnly', permissionCeiling: 'read-only', approvals: { kind: 'off' }, newSession: { kind: 'off' } },
+    } : {
+      kind: 'automation', automationId: request.target.automationId, policy: { resultDelivery: 'none' },
+      scopedTrigger: { sessionId: request.sessionId, triggerId: request.target.triggerId, triggerRevision: request.target.triggerRevision, triggerKind: request.target.triggerKind, principalPolicy: 'repositoryWriters', pullRequest: endpoint.pullRequest },
+    });
+    const binding = await createConversationBindingWithAudience({ connectionId, expectedConnectionRevision: configurationRevision, target, allowBotSenders: principal.kind === 'bot', inputMode: 'allAllowedMessages', inboundDebounceMs: 0, enabled: retained?.enabled ?? request.target !== undefined }, {
+      kind: 'ready', endpoint, allowedPrincipalIds: [principal.id],
+      ...(endpoints.sharedEndpointInputModes === undefined ? {} : { sharedEndpointInputModes: endpoints.sharedEndpointInputModes }),
+    }, context);
+    if (binding.kind !== 'created') throw pluginError('channels_pr_link_binding_not_ready', 'The PR binding could not be attached.', true);
+    if (request.target !== undefined) await disableSessionPullRequestTriggerBindings({ sessionId: request.sessionId, triggerId: request.target.triggerId, triggerRevision: request.target.triggerRevision, exceptBindingId: binding.binding.id }, context);
+    bindingsById.set(binding.binding.id, binding.binding);
+    attachedBindingIds.push(binding.binding.id);
+  }
+  await completeSessionPullRequestLink({ v: 1, session: {
+    serverId: acceptedWorkspace.data.checkout.serverId, sessionId: request.sessionId,
+  } }, context);
+  if (!request.bulk) return { kind: 'attached', bindingId: attachedBindingIds[0]! };
+  const projection = resolveSessionPullRequestLinksV1([...bindingsById.values()], native)
+    .find(link => link.sessionId === request.sessionId)!;
+  return { kind: 'links', ...projection };
 }
 
 /** All existing-binding writes share one transition, verifier, and atomic persistence owner. */

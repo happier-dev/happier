@@ -119,17 +119,18 @@ export async function readSelectedCurrentProviderContribution(input: Readonly<{
 }
 
 /** The PR-link feature selects the single admitted GitHub Channels contributor. */
-export async function readSessionPullRequestProviderSelection(context: ProviderContributionReadContext): Promise<PluginTargetedContributionSelectionV1> {
+export async function readSessionPullRequestProvider(context: ProviderContributionReadContext) {
   const point = await readChannelsProviderPointRef();
   const snapshot = await readCurrentProviderSnapshot(context);
   const matches = snapshot.contributions.filter((entry) => hasCurrentPointProtocol(entry, point)
-    && entry.contributor.pluginId === 'happier.scm.forge.github');
-  if (matches.length !== 1) throw unavailableProviderContribution('persistedProviderMissing', 'The GitHub Channel provider is unavailable.');
-  return {
+    && entry.descriptor?.pullRequests !== undefined);
+  if (matches.length !== 1) throw unavailableProviderContribution('persistedProviderMissing', 'A unique pull request Channel provider is unavailable.');
+  const selection: PluginTargetedContributionSelectionV1 = {
     target: { pluginId: 'happier.channels', sourceCustody: snapshot.sourceCustody },
     point: { pointId: 'providers', protocol: point.protocol },
     contributor: { pluginId: matches[0]!.contributor.pluginId, contributionId: matches[0]!.contributor.contributionId, sourceCustody: matches[0]!.contributor.sourceCustody },
   };
+  return { selection, contribution: matches[0]! };
 }
 
 /**

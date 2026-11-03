@@ -3,6 +3,9 @@ import type {
   PluginInvocationContext,
   TargetedContributionPointRef,
 } from '@happier-dev/plugin-sdk';
+import { manageSessionPullRequestWatchForInvocation, observeSessionPullRequestWatchAction,
+  SESSION_PULL_REQUEST_WATCH_ACCOUNT_EXECUTION_V1 } from './sessionPullRequestWatch.js';
+import { SESSION_PULL_REQUEST_WATCH_SETTINGS_DECLARATION } from './sessionPullRequestWatchPolicy.js';
 import { definePlugin } from '@happier-dev/plugin-sdk';
 import type { ActionHandler } from '@happier-dev/plugin-sdk/actions';
 import type { BackgroundServiceContext } from '@happier-dev/plugin-sdk/background-services';
@@ -60,6 +63,7 @@ import {
   createConversationBindingForInvocation,
   createConversationConnectionForInvocation,
   manageSessionPullRequestBindingForInvocation,
+  observeSessionPullRequestBindingAction,
   createConversationPairingManagementHandlers,
   createConversationPairingManagerForActivation,
   deleteConversationBindingForInvocation,
@@ -116,9 +120,6 @@ import {
   CHANNELS_PAGE_VIEW_ID,
 } from './sessionSurfaceIds.js';
 import { CHANNELS_UI_TRANSLATION_BUNDLES } from './ui/translations.js';
-import { manageSessionPullRequestWatchForInvocation, observeSessionPullRequestWatchAction,
-  SESSION_PULL_REQUEST_WATCH_ACCOUNT_EXECUTION_V1 } from './sessionPullRequestWatch.js';
-import { SESSION_PULL_REQUEST_WATCH_SETTINGS_DECLARATION } from './sessionPullRequestWatchPolicy.js';
 import { CHANNEL_FILE_ATTACHMENT } from './channelAttachment.js';
 import { CHANNEL_FILE_ATTACHMENT_RUNTIME } from './channelAttachmentRuntime.js';
 import {
@@ -643,7 +644,27 @@ function createChannelsPlugin() {
         resultSchema: SessionPullRequestBindingResultV1Schema,
         surfaces: ['cli', 'ui', 'plugin', 'agent', 'mcp'],
         dangerLevel: 'writesLocal',
-        confirmationWhen: { op: 'not', predicate: { op: 'eq', path: 'kind', value: 'list' } },
+        readOnly: { op: 'or', any: [{ op: 'eq', path: 'kind', value: 'list' }, { op: 'eq', path: 'kind', value: 'readRelations' }] },
+        confirmationWhen: {
+          default: { op: 'and', all: [
+            { op: 'not', predicate: { op: 'eq', path: 'kind', value: 'list' } },
+            { op: 'not', predicate: { op: 'eq', path: 'kind', value: 'readRelations' } },
+            { op: 'not', predicate: { op: 'eq', path: 'kind', value: 'unlink' } },
+            // A plain attach only records a link; a target also enables an automation trigger.
+            { op: 'or', any: [
+              { op: 'not', predicate: { op: 'eq', path: 'kind', value: 'attach' } },
+              { op: 'truthy', path: 'target' },
+            ] },
+          ] },
+          presentUserUi: false,
+          cli: { op: 'and', all: [
+            { op: 'not', predicate: { op: 'eq', path: 'kind', value: 'list' } },
+            { op: 'not', predicate: { op: 'eq', path: 'kind', value: 'readRelations' } },
+            { op: 'not', predicate: { op: 'eq', path: 'kind', value: 'attach' } },
+            { op: 'not', predicate: { op: 'eq', path: 'kind', value: 'unlink' } },
+          ] },
+        },
+        sessionTarget: { field: 'sessionId', cardinality: 'one' },
         confirmation: {
           title: 'Manage session pull request binding?',
           body: 'This can attach a pull request to the selected session or change its scoped conversation trigger bindings.',
@@ -651,6 +672,7 @@ function createChannelsPlugin() {
         },
         hostAccess: ['account-storage'],
         run: manageSessionPullRequestBindingForInvocation,
+        observeRead: observeSessionPullRequestBindingAction,
       },
       [SESSION_PULL_REQUEST_WATCH_ACTION_ID_V1]: {
         title: 'Manage pull request watch',

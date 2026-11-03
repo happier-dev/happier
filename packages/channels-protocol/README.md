@@ -7,6 +7,31 @@ schemas, role contracts, contribution-point definitions, and public
 conformance fixtures. It does not contain a runtime, provider implementation,
 registry, UI, polling loop, persistence, or credential materialization.
 
+## Session PR relationship batches (unreleased 0.3)
+
+The existing `session-pull-request-binding-v1` Action accepts `kind: 'attach'`
+with one `pullRequest` or `pullRequestUrl`, or a nonempty `pullRequests` or
+`pullRequestUrls` array. All PRs must match the Session's accepted repository.
+Duplicate operands are linked once; a batch shares Session admission and
+repository setup. Singular attach retains its `attached` result; bulk attach
+returns the existing `links` projection. Automation trigger targets remain
+singular.
+
+For `kind: 'unlink'`, pass the existing `bindingId` and `expectedRevision`, a
+nonempty `bindings: [{ bindingId, expectedRevision }]` array, or a nonempty
+`states` array. Explicit revisions are checked before any unlink. State selection
+uses the freshest retained PR observation, shared with the Session link
+projection; absent observations are `unknown`. It does not refresh remote state.
+Unlink returns `removed` and removes local relationships, including related
+trigger bindings, without deleting or changing a remote PR. A later provider or
+concurrent-write failure can leave a batch partially applied; read the current
+links before retrying.
+
+Each operand form is closed and mutually exclusive. Matching development
+producer and consumer versions are required for the new forms; older strict
+readers reject them. Existing singular inputs and results remain valid. This
+extends V1 without a new epoch, persisted shape or runtime ABI.
+
 ## Provider setup guidance (unreleased 0.3)
 
 The provider descriptor's optional `setupGuidance` exposes static instructions
