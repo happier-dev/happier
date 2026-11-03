@@ -1,6 +1,3 @@
-import { logger } from '@/ui/logger';
-import { machineSetupPlansRequireAdministratorV1 } from '@happier-dev/cli-common/machineSetup';
-import { prepareMachineSetupUpdatesPlanV1 } from './machineSetupUpdatesAction';
 import { homedir } from 'node:os';
 import type { ActionExecuteResult, ActionExecutorDeps } from '@happier-dev/protocol';
 import { MachineSetupResolveResultV1Schema, MachineSetupReportInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
@@ -30,8 +27,11 @@ import { machineRecipesProjectionFamily, machineSetupPresetsProjectionFamily } f
 import type { MachineSetupNativeCommand, MachineSetupNativeCommandResult } from '@happier-dev/cli-common/machineSetup';
 import { resolveInstalledMachineEffectCli } from '../adminAccess/runElevatedEffect';
 import { requestMachineSetupHome, type MachineSetupInstallation } from './machineSetupHomeRequest';
-
-
+import { prepareMachineSetupApps, type MachineSetupAppPreparationHost } from './prepareMachineSetupApps';
+import { prepareMachineSetupAcceptedAppRuns } from './acceptedAppRuns';
+import { machineSetupPlansRequireAdministratorV1 } from '@happier-dev/cli-common/machineSetup';
+import { prepareMachineSetupUpdatesPlanV1 } from './machineSetupUpdatesAction';
+import { logger } from '@/ui/logger';
 
 export type MachineSetupTargetAction = (params: Readonly<{
   input: MachineSetupApplyTargetV1; context: RpcActionExecutorContext; signal?: AbortSignal;
@@ -92,12 +92,13 @@ function observeInitialPresence(sources: MachineSetupSourceV1,
 
 /** Saved copies use the captured content port; new selections demand exact native checks. */
 export function createMachineSetupPlanAction(params: Readonly<{
-  apiMachine: Pick<ApiMachineClient, 'getMachineSetupDesiredSnapshot'> & Partial<Pick<ApiMachineClient, 'resolveMachineSetupRuntime' | 'captureMachineAdminAccess' | 'refreshMachineSetupUpdates' | 'publishMachineSetupUpdates'>>;
+  apiMachine: Pick<ApiMachineClient, 'getMachineSetupDesiredSnapshot'> & Partial<Pick<ApiMachineClient,
+    'resolveMachineSetupRuntime' | 'captureMachineAdminAccess' | 'refreshMachineSetupUpdates' | 'publishMachineSetupUpdates'>>;
   machineId: string; homeId: string;
   installation?: MachineSetupInstallation;
   acquirePluginRuntimeRegistryLease?: () => Promise<PluginRuntimeRegistryLease>;
   runNative?: (command: MachineSetupNativeCommand) => Promise<MachineSetupNativeCommandResult>;
-
+  appPreparation?: MachineSetupAppPreparationHost;
 }>): NonNullable<ActionExecutorDeps['machineSetupPlan']> {
   return async ({ input, context, signal }: Parameters<NonNullable<ActionExecutorDeps['machineSetupPlan']>>[0]
     & Readonly<{ context: RpcActionExecutorContext }>) => {
@@ -168,7 +169,9 @@ export function createMachineSetupPlanAction(params: Readonly<{
     } finally { await recipeLease?.release(); }
     if ((signal ?? context.signal)?.aborted) return fail('cancelled');
     if ('errorCode' in result) return result;
-    return result;
+    return prepareMachineSetupApps(input, result, { ...context, ...(signal ? { signal } : {}) }, {
+      ...params.appPreparation, ...(params.installation ? { installationId: params.installation.installationId } : {}),
+    });
   };
 }
 
@@ -312,7 +315,14 @@ function createMachineSetupTargetAction(params: MachineSetupActionParameters, mo
         if ('errorCode' in planned) return planned;
         const observedSourceFacts = observeInitialPresence(sources, planned.recipePlans ?? []);
         if (prepared && !prepared.ok) return prepared;
-
+        if (mode !== 'remove') {
+          const appFacts = await prepareMachineSetupAcceptedAppRuns({ input, context, isCurrent: isActive,
+            signal: cancellationSignal });
+          if (!appFacts) return fail('machine_setup_app_preparation_unavailable');
+          for (const [origin, facts] of Object.entries(appFacts)) {
+            observedSourceFacts[origin] = { ...observedSourceFacts[origin], ...facts };
+          }
+        }
         let secretEnvironment: Parameters<typeof applyMachineSetup>[0]['secretEnvironment'];
         const scriptSources = prepared?.sources.filter(setup => setup.scripts?.some(script => script.body)) ?? [];
         if (scriptSources.some(setup => setup.secretRefs)) {

@@ -764,8 +764,10 @@ resolveServerFeaturesSnapshot?: () =>
             return reachabilityHost.executeMachineReachabilityAction(request, ingress);
           },
         } : {}),
-        ...(apiMachineForSessions && actionId === 'machines.setup.plan' && input && typeof input === 'object'
-          && !('targets' in input) && 'machineId' in input && input.machineId === params.machineId ? {
+        // The native dependency is also needed when approval replay is the
+        // enclosing invocation. Ordinary remote targets retain their transport.
+        ...(apiMachineForSessions && (actionId !== 'machines.setup.apply' && actionId !== 'machines.setup.plan' || (input && typeof input === 'object'
+          && !('targets' in input) && 'machineId' in input && input.machineId === params.machineId)) ? {
           machineSetupPlan: async request => {
             const origin = await params.resolveCurrentMachineExecutionOriginContext?.(request.signal ?? request.context.signal);
             if (!origin || origin.machineId !== params.machineId) return { ok: false as const, errorCode: 'target_unavailable', error: 'target_unavailable' };
@@ -773,6 +775,19 @@ resolveServerFeaturesSnapshot?: () =>
             const { createMachineSetupPlanAction } = await import('@/machines/setup/machineSetupAction');
             return createMachineSetupPlanAction({ apiMachine: apiMachineForSessions, machineId: params.machineId,
               ...(externalActionInstallationIdentity ? { installation: externalActionInstallationIdentity } : {}),
+              ...(deploymentDeps ? { appPreparation: {
+                prepareDeploymentTemplateInstantiation: deploymentDeps.prepareDeploymentTemplateInstantiation,
+                deploymentAction: deploymentDeps.deploymentAction,
+                readArtifact: deploymentDeps.readSetupAppArtifact,
+                readAppRuntime: context => {
+                  const authorization = context.externalActionExecutionAuthorization;
+                  const reader = authorization ? authorization.requesterAccountExecutor : executor;
+                  if (!reader) return null;
+                  return { execute: (actionId, input, readContext) => reader.execute(actionId, input, readContext),
+                    isCurrent: async () => !context.signal?.aborted
+                      && (!authorization || Boolean(await authorization.requesterAccountProjection?.isCurrent())) };
+                },
+              } } : {}),
               homeId: origin.serverIdentityId, acquirePluginRuntimeRegistryLease: acquireDaemonPluginRuntimeRegistryLease })({ ...request,
                 context: { ...request.context, ...(ingress?.machineAdmission ? { machineAdmission: ingress.machineAdmission,
                   verifyMachineAdmissionCurrent: ingress.verifyMachineAdmissionCurrent } : {}) } });
