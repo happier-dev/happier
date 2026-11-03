@@ -840,6 +840,7 @@ export class RpcHandlerManager {
                     return await respond(request, {
                         error: confidential ? 'confidential_continuation_failed' : authorization.error,
                         ...(confidential ? { errorCode: 'confidential_continuation_failed' } : authorization.errorCode ? { errorCode: authorization.errorCode } : {}),
+                        effectAttempted: false,
                     });
                 }
             }

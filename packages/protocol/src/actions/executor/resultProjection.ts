@@ -32,7 +32,7 @@ import { SessionSpawnNewResultV1Schema, projectSessionSpawnNewActionResultV1 } f
 
 const RPC_ERROR_CODE_SET: ReadonlySet<string> = new Set(Object.values(RPC_ERROR_CODES));
 
-export function normalizeActionExecutorThrownError(error: unknown, phase?: ActionId): Readonly<{ errorCode: string; error: string; details?: unknown }> {
+export function normalizeActionExecutorThrownError(error: unknown, phase?: ActionId): Readonly<{ errorCode: string; error: string; details?: unknown; effectAttempted?: false }> {
   if (error instanceof PublicProfileAccountScopeError) return { errorCode: error.code, error: error.code };
   if (error instanceof RegistryFetchErrorV1) {
     const status = RegistrySourceStatusV1Schema.safeParse(error.status);
@@ -145,6 +145,7 @@ export function normalizeActionExecutorThrownError(error: unknown, phase?: Actio
       errorCode: normalizedCode,
       error: message || normalizedCode,
       ...(details !== undefined ? { details } : {}),
+      ...(isRpcError(error) && errorRecord.effectAttempted === false ? { effectAttempted: false as const } : {}),
     };
   }
 

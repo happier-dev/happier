@@ -6714,6 +6714,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         errorCode: normalized.errorCode,
         error: normalized.error,
         ...(normalized.details !== undefined ? { details: normalized.details } : {}),
+        ...(normalized.effectAttempted === false ? { effectAttempted: false } : {}),
       };
       return actionId === 'execution.run.start'
         ? classifyExecutionRunStartFailure(failure, dispatchFacts.executionRunStartDispatched ? 'outcomeUnknown' : 'noRunCreated', error)
