@@ -2,7 +2,9 @@ import { createTodoItemV1, updateTodoItemV1, transitionTodoItemV1, resolveTodoSt
 import { resolveAnchoredListMoveV1 } from '../actions/anchoredListOrderV1.js';
 import { TodoReorderInputV1Schema, type ListReorderOutputV1 } from '../actions/listReorderAction.js';
 import { InternalTaskCreateInputSchema, InternalTaskEditInputSchema, InternalTaskTransitionInputSchema,
-  type InternalTaskActionId, type InternalTaskListOutput, type InternalTaskMutationOutput, type InternalTaskScope } from '../actions/internalTaskActions.js';
+  InternalTaskLabelSetColorInputSchema, InternalTaskLabelClearColorInputSchema,
+  type InternalTaskActionId, type InternalTaskActionOutput, type InternalTaskScope } from '../actions/internalTaskActions.js';
+import { TODO_LABEL_CATALOG_KEY_V1, TodoLabelCatalogV1StoredSchema, projectTodoLabelColorsV1 } from './todoLabelColoursV1.js';
 
 export type AccountJsonKvRow = Readonly<{ key: string; value: unknown; version: number }>;
 export type AccountJsonKvMutation = Readonly<{ key: string; value: unknown; version: number }>;
@@ -27,11 +29,34 @@ function failureReason(error: unknown): string {
 export async function executeInternalTaskAction(args: Readonly<{
   actionId: InternalTaskActionId; input: unknown; scope: InternalTaskScope; port: AccountJsonKvCollectionPort;
   requireCurrent: () => void; createId: () => string;
-}>): Promise<InternalTaskListOutput | InternalTaskMutationOutput> {
+}>): Promise<InternalTaskActionOutput> {
   let writing = false;
   try {
     args.requireCurrent();
+    const readLabelCatalog = async () => {
+      const row = await args.port.read(TODO_LABEL_CATALOG_KEY_V1);
+      args.requireCurrent();
+      return { ...row, value: row.value === null ? { v: 1 as const, colors: {} } : TodoLabelCatalogV1StoredSchema.parse(row.value) };
+    };
+    if (args.actionId === 'tasks.internal.labels.setColor' || args.actionId === 'tasks.internal.labels.clearColor') {
+      const set = args.actionId === 'tasks.internal.labels.setColor' ? InternalTaskLabelSetColorInputSchema.parse(args.input) : null;
+      const input = set ?? InternalTaskLabelClearColorInputSchema.parse(args.input);
+      if (input.scope.serverId !== args.scope.serverId || input.scope.accountId !== args.scope.accountId) return { status: 'refused', reason: 'task_scope_mismatch' };
+      const current = await readLabelCatalog();
+      const colors = set ? { ...current.value.colors, [set.name]: set.colorToken } : { ...current.value.colors };
+      if (!set) delete colors[input.name];
+      writing = true;
+      const result = await args.port.mutate([{ key: TODO_LABEL_CATALOG_KEY_V1, value: { v: 1, colors }, version: current.version }]);
+      writing = false;
+      if (!result.success) return { status: 'refused', reason: 'task_conflict' };
+      if (!result.results.some(row => row.key === TODO_LABEL_CATALOG_KEY_V1)) return { status: 'uncertain', reason: 'task_receipt_incomplete' };
+      return { status: 'applied', scope: args.scope, labelCatalog: projectTodoLabelColorsV1(Object.keys(colors), { v: 1, colors }) };
+    }
     if (args.actionId === 'tasks.internal.list') {
+      const catalog = (await readLabelCatalog()).value;
+      const labelCatalog = projectTodoLabelColorsV1(Object.keys(catalog.colors), catalog);
+      const withColors = <T extends TodoItemV1>(todo: T) => ({ ...todo, labelColors: projectTodoLabelColorsV1(todo.labels ?? [], catalog) });
+
       const rows = await args.port.list('todo.');
       args.requireCurrent();
       const todos = rows.filter(row => row.key !== 'todo.index').map(row => project(parseTodo(row.key.slice(5), row.value)));
@@ -42,7 +67,7 @@ export async function executeInternalTaskAction(args: Readonly<{
       const completedOrder = index.completedOrder.filter(id => ids.has(id));
       const ordered = new Set([...undoneOrder, ...completedOrder]);
       for (const todo of todos) if (!ordered.has(todo.id)) (todo.done ? completedOrder : undoneOrder).push(todo.id);
-      return { status: 'ok', scope: args.scope, todos, undoneOrder, completedOrder };
+      return { status: 'ok', scope: args.scope, todos: todos.map(withColors), undoneOrder, completedOrder, labelCatalog };
     }
     const create = args.actionId === 'tasks.internal.create' ? InternalTaskCreateInputSchema.parse(args.input) : null;
     const edit = args.actionId === 'tasks.internal.edit' ? InternalTaskEditInputSchema.parse(args.input) : null;

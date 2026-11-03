@@ -76,6 +76,7 @@ import { CODE_INTELLIGENCE_QUERY_KIND_BY_ACTION_ID, CodeIntelligenceActionInputS
 import { DaemonLspQueryResponseSchema, DaemonLspRestartResponseSchema, DaemonLspApplyResponseSchema, type DaemonLspApplyRequest, type DaemonLspQueryRequest } from '../machines/languageIntelligence.js';
 import { queryCodeIntelligenceFallback } from '../machines/codeIntelligenceFallback.js';
 import { ActionInvokeInputSchema } from './actionInvokeInput.js';
+import { InternalTaskActionIdSchema } from './internalTaskActions.js';
 import { PetChooseInputV1Schema } from '../pets/selection.js';
 import { QualifiedConnectedAccountPurposeV1Schema } from '../connect/connectedAccountPurposeIdentity.js';
 import { QualifiedConnectedAccountPurposeTeamResourceSelectionV1Schema } from '../connect/connectedAccountPurposeBindings.js';
@@ -5436,7 +5437,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             ...(ctx.signal ? { signal: ctx.signal } : {}) }));
         }
 
-        if (actionId === 'tasks.internal.list' || actionId === 'tasks.internal.create' || actionId === 'tasks.internal.edit' || actionId === 'tasks.internal.transition') {
+        if (isActionFamilyId(actionId, InternalTaskActionIdSchema)) {
           if (!deps.internalTaskAction) return { ok: true, result: { status: 'unavailable' } };
           return completeActionResult(await deps.internalTaskAction({ actionId, input: parsed.data, context: ctx,
             ...(ctx.signal ? { signal: ctx.signal } : {}) }));

@@ -324,6 +324,23 @@ check; these development-source handlers do not establish released availability.
 
 ### Personal Happier tasks (0.3 development source)
 
+Personal task item labels remain stored string
+names. In 0.3 development, the authenticated Account's separate
+`task-label-colours.v1` KV catalog stores `{v: 1, colors: { [name]: colorToken }}`
+through the same Account-mode envelope owner. It stays outside `todo.*`, so
+released item/order readers cannot mistake it for a task. No item rewrite or
+second colour writer is needed.
+
+`tasks.internal.labels.setColor` and `tasks.internal.labels.clearColor` change
+that catalog with the existing KV CAS behavior. Inputs carry the captured
+`scope`, exact label `name`, and (for set) a `colorToken`: `secondaryText`,
+`accent`, `info`, `success`, `warning`, or `danger`. A missing entry projects
+`secondaryText`; hex values are rejected. One catalog read joins each task-list
+read, irrespective of the row count. Host results carry `labelCatalog` and
+per-task `labelColors`; the source exposes optional sibling `snapshot.labelColors`
+beside string-valued `snapshot.labels` for list, board and detail. These
+observations are process-local/wire projections, never Collection values.
+
 The built-in `internal` source in `happier.triage` reads the current Account's
 existing unqualified `todo.<id>` records and `todo.index`. Its configured
 binding uses `source: 'accountData'`; it has no Connected Account or machine

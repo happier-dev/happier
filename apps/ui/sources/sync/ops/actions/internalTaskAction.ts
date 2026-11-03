@@ -1,5 +1,5 @@
 import { executeInternalTaskAction } from '@happier-dev/protocol/todos/todoActionOperationsV1';
-import type { InternalTaskActionId, InternalTaskListOutput, InternalTaskMutationOutput } from '@happier-dev/protocol/actions/internalTaskActions';
+import type { InternalTaskActionId, InternalTaskActionOutput } from '@happier-dev/protocol/actions/internalTaskActions';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { createTodoAccountKvTransport } from '@/sync/domains/todos/todoAccountKvTransport';
@@ -11,7 +11,7 @@ import { randomUUID } from '@/platform/randomUUID';
 
 export async function executeInternalTaskHostAction(args: Readonly<{
   actionId: InternalTaskActionId; input: unknown; signal?: AbortSignal;
-}>): Promise<InternalTaskListOutput | InternalTaskMutationOutput> {
+}>): Promise<InternalTaskActionOutput> {
   const lifetime = captureActiveServerAccountScopeLifetime();
   const credentials = sync?.getCredentials();
   if (!lifetime || !credentials) return { status: 'unavailable' };

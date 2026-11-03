@@ -11,6 +11,21 @@ describe('Todo stored reader', () => {
         expectedMode: 'plain', encryption: null,
     });
 
+    it.each(['plain', 'e2ee'] as const)('keeps the label catalog under the same %s Account envelope owner', async mode => {
+        const value = { v: 1, colors: { bug: 'success' } };
+        // The raw Account cipher is the external boundary; encode/decode and mode admission stay real.
+        const encryption = mode === 'plain' ? null : {
+            encryptRaw: async (content: unknown) => JSON.stringify(content),
+            decryptRaw: async (content: string): Promise<unknown> => JSON.parse(content),
+        };
+        const encoded = await encodeTodoStoredContent({ key: 'task-label-colours.v1', mode, value, encryption });
+        await expect(decodeTodoStoredContent({ key: 'task-label-colours.v1', encoded, expectedMode: mode, encryption }))
+            .resolves.toEqual({ kind: 'labelCatalog', value });
+        await expect(decodeTodoStoredContent({ key: 'task-label-colours.v1', encoded,
+            expectedMode: mode === 'plain' ? 'e2ee' : 'plain', encryption }))
+            .rejects.toBeInstanceOf(TodoStoredContentUnavailableError);
+    });
+
     it('projects stored index and nested task fields while canonical writes stay strict', async () => {
         const index = { undoneOrder: ['task-a'], completedOrder: [] };
         const session = { serverId: 'home-a', accountId: 'account-a', sessionId: 'session-a' };

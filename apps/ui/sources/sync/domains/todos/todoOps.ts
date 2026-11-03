@@ -122,7 +122,7 @@ export async function fetchTodos(
             if (content.kind === 'index') {
                 state.undoneOrder = content.value.undoneOrder;
                 state.doneOrder = content.value.completedOrder;
-            } else {
+            } else if (content.kind === 'item') {
                 state.todos[content.todoId] = content.value;
             }
         }

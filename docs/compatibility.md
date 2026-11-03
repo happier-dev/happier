@@ -32,6 +32,17 @@ not a release certification.
 
 Apply this policy when a change affects a cross-component wire shape or semantic, persisted/session/settings data, schema or migration, feature/capability negotiation, installer or service state, upgrade/coexistence, or rollback. Routine internal refactors that leave these seams unchanged do not need a compatibility matrix or shim.
 
+Personal-task label colours are an additive development extension. Item
+`labels: string[]` and legacy item/index writes remain unchanged. The sole colour
+writer uses the separate Account KV key `task-label-colours.v1`, outside the
+released `todo.*` inventory, with the existing Plain/E2EE envelope owner. New
+readers accept a missing catalog and project the neutral `secondaryText` token.
+Optional host `labelColors`/`labelCatalog` and source snapshot `labelColors`
+extend the development Action results; snapshot `labels` remains a string
+array. Observation snapshots are process-local/wire values and are not embedded
+in Triage's persisted Collection declarations. The new set/clear Actions require
+an upgraded host; they do not need a dual writer or a stored-data migration.
+
 ## Runtime failure transcript metadata (0.3 development)
 
 Host failure messages carry the existing typed `SessionRuntimeIssueV1` in optional

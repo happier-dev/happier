@@ -1,5 +1,6 @@
 import { z } from 'zod/mini';
 import { TodoItemV1Schema, TodoItemV1StoredSchema, TodoIndexV1Schema, TodoIndexV1StoredSchema } from '@happier-dev/protocol/todos/todoSessionLinkV1';
+import { TODO_LABEL_CATALOG_KEY_V1, TodoLabelCatalogV1Schema, TodoLabelCatalogV1StoredSchema, type TodoLabelCatalogV1 } from '@happier-dev/protocol/todos/todoSessionLinkV1';
 
 import {
     AccountStoredJsonContentEncryptionMaterialUnavailableError,
@@ -71,11 +72,14 @@ export function toTodoStoredContentUnavailableError(key: string, error: unknown)
 
 export type DecodedTodoStoredContent =
     | Readonly<{ kind: 'index'; value: TodoIndex }>
+    | Readonly<{ kind: 'labelCatalog'; value: TodoLabelCatalogV1 }>
     | Readonly<{ kind: 'item'; todoId: string; value: TodoItem }>;
 
 function resolveTodoKey(key: string):
     | Readonly<{ kind: 'index' }>
+    | Readonly<{ kind: 'labelCatalog' }>
     | Readonly<{ kind: 'item'; todoId: string }> {
+    if (key === TODO_LABEL_CATALOG_KEY_V1) return { kind: 'labelCatalog' };
     if (key === TODO_INDEX_KEY) {
         return { kind: 'index' };
     }
@@ -95,6 +99,11 @@ export function parseTodoStoredContent(
     storedRead = false,
 ): DecodedTodoStoredContent {
     const resolvedKey = resolveTodoKey(key);
+    if (resolvedKey.kind === 'labelCatalog') {
+        const parsed = (storedRead ? TodoLabelCatalogV1StoredSchema : TodoLabelCatalogV1Schema).safeParse(value);
+        if (!parsed.success) throw new TodoStoredContentUnavailableError(key, 'schema_invalid', parsed.error);
+        return { kind: 'labelCatalog', value: parsed.data };
+    }
     if (resolvedKey.kind === 'index') {
         const parsed = (storedRead ? TodoIndexStoredSchema : TodoIndexSchema).safeParse(value);
         if (!parsed.success) {

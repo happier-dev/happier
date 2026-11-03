@@ -1,3 +1,4 @@
+import { INTERNAL_TASK_ACTION_IDS } from './internalTaskActions.js';
 export const BROWSER_EXTENSION_MUTATION_ACTION_IDS = [
   'browser.extensions.install', 'browser.extensions.update', 'browser.extensions.enable', 'browser.extensions.disable', 'browser.extensions.remove',
 ] as const;
@@ -184,7 +185,7 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
   composer_ingress: ['composer.transaction.apply', 'composer.attachments.pick', 'repository.upload.pick'],
   list_reorder: ['session.pending.reorder', 'tasks.internal.reorder'],
   todo_session_link: ['tasks.internal.session.link'],
-  internal_tasks: ['tasks.internal.list', 'tasks.internal.create', 'tasks.internal.edit', 'tasks.internal.transition'],
+  internal_tasks: INTERNAL_TASK_ACTION_IDS,
   workspace_file_search: ['workspace.files.search', 'workspace.files.replace.preview', 'workspace.files.replace'],
   code_intelligence: CODE_INTELLIGENCE_ACTION_IDS,
   workflow_event_catalog: ['workflow.events.list'],

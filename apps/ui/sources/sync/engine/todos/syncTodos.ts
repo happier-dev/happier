@@ -95,7 +95,7 @@ export async function applyTodoSocketUpdates(params: {
         if (content.kind === 'index') {
             newUndoneOrder = content.value.undoneOrder;
             newDoneOrder = content.value.completedOrder;
-        } else {
+        } else if (content.kind === 'item') {
             updatedTodos[content.todoId] = content.value;
         }
     }

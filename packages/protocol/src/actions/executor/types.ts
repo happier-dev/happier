@@ -99,7 +99,7 @@ import type { ProjectPlacementActionExecutorV1 } from './projectActionPlacement.
 import type { ProjectDefinitionActionId } from '../projectDefinitionActionFamily.js';
 import type { WorkBoardArtifactPortV1 } from '../../boards/workBoardArtifactV1.js';
 import type { TodoSessionLinkOutputV1 } from '../../todos/todoSessionLinkV1.js';
-import type { InternalTaskActionId, InternalTaskListOutput, InternalTaskMutationOutput } from '../internalTaskActions.js';
+import type { InternalTaskActionId, InternalTaskActionOutput } from '../internalTaskActions.js';
 import type { ArtifactAccessActionIdV1 } from '../../artifacts/artifactAccessV1.js';
 import type { ArtifactHostActionInvocationV1 } from '../../artifacts/artifactCollaborationActionsV1.js';
 import type { SessionRoleConfigurationV1, SessionRolesV1 } from '../../prompts/roles/sessionRolesSnapshot.js';
@@ -1663,7 +1663,7 @@ export type ActionExecutorDeps = Readonly<{
   }>) => Promise<unknown>;
   composerIngress?: (args: Readonly<{ actionId: 'composer.transaction.apply' | 'composer.attachments.pick' | 'repository.upload.pick'; input: unknown; context: ActionExecutorContext; signal?: AbortSignal }>) => Promise<unknown>;
   listReorder?: (args: Readonly<{ actionId: 'session.pending.reorder' | 'tasks.internal.reorder'; input: unknown; context: ActionExecutorContext; signal?: AbortSignal }>) => Promise<unknown>;
-  internalTaskAction?: (args: Readonly<{ actionId: InternalTaskActionId; input: unknown; context: ActionExecutorContext; signal?: AbortSignal }>) => Promise<InternalTaskListOutput | InternalTaskMutationOutput>;
+  internalTaskAction?: (args: Readonly<{ actionId: InternalTaskActionId; input: unknown; context: ActionExecutorContext; signal?: AbortSignal }>) => Promise<InternalTaskActionOutput>;
   todoSessionLink?: (args: Readonly<{ input: unknown; context: ActionExecutorContext; signal?: AbortSignal }>) => Promise<TodoSessionLinkOutputV1>;
   sessionTerminalAction?: (args: Readonly<{ actionId: SessionTerminalActionId; input: unknown; context: ActionExecutorContext; signal?: AbortSignal }>) => Promise<unknown>;
   /** Canonical host resolver for non-qualified Session ids/titles. */

@@ -3,6 +3,7 @@ import {
     defineProtocolLiteral,
     defineProtocolNumber,
     defineProtocolObject,
+    defineProtocolString,
     defineProtocolUnion,
     defineProtocolUniqueArray,
     defineProtocolUtf8String,
@@ -237,6 +238,13 @@ export const TriageSourceEntrySnapshotV1Schema = defineProtocolObject({
      * source with no author for an entry kind (an error group) omits it.
      */
     authorLabel: TriageTextV1ProtocolSchema.optional(),
+    /** Source label names retain their string-array shape; colours are additive. */
+    labels: defineProtocolArray(defineProtocolString()).optional(),
+    /** Exact source label names plus theme token names, never resolved colour values. */
+    labelColors: defineProtocolArray(defineProtocolObject({
+        name: defineProtocolString(),
+        colorToken: TriageIdentifierV1ProtocolSchema,
+    }, { policy: 'closed' })).optional(),
     /**
      * The entry's short native designation as the provider writes it ("#2481",
      * "!88", "CHECKOUT-WEB-4F2"). Presentation only: never parsed back into
