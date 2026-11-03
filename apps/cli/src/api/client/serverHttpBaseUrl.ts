@@ -32,6 +32,15 @@ export function resolveServerHttpBaseUrl(): string {
     ?? normalizeServerHttpBaseUrl(configuration.apiServerUrl);
 }
 
+/**
+ * The daemon's verified process-local origin when it differs from the configured
+ * route, else null. Child processes cannot see the publication, so the spawn
+ * owner hands them this value in place of the configured API URL.
+ */
+export function resolvePublishedServerHttpOrigin(): string | null {
+  return runtimePublication?.origin ?? null;
+}
+
 /** A live daemon consumer follows carrier replacement within its original Home. */
 export function captureServerHttpBaseUrl(): () => string {
   const origin = resolveServerHttpBaseUrl();

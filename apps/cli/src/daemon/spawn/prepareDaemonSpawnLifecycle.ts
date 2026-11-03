@@ -1,4 +1,5 @@
 import type { CatalogAgentId } from '@/agent/catalog/ids';
+import { resolvePublishedServerHttpOrigin } from '@/api/client/serverHttpBaseUrl';
 import { configuration } from '@/configuration';
 import { HAPPIER_PROVIDER_BINDING_LAUNCH_MATERIALIZATION_V1_ENV_KEY } from '@/plugins/runtime/providerBindings/handoff';
 import {
@@ -41,7 +42,8 @@ function buildDaemonOwnedSpawnChildEnv(): Record<string, string> {
             String(process.env.HAPPIER_DAEMON_LIFECYCLE_SCOPE_ID ?? '').trim()
             || configuration.activeServerId,
         HAPPIER_SERVER_URL: configuration.serverUrl,
-        HAPPIER_LOCAL_SERVER_URL: configuration.apiServerUrl,
+        // The child resolves its route from this key; identity stays the canonical URL above.
+        HAPPIER_LOCAL_SERVER_URL: resolvePublishedServerHttpOrigin() ?? configuration.apiServerUrl,
         HAPPIER_PUBLIC_SERVER_URL: configuration.publicServerUrl,
         HAPPIER_WEBAPP_URL: configuration.webappUrl,
     };
