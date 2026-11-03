@@ -182,10 +182,29 @@ export function clearSessionStateFieldFromMetadata(
 export function createSessionStateFieldMetadataUpdater<F extends SessionStateFieldId>(
   fieldId: F,
   value: SessionStateFieldWriteValue<F>,
-): (metadata: SessionMetadata) => SessionMetadata {
+  expectedMetadataRevision?: number,
+  expectedValue?: SessionStateFieldValue<F> | null,
+): (metadata: SessionMetadata, metadataRevision?: number) => SessionMetadata {
   const binding = getBinding(fieldId);
+  const expected = expectedValue === undefined ? undefined : projectNativeJsonValueForTransport(expectedValue);
   let basis: JsonValue | undefined;
-  return (metadata) => {
+  let firstRead = true;
+  return (metadata, metadataRevision) => {
+    // A conditional inverse is admitted against every fresh CAS candidate.
+    // Omission is unconditional; null explicitly requires an absent field.
+    if (expected !== undefined && binding && !sameStrictJsonValue(expected,
+      projectNativeJsonValueForTransport(binding.read(metadata).value ?? null))) {
+      throw Object.assign(new Error('Session field no longer matches the expected value'), { code: 'conflict', retryable: false });
+    }
+    // Admission uses the caller's exact read, including approval replay. Once
+    // admitted, the field basis below permits unrelated tuple changes on retry.
+    if (firstRead && expectedMetadataRevision !== undefined && (
+      !Number.isSafeInteger(expectedMetadataRevision) || expectedMetadataRevision < 0
+      || metadataRevision !== expectedMetadataRevision
+    )) {
+      throw Object.assign(new Error('Reviewed Session metadata revision changed'), { code: 'conflict', retryable: false });
+    }
+    firstRead = false;
     if (binding?.readMutationBasis) {
       const current = projectNativeJsonValueForTransport(binding.readMutationBasis(metadata));
       if (basis !== undefined && !sameStrictJsonValue(basis, current)) {
