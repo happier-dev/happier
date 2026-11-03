@@ -99,6 +99,53 @@ describe('agent-desktop native driver', () => {
         .toEqual(['--headed', 'mouse-click', '--xy=30,50', '--button', 'right', '--count', '2', '--modifiers', 'meta', '--modifiers', 'ctrl']);
     } finally { await driver.close(); }
   });
+  it.skipIf(process.platform !== 'linux').each(['preflight', 'dispatch'] as const)('keeps a released drag ahead of later hover during native %s', async phase => {
+    let resumeNative!: () => void;
+    const nativePending = new Promise<void>(resolve => { resumeNative = resolve; });
+    let enteredNative!: () => void;
+    const nativeEntered = new Promise<void>(resolve => { enteredNative = resolve; });
+    let prepareDrag = false;
+    let dragCaptured = false;
+    setup(async args => {
+      if (prepareDrag && args.includes('snapshot')) dragCaptured = true;
+      if (prepareDrag && ((phase === 'preflight' && dragCaptured && args.includes('list-displays'))
+        || (phase === 'dispatch' && args.includes('drag')))) {
+        prepareDrag = false;
+        enteredNative();
+        await nativePending;
+      }
+      return nativeResponse(args);
+    });
+    const source = createComputerCaptureSource({ sessionId: 'hover-drag', target: { kind: 'display', displayId: ':73' },
+      provider: 'agent-desktop', executablePath: '/managed/agent-desktop' });
+    const failures: string[] = [];
+    const stream = await source.adapter.start({ streamId: 'hover-drag', streamFamily: 'screen', sourceMachineId: 'machine', targetMachineId: 'machine', caps: {},
+      startRequest: { v: 1, streamId: 'hover-drag', streamFamily: 'screen', sourceId: source.sourceId, codecId: 'image.frame.v1',
+        routeKind: 'loopback_direct', sourceMachineId: 'machine', targetMachineId: 'machine' },
+      startedAtMs: 0, expiresAtMs: 60_000, nowMs: () => 0, offerFrame: () => ({ ok: true }), applyControl: () => ({ ok: true }),
+      emitReceipt(receipt) { if (receipt.reasonCode) failures.push(receipt.reasonCode); } });
+    if (!stream.ok) throw new Error(stream.reasonCode);
+    const sideband = { v: 1, streamId: 'hover-drag', sourceId: source.sourceId } as const;
+    try {
+      await source.interrupt();
+      expect(stream.session.applySidebandControl?.({ ...sideband, eventId: 'before', kind: 'move', x: 0.5, y: 0.4 })).toEqual({ ok: true });
+      await vi.waitFor(() => expect(boundary.calls.some(args => args.includes('mouse-move'))).toBe(true));
+      prepareDrag = true;
+      expect(stream.session.applySidebandControl?.({ ...sideband, eventId: 'release', kind: 'drag', fromX: 0.5, fromY: 0.4, toX: 0.6, toY: 0.5 })).toEqual({ ok: true });
+      await nativeEntered;
+      expect(stream.session.applySidebandControl?.({ ...sideband, eventId: 'after', kind: 'move', x: 0.6, y: 0.5 })).toEqual({ ok: true });
+      resumeNative();
+      await vi.waitFor(() => expect(boundary.calls.filter(args => args.includes('mouse-move'))).toHaveLength(2));
+      await vi.waitFor(() => expect(source.handBack()).toBe(true));
+      expect(boundary.calls.filter(args => args.includes('mouse-move') || args.includes('drag'))).toEqual([
+        ['--headed', 'mouse-move', '--xy=400,240'],
+        ['--headed', 'drag', '--from-xy=400,240', '--to-xy=480,300'],
+        ['--headed', 'mouse-move', '--xy=480,300'],
+      ]);
+      expect(failures).toEqual([]);
+      expect(boundary.spawn.mock.results.every(result => result.value.kill.mock.calls.length === 0)).toBe(true);
+    } finally { resumeNative(); await stream.session.stop(); await source.close(); }
+  });
   it('refuses clipboard writes without exposing text in native argv and preserves clipboard reads', async () => {
     let clipboard: string | null = 'remote 日本';
     setup(args => {

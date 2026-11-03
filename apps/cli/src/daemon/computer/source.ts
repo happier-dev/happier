@@ -197,9 +197,9 @@ export function createComputerCaptureSource(input: Readonly<{
             if (status.controller !== 'human' || status.stopping || status.uncertain) return { ok: false, reasonCode: 'invalid_control' };
           }
           // Present-user sidebands are admitted by the existing stream custody/lease owner.
-          const takeover = control.takeOver();
           pendingInput = pendingInput.then(async () => {
-            const drain = await takeover;
+            // Take over in queue order so later hover cannot cancel an earlier human action.
+            const drain = await control.takeOver();
             if (stopped) return;
             if (drain.completion === 'unknown') { failInput('human_input_interruption_uncertain'); return; }
             let captureId: string | null = null;
