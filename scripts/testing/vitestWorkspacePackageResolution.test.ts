@@ -228,6 +228,26 @@ function firstPartyAliases(config: { resolve?: { alias?: unknown } }): readonly 
     return [];
 }
 
+test('Codex host imports resolve deployment workspace exports from source without built output', async (t) => {
+    const repoRoot = fileURLToPath(new URL('../../', import.meta.url));
+    const server = await createServer({
+        root: resolve(repoRoot, 'packages/plugins/codex'),
+        configFile: resolve(repoRoot, 'packages/plugins/codex/vitest.config.ts'),
+        server: { middlewareMode: true, watch: null },
+        optimizeDeps: { noDiscovery: true },
+        logLevel: 'silent',
+    });
+    t.after(async () => { await server.close(); });
+    const importer = resolve(repoRoot, 'apps/cli/src/deployments/secrets/prepareEnvironmentSecretBindingsForLaunch.ts');
+    for (const [specifier, source] of [
+        ['@happier-dev/deployment-protocol', 'index.ts'],
+        ['@happier-dev/deployment-protocol/v1', 'v1/index.ts'],
+    ]) {
+        const resolved = await server.pluginContainer.resolveId(specifier, importer);
+        assert.equal(resolved?.id, resolve(repoRoot, 'packages/deployment-protocol/src', source));
+    }
+});
+
 test('host source aliases follow the importing host through the ordinary UI loader', async (t) => {
     const server = await createServer({
         configFile: resolve('apps/ui/vitest.config.ts'),
