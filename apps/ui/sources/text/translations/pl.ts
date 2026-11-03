@@ -8698,6 +8698,7 @@ encryptedUnavailable: "Zaszyfrowane dane niedostępne",
 
   voiceSurface: {
     approvalTapRequired: 'Ta prośba wymaga dotknięcia w Happier. Otwórz ją, aby zatwierdzić lub odrzucić.',
+    actionCanceled: 'Operacja została anulowana.',
     reviewCredentials: 'Sprawdź dane logowania',
     connectAgent: 'Połącz',
     setUpAgent: ({ agent }: { agent: string }) => `Skonfiguruj ${agent}`,

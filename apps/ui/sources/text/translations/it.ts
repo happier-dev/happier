@@ -9086,6 +9086,7 @@ encryptedUnavailable: "Dettagli crittografati non disponibili",
 
   voiceSurface: {
     approvalTapRequired: 'Questa richiesta richiede un tocco in Happier. Aprila per approvarla o rifiutarla.',
+    actionCanceled: 'L’operazione è stata annullata.',
     reviewCredentials: 'Controlla le credenziali',
     connectAgent: 'Connetti',
     setUpAgent: ({ agent }: { agent: string }) => `Configura ${agent}`,

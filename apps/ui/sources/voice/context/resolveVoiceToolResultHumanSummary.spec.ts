@@ -5,6 +5,16 @@ import { t } from '@/text';
 import { resolveVoiceToolResultHumanSummary } from './resolveVoiceToolResultHumanSummary';
 
 describe('resolveVoiceToolResultHumanSummary', () => {
+    it.each([false, true])('keeps canceled approval operations distinct from request cancellation (envelope=%s)', envelope => {
+        const input = { artifactId: 'request-1', decision: 'approve' };
+        expect(resolveVoiceToolResultHumanSummary({
+            toolName: envelope ? 'action_execute' : 'approval_request_decide',
+            toolInput: envelope ? { actionId: 'approval.request.decide', input } : input,
+            toolResult: { ok: false, errorCode: 'cancelled', error: 'cancelled', summary: 'The request was canceled.' },
+            shareFilePaths: true, shareSessionSummary: true,
+        })).toBe(t('voiceSurface.actionCanceled'));
+    });
+
     it.each([false, true])('reports a created settings approval as pending rather than completed (envelope=%s)', envelope => {
         const input = { anchor: 'voiceConversations.verbosity', value: 'balanced' };
         const result = { kind: 'approval_request_created', artifactId: 'approval-1', actionId: 'settings.set' };

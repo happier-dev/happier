@@ -8970,6 +8970,7 @@ encryptedUnavailable: "Detalhes encriptados indisponíveis",
 
   voiceSurface: {
     approvalTapRequired: 'Este pedido requer um toque no Happier. Abra-o para aprovar ou rejeitar.',
+    actionCanceled: 'A operação foi cancelada.',
     reviewCredentials: 'Rever credenciais',
     connectAgent: 'Ligar',
     setUpAgent: ({ agent }: { agent: string }) => `Configurar ${agent}`,

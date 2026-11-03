@@ -8156,6 +8156,7 @@ encryptedUnavailable: "Detalls xifrats no disponibles",
 
       voiceSurface: {
         approvalTapRequired: 'Aquesta sol·licitud requereix un toc a Happier. Obre-la per aprovar-la o rebutjar-la.',
+        actionCanceled: 'L’operació s’ha cancel·lat.',
         reviewCredentials: 'Revisa les credencials',
         connectAgent: 'Connecta',
         setUpAgent: ({ agent }: { agent: string }) => `Configura ${agent}`,

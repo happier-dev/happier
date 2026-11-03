@@ -8843,6 +8843,7 @@ encryptedUnavailable: "Verschlüsselte Details nicht verfügbar",
 
     voiceSurface: {
       approvalTapRequired: 'Diese Anfrage erfordert ein Tippen in Happier. Öffne sie, um sie zu genehmigen oder abzulehnen.',
+      actionCanceled: 'Der Vorgang wurde abgebrochen.',
         reviewCredentials: 'Zugangsdaten prüfen',
         connectAgent: 'Verbinden',
         setUpAgent: ({ agent }: { agent: string }) => `${agent} einrichten`,

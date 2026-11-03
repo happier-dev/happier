@@ -83,7 +83,7 @@ let disconnect: (() => Promise<void>) | undefined;
 const events: string[] = [];
 const approvalArtifacts = createArtifactStoreBoundary({ ownerAccountId: () => 'account-a', encryptionMode: 'plain' });
 let directPendingEntered = createDeferred<void>();
-type TurnReply = { assistantText: string; actions: VoiceAssistantAction[] };
+type TurnReply = { assistantText: string; actions: VoiceAssistantAction[]; speechSegments?: string[] };
 let turnReplies: (index: number, message: string) => TurnReply = () => ({ assistantText: 'Done.', actions: [] });
 let turnIndex = 0;
 let rejectStart = false;
@@ -112,10 +112,15 @@ async function answerVoiceAgentRpc(method: string, input: unknown): Promise<unkn
     const request = ExecutionRunTurnStreamReadRequestSchema.parse(input);
     const reply = repliesByStream.get(request.streamId);
     if (!reply) throw new Error('Unknown transcript stream');
-    const outputs: ExecutionRunTurnStreamEvent[] = reply.actions.map((action, index) => ({
-      t: 'voice_output', output: { v: 1, kind: 'side_effect', turnId: request.streamId, seq: index,
-        effectId: `${request.streamId}:effect:${index}`, action },
+    const outputs: ExecutionRunTurnStreamEvent[] = (reply.speechSegments ?? []).map((text, index) => ({
+      t: 'voice_output', output: { v: 1, kind: 'speech_segment', turnId: request.streamId, seq: index,
+        segmentId: `${request.streamId}:speech:${index}`, text },
     }));
+    const effectOffset = outputs.length;
+    outputs.push(...reply.actions.map((action, index): ExecutionRunTurnStreamEvent => ({
+      t: 'voice_output', output: { v: 1, kind: 'side_effect', turnId: request.streamId, seq: effectOffset + index,
+        effectId: `${request.streamId}:effect:${index}`, action },
+    })));
     outputs.push({ t: 'voice_output', output: { v: 1, kind: 'turn_final', turnId: request.streamId,
       seq: outputs.length, text: reply.assistantText } });
     return ExecutionRunTurnStreamReadResponseSchema.parse({ streamId: request.streamId,
@@ -288,8 +293,12 @@ describe('sendVoiceTextTurn native-session transcript ownership', () => {
 
   afterEach(async () => { await voiceAgentSessions.stop(VOICE_AGENT_GLOBAL_SESSION_ID); await disconnect?.(); disconnect = undefined; await account?.dispose(); });
 
-  it.each(['setting', 'existing-request', 'approvals-off', 'refused-setting'] as const)(
-    'executes the spoken %s without a model confirmation round and speaks only the owner outcome', async path => {
+  it.each([
+    { path: 'setting', streamedNarration: false }, { path: 'existing-request', streamedNarration: false },
+    { path: 'approvals-off', streamedNarration: false }, { path: 'refused-setting', streamedNarration: false },
+    { path: 'setting', streamedNarration: true }, { path: 'existing-request', streamedNarration: true },
+  ] as const)(
+    'executes the spoken $path without a model confirmation round (streamed narration=$streamedNarration)', async ({ path, streamedNarration }) => {
       const { sendVoiceTextTurn } = await loadSendVoiceTextTurnWithProductionBinding();
       const { createVoiceToolHandlers } = await import('@/voice/tools/handlers');
       const { setVoiceSessionSnapshot, resetVoiceSessionStoreForTests } = await import('@/voice/session/voiceSessionStore');
@@ -297,6 +306,7 @@ describe('sendVoiceTextTurn native-session transcript ownership', () => {
       const handlers = createVoiceToolHandlers({ resolveSessionId: () => 's1', currentServerId: serverId });
       const input = { anchor: 'voiceConversations.verbosity', value: path === 'refused-setting' ? 'unsupported' : 'balanced' };
       const controller = new AbortController();
+      const narration = streamedNarration ? ['I found the requested change.', 'I will apply it now.'] : undefined;
       let pending: Promise<string> | undefined;
       let artifactId: string | undefined;
       if (path === 'existing-request' || path === 'approvals-off') {
@@ -347,7 +357,7 @@ describe('sendVoiceTextTurn native-session transcript ownership', () => {
         if (index === 3 && !artifactId) {
           const spec = z.object({ actionSpec: z.object({ bindings: z.object({ voiceClientToolName: z.string() }) }) }).parse(resultBody(message)).actionSpec;
           settingsSetName = spec.bindings.voiceClientToolName;
-          return { assistantText: 'Replies is now set to Balanced.', actions: [{ t: settingsSetName, args: { ...input, anchor: discoveredAnchor } }] };
+          return { assistantText: 'Replies is now set to Balanced.', speechSegments: narration, actions: [{ t: settingsSetName, args: { ...input, anchor: discoveredAnchor } }] };
         }
         if (index === 2 && artifactId) {
           const requests = z.object({ items: z.array(z.object({ artifactId: z.string() })) }).parse(resultBody(message)).items;
@@ -357,10 +367,10 @@ describe('sendVoiceTextTurn native-session transcript ownership', () => {
         }
         if (index === 3 && artifactId) {
           expect(resultBody(message)).toMatchObject({ ok: true, request: { status: 'open', actionId: 'settings.set' } });
-          return { assistantText: 'Approved.', actions: [{ t: 'approval_request_decide', args: { artifactId: discoveredArtifactId, decision: 'approve' } }] };
+          return { assistantText: 'Approved.', speechSegments: narration, actions: [{ t: 'approval_request_decide', args: { artifactId: discoveredArtifactId, decision: 'approve' } }] };
         }
         const result = resultBody(message);
-        expect(result).toMatchObject(path === 'approvals-off' ? { ok: false, errorCode: 'present_user_required' }
+        expect(result, JSON.stringify(result)).toMatchObject(path === 'approvals-off' ? { ok: false, errorCode: 'present_user_required' }
           : path === 'refused-setting' ? { ok: false } : { ok: true });
         return { assistantText: 'Unverified provider success claim.', actions: [] };
       };
@@ -373,13 +383,47 @@ describe('sendVoiceTextTurn native-session transcript ownership', () => {
       storage.setState({ settings });
       account.replaceAccountSettings('voice', { settings, version: 10 });
       const spoken: string[] = [];
+      const firstNarration = createDeferred<SpeechOptions>();
+      const hostSummary = createDeferred<SpeechOptions>();
+      const secondNarration = createDeferred<void>();
+      let activeSpeech: SpeechOptions | undefined;
+      let summaryAttempted = false;
+      let summaryStopped = false;
+      let summaryOptions: SpeechOptions | undefined;
+      const { getVoiceSessionSpokenActionConfirmation } = await import('@/voice/session/voiceSessionStore');
+      const carrier = getVoiceSessionSpokenActionConfirmation();
       await speech.speak.withImplementation((text, options) => {
-        spoken.push(text); options.onStart?.(); options.onDone?.();
+        spoken.push(text); activeSpeech = options;
+        if (text === narration?.[0]) { options.onStart?.(); firstNarration.resolve(options); }
+        else {
+          if (streamedNarration && text === carrier?.readPending()?.operation.summary) {
+            summaryAttempted = true; summaryOptions = options; hostSummary.resolve(options);
+          } else {
+            options.onStart?.(); options.onDone?.();
+            if (text === narration?.[1]) secondNarration.resolve();
+          }
+        }
+      }, async () => await speech.stop.withImplementation(() => {
+        if (activeSpeech === summaryOptions) summaryStopped = true;
+        activeSpeech?.onStopped?.();
       }, async () => {
         try {
-          await sendVoiceTextTurn({ sessionId: VOICE_AGENT_GLOBAL_SESSION_ID, settings,
+          const sending = sendVoiceTextTurn({ sessionId: VOICE_AGENT_GLOBAL_SESSION_ID, settings,
             userText: artifactId ? 'Approve this exact request.' : 'In Voice settings change Replies from Short to Balanced.',
             playbackController: createVoicePlaybackController(), voiceAgentSessions, signal: controller.signal });
+          // Keep a transport assertion failure observed while OS playback is held.
+          void sending.catch(() => undefined);
+          if (streamedNarration) {
+            const first = await firstNarration.promise;
+            // Hold real OS playback while the same streamed reply delivers its
+            // Action. The queued second segment must not replace host read-back.
+            await vi.waitFor(() => expect(carrier?.readPending() !== null || summaryAttempted).toBe(true));
+            first.onDone?.();
+            const summary = await hostSummary.promise;
+            await secondNarration.promise;
+            if (!summaryStopped) { summary.onStart?.(); summary.onDone?.(); }
+          }
+          await sending;
           expect(JSON.parse(await handlers.settings_get!({ anchor: input.anchor }))).toMatchObject({ ok: true, value: path === 'refused-setting' || path === 'approvals-off' ? 'short' : 'balanced' });
           expect(spoken).not.toContain('Replies is now set to Balanced.');
           expect(spoken).not.toContain('Unverified provider success claim.');
@@ -396,7 +440,7 @@ describe('sendVoiceTextTurn native-session transcript ownership', () => {
         } finally {
           controller.abort(); resetVoiceSessionStoreForTests(); await pending?.catch(() => undefined);
         }
-      });
+      }));
     });
 
   it('submits direct coding-session voice turns through durable immediate delivery', async () => {

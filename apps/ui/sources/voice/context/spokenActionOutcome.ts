@@ -1,6 +1,6 @@
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { SettingsDeclarationActionOutputSchemasV1 } from '@happier-dev/protocol/actions/settingsDeclarationActionFamily';
-import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionApprovalRequestCreatedResultSchema, parseActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ApprovalRequestStatusSchema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 
 import { t } from '@/text';
@@ -29,6 +29,9 @@ export function resolveSpokenActionOutcome(entry: LocalVoiceAgentToolResultEntry
   const unknown = t('entityDragDrop.preview.unknownDetail');
   if (envelope?.ok === false && (envelope.errorCode ?? envelope.code) === 'present_user_required') {
     return t('voiceSurface.approvalTapRequired');
+  }
+  if (parseActionExecuteFailure(entry.result)?.errorCode === 'cancelled') {
+    return t('voiceSurface.actionCanceled');
   }
   if (envelope?.ok !== true) return resolveActionExecutionFailureMessage(entry.result, unknown) ?? unknown;
   // Direct tools flatten the envelope; action_execute retains it. Neither

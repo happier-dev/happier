@@ -2226,6 +2226,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
 
     voiceSurface: {
       approvalTapRequired: '此請求需要在 Happier 中點選確認。開啟請求以批准或拒絕。',
+      actionCanceled: '操作已取消。',
       reviewCredentials: '檢查認證資料',
       connectAgent: '連線',
       setUpAgent: ({ agent }: { agent: string }) => `設定 ${agent}`,

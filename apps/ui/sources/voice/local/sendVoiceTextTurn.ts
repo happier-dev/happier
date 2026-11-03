@@ -458,6 +458,8 @@ export async function sendVoiceTextTurn(params: {
         // The Action owner resumes its captured invocation after host playback.
         // A model follow-up is never responsible for delivering confirmation.
         playHostText: async ({ text, signal }) => {
+          // Drain admitted narration before its next chunk can replace host playback.
+          await finalizeStreamedTurn();
           if (signal.aborted || !params.playbackController.isEpochCurrent(playbackEpoch)) return { status: 'cancelled' };
           clearReplyTtsGuard();
           let readBackStarted = false;
