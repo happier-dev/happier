@@ -1,3 +1,5 @@
+import { TeamCredentialResourceReadinessV1Schema, type TeamCredentialResourceReadinessV1 } from './resourceReadinessV1.js';
+export { TeamCredentialResourceReadinessV1Schema, type TeamCredentialResourceReadinessV1 } from './resourceReadinessV1.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod/mini';
 
@@ -5,7 +7,8 @@ import { IrohEndpointDescriptorV1Schema } from '../../connectivity/iroh/endpoint
 import { RunnerCredentialSelectionBindingV1Schema } from '../../ephemeralRunner/review.js';
 import { PluginContributionIdentityV1Schema } from '../../plugins/contributionIdentity.js';
 import { asProtocolZod } from '../../plugins/actions/internalProtocolZodAdapter.js';
-import { TeamCredentialUsageLimitMetricV1Schema } from './usageV1.js';
+
+export { readTeamCredentialDeliveryReadinessV1 } from './deliveryV1.js';
 
 export {
   createRunnerBrokerReadinessSigningInputV1,
@@ -29,33 +32,6 @@ export const RunnerBrokerProviderPresentationV1Schema = lazyZodSchema(() => z.st
   identity: asProtocolZod(PluginContributionIdentityV1Schema),
   definitionRevision: z.literal(1),
 }));
-
-/** Safe, content-free readiness reported by the credential-resource owner. */
-export const TeamCredentialResourceReadinessV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
-  z.strictObject({ kind: z.literal('available') }),
-  z.strictObject({ kind: z.literal('resource_corrupt') }),
-  z.strictObject({ kind: z.literal('resource_unavailable') }),
-  z.strictObject({ kind: z.literal('source_unavailable') }),
-  z.strictObject({
-    kind: z.literal('broker_unavailable'),
-    // Content-free observation only; never grants resource or broker authority.
-    reason: z.optional(z.enum([
-      'application_unavailable', 'model_unavailable',
-      'projection_unavailable', 'response_invalid', 'not_granted', 'incompatible', 'catalog_empty',
-    ])),
-  }),
-  z.strictObject({ kind: z.literal('update_required') }),
-  z.strictObject({ kind: z.literal('policy_denied') }),
-  z.strictObject({
-    kind: z.literal('limit_reached'),
-    // The one metric vocabulary: the limit owner decides with it, the catalog
-    // read copies the denial's metric into this readiness, and the picker
-    // labels it. A second spelling here makes the whole catalog entry throw.
-    metric: TeamCredentialUsageLimitMetricV1Schema,
-    resetsAtUtc: z.string().check(z.iso.datetime()),
-  }),
-]));
-export type TeamCredentialResourceReadinessV1 = z.infer<typeof TeamCredentialResourceReadinessV1Schema>;
 
 const RunnerBrokerReadinessResponseBindingV1Schema = lazyZodSchema(() => z.omit(RunnerBrokerReadinessFactsV1Schema, {
   v: true,
