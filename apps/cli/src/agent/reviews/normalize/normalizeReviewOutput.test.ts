@@ -133,14 +133,108 @@ describe('normalizeReviewOutput codex reviews', () => {
     expect(payload.findings).toEqual([]);
   });
 
+  it('keeps native prose findings whose evidence contains a JSON example', () => {
+    const result = normalizeCodex([
+      'One correctness issue is present.',
+      '',
+      'Review comment:',
+      '',
+      '- Reject stale cache entries -- src/cache.ts:42',
+      '  The invalid cached value is {"generation":0}.',
+    ].join('\n'));
+
+    const payload = parseFindingsPayload(result);
+    expect(payload.findings).toHaveLength(1);
+    expect(payload.findings[0]).toMatchObject({
+      filePath: 'src/cache.ts',
+      summary: 'The invalid cached value is {"generation":0}.',
+    });
+  });
+
   it('fails clearly for empty Codex native review output', () => {
     const result = normalizeCodex('   \n  ');
 
     expect(result.status).toBe('failed');
-    expect(result.summary).toBe('Invalid review output (empty Codex native review).');
     expect(result.toolResultOutput).toMatchObject({
       status: 'failed',
       error: { code: 'invalid_output' },
     });
+  });
+
+  it('preserves findings from Codex native JSON reviews', () => {
+    const result = normalizeCodex(JSON.stringify({
+      findings: [{
+        title: '[P2] Keep the deletion schedule within the retention requirement',
+        body: 'The thirty-day schedule exceeds the seven-day retention requirement.',
+        priority: 2,
+        confidence_score: 1,
+        code_location: {
+          absolute_file_path: '/repo/retention.md',
+          line_range: { start: 3, end: 3 },
+        },
+      }],
+      overall_correctness: 'patch is incorrect',
+      overall_explanation: 'The schedule conflicts with the retention requirement.',
+      overall_confidence_score: 1,
+    }));
+
+    const payload = parseFindingsPayload(result);
+    expect(payload.summary).toBe('The schedule conflicts with the retention requirement.');
+    expect(payload.findings).toHaveLength(1);
+    expect(payload.findings[0]).toMatchObject({
+      title: '[P2] Keep the deletion schedule within the retention requirement',
+      summary: 'The thirty-day schedule exceeds the seven-day retention requirement.',
+      severity: 'medium',
+      confidence: 1,
+      filePath: '/repo/retention.md',
+      startLine: 3,
+      endLine: 3,
+    });
+    expect(result.toolResultOutput).toMatchObject({ findingsDigest: { total: 1 } });
+  });
+
+  it('accepts a valid Codex native JSON review with no findings', () => {
+    const result = normalizeCodex(JSON.stringify({
+      findings: [],
+      overall_correctness: 'patch is correct',
+      overall_explanation: 'No correctness issues found.',
+      overall_confidence_score: 0.9,
+    }));
+
+    const payload = parseFindingsPayload(result);
+    expect(payload.summary).toBe('No correctness issues found.');
+    expect(payload.findings).toEqual([]);
+  });
+
+  it('preserves a Codex finding and priority when its overview is empty', () => {
+    const result = normalizeCodex(JSON.stringify({
+      findings: [{
+        title: '[P1] Do not return a successful empty review',
+        body: 'Malformed review output must remain an observable failure.',
+        priority: 1,
+        code_location: {
+          absolute_file_path: '/repo/review.ts',
+          line_range: { start: 10, end: 12 },
+        },
+      }],
+      overall_explanation: '',
+    }));
+
+    const payload = parseFindingsPayload(result);
+    expect(payload.summary).toBe('Codex review completed.');
+    expect(payload.findings[0]).toMatchObject({ severity: 'high', startLine: 10, endLine: 12 });
+  });
+
+  it.each([
+    '{"findings":[',
+    '```json\n{"findings":[\n```',
+    'Review result:\n```json\n{"findings":[\n```',
+    JSON.stringify({ findings: [{ title: 'Finding without a location', body: 'Details.' }] }),
+    JSON.stringify({ summary: 'Invalid strict result', findings: [{ title: 'Incomplete' }] }),
+  ])('does not turn malformed JSON into a successful empty review: %s', (rawText) => {
+    const result = normalizeCodex(rawText);
+
+    expect(result.status).toBe('failed');
+    expect(result.toolResultOutput).toMatchObject({ error: { code: 'invalid_output' } });
   });
 });

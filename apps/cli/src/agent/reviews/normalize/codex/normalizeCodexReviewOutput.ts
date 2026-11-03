@@ -33,7 +33,7 @@ export function normalizeCodexReviewOutput(params: Readonly<{
   });
 
   if (!findingsPayload) {
-    const summary = 'Invalid review output (empty Codex native review).';
+    const summary = 'Invalid review output (unsupported Codex review format).';
     return {
       status: 'failed',
       summary,

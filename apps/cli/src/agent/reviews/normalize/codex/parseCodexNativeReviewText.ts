@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto';
+import { z } from 'zod';
 
 import type { ReviewFinding } from '@happier-dev/protocol';
+import { parseTrailingJsonObject } from '@/agent/executionRuns/profiles/shared/parseTrailingJsonObject';
 
 type ParsedCodexNativeReview = {
   summary: string;
@@ -19,6 +21,23 @@ type FindingDraft = {
 const REVIEW_COMMENTS_HEADER_PATTERN = /^(?:Full review comments|Review comment):\s*$/i;
 const FINDING_BULLET_PATTERN = /^\s*-\s+(.+?)\s+(?:--|[-\u2013\u2014])\s+(.+):(\d+)(?:-(\d+))?\s*$/u;
 const INDENTED_BODY_LINE_PATTERN = /^(?: {2,}|\t)(.*)$/;
+const CODEX_JSON_REVIEW_SCHEMA = z.object({
+  findings: z.array(z.object({
+    title: z.string().trim().min(1),
+    body: z.string().trim().min(1),
+    priority: z.number().int().min(0).max(3).optional(),
+    confidence_score: z.number().min(0).max(1).optional(),
+    code_location: z.object({
+      absolute_file_path: z.string().trim().min(1),
+      line_range: z.object({
+        start: z.number().int().min(1),
+        end: z.number().int().min(1),
+      }).refine((range) => range.end >= range.start),
+    }),
+  })),
+  overall_explanation: z.string().trim(),
+});
+const SEVERITY_BY_PRIORITY = ['blocker', 'high', 'medium', 'low'] as const;
 
 function firstNonEmptyParagraph(text: string): string {
   const paragraphs = text
@@ -120,9 +139,41 @@ export function parseCodexNativeReviewText(rawText: string): ParsedCodexNativeRe
   const overviewMarkdown = rawText.trim();
   if (overviewMarkdown.length === 0) return null;
 
+  const textFindings = parseNativeFindings(overviewMarkdown);
+  if (textFindings.length > 0) {
+    return {
+      summary: firstNonEmptyParagraph(overviewMarkdown),
+      overviewMarkdown,
+      findings: textFindings,
+    };
+  }
+
+  const json = parseTrailingJsonObject(overviewMarkdown);
+  if (json !== null) {
+    const parsed = CODEX_JSON_REVIEW_SCHEMA.safeParse(json);
+    if (!parsed.success) return null;
+
+    return {
+      summary: firstNonEmptyParagraph(parsed.data.overall_explanation),
+      overviewMarkdown: parsed.data.overall_explanation,
+      findings: parsed.data.findings.map((finding) => ({
+        ...toFinding({
+          title: finding.title,
+          filePath: finding.code_location.absolute_file_path,
+          startLine: finding.code_location.line_range.start,
+          endLine: finding.code_location.line_range.end,
+          bodyLines: [finding.body],
+        }),
+        severity: SEVERITY_BY_PRIORITY[finding.priority ?? 2] ?? 'medium',
+        ...(finding.confidence_score !== undefined ? { confidence: finding.confidence_score } : {}),
+      })),
+    };
+  }
+  if (/^\s*(?:\{|\[|```(?:json\b|\s*[\r\n]+\s*[\[{]))/im.test(overviewMarkdown)) return null;
+
   return {
     summary: firstNonEmptyParagraph(overviewMarkdown),
     overviewMarkdown,
-    findings: parseNativeFindings(overviewMarkdown),
+    findings: textFindings,
   };
 }
