@@ -3986,6 +3986,15 @@ Run-on writer or store is added.
 
 ## SDK protocol evolution
 
+Unreleased 0.3 Machine isolation unavailable status adds optional
+`prerequisite: { reason, requiredFact, remedy }` for preparation refusals before
+native CHECK. The reason and required fact are closed; the remedy is non-secret
+display text selected by the preparation owner. Existing statuses remain readable.
+Matching development Protocol readers must load with the daemon producer because
+older strict readers reject the added field. This extends the existing preview,
+Machine publication and operation-detail schemas without a new wire epoch,
+runtime ABI, migration or compatibility adapter.
+
 The unreleased 0.3 Machine terminal request adds the closed `service_shell`
 launch intent. Its service id and reviewed native generation are resolved by
 the receiving service owner; callers cannot combine it with a cwd, Workspace

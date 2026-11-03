@@ -39,6 +39,11 @@ export const MachineAgentIsolationUnavailableStatusV1Schema = lazyZodSchema(() =
     'mcp_socket_access_unavailable', 'local_admin_api_accessible', 'metadata_unavailable']),
   // Publish only the prerequisite cause, without native recovery payloads.
   setup: z.optional(z.pick(MachineElevatedNotAppliedResultV1Schema, { outcome: true, reasonCode: true, failure: true })),
+  // Preparation can stop before native CHECK has a setup result to report.
+  prerequisite: z.optional(z.strictObject({ reason: z.literal('required_fact_unavailable'),
+    requiredFact: z.enum(['session_inventory', 'daemon_identity', 'workspace_census', 'workspace_paths']),
+    remedy: id,
+  })),
 }));
 export const MachineAgentIsolationStatusV1Schema = lazyZodSchema(() => z.union([
   z.strictObject({ kind: z.literal('effective'), platform: z.literal('linux'), agentUser: z.literal('happier-agent') }),

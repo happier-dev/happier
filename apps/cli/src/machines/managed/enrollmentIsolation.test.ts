@@ -6,6 +6,9 @@ import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/action
 describe('managed enrollment isolation refusal', () => {
     it.each([
         { kind: 'unavailable', status: { kind: 'unavailable', code: 'provisioning_unavailable' } },
+        { kind: 'unavailable', status: { kind: 'unavailable', code: 'provisioning_unavailable',
+            prerequisite: { reason: 'required_fact_unavailable', requiredFact: 'workspace_census',
+                remedy: 'Restore the Machine project/workspace subscription on its Home, then review isolation.' } } },
         { kind: 'unavailable', status: { kind: 'unavailable', code: 'provisioning_unavailable' },
             setup: { outcome: 'not_applied', reasonCode: 'native_check_unavailable',
                 failure: { kind: 'native_check_unavailable', reason: 'required_fact_unavailable' },
@@ -14,7 +17,7 @@ describe('managed enrollment isolation refusal', () => {
         const operations = createHostActionOperationRuntime({ machineId: 'controller', resolveAccountId: async () => 'owner',
             generateOperationId: () => 'isolation-refusal' });
         const details = { kind: 'managedAgentIsolation', phase: 'machines.agentIsolation.preview', status: {
-            kind: 'unavailable', code: 'provisioning_unavailable', ...('setup' in preview ? {
+            ...preview.status, ...('setup' in preview ? {
                 setup: { outcome: 'not_applied', reasonCode: 'native_check_unavailable',
                     failure: { kind: 'native_check_unavailable', reason: 'required_fact_unavailable' } },
             } : {}),

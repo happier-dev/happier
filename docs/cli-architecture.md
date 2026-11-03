@@ -38,6 +38,10 @@ its typed unavailable status and prerequisite reason through the existing Machin
 daemon-state owner; the controller preserves that same closed cause when reporting
 an isolation failure. Native recovery payloads are excluded. Authentication,
 admission and unknown failures still fail the operation.
+Preparation refusals before native CHECK carry `status.prerequisite` with a
+closed `reason` and `requiredFact`, plus a concrete `remedy`. The intent owner
+distinguishes an unavailable workspace census from a valid empty one and reports
+filesystem inspection failures without publishing paths or OS error text.
 
 
 This document describes the Happier CLI (`apps/cli`) and its daemon. The CLI is both an interactive tool and a background session manager that keeps machine state in sync with the server.

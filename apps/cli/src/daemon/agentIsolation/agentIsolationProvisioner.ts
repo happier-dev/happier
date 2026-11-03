@@ -1,5 +1,3 @@
-import { lstat, realpath } from 'node:fs/promises';
-import { dirname, isAbsolute } from 'node:path';
 import { applyMachineSetupEffectPlan, checkMachineSetupEffectPlan, createMachineSetupNativeBackend, type MachineSetupBackend } from '@happier-dev/cli-common/machineSetup';
 import { resolveMachineAgentExecutionPlacementV1, readMachineAgentIsolationPolicyV1, type AgentIsolationEffectPlanV1, type MachineAgentIsolationPolicyV1,
   type MachineAgentIsolationPreviewResultV1, type MachineAgentIsolationStatusV1, type MachineElevatedResultV1 } from '@happier-dev/protocol';
@@ -7,13 +5,12 @@ import type { MachineSetupEffectPlanV1 } from '@happier-dev/protocol/machines/se
 import { MachineSetupObservationReasonV1Schema } from '@happier-dev/protocol/machines/setup/machineSetupObservationReasonV1';
 import type { MachineMetadataFieldPortV1 } from '@happier-dev/protocol/machines/machineMetadataFieldV1';
 import { checkElevatedMachineSetupPlanResult, runElevatedEffect, runElevatedMachineSetupIntent, type MachineElevationDependencies } from '@/machines/adminAccess/runElevatedEffect';
-import { buildAgentIsolationProvisioningSteps, buildAgentIsolationMemberAccountStep, buildAgentIsolationMemberRetirementSteps,
+import { buildAgentIsolationMemberAccountStep, buildAgentIsolationMemberRetirementSteps,
   deriveAgentIsolationMemberIdentity, type AgentIsolationMemberRequester, type AgentIsolationDaemonObservation } from './provisioning';
 import { readAgentIsolationNativeIdentity, type AgentIsolationMemberNativeIdentity } from './agentIsolationNativeIdentity';
 import { readAgentIsolationMemberBinding, readAgentIsolationMemberBindingForAccount, writeAgentIsolationMemberBinding,
   type AgentIsolationMemberBindingScope } from './memberBindings';
-import { isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPath';
-import { buildUserManagerGroupRefreshStep } from '@/daemon/service/userManagerGroups';
+import { resolveAgentIsolationEffectIntentResult } from './effectIntent';
 import type { AgentIsolationReadinessSystem } from './agentIsolationReadiness';
 import type { MachineNativeEffectContext } from '@/daemon/local/services/launch/machineNativeEffectAdmission';
 export { ensureAgentIsolationMember, type EnsureAgentIsolationMemberInput,
@@ -45,47 +42,8 @@ export type PreparedAgentIsolationEffects = Readonly<{
 
 export async function resolveAgentIsolationEffectIntent(enabled: boolean, effects: AgentIsolationEffectDependencies,
   requesterIdentity?: AgentIsolationMemberRequester, retainedMemberUid?: number) {
-  const sessionsToReplace = effects.readSessionsToReplace();
-  if (!Number.isSafeInteger(sessionsToReplace) || sessionsToReplace < 0) return null;
-  // Off changes future admission, not permissions or ownership. Its actual
-  // filesystem effect is empty; a missing checkout must not block recovery.
-  if (!enabled) return { roots: [], ancestorAcls: [], sessionsToReplace, steps: [] };
-  const daemon = await effects.elevation.observe();
-  if (daemon.daemonIdentity !== 'nonRoot' || daemon.daemonUid === null || daemon.daemonUid <= 0 || !daemon.daemonUsername || !daemon.daemonPrimaryGroup) return null;
-  if (requesterIdentity) return { roots: [], ancestorAcls: [], sessionsToReplace: 0, daemonObservation: daemon,
-    steps: buildAgentIsolationProvisioningSteps({ daemonUsername: daemon.daemonUsername, daemonPrimaryGroup: daemon.daemonPrimaryGroup, binaryPath: effects.installedCli, requesterIdentity, retainedMemberUid }) };
-  const admitted = effects.readRoots();
-  // A newly created server may have no Workspace yet. Only an unavailable
-  // census is unknown; a known empty census still needs account/RunAs setup.
-  if (!admitted) return null;
-  const protectedRoots = await Promise.all((effects.protectedRoots ?? []).map(async path => {
-    try { return await realpath(path); }
-    catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return path; throw error; }
-  }));
-  const roots = await Promise.all(admitted.map(async root => {
-    if (!isAbsolute(root.path) || !root.rootId) throw new Error('workspace_not_ready');
-    const path = await realpath(root.path);
-    if (path === dirname(path) || !(await lstat(path)).isDirectory()
-      || protectedRoots.some(protectedRoot => isCanonicalAbsolutePathInsideRoot(protectedRoot, path)
-        || isCanonicalAbsolutePathInsideRoot(path, protectedRoot))) throw new Error('workspace_not_ready');
-    return { rootId: root.rootId, path };
-  }));
-  roots.sort((left, right) => left.rootId.localeCompare(right.rootId) || left.path.localeCompare(right.path));
-  const ancestors = new Set<string>();
-  for (const root of roots) for (let path = dirname(root.path); path !== dirname(path); path = dirname(path)) {
-    const stat = await lstat(path);
-    if (stat.isSymbolicLink() || !stat.isDirectory()) throw new Error('workspace_not_ready');
-    if (!(stat.mode & 0o001)) ancestors.add(path);
-  }
-  const ancestorAcls = [...ancestors].sort().map(path => ({ path, add: 'x' as const }));
-  const steps = [
-    ...buildAgentIsolationProvisioningSteps({ daemonUsername: daemon.daemonUsername, daemonPrimaryGroup: daemon.daemonPrimaryGroup, binaryPath: effects.installedCli }),
-    ...ancestorAcls.map((acl, index) => ({ id: `ancestor-${index}`, kind: 'pathTraversal' as const, path: acl.path, agentUsername: 'happier-agent' })),
-    ...roots.map(root => ({ id: `workspace-${root.rootId}`, kind: 'workspaceAccess' as const, path: root.path,
-      group: 'happier-workspace', agentUsername: 'happier-agent' })),
-    buildUserManagerGroupRefreshStep({ uid: daemon.daemonUid, username: daemon.daemonUsername }),
-  ];
-  return { roots, ancestorAcls, sessionsToReplace, steps, daemonObservation: daemon };
+  const result = await resolveAgentIsolationEffectIntentResult(enabled, effects, requesterIdentity, retainedMemberUid);
+  return result.kind === 'ready' ? result.intent : null;
 }
 
 /** One review/digest owner, reused before every CAS and inside elevated APPLY. */
@@ -114,8 +72,9 @@ export async function prepareAgentIsolationEffectsResult(input: Readonly<{
   if (snapshot.status !== 'ready') return unavailable('metadata_unavailable');
   const policy = readMachineAgentIsolationPolicyV1(snapshot.metadata);
   if (policy.status !== 'ready') return unavailable('metadata_unavailable');
-  const intent = await resolveAgentIsolationEffectIntent(input.enabled, effects, input.requesterIdentity);
-  if (!intent) return unavailable();
+  const resolved = await resolveAgentIsolationEffectIntentResult(input.enabled, effects, input.requesterIdentity);
+  if (resolved.kind === 'unavailable') return resolved;
+  const intent = resolved.intent;
   const { roots, ancestorAcls, sessionsToReplace, steps } = intent;
   const memberReview = input.enabled && input.memberProvisioning === 'linuxUsersV1'
     ? { memberProvisioning: 'linuxUsersV1' as const } : {};
