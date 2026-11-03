@@ -9,7 +9,6 @@ import {
     RPC_METHODS,
     SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS,
 } from '@happier-dev/protocol/rpc';
-import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
 import { resolveMachineRpcTargetServerId } from '@/sync/runtime/orchestration/serverScopedRpc/resolveMachineRpcTargetServerId';
@@ -67,6 +66,11 @@ function isUnsupportedDaemonError(error: unknown): boolean {
     return projectSessionRunnerReadFailureV1('status-read', error).status === 'unsupported_daemon';
 }
 
+function isRestartMethodUnavailable(error: unknown): boolean {
+    const code = projectSessionRunnerReadFailureV1('restart', error).diagnostics?.errorCode;
+    return code === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE || code === 'METHOD_NOT_AVAILABLE';
+}
+
 function buildUnsupportedDaemonResult(sessionId: string): RestartSessionRunnerResultV1 {
     return buildResult({
         sessionId,
@@ -115,7 +119,7 @@ async function sendSessionRunnerRestartRequest<Request>(input: RestartSessionRun
                 sessionId: input.runtimeState.sessionId,
             },
         });
-        if (isUnsupportedDaemonError(raw) || (input.fallbackMethod && readRpcErrorCode(raw) === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE)
+        if (isUnsupportedDaemonError(raw) || (input.fallbackMethod && isRestartMethodUnavailable(raw))
             || (!input.fallbackMethod && isRpcMethodNotFoundResult(raw))) {
             return await unsupported();
         }
@@ -125,7 +129,7 @@ async function sendSessionRunnerRestartRequest<Request>(input: RestartSessionRun
             ? parsed.data : projectSessionRunnerReadFailureV1(input.runtimeState.sessionId, raw);
     } catch (error) {
         input.signal?.throwIfAborted();
-        if (isUnsupportedDaemonError(error) || (input.fallbackMethod && readRpcErrorCode(error) === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE)) {
+        if (isUnsupportedDaemonError(error) || (input.fallbackMethod && isRestartMethodUnavailable(error))) {
             return await unsupported();
         }
         result = projectSessionRunnerReadFailureV1(input.runtimeState.sessionId, error);
