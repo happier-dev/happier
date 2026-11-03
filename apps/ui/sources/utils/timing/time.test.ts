@@ -138,6 +138,43 @@ describe('createBackoff', () => {
         }
     });
 
+    it('settles an AbortError at once without another attempt, notification or wait', async () => {
+        vi.useFakeTimers();
+        try {
+            const onRetry = vi.fn();
+            // A permissive caller policy still cannot retry a cancelled attempt.
+            const retry = createBackoff({ minDelay: 60_000, maxDelay: 60_000, shouldRetry: () => true, onRetry });
+            const aborted = new DOMException('Aborted', 'AbortError');
+            const callback = vi.fn(async () => { throw aborted; });
+            const settled = retry(callback).then(() => 'resolved', (error: unknown) => error);
+            await vi.advanceTimersByTimeAsync(0);
+            await expect(Promise.race([settled, Promise.resolve('pending')])).resolves.toBe(aborted);
+            expect(callback).toHaveBeenCalledTimes(1);
+            expect(onRetry).not.toHaveBeenCalled();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('settles with the abort as soon as its signal aborts mid-backoff', async () => {
+        vi.useFakeTimers();
+        try {
+            const retry = createBackoff({ minDelay: 60_000, maxDelay: 60_000 });
+            const controller = new AbortController();
+            const callback = vi.fn(async () => { throw new Error('fail'); });
+            const settled = retry(callback, { signal: controller.signal }).then(() => 'resolved', (error: unknown) => error);
+            await vi.advanceTimersByTimeAsync(0);
+            expect(callback).toHaveBeenCalledTimes(1);
+            controller.abort();
+            await vi.advanceTimersByTimeAsync(0);
+            await expect(Promise.race([settled, Promise.resolve('pending')])).resolves.toBe(controller.signal.reason);
+            await vi.runAllTimersAsync();
+            expect(callback).toHaveBeenCalledTimes(1);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
     it('does not retry endpoint offline HappyErrors by default', async () => {
         vi.useFakeTimers();
         try {

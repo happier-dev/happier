@@ -60,7 +60,31 @@ export function linearBackoffDelay(currentFailureCount: number, minDelay: number
     return Math.max(minDelay, Math.round(jittered));
 }
 
-export type BackoffFunc = <T>(callback: () => Promise<T>) => Promise<T>;
+export type BackoffFunc = <T>(callback: () => Promise<T>, options?: Readonly<{ signal?: AbortSignal }>) => Promise<T>;
+
+function abortReason(signal: AbortSignal): unknown {
+    return signal.reason ?? Object.assign(new Error('Aborted'), { name: 'AbortError' });
+}
+
+function isAbortError(error: unknown): boolean {
+    return typeof error === 'object' && error !== null && 'name' in error && error.name === 'AbortError';
+}
+
+/** Waits out a retry delay, settling at once with the abort when the caller cancels. */
+function delayUnlessAborted(ms: number, signal: AbortSignal | undefined): Promise<void> {
+    if (!signal) return delay(ms).then(() => undefined);
+    return new Promise<void>((resolve, reject) => {
+        const onAbort = () => {
+            clearTimeout(timer);
+            reject(abortReason(signal));
+        };
+        const timer = setTimeout(() => {
+            signal.removeEventListener('abort', onAbort);
+            resolve();
+        }, ms);
+        signal.addEventListener('abort', onAbort, { once: true });
+    });
+}
 
 export function createBackoff(
     opts?: {
@@ -71,7 +95,8 @@ export function createBackoff(
         maxDelay?: number,
         maxFailureCount?: number
     }): BackoffFunc {
-    return async <T>(callback: () => Promise<T>): Promise<T> => {
+    return async <T>(callback: () => Promise<T>, options?: Readonly<{ signal?: AbortSignal }>): Promise<T> => {
+        const signal = options?.signal;
         let currentFailureCount = 0;
         const minDelay = opts && opts.minDelay !== undefined ? opts.minDelay : 250;
         const maxDelay = opts && opts.maxDelay !== undefined ? opts.maxDelay : 1000;
@@ -81,9 +106,13 @@ export function createBackoff(
             ? opts.shouldRetry
             : shouldRetryError;
         while (true) {
+            if (signal?.aborted) throw abortReason(signal);
             try {
                 return await callback();
             } catch (e) {
+                // A cancelled attempt is never retried, whatever the caller's retry policy says.
+                if (signal?.aborted) throw abortReason(signal);
+                if (isAbortError(e)) throw e;
                 if (isServerFetchReadSupersededError(e)) continue;
                 currentFailureCount++;
                 if (!shouldRetry(e, currentFailureCount)) {
@@ -99,7 +128,7 @@ export function createBackoff(
                 if (opts && opts.onRetry) {
                     opts.onRetry(e, currentFailureCount, waitForRequest);
                 }
-                await delay(waitForRequest);
+                await delayUnlessAborted(waitForRequest, signal);
             }
         }
     };
