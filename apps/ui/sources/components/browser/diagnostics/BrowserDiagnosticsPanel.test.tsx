@@ -3,6 +3,9 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 
+// Load the required renderer during collection, before a case starts its render/interaction deadline.
+import './BrowserDiagnosticsPanel';
+
 vi.mock('react-native-unistyles', async () => {
   const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
   return createUnistylesMock();
