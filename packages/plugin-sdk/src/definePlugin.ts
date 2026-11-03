@@ -76,6 +76,7 @@ import type {
 import type { PromptAssetContribution } from './resources.js';
 import type {
     ConnectedAccountRuntime,
+    ConnectedAccountPortableRuntime,
     PluginConnectedAccountDescriptorContributionV2,
 } from './connectedAccounts.js';
 import type {
@@ -503,7 +504,10 @@ export type PluginConnectedAccountDefinition = RuntimeContributionDefinition<
     ConnectedAccountRuntime,
     'runtime',
     ReadonlyAuthorDeclaration<DistributiveOmit<PluginConnectedAccountDescriptorContributionV2, 'id'>>
->;
+> & Readonly<{
+    /** Portable callbacks in the declared authentication.account artifact. */
+    accountRuntime?: ConnectedAccountPortableRuntime;
+}>;
 export type PluginRequestInterceptorDefinition = RuntimeContributionDefinition<
     'requestInterceptors',
     PluginRequestInterceptor,
@@ -2229,7 +2233,7 @@ const SCM_BACKENDS_ADAPTER = runtimeDefinitionAdapter<PluginScmBackendDefinition
 });
 const CONNECTED_ACCOUNTS_ADAPTER = runtimeDefinitionAdapter<PluginConnectedAccountDefinition>({
     authorKey: 'connectedAccountDescriptors',
-    runtimeReceiverPaths: [['*', 'runtime']],
+    runtimeReceiverPaths: [['*', 'runtime'], ['*', 'accountRuntime']],
     register: (api, localId, definition) => api.connectedAccounts.register(localId, definition.runtime),
 });
 const REQUEST_INTERCEPTORS_ADAPTER = runtimeDefinitionAdapter<PluginRequestInterceptorDefinition>({
@@ -3055,6 +3059,12 @@ function definePluginImplementation<
         const targets = new Map(accountDefinitions.map(([, definition]) => [
             JSON.stringify([definition.execution.account.artifactId, definition.execution.account.exportName]), definition.execution.account,
         ]));
+        const authenticationDefinitions = Object.entries(capturedInput.connectedAccountDescriptors ?? {})
+            .filter(([, definition]) => definition.declaration.authentication.account !== undefined);
+        for (const [, definition] of authenticationDefinitions) {
+            const account = definition.declaration.authentication.account!;
+            targets.set(JSON.stringify([account.artifactId, account.exportName]), account);
+        }
         if (!selectedTarget && targets.size > 1) {
             throw new TypeError('Multiple Account activation targets require an exact artifactId and exportName');
         }
@@ -3066,6 +3076,14 @@ function definePluginImplementation<
                 throw new TypeError(`Account Action '${localId}' requires its separately declared portable activation handler`);
             }
             api.actions.register(localId, normalizeActionHandler({ ...definition, run: definition.run }));
+        }
+        for (const [localId, definition] of authenticationDefinitions) {
+            const account = definition.declaration.authentication.account!;
+            if (account.artifactId !== target?.artifactId || account.exportName !== target.exportName) continue;
+            if (!definition.accountRuntime) {
+                throw new TypeError(`Connected Account '${localId}' requires its separately declared portable authentication runtime`);
+            }
+            api.connectedAccounts.register(localId, definition.accountRuntime);
         }
     };
 

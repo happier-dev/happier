@@ -28,7 +28,7 @@ import {
   readComposerAttachmentRuntimeRegistrationFieldsV1,
   type ComposerAttachmentRuntimeRegistrationFieldV1,
 } from './composerAttachments.js';
-import type { PluginClientExecutionPlatformV1 } from './clientExecution.js';
+import { PluginClientExecutionReferenceV1Schema, type PluginClientExecutionPlatformV1 } from './clientExecution.js';
 import type { VoiceProviderContribution } from './voiceProviders.js';
 import { isBundledProviderCatalogParserV1 } from '../../providers/catalog/descriptorV1.js';
 import { isBundledProviderCommandCatalogParserV1 } from '../../providers/detection/descriptorV1.js';
@@ -97,6 +97,13 @@ export type PluginContributionRegistrationRight = Readonly<{
   providerArms?: Readonly<{
     managedRuntime: boolean;
     catalogParserIds: readonly string[];
+  }>;
+}>;
+
+export type PluginAccountExecutionArtifactSlot = Readonly<{
+  contributionId: string;
+  registrationRight: PluginContributionRegistrationRight & Readonly<{
+    target: Extract<PluginContributionRegistrationTarget, { realm: 'account' }>;
   }>;
 }>;
 
@@ -234,7 +241,7 @@ secretSources: { identityField: 'id', disposition: 'retained', activationDemand:
   notificationChannels: { identityField: 'id', disposition: 'reshaped', activationDemand: 'registration', projectionFamily: null, allowedRuntimeRegistration: 'notifications', consumer: 'notification-service', platforms: CLI_PLATFORMS },
   scmHostingProviders: { identityField: 'id', disposition: 'reshaped', activationDemand: 'registration', projectionFamily: 'scmHostingProviders', allowedRuntimeRegistration: 'scm', consumer: 'scm-host', platforms: CLI_PLATFORMS },
   scmBackends: { identityField: 'id', disposition: 'reshaped', activationDemand: 'registration', projectionFamily: 'scmBackends', allowedRuntimeRegistration: 'scm', consumer: 'scm-host', platforms: CLI_PLATFORMS },
-  connectedAccountDescriptors: { identityField: 'id', disposition: 'reshaped', activationDemand: 'registration', projectionFamily: 'connectedAccounts', allowedRuntimeRegistration: 'connectedAccounts', consumer: 'connected-account-service', platforms: CLI_PLATFORMS },
+  connectedAccountDescriptors: { identityField: 'id', disposition: 'reshaped', activationDemand: 'registration', projectionFamily: 'connectedAccounts', allowedRuntimeRegistration: 'connectedAccounts', consumer: 'connected-account-service', platforms: ALL_PLATFORMS },
   managedDependencies: { identityField: 'id', disposition: 'reshaped', activationDemand: 'none', projectionFamily: 'managedDependencies', allowedRuntimeRegistration: null, consumer: 'managed-dependency-service', platforms: CLI_PLATFORMS },
   systemTools: { identityField: 'id', disposition: 'reshaped', activationDemand: 'none', projectionFamily: null, allowedRuntimeRegistration: null, consumer: 'system-tool-service', platforms: CLI_PLATFORMS },
   promptAssets: { identityField: 'id', disposition: 'reshaped', activationDemand: 'none', projectionFamily: null, allowedRuntimeRegistration: null, consumer: 'prompt-service', platforms: CLI_PLATFORMS },
@@ -294,6 +301,14 @@ function extractNestedReferences(family: string, value: Readonly<Record<string, 
       revision: item.selection.ref.revision,
       path: ['setup', 'items', index, 'selection', 'ref'],
     }]);
+  }
+  if (family === 'connectedAccountDescriptors') {
+    const authentication = value.authentication as Readonly<{ account?: unknown }> | undefined;
+    const parsed = PluginClientExecutionReferenceV1Schema.safeParse(authentication?.account);
+    return parsed.success ? [{
+      targetFamily: 'generated.uiArtifacts', reference: parsed.data.artifactId,
+      path: ['authentication', 'account', 'artifactId'],
+    }] : [];
   }
   if (family === 'actions') {
     const parsed = PluginActionDeclaredExecutionV2Schema.safeParse(value.execution);
@@ -1152,6 +1167,20 @@ export function derivePluginContributionRegistrationRights(
   return derivePluginContributionRegistrationRightsForHost(contributes);
 }
 
+/** Shared release-slot coordinates retain the catalog's exact Account registration right. */
+export function derivePluginAccountExecutionArtifactSlots(
+  contributes: Readonly<Record<string, unknown>>,
+): readonly PluginAccountExecutionArtifactSlot[] {
+  return Object.freeze(derivePluginContributionRegistrationRights(contributes)
+    .filter((right): right is PluginAccountExecutionArtifactSlot['registrationRight'] => right.target.realm === 'account')
+    .map((registrationRight) => ({
+      contributionId: registrationRight.family === 'actions'
+        ? registrationRight.localId
+        : `${registrationRight.family}/${registrationRight.localId}`,
+      registrationRight,
+    })));
+}
+
 function derivePluginContributionRegistrationRightsForHost(
   contributes: Readonly<Record<string, unknown>>,
   host?: Exclude<PluginContributionCatalogEntryV2['registrationHost'], null>,
@@ -1166,65 +1195,72 @@ function derivePluginContributionRegistrationRightsForHost(
     entry.readEntries(contributes).flatMap((value) => {
       if (!value || typeof value !== 'object' || !entry.requiresRegistration(value as Readonly<Record<string, unknown>>)) return [];
       const record = value as Readonly<Record<string, unknown>>;
-      const target = entry.runtimeRegistrationTarget(record);
-      if (target === null || (host !== undefined && target.realm !== host)) return [];
-      if (accountTarget !== undefined && (target.realm !== 'account'
-        || target.artifactId !== accountTarget.artifactId || target.exportName !== accountTarget.exportName)) return [];
-      if (clientTarget !== undefined && (
-        target.realm !== 'client'
-        || target.artifactId !== clientTarget.artifactId
-        || target.exportName !== clientTarget.exportName
-        || !target.platforms.includes(clientTarget.platform)
-      )) return [];
-      const localId = entry.identityField === null ? null : (value as Readonly<Record<string, unknown>>)[entry.identityField];
-      const family = entry.runtimeRegistrationFamily(record);
-      if (typeof localId !== 'string') return [];
-      if (entry.manifestKey === 'projectNativeAdapters') {
-        return [{ family, localId, target, projectNativeAdapterRoles: Object.freeze([...(record.roles as readonly ProjectNativeAdapterRoleV1[])]) }];
-      }
-      if (entry.manifestKey === 'connectedAccountDescriptors') {
-        return [{
-          family,
-          localId,
-          target,
-          connectedAccountDescriptorDeclaration:
-            record as PluginConnectedAccountDescriptorContributionV2,
-        }];
-      }
-      if (entry.manifestKey === 'voiceProviders') {
-        return [{
-          family,
-          localId,
-          target,
-          voiceProviderDeclaration: record as VoiceProviderContribution,
-        }];
-      }
-      if (entry.manifestKey === 'composerAttachments') {
-        const fields = readComposerAttachmentRuntimeRegistrationFieldsV1(record.runtime);
-        return fields.length === 0 ? [] : [{ family, localId, target, requiredFields: fields }];
-      }
-      if (entry.manifestKey === 'providers') {
-        return [{
-          family,
-          localId,
-          target,
-          providerArms: Object.freeze({
-            managedRuntime: declaresProviderManagedRuntimeV1(record),
-            catalogParserIds: readContributedProviderCatalogParserIds(record),
-          }),
-        }];
-      }
-      if (entry.manifestKey !== 'agents') return [{ family, localId, target }];
-      assertExclusiveAgentPrimaryLifecycle(record);
-      const fields: ('factory' | 'sessionRunnerFactory' | 'cliAuth' | 'terminal' | 'externalSessions')[] = [];
-      if ((record.runtime as Readonly<{ kind?: unknown }> | undefined)?.kind === 'custom') {
-        fields.push('factory');
-        if (declaresAgentSessions(record)) fields.push('sessionRunnerFactory');
-      }
-      if (declaresAgentCliAuth(record)) fields.push('cliAuth');
-      if (declaresContributedAgentTerminal(record)) fields.push('terminal');
-      if (requiresContributedAgentExternalSessions(record)) fields.push('externalSessions');
-      return [{ family, localId, target, requiredFields: Object.freeze(fields) }];
+      const primaryTarget = entry.runtimeRegistrationTarget(record);
+      const authentication = entry.manifestKey === 'connectedAccountDescriptors'
+        ? record.authentication as Readonly<{ account?: unknown }> | undefined : undefined;
+      const account = authentication?.account === undefined ? null : PluginClientExecutionReferenceV1Schema.safeParse(authentication.account);
+      const targets: readonly (PluginContributionRegistrationTarget | null)[] = account?.success
+        ? [primaryTarget, { realm: 'account', ...account.data }] : [primaryTarget];
+      return targets.flatMap((target): PluginContributionRegistrationRight[] => {
+        if (target === null || (host !== undefined && target.realm !== host)) return [];
+        if (accountTarget !== undefined && (target.realm !== 'account'
+          || target.artifactId !== accountTarget.artifactId || target.exportName !== accountTarget.exportName)) return [];
+        if (clientTarget !== undefined && (
+          target.realm !== 'client'
+          || target.artifactId !== clientTarget.artifactId
+          || target.exportName !== clientTarget.exportName
+          || !target.platforms.includes(clientTarget.platform)
+        )) return [];
+        const localId = entry.identityField === null ? null : (value as Readonly<Record<string, unknown>>)[entry.identityField];
+        const family = entry.runtimeRegistrationFamily(record);
+        if (typeof localId !== 'string') return [];
+        if (entry.manifestKey === 'projectNativeAdapters') {
+          return [{ family, localId, target, projectNativeAdapterRoles: Object.freeze([...(record.roles as readonly ProjectNativeAdapterRoleV1[])]) }];
+        }
+        if (entry.manifestKey === 'connectedAccountDescriptors') {
+          return [{
+            family,
+            localId,
+            target,
+            connectedAccountDescriptorDeclaration:
+              record as PluginConnectedAccountDescriptorContributionV2,
+          }];
+        }
+        if (entry.manifestKey === 'voiceProviders') {
+          return [{
+            family,
+            localId,
+            target,
+            voiceProviderDeclaration: record as VoiceProviderContribution,
+          }];
+        }
+        if (entry.manifestKey === 'composerAttachments') {
+          const fields = readComposerAttachmentRuntimeRegistrationFieldsV1(record.runtime);
+          return fields.length === 0 ? [] : [{ family, localId, target, requiredFields: fields }];
+        }
+        if (entry.manifestKey === 'providers') {
+          return [{
+            family,
+            localId,
+            target,
+            providerArms: Object.freeze({
+              managedRuntime: declaresProviderManagedRuntimeV1(record),
+              catalogParserIds: readContributedProviderCatalogParserIds(record),
+            }),
+          }];
+        }
+        if (entry.manifestKey !== 'agents') return [{ family, localId, target }];
+        assertExclusiveAgentPrimaryLifecycle(record);
+        const fields: ('factory' | 'sessionRunnerFactory' | 'cliAuth' | 'terminal' | 'externalSessions')[] = [];
+        if ((record.runtime as Readonly<{ kind?: unknown }> | undefined)?.kind === 'custom') {
+          fields.push('factory');
+          if (declaresAgentSessions(record)) fields.push('sessionRunnerFactory');
+        }
+        if (declaresAgentCliAuth(record)) fields.push('cliAuth');
+        if (declaresContributedAgentTerminal(record)) fields.push('terminal');
+        if (requiresContributedAgentExternalSessions(record)) fields.push('externalSessions');
+        return [{ family, localId, target, requiredFields: Object.freeze(fields) }];
+      });
     })
   )));
 }
