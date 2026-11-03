@@ -3,9 +3,9 @@
 export type NavigationPlacementTranslation = Readonly<{
     customize: string; title: string; description: string;
     pinned: string; overflow: string; hidden: string; reset: string;
-    appRail: string; sessionRail: string; workspaceRail: string; sessionTabBar: string; phoneLauncher: string;
+    appRail: string; sessionRail: string; workspaceRail: string; sessionTabBar: string; projectTabBar: string; phoneLauncher: string;
     composer: string;
 }>;
 
 
-export const navigationPlacementTranslationsEnglish = { en: { customize: 'Customize…', title: 'Navigation', description: 'Choose what stays visible, goes in More, or is hidden. Drag to reorder. Saved on this device.', pinned: 'Pinned', overflow: 'More', hidden: 'Hidden', reset: 'Reset', appRail: 'Left rail', sessionRail: 'Session rail', workspaceRail: 'Workspace rail', sessionTabBar: 'Phone tab bar', phoneLauncher: 'Phone shortcuts', composer: 'Composer' } } satisfies Pick<Record<string, NavigationPlacementTranslation>, "en">;
+export const navigationPlacementTranslationsEnglish = { en: { customize: 'Customize…', title: 'Navigation', description: 'Choose what stays visible, goes in More, or is hidden. Drag to reorder. Saved on this device.', pinned: 'Pinned', overflow: 'More', hidden: 'Hidden', reset: 'Reset', appRail: 'Left rail', sessionRail: 'Session rail', workspaceRail: 'Workspace rail', sessionTabBar: 'Phone tab bar', projectTabBar: 'Project tabs', phoneLauncher: 'Phone shortcuts', composer: 'Composer' } } satisfies Pick<Record<string, NavigationPlacementTranslation>, "en">;

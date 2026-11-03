@@ -8084,7 +8084,7 @@ return { nativePasswordTranslations };
 const Domain_navigationPlacementTranslations = (() => {
 type NavigationPlacementTranslation = Shared_navigationPlacementTranslations.NavigationPlacementTranslation;
 
-const navigationPlacementTranslations = { ja: { customize: 'カスタマイズ…', title: 'ナビゲーション', description: '表示、「その他」、非表示を選択します。ドラッグして並べ替え。このデバイスに保存されます。', pinned: '固定', overflow: 'その他', hidden: '非表示', reset: 'リセット', appRail: '左レール', sessionRail: 'セッションレール', workspaceRail: 'ワークスペースレール', sessionTabBar: 'スマートフォンのタブバー', phoneLauncher: 'スマートフォンのショートカット', composer: '入力欄' } } satisfies Pick<Record<string, NavigationPlacementTranslation>, "ja">;
+const navigationPlacementTranslations = { ja: { customize: 'カスタマイズ…', title: 'ナビゲーション', description: '表示、「その他」、非表示を選択します。ドラッグして並べ替え。このデバイスに保存されます。', pinned: '固定', overflow: 'その他', hidden: '非表示', reset: 'リセット', appRail: '左レール', sessionRail: 'セッションレール', workspaceRail: 'ワークスペースレール', sessionTabBar: 'スマートフォンのタブバー', projectTabBar: 'プロジェクトのタブ', phoneLauncher: 'スマートフォンのショートカット', composer: '入力欄' } } satisfies Pick<Record<string, NavigationPlacementTranslation>, "ja">;
 
 return { navigationPlacementTranslations };
 })();

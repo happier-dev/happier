@@ -8089,7 +8089,7 @@ return { nativePasswordTranslations };
 const Domain_navigationPlacementTranslations = (() => {
 type NavigationPlacementTranslation = Shared_navigationPlacementTranslations.NavigationPlacementTranslation;
 
-const navigationPlacementTranslations = { it: { customize: 'Personalizza…', title: 'Navigazione', description: 'Scegli cosa resta visibile, va in Altro o viene nascosto. Trascina per riordinare. Salvato su questo dispositivo.', pinned: 'Fissato', overflow: 'Altro', hidden: 'Nascosto', reset: 'Ripristina', appRail: 'Barra sinistra', sessionRail: 'Barra della sessione', workspaceRail: 'Barra dello spazio di lavoro', sessionTabBar: 'Schede del telefono', phoneLauncher: 'Scorciatoie del telefono', composer: 'Compositore' } } satisfies Pick<Record<string, NavigationPlacementTranslation>, "it">;
+const navigationPlacementTranslations = { it: { customize: 'Personalizza…', title: 'Navigazione', description: 'Scegli cosa resta visibile, va in Altro o viene nascosto. Trascina per riordinare. Salvato su questo dispositivo.', pinned: 'Fissato', overflow: 'Altro', hidden: 'Nascosto', reset: 'Ripristina', appRail: 'Barra sinistra', sessionRail: 'Barra della sessione', workspaceRail: 'Barra dello spazio di lavoro', sessionTabBar: 'Schede del telefono', projectTabBar: 'Schede del progetto', phoneLauncher: 'Scorciatoie del telefono', composer: 'Compositore' } } satisfies Pick<Record<string, NavigationPlacementTranslation>, "it">;
 
 return { navigationPlacementTranslations };
 })();

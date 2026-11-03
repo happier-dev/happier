@@ -8079,7 +8079,7 @@ return { nativePasswordTranslations };
 const Domain_navigationPlacementTranslations = (() => {
 type NavigationPlacementTranslation = Shared_navigationPlacementTranslations.NavigationPlacementTranslation;
 
-const navigationPlacementTranslations = { 'zh-Hans': { customize: '自定义…', title: '导航', description: '选择保持显示、放入“更多”或隐藏的项目。拖动以排序。保存在此设备上。', pinned: '固定', overflow: '更多', hidden: '隐藏', reset: '重置', appRail: '左侧栏', sessionRail: '会话侧栏', workspaceRail: '工作区侧栏', sessionTabBar: '手机标签栏', phoneLauncher: '手机快捷方式', composer: '输入框' } } satisfies Pick<Record<string, NavigationPlacementTranslation>, "zh-Hans">;
+const navigationPlacementTranslations = { 'zh-Hans': { customize: '自定义…', title: '导航', description: '选择保持显示、放入“更多”或隐藏的项目。拖动以排序。保存在此设备上。', pinned: '固定', overflow: '更多', hidden: '隐藏', reset: '重置', appRail: '左侧栏', sessionRail: '会话侧栏', workspaceRail: '工作区侧栏', sessionTabBar: '手机标签栏', projectTabBar: '项目标签栏', phoneLauncher: '手机快捷方式', composer: '输入框' } } satisfies Pick<Record<string, NavigationPlacementTranslation>, "zh-Hans">;
 
 return { navigationPlacementTranslations };
 })();
