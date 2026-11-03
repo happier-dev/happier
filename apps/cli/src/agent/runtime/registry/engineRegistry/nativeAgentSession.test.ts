@@ -985,7 +985,23 @@ describe('native Agent session host adapter', () => {
                     const factories: Readonly<Record<string, AgentRuntimeFactory>> = await import(runtimePath);
                     const factory = factories[agentId === 'codex' ? 'createCodexAgentRuntime' : 'createOpenCodeAgentRuntime'];
                     if (!factory) throw new Error('Actual selected Agent runtime factory is unavailable');
-                    const runtime = await factory({ plugin: { id: pluginId, version: '0.0.0' }, agent: { id: agentId }, signal: generation.signal });
+                    const nativeRuntime = await factory({ plugin: { id: pluginId, version: '0.0.0' }, agent: { id: agentId }, signal: generation.signal });
+                    if (!nativeRuntime.sessions?.open) throw new Error('Actual selected Agent runtime omitted its Session surface');
+                    const launchPreparation = await createNativeAgentLaunchPreparationFixture();
+                    const hostExec = createStablePluginExecService({ signal: generation.signal,
+                        requesterIdentity: launchPreparation.requesterIdentity,
+                        isOccurrenceCurrent: () => !generation.signal.aborted,
+                        resolveExecutable: async () => { throw new Error('Native attach already resolved its executable'); },
+                        resolvePath: async () => directory,
+                        prepareAgentNativeLaunch: launchPreparation.prepare(directory, generation.signal),
+                    });
+                    // Only the vendor process/client transport uses the existing boundary fixture.
+                    // The native host captures attach authority from its genuine Exec producer.
+                    const runtime: AgentRuntime = { ...nativeRuntime, sessions: { ...nativeRuntime.sessions,
+                        open: (request, context) => nativeRuntime.sessions!.open!(request, {
+                            ...context, services: { ...context.services, exec },
+                        }),
+                    } };
                     if (!runtime.sessions?.resolveTerminalPresentation) throw new Error('The actual optional provider omitted its selected presentation');
                     const selected = await runtime.sessions.resolveTerminalPresentation({ cwd: directory, requestedHost: 'herdr', runtimeDescriptorV1: {
                         v: 1, agentId, agent: { backendMode: agentId === 'codex' ? 'appServer' : 'server' },
@@ -1021,7 +1037,7 @@ describe('native Agent session host adapter', () => {
                                 return { ok: response.ok };
                             } };
                         },
-                        createInvocationServices: async () => ({ ...baseServices, exec,
+                        createInvocationServices: async () => ({ ...baseServices, exec: hostExec,
                             logger: createPluginInvocationLogger({ seed: { plugin: { id: pluginId, version: '0.0.0' }, contribution: { id: agentId, qualifiedId: `${pluginId}/agents/${agentId}` }, occurrenceId: 'selected-optional', correlationId: session.sessionId, surface: 'agent', signal: generation.signal, isOccurrenceCurrent: () => !generation.signal.aborted }, sink: { write(record) { logger.infoFile('Selected optional provider fixture', record); } } }),
                             managedServices: { ...baseServices.managedServices, supervise: async () => managed },
                             connectedAccounts: { ...baseServices.connectedAccounts, getBinding: async () => null, watch: (_purpose, listener) => { queueMicrotask(() => { void listener({ kind: 'resync' }); }); return { dispose() {} }; } },
@@ -1079,7 +1095,7 @@ describe('native Agent session host adapter', () => {
                         ? ['--remote', endpoints[0], '--cd', directory, 'resume', providerSessionId]
                         : ['--server', baseUrl, '--session', providerSessionId, directory] });
                     expect(api.requests.filter(request => request.method === 'layout.apply')).toHaveLength(1);
-                    const attachment = await readTerminalHostAttachmentInfo({ happyHomeDir: directory, sessionId: session.sessionId });
+                    const attachment = await readTerminalHostAttachmentInfo({ happyHomeDir: launchPreparation.happyHomeDir, sessionId: session.sessionId });
                     if (!attachment || attachment.version !== 2) throw new Error('The optional client did not publish owned host custody');
                     // A native pane closing is an external process/socket event. The daemon's actual
                     // exact-host supervisor produces the metadata notification consumed by the mode owner.
@@ -1088,7 +1104,7 @@ describe('native Agent session host adapter', () => {
                     await terminateProcessTree(native.child, { ownedProcessGroup: true });
                     api.panes.clear();
                     await expect(superviseDisconnectedTerminalHostCandidate({
-                        candidate: { sessionId: session.sessionId, pid: process.pid, happyHomeDir: directory,
+                        candidate: { sessionId: session.sessionId, pid: process.pid, happyHomeDir: launchPreparation.happyHomeDir,
                             attachmentId: attachment.attachmentId, handle: attachment.handle, terminalMode: 'herdr' },
                         terminalHostAdapters: { herdr: createHerdrTerminalHostAdapter({ binary: herdrPath,
                             sessionName: 'selected-optional', socketPath: api.socketPath,
@@ -1106,7 +1122,7 @@ describe('native Agent session host adapter', () => {
                         },
                     })).resolves.toEqual({ state: 'stopped' });
                     await vi.waitFor(() => expect(session.__getAgentState().localControl).toMatchObject({ attached: false, canDetach: false, remoteWritable: true }));
-                    expect(await readTerminalHostAttachmentInfo({ happyHomeDir: directory, sessionId: session.sessionId })).toBeNull();
+                    expect(await readTerminalHostAttachmentInfo({ happyHomeDir: launchPreparation.happyHomeDir, sessionId: session.sessionId })).toBeNull();
                     const capturedPid = nativePid;
                     await vi.waitFor(() => expect(() => process.kill(capturedPid!, 0)).toThrow());
                     expect(managedServerDisposed).toBe(false);
@@ -1712,6 +1728,7 @@ describe('native Agent session host adapter', () => {
                     resolveLaunchSpec: () => ({ source: 'managed', resolvedPath: process.execPath,
                         command: process.execPath, args: [script] }),
                 });
+                const launchPreparation = await createNativeAgentLaunchPreparationFixture();
                 const plan = await createNativeAgentRuntimeSessionPlan({
                     runtime: { sessions: { open: async () => ({
                         send: async () => ({ status: 'admitted' as const }),
@@ -1726,6 +1743,12 @@ describe('native Agent session host adapter', () => {
                     agent: { ...external.agent, provenance: 'first_party', source: { kind: 'bundled' }, pluginId: 'happier.agent.codex' },
                     executionSurfaces: { ...createEmptyBackendExecutionSurfaces(), attach },
                     createSessionHostServiceOwners: () => createSessionHostServiceOwners(),
+                    createInvocationServices: async ({ signal }) => ({ ...createUnavailablePluginServices(),
+                        exec: createStablePluginExecService({ signal, requesterIdentity: launchPreparation.requesterIdentity, isOccurrenceCurrent: () => !signal.aborted,
+                            resolveExecutable: async () => { throw new Error('Native attach already resolved its executable'); },
+                            resolvePath: async () => directory, prepareAgentNativeLaunch: launchPreparation.prepare(directory, signal),
+                        }),
+                    }),
                     reportSessionMetadataToDaemon: async ({ metadata }) => {
                         // External daemon transport; no daemon actor in this process fixture.
                         if (refuseRetirementReport && metadata.terminal?.controlServiceabilityV1?.retired) {
@@ -1752,7 +1775,7 @@ describe('native Agent session host adapter', () => {
                 if (reason === 'foreground_current') {
                     await vi.waitFor(() => expect(session.__getAgentState().localControl).toMatchObject({ attached: true, canDetach: true }));
                     expect(api.requests.some(request => request.method === 'layout.apply')).toBe(false);
-                    expect(await readTerminalHostAttachmentInfo({ happyHomeDir: directory, sessionId: session.sessionId })).toBeNull();
+                    expect(await readTerminalHostAttachmentInfo({ happyHomeDir: launchPreparation.happyHomeDir, sessionId: session.sessionId })).toBeNull();
                     await expect(session.rpcHandlerManager.invokeLocal('switch', { to: 'remote' })).resolves.toBe(true);
                     // Switch acknowledges the abort; the actual launcher exit owns detached publication.
                     await vi.waitFor(() => expect(session.__getAgentState().localControl).toMatchObject({ attached: false, remoteWritable: true }));
@@ -1761,7 +1784,7 @@ describe('native Agent session host adapter', () => {
                 }
                 await vi.waitFor(() => expect(api.requests.some(request => request.method === 'layout.apply')).toBe(true));
                 await vi.waitFor(() => expect(session.__getAgentState().localControl).toMatchObject({ attached: true, canDetach: true }));
-                const attachment = await readTerminalHostAttachmentInfo({ happyHomeDir: directory, sessionId: session.sessionId });
+                const attachment = await readTerminalHostAttachmentInfo({ happyHomeDir: launchPreparation.happyHomeDir, sessionId: session.sessionId });
                 expect(attachment?.handle.kind).toBe('herdr');
                 if (!attachment || attachment.version === 1) throw new Error('The presenter did not publish exact attachment custody');
                 if (reason === 'pane_closed') {
@@ -1828,6 +1851,7 @@ describe('native Agent session host adapter', () => {
                 return child;
             }),
         });
+        const launchPreparation = await createNativeAgentLaunchPreparationFixture();
         const plan = await createNativeAgentRuntimeSessionPlan({
             runtime: { sessions: { open: async () => ({
                 send: async () => ({ status: 'admitted' as const }),
@@ -1846,6 +1870,12 @@ describe('native Agent session host adapter', () => {
             agent: contributions.agent,
             executionSurfaces: { ...createEmptyBackendExecutionSurfaces(), attach },
             createSessionHostServiceOwners: () => createSessionHostServiceOwners(),
+            createInvocationServices: async ({ signal }) => ({ ...createUnavailablePluginServices(),
+                exec: createStablePluginExecService({ signal, requesterIdentity: launchPreparation.requesterIdentity, isOccurrenceCurrent: () => !signal.aborted,
+                    resolveExecutable: async () => { throw new Error('Native attach already resolved its executable'); },
+                    resolvePath: async () => '/tmp/managed-native-restore', prepareAgentNativeLaunch: launchPreparation.prepare('/tmp/managed-native-restore', signal),
+                }),
+            }),
             generationSignal: generation.signal,
             sessionInput: buildPluginSessionBindingInput({ credentials, directory: '/tmp/managed-native-restore', startedBy: outcome === 'remote_initial' ? 'terminal' : 'daemon', ...(outcome === 'hosted_initial' || outcome.startsWith('initial_') ? { startingMode: 'local' as const } : outcome === 'remote_initial' ? { startingMode: 'remote' as const } : {}), backendTarget: { kind: 'backend', backendId: agentId } }),
         });
@@ -2004,6 +2034,7 @@ describe('native Agent session host adapter', () => {
                 },
             },
         }));
+        const launchPreparation = await createNativeAgentLaunchPreparationFixture();
         const plan = await createNativeAgentRuntimeSessionPlan({
             runtime: { sessions: { open } },
             lease: {
@@ -2017,6 +2048,12 @@ describe('native Agent session host adapter', () => {
                 attach,
             },
             createSessionHostServiceOwners: () => createSessionHostServiceOwners(),
+            createInvocationServices: async ({ signal }) => ({ ...createUnavailablePluginServices(),
+                exec: createStablePluginExecService({ signal, requesterIdentity: launchPreparation.requesterIdentity, isOccurrenceCurrent: () => !signal.aborted,
+                    resolveExecutable: async () => { throw new Error('Native attach already resolved its executable'); },
+                    resolvePath: async () => '/tmp/codex-provider-attach', prepareAgentNativeLaunch: launchPreparation.prepare('/tmp/codex-provider-attach', signal),
+                }),
+            }),
             generationSignal: generation.signal,
             sessionInput: buildPluginSessionBindingInput({
                 credentials,

@@ -9,6 +9,7 @@ import { createInstalledProjectAgentLaunchFixture } from '@/daemon/testkit/insta
 import { createRunnerAgentProjectLaunchInvocation } from '@/daemon/agentRuntime/runnerAgentProjectLaunch';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
+import { selectHostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 
 /** Real captured requester and Project preparation, with only Home/OS boundaries supplied by the installed fixture. */
 export async function createNativeAgentLaunchPreparationFixture() {
@@ -17,7 +18,9 @@ export async function createNativeAgentLaunchPreparationFixture() {
     const previousGetImplementation = vi.isMockFunction(previousGet) ? previousGet.getMockImplementation() : undefined;
     const previousPostImplementation = vi.isMockFunction(previousPost) ? previousPost.getMockImplementation() : undefined;
     const previousFetch = globalThis.fetch;
-    const fixture = await createInstalledProjectAgentLaunchFixture();
+    const custodianAccountId = 'requester';
+    const fixture = await createInstalledProjectAgentLaunchFixture({ homeServerIdentityId: 'srv_native_launch_fixture',
+        machineAccess: { custodianAccountId, role: 'manage' } });
     const homeGet = vi.mocked(axios.get).getMockImplementation();
     const homePost = vi.mocked(axios.post).getMockImplementation();
     if (!homeGet || !homePost) throw new Error('Installed Home transport fixture is unavailable');
@@ -39,6 +42,13 @@ export async function createNativeAgentLaunchPreparationFixture() {
     };
     return {
         homeGet, homePost, projectLaunchContext,
+        happyHomeDir: fixture.f.directory,
+        requesterIdentity: selectHostRequesterExecutionIdentity({
+            sessionRequester: fixture.f.bootstrap.attribution,
+            sessionRequesterHomeServerIdentityId: fixture.f.bootstrap.homeServerIdentityId,
+            hostHomeServerIdentityId: fixture.f.bootstrap.homeServerIdentityId,
+            sessionCustodianAccountId: custodianAccountId,
+        }),
         prepare(cwd: string, signal: AbortSignal) {
             const invocation = createRunnerAgentProjectLaunchInvocation({ ...projectLaunchContext, cwd, signal });
             onTestFinished(() => invocation.disposeProjectAgentLaunch());
