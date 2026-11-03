@@ -6,6 +6,7 @@ import {
     type AccountApiTokenSummaryV1, type ApprovalRequest,
 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { PENDING_INPUT_PROTOCOL_VERSION_V4 } from '@happier-dev/protocol/clientCompatibility/primitives';
 import { SOCKET_RPC_EVENTS, type SocketRpcRequestPayload } from '@happier-dev/protocol/socketRpc';
@@ -725,6 +726,39 @@ describe('createDefaultActionExecutor approvals', () => {
             authority: 'account_automation', caller: { kind: 'session' }, externalActionExecutionAuthorization: expect.any(Object),
         } });
         expect(outgoing).toEqual([]);
+    });
+    it('settles a worker link created on another device through this reader profile and portable Home WorkspaceRef', async () => {
+        const { computeWorkspaceSyncPolicyDigest } = await import('@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas');
+        const { PROJECT_ACCOUNT_ROWS_ROUTE_V1 } = await import('@happier-dev/protocol/projects/projectAccountRowsV1');
+        const { createPlainProjectAccountRowListFixture } = await import('@/dev/testkit/fixtures/projectAccountRows');
+        const artifactId = 'cross-device-worker-link';
+        const policy = { v: 1 as const, selection: 'all_files' as const, extraIgnorePatterns: [], extraIncludePatterns: [] };
+        const original = ApprovalRequestV2Schema.parse({ v: 2, status: 'outcome_unknown', createdAtMs: 1, updatedAtMs: 2,
+            createdBy: { surface: 'agent' }, requestedSurface: 'agent', summary: 'Link worker',
+            actionId: 'workspace.sync.relationship.create', actionArgs: {
+                v: 1, sourceWorkspaceRefId: 'source', targetMachineId: 'worker', targetPath: '/copy', mode: 'keep_synced',
+                contentPolicy: { ...policy, policyDigest: computeWorkspaceSyncPolicyDigest(policy) },
+                destinationIntent: 'materialize_from_source_workspace', purpose: 'worker_clean_copy',
+            }, executionOriginV1: { v: 1, authority: 'account_automation', surface: 'agent', caller: { kind: 'host' },
+                serverId: 'creating-device-only-profile', serverIdentityId: 'srv_approval_home', accountId: 'account-a',
+                actionId: 'workspace.sync.relationship.create', requestId: 'original-link-operation' },
+            decision: { kind: 'approve', decidedAtMs: 1 },
+            execution: { executedAtMs: 2, ok: false, effectAttempted: true, errorCode: 'RPC_OUTCOME_UNKNOWN' },
+        });
+        await seedApproval(artifactId, original);
+        homes.answer(homeId, `POST ${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`, { body: createPlainProjectAccountRowListFixture({ workspaceRefs: [{
+            id: 'source', serverId: 'srv_approval_home', machineId: 'controller', rootPath: '/source',
+            label: null, createdAtMs: 1, lastOpenedAtMs: null,
+        }] }) });
+        const machine = createPlainMachineRowFixture({ id: 'controller', accountId: 'account-a' });
+        homes.answer(homeId, '/v1/machines', { body: [machine] });
+        homes.answer(homeId, '/v1/machines/controller', { body: { machine } });
+        rpcResult = { outcome: 'succeeded', relationshipId: 'committed-link', controllerMachineId: 'controller',
+            sourceWorkspaceRefId: 'source', targetWorkspaceRefId: 'copy' };
+        expect(await executor.execute('approval.request.get', { artifactId }, context()))
+            .toMatchObject({ ok: true, result: { request: { status: 'executed', execution: { result: rpcResult } } } });
+        expect(persistedApproval(artifactId)).toMatchObject({ status: 'executed', executionOriginV1: original.executionOriginV1 });
+        expect(outgoing.map(request => request.method)).toEqual([`controller:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIP_CREATION_OBSERVE}`]);
     });
     beforeEach(async () => {
         vi.mocked(Modal.confirm).mockReset().mockResolvedValue(false);

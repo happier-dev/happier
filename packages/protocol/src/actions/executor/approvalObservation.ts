@@ -20,10 +20,12 @@ async function reconcileWorkspaceLink(request: ApprovalRequest, artifactId: stri
   const input = WorkspaceSyncRelationshipCreateActionInputV1Schema.safeParse(request.actionArgs);
   if (!input.success) return request;
   try {
+    // The immutable origin may name another device's profile; read and settle on this reader's Home.
+    const serverId = context.serverId?.trim() || request.executionOriginV1.serverId;
     const observed = WorkspaceSyncRelationshipCreationObservationV1Schema.parse(await deps.workspaceSyncRelationshipObserveCreation({
       input: input.data,
       operationId: request.handoffTargetReplacementApproval?.operationId ?? request.executionOriginV1.requestId,
-      serverId: request.executionOriginV1.serverId,
+      serverId,
       ...(context.signal ? { signal: context.signal } : {}),
     }));
     if (observed.outcome === 'unknown') return request;
@@ -33,7 +35,7 @@ async function reconcileWorkspaceLink(request: ApprovalRequest, artifactId: stri
         ...(observed.outcome === 'succeeded' ? { ok: true, result: observed }
           : { ok: false, errorCode: observed.errorCode, error: observed.errorCode }) },
     });
-    const updated = await deps.approvalsUpdate({ artifactId, request: next, serverId: request.executionOriginV1.serverId });
+    const updated = await deps.approvalsUpdate({ artifactId, request: next, serverId });
     return updated.ok ? next : request;
   } catch { return request; }
 }

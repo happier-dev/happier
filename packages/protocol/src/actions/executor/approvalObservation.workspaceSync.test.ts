@@ -21,10 +21,12 @@ it('settles an admitted unknown link from its owner without replaying the effect
     let stored = original;
     let observations = 0;
     const result = await executeApprovalObservationAction({ actionId: 'approval.request.get', input: { artifactId: 'approval' },
-      context: { surface: 'cli', ...(scenario === 'foreign_session' ? { externalActionTarget: { kind: 'session' as const, sessionId: 'other' } } : {}) },
+      context: { surface: 'cli', serverId: 'reader-profile', serverIdentityId: 'home',
+        ...(scenario === 'foreign_session' ? { externalActionTarget: { kind: 'session' as const, sessionId: 'other' } } : {}) },
       deps: {
         approvalsGet: async () => stored,
-        approvalsUpdate: async ({ request }) => {
+        approvalsUpdate: async ({ request, serverId }) => {
+          expect(serverId).toBe('reader-profile');
           if (scenario === 'storage_conflict') return { ok: false, errorCode: 'conflict', error: 'conflict' };
           expect(decideApprovalRequestTransition(stored, request)).toMatchObject({ ok: true });
           stored = ApprovalRequestV2Schema.parse(request); return { ok: true };
@@ -32,7 +34,7 @@ it('settles an admitted unknown link from its owner without replaying the effect
         workspaceSyncRelationshipObserveCreation: async request => {
           observations += 1;
           // The transport routes by the local profile, not the portable Home identity.
-          expect(request).toMatchObject({ operationId: 'admitted-request', input: original.actionArgs, serverId: 'profile' });
+          expect(request).toMatchObject({ operationId: 'admitted-request', input: original.actionArgs, serverId: 'reader-profile' });
           if (scenario === 'offline') throw new Error('Peer offline');
           return scenario === 'absent' ? { outcome: 'failed', errorCode: 'workspace_sync_relationship_not_committed' }
             : { outcome: 'succeeded', relationshipId: 'relationship', controllerMachineId: 'controller',
@@ -48,6 +50,7 @@ it('settles an admitted unknown link from its owner without replaying the effect
       expect(result).toMatchObject({ ok: true, result: { request: { status } } });
       expect(stored.status).toBe(status);
       expect(stored.decision).toEqual(original.decision);
+      expect(stored.executionOriginV1).toEqual(original.executionOriginV1);
     }
   }
 });
