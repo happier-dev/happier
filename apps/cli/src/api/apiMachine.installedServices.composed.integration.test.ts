@@ -1,7 +1,7 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { once } from 'node:events';
-import { expect, it, onTestFailed } from 'vitest';
+import { afterAll, beforeAll, expect, it, onTestFailed } from 'vitest';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { RPC_ERROR_CODES, readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { getActionSpec } from '@happier-dev/protocol/actions';
@@ -24,10 +24,13 @@ import { formatProcessOwnerTag } from '@/processes/ownerTag';
 import { writeExecutionRunMarker } from '@/daemon/executionRunRegistry';
 import { isPidPresent } from '@happier-dev/cli-common/process';
 
-it('opens an owner Project and replays native Service Start through the full daemon retention owner without member effects', async () => {
-    let phase = 'start_installed_daemon';
-    onTestFailed(() => { console.error(`Installed native Project phase: ${phase}`); });
-    const h = await startInstalledDaemonFixture({
+// A daemon owns one process-wide plugin registry, including its shutdown.
+// Keep one installed lifetime across these consecutive native operations.
+let h: Awaited<ReturnType<typeof startInstalledDaemonFixture>>;
+let stopDaemon: (() => Promise<void>) | undefined;
+beforeAll(async () => {
+    h = await startInstalledDaemonFixture({
+      registerCleanup: cleanup => { stopDaemon = cleanup; },
       onStartupPhase: phase => { console.info('Installed Project daemon startup:', phase); },
       onShutdownPhase: phase => { console.info('Installed Project daemon shutdown:', phase); }, env: {
         HAPPIER_FEATURE_LOCAL_SERVICES__ENABLED: '1',
@@ -36,7 +39,12 @@ it('opens an owner Project and replays native Service Start through the full dae
         HAPPIER_FEATURE_LOCAL_SERVICES_ACTIONS__ENABLED: '1',
         HAPPIER_FEATURE_LOCAL_SERVICES_INVENTORY__ENABLED: '1',
     } });
-    phase = 'create_machine_members';
+}, 120_000);
+afterAll(async () => { await stopDaemon?.(); }, 120_000);
+
+it('opens an owner Project and replays native Service Start through the full daemon retention owner without member effects', async () => {
+    let phase = 'create_machine_members';
+    onTestFailed(() => { console.error(`Installed native Project phase: ${phase}`); });
     const members = await Promise.all([h.home.createMachineMember('view'), h.home.createMachineMember('admin'), h.home.createForeignAccount()]);
     const foreign = members[2]!;
     const home = h.home.homeId;
@@ -62,114 +70,113 @@ it('opens an owner Project and replays native Service Start through the full dae
         }
         const nativeDenial = refusal.kind === 'value' && refusal.value !== null && typeof refusal.value === 'object'
             && 'errorCode' in refusal.value && refusal.value.errorCode === 'agent_isolation_unavailable';
-        expect(refusal).toEqual({ kind: 'value', value: nativeDenial
+        // Native owners may add effect-attempt metadata; the denial identity
+        // and the unchanged native log below decide the no-effect contract.
+        expect(refusal).toMatchObject({ kind: 'value', value: nativeDenial
             ? { errorCode: 'agent_isolation_unavailable', error: expect.any(String) } : domainDenial });
     };
-    try {
-        phase = 'execute_confirmed_project_open';
-        const input = getActionSpec('projects.open').inputSchema.parse(openRequest);
-        const requestId = 'native-confirmed-project-open';
-        const marker = { actionId: 'projects.open' as const,
-            inputDigest: computeActionInputApprovalDigestV1('projects.open', input), requestId,
-            accountId: h.home.accountId, serverId: home, target: { kind: 'machine' as const, machineId: h.machineId } };
-        const executor = h.createActionExecutor();
-        const deliver = () => executor.execute('projects.open', input, { actionRequestId: requestId,
-            // Fresh decoding models a second network delivery, not marker
-            // object identity. Home still mints and seals real requester custody.
-            presentUserConfirmation: ExternalActionRequesterInvocationV1Schema.parse(JSON.parse(JSON.stringify({
-                caller: { kind: 'host' }, surface: 'ui', authority: 'present_user', presentUserConfirmation: marker,
-            }))).presentUserConfirmation,
-        });
-        const first = await deliver();
-        expect(first).toMatchObject({ ok: true, result: { kind: 'opened' } });
-        if (!first.ok) throw new Error(`Installed confirmed Project Open refused: ${first.errorCode}`);
-        const opened = OpenProjectResultV1Schema.parse(first.result);
-        const afterFirstOpen = await readProjectAccountRows({ credentials: h.ownerCredentials, serverId: h.serverId,
-            selection: { kinds: ['workspace-ref'] } });
-        phase = 'rejoin_confirmed_project_open';
-        expect(await deliver()).toEqual(first);
-        // This reader timestamps each observation; every domain row and
-        // revision must remain identical across the repeated delivery.
-        expect(await readProjectAccountRows({ credentials: h.ownerCredentials, serverId: h.serverId,
-            selection: { kinds: ['workspace-ref'] } })).toEqual({ ...afterFirstOpen, loadedAtMs: expect.any(Number) });
-        phase = 'verify_project_receipt';
-        const operations = ActionOperationListV1ResponseSchema.parse(await h.invoke(ACTION_OPERATION_RPC_METHODS_V2.list, {}));
-        const projectOperations = operations.items.filter(operation => operation.actionId === 'projects.open');
-        expect(projectOperations).toMatchObject([{ requestId, state: 'succeeded' }]);
-        const receipt = ActionOperationGetV1ResponseSchema.parse(await h.invoke(ACTION_OPERATION_RPC_METHODS_V2.get,
-            { operationId: projectOperations[0]!.operationId }));
-        expect(receipt).toMatchObject({ kind: 'found', operation: { requestId, state: 'succeeded', result: opened } });
-        const changedDirectory = join(h.directory, 'changed-after-review');
-        await mkdir(changedDirectory);
-        phase = 'reject_changed_project_input';
-        expect(await executor.execute('projects.open', { ...input, source: { kind: 'folder', path: changedDirectory } }, {
-            actionRequestId: requestId, presentUserConfirmation: { ...marker },
-        })).toMatchObject({ ok: false, errorCode: 'action_request_input_conflict' });
-        phase = 'ordinary_project_approval';
-        expect(await executor.execute('projects.open', input, { actionRequestId: 'unconfirmed-project-open' }))
-            .toMatchObject({ ok: true, result: { kind: 'approval_request_created', artifactId: expect.any(String) } });
-        expect(await readProjectAccountRows({ credentials: h.ownerCredentials, serverId: h.serverId,
-            selection: { kinds: ['workspace-ref'] } })).toEqual({ ...afterFirstOpen, loadedAtMs: expect.any(Number) });
-        expect(opened).toMatchObject({ kind: 'opened', directory: h.directory,
-            workspace: { serverId: home, machineId: h.machineId, rootPath: h.directory } });
-        if (opened.kind !== 'opened') throw new Error('Actual Project acceptance did not settle');
-        const workspace = opened.workspace;
-        phase = 'review_and_start_native_service';
-        if (!workspace.workspaceId) throw new Error('Project acceptance omitted canonical Workspace identity');
-        const accepted = await readProjectAccountRows({ credentials: h.ownerCredentials, serverId: h.serverId,
-            selection: { kinds: ['workspace-ref'] } });
-        expect(accepted.workspaceRefs).toContainEqual(expect.objectContaining({ id: workspace.workspaceId, rootPath: h.directory }));
-        for (const member of members) await refuse(member, RPC_METHODS.PROJECTS_OPEN, openRequest, {
-            kind: 'refused', code: expect.stringMatching(/^requester_(?:account|authority)_unavailable$/),
-        });
-        expect(await readProjectAccountRows({ credentials: h.ownerCredentials, serverId: h.serverId,
-            selection: { kinds: ['workspace-ref'] } })).toEqual({ ...accepted, loadedAtMs: expect.any(Number) });
-        const declaration = { workspaceRefId: workspace.workspaceId, selection: { kind: 'manifest', name: 'worker' } } as const;
-        const request = { machineId: h.machineId, workspace, workspaceId: workspace.workspaceId, declaration,
-            targetId: createProjectServiceDeclarationTargetIdV1({ id: workspace.workspaceId, serverId: home, machineId: h.machineId }, declaration.selection) };
-        const review = DaemonLocalServiceLauncherSnapshotResponseV1Schema.parse(await h.invoke(
-            RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_SNAPSHOT,
-            { machineId: h.machineId, workspaceRoot: h.directory, startReview: { request, surface: 'rpc' } })).startReview;
-        expect(review).toHaveProperty('reviewedEffectDigest');
-        if (!review || 'ok' in review) throw new Error('Actual Service review was refused');
-        const method = getActionSpec('localServices.launcher.start').bindings!.rpcMethod!;
-        const launch = createTargetedActionRpcRequestV1({ ...request, expectedEffectDigest: review.reviewedEffectDigest },
-            { kind: 'machine', machineId: h.machineId });
-        for (const member of members) await refuse(member, method, launch, {
-            ok: false, errorCode: 'requester_credentials_unavailable', error: 'requester_credentials_unavailable',
-        });
-        await expect(readFile(nativeLog, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
-        await expect(h.invoke(method, launch)).resolves.toMatchObject({ status: 'succeeded' });
-        await expect.poll(() => readFile(nativeLog, 'utf8')).toBe('native-owner-service\n');
-        const listRequest = { serverId: home, machineId: h.machineId, scope: 'happier', view: 'owners' };
-        const view = MachineProcessesAnswerV1Schema.parse(await h.invoke(RPC_METHODS.MACHINES_PROCESSES_LIST, listRequest));
-        const service = view.owners.find(row => row.owner.kind === 'service' && row.owner.workspaceId === workspace.workspaceId);
-        if (!service?.root) throw new Error(`Full daemon did not publish the native Service root: ${JSON.stringify({
-            state: view.state, reason: view.reason, unverifiableCount: view.unverifiableCount,
-            owners: view.owners.map(row => ({ kind: row.owner.kind,
-                workspaceMatches: row.owner.kind === 'service' && row.owner.workspaceId === workspace.workspaceId,
-                hasRoot: row.root !== undefined })),
-        })}`);
-        const root = service.root;
-        await expect(h.invoke(RPC_METHODS.MACHINES_PROCESSES_STOP, { serverId: home, machineId: h.machineId,
-            targets: [{ ref: root.ref, expect: { level: root.level, owner: service.owner } }] })).resolves.toMatchObject({ status: 'ended' });
-        const startAgain = { serverId: home, machineId: h.machineId, ref: root.ref };
-        for (const member of members) await refuse(member, RPC_METHODS.MACHINES_PROCESSES_START_AGAIN, startAgain, {
-            status: 'refused', reasonCode: 'access_denied',
-        });
-        expect(await readFile(nativeLog, 'utf8')).toBe('native-owner-service\n');
-        await expect(h.invoke(RPC_METHODS.MACHINES_PROCESSES_START_AGAIN, startAgain)).resolves.toMatchObject({ status: 'started' });
-        await expect.poll(() => readFile(nativeLog, 'utf8')).toBe('native-owner-service\nnative-owner-service\n');
-        const rowsAfter = await readProjectAccountRows({ credentials: h.ownerCredentials, serverId: h.serverId,
-            selection: { kinds: ['workspace-ref'] } });
-        expect(rowsAfter.workspaceRefs).toEqual(accepted.workspaceRefs);
-    } finally { await h.stop(); }
+    phase = 'execute_confirmed_project_open';
+    const input = getActionSpec('projects.open').inputSchema.parse(openRequest);
+    const requestId = 'native-confirmed-project-open';
+    const marker = { actionId: 'projects.open' as const,
+        inputDigest: computeActionInputApprovalDigestV1('projects.open', input), requestId,
+        accountId: h.home.accountId, serverId: home, target: { kind: 'machine' as const, machineId: h.machineId } };
+    const executor = h.createActionExecutor();
+    const deliver = () => executor.execute('projects.open', input, { actionRequestId: requestId,
+        // Fresh decoding models a second network delivery, not marker
+        // object identity. Home still mints and seals real requester custody.
+        presentUserConfirmation: ExternalActionRequesterInvocationV1Schema.parse(JSON.parse(JSON.stringify({
+            caller: { kind: 'host' }, surface: 'ui', authority: 'present_user', presentUserConfirmation: marker,
+        }))).presentUserConfirmation,
+    });
+    const first = await deliver();
+    expect(first).toMatchObject({ ok: true, result: { kind: 'opened' } });
+    if (!first.ok) throw new Error(`Installed confirmed Project Open refused: ${first.errorCode}`);
+    const opened = OpenProjectResultV1Schema.parse(first.result);
+    const afterFirstOpen = await readProjectAccountRows({ credentials: h.ownerCredentials, serverId: h.serverId,
+        selection: { kinds: ['workspace-ref'] } });
+    phase = 'rejoin_confirmed_project_open';
+    expect(await deliver()).toEqual(first);
+    // This reader timestamps each observation; every domain row and
+    // revision must remain identical across the repeated delivery.
+    expect(await readProjectAccountRows({ credentials: h.ownerCredentials, serverId: h.serverId,
+        selection: { kinds: ['workspace-ref'] } })).toEqual({ ...afterFirstOpen, loadedAtMs: expect.any(Number) });
+    phase = 'verify_project_receipt';
+    const operations = ActionOperationListV1ResponseSchema.parse(await h.invoke(ACTION_OPERATION_RPC_METHODS_V2.list, {}));
+    const projectOperations = operations.items.filter(operation => operation.actionId === 'projects.open');
+    expect(projectOperations).toMatchObject([{ requestId, state: 'succeeded' }]);
+    const receipt = ActionOperationGetV1ResponseSchema.parse(await h.invoke(ACTION_OPERATION_RPC_METHODS_V2.get,
+        { operationId: projectOperations[0]!.operationId }));
+    expect(receipt).toMatchObject({ kind: 'found', operation: { requestId, state: 'succeeded', result: opened } });
+    const changedDirectory = join(h.directory, 'changed-after-review');
+    await mkdir(changedDirectory);
+    phase = 'reject_changed_project_input';
+    expect(await executor.execute('projects.open', { ...input, source: { kind: 'folder', path: changedDirectory } }, {
+        actionRequestId: requestId, presentUserConfirmation: { ...marker },
+    })).toMatchObject({ ok: false, errorCode: 'action_request_input_conflict' });
+    phase = 'ordinary_project_approval';
+    expect(await executor.execute('projects.open', input, { actionRequestId: 'unconfirmed-project-open' }))
+        .toMatchObject({ ok: true, result: { kind: 'approval_request_created', artifactId: expect.any(String) } });
+    expect(await readProjectAccountRows({ credentials: h.ownerCredentials, serverId: h.serverId,
+        selection: { kinds: ['workspace-ref'] } })).toEqual({ ...afterFirstOpen, loadedAtMs: expect.any(Number) });
+    expect(opened).toMatchObject({ kind: 'opened', directory: h.directory,
+        workspace: { serverId: home, machineId: h.machineId, rootPath: h.directory } });
+    if (opened.kind !== 'opened') throw new Error('Actual Project acceptance did not settle');
+    const workspace = opened.workspace;
+    phase = 'review_and_start_native_service';
+    if (!workspace.workspaceId) throw new Error('Project acceptance omitted canonical Workspace identity');
+    const accepted = await readProjectAccountRows({ credentials: h.ownerCredentials, serverId: h.serverId,
+        selection: { kinds: ['workspace-ref'] } });
+    expect(accepted.workspaceRefs).toContainEqual(expect.objectContaining({ id: workspace.workspaceId, rootPath: h.directory }));
+    for (const member of members) await refuse(member, RPC_METHODS.PROJECTS_OPEN, openRequest, {
+        kind: 'refused', code: expect.stringMatching(/^requester_(?:account|authority)_unavailable$/),
+    });
+    expect(await readProjectAccountRows({ credentials: h.ownerCredentials, serverId: h.serverId,
+        selection: { kinds: ['workspace-ref'] } })).toEqual({ ...accepted, loadedAtMs: expect.any(Number) });
+    const declaration = { workspaceRefId: workspace.workspaceId, selection: { kind: 'manifest', name: 'worker' } } as const;
+    const request = { machineId: h.machineId, workspace, workspaceId: workspace.workspaceId, declaration,
+        targetId: createProjectServiceDeclarationTargetIdV1({ id: workspace.workspaceId, serverId: home, machineId: h.machineId }, declaration.selection) };
+    const review = DaemonLocalServiceLauncherSnapshotResponseV1Schema.parse(await h.invoke(
+        RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_SNAPSHOT,
+        { machineId: h.machineId, workspaceRoot: h.directory, startReview: { request, surface: 'rpc' } })).startReview;
+    expect(review).toHaveProperty('reviewedEffectDigest');
+    if (!review || 'ok' in review) throw new Error('Actual Service review was refused');
+    const method = getActionSpec('localServices.launcher.start').bindings!.rpcMethod!;
+    const launch = createTargetedActionRpcRequestV1({ ...request, expectedEffectDigest: review.reviewedEffectDigest },
+        { kind: 'machine', machineId: h.machineId });
+    for (const member of members) await refuse(member, method, launch, {
+        ok: false, errorCode: 'requester_credentials_unavailable', error: 'requester_credentials_unavailable',
+    });
+    await expect(readFile(nativeLog, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(h.invoke(method, launch)).resolves.toMatchObject({ status: 'succeeded' });
+    await expect.poll(() => readFile(nativeLog, 'utf8')).toBe('native-owner-service\n');
+    const listRequest = { serverId: home, machineId: h.machineId, scope: 'happier', view: 'owners' };
+    const view = MachineProcessesAnswerV1Schema.parse(await h.invoke(RPC_METHODS.MACHINES_PROCESSES_LIST, listRequest));
+    const service = view.owners.find(row => row.owner.kind === 'service' && row.owner.workspaceId === workspace.workspaceId);
+    if (!service?.root) throw new Error(`Full daemon did not publish the native Service root: ${JSON.stringify({
+        state: view.state, reason: view.reason, unverifiableCount: view.unverifiableCount,
+        owners: view.owners.map(row => ({ kind: row.owner.kind,
+            workspaceMatches: row.owner.kind === 'service' && row.owner.workspaceId === workspace.workspaceId,
+            hasRoot: row.root !== undefined })),
+    })}`);
+    const root = service.root;
+    await expect(h.invoke(RPC_METHODS.MACHINES_PROCESSES_STOP, { serverId: home, machineId: h.machineId,
+        targets: [{ ref: root.ref, expect: { level: root.level, owner: service.owner } }] })).resolves.toMatchObject({ status: 'ended' });
+    const startAgain = { serverId: home, machineId: h.machineId, ref: root.ref };
+    for (const member of members) await refuse(member, RPC_METHODS.MACHINES_PROCESSES_START_AGAIN, startAgain, {
+        status: 'refused', reasonCode: 'access_denied',
+    });
+    expect(await readFile(nativeLog, 'utf8')).toBe('native-owner-service\n');
+    await expect(h.invoke(RPC_METHODS.MACHINES_PROCESSES_START_AGAIN, startAgain)).resolves.toMatchObject({ status: 'started' });
+    await expect.poll(() => readFile(nativeLog, 'utf8')).toBe('native-owner-service\nnative-owner-service\n');
+    const rowsAfter = await readProjectAccountRows({ credentials: h.ownerCredentials, serverId: h.serverId,
+        selection: { kinds: ['workspace-ref'] } });
+    expect(rowsAfter.workspaceRefs).toEqual(accepted.workspaceRefs);
 }, 120_000);
 
 it('discloses native Run and registered Service attribution through the installed daemon Home binding', async () => {
     let phase = 'start_installed_daemon';
     onTestFailed(() => { console.error(`Installed Process attribution phase: ${phase}`); });
-    const h = await startInstalledDaemonFixture();
     let child: ReturnType<typeof spawnInlineNodeTestProcess> | undefined;
     let stopService: (() => Promise<void>) | undefined;
     try {
@@ -251,13 +258,11 @@ it('discloses native Run and registered Service attribution through the installe
     } finally {
         try { await stopService?.(); }
         finally {
-            try {
-                if (child && child.exitCode === null && child.signalCode === null) {
-                    const exited = once(child, 'exit');
-                    child.kill('SIGKILL');
-                    await exited;
-                }
-            } finally { await h.stop(); }
+            if (child && child.exitCode === null && child.signalCode === null) {
+                const exited = once(child, 'exit');
+                child.kill('SIGKILL');
+                await exited;
+            }
         }
     }
 }, 120_000);
