@@ -1,9 +1,10 @@
 import type { DetectCliName } from '../snapshots/cliSnapshot';
-import type { CapabilitiesDetectContext, CapabilitiesDetectContextBuilder } from '../service';
+import type { CapabilitiesDetectContext } from '../service';
 import type { CapabilityDetectRequest } from '../types';
 import { detectCliSnapshotOnDaemonPath } from '../snapshots/cliSnapshot';
+import type { AgentSessionFactorySource } from '@/agent/catalog/runtimeEntry';
 
-export const buildDetectContext: CapabilitiesDetectContextBuilder = async (requests: CapabilityDetectRequest[]): Promise<CapabilitiesDetectContext> => {
+export const buildDetectContext = async (requests: CapabilityDetectRequest[], factorySource?: AgentSessionFactorySource): Promise<CapabilitiesDetectContext> => {
     // Execution Run protocol/catalog facts come from contributions, not local
     // executable discovery. Control preflight must not scan every Agent CLI.
     const wantsCliOrTmux = requests.some((r) =>
@@ -26,9 +27,11 @@ export const buildDetectContext: CapabilitiesDetectContextBuilder = async (reque
         ? await detectCliSnapshotOnDaemonPath({
             ...(anyLogin ? { includeLoginStatus: true } : {}),
             ...(requestedCliNames.length > 0 ? { requestedCliNames } : {}),
+            requestedTools: requests.flatMap(request => request.id === 'tool.tmux' ? ['tmux' as const]
+                : request.id === 'tool.windowsTerminal' ? ['windowsTerminal' as const] : []),
             ...(bypassCache ? { bypassCache: true } : {}),
             ...(verifyVersion ? { verifyVersion: true } : {}),
-        })
+        }, factorySource)
         : null;
 
     return { cliSnapshot };

@@ -2304,6 +2304,7 @@ export class ApiMachineClient {
             identity: input.identity, operationKey: input.operationKey, signal: input.signal,
             ...(input.ingress ? { ingress: input.ingress } : {}),
             configuration: { machineId: this.machine.id, requesterAccountId: input.identity.requester.accountId,
+                ...(input.ingress?.capabilitySessionFactories ? { capabilitySessionFactories: input.ingress.capabilitySessionFactories } : {}),
                 workingDirectory: this.machineRpcWorkingDirectory,
                 ...(input.ingress?.callerAuthority ? { callerAuthority: input.ingress.callerAuthority } : {}),
                 accessPolicy: this.filesystemAccessPolicy, additionalAllowedReadDirs: [...this.additionalAllowedReadDirs],

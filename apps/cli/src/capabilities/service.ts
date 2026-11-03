@@ -14,6 +14,7 @@ import { CapabilityError, readCapabilityRefusalDetails } from './errors';
 import { readCapabilityInvokeFailure } from '@happier-dev/protocol/capabilities';
 import { SystemTaskExecutionError } from '@happier-dev/cli-common/systemTasks';
 import type { DetectCliSnapshot } from './snapshots/cliSnapshot';
+import type { AgentSessionFactorySource } from '@/agent/catalog/runtimeEntry';
 import type { ManagedInstallationServerOriginV1 } from '@happier-dev/protocol/machines/managed/managedInstallationV1';
 /** Host-private current Machine ingress, never a capability/Action operand. */
 export type MachineSystemTaskResponseContext = Readonly<{
@@ -48,7 +49,8 @@ export type CapabilitiesInvokeContext = Readonly<{ signal?: AbortSignal; managed
 
 /** Host-owned effect facts, not a wire descriptor or caller-selected permission. */
 export type CapabilityEffects = readonly ('private_read' | 'file_write' | 'process' | 'machine_install')[];
-export type CapabilityEffectExecution = <T>(effects: CapabilityEffects, execute: () => Promise<T>) => Promise<T>;
+export type CapabilityEffectExecution = <T>(effects: CapabilityEffects, execute: (source?: AgentSessionFactorySource) => Promise<T>,
+    detectRequest?: CapabilitiesDetectRequest) => Promise<T>;
 const UNCLASSIFIED_EFFECTS: CapabilityEffects = ['private_read', 'file_write', 'process'];
 
 export type CapabilitiesDetectContext = {
@@ -56,7 +58,7 @@ export type CapabilitiesDetectContext = {
     cliSnapshot: DetectCliSnapshot | null;
 };
 
-export type CapabilitiesDetectContextBuilder = (requests: CapabilityDetectRequest[]) => Promise<CapabilitiesDetectContext>;
+export type CapabilitiesDetectContextBuilder = (requests: CapabilityDetectRequest[], source?: AgentSessionFactorySource) => Promise<CapabilitiesDetectContext>;
 
 export type Capability = {
     descriptor: CapabilityDescriptor;
@@ -149,18 +151,23 @@ export function createCapabilitiesService(opts: {
         );
         // Select the complete effective request before shared discovery: a mixed
         // checklist must not run its public prefix before a protected refusal.
+        const parentRequests: CapabilityDetectRequest[] = [];
+        const requesterRequests: CapabilityDetectRequest[] = [];
         const effects = [...new Set(requests.flatMap(request => {
             const cap = capabilityMap.get(request.id);
-            if (!cap) return [];
-            const definition = cap.effects?.detect;
-            return typeof definition === 'function' ? definition(request) : definition ?? UNCLASSIFIED_EFFECTS;
+            const definition = cap?.effects?.detect;
+            const selected = cap
+                ? typeof definition === 'function' ? definition(request) : definition ?? UNCLASSIFIED_EFFECTS
+                : [];
+            (selected.length ? requesterRequests : parentRequests).push(request);
+            return selected;
         }))];
-        const execute = async (): Promise<CapabilitiesDetectResponse> => {
+        const execute = async (selectedRequests: CapabilityDetectRequest[], source?: AgentSessionFactorySource): Promise<CapabilitiesDetectResponse> => {
             const checkedAt = Date.now();
-            const context = { ...await opts.buildContext(requests.filter(request => capabilityMap.has(request.id))), accountId: custody?.accountId };
+            const context = { ...await opts.buildContext(selectedRequests.filter(request => capabilityMap.has(request.id)), source), accountId: custody?.accountId };
 
             const results: Partial<Record<CapabilityId, CapabilityDetectResult>> = {};
-            for (const req of requests) {
+            for (const req of selectedRequests) {
                 const cap = capabilityMap.get(req.id);
                 if (!cap) {
                     results[req.id] = { ok: false, checkedAt, error: { message: `Unknown capability: ${req.id}`, code: 'unknown-capability' } };
@@ -178,8 +185,14 @@ export function createCapabilitiesService(opts: {
             }
             return { protocolVersion: 1, results };
         };
-        return effects.length && custody?.executeEffects
-            ? await custody.executeEffects(effects, execute) : await execute();
+        if (!effects.length || !custody?.executeEffects) return await execute(requests);
+        // The same effect classification selects placement once. Admit the
+        // physical group before any discovery, and retain public daemon facts
+        // in their owning process instead of asking the requester to infer them.
+        const physical = await custody.executeEffects(effects, source => execute(requesterRequests, source), { requests: requesterRequests });
+        if (!parentRequests.length) return physical;
+        const parent = await execute(parentRequests);
+        return { protocolVersion: 1, results: { ...physical.results, ...parent.results } };
     };
 
     const invoke = async (

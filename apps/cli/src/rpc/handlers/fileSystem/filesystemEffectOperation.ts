@@ -11,12 +11,14 @@ import { registerWorkspaceFileSearchHandler } from '../workspaceFileSearch';
 import { registerWorkspaceFileListHandler } from '../workspaceFileList';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { registerMachineFileBrowserHandlers } from '../machineFileBrowser/registerMachineFileBrowserHandlers';
+import { AgentSessionFactoryObservationsSchema } from '@/agent/catalog/runtimeEntry';
 
 const absolutePath = z.string().check(z.refine(value => isFilesystemPathAbsolute(value)));
 export const FilesystemEffectConfigurationSchema = z.strictObject({
   machineId: z.optional(z.string()),
   requesterAccountId: z.optional(z.string()),
   callerAuthority: z.optional(z.enum(['present_user', 'account_automation'])),
+  capabilitySessionFactories: z.optional(AgentSessionFactoryObservationsSchema),
   workingDirectory: absolutePath,
   accessPolicy: z.union([z.strictObject({ kind: z.literal('osUser') }),
     z.strictObject({ kind: z.literal('restrictedRoots'), roots: z.array(absolutePath) })]),

@@ -4,7 +4,7 @@ import { join, delimiter as PATH_DELIMITER } from 'path';
 
 import { AGENTS } from '@/agent/catalog/registry';
 import { readCurrentContributionRegistry } from '@/agent/catalog/snapshot';
-import { observeCurrentAgentSessionFactory } from '@/agent/catalog/runtimeEntry';
+import { observeCurrentAgentSessionFactory, type AgentSessionFactorySource } from '@/agent/catalog/runtimeEntry';
 import type { AgentCliLaunchSpec } from '@/packagedRuntime/managedTools/agentCliLaunchSpec';
 import type { CliDetectSpec } from '@/agent/catalog/types';
 import type { CliAuthStatus } from '@/capabilities/cliAuth/types';
@@ -63,6 +63,8 @@ export interface DetectCliRequest {
      */
     verifyVersion?: boolean;
     requestedCliNames?: readonly DetectCliName[];
+    /** Host-selected tool probes; omitted by callers requesting the full snapshot. */
+    requestedTools?: readonly ('tmux' | 'windowsTerminal')[];
 }
 
 export interface DetectCliEntry {
@@ -155,6 +157,7 @@ function buildCliSnapshotCacheKey(params: DetectCliRequest, pathEnv: string | nu
     const requestedCliNames = Array.isArray(params.requestedCliNames)
         ? params.requestedCliNames.map((value) => String(value)).sort().join(',')
         : '';
+    const requestedTools = params.requestedTools?.slice().sort().join(',') ?? 'all';
     const path = String(pathEnv ?? '');
     const pathExt = process.platform === 'win32' ? String(process.env.PATHEXT ?? '') : '';
     const home = String(process.env.HOME ?? '');
@@ -196,7 +199,7 @@ function buildCliSnapshotCacheKey(params: DetectCliRequest, pathEnv: string | nu
         })
         .join(':');
 
-    return `${includeLoginStatus}:${verifyVersion}:${requestedCliNames}:${pathExt}:${path}:${home}:${userProfile}:${happierHomeDir}:${sourcePrefs}:${probeEnvFingerprint}:${pathOverrides}`;
+    return `${includeLoginStatus}:${verifyVersion}:${requestedCliNames}:${requestedTools}:${pathExt}:${path}:${home}:${userProfile}:${happierHomeDir}:${sourcePrefs}:${probeEnvFingerprint}:${pathOverrides}`;
 }
 
 async function resolveCommandOnPath(command: string, pathEnv: string | null): Promise<string | null> {
@@ -644,7 +647,7 @@ export function invalidateCliSnapshots(): void {
  * - does not rely on a login shell (no ~/.zshrc, ~/.profile, etc)
  * - matches how the daemon itself will resolve binaries when spawning
  */
-export async function detectCliSnapshotOnDaemonPath(data: DetectCliRequest): Promise<DetectCliSnapshot> {
+export async function detectCliSnapshotOnDaemonPath(data: DetectCliRequest, factorySource?: AgentSessionFactorySource): Promise<DetectCliSnapshot> {
     const pathEnv = typeof process.env.PATH === 'string' ? process.env.PATH : null;
     const includeLoginStatus = Boolean(data?.includeLoginStatus);
     const verifyVersion = data?.verifyVersion === true;
@@ -653,11 +656,12 @@ export async function detectCliSnapshotOnDaemonPath(data: DetectCliRequest): Pro
         : [];
     const probeTimeoutMs = resolveCliSnapshotProbeTimeoutMs(includeLoginStatus || verifyVersion);
     const names = requestedCliNames.length > 0 ? requestedCliNames : Object.keys(AGENTS) as DetectCliName[];
-    const nativeFactories = new Map(await Promise.all(names.map(async (name) =>
-        [name, await observeCurrentAgentSessionFactory(name).catch(() => null)] as const)));
+    const nativeFactoryObservations = await Promise.allSettled(names.map(name => observeCurrentAgentSessionFactory(name, factorySource)));
+    const nativeFactories = new Map(names.map((name, index) => [name, nativeFactoryObservations[index]!] as const));
     // Runtime readiness is a live binding fact, not a CLI installation with a TTL.
-    const observesNativeFactory = [...nativeFactories.values()].some((factory) => factory !== null);
-    const cacheKey = buildCliSnapshotCacheKey({ includeLoginStatus, requestedCliNames, verifyVersion }, pathEnv);
+    const observesNativeFactory = [...nativeFactories.values()].some((observation) =>
+        observation.status === 'fulfilled' && observation.value !== null);
+    const cacheKey = buildCliSnapshotCacheKey({ includeLoginStatus, requestedCliNames, verifyVersion, requestedTools: data.requestedTools }, pathEnv);
     const cached = data?.bypassCache || observesNativeFactory ? null : cliSnapshotCache.get(cacheKey);
     if (!data?.bypassCache && cached?.kind === 'success' && cliSnapshotCache.isFresh(cached)) return cached.value;
 
@@ -667,12 +671,16 @@ export async function detectCliSnapshotOnDaemonPath(data: DetectCliRequest): Pro
 
     const observations = await Promise.allSettled(
         names.map(async (name) => {
-            const factory = nativeFactories.get(name);
+            const factoryObservation = nativeFactories.get(name)!;
+            const factory = factoryObservation.status === 'fulfilled' ? factoryObservation.value : null;
             const [resolved, setupFacts] = await Promise.all([
                 factory?.isCurrent() ? Promise.resolve(null) : resolveCliPathForName(name),
                 detectAgentSetupFacts(name),
             ]);
             if (!resolved) {
+                // A successful physical CLI probe is independent of native runtime admission;
+                // without either observation, absence is unknown rather than an uninstall.
+                if (factoryObservation.status === 'rejected') throw factoryObservation.reason;
                 if (factory?.isCurrent()) return [name, {
                     available: true, installed: true, ...setupFacts,
                     signIn: { ...setupFacts.signIn, required: factory.nativeAuthenticationRequired },
@@ -753,13 +761,15 @@ export async function detectCliSnapshotOnDaemonPath(data: DetectCliRequest): Pro
         }),
     );
 
-    const tmuxResolvedPath = await resolveCommandOnPath('tmux', pathEnv);
+    const tmuxResolvedPath = !data.requestedTools || data.requestedTools.includes('tmux')
+        ? await resolveCommandOnPath('tmux', pathEnv) : null;
     const tmux: DetectTmuxEntry = (() => {
         if (!tmuxResolvedPath) return { available: false };
         return { available: true, resolvedPath: tmuxResolvedPath };
     })();
 
-    const windowsTerminalResolvedPath = await resolveCommandOnPath('wt.exe', pathEnv);
+    const windowsTerminalResolvedPath = !data.requestedTools || data.requestedTools.includes('windowsTerminal')
+        ? await resolveCommandOnPath('wt.exe', pathEnv) : null;
     const windowsTerminal: DetectWindowsTerminalEntry = (() => {
         if (!windowsTerminalResolvedPath) return { available: false };
         return { available: true, resolvedPath: windowsTerminalResolvedPath };
@@ -780,13 +790,13 @@ export async function detectCliSnapshotOnDaemonPath(data: DetectCliRequest): Pro
             available: false,
             detectionError: { code: 'cli-detection-failed', message: 'Agent CLI detection failed' },
         } satisfies DetectCliEntry])) as Partial<Record<DetectCliName, DetectCliEntry>>;
-    // Setup and platform probes await external work; retirement during that work
-    // cannot publish the formerly admitted factory as installed or auth-optional.
-    for (const [name, factory] of nativeFactories) {
+    // Retirement invalidates readiness, not the last admitted installation. A
+    // replacement factory must be observed before publishing another install fact.
+    for (const [name, observation] of nativeFactories) {
+        const factory = observation.status === 'fulfilled' ? observation.value : null;
         if (!factory || factory.isCurrent()) continue;
-        const previous = pairEntries[name];
-        if (previous) pairEntries[name] = { ...previous, available: false, installed: false,
-            signIn: { status: 'unknown', loginSupport: previous.signIn?.loginSupport ?? 'unsupported', required: true } };
+        if (pairEntries[name]) pairEntries[name] = { available: false,
+            detectionError: { code: 'cli-detection-failed', message: 'Agent runtime changed during detection' } };
     }
 
     return {

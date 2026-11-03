@@ -84,6 +84,8 @@ export type RpcHandlerContext = Readonly<{
     reportAdmissionDenial?: (predicate: RpcAdmissionPredicate) => void;
     /** Host-admitted private ordinary Session bootstrap, never a public Action field. */
     requesterSessionBootstrap?: AdmittedRequesterSessionBootstrap;
+    /** Daemon-observed executable facts, supplied only to the private requester effect pipe. */
+    capabilitySessionFactories?: import('@/agent/catalog/runtimeEntry').AgentSessionFactoryObservations;
     /** Host-owned handoff acceptance immediately before physical launch; never transported. */
     beforeSessionRunnerLaunch?: () => Promise<boolean>;
     /** Verified server ingress authority; never read from decrypted caller input. */

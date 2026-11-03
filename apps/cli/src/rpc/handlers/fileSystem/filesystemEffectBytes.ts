@@ -90,7 +90,11 @@ export function createFilesystemEffectByteOwner(configuration: FilesystemEffectC
   // Capability effects were admitted by the parent. Reuse the real service in
   // this member process without returning through its RPC admission handlers.
   const getCapabilities = () => import('../capabilities').then(({ createCliCapabilitiesService }) =>
-    createCliCapabilitiesService({ accountContext: { credentials: null, accountSettings: null } }));
+    createCliCapabilitiesService({ accountContext: { credentials: null, accountSettings: null },
+      ...(configuration.capabilitySessionFactories ? { sessionFactorySource: {
+        observations: configuration.capabilitySessionFactories,
+        isCurrent: () => !closed && signal?.aborted !== true,
+      } } : {}) }));
   registrar.registerHandler<CapabilitiesDetectRequest, CapabilitiesDetectResponse>(RPC_METHODS.CAPABILITIES_DETECT,
     async data => (await getCapabilities()).detect(data, { accountId: configuration.requesterAccountId }));
   registrar.registerHandler<CapabilitiesInvokeRequest, CapabilitiesInvokeResponse>(RPC_METHODS.CAPABILITIES_INVOKE,

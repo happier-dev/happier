@@ -8,6 +8,37 @@ import { RpcError } from '@happier-dev/protocol/rpcErrors';
 import { PluginError } from '@happier-dev/plugin-sdk';
 
 describe('createCapabilitiesService', () => {
+  it('keeps parent facts outside requester execution and merges a mixed inventory after one physical execution', async () => {
+    let inRequester = false;
+    let physicalExecutions = 0;
+    const service = createCapabilitiesService({
+      capabilities: [{
+        descriptor: { id: 'tool.parent', kind: 'tool' }, effects: { detect: [] },
+        detect: async () => {
+          if (inRequester) throw new CapabilityError('The requester has no daemon factory lease', 'factory-unavailable');
+          return { available: true, installed: true };
+        },
+      }, {
+        descriptor: { id: 'cli.physical', kind: 'cli' }, effects: { detect: ['private_read', 'process'] },
+        detect: async () => ({ available: inRequester, installed: inRequester }),
+      }],
+      checklists: { [CHECKLIST_IDS.NEW_SESSION]: [], [CHECKLIST_IDS.MACHINE_DETAILS]: [] },
+      buildContext: async () => ({ cliSnapshot: null }),
+    });
+    const observed = await service.detect({ requests: [{ id: 'tool.parent' }, { id: 'cli.physical' }] }, {
+      executeEffects: async (_effects, execute) => {
+        physicalExecutions += 1;
+        inRequester = true;
+        try { return await execute(); } finally { inRequester = false; }
+      },
+    });
+    expect(observed).toMatchObject({ results: {
+      'tool.parent': { ok: true, data: { available: true, installed: true } },
+      'cli.physical': { ok: true, data: { available: true, installed: true } },
+    } });
+    expect(physicalExecutions).toBe(1);
+  });
+
   it.each(['requester_authority_unavailable', 'member_setup_required', 'launch_probe_failed'])(
     'keeps the native preparation cause %s without private setup content', async reason => {
       const service = createCapabilitiesService({ capabilities: [{
@@ -140,7 +171,7 @@ describe('createCapabilitiesService', () => {
       bypassCache: true,
     });
 
-    expect(buildContext).toHaveBeenCalledWith([
+    expect(buildContext.mock.calls[0]?.[0]).toEqual([
       { id: 'cli.claude', params: { bypassCache: true } },
       { id: 'tool.executionRuns', params: { bypassCache: true } },
     ]);

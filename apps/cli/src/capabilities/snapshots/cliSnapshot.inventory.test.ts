@@ -7,6 +7,7 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 
 import { createProbeTempDir, writeExecutableScript } from '@/capabilities/probes/agentModelsProbe.testkit';
 import { readCurrentContributionRegistry } from '@/agent/catalog/snapshot';
+import { observeCurrentAgentSessionFactory } from '@/agent/catalog/runtimeEntry';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { buildCliCapabilityData } from '@/capabilities/probes/cliBase';
 import { detectCliSnapshotOnDaemonPath } from './cliSnapshot';
@@ -98,6 +99,29 @@ describe('machine agent inventory on the daemon', () => {
         } finally {
             await fixture.cleanup();
         }
+    });
+
+    it('uses the admitted parent factory observation in a requester effect instead of reacquiring daemon authority', async () => {
+        const observed = await observeCurrentAgentSessionFactory('custom-acp');
+        expect(observed).not.toBeNull();
+        const source = { observations: { 'custom-acp': observed && {
+            nativeAuthenticationRequired: observed.nativeAuthenticationRequired,
+        } }, isCurrent: () => true };
+        expect(await observeCurrentAgentSessionFactory('custom-acp', source)).toMatchObject({
+            nativeAuthenticationRequired: observed!.nativeAuthenticationRequired,
+        });
+        // An admitted absence must not borrow a different factory from this
+        // process, even when that process happens to host an active daemon.
+        expect(await observeCurrentAgentSessionFactory('custom-acp', {
+            observations: { 'custom-acp': null }, isCurrent: () => true,
+        })).toBeNull();
+        await expect(observeCurrentAgentSessionFactory('custom-acp', {
+            observations: {}, isCurrent: () => true,
+        })).rejects.toThrow('Parent factory observation is unavailable');
+        const retired = await observeCurrentAgentSessionFactory('custom-acp', {
+            ...source, isCurrent: () => false,
+        });
+        expect(retired?.isCurrent()).toBe(false);
     });
 
     it('keeps healthy native CLI facts when a sibling Agent has no native CLI probe', async () => {

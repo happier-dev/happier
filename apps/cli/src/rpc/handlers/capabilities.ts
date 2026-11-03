@@ -56,6 +56,8 @@ import { ManagedInstallationServerOriginV1Schema } from '@happier-dev/protocol/m
 import { RPC_ERROR_CODES, RpcError } from '@happier-dev/protocol/rpcErrors';
 import { createFilesystemEffectAdmission, type FilesystemEffectAdmission } from './fileSystem/accessPolicy/filesystemEffectAdmission';
 import { SavedSecretVaultInvocationV1Schema, type SavedSecretVaultInvocationResultV1 } from '@happier-dev/protocol/account/settings/personalSavedSecretActionsV1';
+import { observeCurrentAgentSessionFactory, type AgentSessionFactorySource } from '@/agent/catalog/runtimeEntry';
+import { tryAcquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
 
 /** Installed inventory served to the Plugins UI; omit daemon-only catalog detail. */
 function projectInstalledPluginCapabilityEntry(entry: PluginCatalogEntry): InstalledPluginCapabilityEntryV1 {
@@ -425,6 +427,7 @@ function createPluginMarketplaceCapability(
 }
 
 export async function createCliCapabilitiesService(dependencies: Readonly<{
+    sessionFactorySource?: AgentSessionFactorySource;
     secretSources?: CliProbeDependencies['secretSources'];
     savedSecretOperationContext?: CliProbeDependencies['savedSecretOperationContext'];
     accountContext?: CliProbeDependencies['accountContext'];
@@ -515,8 +518,8 @@ export async function createCliCapabilitiesService(dependencies: Readonly<{
             installablesRegistry,
             resolvedContributionRegistry,
         ),
-        buildContext: async (requests) => {
-            const context = await buildDetectContext(requests);
+        buildContext: async (requests, factorySource) => {
+            const context = await buildDetectContext(requests, factorySource ?? dependencies.sessionFactorySource);
             if (context.cliSnapshot && dependencies.observeCliSnapshot) {
                 const observedAgentIds = requests.filter(request => request.id.startsWith('cli.')).map(request => request.id.slice(4));
                 if (observedAgentIds.length) await dependencies.observeCliSnapshot({
@@ -617,7 +620,7 @@ export function registerCapabilitiesHandlers(
 
     function effectExecution(method: string, data: unknown,
         context?: import('@/api/rpc/types').RpcHandlerContext): CapabilityEffectExecution {
-        return async <T>(effects: CapabilityEffects, execute: () => Promise<T>): Promise<T> => {
+        return async <T>(effects: CapabilityEffects, execute: (source?: AgentSessionFactorySource) => Promise<T>, detectRequest?: CapabilitiesDetectRequest): Promise<T> => {
             if (effects.includes('machine_install')) {
                 if (context?.machineAdmission?.role !== 'manage') {
                     throw new CapabilityError('Machine software installation requires Manage', RPC_ERROR_CODES.FORBIDDEN);
@@ -632,12 +635,30 @@ export function registerCapabilitiesHandlers(
             // private discovery. Its native owner runs that same request as the
             // requester, rather than lending this daemon's private environment.
             if (admission.executeRpc) {
-                const result = await admission.executeRpc(method, data, context, execute, failure => {
-                    throw new CapabilityError(failure.error, failure.errorCode);
-                });
-                // This private pipe returns the same installed capability
-                // service's response; no external caller supplies this value.
-                return result as T;
+                const names = [...new Set(detectRequest?.requests?.flatMap(request =>
+                    request.id.startsWith('cli.') ? [request.id.slice(4)] : []) ?? [])];
+                const lease = names.length ? tryAcquireAuthoritativePluginRuntimeRegistryLease() : null;
+                try {
+                    // The same applied runtime decides factory readiness once.
+                    // Its facts travel over the existing private requester pipe;
+                    // CLI and dependency discovery still run as that requester.
+                    const observations = await Promise.allSettled(names.map(name =>
+                        observeCurrentAgentSessionFactory(name, lease ? { registry: lease.registry } : undefined)));
+                    const capabilitySessionFactories = Object.fromEntries(observations.flatMap((observation, index) => {
+                        if (observation.status === 'rejected' || observation.value && !observation.value.isCurrent()) return [];
+                        return [[names[index]!, observation.value ? {
+                            nativeAuthenticationRequired: observation.value.nativeAuthenticationRequired,
+                        } : null]];
+                    }));
+                    const result = await admission.executeRpc(method, detectRequest ?? data,
+                        context && names.length ? { ...context, capabilitySessionFactories } : context,
+                        () => execute(names.length ? { observations: capabilitySessionFactories,
+                            isCurrent: () => context?.signal?.aborted !== true } : undefined),
+                        failure => { throw new CapabilityError(failure.error, failure.errorCode); });
+                    // This private pipe returns the same installed capability
+                    // service's response; no external caller supplies this value.
+                    return result as T;
+                } finally { await lease?.release(); }
             }
             if (effects.includes('private_read') || effects.includes('file_write')) {
                 const failure = await admission.rpc(context);

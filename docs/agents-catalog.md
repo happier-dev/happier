@@ -1369,6 +1369,13 @@ probe requests and their inventory projection. A missing, failed or invalid Agen
 appears in the optional `unavailable` list with its Agent id and reason; valid
 results remain in `items`. Invalid whole-response envelopes still fail the inventory.
 The app consumes this projection once through `machineAgentCapabilityObservation`.
+For requester-bound native inventory in 0.3 development, the parent retains its
+daemon-applied runtime lease while the existing private filesystem effect pipe
+carries the observed Session factory facts. CLI, dependency and sign-in probes
+run as the requester. The capability service splits parent-only facts from
+requester effects once and merges their results; a declaration alone does not
+establish native factory readiness. The pipe carries no Account credentials.
+
 Configured registry definitions use the same owner through `tool.acpAgentInventory`.
 Its request carries only the requester's closed definition id, title and typed
 launch projection, without environment, secrets or origin. The daemon returns
