@@ -71,3 +71,40 @@ test('compute-changed-components marks changed_ui when an app dependency package
   assert.equal(parsed.changed_cli, 'true');
   assert.equal(parsed.commit_count, '1');
 });
+
+test('compute-changed-components unions changes and commits across --bases', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'happier-compute-changed-bases-'));
+  git(dir, ['init']);
+  git(dir, ['config', 'user.email', 'test@example.com']);
+  git(dir, ['config', 'user.name', 'Test']);
+
+  await mkdir(join(dir, 'apps', 'cli'), { recursive: true });
+  await mkdir(join(dir, 'apps', 'stack'), { recursive: true });
+  await writeFile(join(dir, 'apps', 'cli', 'README.md'), 'base\n', 'utf8');
+  await writeFile(join(dir, 'apps', 'stack', 'README.md'), 'base\n', 'utf8');
+  git(dir, ['add', '.']);
+  git(dir, ['commit', '-m', 'main base']);
+  const mainBase = git(dir, ['rev-parse', 'HEAD']);
+
+  await writeFile(join(dir, 'apps', 'stack', 'README.md'), 'preview\n', 'utf8');
+  git(dir, ['add', '.']);
+  git(dir, ['commit', '-m', 'preview base']);
+  const previewBase = git(dir, ['rev-parse', 'HEAD']);
+
+  await writeFile(join(dir, 'apps', 'cli', 'README.md'), 'head\n', 'utf8');
+  git(dir, ['add', '.']);
+  git(dir, ['commit', '-m', 'head']);
+  const head = git(dir, ['rev-parse', 'HEAD']);
+
+  const script = resolve(process.cwd(), 'scripts', 'pipeline', 'release', 'compute-changed-components.mjs');
+  const res = run(dir, process.execPath, [script, '--bases', `${previewBase},${mainBase}`, '--head', head]);
+  assert.equal(res.status, 0, res.stderr || res.stdout);
+  const parsed = JSON.parse(String(res.stdout).trim());
+  // Union: the stack change is only visible from the main base, the cli change from both.
+  assert.equal(parsed.changed_cli, 'true');
+  assert.equal(parsed.changed_stack, 'true');
+  assert.equal(parsed.commit_count, '2');
+
+  const both = run(dir, process.execPath, [script, '--base', mainBase, '--bases', previewBase, '--head', head]);
+  assert.notEqual(both.status, 0);
+});
