@@ -325,6 +325,8 @@ machineRuntimeDemandForInput: z.optional(z.custom<(input: unknown, context: Acti
   originalExecution: z.optional(z.strictObject({
     accountRoot: z.optional(z.enum(['allowed', 'separate'])),
     terminalRoot: z.optional(z.enum(['allowed', 'host'])),
+    /** The admitted requester transport needs its persisted Account encryption mode. Never serialized. */
+    accountEncryptionCurrentness: z.optional(z.literal(true)),
     nativePurpose: z.optional(z.enum(['quota_read', 'session_board_write', 'pending_reset_start'])),
     /** Origin hosts that delegate admission to the receiving daemon. Never serialized. */
     daemonIngressSurfaces: z.optional(z.readonly(z.array(z.enum(['cli', 'ui'])))),

@@ -636,6 +636,45 @@ describe("external Action execution authorization", () => {
         return { app, duplicateExternalActionAdmissionRoutes };
     }
 
+    it('admits only requester Account currentness for an origin-free signed transcript read', async () => {
+        const fixture = await createFixture({ qualifiedPat: false });
+        const session = await db.session.create({ data: { accountId: fixture.account.id, tag: crypto.randomUUID(),
+            encryptionMode: 'plain', metadata: '{}' } });
+        const other = await createFixture({ qualifiedPat: false });
+        const otherSession = await db.session.create({ data: { accountId: other.account.id, tag: crypto.randomUUID(),
+            encryptionMode: 'plain', metadata: '{}' } });
+        const { app } = await createApp(fixture.team.id);
+        const actionId = 'session.transcript.get';
+        try {
+            const root = await mint(app, fixture, actionId, { ...fixture.envelope, input: { sessionId: session.id } });
+            expect(root.binding.target).toEqual({ kind: 'machine', machineId: fixture.machine.id });
+            expect(root.binding.sessionActionOrigin).toBeUndefined();
+            const request = (path: string, overrides: Partial<Parameters<typeof machineHeaders>[0]> = {}) =>
+                app.inject({ method: 'GET', url: path, headers: machineHeaders({ authorizationToken: root.token,
+                    effectActionId: actionId, method: 'GET', path, body: undefined,
+                    privateKey: fixture.keyPair.secretKey, ...overrides }) });
+            const currentnessPath = '/v1/account/encryption/currentness';
+            const currentness = await request(currentnessPath);
+            expect(currentness.statusCode).toBe(200);
+            expect(currentness.json()).toMatchObject({ mode: 'plain' });
+            const transcriptPath = `/v1/sessions/${session.id}/messages`;
+            expect((await request(transcriptPath)).statusCode).toBe(200);
+            for (const path of ['/v2/account/settings', '/v1/account/encryption',
+                `${currentnessPath}?accountId=${other.account.id}`]) {
+                expect((await request(path)).statusCode, path).toBe(401);
+            }
+            const foreignTranscript = await request(`/v1/sessions/${otherSession.id}/messages`);
+            expect([403, 404]).toContain(foreignTranscript.statusCode);
+            expect((await request(currentnessPath, { privateKey: other.keyPair.secretKey })).statusCode).toBe(401);
+            expect((await request(currentnessPath, { target: { kind: 'machine', machineId: other.machine.id } })).statusCode).toBe(401);
+            expect((await app.inject({ method: 'GET', url: currentnessPath })).statusCode).toBe(401);
+            const headers = machineHeaders({ authorizationToken: root.token, effectActionId: actionId,
+                method: 'GET', path: currentnessPath, body: undefined, privateKey: fixture.keyPair.secretKey });
+            delete headers[EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER];
+            expect((await app.inject({ method: 'GET', url: currentnessPath, headers })).statusCode).toBe(401);
+        } finally { await app.close(); }
+    });
+
     async function mint(
         app: Awaited<ReturnType<typeof createApp>>["app"],
         fixture: Awaited<ReturnType<typeof createFixture>>,

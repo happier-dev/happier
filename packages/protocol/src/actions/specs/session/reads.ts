@@ -312,7 +312,8 @@ export const SESSION_READ_ACTION_SPECS = Object.freeze([
     inputSchema: SessionInputResultGetInputV1Schema, outputSchema: SessionInputResultGetResultV1Schema,
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'session.transcript.get', approval: {result: 'required'},
+    id: 'session.transcript.get', executionPlacement: 'machine', approval: {result: 'required'},
+    originalExecution: { accountEncryptionCurrentness: true },
     title: 'Get session transcript',
     sideEffectClass: 'read',
     description: 'Read a semantic transcript page, or select one committed message by messageId, with optional tool/reasoning/event flags.',

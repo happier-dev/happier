@@ -1673,7 +1673,8 @@ export async function verifyExternalActionDomainExecutionRequest(
         // Original-root observations and lifecycle operands (including Archive's
         // named Stop phase) retain signature, currentness and ordinary route access.
     } else if (!verified.binding.actionId.startsWith('follow.')
-        && (rootSpec?.executionPlacement === 'session' || verified.binding.sessionActionOrigin)
+        && (rootSpec?.originalExecution?.accountEncryptionCurrentness === true
+            || rootSpec?.executionPlacement === 'session' || verified.binding.sessionActionOrigin)
         && (verified.effectActionId === verified.binding.actionId
             || isSessionArchiveStopEffect(verified.binding.actionId, verified.effectActionId))
         && isAccountEncryptionCurrentnessHttpRead(proof)) {

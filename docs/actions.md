@@ -861,6 +861,10 @@ pending with the same creation key; cancellation is reported when no such custod
 
 The resolved Session transport reads the requester's persisted Account encryption currentness
 under that same signed invocation, without borrowing the daemon's bearer.
+In 0.3 development, the Machine-placed `session.transcript.get` declaration explicitly
+admits this preflight even without a Session origin. Its signed purpose allows only the
+bodyless `GET /v1/account/encryption/currentness` for the admitted requester Account;
+unrelated Account reads and mismatched signatures or targets remain denied.
 
 In 0.3 development, the shared CLI Session transport adapter uses the canonical endpoint-error
 classifier to expose currentness transport/service failures as `server_unreachable` and
