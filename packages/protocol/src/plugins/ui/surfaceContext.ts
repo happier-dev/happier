@@ -1,3 +1,4 @@
+import { WidgetSurfaceRefV1Schema } from '../../widgets/widgetInstanceV1.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod/mini';
 import { asProtocolZod } from "../actions/internalProtocolZodAdapter.js";
@@ -222,6 +223,11 @@ function surfaceFinishGradientSchema() {
 export const PluginUiHostApiSurfaceContextV1Schema = lazyZodSchema(() => z.strictObject({
   mount: PluginUiMountContextV1Schema,
   target: PluginUiHostApiSurfaceTargetV1Schema,
+  /** Identity only from this mount's admitted Account lifetime; never an execution grant. */
+  accountScope: z.optional(z.readonly(z.strictObject({
+    serverId: WidgetSurfaceRefV1Schema.shape.serverId,
+    accountId: WidgetSurfaceRefV1Schema.shape.accountId,
+  }))),
   /** Host page chrome for app pages; absent on other surface placements. */
   page: z.optional(z.strictObject({ columnVisible: z.boolean() })),
   /** The mount's existing approval presenter fact, not an approval or effect authority. */

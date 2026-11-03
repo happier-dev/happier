@@ -60,6 +60,11 @@ describe('plugin UI surface context', () => {
 
     expect(PluginUiSurfaceContextV1Schema.safeParse(surface).success).toBe(false);
     expect(PluginUiHostApiSurfaceContextV1Schema.parse(surface)).toEqual(surface);
+    const accountScope = { serverId: 'home-a', accountId: 'viewer-a' };
+    expect(PluginUiHostApiSurfaceContextV1Schema.parse({ ...surface, accountScope }).accountScope).toEqual(accountScope);
+    for (const invalid of [{ serverId: '', accountId: 'viewer-a' }, { serverId: 'home-a' }, { ...accountScope, grant: 'writer' }]) {
+      expect(PluginUiHostApiSurfaceContextV1Schema.safeParse({ ...surface, accountScope: invalid }).success).toBe(false);
+    }
     const spinner = { style: 'hWave', speed: 'slow', pause: 'long' };
     const withSpinner = { ...surface, theme: { ...surface.theme, spinner } };
     expect(PluginUiHostApiSurfaceContextV1Schema.parse(withSpinner).theme.spinner).toEqual(spinner);
