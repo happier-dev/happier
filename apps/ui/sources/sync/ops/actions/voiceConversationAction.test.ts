@@ -29,6 +29,7 @@ vi.mock('react-native-reanimated', async () =>
     (await import('@/dev/testkit/mocks/reanimated')).createReanimatedModuleMock({ settleTimingCallbacks: true }));
 
 import { createVoiceSessionLifecycleController } from '@/voice/session/voiceSessionLifecycleController';
+import { publishCommittedAppShellPluginUiProjection } from '@/components/appShell/plugins/committedPluginUiProjection';
 import { setVoiceSessionLifecycleController } from '@/voice/session/voiceSessionLifecycleControllerStore';
 import { getVoiceSessionAttemptId, getVoiceSessionPresentedAttemptId, resetVoiceSessionRuntimeStateForTests, setVoiceSessionSnapshot } from '@/voice/session/voiceSessionStore';
 import { registerVoiceAdapters } from '@/voice/session/voiceAdapterRegistry';
@@ -91,7 +92,7 @@ afterEach(async () => { await standardCleanup(); await resetVoiceSessionRuntimeS
     for (const cleanup of runtimeCleanup.splice(0).reverse()) await cleanup();
     resetServerFeaturesClientForTests(); vi.restoreAllMocks(); });
 
-async function createHarness(start = true, featureEnabled = true) {
+async function createHarness(start = true, featureEnabled = true, deferActivation = false) {
     // Account settings persistence outlives a mounted fixture. Distinct external
     // Home inputs keep each case's versioned bootstrap independent.
     const fixtureOrdinal = ++homeFixtureOrdinal;
@@ -205,11 +206,26 @@ async function createHarness(start = true, featureEnabled = true) {
                 providerId: entry.providerId, contribution, declaration: entry.declaration, phase, recipientContract, signal, isCurrent, fetch: providerFetch }) } } });
     runtimeCleanup.push(async () => { await scope.unwind(); });
     const { loadBundledVoiceRuntimeActivate } = await import('@/dev/testkit/harness/builtinVoiceAdapters');
-    (await loadBundledVoiceRuntimeActivate(entry))(scope.api);
-    await scope.commit();
-    const adapter = getExternalVoiceProviderRegistration(entry.providerId)?.adapter;
-    if (!adapter) throw new Error('Generated OpenAI adapter did not activate');
-    registerVoiceAdapters([adapter]);
+    const activationRelease = createDeferred<void>();
+    const activationEntered = createDeferred<void>();
+    if (!deferActivation) activationRelease.resolve(undefined);
+    registerVoiceAdapters([]);
+    const activation = (async () => {
+        await activationRelease.promise;
+        (await loadBundledVoiceRuntimeActivate(entry))(scope.api);
+        await scope.commit();
+        const adapter = getExternalVoiceProviderRegistration(entry.providerId)?.adapter;
+        if (!adapter) throw new Error('Generated OpenAI adapter did not activate');
+        registerVoiceAdapters([adapter]);
+    })();
+    if (!deferActivation) await activation;
+    const unpublish = publishCommittedAppShellPluginUiProjection(() => null, undefined, undefined, undefined,
+        providerId => {
+            if (providerId !== entry.providerId) return null;
+            activationEntered.resolve(undefined);
+            return activation;
+        });
+    runtimeCleanup.push(async () => { activationRelease.resolve(undefined); await activation; unpublish(); });
     const lifecycle = createVoiceSessionLifecycleController({ captureAdmission: createVoiceCaptureAdmissionController() });
     setVoiceSessionLifecycleController(lifecycle);
     lifecycle.subscribe(() => setVoiceSessionSnapshot(lifecycle.getSnapshot()));
@@ -222,6 +238,8 @@ async function createHarness(start = true, featureEnabled = true) {
     const invoke = (action: Parameters<typeof executeVoiceConversationAction>[0], input: unknown) => executeVoiceConversationAction(action, input, { navigate() {} });
     let event = 0;
     return { lifecycle, expectedAttempt, invoke, serverId, providerId: entry.providerId, artifacts, homeRequests: home.requests,
+        releaseActivation: () => activationRelease.resolve(undefined),
+        activationEntered: activationEntered.promise,
         explicitServerId: home.homes.explicit!.id, focusedServerId: home.homes.focused!.id, competingServerId: home.homes.competing!.id,
         micTrack: () => browser.micTrack,
         speaking() { browser.peer.channel.message(JSON.stringify({ type: 'output_audio_buffer.started', event_id: `action-${++event}` })); },
@@ -241,6 +259,37 @@ async function createHarness(start = true, featureEnabled = true) {
 }
 
 describe('generated OpenAI conversation Actions through the lifecycle owner', () => {
+    it('cancels first Start during activation without opening the provider after it settles', async () => {
+        const fixture = await createHarness(false, true, true);
+        const starting = fixture.lifecycle.toggle({ serverId: fixture.serverId, sessionId: 'session-original' });
+        expect(await Promise.race([starting.then(() => 'settled'), fixture.activationEntered.then(() => 'preparing')]))
+            .toBe('preparing');
+        expect(fixture.lifecycle.getSnapshot()).toMatchObject({ status: 'connecting', canStop: true });
+        await fixture.lifecycle.stop('session-original');
+        fixture.releaseActivation();
+        await starting;
+        expect(fixture.lifecycle.getSnapshot()).toMatchObject({ status: 'disconnected', canStop: false });
+    });
+
+    it.each(['action', 'lifecycle'] as const)('sequences first Start after real provider activation (%s)', async ingress => {
+        const fixture = await createHarness(false, true, true);
+        let settled = false;
+        const start = (ingress === 'action'
+            ? fixture.invoke('ui.voice_global.start', { target: { kind: 'session', sessionAddress: {
+                serverId: fixture.serverId, sessionId: 'session-original',
+            } }, expectedAttempt: null })
+            : fixture.lifecycle.toggle({ serverId: fixture.serverId, sessionId: 'session-original' }))
+            .then(result => { settled = true; return result; });
+        expect(await Promise.race([start.then(() => 'settled'), fixture.activationEntered.then(() => 'preparing')]))
+            .toBe('preparing');
+        expect(settled).toBe(false);
+        expect(fixture.lifecycle.getSnapshot().status).not.toBe('error');
+        fixture.releaseActivation();
+        const result = await start;
+        if (ingress === 'action') expect(result).toMatchObject({ status: 'completed' });
+        expect(fixture.lifecycle.getSnapshot()).toMatchObject({ status: 'connected', canStop: true });
+    });
+
     it('exposes a sanitized public attempt projection without opening media', async () => {
         const { lifecycle, invoke } = await createHarness(false);
         try {

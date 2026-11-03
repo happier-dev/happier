@@ -1,3 +1,4 @@
+import { getCurrentAppShellVoiceProviderActivation } from '@/components/appShell/plugins/committedPluginUiProjection';
 import { VoiceConversationActionInputSchemas, type VoiceConversationActionId, type VoiceConversationStatus } from '@happier-dev/protocol/actions/voiceConversationActionFamily';
 import { Linking, Platform } from 'react-native';
 import { readMicrophonePermissionState, requestMicrophonePermission, type MicrophonePermissionState } from '@/utils/platform/microphonePermissions';
@@ -10,7 +11,7 @@ import { getConnectedServiceRegistrySnapshot } from '@/sync/domains/connectedSer
 import { resolveVoiceIdleTarget, useVoiceTargetStore, type VoiceStartIntent, type VoiceIdleTarget } from '@/voice/runtime/voiceTargetStore';
 import { createDefaultVoiceProviderRegistry } from '@/voice/registry/defaultRegistry';
 import { resolveVoicePresentedProviderId } from '@/voice/settings/resolveVoiceProviderId';
-import { resolveVoiceAdapterSurfaceCapabilities } from '@/voice/session/voiceAdapterRegistry';
+import { getVoiceAdapterRegistry, resolveVoiceAdapterSurfaceCapabilities } from '@/voice/session/voiceAdapterRegistry';
 import { voiceSessionManager } from '@/voice/session/voiceSession';
 import { getVoiceSessionLifecycleController } from '@/voice/session/voiceSessionLifecycleControllerStore';
 import { canDismissVoiceSessionFailedAttempt, dismissVoiceSessionEndedAttempt, getVoiceSessionEndedAttempt,
@@ -162,6 +163,13 @@ export async function executeVoiceConversationAction(
 ): Promise<Readonly<{ status: 'completed'; voice: VoiceConversationStatus; permission?: MicrophonePermissionState }>
     | Readonly<{ status: 'unavailable'; code: string; voice: VoiceConversationStatus; permission?: MicrophonePermissionState }>> {
     const parsed = VoiceConversationActionInputSchemas[actionId].safeParse(input);
+    if (parsed.success && ['ui.voice_global.start', 'ui.voice_global.new_conversation', 'ui.voice_global.continue_conversation'].includes(actionId)) {
+        const providerId = resolveVoicePresentedProviderId(voiceSessionManager.getSnapshot(),
+            voiceSettingsParse(storage.getState().settings.voice), registry);
+        if (providerId && !getVoiceAdapterRegistry().get(providerId)) {
+            await getCurrentAppShellVoiceProviderActivation(providerId);
+        }
+    }
     const current = await readConversation(parsed.success && 'target' in parsed.data ? parsed.data.target : undefined);
     const unavailable = (code: string) => ({ status: 'unavailable' as const, code, voice: current.voice,
         ...(actionId === 'ui.voice_global.setup.microphone.permission.request' ? { permission: 'unknown' as const } : {}) });

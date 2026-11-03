@@ -1,6 +1,6 @@
 
 import { buildBackendTargetKeyV2, readBackendTargetRefV2, type BackendTargetRefV2, type PersistedBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
-import type { SessionModelSelectionV1 } from '@happier-dev/protocol/providers/model-selection';
+import { SessionModelSelectionV1Schema, type SessionModelSelectionV1 } from '@happier-dev/protocol/providers/model-selection';
 import { buildQualifiedPluginContributionKey, type PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import { buildSystemSessionMetadataV1 } from '@happier-dev/protocol/sessions/control/contract';
 import { AgentSessionStartupInstructionsV1Schema, type AgentSessionStartupInstructionsV1, type AgentSessionStartupInstructionsMarkerV1 } from '@happier-dev/protocol/runtime/agentSessionStartupInstructionsV1';
@@ -595,6 +595,15 @@ async function spawnVoiceConversationSession(params: Readonly<{
         params.signal,
     );
     params.signal?.throwIfAborted();
+    // Explicit Session inheritance wins; otherwise Home and Session carriers
+    // consume the same configured Voice choice as ordinary Voice Agent turns.
+    const configuredModelId = normalizeNonEmptyString(
+        readLocalConversationVoiceSettings(readCanonicalVoiceSettingsFromState(storage.getState())).agent.chatModelId,
+    );
+    const modelSelection = params.modelSelection ?? (configuredModelId && configuredModelId !== 'default'
+        ? SessionModelSelectionV1Schema.parse({ v: 1, ref: {
+            agentTargetKey: buildBackendTargetKeyV2(agentTarget), providerConnectionId: null, modelId: configuredModelId,
+        }, updatedAt: Date.now() }) : undefined);
     const action = await executeSessionSpawnNewAction({
         creationKey: params.creationKey,
         executionTarget: {
@@ -605,7 +614,7 @@ async function spawnVoiceConversationSession(params: Readonly<{
         agentTarget,
         permissionMode: params.permissionMode,
         transcriptStorage: 'persisted',
-        ...(params.modelSelection !== undefined ? { modelSelection: params.modelSelection } : {}),
+        ...(modelSelection !== undefined ? { modelSelection } : {}),
         ...(params.connectedServices
             ? { connectedServices: params.connectedServices }
             : {}),

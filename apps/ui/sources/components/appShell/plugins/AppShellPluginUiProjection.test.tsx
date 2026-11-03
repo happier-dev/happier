@@ -39,7 +39,7 @@ import {
     type AppShellPluginUiProjectionValue,
 } from './AppShellPluginUiProjection';
 import { EMPTY_PLUGIN_UI_PROJECTION, createPluginUiProjectedActionResolver } from '@/sync/domains/plugins/ui/projection';
-import { publishCommittedAppShellPluginUiProjection, readCurrentAppShellPluginUiProjection,
+import { getCurrentAppShellVoiceProviderActivation, publishCommittedAppShellPluginUiProjection, readCurrentAppShellPluginUiProjection,
     subscribeCommittedAppShellPluginUiProjection } from './committedPluginUiProjection';
 import { createAppShellPluginUiProjectionPublication } from './appShellPluginUiProjectionPublication';
 import { selectPluginSurfacePlacementsForBinding } from '@/sync/domains/plugins/ui/surfacePlacementSelectors';
@@ -2154,8 +2154,14 @@ describe('AppShellPluginUiProjectionProvider', () => {
                 microphoneMode: 'provider_managed' as const, setInputMuted: () => {},
             });
         });
+        const releaseActivation = createDeferred<void>();
+        const activationEntered = createDeferred<void>();
         appShellClientExecutableRuntimeState.loaderBackend = {
-            backendId: 'commonJs', available: true, loadInstalledBundle: vi.fn(async () => activate),
+            backendId: 'commonJs', available: true, loadInstalledBundle: vi.fn(async () => {
+                activationEntered.resolve(undefined);
+                await releaseActivation.promise;
+                return activate;
+            }),
         };
         const host = getInstalledPluginUiExecutableModuleHost();
         pluginExecutableHostState.override = host;
@@ -2185,6 +2191,14 @@ describe('AppShellPluginUiProjectionProvider', () => {
         );
         const screen = await renderScreen(renderApp());
         await flushHookEffects({ cycles: 8 });
+        await activationEntered.promise;
+        const completion = getCurrentAppShellVoiceProviderActivation(providerId);
+        expect(completion).not.toBeNull();
+        expect(getVoiceAdapterRegistry().get(providerId)).toBeNull();
+        await act(async () => {
+            releaseActivation.resolve(undefined);
+            await completion;
+        });
         await vi.waitFor(() => {
             expect(screen.findByType('ProjectionProbe' as never).props.value.clientExecutableActivation)
                 .toEqual({ status: 'ready' });

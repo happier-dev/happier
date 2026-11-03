@@ -120,6 +120,7 @@ export type AppShellPluginUiProjectionValue = Readonly<{
     reloadConnectedAccountProjection(): void;
     clientExecutableActivation: AppShellClientExecutableActivationState;
     reloadClientExecutables(): void;
+    getVoiceProviderActivation?: (providerId: string) => Promise<void> | null;
 }>;
 
 export type AppShellClientExecutableActivationFailure = Readonly<{
@@ -367,7 +368,8 @@ export function AppShellPluginUiProjectionValueProvider(props: Readonly<{
         // Withdrawing it before replacement would notify readers twice.
         const publication = props.publication;
         committedProjectionCleanup.current = publishCommittedAppShellPluginUiProjection(read, readCandidates,
-            publication ? listener => publication.subscribe(listener, 'committed') : undefined, translationRuntime);
+            publication ? listener => publication.subscribe(listener, 'committed') : undefined, translationRuntime,
+            providerId => valueRef.current.getVoiceProviderActivation?.(providerId) ?? null);
     }, [lifetime, props.publication, standaloneProjection, standalonePhase, standaloneDeclarationReady, standaloneCandidates, standaloneSkills, translationRuntime]);
     React.useLayoutEffect(() => () => {
         committedProjectionCleanup.current?.();
@@ -649,7 +651,12 @@ export function AppShellPluginUiProjectionProvider(props: Readonly<{
     appNavigationBindingRef.current = appNavigationBinding;
     const readAppNavigationBinding = React.useCallback(() => appNavigationBindingRef.current, []);
 
-    React.useEffect(() => {
+    const voiceActivation = React.useRef<Readonly<{ providerIds: ReadonlySet<string>; completion: Promise<void> }> | null>(null);
+    const getVoiceProviderActivation = React.useCallback((providerId: string) => {
+        const activation = voiceActivation.current;
+        return activation?.providerIds.has(providerId) ? activation.completion : null;
+    }, []);
+    React.useLayoutEffect(() => {
         const request = clientExecutableActivationRequest;
         const basis = request.basis;
         const next = basis.projection ?? EMPTY_PLUGIN_UI_PROJECTION;
@@ -691,7 +698,12 @@ export function AppShellPluginUiProjectionProvider(props: Readonly<{
             }
         });
         pluginRuntimeUpdateTailRef.current = update;
-        return () => { cancelled = true; };
+        const activation = { providerIds: basis.voiceProviderIds, completion: update };
+        voiceActivation.current = activation;
+        return () => {
+            cancelled = true;
+            if (voiceActivation.current === activation) voiceActivation.current = null;
+        };
     }, [clientExecutableActivationRequest, readAppNavigationBinding]);
 
     React.useEffect(() => () => {
@@ -717,9 +729,10 @@ export function AppShellPluginUiProjectionProvider(props: Readonly<{
         connectedAccountProjectionRevision,
         connectedAccountProjectionState,
         clientExecutableActivation,
+        getVoiceProviderActivation,
         reloadClientExecutables,
         reloadConnectedAccountProjection,
-    }), [accountLifetime, clientExecutableActivation, connectedAccountProjectionRevision, connectedAccountProjectionState, hasEstablishingMembers, interactionEnabled, phase, platform, pluginBrowserProjection, pluginUiProjection, projectionUnion.machineId, projectionUnion.serverId, reloadClientExecutables, reloadConnectedAccountProjection, unavailableReasonCode]);
+    }), [accountLifetime, getVoiceProviderActivation, clientExecutableActivation, connectedAccountProjectionRevision, connectedAccountProjectionState, hasEstablishingMembers, interactionEnabled, phase, platform, pluginBrowserProjection, pluginUiProjection, projectionUnion.machineId, projectionUnion.serverId, reloadClientExecutables, reloadConnectedAccountProjection, unavailableReasonCode]);
     return (
         <AppShellPluginUiProjectionValueProvider value={value} declarationReady={declarationReady} publication={projectionPublication}>
             {projectionTargets.map((projectionTarget) => (

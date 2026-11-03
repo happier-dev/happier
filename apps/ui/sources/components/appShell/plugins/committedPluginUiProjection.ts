@@ -12,6 +12,7 @@ type CommittedProjectionBinding = Readonly<{
     read(input?: AppShellPluginUiProjectionRead): PluginUiProjectionModel | null;
     readCandidates?: (pluginId: string, input?: AppShellPluginUiProjectionRead) => PluginUiExecutionOriginCandidateFacts | null;
     translationRuntime?: PluginUiTranslationRuntime;
+    getVoiceProviderActivation?: (providerId: string) => Promise<void> | null;
     disposeSource(): void;
 }>;
 let committed: CommittedProjectionBinding | null = null;
@@ -41,18 +42,25 @@ export function readCurrentAppShellPluginUiTranslationRuntime(projection: Plugin
     return projection && committed?.read(input) ? committed.translationRuntime ?? null : null;
 }
 
+/** Borrows the activation owner's completion; reading it never starts another activation. */
+export function getCurrentAppShellVoiceProviderActivation(providerId: string): Promise<void> | null {
+    return committed?.getVoiceProviderActivation?.(providerId) ?? null;
+}
+
 /** Publishes the committed reader; the returned cleanup clears it only if it is still the current one. */
 export function publishCommittedAppShellPluginUiProjection(
     read: (input?: AppShellPluginUiProjectionRead) => PluginUiProjectionModel | null,
     readCandidates?: (pluginId: string, input?: AppShellPluginUiProjectionRead) => PluginUiExecutionOriginCandidateFacts | null,
     subscribe?: (listener: () => void) => () => void,
     translationRuntime?: PluginUiTranslationRuntime,
+    getVoiceProviderActivation?: (providerId: string) => Promise<void> | null,
 ): () => void {
     let unsubscribe: (() => void) | undefined;
     const binding: CommittedProjectionBinding = {
         read,
         readCandidates,
         translationRuntime,
+        getVoiceProviderActivation,
         disposeSource() { unsubscribe?.(); unsubscribe = undefined; },
     };
     committed?.disposeSource();

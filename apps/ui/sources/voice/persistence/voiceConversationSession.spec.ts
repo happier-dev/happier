@@ -1,3 +1,7 @@
+import { createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
+import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { admitSessionSpawnNewActionInputV2, SessionSpawnNewActionInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
+import { projectSessionSpawnNewActionResultV1, SessionSpawnNewResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import {
@@ -66,6 +70,7 @@ type TestState = {
 };
 let state: TestState;
 let homeId = '';
+const spawnHttpBoundaries = new Map<string, Awaited<ReturnType<typeof createExternalActionAccountHttpBoundary>>>();
 let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>>;
 const sessionRecords = new Map<string, ReturnType<typeof sessionWireRecord>>();
 const projectionResponse = vi.fn<MachineContributionRegistryProjectionDescribeFn>();
@@ -158,6 +163,22 @@ function commitFixtureSession(id: string) {
 async function respondToServerRequest(input: RequestInfo | URL, init?: RequestInit): Promise<Response | null> {
   const path = new URL(String(input)).pathname;
   if (path === '/v2/sessions/read-batch') return null;
+  if (path.startsWith('/v1/actions/session.spawn_new')) {
+    const body = JSON.parse(String(init?.body));
+    const machineId = body.machineId ?? body.target?.machineId;
+    let boundary = spawnHttpBoundaries.get(machineId);
+    if (!boundary) {
+      boundary = await createExternalActionAccountHttpBoundary({
+        serverUrl: 'https://voice-conversation.example.test', serverIdentityId: connection.home.serverIdentityId ?? 'srv_voice_conversation',
+        accountId: 'account-1', machineId, tokenEpoch: 0, actionId: 'session.spawn_new', requesterInvocation: 'none',
+        execute: async input => projectSessionSpawnNewActionResultV1(SessionSpawnNewResultV1Schema.parse(
+          await dispatchMachineRpc({ machineId, serverId: homeId, method: RPC_METHODS.SESSION_SPAWN_NEW,
+            payload: admitSessionSpawnNewActionInputV2(SessionSpawnNewActionInputV2Schema.parse(input)) }))),
+      });
+      spawnHttpBoundaries.set(machineId, boundary);
+    }
+    return boundary.handle(new URL(String(input)), init);
+  }
   const json = (body: unknown) => Response.json(body);
   if (path === managedMachineActionEndpointPathV1('machines.managed.list')) {
     return json(ManagedMachineActionOutputSchemasV1['machines.managed.list'].parse({ machines: [] }));
@@ -351,9 +372,12 @@ async function restoreAccount(account: Pick<Parameters<typeof restoreServerAccou
   purposeCatalogUnavailable = false;
   purposeCatalogReads = 0;
   sessionRecords.clear();
+  spawnHttpBoundaries.clear();
   sessionListWireOverride = null;
   sessionOrganizationFailure = null;
   connection = await restoreServerAccountForTest({
+    serverIdentityId: 'srv_voice_conversation',
+    credentials: { token: createAccountTokenForTests('account-1', { currentAccount: true }) },
     ...account,
     serverUrl: 'https://voice-conversation.example.test', accountId: 'account-1',
     credentialScope: 'restored-home', activation: 'switch', request: createSessionReadBatchFetchBoundary(respondToServerRequest),
@@ -600,6 +624,19 @@ describe('ensureVoiceConversationSessionForVoiceHome', () => {
     sessionDetailResponse.mockClear();
   });
 
+  it('passes the selected Voice model to Home carrier creation instead of the native default', async () => {
+    const agent = state.settings.voice.providers.local_conversation.config.agent;
+    agent.chatModelSource = 'custom';
+    agent.chatModelId = 'gpt-6-luna';
+    const { ensureVoiceConversationSessionForVoiceHome } = await loadConversationSession();
+    await expect(ensureVoiceConversationSessionForVoiceHome()).resolves.toBe('voice-home-session');
+    expect(spawnRequests).toHaveBeenCalledWith(expect.objectContaining({
+      modelSelection: expect.objectContaining({ ref: {
+        agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: null, modelId: 'gpt-6-luna',
+      } }),
+    }));
+  });
+
   it('R41 gives changed fixed-Agent authentication distinct carriers while keeping unchanged retries stable', async () => {
     state.settings.voice.providers.local_conversation.config.agent.agentSource = 'agent';
     state.settings.voice.providers.local_conversation.config.agent.agentId = 'codex';
@@ -812,6 +849,39 @@ describe('ensureVoiceConversationSessionForVoiceHome', () => {
     }
   });
 
+  it('passes the selected Voice model through Home realtime composition', async () => {
+    enableCodexStartupInstructionsV1();
+    const agent = state.settings.voice.providers.local_conversation.config.agent;
+    agent.chatModelSource = 'custom';
+    agent.chatModelId = 'gpt-6-luna';
+    trustedSpawnResponse.mockImplementation(async params => {
+      state.sessions['realtime-home'] = { id: 'realtime-home', active: true, updatedAt: 1,
+        metadata: { machineId: params.machineId, path: params.directory,
+          runtimeDescriptorV1: { v: 1, agentId: 'codex', agent: {} },
+          connectedServices: params.connectedServices } };
+      return { type: 'success', sessionId: 'realtime-home' };
+    });
+    sessionRpcResponse.mockResolvedValue(AgentSessionRealtimeInspectResultV1Schema.parse({
+      ok: true, status: 'available', transport: 'webrtc',
+    }));
+    await loadConversationSession();
+    const lease = createBundledConversationRuntimeHostLease();
+    try {
+      const resolveBinding = lease.host.resolveAgentRealtimeVoiceConversationBinding;
+      if (!resolveBinding) throw new Error('Agent realtime binding resolver is unavailable');
+      await expect(resolveBinding({ provider: { pluginId: 'acme.voice', localId: 'realtime' },
+        agent: { pluginId: 'happier.agent.codex', localId: 'codex' },
+        controlSessionId: lease.host.globalVoiceSessionId, requestedTargetSessionAddress: null,
+        settings: state.settings, connectedServices: { v: 2, bindingsByServiceId: {} },
+      })).resolves.toMatchObject({ conversationSessionAddress: { sessionId: 'realtime-home' } });
+      expect(spawnRequests).toHaveBeenCalledWith(expect.objectContaining({
+        modelSelection: expect.objectContaining({ ref: {
+          agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: null, modelId: 'gpt-6-luna',
+        } }),
+      }));
+    } finally { lease.revoke(); }
+  });
+
   it('spawns a global hidden session with the exact qualified Agent backend when local ids collide', async () => {
     enableCollidingQualifiedAgentProjection();
     const connectedServices = {
@@ -868,7 +938,7 @@ describe('ensureVoiceConversationSessionForVoiceHome', () => {
       };
       await expect(resolveBinding(bindingInput)).resolves.toEqual({
         conversationSessionAddress: {
-          serverId: homeId,
+          serverId: connection.home.serverIdentityId ?? homeId,
           sessionId: 'installed-codex-global',
         },
         transcriptMode: 'native_session',

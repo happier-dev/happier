@@ -1,3 +1,4 @@
+import { getCurrentAppShellVoiceProviderActivation } from '@/components/appShell/plugins/committedPluginUiProjection';
 import { getVoiceAdapterRegistry, resolveVoiceAdapterSurfaceCapabilities } from './voiceAdapterRegistry';
 import { storage } from '@/sync/domains/state/storage';
 import { captureVoiceAttemptRecoveryTarget } from './voiceAttemptRecoveryTarget';
@@ -932,7 +933,20 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
 
     const startConfiguredAdapter = async (requestedTargetSessionAddress: SessionAddress | null): Promise<void> => {
         const sessionId = requestedTargetSessionAddress?.sessionId ?? '';
-        const adapter = resolveConfiguredAdapter();
+        let adapter = resolveConfiguredAdapter();
+        const providerId = configuredProviderId;
+        const activation = !adapter && providerId && providerId !== 'off'
+            ? getCurrentAppShellVoiceProviderActivation(providerId) : null;
+        if (activation && providerId && providerId !== 'off') {
+            const request: VoiceRecoveryBinding = { providerId,
+                sessionId: sessionId.trim() || VOICE_AGENT_GLOBAL_SESSION_ID, requestedTargetSessionAddress };
+            pendingStart = request;
+            publishSnapshot();
+            await activation;
+            if (disposed || pendingStart !== request || configuredProviderId !== providerId) return;
+            pendingStart = null;
+            adapter = resolveConfiguredAdapter();
+        }
         if (!adapter) {
             /*
              * A selected provider whose adapter is absent from the registry —
