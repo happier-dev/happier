@@ -1174,36 +1174,8 @@ export async function syncSettings<TOneShotMutationValue = never>(
         parsed: summarizeSettings(nextSettings, { version: fetched.version }),
     });
 
-    // Best-effort migration: if settings were readable but not in canonical `account_scoped_v1` format,
-    // rewrite them so other clients can decrypt them reliably.
-    if (decryptedSettings && fetched.api === 'v2') {
-        try {
-            const migratedServerSettings = normalizeSettingsForServerStorageResult({
-                raw: decryptedSettings as Record<string, unknown>,
-                mode: accountMode,
-                current: decryptedSettings as Record<string, unknown>,
-            });
-            const nonCanonicalFormat = accountMode === 'e2ee'
-                && fetched.content?.t === 'encrypted'
-                && fetched.format !== 'account_scoped_v1';
-            const needsMigration = nonCanonicalFormat
-                || fetched.serverIdentityKeysChanged
-                || migratedServerSettings.changed;
-            if (needsMigration) {
-                const { content: migrateContent } = createSettingsContentForWrite(migratedServerSettings.value);
-                const migrateRes = await updateSettingsV2({
-                    content: migrateContent,
-                    expectedVersion: fetched.version,
-                    raw: migratedServerSettings.value,
-                });
-                if ((migrateRes as any)?.success) {
-                    applySettingsForCapturedScope(nextSettings, (migrateRes as any).version);
-                }
-            }
-        } catch {
-            // ignore migration failures (non-fatal)
-        }
-    }
+    // Reading may project retained formats locally. Persist normalization only with
+    // the next deliberate mutation above; a GET must not rewrite another writer's document.
 }
 
 export function applySettingsLocalDelta(params: {

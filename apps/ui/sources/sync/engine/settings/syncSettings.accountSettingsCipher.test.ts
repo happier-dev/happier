@@ -1243,7 +1243,7 @@ describe('syncSettings account settings ciphertext', () => {
         expect(body.expectedVersion).toBe(8);
     });
 
-    it('imports legacy session organization settings and strips them from account settings storage', async () => {
+    it('imports legacy session organization settings and strips them on a deliberate settings write', async () => {
         const encryptionStub = {
             getContentPrivateKey: () => TEST_MACHINE_KEY,
             decryptRaw: vi.fn(async () => {
@@ -1339,7 +1339,7 @@ describe('syncSettings account settings ciphertext', () => {
             credentials,
             encryption: encryptionStub,
             settingsScope: { serverId: 'srv_identity', accountId: 'account-a' },
-            pendingSettings: {},
+            pendingSettings: { analyticsOptOut: true },
             clearPendingSettings: vi.fn(),
         });
 
@@ -1457,7 +1457,7 @@ describe('syncSettings account settings ciphertext', () => {
             ciphertext: String(migrateBody.content?.c ?? ''),
         });
         const postedSettings = opened?.value as Record<string, unknown> | undefined;
-        expect(postedSettings).toEqual(expect.objectContaining({ analyticsOptOut: false }));
+        expect(postedSettings).toEqual(expect.objectContaining({ analyticsOptOut: true }));
         expect(postedSettings?.pinnedSessionKeysV1).toBeUndefined();
         expect(postedSettings?.sessionTagsV1).toBeUndefined();
         expect(postedSettings?.sessionListGroupOrderV1).toBeUndefined();
@@ -1610,7 +1610,7 @@ describe('syncSettings account settings ciphertext', () => {
             credentials,
             encryption: encryptionStub,
             settingsScope: { serverId: 'localhost-52753', accountId: 'account-a' },
-            pendingSettings: {},
+            pendingSettings: { analyticsOptOut: true },
             clearPendingSettings: vi.fn(),
         });
 
@@ -1624,7 +1624,7 @@ describe('syncSettings account settings ciphertext', () => {
         });
 
         expect(openedCleanup?.value).toEqual(expect.objectContaining({
-            analyticsOptOut: false,
+            analyticsOptOut: true,
             pinnedSessionKeysV1: ['other-server:session-b'],
             sessionFoldersV1: {
                 v: 1,
@@ -1820,7 +1820,7 @@ describe('syncSettings account settings ciphertext', () => {
         });
     });
 
-    it('migrates legacy-sealed saved secrets to canonical machine-key sealing after fetch', async () => {
+    it('migrates legacy-sealed saved secrets to canonical machine-key sealing on a deliberate settings write', async () => {
         const recoverySecret = new Uint8Array(32).fill(6);
         const machineKey = deriveAccountMachineKeyFromRecoverySecret(recoverySecret);
         const legacySettingsKey = deriveSettingsSecretsKeyV1(recoverySecret);
@@ -1884,7 +1884,7 @@ describe('syncSettings account settings ciphertext', () => {
         await syncSettings({
             credentials: legacyCredentials,
             encryption: encryptionStub,
-            pendingSettings: {},
+            pendingSettings: { analyticsOptOut: false },
             settingsSecretsKey: canonicalSettingsKey,
             settingsSecretsReadKeys: [canonicalSettingsKey, legacySettingsKey],
             clearPendingSettings: vi.fn(),

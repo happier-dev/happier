@@ -180,7 +180,8 @@ const localConversationCompatibility: ReleasedVoiceSettingsCompatibility = Objec
       ...migrated.data,
       stt: mergedSpeech.stt,
       tts: mergedSpeech.tts,
-      agent: { ...migrated.data.agent, providerChat: current.data.agent.providerChat },
+      // A predecessor cannot clear optional choices absent from its schema.
+      agent: { ...current.data.agent, ...migrated.data.agent, providerChat: current.data.agent.providerChat },
     }));
   },
 });

@@ -36,11 +36,40 @@ async function pressTtsSample(screen: Awaited<ReturnType<typeof renderScreen>>) 
 }
 
 describe('Voice declarations through the default Settings Action and Account persistence', () => {
-    it('persists Local Voice connected selections losslessly through Settings Actions', async () => {
+    it('retains a saved Voice binding across predecessor ingress without a write on load', async () => {
+        const { normalizeVoiceSettingsServerDelta } = await import('@/sync/domains/settings/voiceSettingsPersistence');
+        const { readLocalConversationVoiceSettings } = await import('@/sync/domains/settings/voiceSettings');
+        const connectedServices = { v: 2, bindingsByServiceId: {
+            'happier.agent.codex/openai-codex': { source: 'connected', selection: 'group', groupId: 'voice-pool' },
+        } };
+        const saved = settingsParse({ voice: { providerId: 'local_conversation',
+            providers: { local_conversation: { schemaVersion: 1, config: { agent: { connectedServices } } } } },
+        });
+        // Construct a predecessor adapter write that omits the new optional choice.
+        const predecessor = settingsParse({ voice: { providerId: 'local_conversation' } });
+        const raw = { ...normalizeVoiceSettingsServerDelta(saved), voice: {
+            providerId: 'local_conversation', adapters: {
+                local_conversation: readLocalConversationVoiceSettings(predecessor.voice),
+            },
+        } };
+        const account = await createVoiceSettingsAccountTestHarness(saved, { mode: 'plain', rawSettings: raw });
+        onTestFinished(account.dispose);
+        const { syncSettings } = await import('@/sync/engine/settings/syncSettings');
+        await syncSettings({ credentials: account.credentials, encryption: account.encryption,
+            settingsScope: account.scope, pendingSettings: {}, clearPendingSettings: () => {} });
+        expect(readLocalConversationVoiceSettings(account.settings.voice).agent.connectedServices).toEqual(connectedServices);
+        expect(account.writes).toHaveLength(0);
+        await syncSettings({ credentials: account.credentials, encryption: account.encryption,
+            settingsScope: account.scope, pendingSettings: { analyticsOptOut: true }, clearPendingSettings: () => {} });
+        expect(account.writes).toHaveLength(1);
+        expect(readLocalConversationVoiceSettings(account.persistedSettings.voice).agent.connectedServices).toEqual(connectedServices);
+    });
+
+    it.each(['plain', 'e2ee'] as const)('persists Local Voice connected selections without automatic follow-up writes (%s)', async (mode) => {
         const account = await createVoiceSettingsAccountTestHarness(settingsParse({
             actionsSettingsV1: { v: 1, actions: {}, approvalWaivedSurfaces: { 'settings.set': ['agent'] } },
             voice: { providerId: 'local_conversation' },
-        }));
+        }), { mode });
         onTestFinished(account.dispose);
         const executor = createDefaultActionExecutor();
         const context = { surface: 'agent' as const, authority: 'account_automation' as const,
@@ -50,7 +79,13 @@ describe('Voice declarations through the default Settings Action and Account per
         for (const value of [{ v: 2, bindingsByServiceId: {
             'happier.agent.codex/openai-codex': { source: 'connected', selection: 'group', groupId: 'voice-pool' },
         } }, null]) {
+            const writesBeforeSave = account.writes.length;
             expect(await executor.execute('settings.set', { anchor, value }, context)).toMatchObject({ ok: true });
+            expect(account.writes).toHaveLength(writesBeforeSave + 1);
+            const { syncSettings } = await import('@/sync/engine/settings/syncSettings');
+            await syncSettings({ credentials: account.credentials, encryption: account.encryption,
+                settingsScope: account.scope, pendingSettings: {}, clearPendingSettings: () => {} });
+            expect(account.writes).toHaveLength(writesBeforeSave + 1);
             expect(await executor.execute('settings.get', { anchor }, context)).toMatchObject({ ok: true, result: { value } });
             const { readLocalConversationVoiceSettings } = await import('@/sync/domains/settings/voiceSettings');
             expect(readLocalConversationVoiceSettings(account.persistedSettings.voice).agent.connectedServices).toEqual(value);

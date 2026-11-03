@@ -1865,6 +1865,15 @@ qualified contribution identity. The unused selection-time
 development. Stored readers tolerate and drop that unknown field without
 changing the selected Agent; this removes no 0.2-created selection contract.
 
+The optional Voice Agent `connectedServices` choice uses the canonical V2
+Connected Service binding schema. Predecessor adapter ingress preserves canonical
+optional Agent choices its payload omits; an explicit `null` still selects native
+authentication. Account Settings loads project retained formats locally without
+rewriting the stored document. The next deliberate settings mutation performs
+normalization through the existing write boundary, including retained cipher and
+secret formats. Updated UI clients must reload to stop the former write-on-load
+path; this does not require a daemon or server restart.
+
 The Voice transcript reset boundary lives in the Account KV row
 `voice:transcript-memory:v1`, through the existing mode-aware JSON/CAS owner.
 Forget advances this boundary only when remembering conversations is enabled;
