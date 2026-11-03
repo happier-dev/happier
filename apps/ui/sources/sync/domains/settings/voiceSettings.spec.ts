@@ -4,6 +4,7 @@ import {
   VoiceProviderIdSchema,
   VOICE_HANDS_FREE_ENDPOINTING_DEFAULTS,
   readLocalConversationVoiceSettings,
+  writeLocalConversationVoiceSettings,
   readLocalDirectVoiceSettings,
   readVoiceProviderSettingsConfig,
   voiceSettingsDefaults,
@@ -15,6 +16,25 @@ import { resolveVoiceTurnStreamReadConfig } from '@/voice/agent/resolveVoiceTurn
 import { getDefaultModelPackId } from '@happier-dev/protocol/voice/modelPacks/catalog';
 
 describe('voiceSettings', () => {
+  it('round-trips a Local Voice connected account or pool without changing absent defaults', () => {
+    const connectedServices = { v: 2, bindingsByServiceId: {
+      'happier.agent.codex/openai-codex': { source: 'connected', selection: 'group', groupId: 'voice-pool' },
+    } };
+    const parsed = settingsParse({ voice: { providers: { local_conversation: { schemaVersion: 1,
+      config: { agent: { connectedServices } } } } } });
+    expect(readLocalConversationVoiceSettings(parsed.voice).agent).toHaveProperty('connectedServices', connectedServices);
+    expect(readLocalConversationVoiceSettings(settingsParse({}).voice).agent).not.toHaveProperty('connectedServices');
+  });
+  it('drops future Local Voice binding fields on stored read so unrelated settings remain writable', () => {
+    const serviceId = 'happier.agent.codex/openai-codex';
+    const binding = { source: 'connected', selection: 'group', groupId: 'voice-pool' };
+    const parsed = settingsParse({ voice: { providers: { local_conversation: { schemaVersion: 1,
+      config: { agent: { connectedServices: { v: 2, future: true,
+        bindingsByServiceId: { [serviceId]: { ...binding, future: true } } } } } } } } });
+    const config = readLocalConversationVoiceSettings(parsed.voice);
+    expect(config.agent.connectedServices).toEqual({ v: 2, bindingsByServiceId: { [serviceId]: binding } });
+    expect(() => writeLocalConversationVoiceSettings(parsed.voice, { ...config, networkTimeoutMs: 20_000 })).not.toThrow();
+  });
   it('preserves configured Voice retention, replay, segmentation and stream preferences without local ceilings', () => {
     const agent = { maxWarmRoots: 12, idleTtlSeconds: 28_800, bootstrapTimeoutMs: 600_000,
       replay: { strategy: 'recent_messages' as const, recentMessagesCount: 150 } };

@@ -434,7 +434,7 @@ describe('initializeVoiceAgentHandle', () => {
         }
     });
 
-    it.each(['connected', 'native', 'ordinary', 'other_agent'] as const)(
+    it.each(['connected', 'native', 'ordinary', 'other_agent', 'configured', 'configured_native'] as const)(
         'R41 preserves the fixed Agent carrier credential choice only for its exact Voice target (%s)', async scenario => {
         const { voiceSessionBindingStore } = await import('@/voice/binding/voiceConversationBindingStore');
         const { VOICE_AGENT_GLOBAL_SESSION_ID } = await import('@/voice/agent/voiceAgentGlobalSessionId');
@@ -457,6 +457,10 @@ describe('initializeVoiceAgentHandle', () => {
         }, settings: { ...previousSettings, voice: voiceSettingsParse({ ...previousSettings.voice,
             providers: { ...previousSettings.voice.providers, local_conversation: { schemaVersion: 1, config: {
                 ...local, agent: { ...local.agent, agentSource: 'agent', agentId: 'claude',
+                    ...(scenario === 'configured' ? { connectedServices: { v: 2, bindingsByServiceId: {
+                        'happier.agent.claude/claude-subscription': { source: 'connected', selection: 'group', groupId: 'voice-pool' },
+                    } } } : {}),
+                    ...(scenario === 'configured_native' ? { connectedServices: null } : {}),
                     chatModelSource: 'custom', chatModelId: 'claude-haiku-4-5' },
             } } },
         }) } });
@@ -471,7 +475,13 @@ describe('initializeVoiceAgentHandle', () => {
                 getDaemonVoiceAgentClient: scope => new DaemonVoiceAgentClient(scope),
                 setDeferredTargetSessionContext: vi.fn() });
             expect(handle.rpcSessionId).toBe(carrierId);
-            if (scenario === 'connected' || scenario === 'native') {
+            if (scenario === 'configured') {
+                expect(admittedStart().connectedServices).toEqual({ v: 2, bindingsByServiceId: {
+                    'happier.agent.claude/claude-subscription': { source: 'connected', selection: 'group', groupId: 'voice-pool' },
+                } });
+            } else if (scenario === 'configured_native') {
+                expect(admittedStart().connectedServices).toEqual({ v: 2, bindingsByServiceId: {} });
+            } else if (scenario === 'connected' || scenario === 'native') {
                 expect(admittedStart().connectedServices).toEqual(connectedServices);
             } else {
                 expect(admittedStart().connectedServices).toBeUndefined();

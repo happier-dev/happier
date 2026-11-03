@@ -3,7 +3,7 @@ import { resolveVoiceProviderLanguagePreference } from '../../plugins/contributi
 import { SettingsDeclarationValueV1Schema } from '../../actions/settingsDeclarationActionFamily.js';
 import type { SettingDomainValueV1 } from '../../actions/settings/settingsOwnerActions.js';
 import type { VoiceSettings, VoiceSettingsOwner, VoiceLocalConversationSettings, VoiceLocalDirectSettings } from './voiceSettings.js';
-import { VoiceLocalConversationSchema } from './localConversation.js';
+import { VoiceAgentConnectedServicesSchema, VoiceLocalConversationSchema } from './localConversation.js';
 import { applyVoiceWelcomeSelection, resolveVoiceWelcomeSelection } from './welcome.js';
 import { applyVoiceAgentSelectionV1, resolveVoiceAgentCatalogSelectionV1, type VoiceAgentCatalogEntryV1 } from './voiceAgentSelection.js';
 import { applyVoiceDictationEngineChoice, projectVoiceProviderSelectionRows, selectVoiceProviderOption } from './providerSelection.js';
@@ -47,7 +47,7 @@ type ScalarPaths<T> = {
 type VoicePreferencePath = ScalarPaths<Omit<VoiceSettings, 'providers' | 'credentialBindings'>>;
 export type LocalConversationPreferencePath = Exclude<ScalarPaths<VoiceLocalConversationSettings>,
     | 'agent.agentId' | 'agent.agentTargetKey'
-    | 'agent.agentIdentity.pluginId' | 'agent.agentIdentity.localId'>;
+    | 'agent.agentIdentity.pluginId' | 'agent.agentIdentity.localId' | `agent.connectedServices.${string}`>;
 
 export function createVoiceSettingBindingsV1<T extends {voice: VoiceSettings}>(input: Readonly<{
  owner: VoiceSettingsOwner; registry: VoiceProviderRegistry; unavailableValue: unknown;
@@ -271,6 +271,23 @@ function voiceLocalConversationBinding(path: LocalConversationPreferencePath): V
     };
 }
 
+const voiceAgentConnectedServicesBinding: VoiceSettingBindingV1<T> = {
+    scope: 'account', kind: 'owner', access: 'read_write',
+    read: settings => canEditLocalConversation(settings.voice)
+        ? readLocalConversationVoiceSettings(settings.voice).agent.connectedServices : SETTING_VALUE_UNAVAILABLE,
+    parse: value => {
+        const parsed = VoiceAgentConnectedServicesSchema.safeParse(value);
+        return parsed.success ? { success: true, value: parsed.data } : { success: false };
+    },
+    mutate: (settings, value) => {
+        const parsed = VoiceAgentConnectedServicesSchema.safeParse(value);
+        if (!parsed.success || !canEditLocalConversation(settings.voice)) return null;
+        const config = readLocalConversationVoiceSettings(settings.voice);
+        return { voice: writeLocalConversationVoiceSettings(settings.voice, { ...config,
+            agent: { ...config.agent, connectedServices: parsed.data } }) };
+    },
+};
+
 const voiceGreetingBinding: VoiceSettingBindingV1<T> = {
     scope: 'account', kind: 'owner', access: 'read_write', allowedValues: ['off', 'immediate', 'on_first_turn'],
     read: (settings) => resolveVoiceWelcomeSelection(settings.voice.welcome),
@@ -358,6 +375,6 @@ function voiceDiagnosticsCaptureBinding(direction: CaptureDirection): VoiceSetti
             applyVoiceDiagnosticsCaptureDirection(owner.readVoiceDiagnosticsSettings(settings.voice), direction, value)) },
     };
 }
-return { voiceServiceChoiceBinding, voiceConversationLanguageBinding, voiceSettingBinding, voiceLocalConversationBinding, voiceGreetingBinding, voiceAgentSelectionBinding, voiceCustomAgentBinding, updateVoiceConversationLanguagePreference, updateVoiceLocalConversationSetting,
+return { voiceServiceChoiceBinding, voiceConversationLanguageBinding, voiceSettingBinding, voiceLocalConversationBinding, voiceGreetingBinding, voiceAgentSelectionBinding, voiceAgentConnectedServicesBinding, voiceCustomAgentBinding, updateVoiceConversationLanguagePreference, updateVoiceLocalConversationSetting,
     voiceMemoryRestoreBinding, resolveVoiceMemoryRestoreChoice, applyVoiceMemoryRestoreChoice, voiceExecutionMachineBinding, voiceDiagnosticsCaptureBinding };
 }

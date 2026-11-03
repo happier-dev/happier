@@ -68,6 +68,7 @@ import { convertBackendTargetRefV2ToV1, readBackendTargetRefV2 } from '@happier-
 import { resolveVoiceConfiguredAgentTarget } from '@/voice/agent/resolveVoiceConfiguredAgentTarget';
 import { requireVoiceSessionAgentSelection, resolveVoiceSessionAgentSelection } from '@/voice/agent/resolveVoiceSessionAgentSelection';
 import { isVoiceConversationSystemSessionMetadata } from '@/voice/persistence/voiceConversationSystemSessionLookup';
+import { projectVoiceAgentConnectedServices } from '@happier-dev/protocol/voice/settings/localConversation';
 import { readPersistentVoiceTranscriptEpoch } from '@/voice/persistence/voiceTranscriptMemory';
 import { createRpcCallError } from '@/sync/runtime/rpcErrors';
 
@@ -540,13 +541,16 @@ export async function initializeVoiceAgentHandle({
         );
         resolvedBackendTarget = admittedBackendTarget;
         resolvedAgentId = resolvedBackendTarget?.kind === 'builtInAgent' ? resolvedBackendTarget.agentId : null;
-        // Session-sourced starts follow their bound coding root. A fixed Agent
-        // follows only its exact Voice carrier's admitted credential choice;
-        // without one, the daemon resolves the Account default.
+        // Session-sourced starts follow their coding root. A fixed Agent uses
+        // its saved choice, then its exact carrier's admitted choice, otherwise
+        // the daemon's Account default.
         connectedServices = resolvedAgentId && resolvedBackendTarget && (agentSource === 'session'
             || isVoiceConversationSystemSessionMetadata(sessionOwnerMetadata))
             ? resolveVoiceSessionConnectedServices(sessionOwnerMetadata, resolvedBackendTarget)
             : undefined;
+        if (agentSource === 'agent') {
+            connectedServices = projectVoiceAgentConnectedServices(agentCfg) ?? connectedServices;
+        }
         if (agentSource === 'session' && resolvedAgentId && targetAddress
             && targetAddress.sessionId !== nextRpcSessionId
             && (agentCfg.chatModelSource === 'session' || agentCfg.commitModelSource === 'session')) {

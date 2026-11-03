@@ -60,6 +60,7 @@ import { readSafeVoiceRuntimeFailureCode } from '@/voice/runtime/voiceRuntimeFai
 import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 import { readAdmittedConnectedAccountCatalogInContext } from '@/sync/api/account/apiConnectedAccountCatalog';
 import { resolveAgentConnectedServicesDefaultBindings } from '@/sync/domains/connectedServices/resolveAgentConnectedServicesDefaultBindings';
+import { projectVoiceAgentConnectedServices } from '@happier-dev/protocol/voice/settings/localConversation';
 
 import {
     matchesVoiceConversationScope,
@@ -400,13 +401,16 @@ async function resolveVoiceConversationAgentTarget(
     return agentTarget;
 }
 
-/** Capture the same Account-purpose choice New Session uses before deriving carrier identity. */
+/** Resolve Local Voice's explicit choice, or the same Account default New Session uses. */
 async function resolveVoiceConversationDefaultBindings(params: Readonly<{
     machineId: string;
     backendTarget: PersistedBackendTargetRefV2;
     accountLifetime: ActiveServerAccountScopeLifetime;
     signal?: AbortSignal;
 }>): Promise<ConnectedServiceBindingsV2 | undefined> {
+    const configuredAgent = readLocalConversationVoiceSettings(readCanonicalVoiceSettingsFromState(storage.getState())).agent;
+    const configuredBindings = projectVoiceAgentConnectedServices(configuredAgent);
+    if (configuredBindings !== undefined) return configuredBindings;
     const projection = await loadDaemonMergedProjectionInputs({ machineId: params.machineId,
         serverId: params.accountLifetime.scope.serverId, signal: params.signal });
     assertVoiceConversationAccountCurrent(params.accountLifetime);

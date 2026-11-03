@@ -1022,6 +1022,37 @@ describe('LocalConversationSection', () => {
     expect(backendDropdown?.props.selectedId).toBe('agent:happier.agent.codex/codex');
   });
 
+  it('offers only the selected Voice Agent services and saves its qualified pool choice', async () => {
+    registryDescribe.mockResolvedValue({ supported: true, projection: PluginProjectionV2Schema.parse({
+      v: 2, generation: 7, familiesById: {}, agentsById: {
+        'com.acme.voice.agent': {
+          id: 'com.acme.voice.agent', identity: { pluginId: 'com.acme.voice', localId: 'agent' },
+          title: 'Acme Voice', capabilities: { sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } },
+          connectedAccounts: [{ purpose: 'primary', service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' } }],
+        },
+      },
+    }) });
+    const LocalConversationSection = await loadLocalConversationSection();
+    const setVoice = vi.fn();
+    const voice = createLocalConversationVoice({ conversationMode: 'agent', agent: {
+      agentSource: 'agent', agentId: 'com.acme.voice.agent', agentTargetKey: 'agent:com.acme.voice/agent',
+      agentIdentity: { pluginId: 'com.acme.voice', localId: 'agent' },
+    } });
+    const screen = await renderSettingsView(<LocalConversationSection voice={voice} setVoice={setVoice} />);
+    const { VoiceGlobalConnectedServicesBindingField } = await import('./realtime/VoiceGlobalConnectedServicesBindingField');
+    await waitForTestEvent(screen.subscribe,
+      () => screen.tree.findByType(VoiceGlobalConnectedServicesBindingField).props.serviceIds,
+      serviceIds => serviceIds.length === 1);
+    const accounts = screen.tree.findByType(VoiceGlobalConnectedServicesBindingField);
+    expect(accounts.props.serviceIds).toEqual(['happier.agent.codex/openai-codex']);
+    expect(accounts.props.bindingVersion).toBe(2);
+    const connectedServices = { v: 2, bindingsByServiceId: {
+      'happier.agent.codex/openai-codex': { source: 'connected', selection: 'group', groupId: 'voice-pool' },
+    } };
+    await act(async () => accounts.props.onChange(connectedServices, null));
+    expect(readLocalConversationVoiceSettings(setVoice.mock.lastCall![0]).agent.connectedServices).toEqual(connectedServices);
+  });
+
   it('renders a chat model dropdown for the voice agent when chatModelSource=custom', async () => {
     const LocalConversationSection = await loadLocalConversationSection();
     const setVoice = vi.fn();

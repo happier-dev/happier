@@ -4810,6 +4810,18 @@ whole edit on its current settings. Agents retain the exact declared field
 operations and their consent rules. This compound host binding is omitted from
 settings search and public discovery; without its mounted intent it has no writer.
 
+In 0.3 development, `voiceConversations.connectedServices` selects the Local
+Voice Agent's connected account or Pool with the same `ConnectedServiceBindingsV2`
+value as New Session. It persists at
+`voice.providers.local_conversation.config.agent.connectedServices`. Absent means
+the Agent's Account default; explicit `null` means native sign-in and launches
+with empty bindings, so an Account Pool default cannot fill it in. Fresh
+Home/Global carriers and fixed-Agent turns consume this choice. Agent from
+Session continues to inherit the coding Session's credentials. Existing saved
+Voice settings need no migration; this preference requires a UI reload only.
+Settings Actions report an absent choice with the existing `unset: true` result;
+an explicit native choice round-trips as `value: null`.
+
 `settings.invoke` accepts a declared anchor and a closed operation input. Voice
 operations identify a model-pack or voice id, diagnostic artifact/session,
 revocation obligation, diagnostic enable choice, or credential-source selection. Discovery advertises the

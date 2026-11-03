@@ -56,6 +56,9 @@ import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
 import { backendTargetKeysMatch } from '@/agents/backendCatalog/backendTargetKeyV2';
 import { resolveVoiceAgentCatalogSelectionV1, voiceAgentCatalogSelectionValueV1 } from '@happier-dev/protocol/voice/settings/voiceAgentSelection';
 import { Icon } from '@/components/ui/icons/Icon';
+import { VoiceGlobalConnectedServicesBindingField } from '@/voice/settings/panels/realtime/VoiceGlobalConnectedServicesBindingField';
+import { resolveProjectedConnectedAccountServiceKeys } from '@/sync/domains/connectedServices/qualifiedConnectedAccountServiceOptions';
+import { VoiceAgentConnectedServicesSchema } from '@happier-dev/protocol/voice/settings/localConversation';
 import { useActionApprovalContinuation } from '@/components/approvals/useActionApprovalContinuation';
 import {
   LEGACY_VOICE_OPENAI_CHAT_COMPATIBLE_AGENT_ID,
@@ -66,6 +69,7 @@ const AGENT_SELECTION_SETTINGS = {
   agentSource: VOICE_CONVERSATIONS_SETTINGS.settings.agentSource,
   agent: VOICE_CONVERSATIONS_SETTINGS.settings.agent,
   customAgent: VOICE_CONVERSATIONS_SETTINGS.settings.customAgent,
+  connectedServices: VOICE_CONVERSATIONS_SETTINGS.settings.connectedServices,
 } as const;
 const CHAT_MODEL_SETTINGS = {
   chatModelSource: VOICE_CONVERSATIONS_SETTINGS.settings.chatModelSource,
@@ -221,6 +225,9 @@ export function LocalConversationSection(props: {
   const selectedAgentIdForDropdown = selectedAgentEntry
     ? voiceAgentCatalogSelectionValueV1(selectedAgentEntry)
     : String(cfg.agent.agentId ?? '').trim() || null;
+  const connectedServiceIds = React.useMemo(() => resolveProjectedConnectedAccountServiceKeys(
+    selectedAgentEntry?.connectedAccounts ?? [],
+  ), [selectedAgentEntry]);
   const selectedAgentIdLabel = React.useMemo(() => {
     const raw = String(cfg.agent.agentId ?? '').trim();
     if (!raw) return t('settingsVoice.local.notSet');
@@ -506,8 +513,18 @@ export function LocalConversationSection(props: {
             />
             </SettingAnchor>
           ) : null}
+          <SettingAnchor setting={AGENT_SELECTION_SETTINGS.connectedServices}>
+          <VoiceGlobalConnectedServicesBindingField
+            agentId={selectedAgentEntry?.identity ?? cfg.agent.agentId}
+            serviceIds={connectedServiceIds}
+            bindingVersion={2}
+            title={t(AGENT_SELECTION_SETTINGS.connectedServices.titleKey)}
+            value={cfg.agent.connectedServices}
+            onChange={(value) => setAgent({ connectedServices: VoiceAgentConnectedServicesSchema.parse(value) })}
+          />
+          </SettingAnchor>
           </>
-        ) : searchPrerequisite({ settings: [AGENT_SELECTION_SETTINGS.customAgent,
+        ) : searchPrerequisite({ settings: [AGENT_SELECTION_SETTINGS.customAgent, AGENT_SELECTION_SETTINGS.connectedServices,
           ...(!needsProviderChatSelection ? [AGENT_SELECTION_SETTINGS.agent] : [])], reason: t('settingsVoice.pages.search.select', { choice: t('settingsVoice.local.conversation.agentSource.fixedAgentTitle'), control: t('settingsVoice.local.mediatorAgentSource') }) })}
           </>
         ) : searchPrerequisite({ settings: Object.values(AGENT_SELECTION_SETTINGS), reason: t('settingsVoice.pages.search.providerChatConfigured') })}

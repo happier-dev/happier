@@ -54,6 +54,7 @@ export function readPortableCatalogAccountSettingBindingV1<T extends CatalogAcco
             case 'voiceGreetingBinding': binding = bindings.voiceGreetingBinding; break;
             case 'voiceExecutionMachineBinding': binding = bindings.voiceExecutionMachineBinding; break;
             case 'voiceAgentSelectionBinding': binding = bindings.voiceAgentSelectionBinding; break;
+            case 'voiceAgentConnectedServicesBinding': binding = bindings.voiceAgentConnectedServicesBinding; break;
             case 'voiceCustomAgentBinding': binding = bindings.voiceCustomAgentBinding; break;
             case 'voiceMemoryRestoreBinding': binding = bindings.voiceMemoryRestoreBinding; break;
             case 'voiceDiagnosticsCaptureBinding':

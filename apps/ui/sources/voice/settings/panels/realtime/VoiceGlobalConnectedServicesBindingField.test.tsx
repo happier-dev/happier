@@ -60,6 +60,23 @@ describe('VoiceGlobalConnectedServicesBindingField', () => {
   });
   afterEach(standardCleanup);
 
+  it('writes qualified Local Voice account and pool selections with the Session V2 contract', async () => {
+    const { VoiceGlobalConnectedServicesBindingField } = await import('./VoiceGlobalConnectedServicesBindingField');
+    const onChange = vi.fn();
+    const serviceId = 'happier.agent.codex/openai-codex';
+    const screen = await renderScreen(<VoiceGlobalConnectedServicesBindingField agentId="codex"
+      serviceIds={[serviceId]} bindingVersion={2} value={null} onChange={onChange} />);
+    await act(async () => screen.tree.findByType(Item).props.onPress());
+    const selection = screen.tree.findByType(NewSessionConnectedServicesSelectionContent);
+    expect(selection.props.supportedServiceIds).toEqual([serviceId]);
+    await act(async () => selection.props.setBindingForService(serviceId, {
+      source: 'connected', selection: 'group', groupId: 'voice-pool',
+    }));
+    expect(onChange).toHaveBeenLastCalledWith({ v: 2, bindingsByServiceId: {
+      [serviceId]: { source: 'connected', selection: 'group', groupId: 'voice-pool' },
+    } }, expect.any(Number));
+  });
+
   it('keeps the declared core binding interactive when optional account groups are disabled', async () => {
     const { VoiceGlobalConnectedServicesBindingField } = await import(
       './VoiceGlobalConnectedServicesBindingField'

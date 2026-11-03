@@ -28,7 +28,7 @@ export const voiceSettingsEditBinding = {
 } satisfies SettingStorageBinding;
 
 const registry = createDefaultVoiceProviderRegistry();
-export const { voiceServiceChoiceBinding, voiceConversationLanguageBinding, voiceSettingBinding, voiceLocalConversationBinding, voiceGreetingBinding, voiceAgentSelectionBinding, voiceCustomAgentBinding, updateVoiceConversationLanguagePreference, updateVoiceLocalConversationSetting,
+export const { voiceServiceChoiceBinding, voiceConversationLanguageBinding, voiceSettingBinding, voiceLocalConversationBinding, voiceGreetingBinding, voiceAgentSelectionBinding, voiceAgentConnectedServicesBinding, voiceCustomAgentBinding, updateVoiceConversationLanguagePreference, updateVoiceLocalConversationSetting,
  voiceMemoryRestoreBinding, resolveVoiceMemoryRestoreChoice, applyVoiceMemoryRestoreChoice, voiceExecutionMachineBinding, voiceDiagnosticsCaptureBinding } = createVoiceSettingBindingsV1<Settings>({
  owner: voiceSettingsOwner, registry, unavailableValue: SETTING_VALUE_UNAVAILABLE,
  captureLanguageOwner: (providerId, capturedRegistry) => captureConversationLanguagePreferenceOwner(providerId, capturedRegistry as VoiceProviderRegistry),

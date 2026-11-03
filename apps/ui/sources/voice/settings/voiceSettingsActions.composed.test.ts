@@ -36,6 +36,27 @@ async function pressTtsSample(screen: Awaited<ReturnType<typeof renderScreen>>) 
 }
 
 describe('Voice declarations through the default Settings Action and Account persistence', () => {
+    it('persists Local Voice connected selections losslessly through Settings Actions', async () => {
+        const account = await createVoiceSettingsAccountTestHarness(settingsParse({
+            actionsSettingsV1: { v: 1, actions: {}, approvalWaivedSurfaces: { 'settings.set': ['agent'] } },
+            voice: { providerId: 'local_conversation' },
+        }));
+        onTestFinished(account.dispose);
+        const executor = createDefaultActionExecutor();
+        const context = { surface: 'agent' as const, authority: 'account_automation' as const,
+            serverId: account.scope.serverId, expectedAccountId: account.scope.accountId };
+        const anchor = 'voiceConversations.connectedServices';
+        expect(await executor.execute('settings.get', { anchor }, context)).toMatchObject({ ok: true, result: { unset: true } });
+        for (const value of [{ v: 2, bindingsByServiceId: {
+            'happier.agent.codex/openai-codex': { source: 'connected', selection: 'group', groupId: 'voice-pool' },
+        } }, null]) {
+            expect(await executor.execute('settings.set', { anchor, value }, context)).toMatchObject({ ok: true });
+            expect(await executor.execute('settings.get', { anchor }, context)).toMatchObject({ ok: true, result: { value } });
+            const { readLocalConversationVoiceSettings } = await import('@/sync/domains/settings/voiceSettings');
+            expect(readLocalConversationVoiceSettings(account.persistedSettings.voice).agent.connectedServices).toEqual(value);
+        }
+    });
+
     it('reads History through the default Settings Action without mounting Privacy', async () => {
         const account = await createVoiceSettingsAccountTestHarness(settingsParse({ voice: { providerId: 'local_conversation' } }));
         onTestFinished(account.dispose);

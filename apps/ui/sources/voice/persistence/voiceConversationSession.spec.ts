@@ -637,6 +637,27 @@ describe('ensureVoiceConversationSessionForVoiceHome', () => {
     }));
   });
 
+  it.each(['profile', 'group', 'native', 'default'] as const)('uses the persisted Local Voice %s selection for a fresh Home carrier', async selection => {
+    const agent = state.settings.voice.providers.local_conversation.config.agent;
+    agent.agentSource = 'agent';
+    agent.agentId = 'codex';
+    if (selection !== 'default') agent.connectedServices = selection === 'native' ? null : { v: 2, bindingsByServiceId: {
+      'happier.agent.codex/openai-codex': selection === 'profile'
+        ? { source: 'connected', selection, profileId: 'voice-account' }
+        : { source: 'connected', selection, groupId: 'voice-pool' },
+    } };
+    purposeBindings = { v: 1, bindings: [{ purpose: {
+      consumer: { pluginId: 'happier.agent.codex', localId: 'codex' }, purpose: 'primary',
+    }, target: { kind: 'group', service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, groupId: 'account-default-pool' } }] };
+    const { ensureVoiceConversationSessionForVoiceHome } = await loadConversationSession();
+    await expect(ensureVoiceConversationSessionForVoiceHome()).resolves.toBe('voice-home-session');
+    const expected = selection === 'default' ? { v: 2, bindingsByServiceId: {
+      'happier.agent.codex/openai-codex': { source: 'connected', selection: 'group', groupId: 'account-default-pool' },
+    } } : agent.connectedServices ?? { v: 2, bindingsByServiceId: {} };
+    expect(spawnRequests).toHaveBeenCalledWith(expect.objectContaining({ connectedServices: expected }));
+    expect(purposeCatalogReads).toBe(selection === 'default' ? 1 : 0);
+  });
+
   it('R41 gives changed fixed-Agent authentication distinct carriers while keeping unchanged retries stable', async () => {
     state.settings.voice.providers.local_conversation.config.agent.agentSource = 'agent';
     state.settings.voice.providers.local_conversation.config.agent.agentId = 'codex';
@@ -2391,6 +2412,9 @@ describe('ensureVoiceConversationSessionForSessionRoot', () => {
   });
 
   it.each(['Agent', 'connected account', 'permission'])('refuses to reuse a scoped carrier with another %s', async mismatch => {
+    state.settings.voice.providers.local_conversation.config.agent.connectedServices = { v: 2, bindingsByServiceId: {
+      'happier.agent.claude/claude-subscription': { source: 'connected', selection: 'profile', profileId: 'voice-only-account' },
+    } };
     const rootBinding = { v: 2, bindingsByServiceId: {
       'happier.agent.claude/claude-subscription': { source: 'connected', selection: 'profile', profileId: 'root-account' },
     } };

@@ -5,9 +5,11 @@ import { BackendTargetKeyV2Schema } from '../../backends/targets/backendTargetRe
 import { PluginContributionIdentityV1Schema } from '../../plugins/contributionIdentity.js';
 import { ProviderBoundModelRefSchema } from '../../providers/selection/v1.js';
 import { ProviderConnectionIdSchema } from '../../providers/ids.js';
+import { ConnectedServiceBindingsV2Schema, type ConnectedServiceBindingsV2 } from '../../connect/connectedServiceBindings.js';
 import { z } from 'zod/mini';
 import { createStoredReadSchema, defineStoredReadProjection } from '../../json/storedReadSchema.js';
 import { asProtocolZod } from '../../plugins/actions/internalProtocolZodAdapter.js';
+import { projectNativeJsonValueForTransport, type JsonValue } from '../../json/strictJsonValue.js';
 
 import { VoiceLocalSttSchema } from './localStt.js';
 import { VoiceLocalTtsSchema } from './localTts.js';
@@ -50,6 +52,10 @@ export const VoiceLocalConversationProviderChatSchema = z.discriminatedUnion('st
   }),
 ]);
 
+// The JSON projector omits optional undefined members from the already-validated Session shape.
+export const VoiceAgentConnectedServicesSchema = z.nullable(z.pipe(ConnectedServiceBindingsV2Schema,
+  z.transform(value => projectNativeJsonValueForTransport(value) as ConnectedServiceBindingsV2 & JsonValue)));
+
 export const VoiceLocalConversationSchema = z.object({
   conversationMode: z._default(z.enum(['direct_session', 'agent']), 'direct_session'),
   stt: zMini.prefault(VoiceLocalSttSchema, {}),
@@ -72,6 +78,8 @@ export const VoiceLocalConversationSchema = z.object({
        * `null` for bundled Agents, which need no contribution identity.
        */
       agentIdentity: VoiceAgentSelectionIdentitySchema,
+      // Absent means the selected Agent's Account defaults, as in New Session.
+      connectedServices: z.optional(VoiceAgentConnectedServicesSchema),
       // Read-only legacy migration inputs. Canonical machine selection is root-owned.
       machineTargetMode: z._default(z.enum(['auto', 'fixed']), 'auto'),
       machineTargetId: z._default(z.nullable(z.string()), null),
@@ -131,6 +139,13 @@ export const VoiceLocalConversationSchema = z.object({
 });
 
 export type VoiceLocalConversationSettings = z.infer<typeof VoiceLocalConversationSchema>;
+
+/** An explicit native choice must suppress Account defaults at daemon launch. */
+export function projectVoiceAgentConnectedServices(
+  agent: Pick<VoiceLocalConversationSettings['agent'], 'connectedServices'>,
+): ConnectedServiceBindingsV2 | undefined {
+  return agent.connectedServices === null ? { v: 2, bindingsByServiceId: {} } : agent.connectedServices;
+}
 
 export function stripLegacyLocalConversationOwnership(
   value: VoiceLocalConversationSettings,

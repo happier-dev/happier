@@ -1,5 +1,5 @@
 import { builtInSettingUiDeclaration, defineSettingsPage, settingsHosts, type SettingRef, type SettingsPageDeclaration } from '@/components/settings/catalog/settingDeclarations';
-import { voiceSettingBinding, voiceGreetingBinding, voiceLocalConversationBinding, voiceAgentSelectionBinding, voiceCustomAgentBinding, voiceConversationLanguageBinding } from './voiceSettingBinding';
+import { voiceSettingBinding, voiceGreetingBinding, voiceLocalConversationBinding, voiceAgentSelectionBinding, voiceAgentConnectedServicesBinding, voiceCustomAgentBinding, voiceConversationLanguageBinding } from './voiceSettingBinding';
 import type { VoiceSettings } from '@/sync/domains/settings/voiceSettings';
 import type { VoiceProviderRegistry } from '@/voice/registry/providerRegistry';
 import { projectConversationLanguagePreference } from './language/conversationLanguage';
@@ -115,6 +115,7 @@ export const VOICE_CONVERSATIONS_SETTINGS = defineSettingsPage({
                 readiness: {  operation: voiceSettingsOperation('readiness_inspect') },
                 agentSource: { storage: voiceLocalConversationBinding('agent.agentSource') },
                 agent: { storage: voiceAgentSelectionBinding },
+                connectedServices: { storage: voiceAgentConnectedServicesBinding },
                 customAgent: { storage: voiceCustomAgentBinding },
                 permissionIntent: { storage: voiceLocalConversationBinding('agent.permissionIntent') },
                 chatModelSource: { storage: voiceLocalConversationBinding('agent.chatModelSource') },
