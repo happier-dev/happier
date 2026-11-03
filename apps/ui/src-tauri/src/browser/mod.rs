@@ -1,3 +1,6 @@
+mod cookie_store;
+mod cookie_types;
+mod login_cookies;
 mod keyboard;
 mod platform;
 mod types;
@@ -56,6 +59,13 @@ type PendingNativeCapture =
     tokio::sync::oneshot::Receiver<Result<NativeCapturedSnapshot, DesktopBrowserCaptureErrorCode>>;
 
 pub(crate) trait DesktopBrowserWebViewHandle {
+    fn login_cookies_available(&self) -> Result<(), login_cookies::LoginImportCode> {
+        Err(login_cookies::LoginImportCode::EngineUnsupported)
+    }
+    fn set_login_cookie(&self, cookie: &login_cookies::LoginCookie, completion: login_cookies::CookieCompletion) -> Result<(), login_cookies::LoginImportCode> {
+        let _ = (cookie, completion);
+        Err(login_cookies::LoginImportCode::EngineUnsupported)
+    }
     fn load_url(&self, url: &str) -> Result<(), String>;
     fn navigation_state(&self) -> Result<(bool, bool), String>;
     fn current_url(&self) -> Result<Option<String>, String> {
@@ -921,6 +931,16 @@ impl DesktopBrowserState {
 }
 
 #[tauri::command]
+pub async fn desktop_browser_apply_login_cookies<R: Runtime>(window: Window<R>, request: login_cookies::CookieApplyRequest) -> login_cookies::CookieApplyResult {
+    login_cookies::apply_login_cookies(window, request).await
+}
+
+#[tauri::command]
+pub fn desktop_browser_get_native_passkey_availability(state: State<'_, DesktopBrowserState>, request: login_cookies::NativeLoginDestination) -> login_cookies::NativePasskeyAvailability {
+    login_cookies::get_native_passkey_availability(state, request)
+}
+
+#[tauri::command]
 pub fn desktop_browser_get_availability() -> DesktopBrowserAvailability {
     platform::resolve_current_desktop_browser_strategy()
 }
@@ -1781,6 +1801,13 @@ impl WryDesktopBrowserView {
 }
 
 impl DesktopBrowserWebViewHandle for WryDesktopBrowserView {
+    fn login_cookies_available(&self) -> Result<(), login_cookies::LoginImportCode> {
+        cookie_store::available()
+    }
+
+    fn set_login_cookie(&self, cookie: &login_cookies::LoginCookie, completion: login_cookies::CookieCompletion) -> Result<(), login_cookies::LoginImportCode> {
+        cookie_store::set(&self.webview, cookie, completion)
+    }
     fn current_url(&self) -> Result<Option<String>, String> {
         self.webview
             .url()

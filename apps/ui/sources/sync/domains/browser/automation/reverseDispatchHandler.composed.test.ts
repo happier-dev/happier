@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { BrowserInjectedRuntimeResultMessageV1Schema, BrowserAutomationActionResultV1Schema, UiBrowserAutomationDispatchRequestV1Schema, UiBrowserAutomationDispatchResultV1Schema, type RuntimeActionExecuteArgs } from '@happier-dev/protocol';
 
 import { handleUiBrowserAutomationDispatchRequest } from './reverseDispatchHandler';
@@ -12,6 +12,23 @@ import { createActionExecutorBoundaryFixture } from '@/dev/testkit';
 import { loadBrowserDaemonRuntimeForTests } from '@/dev/testkit/harness/browserDaemonRuntime';
 import { openExternalUrl } from '@/utils/url/openExternalUrl';
 
+import type { DesktopWebViewNativeAvailability } from '../adapters/desktopWebView';
+import { importSavedSecretPasskeysInContext } from '@/sync/ops/actions/browserProfileLoginsImport';
+
+const { nativeInvoke, nativeHost } = vi.hoisted(() => ({ nativeInvoke: vi.fn(), nativeHost: vi.fn(() => true) }));
+vi.mock('@/utils/platform/desktopHost', async importOriginal => ({
+  ...await importOriginal<typeof import('@/utils/platform/desktopHost')>(),
+  isDesktopHost: nativeHost,
+  invokeDesktopHost: (command: string, input?: Record<string, unknown>) => nativeInvoke(command, input),
+}));
+
+const desktopAvailability: DesktopWebViewNativeAvailability = {
+  available: true, platform: 'macos', primitive: 'macosNsViewWebKit', renderEngine: 'desktopWebView',
+  producer: 'tauriWryNativeChildView', privilegedIpc: false, disabledReasons: [],
+  supports: { navigation: true, goBackForward: true, reload: true, stop: true,
+    pageInfoDiagnostics: true, nativeDevtools: true, capture: true, recording: false, automation: true },
+};
+
 // The system browser is the only effect substituted in this composed route.
 vi.mock('@/utils/url/openExternalUrl', () => ({ openExternalUrl: vi.fn(async () => true) }));
 
@@ -22,25 +39,30 @@ const args: RuntimeActionExecuteArgs = { actionId: 'browser.automation.click', i
   context: { surface: 'agent', authority: 'account_automation', defaultSessionId: 'happier-session' } };
 const { createDaemonRuntimeActionExecutor, createBrowserAutomationReverseDispatcher } = await loadBrowserDaemonRuntimeForTests();
 
-function mountView(executePageAction?: (signal: AbortSignal) => Promise<Readonly<{ status: 'succeeded' }>>, withAutomation = true) {
+function mountView(executePageAction?: (signal: AbortSignal) => Promise<Readonly<{ status: 'succeeded' }>>, withAutomation = true,
+  availability?: DesktopWebViewNativeAvailability, adapterKind: 'localPreview' | 'externalUrl' = 'localPreview') {
   const controlService = createBrowserAutomationControlService({ nowMs: () => Date.now() });
   let clicks = 0;
   // The page transport is the real system boundary; controller and Action internals stay real.
-  controlService.registerOwner({ ownerId: 'mounted-owner', ...view, navigationGeneration: 0, authority: 'uiLocal', adapterKind: 'localPreview', fidelity: 'injectedPage', trustedInput: false, supportedActions: ['click'], executeAction: async (_request, context) => { clicks += 1; return executePageAction ? executePageAction(context.signal) : { status: 'succeeded', resultSummary: { clicked: true, cookie: 'secret' } }; } });
+  controlService.registerOwner({ ownerId: 'mounted-owner', ...view, navigationGeneration: 0, authority: 'uiLocal', adapterKind, fidelity: 'injectedPage', trustedInput: false, supportedActions: ['click'], executeAction: async (_request, context) => { clicks += 1; return executePageAction ? executePageAction(context.signal) : { status: 'succeeded', resultSummary: { clicked: true, cookie: 'secret' } }; } });
   const state = applyBrowserControlEvent(applyBrowserControlEvent(createBrowserControlState(), {
     kind: 'sessionCreated', eventId: 'session-created', browserSessionId: view.browserSessionId, profileId: 'profile-1', occurredAt: 1,
   }), {
-    kind: 'viewOpened', eventId: 'view-opened', ...view, occurredAt: 2, platform: 'web', adapterKind: 'localPreview', engineKind: 'webIframe',
+    kind: 'viewOpened', eventId: 'view-opened', ...view, occurredAt: 2, platform: availability ? 'desktop' : 'web', adapterKind, engineKind: availability ? 'desktopWebView' : 'webIframe',
     target: { kind: 'externalUrl', targetId: 'page', url: 'https://example.test', display: { title: 'Page', addressLabel: 'example.test' } },
-    adapterCapabilities: buildBrowserAdapterCapabilities({ adapterKind: 'localPreview', supportedTargetKinds: ['externalUrl'], supportedRenderEngines: ['webIframe'] }),
+    adapterCapabilities: buildBrowserAdapterCapabilities({ adapterKind, supportedTargetKinds: ['externalUrl'], supportedRenderEngines: [availability ? 'desktopWebView' : 'webIframe'] }),
   });
-  const dispose = registerBrowserRuntimeControlAdapter({ browserSessionId: view.browserSessionId, control: { readState: () => state, applyDispatchResult: () => {} },
+  const dispose = registerBrowserRuntimeControlAdapter({ browserSessionId: view.browserSessionId, control: {
+    readState: () => state, applyDispatchResult: () => {}, readDispatchOptions: () => ({ desktopWebViewAvailability: availability }),
+  },
     ...(withAutomation ? { automation: { controlService } } : {}) });
-  return { dispose, controlService, clicks: () => clicks };
+  return { dispose, controlService, state, clicks: () => clicks };
 }
 
 afterEach(() => {
   clearBrowserRuntimeControlRegistryForTests();
+  nativeInvoke.mockReset();
+  nativeHost.mockReturnValue(true);
   vi.useRealTimers();
 });
 
@@ -221,5 +243,90 @@ describe('daemon to exact mounted UI browser Action', () => {
     expect(await invoke('browser.automation.cancelActive', 'present_user')).toEqual({ v: 1, outcome: 'canceled', canceledCount: 1, completion: 'uncertain' });
     settle({ status: 'succeeded' });
     expect(await active).toMatchObject({ status: 'canceled' });
+  });
+});
+
+describe('admitted private cookie continuation to the exact native view', () => {
+  beforeEach(() => { nativeHost.mockReturnValue(true); });
+  const cookies = [{ name: 'session', value: 'COOKIE_SENTINEL', domain: '.example.test', path: '/', secure: true,
+    httpOnly: true, sameSite: 'None' as const, expires: 1900000000 }];
+  const input = { ...view, profileId: 'profile-1', cookies };
+  it('applies native cookies with their full scope/attributes and returns the typed partial metadata', async () => {
+    mountView(undefined, false, desktopAvailability);
+    const expected = { status: 'completed', records: [{ name: 'session', domain: '.example.test', status: 'imported' }] };
+    nativeInvoke.mockResolvedValue(expected);
+    expect(await handleUiBrowserAutomationDispatchRequest(input, boundView)).toEqual(expected);
+    expect(nativeInvoke).toHaveBeenCalledWith('desktop_browser_apply_login_cookies', { request: input });
+  });
+  it('refuses another view and non-native engines before sending material to the platform', async () => {
+    mountView(undefined, false);
+    expect(await handleUiBrowserAutomationDispatchRequest(input, boundView)).toEqual({ status: 'unavailable', code: 'engine_unsupported' });
+    expect(await handleUiBrowserAutomationDispatchRequest({ ...input, viewId: 'another-view' }, boundView))
+      .toEqual({ status: 'unavailable', code: 'destination_unavailable' });
+    expect(nativeInvoke).not.toHaveBeenCalled();
+  });
+  it('preserves native profile refusal, cancellation and unavailable reasons without exposing native exceptions', async () => {
+    mountView(undefined, false, desktopAvailability);
+    nativeInvoke.mockResolvedValue({ status: 'unavailable', code: 'profile_mismatch' });
+    expect(await handleUiBrowserAutomationDispatchRequest({ ...input, profileId: 'other' }, boundView))
+      .toEqual({ status: 'unavailable', code: 'profile_mismatch' });
+    nativeInvoke.mockClear();
+    expect(await handleUiBrowserAutomationDispatchRequest(input, boundView, { signal: AbortSignal.abort() }))
+      .toEqual({ status: 'unavailable', code: 'canceled' });
+    expect(nativeInvoke).not.toHaveBeenCalled();
+    nativeInvoke.mockRejectedValue(new Error('COOKIE_SENTINEL /native/path'));
+    expect(await handleUiBrowserAutomationDispatchRequest(input, boundView))
+      .toEqual({ status: 'unavailable', code: 'import_unknown' });
+  });
+});
+
+
+describe('native passkeys use provider availability without credential transfer', () => {
+  beforeEach(() => { nativeHost.mockReturnValue(true); });
+  const input = { ...view, profileId: 'profile-1', credentials: [] };
+  it.each([
+    { platform: 'Windows', availability: { status: 'available' }, code: 'passkey_import_unavailable' },
+    { platform: 'macOS', availability: { status: 'unavailable', code: 'passkey_import_unavailable' }, code: 'passkey_import_unavailable' },
+    { platform: 'Linux', availability: { status: 'unavailable', code: 'engine_unsupported' }, code: 'engine_unsupported' },
+  ] as const)('settles the $platform SavedSecret import before acquiring key material', async ({ availability, code }) => {
+    mountView(undefined, false, desktopAvailability);
+    nativeInvoke.mockResolvedValue(availability);
+    // Only Home HTTP and the native host are substituted; material acquisition and the
+    // private capability continuation use their real owners beneath the admitted Action.
+    const acquire = vi.fn(async (): Promise<never> => { throw new Error('passkey material must not be acquired'); });
+    const result = await importSavedSecretPasskeysInContext({
+      serverId: 'home', accountId: 'person', credentials: { token: 'unused-account-token' },
+      request: acquire, assertCurrent: () => {}, resolveAccountMode: async () => 'plain',
+      resolveAccountEncryption: async () => ({ accountMode: 'plain', encryption: null }),
+    }, { kind: 'passkeys', machineId: 'machine', ...input, refs: ['happier:shared-secret:v1:private-key'] },
+    async request => handleUiBrowserAutomationDispatchRequest(request.input, boundView));
+    expect(result).toEqual({ status: 'unavailable', code });
+    expect(acquire).not.toHaveBeenCalled();
+    expect(nativeInvoke).toHaveBeenCalledWith('desktop_browser_get_native_passkey_availability', {
+      request: { ...view, profileId: 'profile-1' },
+    });
+    expect(JSON.stringify(nativeInvoke.mock.calls)).not.toMatch(/credentials|private-key|privateKey/);
+  });
+  it('strips supplied private credentials before invoking the OS provider', async () => {
+    mountView(undefined, false, desktopAvailability);
+    nativeInvoke.mockResolvedValue({ status: 'available' });
+    const credentials = [{ kind: 'passkey', rpId: 'example.test', credentialId: 'Y3JlZA==', userHandle: 'dXNlcg==',
+      privateKey: 'cHJpdmF0ZS1rZXk=', algorithm: -7, signCount: 0, backupEligibility: true, backupState: true }];
+    expect(await handleUiBrowserAutomationDispatchRequest({ ...input, credentials }, boundView))
+      .toEqual({ status: 'unavailable', code: 'passkey_import_unavailable' });
+    expect(nativeInvoke).toHaveBeenCalledWith('desktop_browser_get_native_passkey_availability', {
+      request: { ...view, profileId: 'profile-1' },
+    });
+    expect(JSON.stringify(nativeInvoke.mock.calls)).not.toMatch(/credentials|cHJpdmF0ZS1rZXk=/);
+  });
+  it('preserves the native profile binding and refuses a different live view', async () => {
+    mountView(undefined, false, desktopAvailability);
+    nativeInvoke.mockResolvedValue({ status: 'unavailable', code: 'profile_mismatch' });
+    expect(await handleUiBrowserAutomationDispatchRequest({ ...input, profileId: 'other-profile' }, boundView))
+      .toEqual({ status: 'unavailable', code: 'profile_mismatch' });
+    nativeInvoke.mockClear();
+    expect(await handleUiBrowserAutomationDispatchRequest({ ...input, viewId: 'other' }, boundView))
+      .toEqual({ status: 'unavailable', code: 'destination_unavailable' });
+    expect(nativeInvoke).not.toHaveBeenCalled();
   });
 });

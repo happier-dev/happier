@@ -58,6 +58,8 @@ macro_rules! with_desktop_commands {
             secure_storage::desktop_secure_storage_write,
             secure_storage::desktop_secure_storage_remove,
             browser::desktop_browser_get_availability,
+            browser::desktop_browser_apply_login_cookies,
+            browser::desktop_browser_get_native_passkey_availability,
             browser::desktop_browser_open_view,
             browser::desktop_browser_navigate,
             browser::desktop_browser_set_bounds,

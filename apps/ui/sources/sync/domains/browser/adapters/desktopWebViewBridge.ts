@@ -1,3 +1,4 @@
+import { BrowserCookieApplyV1Schema, BrowserProfileLoginsImportResultV1Schema, type BrowserProfileLoginsImportResultV1 } from '@happier-dev/protocol/browser/profile/v1';
 import type { NativeHardwareKeyboardEventLike } from '@/keyboard/runtime';
 import { parseBrowserGuestKeyboardEvent } from './guestKeyboard';
 
@@ -11,6 +12,45 @@ import {
     unavailableDesktopWebViewNativeAvailability,
     type DesktopWebViewNativeAvailability,
 } from './desktopWebView';
+
+/** Private continuation of the already admitted import; values never enter Action output. */
+export async function applyDesktopBrowserLoginCookies(
+    request: ReturnType<typeof BrowserCookieApplyV1Schema.parse>,
+    signal?: AbortSignal,
+): Promise<BrowserProfileLoginsImportResultV1> {
+    if (signal?.aborted) return { status: 'unavailable', code: 'canceled' };
+    if (!isDesktopHost()) return { status: 'unavailable', code: 'engine_unsupported' };
+    try {
+        const result = BrowserProfileLoginsImportResultV1Schema.safeParse(await invokeDesktopHost(
+            'desktop_browser_apply_login_cookies', { request },
+        ));
+        if (result.success) return result.data;
+    } catch {
+        // Native errors are untrusted and may include credential material.
+    }
+    return { status: 'unavailable', code: 'import_unknown' };
+}
+
+export type NativeBrowserPasskeyAvailability = Readonly<{ status: 'available' }>
+    | Extract<BrowserProfileLoginsImportResultV1, { status: 'unavailable' }>;
+
+/** OS-provider ceremonies are distinct from importing a credential private key. */
+export async function getDesktopBrowserNativePasskeyAvailability(
+    request: Pick<DesktopBrowserOpenViewRequest, 'browserSessionId' | 'viewId' | 'profileId'>,
+    signal?: AbortSignal,
+): Promise<NativeBrowserPasskeyAvailability> {
+    if (signal?.aborted) return { status: 'unavailable', code: 'canceled' };
+    if (!isDesktopHost()) return { status: 'unavailable', code: 'engine_unsupported' };
+    try {
+        const raw = await invokeDesktopHost('desktop_browser_get_native_passkey_availability', { request });
+        if (raw && typeof raw === 'object' && 'status' in raw && raw.status === 'available') return { status: 'available' };
+        const result = BrowserProfileLoginsImportResultV1Schema.safeParse(raw);
+        if (result.success && result.data.status === 'unavailable') return result.data;
+    } catch {
+        // Publish only the typed reason, never native diagnostic text.
+    }
+    return { status: 'unavailable', code: 'passkey_import_unavailable' };
+}
 
 export const DESKTOP_BROWSER_GET_AVAILABILITY_COMMAND = 'desktop_browser_get_availability';
 export const DESKTOP_BROWSER_OPEN_VIEW_COMMAND = 'desktop_browser_open_view';

@@ -61,6 +61,8 @@
     "allow-desktop-secure-storage-write",
     "allow-desktop-secure-storage-remove",
     "allow-desktop-browser-get-availability",
+    "allow-desktop-browser-apply-login-cookies",
+    "allow-desktop-browser-get-native-passkey-availability",
     "allow-desktop-browser-open-view",
     "allow-desktop-browser-navigate",
     "allow-desktop-browser-set-bounds",

@@ -26,6 +26,8 @@ use std::sync::{Arc, Mutex};
 
 const DESKTOP_BROWSER_COMMANDS: &[&str] = &[
     "desktop_browser_get_availability",
+    "desktop_browser_apply_login_cookies",
+    "desktop_browser_get_native_passkey_availability",
     "desktop_browser_open_view",
     "desktop_browser_navigate",
     "desktop_browser_set_bounds",
@@ -246,6 +248,7 @@ fn assert_native_child_view_available(
 
 #[derive(Clone, Debug, PartialEq)]
 enum FakeWebViewEvent {
+    Cookie { view_id: String, cookie: serde_json::Value },
     Created {
         view_id: String,
         profile_dir: PathBuf,
@@ -312,6 +315,7 @@ struct FakeWebViewHost {
     capture_result: Arc<Mutex<Result<DesktopBrowserCapturedSnapshot, String>>>,
     on_capture: Option<Arc<dyn Fn() + Send + Sync>>,
     deferred_capture: Option<Arc<Mutex<Option<super::NativeSnapshotCompletion>>>>,
+    cookie_completion: Arc<Mutex<Option<super::login_cookies::CookieCompletion>>>,
     privacy_result: Arc<Mutex<String>>,
     on_privacy_probe: Option<Arc<dyn Fn() + Send + Sync>>,
     deferred_privacy: Option<Arc<Mutex<Option<super::NativeScriptCompletion>>>>,
@@ -344,6 +348,7 @@ impl FakeWebViewHost {
             }))),
             on_capture: None,
             deferred_capture: None,
+            cookie_completion: Arc::new(Mutex::new(None)),
             privacy_result: Arc::new(Mutex::new("false".to_string())),
             on_privacy_probe: None,
             deferred_privacy: None,
@@ -446,6 +451,7 @@ impl DesktopBrowserWebViewHost for FakeWebViewHost {
             capture_result: self.capture_result.clone(),
             on_capture: self.on_capture.clone(),
             deferred_capture: self.deferred_capture.clone(),
+            cookie_completion: self.cookie_completion.clone(),
             privacy_result: self.privacy_result.clone(),
             on_privacy_probe: self.on_privacy_probe.clone(),
             deferred_privacy: self.deferred_privacy.clone(),
@@ -469,6 +475,7 @@ struct FakeWebViewHandle {
     capture_result: Arc<Mutex<Result<DesktopBrowserCapturedSnapshot, String>>>,
     on_capture: Option<Arc<dyn Fn() + Send + Sync>>,
     deferred_capture: Option<Arc<Mutex<Option<super::NativeSnapshotCompletion>>>>,
+    cookie_completion: Arc<Mutex<Option<super::login_cookies::CookieCompletion>>>,
     privacy_result: Arc<Mutex<String>>,
     on_privacy_probe: Option<Arc<dyn Fn() + Send + Sync>>,
     deferred_privacy: Option<Arc<Mutex<Option<super::NativeScriptCompletion>>>>,
@@ -476,6 +483,19 @@ struct FakeWebViewHandle {
 }
 
 impl DesktopBrowserWebViewHandle for FakeWebViewHandle {
+    fn login_cookies_available(&self) -> Result<(), super::login_cookies::LoginImportCode> { Ok(()) }
+
+    fn set_login_cookie(&self, cookie: &super::login_cookies::LoginCookie, completion: super::login_cookies::CookieCompletion) -> Result<(), super::login_cookies::LoginImportCode> {
+        self.log.push(FakeWebViewEvent::Cookie { view_id: self.view_id.clone(), cookie: serde_json::to_value(cookie).unwrap() });
+        if cookie.name == "pending" {
+            *self.cookie_completion.lock().unwrap() = Some(completion);
+            return Ok(());
+        }
+        if cookie.name == "unknown" { return Ok(()); }
+        completion(if cookie.name == "refused" { Err(super::login_cookies::LoginImportCode::ImportFailed) } else { Ok(()) });
+        Ok(())
+    }
+
     fn current_url(&self) -> Result<Option<String>, String> {
         Ok(self.current_url_override.lock().unwrap().clone())
     }
@@ -2801,4 +2821,244 @@ fn native_snapshot_completion_cannot_survive_source_replacement() {
         );
         assert!(result.snapshot.is_none());
     }
+}
+
+#[test]
+fn native_login_cookie_import_keeps_attributes_partial_results_and_exact_destination() {
+    use super::login_cookies::{CookieApplyRequest, CookieApplyResult};
+    let host = FakeWebViewHost::new(false);
+    let log = host.log.clone();
+    let root = tempfile::tempdir().unwrap();
+    let state = DesktopBrowserState::for_test(
+        available_test_availability(),
+        root.path().to_path_buf(),
+        Box::new(host),
+    );
+    assert!(
+        state
+            .open_view(open_request("view_1", "selected", "https://example.test"))
+            .ok
+    );
+    assert!(
+        state
+            .open_view(open_request("view_2", "other", "https://example.test"))
+            .ok
+    );
+    let operand = serde_json::json!({"browserSessionId":"browser_session_1", "viewId":"view_1", "profileId":"selected", "cookies":[
+        {"name":"session", "value":"private-cookie-sentinel", "domain":".example.test", "path":"/account", "secure":true, "httpOnly":true, "sameSite":"Strict", "expires":2000000000.0},
+        {"name":"refused", "value":"private-cookie-sentinel", "domain":"example.test", "path":"/", "secure":false, "httpOnly":false, "sameSite":"Lax"}
+    ]});
+    let result = tauri::async_runtime::block_on(state.apply_login_cookies_for_test(
+        serde_json::from_value::<CookieApplyRequest>(operand.clone()).unwrap(),
+    ));
+    let json = serde_json::to_value(&result).unwrap();
+    assert_eq!(
+        json,
+        serde_json::json!({"status":"completed", "records":[
+            {"domain":".example.test", "name":"session", "status":"imported"},
+            {"domain":"example.test", "name":"refused", "status":"failed", "code":"import_failed"}
+        ]})
+    );
+    assert!(!json.to_string().contains("private-cookie-sentinel"));
+    let written: Vec<_> = log
+        .events()
+        .into_iter()
+        .filter_map(|event| match event {
+            FakeWebViewEvent::Cookie { view_id, cookie } => Some((view_id, cookie)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(written.len(), 2);
+    for (view_id, cookie) in &written {
+        assert_eq!(view_id, "view_1");
+        assert!(operand["cookies"].as_array().unwrap().contains(cookie));
+    }
+    for (field, value, code) in [
+        ("profileId", "other", "profile_mismatch"),
+        ("browserSessionId", "other", "destination_unavailable"),
+        ("viewId", "missing", "destination_unavailable"),
+    ] {
+        let mut wrong = operand.clone();
+        wrong[field] = value.into();
+        let result = tauri::async_runtime::block_on(
+            state.apply_login_cookies_for_test(serde_json::from_value(wrong).unwrap()),
+        );
+        assert_eq!(
+            serde_json::to_value(result).unwrap(),
+            serde_json::json!({"status":"unavailable","code":code})
+        );
+    }
+    let mut probe = operand;
+    probe["cookies"] = serde_json::json!([]);
+    assert_eq!(
+        tauri::async_runtime::block_on(
+            state.apply_login_cookies_for_test(serde_json::from_value(probe).unwrap())
+        ),
+        CookieApplyResult::Completed { records: vec![] }
+    );
+    assert_eq!(
+        log.events()
+            .iter()
+            .filter(|e| matches!(e, FakeWebViewEvent::Cookie { .. }))
+            .count(),
+        2
+    );
+}
+
+#[test]
+fn native_login_cookie_import_waits_for_os_completion_and_reports_lost_completion() {
+    use std::{
+        future::Future,
+        pin::pin,
+        task::{Context, Poll, Waker},
+    };
+    let host = FakeWebViewHost::new(false);
+    let completion = host.cookie_completion.clone();
+    let root = tempfile::tempdir().unwrap();
+    let state = DesktopBrowserState::for_test(
+        available_test_availability(),
+        root.path().to_path_buf(),
+        Box::new(host),
+    );
+    assert!(
+        state
+            .open_view(open_request("view_1", "selected", "https://example.test"))
+            .ok
+    );
+    let request = serde_json::from_value(serde_json::json!({"browserSessionId":"browser_session_1","viewId":"view_1","profileId":"selected","cookies":[
+        {"name":"pending","value":"private-cookie-sentinel","domain":"example.test","path":"/","secure":true,"httpOnly":true},
+        {"name":"unknown","value":"private-cookie-sentinel","domain":"example.test","path":"/","secure":true,"httpOnly":true}
+    ]})).unwrap();
+    let mut future = pin!(state.apply_login_cookies_for_test(request));
+    let mut context = Context::from_waker(Waker::noop());
+    assert!(future.as_mut().poll(&mut context).is_pending());
+    completion.lock().unwrap().take().unwrap()(Ok(()));
+    let Poll::Ready(result) = future.as_mut().poll(&mut context) else {
+        panic!("native completion must settle import")
+    };
+    assert_eq!(
+        serde_json::to_value(result).unwrap(),
+        serde_json::json!({"status":"completed","records":[
+            {"domain":"example.test","name":"pending","status":"imported"},
+            {"domain":"example.test","name":"unknown","status":"failed","code":"import_unknown"}
+        ]})
+    );
+}
+
+#[test]
+fn native_login_passkey_availability_uses_os_provider_and_exact_profile_binding() {
+    use super::login_cookies::{native_passkeys_for_platform, NativeLoginDestination};
+    for (platform, expected) in [
+        (
+            DesktopBrowserPlatform::Windows,
+            serde_json::json!({"status":"available"}),
+        ),
+        (
+            DesktopBrowserPlatform::MacOs,
+            serde_json::json!({"status":"unavailable","code":"passkey_import_unavailable"}),
+        ),
+        (
+            DesktopBrowserPlatform::LinuxX11,
+            serde_json::json!({"status":"unavailable","code":"engine_unsupported"}),
+        ),
+        (
+            DesktopBrowserPlatform::LinuxWayland,
+            serde_json::json!({"status":"unavailable","code":"engine_unsupported"}),
+        ),
+    ] {
+        assert_eq!(
+            serde_json::to_value(native_passkeys_for_platform(platform)).unwrap(),
+            expected
+        );
+    }
+    let root = tempfile::tempdir().unwrap();
+    let state = DesktopBrowserState::for_test(
+        available_test_availability(),
+        root.path().to_path_buf(),
+        Box::new(FakeWebViewHost::new(false)),
+    );
+    assert!(
+        state
+            .open_view(open_request("view_1", "selected", "https://example.test"))
+            .ok
+    );
+    for (session, profile, expected) in [
+        (
+            "browser_session_1",
+            "selected",
+            serde_json::json!({"status":"available"}),
+        ),
+        (
+            "browser_session_1",
+            "other",
+            serde_json::json!({"status":"unavailable","code":"profile_mismatch"}),
+        ),
+        (
+            "other",
+            "selected",
+            serde_json::json!({"status":"unavailable","code":"destination_unavailable"}),
+        ),
+    ] {
+        assert_eq!(
+            serde_json::to_value(state.native_passkey_availability(NativeLoginDestination {
+                browser_session_id: session.into(),
+                view_id: "view_1".into(),
+                profile_id: profile.into()
+            }))
+            .unwrap(),
+            expected
+        );
+    }
+}
+#[test]
+fn native_login_cookie_import_close_invalidates_binding_and_reopen_preserves_local_profile() {
+    let host = FakeWebViewHost::new(false);
+    let log = host.log.clone();
+    let root = tempfile::tempdir().unwrap();
+    let state = DesktopBrowserState::for_test(
+        available_test_availability(),
+        root.path().to_path_buf(),
+        Box::new(host),
+    );
+    let profile_id = "browser_profile_local";
+    let profile_dir = state.profile_dir_for_id(profile_id);
+    fs::create_dir_all(&profile_dir).unwrap();
+    let persisted = profile_dir.join("persisted-cookie-store-fixture");
+    fs::write(&persisted, b"persistent-profile-fixture").unwrap();
+    assert!(
+        state
+            .open_view(open_request("view_1", profile_id, "https://example.test"))
+            .ok
+    );
+    let request = serde_json::json!({
+        "browserSessionId":"browser_session_1", "viewId":"view_1", "profileId":profile_id,
+        "cookies":[{"name":"session", "value":"private-cookie-sentinel", "domain":"example.test", "path":"/", "secure":true, "httpOnly":true}]
+    });
+    assert!(state.close_view_by_id(view_request("view_1")).ok);
+    let result = tauri::async_runtime::block_on(
+        state.apply_login_cookies_for_test(serde_json::from_value(request.clone()).unwrap()),
+    );
+    assert_eq!(
+        serde_json::to_value(result).unwrap(),
+        serde_json::json!({"status":"unavailable", "code":"destination_unavailable"})
+    );
+    assert!(!log
+        .events()
+        .iter()
+        .any(|event| matches!(event, FakeWebViewEvent::Cookie { .. })));
+    assert_eq!(fs::read(&persisted).unwrap(), b"persistent-profile-fixture");
+    assert!(
+        state
+            .open_view(open_request("view_1", profile_id, "https://example.test"))
+            .ok
+    );
+    assert_eq!(state.profile_dir_for_id(profile_id), profile_dir);
+    let result = tauri::async_runtime::block_on(
+        state.apply_login_cookies_for_test(serde_json::from_value(request).unwrap()),
+    );
+    assert_eq!(
+        serde_json::to_value(result).unwrap(),
+        serde_json::json!({"status":"completed", "records":[{"domain":"example.test", "name":"session", "status":"imported"}]})
+    );
+    assert_eq!(fs::read(&persisted).unwrap(), b"persistent-profile-fixture");
 }
