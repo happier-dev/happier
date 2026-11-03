@@ -300,6 +300,7 @@ export type HomeGovernanceHarness = Readonly<{
     requireUiApproval(serverId: string, actionId: string | readonly string[]): Promise<void>;
     /** Seed the same persisted policy for another real invocation surface. */
     requireActionApproval(serverId: string, actionId: string | readonly string[], surface: ActionSurfaceKey): Promise<void>;
+    setActionPolicy(serverId: string, actionId: string | readonly string[], surface: ActionSurfaceKey, mode: 'off' | 'ask' | 'allowed'): Promise<void>;
     /** Requests recorded for one path, for asserting what was asked and where. */
     requestsFor(path: string): RecordedHomeRequest[];
     /** Observe physical Home request admission and response settlement. */
@@ -514,6 +515,9 @@ export function createHomeGovernanceHarness(): HomeGovernanceHarness {
             await this.requireActionApproval(serverId, actionId, 'ui');
         },
         async requireActionApproval(serverId: string, actionId: string | readonly string[], surface: ActionSurfaceKey): Promise<void> {
+            await this.setActionPolicy(serverId, actionId, surface, 'ask');
+        },
+        async setActionPolicy(serverId: string, actionId: string | readonly string[], surface: ActionSurfaceKey, mode: 'off' | 'ask' | 'allowed'): Promise<void> {
             const record = findHomeRecord(serverId);
             if (!record) throw new Error(`No Home saved for ${serverId}`);
             if (!record.accountId) {
@@ -521,7 +525,7 @@ export function createHomeGovernanceHarness(): HomeGovernanceHarness {
             }
             const { storage } = await import('@/sync/domains/state/storage');
             const { loadAccountSettings } = await import('@/sync/domains/state/accountSettingsPersistence');
-            const { normalizeActionsSettingsV1 } = await import('@happier-dev/protocol/actions/actionSettings');
+            const { normalizeActionsSettingsV1, normalizeActionSettingsActionId, setActionApprovalOverride } = await import('@happier-dev/protocol/actions/actionSettings');
             const { getActiveServerAccountScope } = await import('@/sync/domains/scope/activeServerAccountScope');
             const { areAccountSettingsScopesEqual } = await import('@/sync/domains/settings/scope/accountSettingsScope');
             const targetScope = { serverId: resolveServerProfileScopeIdForIdentifier(serverId), accountId: record.accountId };
@@ -543,18 +547,19 @@ export function createHomeGovernanceHarness(): HomeGovernanceHarness {
                 ? settingsParse(homeSnapshot.data.content.v)
                 : current;
             const version = (homeSnapshot.success ? homeSnapshot.data.version : persisted.version ?? 0) + 1;
-            const settings = settingsParse({
-                ...current,
-                actionsSettingsV1: normalizeActionsSettingsV1({
-                    v: 1,
-                    actions: {
-                        ...homeSettings.actionsSettingsV1.actions,
-                        ...current.actionsSettingsV1.actions,
-                        ...Object.fromEntries((typeof actionId === 'string' ? [actionId] : actionId)
-                            .map(id => [id, { approvalRequiredSurfaces: [surface] }])),
-                    },
-                }),
-            });
+            let policy = normalizeActionsSettingsV1({ ...homeSettings.actionsSettingsV1,
+                actions: { ...homeSettings.actionsSettingsV1.actions, ...current.actionsSettingsV1.actions } });
+            for (const rawId of typeof actionId === 'string' ? [actionId] : actionId) {
+                const id = normalizeActionSettingsActionId(rawId);
+                if (!id) throw new Error('Unknown Action policy fixture');
+                policy = setActionApprovalOverride({ settings: policy, actionId: id, surface,
+                    approvalRequired: mode === 'ask' ? true : mode === 'allowed' ? false : null });
+                const prior = policy.actions[id];
+                policy = normalizeActionsSettingsV1({ ...policy, actions: { ...policy.actions,
+                    [id]: { ...prior, disabledSurfaces: [...(prior?.disabledSurfaces ?? []).filter(value => value !== surface),
+                        ...(mode === 'off' ? [surface] : [])] } } });
+            }
+            const settings = settingsParse({ ...current, actionsSettingsV1: policy });
             // A local settings publication can only belong to an actually
             // restored Account. Persisted target policy below also serves a
             // saved/nonfocused Home without forging a focused Account scope.
