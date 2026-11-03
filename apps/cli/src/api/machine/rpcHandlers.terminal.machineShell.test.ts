@@ -46,9 +46,9 @@ describe('machine shell RPC custody', () => {
         expect(await rpc.invokeLocal(RPC_METHODS.DAEMON_TERMINAL_ENSURE,
           { ...input, cwd: dirname(root) }, { rpcContext }))
           .toMatchObject({ ok: false, errorCode: 'terminal_cwd_denied' });
-        const foreignContext = { ...rpcContext, machineAdmission: { ...rpcContext.machineAdmission, actorAccountId: 'recipient' } };
+        const foreignContext = { ...rpcContext, machineAdmission: { ...rpcContext.machineAdmission, actorAccountId: 'recipient', role: 'use' as const } };
         expect(await rpc.invokeLocal(RPC_METHODS.DAEMON_TERMINAL_ENSURE, input, { rpcContext: foreignContext }))
-          .toMatchObject({ ok: false });
+          .toMatchObject({ ok: false, errorCode: 'terminal_forbidden' });
         expect(await rpc.invokeLocal(RPC_METHODS.DAEMON_TERMINAL_STREAM_READ,
           { terminalId: terminal.terminalId, cursor: 0 }, { rpcContext: foreignContext })).toMatchObject({ ok: false });
         expect(await rpc.invokeLocal(RPC_METHODS.DAEMON_TERMINAL_ENSURE,

@@ -3972,6 +3972,16 @@ Run-on writer or store is added.
 
 ## SDK protocol evolution
 
+The unreleased 0.3 Machine terminal request adds the closed `service_shell`
+launch intent. Its service id and reviewed native generation are resolved by
+the receiving service owner; callers cannot combine it with a cwd, Workspace
+or Session selector. Matching development Protocol and daemon readers are
+required. An older closed reader refuses the new intent rather than opening
+an ordinary shell. The existing terminal operation and response envelopes
+remain the owners; no alternate writer, runtime ABI or wire epoch is added.
+The scoped-clean 0.2 predecessor at `b06b31d66f94` has no terminal or deployment
+schema at these paths; reverse development rollback is unsupported.
+
 The unreleased 0.3 signed Workflow origin accepts a closed `sessionLeaf` variant
 for an admitted Session's Workflow child Actions. Its nested caller, accepted
 authorization and requester-attribution objects are closed; an unknown field
