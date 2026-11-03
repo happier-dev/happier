@@ -1,7 +1,7 @@
 import { MACHINE_AGENT_ISOLATION_ACTION_IDS, MACHINE_AGENT_ISOLATION_ACTION_INPUT_SCHEMAS,
   MachineAgentIsolationPreviewResultV1Schema, MachineAgentIsolationSetResultV1Schema,
   MachineAgentIsolationOwnStatusV1Schema, type MachineAgentIsolationOwnStatusV1,
-  agentIsolationMetadataFieldV1, readMachineAgentIsolationPolicyV1,
+  agentIsolationMetadataFieldV1, readMachineAgentIsolationPolicyV1, resolveMachineAgentExecutionPlacementV1,
   type MachineAgentIsolationStatusV1, type MachineAgentIsolationPolicyV1, type ActionExecutorDeps } from '@happier-dev/protocol';
 import { mutateMachineMetadataFieldV1, type MachineMetadataFieldPortV1 } from '@happier-dev/protocol/machines/machineMetadataFieldV1';
 import { projectMachineAgentIsolationUnavailableStatusV1 } from '@happier-dev/protocol/machines/agentIsolationV1';
@@ -84,6 +84,8 @@ export function registerDaemonMachineAgentIsolationRpcHandlers(rpc: RpcHandlerRe
       const desired = actionId === 'machines.agentIsolation.preview'
         ? MACHINE_AGENT_ISOLATION_ACTION_INPUT_SCHEMAS['machines.agentIsolation.preview'].parse(raw)
         : MACHINE_AGENT_ISOLATION_ACTION_INPUT_SCHEMAS['machines.agentIsolation.set'].parse(raw);
+      const desiredPolicy: MachineAgentIsolationPolicyV1 = { enabled: desired.enabled,
+        ...(desired.enabled && desired.memberProvisioning ? { memberProvisioning: desired.memberProvisioning } : {}) };
       const unavailable = () => MachineAgentIsolationPreviewResultV1Schema.parse({
         kind: 'unavailable', status: snapshot.status.kind === 'unavailable' ? snapshot.status
           : { kind: 'unavailable', code: 'provisioning_unavailable' },
@@ -107,15 +109,27 @@ export function registerDaemonMachineAgentIsolationRpcHandlers(rpc: RpcHandlerRe
           enabled: desired.enabled, port, status: options.read().status, operationId, signal: context?.signal,
           ...(desired.memberProvisioning ? { memberProvisioning: desired.memberProvisioning } : {}),
           verifyCurrent: verify }, effects).catch(() => null);
-        if (!await verify()) throw new RpcError('Current Machine admission is required', RPC_ERROR_CODES.FORBIDDEN);
         const preview = MachineAgentIsolationPreviewResultV1Schema.parse(prepared && 'preview' in prepared
           ? prepared.preview : prepared ?? unavailable());
+        // Reinstall withdraws runtime proof, not native setup. An explicit CHECK
+        // can qualify that unknown shared identity without repeating APPLY.
+        const status = preview.kind === 'ready' && preview.status.kind === 'unavailable'
+          && preview.status.code === 'provisioning_unavailable'
+          && agentIsolationMetadataFieldV1.equal(preview.policy, desiredPolicy)
+          && resolveMachineAgentExecutionPlacementV1({ policy: preview.policy, platform: effects.platform }) === 'sharedAgent'
+          && !preview.plan.requiresAdmin && preview.plan.sessionsToReplace === 0 && effects.nativeReadiness
+          ? await observeAgentIsolationNativeReadiness({ installedCli: effects.installedCli,
+            roots: preview.plan.roots.map(root => root.path), signal: context?.signal,
+            privateRoots: effects.nativeReadiness.privateRoots, system: effects.nativeReadiness.system }) : undefined;
+        if (!await verify()) throw new RpcError('Current Machine admission is required', RPC_ERROR_CODES.FORBIDDEN);
+        if (status) {
+          await effects.publishStatus(status);
+          return { ...preview, status };
+        }
         if (preview.kind === 'unavailable') await effects.publishStatus(projectMachineAgentIsolationUnavailableStatusV1(preview));
         return preview;
       }
       const mutation = MACHINE_AGENT_ISOLATION_ACTION_INPUT_SCHEMAS['machines.agentIsolation.set'].parse(raw);
-      const desiredPolicy: MachineAgentIsolationPolicyV1 = { enabled: mutation.enabled,
-        ...(mutation.enabled && mutation.memberProvisioning ? { memberProvisioning: mutation.memberProvisioning } : {}) };
       const failed = (code: 'cancelled' | 'denied' | 'locked' | 'invalid' | 'unavailable' | 'outcome_unknown', operationId?: string) =>
         MachineAgentIsolationSetResultV1Schema.parse({ kind: 'failed', code, ...(operationId ? { operationId } : {}) });
       const requireReview = async (prepared: PreparedAgentIsolationEffects) => {
@@ -146,7 +160,7 @@ export function registerDaemonMachineAgentIsolationRpcHandlers(rpc: RpcHandlerRe
       }
       if ((!agentIsolationMetadataFieldV1.equal(previous.policy, mutation.expectedPolicy)
         && !agentIsolationMetadataFieldV1.equal(previous.policy, desiredPolicy))
-        || before.metadataVersion < mutation.expectedMetadataVersion) return MachineAgentIsolationSetResultV1Schema.parse({
+        || before.metadataVersion !== mutation.expectedMetadataVersion) return MachineAgentIsolationSetResultV1Schema.parse({
           kind: 'conflict', policy: previous.policy, metadataVersion: before.metadataVersion });
       let prepared = await prepare(mutation.expectedPolicy).catch(() => null);
       if (!prepared) return failed('unavailable');

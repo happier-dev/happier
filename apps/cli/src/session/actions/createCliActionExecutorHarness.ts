@@ -1,4 +1,5 @@
-import { StoredApprovalRequestSchema } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { settleApprovalRequestReplayInputs } from '@happier-dev/protocol/approvals/approvalRequestTransition';
+import { StoredApprovalRequestSchema, type ApprovalRequestV2 } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { buildActionExecuteResultFromRecordedApprovalExecution, createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { isActionEnabledByActionsSettings, normalizeActionsSettingsV1, type ActionSettingsActionId } from '@happier-dev/protocol/actions/actionSettings';
 import { isActionEnabledWithSessionMemory } from '@happier-dev/protocol/actions/actionSurfaceAvailability';
@@ -311,31 +312,54 @@ export function createCliActionExecutorHarness(
       if (!params.credentials || !getApproval || !waitForDecision
         || readAccountIdFromToken(params.credentials.token) !== args.expectedOrigin.accountId) return failure('approval_context_unavailable');
       const serverUrl = params.serverHttpBaseUrl ?? resolveServerHttpBaseUrl();
+      let observedRequest: ApprovalRequestV2 | undefined;
       const current = async () => !args.signal.aborted && await args.isCurrent() && !args.signal.aborted;
-      try {
-        while (true) {
-          if (!await current()) return failure(args.signal.aborted ? 'cancelled' : 'approval_stale');
-          const request = await runWithServerHttpBaseUrl(serverUrl, () => getApproval({ artifactId: args.artifactId, serverId: params.serverId ?? null }));
-          if (!request) return failure('approval_not_found');
-          if (request.v !== 2
-            || Object.entries(args.expectedOrigin).some(([key, value]) => Reflect.get(request.executionOriginV1, key) !== value)
-            || request.executionOriginV1.target?.kind !== 'machine'
-            || request.executionOriginV1.target.machineId !== args.expectedOrigin.machineId) return failure('approval_stale');
-          if (!await current()) return failure(args.signal.aborted ? 'cancelled' : 'approval_stale');
-          const result = buildActionExecuteResultFromRecordedApprovalExecution(request);
-          if (result) return result;
-          if (request.status === 'rejected') return failure('approval_rejected');
-          if (request.status === 'canceled') return failure('approval_canceled');
-          // A returned approval id is the deferred flow. Its observer must not
-          // claim another Machine's live blocking decision continuation.
-          if (request.approval?.flow !== 'deferred') return failure('approval_context_unavailable');
-          // Approval is not execution. The same coordinator subscribes before
-          // rereading the durable body; no polling or competing replay begins.
-          await waitForDecision({ artifactId: args.artifactId, request, serverId: params.serverId ?? null, signal: args.signal });
+      const observe = async (): Promise<ActionExecuteResult> => {
+        try {
+          while (true) {
+            if (!args.signal.aborted && !await current() && !args.signal.aborted) return failure('approval_stale');
+            // Cancellation before the first read still withdraws this exact child.
+            const request = await runWithServerHttpBaseUrl(serverUrl, () => getApproval({ artifactId: args.artifactId, serverId: params.serverId ?? null }));
+            if (!request) return failure(args.signal.aborted ? 'cancelled' : 'approval_not_found');
+            if (request.v !== 2
+              || Object.entries(args.expectedOrigin).some(([key, value]) => Reflect.get(request.executionOriginV1, key) !== value)
+              || request.executionOriginV1.target?.kind !== 'machine'
+              || request.executionOriginV1.target.machineId !== args.expectedOrigin.machineId) return failure(args.signal.aborted ? 'cancelled' : 'approval_stale');
+            observedRequest = request;
+            if (!await current()) return failure(args.signal.aborted ? 'cancelled' : 'approval_stale');
+            const result = buildActionExecuteResultFromRecordedApprovalExecution(request);
+            if (result) return result;
+            if (request.status === 'rejected') return failure('approval_rejected');
+            if (request.status === 'canceled') return failure('approval_canceled');
+            // A returned approval id is the deferred flow. Its observer must not
+            // claim another Machine's live blocking decision continuation.
+            if (request.approval?.flow !== 'deferred') return failure('approval_context_unavailable');
+            // Approval is not execution. The same coordinator subscribes before
+            // rereading the durable body; no polling or competing replay begins.
+            await waitForDecision({ artifactId: args.artifactId, request, serverId: params.serverId ?? null, signal: args.signal });
+          }
+        } catch {
+          return failure(args.signal.aborted ? 'cancelled' : 'approval_context_unavailable');
         }
-      } catch {
-        return failure(args.signal.aborted ? 'cancelled' : 'approval_context_unavailable');
+      };
+      const result = await observe();
+      const request = observedRequest;
+      if (args.signal.aborted && request?.status === 'open' && request.approval?.flow === 'deferred') {
+        const updateApproval = deps.approvalsUpdate;
+        if (!updateApproval) return failure('approval_context_unavailable');
+        try {
+          const updated = await runWithServerHttpBaseUrl(serverUrl, () => updateApproval({
+            artifactId: args.artifactId, serverId: params.serverId ?? null,
+            request: { ...settleApprovalRequestReplayInputs(request), status: 'canceled',
+              updatedAtMs: Math.max(Date.now(), request.updatedAtMs) },
+          }));
+          // The transition owner/CAS preserves a decision that won withdrawal.
+          if (!updated.ok && updated.errorCode !== 'invalid_transition' && updated.errorCode !== 'subject_mismatch') return updated;
+        } catch {
+          return failure('approval_context_unavailable');
+        }
       }
+      return result;
     },
     executor: {
       prepare: (actionId, input, context) => runOnCapturedHome(() => executor.prepare(actionId, input, resolveContext(context, actionId))),

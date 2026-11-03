@@ -132,7 +132,7 @@ export async function observeAgentIsolationMemberLaunchReadiness(input: Readonly
   }
 }
 
-/** Finite native qualification, demanded by Apply. No Session is invented: this
+/** Finite native qualification, demanded by explicit CHECK or Apply. No Session is invented: this
  * endpoint has no tools or Account authority and retires before publication.
  * Actual Sessions still supply their own live MCP/materialization lease. */
 export async function observeAgentIsolationNativeReadiness(input: Readonly<{
@@ -171,7 +171,7 @@ export async function observeAgentIsolationNativeReadiness(input: Readonly<{
   let observed: MachineAgentIsolationStatusV1;
   let cleanupFailure: Unavailable['code'] | undefined;
   const qualify = async (): Promise<MachineAgentIsolationStatusV1> => {
-    // Apply demand owns loading the transport/client graph, not daemon startup.
+    // Explicit demand owns loading the transport/client graph, not daemon startup.
     const { prepareSessionMcpLocalTransport } = await import('@/mcp/runtime/sessionMcpLocalTransport');
     transport = await prepareSessionMcpLocalTransport({ agentUid: identity.uid });
     await transport.listen(server);

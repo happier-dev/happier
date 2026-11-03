@@ -8,6 +8,32 @@ import { registerActionOperationRpcHandlers } from '@/daemon/actionOperations/ac
 import { createAgentIsolationEffectsBoundary } from '@/daemon/agentIsolation/agentIsolationEffects.testkit';
 import { registerDaemonMachineAgentIsolationRpcHandlers } from './daemonMachineAgentIsolation';
 
+it('refuses a stale reviewed metadata version before direct RPC effects even when the policy still matches', async () => {
+  const target = { serverId: 'home', machineId: 'guest', installationId: 'installation', custodianAccountId: 'owner' };
+  const native = createAgentIsolationEffectsBoundary({ installationId: target.installationId,
+    installedCli: '/opt/happier/cli/current/happier', readRoots: () => [], readSessionsToReplace: () => 0,
+    publishStatus: async () => { throw new Error('Stale admission must not publish'); } });
+  const context: RpcHandlerContext = { signal: new AbortController().signal, callerAuthority: 'present_user',
+    transportRequestId: 'stale-review', machineAdmission: { actorAccountId: 'owner', custodianAccountId: 'owner',
+      machineId: target.machineId, installationId: target.installationId, role: 'manage', encryptionMode: 'plain' },
+    verifyMachineAdmissionCurrent: async () => true };
+  const rpc = new RpcHandlerManager({ scopePrefix: target.machineId, localMachineId: target.machineId,
+    encryptionMode: 'plain', logger() {}, authorizeRequest: async () => ({ ok: true }) });
+  registerDaemonMachineAgentIsolationRpcHandlers(rpc, { target: () => target,
+    read: () => ({ enabled: false, status: { kind: 'disabled' } }), effects: native.effects,
+    captureMetadataPort: () => ({ read: async () => ({ status: 'ready', metadataVersion: 17,
+      metadata: { agentIsolation: { enabled: false } } }),
+      compareAndSwap: async () => { throw new Error('Stale admission must not write'); } }) });
+  const preview = MachineAgentIsolationPreviewResultV1Schema.parse(await rpc.invokeLocal('machines.agentIsolation.preview',
+    { machineId: target.machineId, enabled: true }, { rpcContext: context }));
+  if (preview.kind !== 'ready') throw new Error('Expected review');
+  expect(await rpc.invokeLocal('machines.agentIsolation.set', { machineId: target.machineId, enabled: true,
+    expectedMetadataVersion: 16, expectedPolicy: preview.policy, expectedPlanDigest: preview.plan.planDigest }, { rpcContext: context }))
+    .toEqual({ kind: 'conflict', policy: { enabled: false }, metadataVersion: 17 });
+  expect(native.launches).toEqual([]);
+  expect(native.mutations).toEqual([]);
+});
+
 it.each(['rpc', 'owned'] as const)('retains a readable current isolation review through %s ingress', async ingress => {
   const target = { serverId: 'home', machineId: 'guest', installationId: 'installation', custodianAccountId: 'owner' };
   const operations = createHostActionOperationRuntime({ serverId: target.serverId, machineId: target.machineId,

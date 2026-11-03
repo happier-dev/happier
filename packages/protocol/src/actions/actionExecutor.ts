@@ -11,7 +11,7 @@ import { admitPresentUserConfirmationV1 } from './executor/approvalReview.js';
 import type { SessionSpaceMembershipSetInputV1 } from './sessionSpaceMembership.js';
 import { dispatchProjectsDispatch1, dispatchProjectsDispatch2, dispatchProjectsDispatch3 } from './executor/projects/dispatch.js';
 import { withScmRefineInputAuthorizationV1, readHostRootInputCredentialActionV1 } from './executor/scmRefineInputPurpose.js';
-import { dispatchMachineControls1, dispatchMachineControls2, dispatchMachineControls3 } from './executor/machine/controls.js';
+import { dispatchMachineControls1, dispatchMachineControls2, dispatchMachineControls3, readMachineAgentIsolationSetAdmission } from './executor/machine/controls.js';
 import { dispatchMachineManaged } from './executor/machine/managed.js';
 import { dispatchAgentsSubagents1, dispatchAgentsSubagents2 } from './executor/agents/subagents.js';
 import { dispatchReviewDispatch1, dispatchReviewDispatch2, reviewScopeForInput } from './executor/review/dispatch.js';
@@ -2358,6 +2358,13 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     if (credentialFailure) return credentialFailure;
     const workspaceFailure = workspaceWriteFailure(spec, admittedInput, ctx);
     if (workspaceFailure) return workspaceFailure;
+    if (!existingAdmission && actionId === 'machines.agentIsolation.set') {
+      const input = admittedInput as z.infer<typeof MACHINE_AGENT_ISOLATION_ACTION_INPUT_SCHEMAS['machines.agentIsolation.set']>;
+      if (ctx.serverId && input.serverId && !isSameHome(input.serverId, ctx.serverId, ctx))
+        return { ok: false, errorCode: 'server_target_mismatch', error: 'server_target_mismatch' };
+      const settled = await readMachineAgentIsolationSetAdmission(deps, input, ctx);
+      if (settled) return settled;
+    }
     const retainedDeploymentReview = existingAdmission?.deploymentReview ?? ctx.approvedActionReplay?.deploymentReview;
     const semanticInput = existingAdmission?.semanticInput ?? admittedInput;
     let deploymentReview: JsonValue | undefined = retainedDeploymentReview;

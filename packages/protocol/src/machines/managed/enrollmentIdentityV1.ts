@@ -27,7 +27,7 @@ export type ManagedMachineEnrollmentIdentityV1 = z.infer<typeof ManagedMachineEn
 
 /** Personal/adopted enrollment leaves the incumbent missing-field/off policy alone. */
 export function resolveManagedMachineEnrollmentAgentIsolationV1(identity: ManagedMachineEnrollmentIdentityV1 | undefined): MachineAgentIsolationPolicyV1 | null {
-  return identity?.kind === 'dedicatedDaemonUser' ? { enabled: true, memberProvisioning: 'linuxUsersV1' } : null;
+  return identity?.kind === 'dedicatedDaemonUser' ? { enabled: true } : null;
 }
 
 /** Creation can only request its reviewed enablement; the field owner preserves stored off. */

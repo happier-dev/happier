@@ -1,3 +1,8 @@
+import { createResourceDataKey } from '@/api/encryption/resourceDataKey';
+import { encodeBase64, encryptWithDataKey } from '@/api/encryption';
+import { ArtifactJsonUpdateHttpInputV1Schema } from '@happier-dev/protocol';
+import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
+import { observeManagedChildApprovalExecution } from '@/api/managedChildApproval';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import axios from 'axios';
@@ -209,6 +214,73 @@ describe('createCliActionExecutorHarness', () => {
       await pending.catch(() => undefined);
     }
   });
+  it.each([{ mode: 'plain', winner: null }, { mode: 'e2ee', winner: null },
+    { mode: 'e2ee', winner: 'approved' }, { mode: 'e2ee', winner: 'executing' }] as const)(
+    'withdraws an open guest approval when its containing operation is cancelled, preserving a claimed decision ($mode, $winner)', async ({ mode, winner }) => {
+    const token = `fixture.${Buffer.from(JSON.stringify({ sub: 'requester' })).toString('base64url')}.signature`;
+    const credentials = { token, encryption: mode === 'plain' ? null : { type: 'legacy' as const, secret: new Uint8Array(32).fill(17) } };
+    const resource = await createResourceDataKey({ credentials, mode });
+    const encode = (value: unknown) => resource.mode === 'plain' ? encodePlainArtifactStoredContent(value)
+      : encodeBase64(encryptWithDataKey(value, resource.dataKey));
+    const expectedOrigin = { actionId: 'machines.agentIsolation.set', requestId: 'child-request', accountId: 'requester',
+      serverIdentityId: 'srv_home', machineId: 'guest' };
+    const request = ApprovalRequestV2Schema.parse({ v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
+      createdBy: { surface: 'system' }, requestedSurface: 'ui',
+      executionOriginV1: { v: 1, authority: 'present_user', surface: 'ui', caller: { kind: 'host' },
+        serverId: 'guest-home-profile', ...expectedOrigin, target: { kind: 'machine', machineId: 'guest' } },
+      approval: { flow: 'deferred', result: 'required' }, actionId: expectedOrigin.actionId,
+      actionArgs: { serverId: 'srv_home', machineId: 'guest', enabled: true }, summary: 'Change Agent isolation' });
+    let record = { id: 'cancel-child-approval', ownerAccountId: 'requester', access: 'owner', encryptionMode: mode,
+      publicAudience: 'none', header: encode(buildApprovalRequestArtifactHeaderV1(request)),
+      body: encode({ body: JSON.stringify(request) }),
+      dataEncryptionKey: resource.mode === 'plain' ? ARTIFACT_PLAIN_DATA_KEY_MARKER : resource.dataEncryptionKey,
+      headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 };
+    let held!: () => void;
+    const waiting = new Promise<void>(resolve => { held = resolve; });
+    // Home HTTP and Socket.IO are the only substituted boundaries. The operation
+    // runner, observer, coordinator, encryption and approval transition stay real.
+    vi.spyOn(axios, 'get').mockImplementation(async url => {
+      if (String(url).endsWith('/v1/account/encryption')) return { status: 200,
+        data: AccountEncryptionModeResponseSchema.parse({ mode, updatedAt: 1 }) };
+      if (wire.sockets.some(socket => socket.connected)) held();
+      return { status: 200, data: record };
+    });
+    const writes = vi.spyOn(axios, 'post').mockImplementation(async (_url, raw) => {
+      const mutation = ArtifactJsonUpdateHttpInputV1Schema.parse(raw);
+      expect(mutation.expectedHeaderVersion).toBe(record.headerVersion);
+      expect(mutation.expectedBodyVersion).toBe(record.bodyVersion);
+      record = { ...record, header: mutation.header ?? record.header, body: mutation.body ?? record.body,
+        headerVersion: record.headerVersion + 1, bodyVersion: record.bodyVersion + 1 };
+      return { status: 200, data: { success: true, headerVersion: record.headerVersion, bodyVersion: record.bodyVersion } };
+    });
+    const harness = createCliActionExecutorHarness({ token, credentials, sessionId: 'source',
+      serverId: 'requester-home', serverHttpBaseUrl: 'https://requester-home.example',
+      ...(mode === 'plain' ? { mode: 'plain', ctx: null }
+        : { mode: 'e2ee', ctx: { encryptionKey: new Uint8Array(32).fill(17), encryptionVariant: 'legacy' } }) });
+    const operations = createHostActionOperationRuntime({ serverId: 'requester-home', machineId: 'controller',
+      resolveAccountId: async () => 'requester', generateOperationId: () => 'cancel-bootstrap' });
+    const scope = { accountId: 'requester', machineId: 'controller' };
+    const pending = operations.runActionOperation({ actionId: 'machines.managed.bootstrap.retry', input: { managedId: 'guest' }, context: {},
+      execute: context => observeManagedChildApprovalExecution({ context, signal: context.signal, expectedOrigin,
+        isCurrent: async () => true, observeRecordedApprovalExecution: harness.observeRecordedApprovalExecution,
+        execution: { ok: true, result: { kind: 'approval_request_created', artifactId: record.id, actionId: expectedOrigin.actionId } } }) });
+    await Promise.race([waiting, pending.then(result => { throw new Error(`Operation settled before approval wait: ${JSON.stringify(result)}`); })]);
+    if (winner) {
+      const claimed = ApprovalRequestV2Schema.parse({ ...request, status: winner, updatedAtMs: 2,
+        decision: { kind: 'approve', decidedAtMs: 2, authority: 'present_user' } });
+      record = { ...record, header: encode(buildApprovalRequestArtifactHeaderV1(claimed)),
+        body: encode({ body: JSON.stringify(claimed) }), headerVersion: 2, bodyVersion: 2 };
+    }
+    expect(await operations.handlers.cancel({ operationId: 'cancel-bootstrap' })).toEqual({ kind: 'requested' });
+    await expect(pending).resolves.toMatchObject({ ok: false, errorCode: 'cancelled' });
+    expect(operations.store.get(scope, 'cancel-bootstrap')?.state).toBe('cancelled');
+    const observed = await runWithServerHttpBaseUrl('https://requester-home.example', () =>
+      harness.deps.approvalsGet!({ artifactId: record.id, serverId: null }));
+    expect(observed).toMatchObject({ status: winner ?? 'canceled' });
+    expect(writes).toHaveBeenCalledTimes(winner ? 0 : 1);
+    expect(wire.sockets.every(socket => !socket.connected && socket.listenerCount() === 0)).toBe(true);
+  });
+
   it('routes admitted CLI service Stop through the exact receiving Machine Action and consumes its native refusal', async () => {
     const machineId = 'exact-service-worker';
     const gate = createLocalServicesDaemonFeatureGate({ env: {}, resolveServerFeaturesSnapshot: () => ({

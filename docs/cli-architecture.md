@@ -32,6 +32,18 @@ installs the promoted CLI and explicitly restarts its existing background servic
 before waiting for registration. An unchanged service definition or CLI version
 does not prove that its running process adopted the promoted payload.
 
+Dedicated enrollment requests `enabled: true` without inferring Linux member
+provisioning from the daemon identity; member provisioning requires explicit
+isolation template intent. A matching effective preview with no administrator
+effects or Sessions to replace completes bootstrap without a set or approval.
+Isolation set refuses a stale reviewed metadata version as a typed conflict at
+Action admission before creating approval, and at the direct RPC effect boundary.
+A new daemon runtime retains policy and native setup but cannot reuse an old
+runtime's readiness proof. An unchanged shared-Agent preview needing no native
+changes refreshes that proof through the existing finite native readiness owner.
+Cancelling bootstrap withdraws its still-open child approval through the existing
+conditional approval transition; a completed decision is never overwritten.
+
 Agent isolation is an optional enrollment capability. An unavailable isolation
 preview does not fail acquisition or retained bootstrap retry. The guest publishes
 its typed unavailable status and prerequisite reason through the existing Machine

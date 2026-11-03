@@ -1,3 +1,4 @@
+import { MachineAgentIsolationPreviewResultV1Schema, type MachineAgentIsolationSetInputV1 } from '../../../machines/agentIsolationV1.js';
 import type { z } from 'zod/mini';
 import { MachineServiceExecInputV1Schema } from '../../specs/machine/services.js';
 import { MachineServiceExecResultV1Schema } from '../../specs/machine/services.js';
@@ -34,6 +35,27 @@ import type { ActionApprovalScopeV1 } from '../../actionSettings.js';
 import type { CoreInvocation, DispatchFacts, PreparedCoreAdmission } from '../coreInvocation.js';
 import type { ActionExecutorDeps } from '../types.js';
 
+
+
+/** Read the target once at admission, before either Ask or waived execution. */
+export async function readMachineAgentIsolationSetAdmission(
+  deps: ActionExecutorDeps,
+  input: MachineAgentIsolationSetInputV1,
+  context: ActionExecutorContext,
+): Promise<ActionExecuteResult | null> {
+  if (!deps.machineAgentIsolationAction) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:machines.agentIsolation.set' };
+  const { expectedMetadataVersion, expectedPolicy: _policy, expectedPlanDigest: _digest, ...previewInput } = input;
+  const result = await deps.machineAgentIsolationAction({ actionId: 'machines.agentIsolation.preview', input: previewInput,
+    context, ...(context.signal ? { signal: context.signal } : {}) });
+  const failure = readActionFailureEnvelope(result);
+  if (failure) return failure;
+  const parsed = MachineAgentIsolationPreviewResultV1Schema.safeParse(result);
+  if (!parsed.success) return { ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output' };
+  if (parsed.data.kind === 'unavailable') return { ok: true, result: { kind: 'failed', code: 'unavailable' } };
+  if (parsed.data.metadataVersion !== expectedMetadataVersion) return { ok: true,
+    result: { kind: 'conflict', policy: parsed.data.policy, metadataVersion: parsed.data.metadataVersion } };
+  return null;
+}
 
 
 export async function dispatchMachineControls1(inv: Pick<CoreInvocation, 'actionId' | 'deps' | 'parsed' | 'ctx'> & Readonly<{

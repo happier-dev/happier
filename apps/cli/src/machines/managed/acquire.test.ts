@@ -232,7 +232,10 @@ describe('creation environment stage', () => {
             : outcome === 'adminApproval' || outcome === 'isolationApproval' ? 'approval_context_unavailable' : 'action_outcome_unknown' });
         expect(policyWritten).toBe(!isRetry || freshEnrollment);
         expect(isolationWritten).toBe(outcome !== 'outcomeUnknown' && outcome !== 'adminApproval' && outcome !== 'previewRefusal' && outcome !== 'isolationUnavailable');
-        for (const requestedPolicy of isolationInputs) expect(requestedPolicy).toMatchObject({ enabled: true, memberProvisioning: 'linuxUsersV1' });
+        for (const requestedPolicy of isolationInputs) {
+            expect(requestedPolicy).toMatchObject({ enabled: true });
+            expect(requestedPolicy).not.toHaveProperty('memberProvisioning');
+        }
         expect(post.mock.calls.some(([url]) => String(url).endsWith('/submit'))).toBe(false);
     });
 
