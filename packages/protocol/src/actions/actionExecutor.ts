@@ -8,6 +8,7 @@ import { settleActionOutput, isDeferredApprovalResult } from './executor/resultP
 import { bindCallerInput, callerInputSchema } from './executor/callerInput.js';
 import type { HostReviewedChildrenPlanV1 } from './executor/types.js';
 import { admitPresentUserConfirmationV1 } from './executor/approvalReview.js';
+import type { SessionSpaceMembershipSetInputV1 } from './sessionSpaceMembership.js';
 import { dispatchProjectsDispatch1, dispatchProjectsDispatch2, dispatchProjectsDispatch3 } from './executor/projects/dispatch.js';
 import { withScmRefineInputAuthorizationV1, readHostRootInputCredentialActionV1 } from './executor/scmRefineInputPurpose.js';
 import { dispatchMachineControls1, dispatchMachineControls2, dispatchMachineControls3 } from './executor/machine/controls.js';
@@ -3526,6 +3527,11 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       if (executionPlacement === 'client' && actionId !== 'widgets.item.refresh' && actionId !== 'widgets.area.layout.select'
         && isActionFamilyId(actionId, WidgetInstanceActionIdV1Schema)
         && !deps.widgetSurfaceActions?.companion) return clientActionUnavailable(actionId);
+
+      if (actionId === 'session.space_membership.set') {
+        if (!deps.sessionSpaceMembershipSet) return clientActionUnavailable(actionId);
+        return await deps.sessionSpaceMembershipSet({ input: admittedInput as SessionSpaceMembershipSetInputV1, context: ctx });
+      }
 
       if (actionId === 'session.authoring.open') {
         if (!deps.sessionAuthoringOpen) return clientActionUnavailable(actionId);

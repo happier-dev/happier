@@ -519,7 +519,7 @@ export function createSettingsDeclarationAction(owner: SettingsDeclarationOwner)
                     if (!isCurrent()) throw new RejectedSettingMutation();
                     owner.writeLocalSettings(delta);
                 },
-                mutateSettings: async (mutate) => {
+                mutateSettings: async (mutate, options) => {
                     await owner.mutateAccountSettings((raw) => {
                         throwIfAborted(context?.signal);
                         if (!isCurrent()) throw new RejectedSettingMutation();
@@ -527,7 +527,7 @@ export function createSettingsDeclarationAction(owner: SettingsDeclarationOwner)
                         const delta = mutate(settings);
                         if (!delta) throw new RejectedSettingMutation();
                         return { ...raw, ...normalizeVoiceSettingsLocalDelta(delta, settings) };
-                    });
+                    }, options);
                 },
             });
             return { anchor: ref.anchor, ...result };

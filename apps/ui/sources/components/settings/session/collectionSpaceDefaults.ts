@@ -1,4 +1,4 @@
-import { createDefaultCollectionSpaceV1, type CollectionEntityKindV1 } from '@happier-dev/protocol/collections/spaces/collectionSpacesV1';
+import { createDefaultCollectionSpaceV1, type CollectionEntityKindV1, type CollectionSpaceV1 } from '@happier-dev/protocol/collections/spaces/collectionSpacesV1';
 import type { Settings } from '@/sync/domains/settings/settings';
 import type { LocalSettings } from '@/sync/domains/settings/localSettings';
 import { readResolvedActiveServerSelection } from '@/sync/domains/server/selection/serverSelectionResolution';
@@ -8,6 +8,7 @@ import { resolveSessionListViewContextDefaults } from '@/components/sessions/she
 import { t } from '@/text';
 
 /** Snapshot global defaults for an explicit default edit, never the caller's Team/archive lens. No demand is acquired. */
+export function readCollectionSpaceDefaultV1<K extends CollectionEntityKindV1>(entityKind: K, settings: Settings, local: LocalSettings): CollectionSpaceV1<K>;
 export function readCollectionSpaceDefaultV1(entityKind: CollectionEntityKindV1, settings: Settings, local: LocalSettings) {
     if (entityKind !== 'sessionWork') return createDefaultCollectionSpaceV1(entityKind, {
         name: t(entityKind === 'workflow' ? 'sessionsList.spacesAllWorkflows' : 'sessionsList.spacesAllDiscussions'),

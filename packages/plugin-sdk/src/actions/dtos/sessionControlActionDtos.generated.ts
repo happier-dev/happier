@@ -392,6 +392,18 @@ export type SessionControlActionInputById = {
         tagIds: string[];
         sessionId: string;
     };
+    readonly "session.space_membership.set": {
+        sessionId: string;
+        operation: 'add' | 'move' | 'remove';
+        spaceId: string;
+        spaceSettingsTarget: {
+            serverId: string;
+            accountId: string;
+        };
+        sourceSpaceId?: string | undefined;
+    } & {
+        clientId?: string | undefined;
+    };
     readonly "session.unarchive": {
         [x: string]: unknown;
         sessionId: SessionTargetV1<true>;
@@ -885,6 +897,13 @@ export type SessionControlActionResultById = {
     readonly "session.tags.set": {
         sessionId: string;
         tagIds: string[];
+    };
+    readonly "session.space_membership.set": {
+        sessionId: string;
+        operation: 'add' | 'move' | 'remove';
+        spaceId: string;
+        tagIds: string[];
+        smartMatchMayRemain: boolean;
     };
     readonly "session.unarchive": JsonValue;
     readonly "session.status.get": {

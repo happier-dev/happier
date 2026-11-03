@@ -69,28 +69,32 @@ export type CollectionSpaceMutationV1<K extends CollectionEntityKindV1> =
 export type CollectionSpaceOperationV1 = { [K in CollectionEntityKindV1]: Readonly<{
     kind: 'collection_space'; entityKind: K; mutation: CollectionSpaceMutationV1<K>;
 }> }[CollectionEntityKindV1];
-function mutationSchema<FilterSchema extends z.core.$ZodType, SpaceSchema extends z.core.$ZodType<Readonly<{ id: string }>>>(filter: FilterSchema, space: SpaceSchema, entityKind: CollectionEntityKindV1) {
+function editChangesFields<FilterSchema extends z.core.$ZodType>(filter: FilterSchema) {
+    return { name: z.optional(IdSchema), icon: z.optional(CollectionSpaceIconV1Schema), filter: z.optional(filter), includeNeedsYouEverywhere: z.optional(z.boolean()) };
+}
+function mutationVariants<ChangesSchema extends z.core.$ZodType, SpaceSchema extends z.core.$ZodType<Readonly<{ id: string }>>>(changes: ChangesSchema, space: SpaceSchema, entityKind: CollectionEntityKindV1) {
     const entityId = IdSchema.check(z.refine(id => belongsToKind(id, entityKind)));
-    return z.discriminatedUnion('op', [
+    return [
         z.strictObject({ op: z.literal('create'), space }).check(z.refine(input => {
             // The containing strict object has admitted `space` through the supplied id-bearing schema.
             const candidate = (input as Readonly<{ space: z.output<SpaceSchema> }>).space;
             return candidate.id !== DEFAULT_IDS[entityKind] && belongsToKind(candidate.id, entityKind);
         })),
-        z.strictObject({ op: z.literal('edit'), spaceId: entityId, changes: z.strictObject({
-            name: z.optional(IdSchema), icon: z.optional(CollectionSpaceIconV1Schema), filter: z.optional(filter), includeNeedsYouEverywhere: z.optional(z.boolean()),
-            ...(entityKind === 'sessionWork' ? { membership: z.optional(z.strictObject({ mode: SessionSpaceMembershipV1Schema.shape.mode })) } : {}),
-        }) }),
+        z.strictObject({ op: z.literal('edit'), spaceId: entityId, changes }),
         z.strictObject({ op: z.literal('delete'), spaceId: entityId.check(z.refine(id => id !== DEFAULT_IDS[entityKind])) }),
         z.strictObject({ op: z.literal('reorder'), spaceId: entityId, beforeSpaceId: z.nullable(entityId) }),
         z.strictObject({ op: z.literal('resetDefault') }),
-        ...(entityKind === 'sessionWork' ? [z.strictObject({ op: z.literal('associateTag'), spaceId: entityId, tag: QualifiedSessionSpaceTagV1Schema })] : []),
-    ]);
+    ] as const;
 }
 export const CollectionSpaceOperationV1Schema = lazyZodSchema(() => z.discriminatedUnion('entityKind', [
-    z.strictObject({ kind: z.literal('collection_space'), entityKind: z.literal('sessionWork'), mutation: mutationSchema(SessionListFilterV1Schema, SessionSpaceSchema, 'sessionWork') }),
-    z.strictObject({ kind: z.literal('collection_space'), entityKind: z.literal('workflow'), mutation: mutationSchema(WorkflowListFilterV1Schema, WorkflowSpaceSchema, 'workflow') }),
-    z.strictObject({ kind: z.literal('collection_space'), entityKind: z.literal('discussion'), mutation: mutationSchema(DiscussionListFilterV1Schema, DiscussionSpaceSchema, 'discussion') }),
+    z.strictObject({ kind: z.literal('collection_space'), entityKind: z.literal('sessionWork'), mutation: z.discriminatedUnion('op', [
+        ...mutationVariants(z.strictObject({ ...editChangesFields(SessionListFilterV1Schema),
+            membership: z.optional(z.strictObject({ mode: SessionSpaceMembershipV1Schema.shape.mode })),
+        }), SessionSpaceSchema, 'sessionWork'),
+        z.strictObject({ op: z.literal('associateTag'), spaceId: IdSchema.check(z.refine(id => belongsToKind(id, 'sessionWork'))), tag: QualifiedSessionSpaceTagV1Schema }),
+    ]) }),
+    z.strictObject({ kind: z.literal('collection_space'), entityKind: z.literal('workflow'), mutation: z.discriminatedUnion('op', mutationVariants(z.strictObject(editChangesFields(WorkflowListFilterV1Schema)), WorkflowSpaceSchema, 'workflow')) }),
+    z.strictObject({ kind: z.literal('collection_space'), entityKind: z.literal('discussion'), mutation: z.discriminatedUnion('op', mutationVariants(z.strictObject(editChangesFields(DiscussionListFilterV1Schema)), DiscussionSpaceSchema, 'discussion')) }),
 ]));
 
 export function createDefaultCollectionSpaceV1<K extends CollectionEntityKindV1>(entityKind: K,

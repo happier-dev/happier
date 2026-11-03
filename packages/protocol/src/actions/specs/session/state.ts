@@ -13,6 +13,7 @@ import { BotSetInputSchema } from '../../../sessions/identity/sessionBotV1.js';
 import { SessionTitleSetInputSchema, SessionStatusReasonSetInputSchema, SessionStatusReasonSetResultSchema, SessionToolCallsSetInputSchema, SessionMemorySetInputV1Schema, SessionVoicePreferenceSetInputV1Schema, SessionContextUpdateInputV1Schema, SessionInstructionsSetInputV1Schema } from '../../sessionStateFieldActions.js';
 import { z } from 'zod/mini';
 import { SetSessionTagAssignmentsRequestSchema, SetSessionTagAssignmentsResponseSchema } from '../../../sessions/organization/mutations.js';
+import { SessionSpaceMembershipSetInputV1Schema, SessionSpaceMembershipSetResultV1Schema } from '../../sessionSpaceMembership.js';
 import { SESSION_LIST_AWARENESS_VIEW_V1, SESSION_LIST_SUMMARY_VIEW_V1, SessionListViewV1Schema, type SessionListViewV1 } from '../../../sessions/awareness/action.js';
 import { ActionIdSchema } from '../../actionIds.js';
 import { type ActionInputOption } from '../../actionInputHints.js';
@@ -410,6 +411,22 @@ export const SESSION_STATE_ACTION_SPECS = Object.freeze([
       { path: 'tagIds', title: 'Tag ids', widget: 'textarea', required: true },
     ] },
     cli: { commands: [{ path: ['session', 'tags', 'set'], positionals: ['sessionId'], visibility: 'canonical' }] },
+  } satisfies PreNormalizedActionSpec,
+  {
+    id: 'session.space_membership.set', executionPlacement: 'client', approval: { result: 'none' },
+    title: 'Change Space membership', description: 'Add, move, or remove explicit Space membership in the Session’s own Home and Account. Removing explicit membership may leave a saved-filter match.',
+    safety: 'safe', sideEffectClass: 'external', placements: [],
+    bindings: { mcpToolName: 'session_space_membership_set' },
+    surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false },
+    inputSchema: SessionSpaceMembershipSetInputV1Schema, outputSchema: SessionSpaceMembershipSetResultV1Schema,
+    inputHints: { title: 'Space membership', description: 'Choose the Space and its catalog Account.', fields: [
+      { path: 'sessionId', title: 'Session id', widget: 'text', required: true },
+      { path: 'operation', title: 'Operation', widget: 'text', required: true },
+      { path: 'spaceId', title: 'Space id', widget: 'text', required: true },
+      { path: 'sourceSpaceId', title: 'Source Space id', widget: 'text' },
+      { path: 'spaceSettingsTarget', title: 'Space catalog Home and Account', widget: 'textarea', required: true },
+    ] },
+    cli: { commands: [{ path: ['session', 'space-membership', 'set'], positionals: ['sessionId'], visibility: 'canonical' }] },
   } satisfies PreNormalizedActionSpec,
   {
     id: 'session.unarchive', approval: {result: 'none'},

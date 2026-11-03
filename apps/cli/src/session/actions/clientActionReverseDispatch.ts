@@ -66,7 +66,8 @@ export function createClientActionReverseDispatcher(
     }
     // the invoking Agent's Session is in the background. View-specific Actions
     // still require the App viewing their exact Session, without fallback.
-    const accountClientAction = isVoiceConversationActionId(actionId) || isSettingsDeclarationActionIdV1(actionId);
+    const accountClientAction = isVoiceConversationActionId(actionId) || isSettingsDeclarationActionIdV1(actionId)
+      || actionId === 'session.space_membership.set';
     const composerAction = actionId === 'ui.prompts.picker.open' || actionId === 'composer.transaction.apply'
       || actionId === 'composer.attachments.pick';
     const composerRef = composerAction && input && typeof input === 'object'

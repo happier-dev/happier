@@ -644,3 +644,5 @@ export type { MachineTerminalActionId, MachineTerminalActionInput } from './spec
 export * from './settings/automationSettingsDeclarationAction.js';
 export * from './actionPolicyActionFamily.js';
 export * from './actionAudiencePolicy.js';
+
+export * from './sessionSpaceMembership.js';

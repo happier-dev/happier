@@ -3,6 +3,7 @@ import { z } from 'zod/mini';
 import { StrictJsonValueSchema } from '../json/strictJsonValue.js';
 import { QualifiedConnectedAccountPurposeBindingTargetV1Schema } from '../connect/connectedAccountPurposeBindings.js';
 import { VoiceCredentialSlotIdSchema } from '../plugins/contributions/voiceProviders.js';
+import { CollectionSpaceOperationV1Schema } from '../collections/spaces/collectionSpacesV1.js';
 import { PersistedConnectedServiceBindingsV1Schema } from '../connect/connectedServiceBindings.js';
 
 export const SETTINGS_DECLARATION_ACTION_IDS_V1 = ['settings.list', 'settings.get', 'settings.set', 'settings.reset', 'settings.invoke'] as const;
@@ -41,6 +42,7 @@ export type SettingsDeclarationTargetV1 = z.infer<typeof SettingsDeclarationTarg
 export type SettingsDeclarationTargetKindV1 = SettingsDeclarationTargetV1['kind'];
 /** Exact operation targets, never a settings path, credential value or caller confirmation. */
 export const SettingsDeclarationOperationInputV1Schema = lazyZodSchema(() => z.union([
+  CollectionSpaceOperationV1Schema,
   z.strictObject({ kind: z.literal('atmosphere_picture_add'), source: z.discriminatedUnion('kind', [
     z.strictObject({ kind: z.literal('picked') }),
     z.strictObject({ kind: z.literal('url'), url: z.url().check(z.refine(value => /^https?:\/\//i.test(value))) }),

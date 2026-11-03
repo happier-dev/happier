@@ -2,6 +2,7 @@ import type { SessionStopIntent } from '../../sessions/metadata/sessionExplicitS
 import type { DeploymentPublishResultV1, DeploymentPrepareInputV1, DeploymentPrepareResultV1 } from '../../deployments/deploymentActionsV1.js';
 import type { DeploymentTemplateInstantiateResultV1 } from '../../deployments/deploymentActionsV1.js';
 import type { DeploymentTemplateInstantiateInputV1 } from '../../deployments/deploymentActionsV1.js';
+import type { SessionSpaceMembershipSetInputV1 } from '../sessionSpaceMembership.js';
 import type { QualifiedPluginActionId } from '../../plugins/actions/qualifiedActionId.js';
 import type { DeploymentPublishInputV1 } from '../../deployments/deploymentActionsV1.js';
 import type { DeploymentDeployActionInputV1 } from '../../deployments/deploymentActionsV1.js';
@@ -1585,6 +1586,7 @@ export type ActionExecutorDeps = Readonly<{
     context: ActionExecutorContext;
   }>) => Promise<ActionExecuteResult>;
   /** Answering client's ordinary draft owner; never starts or sends a Session. */
+  sessionSpaceMembershipSet?: (args: Readonly<{ input: SessionSpaceMembershipSetInputV1; context: ActionExecutorContext }>) => Promise<ActionExecuteResult>;
   sessionAuthoringOpen?: (args: Readonly<{
     input: SessionAuthoringOpenV1;
     context: ActionExecutorContext;

@@ -145,6 +145,7 @@ import {
 import { BoundedLegacyJsonValueSchema } from './catalog/legacyJson.js';
 import { ClientEncryptionRequirementSchema } from '../../encryption/clientEncryptionRequirement.js';
 import { ProviderDefaultModelSelectionsByAgentTargetKeyV1Schema } from '../../providers/selection/v1.js';
+import { CollectionSpacesV1Schema } from '../../collections/spaces/collectionSpacesV1.js';
 export { AccountSettingsPersistedObjectSchema } from './accountSettingsPersistedObject.js';
 export type { AccountSettingsPersistedObject } from './accountSettingsPersistedObject.js';
 export {
@@ -906,6 +907,7 @@ const ACCOUNT_CORE_CATALOG_DEFINITIONS = {
     agentInputChipDensity: accountPreference(z.enum(['auto', 'labels', 'icons']), 'auto', 'composer presentation'),
     sessionListDensity: accountPreference((<I extends z.core.$ZodType, O extends z.core.$ZodType>(input: I, output: O) => new z.ZodMiniPipe({ type: 'pipe', in: input, out: output }) as z.ZodMiniPipe<I, O>)(z.transform((raw): unknown => raw === 'compact' ? 'cozy' : raw), z.enum(['detailed', 'cozy', 'narrow'])), 'narrow', 'session list presentation'),
     sessionListIdentityDisplay: accountPreference(z.enum(['avatar', 'agentLogo', 'none']), 'agentLogo', 'session list presentation'),
+    collectionSpacesV1: accountPreference(CollectionSpacesV1Schema, { v: 1, spaces: [] }, 'collection saved filters', ACCOUNT_SETTINGS_MAX_DOCUMENT_BYTES),
     sessionHeaderIdentityDisplay: accountPreference(z.enum(['avatar', 'agentLogo', 'none']), 'avatar', 'session header presentation'),
     sessionListOrderingModeV1: accountPreference(z.enum(['custom', 'created', 'updated']), 'custom', 'session list presentation'),
     sessionListFolderSortModeV1: accountPreference(z.enum(['foldersFirst', 'mixed']), 'foldersFirst', 'session list presentation'),

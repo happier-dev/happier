@@ -44,7 +44,7 @@ export type SettingOperationContext = Readonly<{
     isCurrent(): boolean;
     isFeatureEnabled?: (featureId: FeatureId) => Promise<boolean>;
     readSettings(): Promise<Settings>;
-    mutateSettings(mutate: SettingOwnerMutation): Promise<void>;
+    mutateSettings(mutate: SettingOwnerMutation, options?: Readonly<{ rebaseOnConflict: boolean }>): Promise<void>;
     /** Device effects use the answering client's captured Settings owner, never global storage. */
     readLocalSettings?: () => LocalSettings;
     writeLocalSettings?: (delta: Partial<LocalSettings>) => void;

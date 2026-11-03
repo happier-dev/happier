@@ -1,6 +1,25 @@
 import { describe, expect, it } from 'vitest';
 import { SETTINGS_DECLARATION_ACTION_IDS_V1, SettingsDeclarationActionInputSchemasV1 } from './settingsDeclarationActionFamily.js';
 import { getActionSpec } from './actionSpecs.js';
+import { normalizeSessionListFilterV1 } from '../sessions/listFilter/sessionListFilterV1.js';
+
+describe('collection space intent admission', () => {
+  it('accepts entity-bound intents while rejecting authority, foreign filters and unknown mutation fields', () => {
+    const schema = SettingsDeclarationActionInputSchemasV1['settings.invoke'];
+    const input = { kind: 'collection_space', entityKind: 'sessionWork', mutation: {
+      op: 'create', space: { entityKind: 'sessionWork', id: 'work', name: ' Work ', icon: { kind: 'icon', name: 'list' },
+        filter: normalizeSessionListFilterV1(), includeNeedsYouEverywhere: false },
+    } };
+    expect(schema.safeParse({ anchor: 'session.list.spaces', input }).success).toBe(true);
+    for (const changed of [
+      { ...input, accountId: 'other' },
+      { ...input, entityKind: 'workflow' },
+      { ...input, mutation: { ...input.mutation, beforeSpaceId: 'unexpected' } },
+      { ...input, mutation: { op: 'edit', spaceId: 'work', changes: { filter: { view: 'all' } } } },
+      { ...input, mutation: { op: 'delete', spaceId: 'my-work' } },
+    ]) expect(schema.safeParse({ anchor: 'session.list.spaces', input: changed }).success).toBe(false);
+  });
+});
 
 describe('Voice credential source operation admission', () => {
   it('admits reference-only Voice binding, removal and recipient review, rejecting material and authority', () => {

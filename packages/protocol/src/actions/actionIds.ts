@@ -334,6 +334,7 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
     'session.delete',
     'session.section.set',
     'session.tags.set',
+    'session.space_membership.set',
     'session.title.set',
     'session.status.set_reason',
     'session.coordinator.enable',

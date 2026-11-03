@@ -220,6 +220,7 @@ import { invokeWorkflowAuthoringAction } from './workflowAuthoringAction';
 import { executeAdmittedClientActionChildAtMachine, type AdmittedClientActionParent } from './admittedClientActionChild';
 import { isWorkflowHostAdmittedChildActionIdV1 } from '@happier-dev/protocol/actions/clientDispatchV1';
 import { openSessionAuthoringDraft } from './sessionAuthoringOpenAction';
+import { setSessionSpaceMembership } from '../sessionOrganization/sessionSpaceMembership';
 import { invokeSessionListOrganizationAction } from '@/components/sessions/shell/drag/sessionListOrganizationAction';
 import { createSessionOrganizationMutationScopeForAccount, writeSessionOrganizationPin } from '@/sync/ops/sessionOrganization/sessionOrganizationMutationOwner';
 import { invokeSessionTerminalAction } from '@/components/sessions/terminal/sessionTerminalActions';
@@ -1868,6 +1869,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     invokeContributedAction: (request) => executeCurrentUiContextContributedAction(request, {
       execute: Object.assign(executor.execute, { prepare: executor.prepare }), context: request.context,
     }, accountContext?.accountLifetime),
+    sessionSpaceMembershipSet: args => setSessionSpaceMembership(args, accountContext ?? undefined),
     uiFindAction: executeFindAction,
     uiPromptPickerOpen: executePromptPickerOpenAction,
     nextPendingSession: (context) => invokeNextPendingRequest({
