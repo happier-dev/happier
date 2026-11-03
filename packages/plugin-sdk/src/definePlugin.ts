@@ -51,6 +51,7 @@ import type {
 import type { AgentContribution } from './agents.js';
 import type { BackgroundServiceDefinition } from './backgroundServices.js';
 import type { PluginCaptureSourceRuntime, PluginCaptureSourceDeclaration } from './captureSources.js';
+import type { PluginSecretSourceDefinitionV1 } from './secretSources.js';
 import type { PluginProjectNativeAdapterDefinitionV1 } from './projectNativeAdapters.js';
 import type { MachineProvisionerAuthorDefinitionV1 } from './machineProvisioners.js';
 import type { AccessProviderAuthorDefinitionV1 } from './accessProviders.js';
@@ -772,6 +773,7 @@ type PluginStructuredContributionDefinitions<
     promptAssets?: TPromptAssets;
     backgroundServices?: readonly BackgroundServiceDefinition[];
     captureSources?: Readonly<Record<PluginContributionLocalId, PluginCaptureSourceDefinition>>;
+    secretSources?: Readonly<Record<PluginContributionLocalId, PluginSecretSourceDefinitionV1>>;
     projectNativeAdapters?: Readonly<Record<PluginContributionLocalId, PluginProjectNativeAdapterDefinitionV1>>;
     hooks?: Readonly<Record<PluginContributionLocalId, PluginHookDefinition>>;
     events?: Readonly<Record<PluginContributionLocalId, PluginEventDefinition>>;
@@ -1032,6 +1034,7 @@ export type DefinePluginInput<
         promptAssets?: TPromptAssets;
         backgroundServices?: readonly BackgroundServiceDefinition[];
         captureSources?: Readonly<Record<PluginContributionLocalId, PluginCaptureSourceDefinition>>;
+        secretSources?: Readonly<Record<PluginContributionLocalId, PluginSecretSourceDefinitionV1>>;
         projectNativeAdapters?: Readonly<Record<PluginContributionLocalId, PluginProjectNativeAdapterDefinitionV1>>;
         hooks?: Readonly<Record<PluginContributionLocalId, Readonly<{
             declaration: Omit<HookContribution, 'id'>;
@@ -2038,6 +2041,21 @@ const CAPTURE_SOURCES_ADAPTER: DefinePluginFamilyAdapter = Object.freeze({
     },
 });
 
+const SECRET_SOURCES_ADAPTER: DefinePluginFamilyAdapter = Object.freeze({
+    authorKey: 'secretSources',
+    runtimeReceiverPaths: [['*', 'runtime']],
+    project(input) {
+        const definitions = input.secretSources as Readonly<Record<PluginContributionLocalId, PluginSecretSourceDefinitionV1>> | undefined;
+        return { secretSources: Object.entries(definitions ?? {}).map(([id, definition]) => ({
+            ...definition.declaration, id,
+        })) };
+    },
+    activate(input, api) {
+        const definitions = input.secretSources as Readonly<Record<PluginContributionLocalId, PluginSecretSourceDefinitionV1>> | undefined;
+        for (const [id, definition] of Object.entries(definitions ?? {})) api.secretSources.register(id, definition.runtime);
+    },
+});
+
 const PROJECT_NATIVE_ADAPTERS_ADAPTER: DefinePluginFamilyAdapter = Object.freeze({
     authorKey: 'projectNativeAdapters',
     runtimeReceiverPaths: [['*', 'runtime']],
@@ -2621,6 +2639,7 @@ export const DEFINE_PLUGIN_FAMILY_POLICY_V2 = Object.freeze({
     promptAssets: { classification: 'descriptor-only', authorKey: 'promptAssets', inputShape: 'structured', adapter: PROMPT_ASSETS_ADAPTER },
     backgroundServices: { classification: 'adapter', authorKey: 'backgroundServices', inputShape: 'structured', adapter: BACKGROUND_SERVICES_ADAPTER },
     captureSources: { classification: 'adapter', authorKey: 'captureSources', inputShape: 'structured', adapter: CAPTURE_SOURCES_ADAPTER },
+    secretSources: { classification: 'adapter', authorKey: 'secretSources', inputShape: 'structured', adapter: SECRET_SOURCES_ADAPTER },
     projectNativeAdapters: { classification: 'adapter', authorKey: 'projectNativeAdapters', inputShape: 'structured', adapter: PROJECT_NATIVE_ADAPTERS_ADAPTER },
     hooks: { classification: 'adapter', authorKey: 'hooks', inputShape: 'structured', adapter: HOOKS_ADAPTER },
     events: { classification: 'adapter', authorKey: 'events', inputShape: 'structured', adapter: EVENTS_ADAPTER },

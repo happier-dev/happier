@@ -14,6 +14,7 @@ import { PluginAgentAcpStderrRulesV2Schema } from './agentAcpStderrRules.js';
 import { PluginAgentAcpPermissionModeMappingV2Schema } from './agentAcpPermissionModeMapping.js';
 import { PluginCaptureSourceContributionV1Schema } from './captureSources.js';
 import { MachineProvisionerContributionV1Schema, validateMachineProvisionerContributionsV1 } from './machineProvisioners.js';
+import { AccessProviderContributionV1Schema, validateAccessProviderContributionsV1 } from './accessProviders.js';
 export * from './machineProvisioners.js';
 import { PluginProjectNativeAdapterContributionV1Schema } from './projectNativeAdapters.js';
 import { PluginWorkItemsContributionV1Schema } from './workItems.js';
@@ -898,6 +899,7 @@ export const PLUGIN_CORE_CONTRIBUTION_FAMILIES_V2 = [
   definePluginContributionFamilyV2({ family: 'agents', schema: PluginAgentContributionV2Schema }),
   definePluginContributionFamilyV2({ family: 'providers', schema: ProviderContributionV1Schema }),
   definePluginContributionFamilyV2({ family: 'machineProvisioners', schema: MachineProvisionerContributionV1Schema }),
+  definePluginContributionFamilyV2({ family: 'accessProviders', schema: AccessProviderContributionV1Schema }),
   definePluginContributionFamilyV2({ family: 'deploymentTargets', schema: DeploymentTargetContributionV1Schema }),
   definePluginContributionFamilyV2({ family: 'healthCheckKinds', schema: HealthCheckKindContributionV1Schema }),
   definePluginContributionFamilyV2({ family: 'machineRecipes', schema: MachineRecipeV1Schema }),
@@ -1007,6 +1009,7 @@ function createPluginContributesV2SchemaWithoutDefault(): z.ZodMiniObject<
   validatePluginSearchProviderContributionsV1(value, ctx);
   validateHealthCheckKindContributionsV1(value, ctx);
   validateMachineProvisionerContributionsV1(value, ctx);
+  validateAccessProviderContributionsV1(value, ctx);
   validateDeploymentTargetContributionsV1(value, ctx);
   validateTargetedContributionEnvelopeBoundsV1(value, ctx);
 })));

@@ -196,6 +196,7 @@ export { PluginSearchQueryV1Schema } from './searchProviders.js';
 export type { PluginSearchResultV1 } from './searchProviders.js';
 export { PluginSearchResultV1Schema } from './searchProviders.js';
 export type { PluginSecretSourceAcquisitionV1 } from './secretSources.js';
+export type { PluginSecretSourceDefinitionV1 } from './secretSources.js';
 export type { PluginSecretSourceRequestV1 } from './secretSources.js';
 export type { PluginSecretSourceRuntimeV1 } from './secretSources.js';
 export type { PluginServiceId } from './services/index.js';

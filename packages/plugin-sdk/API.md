@@ -204,6 +204,7 @@
 | `.` | `PluginSearchResultV1` | type | any |
 | `.` | `PluginSearchResultV1Schema` | value | any |
 | `.` | `PluginSecretSourceAcquisitionV1` | type | any |
+| `.` | `PluginSecretSourceDefinitionV1` | type | any |
 | `.` | `PluginSecretSourceRequestV1` | type | any |
 | `.` | `PluginSecretSourceRuntimeV1` | type | any |
 | `.` | `PluginServiceId` | type | any |

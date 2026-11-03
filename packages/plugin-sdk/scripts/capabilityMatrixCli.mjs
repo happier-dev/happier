@@ -1,10 +1,8 @@
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 
-import {
-  PLUGIN_CONTRIBUTION_CATALOG_V2,
-  PLUGIN_HOST_ACCESS_CAPABILITY_CATALOG_V2,
-} from '@happier-dev/protocol';
+import { PLUGIN_CONTRIBUTION_CATALOG_V2 } from '@happier-dev/protocol/plugins/contributions/catalog';
+import { PLUGIN_HOST_ACCESS_CAPABILITY_CATALOG_V2 } from '@happier-dev/protocol/plugins/manifest/v2';
 
 import {
   deriveCapabilityMatrixMetadata,

@@ -228,7 +228,7 @@ export type { BackupDestinationOpenV1 } from './backupDestinations.js';
 
 
 
-export type { PluginSecretSourceAcquisitionV1, PluginSecretSourceRuntimeV1 } from './secretSources.js';
+export type { PluginSecretSourceAcquisitionV1, PluginSecretSourceDefinitionV1, PluginSecretSourceRuntimeV1 } from './secretSources.js';
 
 
 
