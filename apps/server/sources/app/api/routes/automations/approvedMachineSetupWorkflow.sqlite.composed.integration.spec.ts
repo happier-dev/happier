@@ -97,10 +97,44 @@ it('starts the approved Setup child Run before an assignment exists and reads it
                 metadata: '{}', installationId: identity.installationId, installationPublicKey: new Uint8Array(keys.publicKey) } });
             const readClient = createWorkflowRunStorageClient({ token, serverHttpBaseUrl: 'http://setup-home.test',
                 createPublisherHeader: request => signPluginInstallationPublisherHeader({ ...request, identity, machineId: reader.id }) });
-            await expect(readClient.execute({ operation: 'get', runId: run.id }, { publisherMachineId: reader.id }))
-                .resolves.toMatchObject({ run: { id: run.id } });
-            await expect(client(foreignToken).execute({ operation: 'get', runId: run.id }, { publisherMachineId: machine.id }))
-                .rejects.toMatchObject({ response: { status: 404 } });
+            const read = (operation: 'get' | 'wait', bearer = token) => {
+                const body = { operation, runId: run.id, publisherMachineId: reader.id };
+                return app.inject({ method: 'POST', url: '/v3/automations/runs/workflow-storage', payload: body,
+                    headers: { authorization: `Bearer ${bearer}`, 'x-happier-plugin-installation-manifest-publisher':
+                        signPluginInstallationPublisherHeader({ identity, machineId: reader.id,
+                            path: '/v3/automations/runs/workflow-storage', body }) } });
+            };
+            // Transparent instrumentation at the real database boundary; the
+            // optional proof must add no Machine queries to either Account read.
+            let machineReads = 0;
+            const originals = { findUnique: db.machine.findUnique, findFirst: db.machine.findFirst };
+            for (const method of ['findUnique', 'findFirst'] as const) {
+                Object.assign(db.machine, { [method]: new Proxy(db.machine[method], { apply(target, receiver, args) {
+                    machineReads++;
+                    return Reflect.apply(target, receiver, args);
+                } }) });
+            }
+            try {
+                for (const operation of ['get', 'wait'] as const) {
+                    machineReads = 0;
+                    const response = await read(operation);
+                    expect.soft(response.statusCode).toBe(200);
+                    expect.soft(machineReads, `${operation} Machine DB reads`).toBe(0);
+                }
+            } finally { Object.assign(db.machine, originals); }
+            await expect(readClient.execute({ operation: 'recovery.list', runId: run.id, pageByteLimit: 4096 }, { publisherMachineId: reader.id }))
+                .rejects.toMatchObject({ response: { status: 401 } });
+
+            // The reader still signs with its old installation after replacement.
+            await db.machine.update({ where: { id: reader.id }, data: { installationId: randomUUID() } });
+            for (const operation of ['get', 'wait'] as const) {
+                const sameAccount = await read(operation);
+                expect.soft(sameAccount.statusCode, `${operation} with stale proof`).toBe(200);
+                if (sameAccount.statusCode === 200) expect(sameAccount.json()).toMatchObject({ run: { id: run.id } });
+                const foreignAccount = await read(operation, foreignToken);
+                expect.soft(foreignAccount.statusCode, `${operation} foreign Account`).toBe(404);
+                expect.soft(foreignAccount.json()).toMatchObject({ error: 'run_not_found' });
+            }
             await expect(readClient.execute({ operation: 'recovery.list', runId: run.id, pageByteLimit: 4096 }, { publisherMachineId: reader.id }))
                 .rejects.toMatchObject({ response: { status: 401 } });
         } finally { restore(); }

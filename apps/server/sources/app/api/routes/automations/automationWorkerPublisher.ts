@@ -85,16 +85,14 @@ export async function resolveExactAutomationWorkerPublisher(params: Readonly<{
 /** The requester bearer owns content; the admitted installation supplies executor identity. */
 export async function resolveWorkflowAutomationWorkerPublisher(params: Parameters<typeof resolveExactAutomationWorkerPublisher>[0] & Readonly<{
     runId?: string;
-    purpose?: 'admission' | 'claim' | 'custody_refusal' | 'ordinary_read';
+    purpose?: 'admission' | 'claim' | 'custody_refusal';
 }>): Promise<ExactAutomationWorkerPublisher | null> {
     const machine = await db.machine.findUnique({ where: { id: params.machineId },
         select: { accountId: true } });
     if (!machine) return null;
     const publisher = await resolveExactAutomationWorkerPublisher({ ...params, accountId: machine.accountId });
     if (!publisher) return null;
-    // Ordinary get/wait use the requester's Run visibility owner. In particular,
-    // start probes its deterministic id before a worker assignment exists.
-    if (params.purpose === 'admission' || params.purpose === 'claim' || params.purpose === 'ordinary_read') return publisher;
+    if (params.purpose === 'admission' || params.purpose === 'claim') return publisher;
     const custodyRefusal = params.purpose === 'custody_refusal';
     if (custodyRefusal && params.accountId !== machine.accountId) return null;
     if (!params.runId) return machine.accountId === params.accountId && !custodyRefusal ? publisher : null;

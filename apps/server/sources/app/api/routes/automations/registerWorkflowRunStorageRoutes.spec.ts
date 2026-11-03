@@ -4,6 +4,16 @@ import { createRouteTestBuilder } from "../../testkit/routeTestBuilder";
 import { getRouteEntry } from "../../testkit/routeHarness";
 import { registerWorkflowRunStorageRoutes } from "./registerWorkflowRunStorageRoutes";
 
+// These refusal cases need the persisted custodian only. The composed Setup
+// spec exercises the same route with real storage and publisher signatures.
+vi.mock("@/storage/db", async (importOriginal) => {
+    const actual = await importOriginal<typeof import("@/storage/db")>();
+    const { createDbMocks } = await import("../../testkit/dbMocks");
+    const { db } = createDbMocks({ machine: ["findUnique"] });
+    db.machine.findUnique.mockResolvedValue({ accountId: "account-1" });
+    return { ...actual, db };
+});
+
 describe("registerWorkflowRunStorageRoutes", () => {
     it("rejects a workflow persistence request without an exact machine publisher proof", async () => {
         const verifyPublisher = vi.fn(async () => null);

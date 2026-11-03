@@ -129,9 +129,7 @@ export function registerWorkflowRunStorageRoutes(
         if (!executorOperation && !externalAction && isRestrictedAuthTokenKind(request.authTokenKind)) {
             return reply.code(401).send(null);
         }
-        // Explicit host shapes and verified external Actions retain exact publisher proof.
-        // Ordinary Account reads/controls have no executor Machine requirement.
-        if (executorOperation || externalAction || publisherMachineId !== undefined) {
+        if (executorOperation || externalAction) {
             if (publisherMachineId === undefined) return reply.code(401).send(null);
             const publisher = await resolveWorkflowAutomationWorkerPublisher({
                 dependencies,
@@ -141,7 +139,6 @@ export function registerWorkflowRunStorageRoutes(
                 machineId: publisherMachineId,
                 ...('runId' in body && body.runId ? { runId: body.runId } : {}),
                 ...(body.operation === 'admit' ? { purpose: 'admission' as const } : {}),
-                ...(body.operation === 'get' || body.operation === 'wait' ? { purpose: 'ordinary_read' as const } : {}),
             });
             if (!publisher) return reply.code(401).send(null);
             if (body.operation === "admit" && body.machineId !== publisher.machineId) {
