@@ -921,7 +921,7 @@ export async function startDaemonConnectedServiceRuntime(
         if (!token) return null;
         // Require durable evidence the session persists (canonical session read) before trusting a
         // persisted-identity fanout proof; do NOT introduce a second metadata reader.
-        const persistedSession = await fetchSessionByIdCompat({ token, sessionId: input.sessionId });
+        const persistedSession = await fetchSessionByIdCompat({ reason: 'session-control', token, sessionId: input.sessionId });
         if (!persistedSession) return null;
         // The native credential projection takes a scalar binding and delegates to the current
         // qualified credential reader. Only its binding/map lookup uses the scalar id; the

@@ -19,7 +19,7 @@ export async function hydrateReplayDialogFromTranscript(params: Readonly<{
   synopsisText?: string | null;
   referencedSessionMediaWorkspacePaths: readonly string[];
 } | null> {
-  const session = await fetchSessionById({ token: params.credentials.token, sessionId: params.previousSessionId });
+  const session = await fetchSessionById({ reason: 'session-replay', token: params.credentials.token, sessionId: params.previousSessionId });
   if (!session) return null;
 
   const rawSession = session as Readonly<{

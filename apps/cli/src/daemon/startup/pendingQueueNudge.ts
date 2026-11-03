@@ -37,7 +37,7 @@ async function discoverPendingQueueCapability(params: ServiceabilityParams): Pro
   if (!token) return { result: { state: 'unknown', reason: 'no_token' } };
   if (cancelled(params)) return { result: { state: 'unknown', reason: 'shutdown' } };
   try {
-    const rawSession = await fetchSessionByIdCompat({ token, sessionId: params.sessionId });
+    const rawSession = await fetchSessionByIdCompat({ reason: 'session-control', token, sessionId: params.sessionId });
     if (!rawSession) return { result: { state: 'unknown', reason: 'transport_unavailable' } };
     if (!await current()) return { result: { state: 'unknown', reason: cancelled(params) ? 'shutdown' : 'transport_unavailable' } };
     const mode = resolveSessionStoredContentEncryptionMode(rawSession);

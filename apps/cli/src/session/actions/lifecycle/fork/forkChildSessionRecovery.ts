@@ -21,7 +21,7 @@ export async function fetchForkChildSessionOrThrow(params: Readonly<{
 
     for (let index = 0; index < attempts; index += 1) {
         try {
-            const raw = await fetchSessionByIdCompat({ token: params.token, sessionId: params.sessionId });
+            const raw = await fetchSessionByIdCompat({ reason: 'manual-recovery', token: params.token, sessionId: params.sessionId });
             if (raw) return raw;
             lastError = new Error('Session fetch returned empty response');
         } catch (error) {
@@ -57,6 +57,7 @@ export async function cleanupForkChildBestEffort(
         return;
     }
     const rawSession = await fetchSessionByIdCompat({
+        reason: 'manual-recovery',
         token: params.credentials.token,
         sessionId: params.sessionId,
     }).catch(() => null);

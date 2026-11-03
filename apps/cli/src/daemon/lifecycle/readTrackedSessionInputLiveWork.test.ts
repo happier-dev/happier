@@ -82,7 +82,7 @@ describe('requester-qualified live Session network observation', () => {
     // Characterize the genuine HTTP fixture before asserting composed activity;
     // a fixture/schema failure must not masquerade as an inventory assertion RED.
     const transport = await runWithServerHttpBaseUrl(requesterBootstrap.serverHttpBaseUrl,
-      () => resolveSessionTransportContext({ credentials: requesterBootstrap.credentials, idOrPrefix: sessionId }));
+      () => resolveSessionTransportContext({ reason: 'session-control', credentials: requesterBootstrap.credentials, idOrPrefix: sessionId }));
     expect(transport).toMatchObject({ ok: true, sessionId, mode: 'plain' });
     expect(await source.read()).toMatchObject({ coverage: 'complete', items: [
       { category: 'session', attribution, state: 'settled' }, { category: 'input', attribution, state: 'settled' },

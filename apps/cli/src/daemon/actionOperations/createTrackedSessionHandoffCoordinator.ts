@@ -121,7 +121,7 @@ async function resolveSourceContext(
   sessionId: string,
   signal: AbortSignal,
 ): Promise<SourceContext> {
-  const transport = await resolveSessionTransportContext({ credentials, idOrPrefix: sessionId, signal });
+  const transport = await resolveSessionTransportContext({ reason: 'session-control', credentials, idOrPrefix: sessionId, signal });
   if (!transport.ok) {
     return { ok: false, errorCode: transport.code, error: transport.code };
   }

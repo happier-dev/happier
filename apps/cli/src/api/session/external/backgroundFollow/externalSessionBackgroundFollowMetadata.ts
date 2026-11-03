@@ -225,6 +225,7 @@ export async function writeExternalSessionFollowStatus(params: Readonly<{
         throw new Error('Authentication is unavailable while writing external-session follow status.');
     }
     const rawSession = await fetchSessionById({
+        reason: 'waitForMetadataUpdate',
         token: credentials.token,
         sessionId: params.sessionId,
     });

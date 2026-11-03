@@ -456,7 +456,7 @@ export function createDaemonApprovalExecutionOriginCurrentnessFromCredentials(in
     const sessionId = origin.caller.kind === 'session' ? origin.caller.sessionId : origin.sessionId;
     if (!sessionId) return null;
     const serverFeaturesSnapshot = await input.resolveServerFeaturesSnapshot?.();
-    const transport = await resolveSessionTransportContext({
+    const transport = await resolveSessionTransportContext({ reason: 'session-action',
       credentials: input.credentials,
       idOrPrefix: sessionId,
       ...(serverFeaturesSnapshot ? { serverFeaturesSnapshot } : {}),
@@ -559,7 +559,7 @@ export function createDaemonExternalActionTargetResolver(input: Readonly<{
 
     const serverFeaturesSnapshot = await input.resolveServerFeaturesSnapshot?.();
     if (resolveActionExecutionPlacementForInput(getActionSpec(actionId), actionInput) === 'account') {
-      const session = await fetchSessionById({
+      const session = await fetchSessionById({ reason: 'session-action',
         token: input.credentials.token,
         sessionId: target.sessionId,
         ...(input.serverApiUrl ? { serverUrl: input.serverApiUrl } : {}),
@@ -568,7 +568,7 @@ export function createDaemonExternalActionTargetResolver(input: Readonly<{
       });
       return session?.id === target.sessionId ? target : null;
     }
-    const resolveTransport = () => resolveSessionTransportContext({
+    const resolveTransport = () => resolveSessionTransportContext({ reason: 'session-action',
       credentials: input.credentials, idOrPrefix: target.sessionId,
       ...(serverFeaturesSnapshot ? { serverFeaturesSnapshot } : {}),
       ...(signal ? { signal } : {}),

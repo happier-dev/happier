@@ -1083,6 +1083,7 @@ export async function assertExternalSessionOperationProgressCanBeSelected(
   if (!credentials) throw new Error('external_session_operation_publish_unauthenticated');
   const [rawSession, accountEncryptionCurrentness] = await Promise.all([
     fetchSessionById({
+      reason: 'session-action',
       token: credentials.token,
       sessionId: input.sessionId,
     }),
@@ -1215,6 +1216,7 @@ export async function readExternalSessionOperationSharedPresentation(
   }
   const [rawSession, accountEncryptionCurrentness] = await Promise.all([
     fetchSessionById({
+      reason: 'session-action',
       token: credentials.token,
       sessionId,
     }),
@@ -1285,6 +1287,7 @@ export async function publishExternalSessionOperationProgress(input: Readonly<{
         );
       }
       const rawSession = await fetchSessionById({
+        reason: 'session-action',
         token: credentials.token,
         sessionId: input.sessionId,
       });

@@ -198,6 +198,7 @@ async function readAdmittedSessionsPage(params: Readonly<{
   metadataUpgradeRequiredCount?: never;
 }>> {
   const rawSessions = await Promise.all(params.sessionIds.map((sessionId) => fetchSessionById({
+    reason: 'session-query',
     token: params.token,
     sessionId,
     ...(params.resolveAuthorizationHeaders

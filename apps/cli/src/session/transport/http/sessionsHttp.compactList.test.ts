@@ -87,7 +87,7 @@ describe('compact Session list document demand', () => {
       statusCode: 404, error: 'Not Found', message: 'Route POST:/v2/sessions/lookup-by-tags not found',
     } });
     const result = await runWithServerHttpBaseUrl('https://home.example.test',
-      () => resolveSessionIdOrPrefix({ credentials: { token: 'token', encryption: null }, idOrPrefix: 'tag' }));
+      () => resolveSessionIdOrPrefix({ reason: 'session-query', credentials: { token: 'token', encryption: null }, idOrPrefix: 'tag' }));
     expect(result).toEqual({ ok: false, code: 'unsupported' });
     expect(get).not.toHaveBeenCalled();
   });

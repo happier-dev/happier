@@ -605,6 +605,7 @@ async function activateTargetAndAdmitInput(params: Readonly<{
   if (admitted.result.type !== 'accepted' || admitted.terminal) return admitted.result;
 
   const targetSession = await deps.resolveSessionTransportContext({
+    reason: 'session-control',
     credentials,
     idOrPrefix: sessionId,
     ...(params.resolveAuthorizationHeaders ? { resolveAuthorizationHeaders: params.resolveAuthorizationHeaders } : {}),
@@ -708,7 +709,7 @@ export async function runSessionAgentTransition(
     ? request => createExternalActionAuthorizedRequestHeaders({ authorization: root, effectActionId: externalAction.effectActionId,
       target: effectTarget, installationId: externalAction.installationId, privateKey: externalAction.privateKey, ...request })
     : undefined;
-  const resolveTransport = () => deps.resolveSessionTransportContext({ credentials, idOrPrefix: request.sessionId,
+  const resolveTransport = () => deps.resolveSessionTransportContext({ reason: 'session-control', credentials, idOrPrefix: request.sessionId,
     ...(resolveAuthorizationHeaders ? { resolveAuthorizationHeaders } : {}) });
   const localId = request.input.localId;
   const sessionId = request.sessionId;

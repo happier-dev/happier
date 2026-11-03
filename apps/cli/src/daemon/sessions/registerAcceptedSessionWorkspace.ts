@@ -44,7 +44,7 @@ export function createAcceptedSessionWorkspaceRegistration(input: Readonly<{
       }
       const credentials = custody?.credentials ?? input.credentials;
       const serverHttpBaseUrl = custody?.serverHttpBaseUrl ?? resolveServerHttpBaseUrl();
-      const session = await runWithServerHttpBaseUrl(serverHttpBaseUrl, () => fetchSessionByIdCompat({
+      const session = await runWithServerHttpBaseUrl(serverHttpBaseUrl, () => fetchSessionByIdCompat({ reason: 'session-control',
         token: credentials.token, sessionId, signal: input.signal,
       }));
       // Custodian credentials cannot register a foreign Session. Admitted

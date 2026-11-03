@@ -102,7 +102,7 @@ async function prepareTarget(input?: CliVoicePromptStackInput) {
       const currentness = await fetchAccountEncryptionCurrentness({ token: args.credentials.token,
         serverBaseUrl: args.serverUrl, signal: args.signal });
       step = 'target.session';
-      const rawSession = await fetchSessionById({ token: args.credentials.token, sessionId,
+      const rawSession = await fetchSessionById({ reason: 'session-content', token: args.credentials.token, sessionId,
         serverUrl: args.serverUrl, signal: args.signal });
       if (!rawSession || rawSession.id !== sessionId) throw unavailable('target.session');
       step = 'target.metadata';

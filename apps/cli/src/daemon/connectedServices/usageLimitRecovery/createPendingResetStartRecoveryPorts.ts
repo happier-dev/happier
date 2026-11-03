@@ -36,7 +36,7 @@ export function createPendingResetStartRecoveryPorts(input: Readonly<{
         await runWithServerHttpBaseUrl(serverUrl, async () => {
           if (!await isCurrent()) return;
           const authority = await fetchAccountEncryptionCurrentness({ token: credentials.token });
-          const rawSession = await fetchSessionById({ token: credentials.token, sessionId });
+          const rawSession = await fetchSessionById({ reason: 'session-control', token: credentials.token, sessionId });
           if (!await isCurrent() || !rawSession || rawSession.id !== sessionId
             || readSessionAccessProjectionRoleV1(rawSession) !== 'owner' || rawSession.archivedAt != null) return;
           const metadata = tryDecryptSessionOwnerMetadataView({ credentials, rawSession, accountEncryptionMode: authority.mode });

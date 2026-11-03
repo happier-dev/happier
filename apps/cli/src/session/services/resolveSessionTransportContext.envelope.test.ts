@@ -47,6 +47,7 @@ it.each(['', ' '])('settles a malformed published envelope %j without treating i
   });
 
   await expect(resolveSessionTransportContext({
+    reason: 'session-control',
     credentials: { token: 'test', encryption: { type: 'dataKey', machineKey, publicKey } },
     idOrPrefix: sessionId,
   })).resolves.toEqual({ ok: false, code: 'encryption_material_unavailable', sessionId });

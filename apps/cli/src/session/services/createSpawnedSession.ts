@@ -290,6 +290,7 @@ async function waitForSpawnedSessionVisibility(params: Readonly<{
       let session: Awaited<ReturnType<typeof fetchSessionById>>;
       try {
         session = await fetchSessionById({
+          reason: 'session-control',
           token: params.token,
           sessionId: params.sessionId,
           ...(params.signal ? { signal: params.signal } : {}),
@@ -1187,7 +1188,7 @@ export async function createSpawnedSession(
           throw createCodedError('Session retry changed its committed Session', 'creation_conflict',
             { sessionId: existing.id });
         }
-        const current = await fetchSessionById({ token: params.credentials.token, sessionId: existing.id,
+        const current = await fetchSessionById({ reason: 'session-control', token: params.credentials.token, sessionId: existing.id,
           ...(params.signal ? { signal: params.signal } : {}) });
         if (current) existing = current;
       }
@@ -1256,7 +1257,7 @@ export async function createSpawnedSession(
     ?? params.initialSessionRolesV1?.inheritedFrom
     ?? (params.originKind === 'run_step' ? params.originSessionId : undefined);
   if (params.resumeOnly !== true && leadSessionId) {
-    const lead = await fetchSessionById({ token: params.credentials.token, sessionId: leadSessionId,
+    const lead = await fetchSessionById({ reason: 'session-control', token: params.credentials.token, sessionId: leadSessionId,
       ...(params.signal ? { signal: params.signal } : {}) });
     if (!lead) throw createCodedError('Lead Context is unavailable', 'context_source_unavailable');
     // Reporting membership does not grant access to another Account's Context.

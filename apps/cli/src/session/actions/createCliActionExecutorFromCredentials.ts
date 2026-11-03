@@ -1193,7 +1193,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
           if (!serverIdentityId || request.executionOriginV1?.serverIdentityId !== serverIdentityId) return actionFailure('approval_stale');
           if (!sameStoredCredentials(credentials, await readCurrentCredentials())) return actionFailure('credential_scope_retired');
           const result = await runWithServerHttpBaseUrl(approvalServerApiUrl, async () => {
-            const transport = await resolveSessionTransportContext({ credentials, idOrPrefix: subject.personaSessionRef.sessionId,
+            const transport = await resolveSessionTransportContext({ reason: 'session-action', credentials, idOrPrefix: subject.personaSessionRef.sessionId,
               ...(signal ? { signal } : {}) });
             if (!transport.ok || transport.sessionId !== subject.personaSessionRef.sessionId) return actionFailure('approval_stale');
             return await callSessionRpc({ ...transport, token: credentials.token, sessionId: transport.sessionId,
@@ -1288,6 +1288,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
         ]);
         const serverFeaturesSnapshot = await resolveServerFeaturesSnapshotForCredentials(credentials);
         const transport = await resolveSessionTransportContext({
+          reason: 'session-action',
           credentials,
           idOrPrefix: sessionId,
           ...(serverFeaturesSnapshot ? { serverFeaturesSnapshot } : {}),
@@ -1300,6 +1301,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
           sessionId: transport.sessionId,
           ...(transport.mode === 'plain' ? { mode: transport.mode, ctx: null } : { mode: transport.mode, ctx: transport.ctx }),
           readOpenedSessionState: (versions) => fetchOpenedSessionStateFromServer({
+            reason: 'session-action',
             token: credentials.token,
             sessionId: transport.sessionId,
             credentials,
@@ -1521,6 +1523,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
         && hasStoredSessionCredentialProvenance(credentials)) {
         const signal = combineInvocationSignals(invocationSignal, context.signal);
         const transport = await resolveSessionTransportContext({
+          reason: 'session-action',
           credentials, idOrPrefix: sessionTarget,
           ...(signal ? { signal } : {}),
         });
@@ -1838,6 +1841,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
             credentials, token: credentials.token, sessionId: catalogSessionId,
             ...(ctx ? { mode: 'e2ee' as const, ctx } : { mode: 'plain' as const, ctx: null }),
             resolveTransportForSession: (sessionId) => resolveSessionTransportContext({
+              reason: 'session-action',
               credentials, idOrPrefix: sessionId, ...(signal ? { signal } : {}),
             }),
           });
@@ -1915,6 +1919,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
       }
       const serverFeaturesSnapshot = await resolveServerFeaturesSnapshotForCredentials(credentials);
       const resolved = await resolveSessionTransportContext({
+        reason: 'session-action',
         credentials,
         idOrPrefix,
         ...(serverFeaturesSnapshot ? { serverFeaturesSnapshot } : {}),

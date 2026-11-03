@@ -348,6 +348,7 @@ async function refreshExistingExternalSessionMetadataIfNeeded(params: Readonly<{
   }
 
   const rawSession = await fetchSessionById({
+      reason: 'session-control',
     token: params.credentials.token,
     sessionId: params.sessionId,
   }).catch(() => null);

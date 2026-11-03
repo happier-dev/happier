@@ -218,6 +218,7 @@ export async function setSessionModel(params: Readonly<{
   const mutationServerId = params.serverId ?? params.credentials.requesterSessionCredentialScope?.serverId ?? configuration.activeServerId;
   const mutationAccountId = readAccountIdFromToken(params.credentials.token);
   const sessionTarget = await resolveSessionTransportContext({
+    reason: 'session-control',
     credentials: params.credentials,
     idOrPrefix: params.idOrPrefix,
     ...(params.resolveAuthorizationHeaders ? { resolveAuthorizationHeaders: params.resolveAuthorizationHeaders } : {}),
@@ -425,6 +426,7 @@ export async function setSessionModel(params: Readonly<{
     },
     resolveAndInvokeActiveOwnerAfterConflict: async () => {
       const refreshedTarget = await resolveSessionTransportContext({
+        reason: 'session-control',
         credentials: params.credentials,
         idOrPrefix: sessionTarget.sessionId,
         ...(params.resolveAuthorizationHeaders ? { resolveAuthorizationHeaders: params.resolveAuthorizationHeaders } : {}),

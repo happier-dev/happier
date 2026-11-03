@@ -116,7 +116,7 @@ export async function readOwnSessionMachineWorkspace(input: Readonly<{
   credentials: StoredCredentials; serverHttpBaseUrl: string; sessionId: string; machineId: string;
   currentMachineHost: string; currentMachineHomeDir: string; candidatePath?: string; signal?: AbortSignal;
 }>): Promise<Readonly<{ rootPath: string; requestedPath?: string }> | null> {
-  const session = await fetchSessionById({ token: input.credentials.token, serverUrl: input.serverHttpBaseUrl,
+  const session = await fetchSessionById({ reason: 'session-control', token: input.credentials.token, serverUrl: input.serverHttpBaseUrl,
     sessionId: input.sessionId, signal: input.signal, accessProjectionVersion: 1 });
   if (!session || session.id !== input.sessionId || session.effectiveAccess?.level !== 'owner') return null;
   const mode = await readAccountEncryptionModeOnce({ request: () => axios.get(`${input.serverHttpBaseUrl}/v1/account/encryption`, {

@@ -199,6 +199,7 @@ export function createSessionBoardActionDeps(options: Readonly<{
     const needsBoard = sessionBoardActionUsesLayoutV1(actionId, common);
     if (needsBoard && decision.state !== 'enabled') return projectSessionBoardFeatureDecisionFailureV1(actionId, decision);
     const rawSession = await fetchSessionById({
+      reason: 'session-action',
       token: options.credentials.token,
       serverUrl,
       sessionId,

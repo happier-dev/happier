@@ -910,7 +910,7 @@ export function registerSessionClientRuntimeHandlers(
             const roleParams = await resolveCredentialedRoleParams(signal);
             if (!roleParams) return null;
             const session = await runWithServerHttpBaseUrl(approvalServerApiUrl, () => fetchSessionById({
-                token: roleParams.token, sessionId: params.sessionId, signal, accessProjectionVersion: 1,
+                token: roleParams.token, sessionId: params.sessionId, signal, accessProjectionVersion: 1, reason: 'session-action',
             }));
             return session?.effectiveAccess?.level === 'owner' ? readSessionManagerSessionIdV1(session) : null;
         },
@@ -920,7 +920,7 @@ export function registerSessionClientRuntimeHandlers(
             if (!roleParams) return null;
             const sessionId = context.actionCaller.sessionId;
             const transport = await runWithServerHttpBaseUrl(approvalServerApiUrl, () => resolveSessionTransportContext({
-                credentials: roleParams.credentials, idOrPrefix: sessionId, signal: context.signal,
+                credentials: roleParams.credentials, idOrPrefix: sessionId, signal: context.signal, reason: 'session-action',
             }));
             if (!transport.ok || transport.sessionId !== sessionId || transport.rawSession.effectiveAccess?.level !== 'owner') return null;
             const metadata = tryDecryptSessionOwnerMetadataView({ credentials: roleParams.credentials,
@@ -964,7 +964,7 @@ export function registerSessionClientRuntimeHandlers(
             const credentials = await readOwnerAccountCredentials();
             if (!credentials || !await ownerAccountIsCurrent()) throw new Error('usage_limit_recovery_account_unavailable');
             const rawSession = await runWithServerHttpBaseUrl(params.serverUrl, () => fetchSessionById({
-                token: credentials.token, sessionId,
+                token: credentials.token, sessionId, reason: 'session-control',
             }));
             if (!rawSession) throw new Error('usage_limit_recovery_session_unavailable');
             return readLatestUsageLimitFailureIssue(rawSession);

@@ -48,7 +48,7 @@ describe('sessionControl.sessionsHttp authentication status handling', () => {
 
     vi.spyOn(axios, 'get').mockResolvedValueOnce({ status: 401, data: {} } as never);
 
-    await expect(fetchSessionById({ token: 'token-1', sessionId: 'sess-1' })).rejects.toMatchObject({
+    await expect(fetchSessionById({ reason: 'session-query', token: 'token-1', sessionId: 'sess-1' })).rejects.toMatchObject({
       name: 'HttpStatusError',
       response: { status: 401 },
       code: 'not_authenticated',

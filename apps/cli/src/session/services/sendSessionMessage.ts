@@ -1254,6 +1254,7 @@ export async function waitForSessionInputResult(params: WaitForSessionInputResul
 
   try {
     const sessionTarget = await resolveSessionTransportContext({
+      reason: 'session-control',
       credentials: params.credentials,
       idOrPrefix: params.idOrPrefix,
       ...(params.resolveAuthorizationHeaders ? { resolveAuthorizationHeaders: params.resolveAuthorizationHeaders } : {}),
@@ -1360,6 +1361,7 @@ export async function sendSessionMessage(
   let sessionTarget: Awaited<ReturnType<typeof resolveSessionTransportContext>>;
   try {
     sessionTarget = await resolveSessionTransportContext({
+      reason: 'session-control',
       credentials: params.credentials,
       idOrPrefix: params.idOrPrefix,
       ...(params.resolveAuthorizationHeaders
@@ -2149,6 +2151,7 @@ export async function sendSessionMessage(
 
     try {
       const refreshedSession = await fetchSessionById({
+        reason: 'session-control',
         token: params.credentials.token,
         sessionId,
       });
@@ -2189,6 +2192,7 @@ export async function sendSessionMessage(
       recheckTurnActivity: async () => {
         try {
           const refreshedSession = await fetchSessionById({
+            reason: 'session-control',
             token: params.credentials.token,
             sessionId,
           });
@@ -2221,6 +2225,7 @@ export async function sendSessionMessage(
     let finalSessionSnapshot = waitSessionSnapshot;
     try {
       const refreshedSession = await fetchSessionById({
+        reason: 'session-control',
         token: params.credentials.token,
         sessionId,
       });

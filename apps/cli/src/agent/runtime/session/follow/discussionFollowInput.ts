@@ -178,7 +178,7 @@ export function createDiscussionFollowInputIntake(input: Readonly<{
         const serverFeaturesSnapshot = input.session.getServerFeaturesSnapshot();
         const accountId = readAccountIdFromToken(input.credentials.token);
         const foreignSource = Boolean(accountId && question.authorAccountId && question.authorAccountId !== accountId);
-        const sourceRead = resolveSessionTransportContext({ credentials: input.credentials, idOrPrefix: sourceSession.sourceSessionId,
+        const sourceRead = resolveSessionTransportContext({ reason: 'follow-source-hydration', credentials: input.credentials, idOrPrefix: sourceSession.sourceSessionId,
           signal, ...(serverFeaturesSnapshot ? { serverFeaturesSnapshot } : {}) });
         // The authorized presentation read may identify a shared foreign Bot.
         // Unavailable presentation must not replace Pending's private-source hold.
@@ -201,7 +201,7 @@ export function createDiscussionFollowInputIntake(input: Readonly<{
           // up when the other Account's private original cannot be hydrated.
           const transport = input.session.getMachineAdmissionTransport();
           if (!transport) return false;
-          const target = await resolveSessionTransportContext({ credentials: input.credentials, idOrPrefix: input.session.sessionId,
+          const target = await resolveSessionTransportContext({ reason: 'follow-source-hydration', credentials: input.credentials, idOrPrefix: input.session.sessionId,
             signal, ...(serverFeaturesSnapshot ? { serverFeaturesSnapshot } : {}) });
           if (!target.ok) return false;
           const targetMachineId = resolveSessionInputTargetMachineId({ rawSession: target.rawSession,

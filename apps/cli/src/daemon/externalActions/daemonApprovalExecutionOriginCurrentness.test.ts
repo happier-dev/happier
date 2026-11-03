@@ -202,7 +202,7 @@ describe('daemon approval execution-origin currentness', () => {
       throw new Error(`Unexpected HTTP request: ${String(config.url)}`);
     });
     try {
-      const transport = await runWithServerHttpBaseUrl(serverApiUrl, () => resolveSessionTransportContext({ credentials, idOrPrefix: sessionId }));
+      const transport = await runWithServerHttpBaseUrl(serverApiUrl, () => resolveSessionTransportContext({ reason: 'session-action', credentials, idOrPrefix: sessionId }));
       expect(transport.ok).toBe(true);
       if (!transport.ok) throw new Error(transport.code);
       expect(tryDecryptSessionOwnerMetadataView({ credentials, accountEncryptionMode: transport.accountEncryptionCurrentness.mode,

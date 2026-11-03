@@ -327,7 +327,7 @@ export function createPluginSessionsInventory(
   params: PluginSessionsInventoryParams,
 ): SessionsService {
   const fetchPage = params.fetchPage ?? (async (request) => await fetchSessionsPage(request));
-  const fetchById = params.fetchById ?? (async (request) => await fetchSessionById(request));
+  const fetchById = params.fetchById ?? (async (request) => await fetchSessionById({ ...request, reason: 'session-query' }));
   const readStoragePolicy = params.readStoragePolicy
     ?? (async () => readStoragePolicyFromSnapshot(params.resolveServerFeaturesSnapshot?.()));
   const readAccountEncryptionCurrentness = params.readAccountEncryptionCurrentness

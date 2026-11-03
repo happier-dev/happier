@@ -78,6 +78,7 @@ export async function previewSessionAgentTransitionBrief(params: Readonly<{
   const deps: PreviewSessionAgentTransitionBriefDeps = { ...DEFAULT_DEPS, ...params.deps };
 
   const transport = await deps.resolveSessionTransportContext({
+    reason: 'session-control',
     credentials: params.credentials,
     idOrPrefix: params.request.sessionId,
   }).catch(() => null);

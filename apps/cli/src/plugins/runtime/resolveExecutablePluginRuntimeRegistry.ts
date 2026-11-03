@@ -8821,7 +8821,7 @@ agentIsolation?: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').Ho
             const credentials = await readSessionCredentials();
             if (!credentials) throw new PluginError({ code: 'plugin_sessions_not_authenticated', message: 'Session image read requires an Account' });
             const [raw, account] = await Promise.all([
-                fetchSessionById({ token: credentials.token, sessionId: imageParams.media.file.sessionId }),
+                fetchSessionById({ reason: 'session-content', token: credentials.token, sessionId: imageParams.media.file.sessionId }),
                 fetchAccountEncryptionCurrentness(credentials),
             ]);
             assertCurrent();

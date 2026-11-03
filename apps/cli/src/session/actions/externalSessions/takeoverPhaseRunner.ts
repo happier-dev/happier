@@ -1278,6 +1278,7 @@ export async function loadCurrentExternalSessionPersistedTakeoverTarget(
     if (!credentials) throw liveLinkError;
     const [rawSession, accountEncryptionCurrentness] = await Promise.all([
       fetchSessionById({
+        reason: 'session-action',
         token: credentials.token,
         sessionId: record.request.sessionId,
       }).catch(() => null),

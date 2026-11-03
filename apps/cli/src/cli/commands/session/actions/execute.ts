@@ -157,6 +157,7 @@ export async function cmdSessionActionsExecute(
     const sessionTarget = await runWithServerHttpBaseUrl(
       serverHttpBaseUrl,
       async () => await resolveSessionTransportContext({
+        reason: 'session-action',
         credentials,
         idOrPrefix,
         serverFeaturesSnapshot,

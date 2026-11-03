@@ -102,6 +102,7 @@ export async function getSessionTranscript(
     return { ok: false, errorCode: 'invalid_input', errorMessage: 'invalid_input' };
   }
   const sessionTarget = await resolveSessionTransportContext({
+    reason: 'session-content',
     credentials: params.credentials,
     idOrPrefix: params.idOrPrefix,
     ...(params.resolveAuthorizationHeaders

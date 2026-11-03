@@ -83,6 +83,7 @@ export async function recordSessionTeamShareStatement(params: Readonly<{
 }>): Promise<void> {
   try {
     const session = await fetchSessionById({
+      reason: 'session-control',
         token: params.token,
       serverUrl: params.serverHttpBaseUrl,
       sessionId: params.sessionId,
@@ -131,6 +132,7 @@ export async function prepareSessionRecipientEnvelopes(params: Readonly<{
     isScopeCurrent: params.isScopeCurrent,
     resolveSessionDataKey: async () => {
       const session = await fetchSessionById({
+        reason: 'session-control',
             token: params.credentials.token,
         serverUrl: params.serverHttpBaseUrl,
         sessionId: params.sessionId,
@@ -201,6 +203,7 @@ export async function materializeSessionAccessGrantEnvelope(params: Readonly<{
 
   await assertCurrent();
   const rawSession = await fetchSessionById({
+    reason: 'session-control',
     token: params.token,
     serverUrl: params.serverHttpBaseUrl,
     sessionId: logical.sessionId,

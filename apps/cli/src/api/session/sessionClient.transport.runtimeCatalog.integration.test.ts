@@ -117,7 +117,7 @@ describe('ApiSessionClient injected transport', () => {
             return { status: 404, data: {} };
         });
         // The real producer must cross the real strict tuple reader before exercising its wake carrier.
-        await fetchSessionSnapshotUpdateFromServer({ token, sessionId: 'idle-session', credentials,
+        await fetchSessionSnapshotUpdateFromServer({ reason: 'session-query', token, sessionId: 'idle-session', credentials,
             accountEncryptionCurrentness: createAccountEncryptionCurrentnessFixture({ mode: 'plain', version: 1, settingsVersion: 7 }),
             mode: 'plain', ctx: null, currentMetadataLayoutVersion: 1, currentMetadataVersion: 7,
             currentAgentStateVersion: 4, currentMetadata: metadata, currentAgentState: null });

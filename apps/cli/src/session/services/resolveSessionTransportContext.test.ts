@@ -53,6 +53,7 @@ describe('resolveSessionTransportContext', () => {
         const { resolveSessionTransportContext } = await import('./resolveSessionTransportContext');
 
         const result = await resolveSessionTransportContext({
+            reason: 'session-control',
             credentials: {
                 token: 'token',
                 encryption: null,
@@ -90,18 +91,21 @@ describe('resolveSessionTransportContext', () => {
         const { resolveSessionTransportContext } = await import('./resolveSessionTransportContext');
 
         await resolveSessionTransportContext({
+            reason: 'session-control',
             credentials: { token: 'token', encryption: null },
             idOrPrefix: 'sess-1',
             signal: cancellation.signal,
         });
 
         expect(resolveSessionIdOrPrefix).toHaveBeenCalledWith({
+            reason: 'session-control',
             credentials: { token: 'token', encryption: null },
             idOrPrefix: 'sess-1',
             signal: cancellation.signal,
             accountEncryptionMode: expect.any(Function),
         });
         expect(fetchSessionById).toHaveBeenCalledWith({
+            reason: 'session-control',
             token: 'token',
             sessionId: 'sess-1',
             signal: cancellation.signal,
@@ -128,18 +132,21 @@ describe('resolveSessionTransportContext', () => {
 
         const { resolveSessionTransportContext } = await import('./resolveSessionTransportContext');
         await resolveSessionTransportContext({
+            reason: 'session-control',
             credentials: { token: 'token', encryption: null },
             idOrPrefix: 'sess-1',
             serverFeaturesSnapshot,
         });
 
         expect(resolveSessionIdOrPrefix).toHaveBeenCalledWith({
+            reason: 'session-control',
             credentials: { token: 'token', encryption: null },
             idOrPrefix: 'sess-1',
             serverFeaturesSnapshot,
             accountEncryptionMode: expect.any(Function),
         });
         expect(fetchSessionById).toHaveBeenCalledWith({
+            reason: 'session-control',
             token: 'token',
             sessionId: 'sess-1',
             serverFeaturesSnapshot,
@@ -174,6 +181,7 @@ describe('resolveSessionTransportContext', () => {
         const { resolveSessionTransportContext } = await import('./resolveSessionTransportContext');
 
         await expect(resolveSessionTransportContext({
+            reason: 'session-control',
             credentials: {
                 token: 'token',
                 encryption: { type: 'dataKey', publicKey, machineKey },
@@ -209,6 +217,7 @@ describe('resolveSessionTransportContext', () => {
         const { resolveSessionTransportContext } = await import('./resolveSessionTransportContext');
 
         const result = await resolveSessionTransportContext({
+            reason: 'session-control',
             credentials: {
                 token: 'token',
                 encryption: {

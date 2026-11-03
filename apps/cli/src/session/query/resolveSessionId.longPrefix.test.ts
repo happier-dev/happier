@@ -115,9 +115,11 @@ describe('resolveSessionIdOrPrefix', () => {
 
       await runWithServerHttpBaseUrl('https://selected-home.example.test', async () => {
         await expect(resolveSessionIdOrPrefix({
+          reason: 'session-query',
           credentials, idOrPrefix: teamSessionId, serverFeaturesSnapshot, signal, resolveAuthorizationHeaders,
         })).resolves.toMatchObject({ ok: true, sessionId: teamSessionId, rawSession: row });
         await expect(resolveSessionIdOrPrefix({
+          reason: 'session-query',
           credentials, idOrPrefix: 'cteam', serverFeaturesSnapshot, signal, resolveAuthorizationHeaders,
         })).resolves.toEqual({ ok: true, sessionId: teamSessionId });
       });
@@ -139,6 +141,7 @@ describe('resolveSessionIdOrPrefix', () => {
       ]);
       const { resolveSessionIdOrPrefix } = await import('./resolveSessionId');
       await expect(runWithServerHttpBaseUrl('https://selected-home.example.test', () => resolveSessionIdOrPrefix({
+        reason: 'session-query',
         credentials, idOrPrefix: 'cteam', serverFeaturesSnapshot,
       }))).resolves.toEqual({
         ok: false, code: 'session_id_ambiguous', candidates: [teamSessionId, 'cteam-neighbor'],
@@ -152,6 +155,7 @@ describe('resolveSessionIdOrPrefix', () => {
         : { status: 403, data: { privateDiagnostic: 'secret-sentinel' } });
       const { resolveSessionIdOrPrefix } = await import('./resolveSessionId');
       await expect(runWithServerHttpBaseUrl('https://selected-home.example.test', () => resolveSessionIdOrPrefix({
+        reason: 'session-query',
         credentials, idOrPrefix: 'cteam', serverFeaturesSnapshot,
       }))).rejects.toMatchObject({ response: { status: 403 } });
       expect(mockAxiosGet).not.toHaveBeenCalled();
@@ -184,6 +188,7 @@ describe('resolveSessionIdOrPrefix', () => {
       const { resolveSessionIdOrPrefix } = await import('./resolveSessionId');
       const res = await Promise.race([
         resolveSessionIdOrPrefix({
+          reason: 'session-query',
           credentials: {
             token: 'token_test',
             encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
@@ -237,6 +242,7 @@ describe('resolveSessionIdOrPrefix', () => {
     try {
       const { resolveSessionIdOrPrefix } = await import('./resolveSessionId');
       const resultPromise = resolveSessionIdOrPrefix({
+        reason: 'session-query',
         credentials: {
           token: 'token_test',
           encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
@@ -281,6 +287,7 @@ describe('resolveSessionIdOrPrefix', () => {
     try {
       const { resolveSessionIdOrPrefix } = await import('./resolveSessionId');
       const res = await resolveSessionIdOrPrefix({
+        reason: 'session-query',
         credentials: {
           token: 'token_test',
           encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
@@ -344,6 +351,7 @@ describe('resolveSessionIdOrPrefix', () => {
     try {
       const { resolveSessionIdOrPrefix } = await import('./resolveSessionId');
       const res = await resolveSessionIdOrPrefix({
+        reason: 'session-query',
         credentials: {
           token: 'token_test',
           encryption: { type: 'legacy', secret },
@@ -428,6 +436,7 @@ describe('resolveSessionIdOrPrefix', () => {
     try {
       const { resolveSessionIdOrPrefix } = await import('./resolveSessionId');
       const res = await resolveSessionIdOrPrefix({
+        reason: 'session-query',
         credentials: {
           token: 'token_test',
           encryption: { type: 'legacy', secret },
@@ -490,6 +499,7 @@ describe('resolveSessionIdOrPrefix', () => {
     try {
       const { resolveSessionIdOrPrefix } = await import('./resolveSessionId');
       const res = await resolveSessionIdOrPrefix({
+        reason: 'session-query',
         credentials: {
           token: 'token_test',
           encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
@@ -549,6 +559,7 @@ describe('resolveSessionIdOrPrefix', () => {
     try {
       const { resolveSessionIdOrPrefix } = await import('./resolveSessionId');
       const res = await resolveSessionIdOrPrefix({
+        reason: 'session-query',
         credentials: {
           token: 'token_test',
           encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
@@ -608,6 +619,7 @@ describe('resolveSessionIdOrPrefix', () => {
     try {
       const { resolveSessionIdOrPrefix } = await import('./resolveSessionId');
       const res = await resolveSessionIdOrPrefix({
+        reason: 'session-query',
         credentials: {
           token: 'token_test',
           encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
@@ -658,6 +670,7 @@ describe('resolveSessionIdOrPrefix', () => {
     try {
       const { resolveSessionIdOrPrefix } = await import('./resolveSessionId');
       const res = await resolveSessionIdOrPrefix({
+        reason: 'session-query',
         credentials: {
           token: 'token_test',
           encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },

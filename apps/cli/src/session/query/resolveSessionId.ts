@@ -1,6 +1,7 @@
 import { SESSION_LOOKUP_BY_TAGS_TAG_MAX_CODE_UNITS_V2 } from '@happier-dev/protocol/sessions/control/contract';
 
 import type { StoredCredentials } from '@/persistence';
+import type { SessionSnapshotRefreshReason } from '@/api/session/sessionSnapshotRefreshReason';
 import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import {
   fetchSessionById,
@@ -97,6 +98,7 @@ export async function resolveSessionIdOrPrefixFromSessionList(params: Readonly<{
 }
 
 export async function resolveSessionIdOrPrefix(params: Readonly<{
+  reason: SessionSnapshotRefreshReason;
   credentials: StoredCredentials;
   idOrPrefix: string;
   resolveAuthorizationHeaders?: (request: Readonly<{
@@ -115,6 +117,7 @@ export async function resolveSessionIdOrPrefix(params: Readonly<{
   // Prefer exact matches for long inputs, while retaining fallback tag and prefix resolution.
   if (input.length >= 12) {
     const exact = await fetchSessionById({
+      reason: params.reason,
       token: params.credentials.token,
       sessionId: input,
       ...(params.resolveAuthorizationHeaders

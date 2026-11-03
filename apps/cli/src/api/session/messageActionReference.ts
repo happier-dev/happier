@@ -281,6 +281,7 @@ export async function readCurrentMessageActionReferenceRowV1(params: Readonly<{
   try {
     throwIfAborted(params.signal);
     const sessionTransport = await resolveSessionTransportContext({
+      reason: 'session-action',
       credentials: params.credentials,
       idOrPrefix: reference.data.sessionId,
     });

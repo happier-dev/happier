@@ -371,6 +371,7 @@ export async function waitForIdleViaSocket(params: Readonly<{
           if (settled || revision !== observationRevision) return;
           if (latestTurnActivity && !applyRecheckedTurnActivity(latestTurnActivity)) return;
           const refreshedSession = await fetchSessionById({
+            reason: 'reconnect',
             token: params.token, sessionId: params.sessionId,
             ...(params.resolveAuthorizationHeaders ? { resolveAuthorizationHeaders: params.resolveAuthorizationHeaders } : {}),
           });

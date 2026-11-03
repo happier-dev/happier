@@ -55,7 +55,7 @@ describe('opened transcript follow projection', () => {
         const store = createServerBackedSessionTranscriptStore({ token: 'token', sessionId: 'session-1',
             ...(mode === 'plain' ? { mode, ctx: null } : { mode, ctx }),
             readOpenedSessionState: async (versions) => {
-                return await fetchOpenedSessionStateFromServer({ token: 'token', sessionId: 'session-1',
+                return await fetchOpenedSessionStateFromServer({ reason: 'session-query', token: 'token', sessionId: 'session-1',
                     ...(mode === 'plain' ? { mode, ctx: null } : { mode, ctx }),
                     accountEncryptionCurrentness: null, currentMetadataLayoutVersion: 0,
                     currentMetadataVersion: versions.sharedMetadataVersion, currentAgentStateVersion: versions.agentStateVersion });
@@ -121,6 +121,7 @@ describe('opened transcript follow projection', () => {
             ownerMetadata: tuple.ownerMetadata, share: null, metadataVersion: 1, agentState: tuple.agentState, agentStateVersion: 3,
         }) } });
         const read = (currentAgentStateVersion: number) => runWithServerHttpBaseUrl('https://example.invalid', () => fetchOpenedSessionStateFromServer({
+            reason: 'session-query',
             token: credentials.token, sessionId: 'session-1', credentials,
             accountEncryptionCurrentness: createAccountEncryptionCurrentnessFixture(),
             mode: 'plain', ctx: null, currentMetadataLayoutVersion: 1, currentMetadataVersion: 1, currentAgentStateVersion,
@@ -172,6 +173,7 @@ describe('opened transcript follow projection', () => {
             }) } }));
         const store = createServerBackedSessionTranscriptStore({ token: 'session-runtime-token', sessionId: 'session-1', mode: 'e2ee', ctx,
             readOpenedSessionState: (versions) => fetchOpenedSessionStateFromServer({
+                reason: 'session-query',
                 token: 'session-runtime-token', sessionId: 'session-1', mode: 'e2ee', ctx,
                 metadataAuthority: 'shared_editor', accountEncryptionCurrentness: null,
                 currentMetadataLayoutVersion: 1, currentMetadataVersion: versions.sharedMetadataVersion, currentAgentStateVersion: versions.agentStateVersion,

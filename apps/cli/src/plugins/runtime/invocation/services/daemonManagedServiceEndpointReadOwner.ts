@@ -133,6 +133,7 @@ export function createDaemonManagedServiceEndpointReadOwner(input: Readonly<{
         );
       } else {
         const transport = await resolveSessionTransportContext({
+          reason: 'session-query',
           credentials: input.credentials,
           idOrPrefix: projection.sessionId,
         });
@@ -411,6 +412,7 @@ export function createDaemonManagedServiceEndpointReadOwner(input: Readonly<{
         rpc = await input.resolveRunnerEndpointReadRpc(projection.sessionId);
       } else {
         const transport = await resolveSessionTransportContext({
+          reason: 'session-query',
           credentials: input.credentials,
           idOrPrefix: projection.sessionId,
         });

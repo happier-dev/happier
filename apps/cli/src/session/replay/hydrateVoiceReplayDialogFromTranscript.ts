@@ -53,7 +53,7 @@ export async function hydrateVoiceReplayDialogFromTranscript(params: Readonly<{
   limit: number;
   maxTextChars?: number;
 }>): Promise<{ dialog: HappierReplayDialogItem[]; sourceCutoffSeqInclusive: number; synopsisText?: string | null } | null> {
-  const session = await fetchSessionById({ token: params.credentials.token, sessionId: params.previousSessionId }).catch((error) => {
+  const session = await fetchSessionById({ reason: 'session-replay', token: params.credentials.token, sessionId: params.previousSessionId }).catch((error) => {
     if (isAuthenticationError(error)) throw error;
     return null;
   });

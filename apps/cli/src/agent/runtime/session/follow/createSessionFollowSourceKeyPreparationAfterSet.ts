@@ -103,14 +103,14 @@ export function createSessionFollowSourceKeyPreparationAfterSet(input: Readonly<
       try {
         const serverFeaturesSnapshot = await input.resolveServerFeaturesSnapshot?.();
         const [source, destination] = await Promise.all([
-          resolveSessionTransportContext({
+          resolveSessionTransportContext({ reason: 'follow-source-hydration',
             credentials: input.credentials,
             idOrPrefix: sourceSessionId,
             resolveAuthorizationHeaders,
             ...(signal ? { signal } : {}),
             ...(serverFeaturesSnapshot ? { serverFeaturesSnapshot } : {}),
           }).catch(error => transportFailed('source_transport_exception', error)),
-          resolveSessionTransportContext({
+          resolveSessionTransportContext({ reason: 'follow-source-hydration',
             credentials: input.credentials,
             idOrPrefix: destinationSessionId,
             resolveAuthorizationHeaders,

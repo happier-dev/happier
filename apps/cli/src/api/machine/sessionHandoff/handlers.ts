@@ -101,7 +101,7 @@ export async function loadSessionHandoffRemoteMetadata(sessionId: string, contex
   const credentials = context?.requesterSessionBootstrap?.credentials ?? await readStoredCredentials().catch(() => null);
   if (!credentials) return null;
   const [rawSession, accountEncryptionCurrentness] = await Promise.all([
-    fetchSessionById({ token: credentials.token, sessionId, ...(context?.signal ? { signal: context.signal } : {}) }).catch(() => null),
+    fetchSessionById({ reason: 'session-control', token: credentials.token, sessionId, ...(context?.signal ? { signal: context.signal } : {}) }).catch(() => null),
     fetchAccountEncryptionCurrentness({ token: credentials.token, ...(context?.signal ? { signal: context.signal } : {}) }).catch(() => null),
   ]);
   if (!rawSession || !accountEncryptionCurrentness || !await isRequesterSessionLifecycleCurrent(sessionId, context)) return null;

@@ -37,7 +37,7 @@ export function createCliBoundSessionMetadataReader(params: SessionMetadataReade
           accountEncryptionMode: transport.accountEncryptionCurrentness.mode, rawSession: transport.rawSession });
         return currentSessionMetadata;
       }
-      const rawSession = await fetchSessionById({ token: params.token, sessionId, ...(signal ? { signal } : {}) });
+      const rawSession = await fetchSessionById({ reason: 'requester-binding', token: params.token, sessionId, ...(signal ? { signal } : {}) });
       // A Session bearer cannot open Account-private owner metadata.
       if (!rawSession || rawSession.id !== sessionId) return null;
       const mode = resolveSessionStoredContentEncryptionMode(rawSession);

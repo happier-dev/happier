@@ -92,7 +92,7 @@ export function createForkSessionLifecycleActionHandler(params: Readonly<{
         let accountEncryptionCurrentness: Awaited<ReturnType<typeof fetchAccountEncryptionCurrentness>>;
         try {
             [parentSession, accountEncryptionCurrentness] = await Promise.all([
-                fetchSessionByIdCompat({ token: credentials.token, sessionId: parentSessionId }),
+                fetchSessionByIdCompat({ reason: 'session-replay', token: credentials.token, sessionId: parentSessionId }),
                 fetchAccountEncryptionCurrentness({ token: credentials.token }),
             ]);
         } catch (error) {

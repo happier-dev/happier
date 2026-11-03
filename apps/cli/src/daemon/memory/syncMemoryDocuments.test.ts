@@ -459,7 +459,7 @@ it.each([false, true])('admits readable owner context independently of unavailab
     setSessionSharedContentUnavailable(true);
     const { fetchSessionById } = await import('@/session/transport/http/sessionsHttp');
     const { tryDecryptSessionOwnerMetadata, tryDecryptSessionOwnerMetadataView } = await import('@/session/transport/encryption/sessionEncryptionContext');
-    const session = await fetchSessionById({ token: credentials.token, sessionId: 'remote-session' });
+    const session = await fetchSessionById({ reason: 'memory-change', token: credentials.token, sessionId: 'remote-session' });
     expect(session).not.toBeNull();
     if (!session) throw new Error('Missing fixture Session');
     const input = { credentials, accountEncryptionMode: 'plain' as const, rawSession: session };

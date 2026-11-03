@@ -28,8 +28,8 @@ describe('sessionControl.sessionsHttp in-flight session detail coalescing', () =
     });
     const getSpy = vi.spyOn(axios, 'get').mockReturnValue(responsePromise as any);
 
-    const first = fetchSessionById({ token: 'token-1', sessionId: 'sess-1' });
-    const second = fetchSessionById({ token: 'token-1', sessionId: 'sess-1' });
+    const first = fetchSessionById({ reason: 'session-query', token: 'token-1', sessionId: 'sess-1' });
+    const second = fetchSessionById({ reason: 'session-query', token: 'token-1', sessionId: 'sess-1' });
 
     expect(getSpy).toHaveBeenCalledTimes(1);
 
@@ -46,7 +46,46 @@ describe('sessionControl.sessionsHttp in-flight session detail coalescing', () =
       data: { session: createSessionRecordFixture({ id: 'sess-1', metadataVersion: 0, agentStateVersion: 0 }) },
     } as any);
 
-    await expect(fetchSessionById({ token: 'token-1', sessionId: 'sess-1' })).resolves.toMatchObject({ id: 'sess-1' });
+    await expect(fetchSessionById({ reason: 'session-query', token: 'token-1', sessionId: 'sess-1' })).resolves.toMatchObject({ id: 'sess-1' });
     expect(getSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps requester binding separate from legacy reads while newly named queries share the legacy request', async () => {
+    process.env.HAPPIER_SERVER_URL = 'http://server.example.test';
+
+    vi.resetModules();
+    const { fetchSessionById } = await import('./sessionsHttp');
+
+    let releaseResponse: (() => void) | undefined;
+    const responseGate = new Promise<void>((resolve) => {
+      releaseResponse = resolve;
+    });
+    const responsePromise = responseGate.then(() => ({
+      status: 200,
+      data: { session: createSessionRecordFixture({ id: 'sess-1', metadataVersion: 0, agentStateVersion: 0 }) },
+    }));
+    const getSpy = vi.spyOn(axios, 'get').mockReturnValue(responsePromise);
+
+    const requester = fetchSessionById({ reason: 'requester-binding', token: 'token-1', sessionId: 'sess-1' });
+    const legacy = fetchSessionById({ reason: 'legacy-compat-proof', token: 'token-1', sessionId: 'sess-1' });
+    const query = fetchSessionById({ reason: 'session-query', token: 'token-1', sessionId: 'sess-1' });
+
+    try {
+      expect(getSpy).toHaveBeenCalledTimes(2);
+      expect(getSpy).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
+        headers: expect.objectContaining({ 'X-Happier-Request-Purpose': 'session-detail:requester-binding' }),
+      }));
+      expect(getSpy).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
+        headers: expect.objectContaining({ 'X-Happier-Request-Purpose': 'session-detail:legacy-compat-proof' }),
+      }));
+    } finally {
+      releaseResponse?.();
+    }
+
+    await expect(Promise.all([requester, legacy, query])).resolves.toEqual([
+      expect.objectContaining({ id: 'sess-1' }),
+      expect.objectContaining({ id: 'sess-1' }),
+      expect.objectContaining({ id: 'sess-1' }),
+    ]);
   });
 });

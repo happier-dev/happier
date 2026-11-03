@@ -23,8 +23,8 @@ describe('sessionControl.sessionsHttp.fetchSessionByIdCompat', () => {
     vi.spyOn(axios, 'get').mockResolvedValueOnce({ status: 200,
       data: { futureEnvelopeField: { ignored: true }, session: { ...session, futureCoordinationField: { ignored: true } } },
     }).mockResolvedValueOnce({ status: 200, data: { session: { ...session, id: undefined, futureCoordinationField: true } } });
-    await expect(fetchSessionById({ token: 't', sessionId: 's1' })).resolves.toMatchObject({ id: 's1' });
-    await expect(fetchSessionById({ token: 't', sessionId: 's1' })).rejects.toMatchObject({
+    await expect(fetchSessionById({ reason: 'session-query', token: 't', sessionId: 's1' })).resolves.toMatchObject({ id: 's1' });
+    await expect(fetchSessionById({ reason: 'session-query', token: 't', sessionId: 's1' })).rejects.toMatchObject({
       code: 'session_detail_invalid_response',
       issues: expect.arrayContaining([{ path: ['session', 'id'], code: 'invalid_type' }]),
     });
@@ -55,6 +55,7 @@ describe('sessionControl.sessionsHttp.fetchSessionByIdCompat', () => {
     } as any);
 
     await expect(fetchSessionByIdCompat({
+      reason: 'session-query',
       token: 't',
       sessionId: 's1',
       accessProjectionVersion: 1,
@@ -78,6 +79,7 @@ describe('sessionControl.sessionsHttp.fetchSessionByIdCompat', () => {
     } as any);
 
     await expect(fetchSessionByIdCompat({
+      reason: 'session-query',
       token: 't',
       sessionId: 's1',
       accessProjectionVersion: 1,
@@ -97,6 +99,7 @@ describe('sessionControl.sessionsHttp.fetchSessionByIdCompat', () => {
     } as any);
 
     await expect(fetchSessionByIdCompat({
+      reason: 'session-query',
       token: 't',
       sessionId: 's1',
       accessProjectionVersion: 1,
@@ -113,7 +116,7 @@ describe('sessionControl.sessionsHttp.fetchSessionByIdCompat', () => {
       status: 200,
       data: { session: { metadata: 'private-provider-text' } },
     });
-    const error = await fetchSessionById({ token: 'private-token', sessionId: 's1' }).catch((error: unknown) => error);
+    const error = await fetchSessionById({ reason: 'session-query', token: 'private-token', sessionId: 's1' }).catch((error: unknown) => error);
     expect(error).toMatchObject({
       code: 'session_detail_invalid_response',
       schema: 'v2_session_detail',
@@ -131,7 +134,7 @@ describe('sessionControl.sessionsHttp.fetchSessionByIdCompat', () => {
       },
     } as any);
 
-    await expect(fetchSessionByIdCompat({ token: 't', sessionId: 's1' }))
+    await expect(fetchSessionByIdCompat({ reason: 'session-query', token: 't', sessionId: 's1' }))
       .resolves.toMatchObject({ id: 's1' });
   });
 
@@ -149,7 +152,7 @@ describe('sessionControl.sessionsHttp.fetchSessionByIdCompat', () => {
         ]),
       } as any);
 
-    const res = await fetchSessionByIdCompat({ token: 't', sessionId: 's1' });
+    const res = await fetchSessionByIdCompat({ reason: 'session-query', token: 't', sessionId: 's1' });
     expect(res).toBeNull();
 
     expect(getSpy).toHaveBeenCalledTimes(1);
@@ -163,7 +166,7 @@ describe('sessionControl.sessionsHttp.fetchSessionByIdCompat', () => {
       data: { error: 'Session not found' },
     } as any);
 
-    const res = await fetchSessionByIdCompat({ token: 't', sessionId: 's1' });
+    const res = await fetchSessionByIdCompat({ reason: 'session-query', token: 't', sessionId: 's1' });
     expect(res).toBeNull();
     expect(getSpy).toHaveBeenCalledTimes(1);
     expect(String(getSpy.mock.calls[0]?.[0])).toContain('/v2/sessions/s1');
@@ -195,7 +198,7 @@ describe('sessionControl.sessionsHttp.fetchSessionByIdCompat', () => {
       },
     } as any);
 
-    await fetchSessionByIdCompat({ token: 't', sessionId: 's1' });
+    await fetchSessionByIdCompat({ token: 't', sessionId: 's1', reason: 'legacy-compat-proof' });
 
     expect(getSpy.mock.calls[0]?.[1]?.headers).toMatchObject({
       'X-Happier-Request-Purpose': 'session-detail:legacy-compat-proof',

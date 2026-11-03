@@ -131,7 +131,7 @@ export function createDiscussionReplyReturnPublisher(params: Readonly<{
           || parsed.data.request.replyTarget?.kind !== 'message'
           || parsed.data.request.replyTarget.messageId !== original.discussion.messageId || !await current()) return denied();
         phase = 'session_transport';
-        const transport = await resolveSessionTransportContext({ credentials: params.credentials,
+        const transport = await resolveSessionTransportContext({ reason: 'session-control', credentials: params.credentials,
           idOrPrefix: original.requestSessionId, signal });
         if (!transport.ok) return transport.code === 'session_not_found' ? denied() : unavailable();
         if (transport.sessionId !== original.requestSessionId || !await current()) return denied();

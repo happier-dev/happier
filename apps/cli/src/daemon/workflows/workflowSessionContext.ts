@@ -53,7 +53,7 @@ export function createProductionWorkflowSessionContextReader(params: ContextRead
     try {
       params.signal?.throwIfAborted();
       if (!params.originSessionId) throw new WorkflowInputResolutionError('invalid_reference_scope');
-      const target = await resolveSessionTransportContext({ credentials: params.credentials, idOrPrefix: params.originSessionId,
+      const target = await resolveSessionTransportContext({ reason: 'session-content', credentials: params.credentials, idOrPrefix: params.originSessionId,
         ...(params.signal ? { signal: params.signal } : {}),
         ...(params.resolveAuthorizationHeaders ? { resolveAuthorizationHeaders: params.resolveAuthorizationHeaders } : {}),
       });

@@ -38,6 +38,7 @@ export async function setSessionArchivedState(params: Readonly<{
   signal?.throwIfAborted();
   const rootRequestId = params.externalAction?.context.actionRequestId;
   const resolved = await runTracedExternalActionStage(actionId, rootRequestId, 'session_archive.resolve_session', () => resolveSessionIdOrPrefix({
+    reason: 'session-control',
     credentials: params.credentials,
     idOrPrefix: params.idOrPrefix,
     ...(signal ? { signal } : {}),

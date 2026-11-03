@@ -179,6 +179,7 @@ export function createSessionConnectedServiceAuthTransport(
       };
     }
     resolvedTransport ??= resolveSessionTransportContext({
+      reason: 'session-control',
       credentials: params.credentials,
       idOrPrefix: params.sessionId,
     });

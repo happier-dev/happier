@@ -138,6 +138,7 @@ async function resolveActionDeps(params: Readonly<{
   if (!credentials) return { ok: false, result: notAuthenticated() };
 
   const transport = await (params.deps?.resolveSessionTransportContext ?? resolveSessionTransportContext)({
+    reason: 'session-control',
     credentials,
     idOrPrefix: params.sessionId,
     ...(params.context ? { signal: params.context.signal } : {}),
@@ -189,6 +190,7 @@ async function resolveLocalUsageLimitContext(params: Readonly<{
   const credentials = await (params.deps?.readStoredCredentials ?? readStoredCredentials)();
   if (!credentials) return { ok: false, result: notAuthenticated() };
   const transport = await (params.deps?.resolveSessionTransportContext ?? resolveSessionTransportContext)({
+    reason: 'session-control',
     credentials,
     idOrPrefix: params.sessionId,
   });

@@ -177,6 +177,7 @@ async function loadSessionContinuationSource(params: Readonly<{
   deps: SessionContinuationInspectionDeps;
 }>): Promise<SessionContinuationSource> {
   const transport = await params.deps.resolveSessionTransportContext({
+    reason: 'session-control',
     credentials: params.credentials,
     idOrPrefix: params.sourceSessionId,
   }).catch(() => null);

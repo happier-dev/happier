@@ -1774,7 +1774,7 @@ export class ApiSessionClient extends EventEmitter {
             readContext: async () => await this.runSessionRequest(async () => {
                 const credentials = await this.readCurrentOwnerCredentials();
                 if (!credentials || this.closed) return null;
-                const transport = await resolveSessionTransportContext({ credentials, idOrPrefix: this.sessionId });
+                const transport = await resolveSessionTransportContext({ credentials, idOrPrefix: this.sessionId, reason: 'session-control' });
                 if (!transport.ok) return null;
                 const metadata = tryDecryptSessionOwnerMetadataView({ credentials,
                     accountEncryptionMode: transport.accountEncryptionCurrentness.mode, rawSession: transport.rawSession });
@@ -4836,7 +4836,7 @@ export class ApiSessionClient extends EventEmitter {
                 const authoritativeSession = await this.runSessionRequest(async () => fetchSessionByIdCompat({
                     token: this.token,
                     sessionId: this.sessionId,
-                    reason: 'legacy-compat-proof',
+                    reason: 'close-end-proof',
                 }));
                 if (authoritativeSession?.active === false) return;
             } catch {

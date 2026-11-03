@@ -67,6 +67,7 @@ export function createPersonalFollowOccurrenceDispatcher(params: Readonly<{
     const result = await dispatchActivityNotificationAsync({ ...params, operationContext: params.operationContext,
       settings: params.operationContext.readSnapshot()?.settings, isCurrent,
       fetchSessionNotificationContext: params.fetchSessionNotificationContext ?? (sessionId => fetchSessionById({
+        reason: 'session-notification',
         token: params.operationContext.credentials.token, serverUrl: params.operationContext.serverHttpBaseUrl,
         sessionId, signal: input.signal,
       })),

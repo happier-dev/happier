@@ -167,6 +167,7 @@ export function createServerPluginSubagentDurableCustody(params: Readonly<{
   }>> => {
     const payload = detail ?? null;
     const rawSession = await awaitWithAbort(fetchSessionById({
+      reason: 'session-control',
       token: credentials.token,
       sessionId: params.identity.parentSessionId,
     }), signal);

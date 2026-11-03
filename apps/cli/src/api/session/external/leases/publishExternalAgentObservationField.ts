@@ -92,6 +92,7 @@ async function dispatchExternalSessionReadyNotification(
             token: home.token, serverHttpBaseUrl: home.serverUrl, accountId: readAccountIdFromToken(home.token) ?? '',
         }),
         fetchSessionNotificationContext: (sessionId) => fetchSessionById({
+            reason: 'session-notification',
             ...home, sessionId, accessProjectionVersion: 1,
         }),
         event: {

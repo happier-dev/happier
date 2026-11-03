@@ -201,7 +201,7 @@ export function createDaemonSessionMutationCustody(params: Readonly<{
       if (!sessionId || !localId) {
         throw new DaemonSessionMutationAdmissionError('session_unavailable');
       }
-      const resolved = await (params.resolveSessionTransportContext ?? resolveSessionTransportContext)({
+      const resolved = await (params.resolveSessionTransportContext ?? resolveSessionTransportContext)({ reason: 'session-control',
         credentials: params.credentials,
         idOrPrefix: sessionId,
       });
@@ -282,7 +282,7 @@ export function createDaemonSessionMutationCustody(params: Readonly<{
           }
           let resolved: Awaited<ReturnType<typeof resolveSessionTransportContext>>;
           try {
-            resolved = await (params.resolveSessionTransportContext ?? resolveSessionTransportContext)({
+            resolved = await (params.resolveSessionTransportContext ?? resolveSessionTransportContext)({ reason: 'session-control',
               credentials: params.credentials,
               idOrPrefix: sessionId,
             });

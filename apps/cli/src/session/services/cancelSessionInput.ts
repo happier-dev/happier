@@ -47,6 +47,7 @@ export async function cancelSessionInput(params: Readonly<{
 
   try {
     const transport = await resolveSessionTransportContext({
+      reason: 'session-control',
       credentials: params.credentials,
       idOrPrefix: params.sessionId,
     });

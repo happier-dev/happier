@@ -41,6 +41,7 @@ export async function archiveSessionOnceInactive(params: Readonly<{
       }
 
       const rawSession = await fetchSessionByIdCompat({
+        reason: 'session-control',
         token: params.token,
         sessionId: params.sessionId,
         ...(params.signal ? { signal: params.signal } : {}),

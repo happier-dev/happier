@@ -39,6 +39,7 @@ describe('fresh Session transport HTTP resolution', () => {
     if (!address || typeof address === 'string') throw new Error('Loopback HTTP address unavailable');
     try {
       await expect(runWithServerHttpBaseUrl(`http://127.0.0.1:${address.port}`, () => resolveSessionTransportContext({
+        reason: 'session-control',
         credentials: { token: 'must-not-be-used', encryption: null }, idOrPrefix: sessionId,
         // The signature issuer is outside this adapter; inspect its supplied HTTP authority, never substitute the host token.
         resolveAuthorizationHeaders: () => ({ Authorization: 'signed-invocation-fixture' }),
@@ -53,6 +54,8 @@ describe('fresh Session transport HTTP resolution', () => {
   });
 
   it.each(['current', 'unavailable'] as const)('overlaps exact detail with a held fresh Account witness and fails closed when %s', async witness => {
+    const reason = witness === 'current' ? 'session-control' : 'session-query';
+    const detailPurposes: Array<string | string[] | undefined> = [];
     let witnessResponse: ServerResponse | undefined;
     let detailResponded = false;
     let settled = false;
@@ -63,6 +66,7 @@ describe('fresh Session transport HTTP resolution', () => {
         return;
       }
       if (request.url === `/v2/sessions/${sessionId}`) {
+        detailPurposes.push(request.headers['x-happier-request-purpose']);
         const body = V2SessionByIdResponseSchema.parse({ session: createSessionRecordFixture({
           id: sessionId, encryptionMode: 'plain', metadata: '{}',
         }) });
@@ -76,6 +80,7 @@ describe('fresh Session transport HTTP resolution', () => {
     const address = server.address();
     if (!address || typeof address === 'string') throw new Error('Loopback HTTP address unavailable');
     const pending = runWithServerHttpBaseUrl(`http://127.0.0.1:${address.port}`, () => resolveSessionTransportContext({
+      reason,
       credentials: { token: 'transport-fixture', encryption: null }, idOrPrefix: sessionId,
       serverFeaturesSnapshot: { status: 'unsupported', reason: 'endpoint_missing' },
     }));
@@ -83,6 +88,7 @@ describe('fresh Session transport HTTP resolution', () => {
     try {
       await expect.poll(() => witnessResponse !== undefined).toBe(true);
       await expect.poll(() => detailResponded).toBe(true);
+      expect(detailPurposes).toEqual([`session-detail:${reason}`]);
       await setImmediate();
       expect(settled).toBe(false);
       if (witness === 'current') {
@@ -129,6 +135,7 @@ describe('fresh Session transport HTTP resolution', () => {
     const address = server.address();
     if (!address || typeof address === 'string') throw new Error('Loopback HTTP address unavailable');
     const pending = runWithServerHttpBaseUrl(`http://127.0.0.1:${address.port}`, () => resolveSessionTransportContext({
+      reason: 'session-control',
       credentials: { token: 'transport-fixture', encryption: null }, idOrPrefix: 'legacy-tag',
       serverFeaturesSnapshot: { status: 'unsupported', reason: 'endpoint_missing' },
     }));

@@ -17,7 +17,7 @@ import {
     type SessionMetadataSharedEditorSnapshot,
 } from '@/session/metadata/updateSessionMetadataWithRetry';
 import { readKnownPendingQueueState, readPendingExecutionRunIds, type KnownPendingQueueState } from './pendingQueueState';
-import type { SessionSnapshotRefreshReason } from './sessionSnapshotRefreshReason';
+import { resolveSessionSnapshotRequestCoalescingReason, type SessionSnapshotRefreshReason } from './sessionSnapshotRefreshReason';
 import {
     readLatestTurnStatusSnapshot,
     type LatestTurnStatusSnapshot,
@@ -63,11 +63,11 @@ type RawSessionSnapshot = Awaited<ReturnType<typeof fetchSessionByIdCompat>>;
 
 const rawSessionSnapshotInFlight = new Map<string, Promise<RawSessionSnapshot>>();
 
-function rawSessionSnapshotInFlightKey(opts: { token: string; sessionId: string; reason?: SessionSnapshotRefreshReason }): string {
-    return `${opts.token}\u0000${opts.sessionId}\u0000${opts.reason ?? 'legacy-compat-proof'}`;
+function rawSessionSnapshotInFlightKey(opts: { token: string; sessionId: string; reason: SessionSnapshotRefreshReason }): string {
+    return `${opts.token}\u0000${opts.sessionId}\u0000${resolveSessionSnapshotRequestCoalescingReason(opts.reason)}`;
 }
 
-async function fetchRawSessionSnapshotOnce(opts: { token: string; sessionId: string; reason?: SessionSnapshotRefreshReason }): Promise<RawSessionSnapshot> {
+async function fetchRawSessionSnapshotOnce(opts: { token: string; sessionId: string; reason: SessionSnapshotRefreshReason }): Promise<RawSessionSnapshot> {
     const key = rawSessionSnapshotInFlightKey(opts);
     const existing = rawSessionSnapshotInFlight.get(key);
     if (existing) {
@@ -105,7 +105,7 @@ export async function fetchSessionSnapshotUpdateFromServer(opts: {
     currentAgentStateVersion: number;
     currentMetadata?: Metadata | null;
     currentAgentState?: AgentState | null;
-    reason?: SessionSnapshotRefreshReason;
+    reason: SessionSnapshotRefreshReason;
 } & SessionStoredContentCryptoContext): Promise<{
     archivedAt?: number | null;
     organization?: Pick<V2SessionByIdResponse['session'], 'manager' | 'origin'>;

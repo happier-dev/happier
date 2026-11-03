@@ -26,7 +26,7 @@ export async function callSessionProviderInputAdmission(params: Readonly<{
   externalAction?: Parameters<typeof callSessionRpc>[0]['externalAction'];
   resolveAuthorizationHeaders?: Parameters<typeof resolveSessionTransportContext>[0]['resolveAuthorizationHeaders'];
 }> & ProviderInputAdmissionRequest): Promise<Readonly<{ status: 'enforced' | 'cleared' | 'not_matched' }>> {
-  const transport = await resolveSessionTransportContext({
+  const transport = await resolveSessionTransportContext({ reason: 'session-control',
     credentials: params.credentials,
     idOrPrefix: params.sessionId,
     ...(params.resolveAuthorizationHeaders ? { resolveAuthorizationHeaders: params.resolveAuthorizationHeaders } : {}),

@@ -1,4 +1,5 @@
 import type { StoredCredentials } from '@/persistence';
+import type { SessionSnapshotRefreshReason } from '@/api/session/sessionSnapshotRefreshReason';
 import type { AccountEncryptionCurrentnessResponse } from '@happier-dev/protocol';
 import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import { fetchAccountEncryptionCurrentness } from '@/api/client/connectedServiceCredentialApi';
@@ -42,6 +43,7 @@ export type ResolveSessionTransportContextResult =
       };
 
 async function fetchSessionTransportRecord(params: Readonly<{
+    reason: SessionSnapshotRefreshReason;
     credentials: StoredCredentials;
     sessionId: string;
     resolveAuthorizationHeaders?: (request: Readonly<{
@@ -52,6 +54,7 @@ async function fetchSessionTransportRecord(params: Readonly<{
 }>): Promise<RawSessionRecord | null> {
     params.signal?.throwIfAborted();
     return await fetchSessionById({
+        reason: params.reason,
         token: params.credentials.token,
         sessionId: params.sessionId,
         ...(params.resolveAuthorizationHeaders
@@ -63,6 +66,7 @@ async function fetchSessionTransportRecord(params: Readonly<{
 }
 
 export async function resolveSessionTransportContext(params: Readonly<{
+    reason: SessionSnapshotRefreshReason;
     credentials: StoredCredentials;
     idOrPrefix: string;
     resolveAuthorizationHeaders?: (request: Readonly<{
@@ -116,6 +120,7 @@ export async function resolveSessionTransportContext(params: Readonly<{
     }).then(currentness => { phase('account_currentness', resolutionStartedAt); return currentness; });
     const lookupStartedAt = performance.now();
     const sessionLookup = resolveSessionIdOrPrefix({
+        reason: params.reason,
         credentials: params.credentials,
         idOrPrefix: params.idOrPrefix,
         ...(params.resolveAuthorizationHeaders
@@ -140,6 +145,7 @@ export async function resolveSessionTransportContext(params: Readonly<{
     const rawSessionPromise = resolved.rawSession
         ? Promise.resolve(resolved.rawSession)
         : fetchSessionTransportRecord({
+            reason: params.reason,
             credentials: params.credentials,
             sessionId: resolved.sessionId,
             ...(params.resolveAuthorizationHeaders

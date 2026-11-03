@@ -816,7 +816,7 @@ export async function verifyRequesterSessionCredentialBinding(input: Readonly<{
           observe('encryption', () => readRequesterAccountEncryptionCurrentness({ accountId: input.attribution.accountId,
             token: input.credentials.token, serverBaseUrl: input.serverHttpBaseUrl,
             ...(input.signal ? { signal: input.signal } : {}) })),
-          observe('session', () => fetchSessionById({ token: input.credentials.token, serverUrl: input.serverHttpBaseUrl, sessionId: input.sessionId,
+          observe('session', () => fetchSessionById({ reason: 'requester-binding', token: input.credentials.token, serverUrl: input.serverHttpBaseUrl, sessionId: input.sessionId,
             ...(input.signal ? { signal: input.signal } : {}) })),
         ]));
         const owner = input.expectedSessionCreationTag !== undefined && session ? tryDecryptSessionOwnerMetadataView({ credentials: input.credentials,

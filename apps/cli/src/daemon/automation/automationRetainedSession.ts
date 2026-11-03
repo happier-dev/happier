@@ -8,7 +8,7 @@ import { resolveSessionEncryptionContextFromCredentials,
 export async function resolveAutomationTemplateRetainedSession(params: Readonly<{
   credentials: StoredCredentials; sessionId: string; signal?: AbortSignal;
 }>): Promise<AutomationTemplateRetainedSessionV1 | null> {
-  const session = await fetchSessionById({ token: params.credentials.token, sessionId: params.sessionId,
+  const session = await fetchSessionById({ reason: 'session-content', token: params.credentials.token, sessionId: params.sessionId,
     ...(params.signal ? { signal: params.signal } : {}) });
   params.signal?.throwIfAborted();
   if (!session || session.id !== params.sessionId) return null;

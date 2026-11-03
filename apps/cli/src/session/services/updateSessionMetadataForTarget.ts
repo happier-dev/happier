@@ -28,6 +28,7 @@ export async function updateSessionMetadataForTarget(params: Readonly<{
 }>): Promise<UpdateSessionMetadataForTargetResult> {
   assertSessionMetadataMutationCurrentness(params.currentness);
   const sessionTarget = await resolveSessionTransportContext({
+    reason: 'waitForMetadataUpdate',
     credentials: params.credentials,
     ...(params.resolveAuthorizationHeaders
       ? { resolveAuthorizationHeaders: params.resolveAuthorizationHeaders }

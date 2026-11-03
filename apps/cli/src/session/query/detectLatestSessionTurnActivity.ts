@@ -19,6 +19,7 @@ export async function detectLatestSessionTurnActivity(params: Readonly<{
     let projectedActivity: SessionTurnActivity | null = null;
     try {
         const refreshedSession = await fetchSessionById({
+      reason: 'session-query',
             token: params.token,
             sessionId: params.sessionId,
             ...(params.resolveAuthorizationHeaders ? { resolveAuthorizationHeaders: params.resolveAuthorizationHeaders } : {}),

@@ -39,6 +39,7 @@ export async function waitForSessionIdle(params: Readonly<{
 
   try {
     const sessionTarget = await resolveSessionTransportContext({
+      reason: 'session-control',
       credentials: params.credentials,
       idOrPrefix: params.idOrPrefix,
       signal,

@@ -87,6 +87,7 @@ export function createRestrictedCurrentSessionListActionDependency(params: Reado
         }))
       : null;
     const detail = page ? null : await fetchSessionById({
+      reason: 'session-action',
       token: params.credentials.token,
       sessionId: params.sessionId,
       serverUrl: params.serverHttpBaseUrl,

@@ -596,7 +596,7 @@ describe('requestSessionStop machine transport', () => {
       }
       expect(issuedMethods).toEqual(refused ? [] : ['owning-machine:stop-session']);
       if (caller === 'own-child' || caller === 'grandchild') {
-        const rawSession = await fetchSessionByIdCompat({ token: credentials.token, sessionId });
+        const rawSession = await fetchSessionByIdCompat({ reason: 'session-control', token: credentials.token, sessionId });
         expect(rawSession).not.toBeNull();
         if (!rawSession) throw new Error('Expected the exact stopped Session');
         const stop = readPersistedStop();

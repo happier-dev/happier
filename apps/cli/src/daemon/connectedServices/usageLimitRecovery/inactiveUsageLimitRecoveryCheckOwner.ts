@@ -77,7 +77,7 @@ async function readRestorableSession(input: RestoreSessionInput): Promise<
 > {
   if (!recoveryEnabled(input)) return { status: 'disabled' };
   const serverFeaturesSnapshot = input.getServerFeaturesSnapshot();
-  const target = await resolveSessionTransportContext({ credentials: input.credentials, idOrPrefix: input.sessionId,
+  const target = await resolveSessionTransportContext({ reason: 'session-control', credentials: input.credentials, idOrPrefix: input.sessionId,
     ...(serverFeaturesSnapshot ? { serverFeaturesSnapshot } : {}),
   });
   if (!input.isCurrent()) return { status: 'stale' };

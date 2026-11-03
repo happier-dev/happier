@@ -309,6 +309,7 @@ async function fetchSessionRecordWithEncryptionMode(params: Readonly<{
   try {
     [rawSession, accountEncryptionCurrentness] = await Promise.all([
       fetchSessionById({
+        reason: 'session-control',
         token: params.credentials.token,
         sessionId: params.sessionId,
         ...(params.signal ? { signal: params.signal } : {}),

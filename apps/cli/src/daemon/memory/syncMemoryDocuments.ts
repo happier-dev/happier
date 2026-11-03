@@ -88,7 +88,7 @@ export async function syncMemoryDocuments(params: Readonly<{
     nextPhase('session_inventory');
     const sessions = new Map<string, RawSessionRecord>();
     if (params.scope.type === 'session') {
-      const session = await fetchSessionById({ token: params.credentials.token, sessionId: params.scope.sessionId, signal: params.signal });
+      const session = await fetchSessionById({ reason: 'memory-change', token: params.credentials.token, sessionId: params.scope.sessionId, signal: params.signal });
       if (session) sessions.set(session.id, session);
     }
     else {

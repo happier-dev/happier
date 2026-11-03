@@ -222,9 +222,10 @@ export async function handleResumeCommand(
     process.exit(1);
   }
 
-  let rawSession = await fetchSessionByIdFn({ token: credentials.token, sessionId: sessionIdOrPrefix });
+  let rawSession = await fetchSessionByIdFn({ reason: 'session-control', token: credentials.token, sessionId: sessionIdOrPrefix });
   if (!rawSession) {
     const resolved = await resolveSessionIdOrPrefix({
+      reason: 'session-control',
       credentials,
       idOrPrefix: sessionIdOrPrefix,
       accountEncryptionMode: accountEncryptionCurrentness.mode,
@@ -238,7 +239,7 @@ export async function handleResumeCommand(
       }
       throw new Error('Session not found');
     }
-    rawSession = await fetchSessionByIdFn({ token: credentials.token, sessionId: resolved.sessionId });
+    rawSession = await fetchSessionByIdFn({ reason: 'session-control', token: credentials.token, sessionId: resolved.sessionId });
   }
   if (!rawSession) throw new Error(`Session not found: ${sessionIdOrPrefix}`);
 

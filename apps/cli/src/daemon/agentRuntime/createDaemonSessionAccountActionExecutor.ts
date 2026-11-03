@@ -158,7 +158,7 @@ export function createDaemonSessionAccountActionExecutor(params: Readonly<{
       try {
         return await readRequesterHomeWithinActionLifetime(async (): Promise<SessionAccountActionRefusalReason | null> => {
           if (authority.signal?.aborted || !await authority.isCurrent()) return 'runtime_authority_unavailable';
-          const session = await fetchSessionById({
+          const session = await fetchSessionById({ reason: 'session-action',
             token: params.token, serverUrl: params.serverHttpBaseUrl, sessionId: authority.sessionId,
             ...(authority.signal ? { signal: authority.signal } : {}),
           });
@@ -286,7 +286,7 @@ export function createDaemonSessionAccountActionExecutor(params: Readonly<{
           : await runWithServerHttpBaseUrl(params.serverHttpBaseUrl, () => resolveCliActionCallerWorkflowTarget({
           credentials, context,
           ...(params.machineId ? { target: { kind: 'machine', machineId: params.machineId } as const } : {}),
-          resolveTransportForSession: (sessionId, signal) => resolveSessionTransportContext({ credentials,
+          resolveTransportForSession: (sessionId, signal) => resolveSessionTransportContext({ reason: 'session-action', credentials,
             idOrPrefix: sessionId, ...(signal ? { signal } : {}) }),
         })), authority.signal) : undefined;
       if (operation.actionId === 'workflow.run.start' && !workflowTarget) return refuse('external_authorization_preparation_failed');

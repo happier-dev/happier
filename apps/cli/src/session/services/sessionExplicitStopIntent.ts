@@ -82,6 +82,7 @@ export async function clearSessionExplicitStopIntentAfterResume(input: Readonly<
   const stop = readSessionExplicitStopV1FromMetadata(input.metadata);
   if (!stop || 'status' in stop) return;
   const rawSession = input.rawSession ?? await fetchSessionByIdCompat({
+    reason: 'session-control',
     token: input.credentials.token,
     sessionId: input.sessionId,
     ...(input.resolveAuthorizationHeaders ? { resolveAuthorizationHeaders: input.resolveAuthorizationHeaders } : {}),

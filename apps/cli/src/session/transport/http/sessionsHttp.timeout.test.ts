@@ -27,7 +27,7 @@ describe('sessionControl.sessionsHttp timeouts', () => {
 
     const { fetchSessionById, fetchSessionsPage } = await import('./sessionsHttp');
 
-    await expect(fetchSessionById({ token: 't', sessionId: 's1' })).resolves.toBeNull();
+    await expect(fetchSessionById({ reason: 'session-query', token: 't', sessionId: 's1' })).resolves.toBeNull();
     await expect(fetchSessionsPage({ token: 't', limit: 1 })).resolves.toMatchObject({ sessions: [] });
 
     expect(axiosGetMock).toHaveBeenCalledTimes(2);

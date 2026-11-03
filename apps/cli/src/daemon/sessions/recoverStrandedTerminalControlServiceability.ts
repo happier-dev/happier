@@ -44,7 +44,7 @@ export async function recoverStrandedTerminalControlServiceability(params: Reado
     ?? (async (token: string) => (await fetchAccountEncryptionCurrentness({ token,
       ...(headers ? { authorizationHeaders: headers } : {}) })).mode);
   const [rawSession, accountEncryptionMode] = await Promise.all([
-    fetchSession({ token: params.credentials.token, sessionId: params.sessionId,
+    fetchSession({ reason: 'session-control', token: params.credentials.token, sessionId: params.sessionId,
       ...(params.resolveAuthorizationHeaders ? { resolveAuthorizationHeaders: params.resolveAuthorizationHeaders } : {}) }),
     resolveAccountEncryptionMode(params.credentials.token),
   ]);

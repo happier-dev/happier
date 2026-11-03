@@ -34,7 +34,7 @@ describe('sessionControl.sessionsHttp URL encoding', () => {
     const encoded = encodeURIComponent(sessionId);
 
     const getSpy = vi.spyOn(axios, 'get').mockResolvedValueOnce({ status: 404, data: {} } as any);
-    await expect(fetchSessionById({ token: 't', sessionId })).resolves.toBeNull();
+    await expect(fetchSessionById({ reason: 'session-query', token: 't', sessionId })).resolves.toBeNull();
 
     expect(getSpy).toHaveBeenCalledWith(
       `http://server.example.test/v2/sessions/${encoded}`,
@@ -45,7 +45,7 @@ describe('sessionControl.sessionsHttp URL encoding', () => {
   it('uses the captured Home for an exact Session hydration', async () => {
     const { fetchSessionById } = await import('./sessionsHttp');
     const get = vi.spyOn(axios, 'get').mockResolvedValueOnce({ status: 404, data: {} });
-    await expect(fetchSessionById({ token: 't', sessionId: 'session', serverUrl: 'https://captured.example' })).resolves.toBeNull();
+    await expect(fetchSessionById({ reason: 'session-query', token: 't', sessionId: 'session', serverUrl: 'https://captured.example' })).resolves.toBeNull();
     expect(get.mock.calls[0]?.[0]).toBe('https://captured.example/v2/sessions/session');
   });
 
@@ -53,6 +53,7 @@ describe('sessionControl.sessionsHttp URL encoding', () => {
     const { fetchSessionById } = await import('./sessionsHttp');
     const get = vi.spyOn(axios, 'get').mockResolvedValueOnce({ status: 404, data: {} });
     await expect(fetchSessionById({
+      reason: 'session-query',
       token: 't',
       sessionId: 'session',
       serverUrl: 'https://captured.example',
@@ -69,6 +70,7 @@ describe('sessionControl.sessionsHttp URL encoding', () => {
     });
 
     await expect(fetchSessionById({
+      reason: 'session-query',
       token: 't',
       sessionId: 'session',
       serverUrl: 'https://captured.example',
@@ -80,6 +82,7 @@ describe('sessionControl.sessionsHttp URL encoding', () => {
     const { fetchSessionById } = await import('./sessionsHttp');
     const get = vi.spyOn(axios, 'get').mockResolvedValueOnce({ status: 404, data: {} });
     await expect(fetchSessionById({
+      reason: 'session-query',
       token: 't',
       sessionId: 'session',
       serverUrl: 'https://captured.example',
@@ -104,6 +107,7 @@ describe('sessionControl.sessionsHttp URL encoding', () => {
     const { fetchSessionById } = await import('./sessionsHttp');
     const get = vi.spyOn(axios, 'get').mockResolvedValueOnce({ status: 404, data: {} });
     await expect(fetchSessionById({
+      reason: 'session-query',
       token: 't',
       sessionId: 'session',
       serverUrl: 'https://captured.example',

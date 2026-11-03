@@ -55,7 +55,7 @@ export async function withTrackedSessionRpc<T>(input: Readonly<{
   if (!await isCurrent()) return null;
   const credentials = requester?.credentials ?? input.credentials;
   return await runWithServerHttpBaseUrl(requester?.serverHttpBaseUrl ?? input.serverHttpBaseUrl, async () => {
-    const transport = await resolveSessionTransportContext({ credentials, idOrPrefix: sessionId,
+    const transport = await resolveSessionTransportContext({ reason: 'session-control', credentials, idOrPrefix: sessionId,
       ...(input.signal ? { signal: input.signal } : {}) });
     if (!transport.ok || transport.sessionId !== sessionId || !await isCurrent()) return null;
     const systemRecords = createSessionSystemRecordPayloadService({ sessionId,

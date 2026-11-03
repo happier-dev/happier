@@ -1485,6 +1485,7 @@ export class ApiMachineClient {
                         serverHttpBaseUrl: readMachineRuntimeServerHttpBaseUrl(), signal });
                 if (!await isCurrent()) return null;
                 const transport = await runWithServerHttpBaseUrl(readMachineRuntimeServerHttpBaseUrl(), () => resolveSessionTransportContext({
+                    reason: 'session-control',
                     credentials, idOrPrefix: authorization.sessionId, signal,
                 }));
                 if (!transport.ok || transport.sessionId !== authorization.sessionId) return null;

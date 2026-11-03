@@ -149,7 +149,7 @@ export async function getMemoryWindow(params: SessionMemoryWindowRequest | Exter
   const effectiveTo = requestedMessages > maxMessages ? Math.max(effectiveFrom, effectiveFrom + maxMessages - 1) : paddedTo;
 
   params.signal?.throwIfAborted();
-  const rawSession = await fetchSession({ token: params.credentials.token, sessionId, ...(params.signal ? { signal: params.signal } : {}) });
+  const rawSession = await fetchSession({ reason: 'memory-change', token: params.credentials.token, sessionId, ...(params.signal ? { signal: params.signal } : {}) });
   params.signal?.throwIfAborted();
   if (!rawSession) {
     return {

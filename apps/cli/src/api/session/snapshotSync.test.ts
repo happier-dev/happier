@@ -45,14 +45,15 @@ type SnapshotUpdateParams = Parameters<
   typeof fetchSessionSnapshotUpdateFromServerOwner
 >[0];
 type SnapshotUpdateTestParams<T> = T extends SnapshotUpdateParams
-  ? Omit<T, 'accountEncryptionCurrentness'> &
-      Partial<Pick<T, 'accountEncryptionCurrentness'>>
+  ? Omit<T, 'accountEncryptionCurrentness' | 'reason'> &
+      Partial<Pick<T, 'accountEncryptionCurrentness' | 'reason'>>
   : never;
 
 function fetchSessionSnapshotUpdateFromServer(
   params: SnapshotUpdateTestParams<SnapshotUpdateParams>,
 ) {
   return fetchSessionSnapshotUpdateFromServerOwner({
+    reason: 'session-query',
     ...params,
     accountEncryptionCurrentness:
       params.accountEncryptionCurrentness ?? e2eeCurrentness,

@@ -57,7 +57,7 @@ export async function resolveWorkflowAuthorizedSession(params: Readonly<{
   sessionCreationTag?: SessionCreationTagV1;
   onUnavailable?: (details: WorkflowConversationUnavailableDetailsV1) => void;
 }>) {
-  const target = await resolveSessionTransportContext({
+  const target = await resolveSessionTransportContext({ reason: 'session-control',
     credentials: params.credentials, idOrPrefix: params.sessionId,
     ...(params.signal ? { signal: params.signal } : {}),
   });

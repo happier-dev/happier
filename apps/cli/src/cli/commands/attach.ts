@@ -291,16 +291,16 @@ async function resolveAttachContext(
   const credentials = await readCredentialsFn();
   if (!credentials) return null;
 
-  let rawSession = await fetchSessionByIdFn({ token: credentials.token, sessionId: sessionIdOrPrefix });
+  let rawSession = await fetchSessionByIdFn({ reason: 'session-control', token: credentials.token, sessionId: sessionIdOrPrefix });
   if (!rawSession) {
-    const resolved = await resolveSessionIdOrPrefixFn({ credentials, idOrPrefix: sessionIdOrPrefix });
+    const resolved = await resolveSessionIdOrPrefixFn({ reason: 'session-control', credentials, idOrPrefix: sessionIdOrPrefix });
     if (!resolved.ok) {
       if (resolved.code === 'session_lookup_timeout') {
         throw new Error('Session lookup timed out; try again');
       }
       return null;
     }
-    rawSession = await fetchSessionByIdFn({ token: credentials.token, sessionId: resolved.sessionId });
+    rawSession = await fetchSessionByIdFn({ reason: 'session-control', token: credentials.token, sessionId: resolved.sessionId });
   }
   if (!rawSession) return null;
 

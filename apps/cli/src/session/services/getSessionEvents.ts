@@ -59,6 +59,7 @@ export async function getSessionEvents(params: Readonly<{
   serverFeaturesSnapshot?: CliServerFeaturesSnapshot;
 }>): Promise<GetSessionEventsResult> {
   const sessionTarget = await resolveSessionTransportContext({
+    reason: 'session-content',
     credentials: params.credentials,
     idOrPrefix: params.idOrPrefix,
     ...(params.serverFeaturesSnapshot ? { serverFeaturesSnapshot: params.serverFeaturesSnapshot } : {}),

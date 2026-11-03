@@ -54,6 +54,7 @@ export async function callBuiltInHappierTool(params: Readonly<{
     return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
   }
   const sessionTarget = await resolveSessionTransportContext({
+    reason: 'session-action',
     credentials: credentialSnapshot,
     idOrPrefix: params.sessionId,
     ...(params.signal ? { signal: params.signal } : {}),

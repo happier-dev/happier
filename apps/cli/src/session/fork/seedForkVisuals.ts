@@ -103,8 +103,8 @@ async function readSegmentVisualCandidates(params: SeedParams, segment: ForkTran
 export async function seedForkVisualCopies(params: SeedParams): Promise<readonly SessionForkVisualCopyV1[]> {
     const copies: SessionForkVisualCopyV1[] = [];
     const [sourceRaw, childRaw] = await Promise.all([
-        params.sourceRawSession ?? fetchSessionById({ token: params.credentials.token, sessionId: params.sourceSessionId }),
-        fetchSessionById({ token: params.credentials.token, sessionId: params.childSessionId }),
+        params.sourceRawSession ?? fetchSessionById({ reason: 'session-replay', token: params.credentials.token, sessionId: params.sourceSessionId }),
+        fetchSessionById({ reason: 'session-replay', token: params.credentials.token, sessionId: params.childSessionId }),
     ]);
     if (!sourceRaw || !childRaw) return copies;
     const childCrypto = resolveExactSessionOrCredentialCryptoContext(params, params.childSessionId, childRaw);
@@ -244,7 +244,7 @@ export async function seedForkVisualsBestEffort(params: Readonly<{
 }>): Promise<void> {
     try {
         const [childRaw, currentness] = await Promise.all([
-            fetchSessionById({ token: params.credentials.token, sessionId: params.childSessionId }),
+            fetchSessionById({ reason: 'session-replay', token: params.credentials.token, sessionId: params.childSessionId }),
             fetchAccountEncryptionCurrentness({ token: params.credentials.token }),
         ]);
         if (!childRaw) return;
@@ -253,7 +253,7 @@ export async function seedForkVisualsBestEffort(params: Readonly<{
         if (!fork || fork.parentSessionId !== params.sourceSessionId) return;
         // Presence settles the existing creation identity, including a truthful empty/failed seed.
         if (Array.isArray(fork.visualCopies)) return;
-        const sourceRawSession = params.sourceRawSession ?? await fetchSessionById({ token: params.credentials.token, sessionId: params.sourceSessionId });
+        const sourceRawSession = params.sourceRawSession ?? await fetchSessionById({ reason: 'session-replay', token: params.credentials.token, sessionId: params.sourceSessionId });
         const sourceMetadata = params.sourceMetadata ?? (sourceRawSession ? tryDecryptSessionOwnerMetadataView({
             credentials: params.credentials, rawSession: sourceRawSession, accountEncryptionMode: currentness.mode,
         }) : null);

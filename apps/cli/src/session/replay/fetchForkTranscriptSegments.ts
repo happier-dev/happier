@@ -33,7 +33,7 @@ export async function fetchForkTranscriptSegments(params: Readonly<{
         if (visited.has(currentSessionId)) break;
         visited.add(currentSessionId);
         const rawSession = depth === 0 && params.startingRawSession ? params.startingRawSession
-            : await fetchSessionByIdCompat({ token: params.credentials.token, sessionId: currentSessionId,
+            : await fetchSessionByIdCompat({ reason: 'session-replay', token: params.credentials.token, sessionId: currentSessionId,
                 ...(params.resolveAuthorizationHeaders ? { resolveAuthorizationHeaders: params.resolveAuthorizationHeaders } : {}),
             }).catch(error => {
                 acquisitionError = error;

@@ -354,7 +354,7 @@ export function registerMachineMcpServersRpcHandlers(params: Readonly<{
         const previewRead = (async () => {
           const [accountSettingsContext, session] = await Promise.all([
             loadFreshMcpAccountSettingsContext(credentials, { bootstrapAccountSettingsContext: bootstrapAccountSettingsContextImpl }),
-            parsed.data.sessionId ? resolveSessionTransportContext({ credentials, idOrPrefix: parsed.data.sessionId, signal: context?.signal }) : null,
+            parsed.data.sessionId ? resolveSessionTransportContext({ reason: 'session-control', credentials, idOrPrefix: parsed.data.sessionId, signal: context?.signal }) : null,
           ]);
           const accountMcpSettings = readMcpServersSettingsFromAccountSettings(accountSettingsContext);
           const operationContext = accountSettingsContext.operationContext;

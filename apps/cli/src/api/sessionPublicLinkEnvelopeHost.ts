@@ -64,6 +64,7 @@ export async function materializeSessionPublicLinkCreateBody(params: Readonly<{
   let rawSession: Awaited<ReturnType<typeof fetchSessionById>>;
   try {
     rawSession = await fetchSessionById({
+      reason: 'session-control',
       token: params.token,
       serverUrl: params.serverHttpBaseUrl,
       sessionId: logical.sessionId,

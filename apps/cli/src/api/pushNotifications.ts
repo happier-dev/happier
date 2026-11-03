@@ -151,7 +151,7 @@ export class PushNotificationClient {
     }
 
     async fetchSessionNotificationContext(sessionId: string): Promise<RawSessionRecord | null> {
-        return fetchSessionById({ token: this.token, serverUrl: this.baseUrl, sessionId, accessProjectionVersion: 1 })
+        return fetchSessionById({ reason: 'session-notification', token: this.token, serverUrl: this.baseUrl, sessionId, accessProjectionVersion: 1 })
     }
 
     readAccountSessionDeliveryMutedScopes(): ReturnType<typeof readAccountSessionDeliveryMutedScopes> {

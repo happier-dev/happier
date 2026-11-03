@@ -61,6 +61,7 @@ async function readSessionInactive(params: Readonly<{
   resolveAuthorizationHeaders?: Parameters<typeof fetchSessionByIdCompat>[0]['resolveAuthorizationHeaders'];
 }>): Promise<boolean | null> {
   const session = await fetchSessionByIdCompat({
+    reason: 'session-control',
     token: params.token,
     sessionId: params.sessionId,
     ...(params.signal ? { signal: params.signal } : {}),
@@ -355,6 +356,7 @@ export async function requestSessionStop(params: Readonly<{
   const traceRequestId = rootRequestId ?? params.actionContext?.actionRequestId;
   const signal = params.signal ?? params.actionContext?.signal ?? params.externalAction?.context.signal;
   const resolved = await runTracedExternalActionStage(actionId, traceRequestId, 'stop.resolve_session', () => resolveSessionIdOrPrefix({
+    reason: 'session-control',
     credentials: params.credentials,
     idOrPrefix: params.idOrPrefix,
     ...(params.resolveAuthorizationHeaders ? { resolveAuthorizationHeaders: params.resolveAuthorizationHeaders } : {}),
@@ -372,6 +374,7 @@ export async function requestSessionStop(params: Readonly<{
   let phase = 'read_session';
   try {
     const rawSession = resolved.rawSession ?? await fetchSessionByIdCompat({
+      reason: 'session-control',
       token: params.credentials.token,
       sessionId: resolved.sessionId,
       ...(signal ? { signal } : {}),

@@ -178,6 +178,7 @@ async function resolveContext(
   let result: ResolveSessionTransportContextResult;
   try {
     result = await resolveSessionTransportContext({
+      reason: 'session-content',
       credentials,
       idOrPrefix: params.sessionId,
       signal,

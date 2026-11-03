@@ -85,7 +85,7 @@ export async function resolveSessionCommandResumeDelegation(
   try {
     const credentials = await resolveCredentials({ readCredentialsFn, ensureAuthFn });
     if (!credentials) return continueDecision;
-    const session = await fetchSessionByIdFn({ token: credentials.token, sessionId });
+    const session = await fetchSessionByIdFn({ reason: 'session-control', token: credentials.token, sessionId });
     return session ? { kind: 'delegate', sessionId } : continueDecision;
   } catch {
     return continueDecision;

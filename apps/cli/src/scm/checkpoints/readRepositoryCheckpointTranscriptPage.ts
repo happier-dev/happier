@@ -19,7 +19,7 @@ export function createRepositoryCheckpointTranscriptPageReader(input: Readonly<{
     signal?: AbortSignal;
 }>): ReadRepositoryCheckpointTranscriptPage {
     return async ({ sessionId, afterSeq }) => {
-        const target = await resolveSessionTransportContext({ ...input, idOrPrefix: sessionId });
+        const target = await resolveSessionTransportContext({ reason: 'session-content', ...input, idOrPrefix: sessionId });
         if (!target.ok || target.sessionId !== sessionId) throw new Error(target.ok ? 'Checkpoint transcript resolved a different session' : target.code);
         const page = await fetchEncryptedTranscriptMessagesPage({ token: input.credentials.token, sessionId,
             limit: SESSION_TRANSCRIPT_GET_MAX_LIMIT, afterSeq: afterSeq ?? 0, scope: 'main',

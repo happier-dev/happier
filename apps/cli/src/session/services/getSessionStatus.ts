@@ -82,6 +82,7 @@ export async function getSessionStatus(params: Readonly<{
   serverFeaturesSnapshot?: CliServerFeaturesSnapshot;
 }>): Promise<GetSessionStatusResult> {
   const sessionTarget = await resolveSessionTransportContext({
+    reason: 'session-query',
     credentials: params.credentials,
     idOrPrefix: params.idOrPrefix,
     ...(params.signal ? { signal: params.signal } : {}),

@@ -11,7 +11,7 @@ describe('Account Action caller Session metadata authority', () => {
     const post = vi.spyOn(axios, 'post').mockRejectedValue(new Error('unbound_host_has_no_session'));
     try {
       const read = createCliBoundSessionMetadataReader({ credentials, token: credentials.token, sessionId, mode: 'plain', ctx: null,
-        resolveTransportForSession: (id, signal) => resolveSessionTransportContext({ credentials, idOrPrefix: id, signal }),
+        resolveTransportForSession: (id, signal) => resolveSessionTransportContext({ reason: 'requester-binding', credentials, idOrPrefix: id, signal }),
       });
       await expect(read()).resolves.toBeNull();
       expect(get).not.toHaveBeenCalled();
@@ -37,7 +37,7 @@ describe('Account Action caller Session metadata authority', () => {
         context: { surface: 'agent', actionCaller: { kind: 'session', sessionId, starterDepth: 0, turnDepth: 0 },
           defaultSessionId: sessionId, signal: caller.signal },
         readBoundSession: async () => ({ metadata: null, workDepth: undefined, backendTarget: null, machineId: null, directory: null }),
-        resolveTransportForSession: (id, signal?: AbortSignal) => resolveSessionTransportContext({ credentials, idOrPrefix: id, signal }),
+        resolveTransportForSession: (id, signal?: AbortSignal) => resolveSessionTransportContext({ reason: 'requester-binding', credentials, idOrPrefix: id, signal }),
       }).then(value => ({ value }), error => ({ error }));
       await ready;
       const reason = new Error('caller cancelled');
@@ -77,7 +77,7 @@ describe('Account Action caller Session metadata authority', () => {
     try {
       const read = createCliBoundSessionMetadataReader({ credentials, token: credentials.token, sessionId, mode: 'plain', ctx: null,
         ...(source === 'cached' ? { rawSession } : {}),
-        resolveTransportForSession: (id) => resolveSessionTransportContext({ credentials, idOrPrefix: id }),
+        resolveTransportForSession: (id) => resolveSessionTransportContext({ reason: 'requester-binding', credentials, idOrPrefix: id }),
       });
       await expect(read()).resolves.toMatchObject({ path: '/bound/owner', machineId: 'bound-machine' });
     } finally { get.mockRestore(); }
@@ -105,7 +105,7 @@ describe('Account Action caller Session metadata authority', () => {
         readBoundSession: async () => ({ metadata: { flavor: 'claude' }, workDepth: 0,
           backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
           machineId: 'wrong-machine', directory: '/wrong/repo' }),
-        resolveTransportForSession: (id: string) => resolveSessionTransportContext({ credentials, idOrPrefix: id }),
+        resolveTransportForSession: (id: string) => resolveSessionTransportContext({ reason: 'requester-binding', credentials, idOrPrefix: id }),
       } satisfies Parameters<typeof resolveCliActionCallerSession>[0];
       const result = await resolveCliActionCallerSession(params);
       expect(result).toMatchObject({ sessionId, workDepth: 2, directory: '/owner/repo', machineId: 'caller-machine',
@@ -131,7 +131,7 @@ describe('Account Action caller Session metadata authority', () => {
       await expect(resolveCliActionCallerSession({ credentials, boundSessionId: 'cli-global',
         context: { surface: 'agent', actionCaller: { kind: 'session', sessionId, starterDepth: 0, turnDepth: 0 }, defaultSessionId: sessionId },
         readBoundSession: async () => ({ metadata: null, workDepth: undefined, backendTarget: null, machineId: null, directory: null }),
-        resolveTransportForSession: (id) => resolveSessionTransportContext({ credentials, idOrPrefix: id }),
+        resolveTransportForSession: (id) => resolveSessionTransportContext({ reason: 'requester-binding', credentials, idOrPrefix: id }),
       })).resolves.toBeNull();
     } finally { get.mockRestore(); }
   });
@@ -147,7 +147,7 @@ describe('Account Action caller Session metadata authority', () => {
         : { session: rawSession } }));
     const params = { credentials, boundSessionId: 'cli-global',
       readBoundSession: async () => ({ metadata: null, workDepth: undefined, backendTarget: null, machineId: null, directory: null }),
-      resolveTransportForSession: (id: string) => resolveSessionTransportContext({ credentials, idOrPrefix: id }),
+      resolveTransportForSession: (id: string) => resolveSessionTransportContext({ reason: 'requester-binding', credentials, idOrPrefix: id }),
     };
     try {
       await expect(resolveCliActionCallerSession({ ...params,

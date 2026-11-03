@@ -17,7 +17,7 @@ export async function reconcileRecoveredSessionMachineControl(params: Readonly<{
     sessionId: params.sessionId,
     machineId: params.machineId,
   });
-  const rawSession = await fetchSessionByIdCompat({
+  const rawSession = await fetchSessionByIdCompat({ reason: 'session-control',
     token: params.credentials.token,
     sessionId: params.sessionId,
   });

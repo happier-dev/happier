@@ -234,7 +234,7 @@ describe('Home Discussion resource transport', () => {
       capabilities: { serverIdentity: { serverIdentityId: 'srv_home' } } }), { status: 200 }));
     onTestFinished(() => fetch.mockRestore());
     await runWithServerHttpBaseUrl('https://home.example.test', async () => {
-      expect(await resolveSessionTransportContext({ credentials: keyless, idOrPrefix: sessionId }))
+      expect(await resolveSessionTransportContext({ reason: 'session-control', credentials: keyless, idOrPrefix: sessionId }))
         .toMatchObject(retiredSession ? { ok: true, mode: 'plain' }
           : { ok: false, code: scenario === 'session_not_found' ? 'session_not_found' : 'encryption_material_unavailable' });
       axiosGet.mockClear();

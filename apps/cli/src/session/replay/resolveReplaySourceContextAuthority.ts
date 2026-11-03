@@ -37,6 +37,7 @@ export async function resolveReplaySourceContextAuthority(params: Readonly<{
   sourceSessionId: string;
 }>): Promise<ReplaySourceContextAuthority> {
   const rawSession = await fetchSessionByIdCompat({
+    reason: 'session-replay',
     token: params.credentials.token,
     sessionId: params.sourceSessionId,
   });

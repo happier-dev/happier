@@ -51,6 +51,7 @@ import { resolveSessionStoredContentEncryptionMode, resolveSessionEncryptionCont
 import { assertSessionEncryptionModeAllowedByEffectiveClientRequirement } from '@/settings/accountSettings/resolveEffectiveClientEncryptionRequirement';
 import {
   resolveSessionSnapshotRequestPurpose,
+  resolveSessionSnapshotRequestCoalescingReason,
   type SessionSnapshotRefreshReason,
 } from '@/api/session/sessionSnapshotRefreshReason';
 import { configuration } from '@/configuration';
@@ -343,7 +344,7 @@ async function getSessionByIdResponse(params: Readonly<{
   }>) => Readonly<Record<string, string>> | null;
   sessionId: string;
   serverUrl?: string;
-  reason?: SessionSnapshotRefreshReason;
+  reason: SessionSnapshotRefreshReason;
   signal?: AbortSignal;
   deadlineAtMs?: number;
   accessProjectionVersion?: 1;
@@ -398,7 +399,7 @@ async function getSessionByIdResponse(params: Readonly<{
     serverUrl,
     token: params.token,
     encodedSessionId,
-    requestPurpose,
+    requestPurpose: resolveSessionSnapshotRequestPurpose(resolveSessionSnapshotRequestCoalescingReason(params.reason)),
     accessProjectionVersion,
   });
   const existing = sessionByIdInFlightRequests.get(key);
@@ -432,7 +433,7 @@ export async function fetchSessionById(params: Readonly<{
   }>) => Readonly<Record<string, string>> | null;
   sessionId: string;
   serverUrl?: string;
-  reason?: SessionSnapshotRefreshReason;
+  reason: SessionSnapshotRefreshReason;
   signal?: AbortSignal;
   deadlineAtMs?: number;
   /** Require the complete current projection; unsupported Homes fail rather than falling back. */

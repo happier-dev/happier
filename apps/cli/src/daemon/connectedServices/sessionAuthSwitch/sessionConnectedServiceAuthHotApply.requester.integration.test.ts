@@ -330,7 +330,7 @@ describe('requester native subscription hot apply', () => {
       expect(nativeBytes.toString()).toContain('bob-refreshed-backup');
       expect(tracked.spawnOptions.identity).toEqual(identity);
       expect(tracked.happySessionId).toBe('bob-bot');
-      const session = await fetchSessionById({ token: credentials.token, serverUrl: homeUrl, sessionId: 'bob-bot' });
+      const session = await fetchSessionById({ reason: 'session-query', token: credentials.token, serverUrl: homeUrl, sessionId: 'bob-bot' });
       expect(session).not.toBeNull();
       if (!session) throw new Error('Missing protected Bot Session');
       expect(tryDecryptSessionOwnerMetadataView({ credentials, accountEncryptionMode: 'plain', rawSession: session }))

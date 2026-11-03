@@ -74,7 +74,7 @@ export async function retireExactTerminalControlServiceability(params: Readonly<
     // tuple awaits admission; the writer rechecks currentness before its CAS.
     const [, rawSession, accountEncryptionCurrentness] = await Promise.all([
         verifySessionMetadataMutationCurrentness(params.currentness),
-        fetchSessionByIdCompat({
+        fetchSessionByIdCompat({ reason: 'session-control',
             token: params.credentials.token,
             sessionId: params.sessionId,
             ...(params.resolveAuthorizationHeaders ? { resolveAuthorizationHeaders: params.resolveAuthorizationHeaders } : {}),

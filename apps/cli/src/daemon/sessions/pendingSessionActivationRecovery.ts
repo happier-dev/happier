@@ -69,7 +69,7 @@ export async function readRequesterPendingSessionActivation(params: Readonly<{
   if (!origin || origin.machineId !== bootstrap.attribution.machineId
     || bootstrap.getBoundSessionId() !== sessionId || !await bootstrap.isCurrent()) return null;
   const session = await runWithServerHttpBaseUrl(bootstrap.serverHttpBaseUrl,
-    () => fetchSessionById({ token: bootstrap.credentials.token, sessionId, serverUrl: bootstrap.serverHttpBaseUrl }));
+    () => fetchSessionById({ reason: 'session-control', token: bootstrap.credentials.token, sessionId, serverUrl: bootstrap.serverHttpBaseUrl }));
   const authorization = session?.pendingActivationAuthorization;
   const target = authorization?.admittedTarget;
   const attribution = bootstrap.attribution;
