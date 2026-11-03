@@ -119,7 +119,7 @@ import { readPromptLibraryCatalogRecordV1 } from '@happier-dev/protocol/prompts/
 import { readSkillRulesForItemV1 } from '@happier-dev/protocol/prompts/library/skillRulesActionsV1';
 import { readSkillUsageCatalogV1 } from '@happier-dev/protocol/prompts/library/skills/skillActionOperations';
 import { readPromptLibraryCatalogProjectionInContext, mutatePromptLibraryRoleOverrideInContext } from '@/sync/api/account/apiPromptLibraryCatalog';
-import { getActionSpec, type PublicActionInputById } from '@happier-dev/protocol/actions/actionSpecs';
+import { getActionSpec, resolveActionExecutionPlacementForInput, type PublicActionInputById } from '@happier-dev/protocol/actions/actionSpecs';
 import { isPluginDevLoopActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
 import { resolveActionBackendTargetSelection } from '@happier-dev/protocol/actions/resolveActionBackendTargetSelection';
 import { getResolvedBackendCatalogEntries } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
@@ -272,7 +272,7 @@ import { subscribeActionOperationByRequestId } from '@/sync/domains/actionOperat
 import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
 import { createUiManagedMachineReferenceReader, createUiMachineDeploymentReferenceReader } from './managedMachineReferenceDeps';
 import { resolveActionOriginationPreferenceFailureV1 } from '@happier-dev/protocol/actions/executor/actionOriginationPreferences';
-import { ManagedMachineActionIdV1Schema, ManagedMachineActionInputSchemasV1, type ManagedMachineActionIdV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedMachineActionIdV1Schema, ManagedMachineActionInputSchemasV1, type ManagedMachineActionIdV1, type ManagedMachineActionOutputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { createRunnerActivationClient, RunnerActivationClientError } from '@/sync/api/ephemeralRunner/runnerActivationClient';
 import type { RunnerActivationCreateRequestV1 } from '@happier-dev/protocol/ephemeralRunner/activation';
 import { getReadyServerFeatures } from '@/sync/api/capabilities/getReadyServerFeatures';
@@ -817,7 +817,8 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
   resolveWidgetAreaPresets?: Parameters<typeof createWidgetAreaActionDepsV1>[1];
   widgetAreaIsCurrent?: () => boolean;
   }>, accountContext?: LazyActionAccountContext & { settings: Awaited<ReturnType<LazyActionAccountContext['readSettings']>> }, followReadInputs?: SessionFollowReadInputs): UiProtocolActionExecutor & Readonly<{
-    executeNativeManagedAction(actionId: ManagedMachineActionIdV1, input: unknown, context?: ActionExecutorContext): Promise<ActionExecuteResult>;
+    executeNativeManagedAction(actionId: ManagedMachineActionIdV1, input: unknown, context?: ActionExecutorContext,
+      retainedMachine?: ManagedMachineActionOutputV1<'machines.managed.get'>): Promise<ActionExecuteResult>;
     readWidgetMovementAdmission(ref: WidgetInstanceRefV1, surface: WidgetSurfaceRefV1, context: ActionExecutorContext): ReturnType<typeof readWidgetEntityMovementAdmission>;
     readWidgetInputDescriptor(request: Parameters<NonNullable<ReturnType<typeof createWidgetInputActionDepsV1>['readWidgetInputDescriptor']>>[0]): ReturnType<NonNullable<ReturnType<typeof createWidgetInputActionDepsV1>['readWidgetInputDescriptor']>>;
   }> {
@@ -4594,7 +4595,8 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     },
     // A genuine present-user native invocation has one installed Action policy
     // and approval owner. Do not create a second local Ask before its relay.
-    executeNativeManagedAction: async (actionId: ManagedMachineActionIdV1, input: unknown, context?: ActionExecutorContext) => {
+    executeNativeManagedAction: async (actionId: ManagedMachineActionIdV1, input: unknown, context?: ActionExecutorContext,
+      retainedMachine?: ManagedMachineActionOutputV1<'machines.managed.get'>) => {
       if (!accountContext) return { ok: false as const, errorCode: 'not_authenticated', error: 'not_authenticated' };
       const resolvedContext = resolveContext(context, input, actionId);
       const preferenceFailure = resolveActionOriginationPreferenceFailureV1(actionId, resolvedContext);
@@ -4603,7 +4605,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         return { ok: false as const, errorCode: 'action_disabled', error: 'action_disabled' };
       }
       return await executeManagedMachineNativeAction({ account: accountContext, actionId, input,
-        context: resolvedContext, ...(context?.signal ? { signal: context.signal } : {}) });
+        context: resolvedContext, retainedMachine, ...(context?.signal ? { signal: context.signal } : {}) });
     },
     readWidgetInputDescriptor: async request => {
       const port = readWidgetActionSurfacePortV1(widgetInputDeps, request.ref.surface);
@@ -5051,15 +5053,40 @@ export function resolveDefaultActionInvocationServerId(actionId: ActionId, input
       ? getActiveServerAccountScope()?.serverId : undefined;
 }
 
-function resolveNativeManagedAction(actionId: ActionId, opts?: DefaultActionExecutorOptions): ManagedMachineActionIdV1 | null {
+async function resolveNativeManagedAction(actionId: ActionId, input: unknown, account: LazyActionAccountContext,
+  context?: ActionExecutorContext, opts?: DefaultActionExecutorOptions): Promise<Readonly<{ actionId: ManagedMachineActionIdV1;
+    retainedMachine?: ManagedMachineActionOutputV1<'machines.managed.get'> }> | ActionExecuteFailure | null> {
   // An admitted replay retains its existing strict approval custody. Ordinary
   // relay ingress cannot consume a local Artifact's bypass proof.
   if (opts?.admittedClientActionId) return null;
+  // Retained control runs where the resource's controller lives. The static
+  // Account placement also covers resources without a controller.
+  if (actionId === 'machines.managed.power.set' || actionId === 'machines.managed.inspect'
+    || actionId === 'machines.managed.bootstrap.retry' || actionId === 'machines.managed.delete') {
+    // Other surfaces retain their existing Account Action admission path.
+    if (context?.surface && context.surface !== 'ui' && context.surface !== 'voice') return null;
+    const parsed = ManagedMachineActionInputSchemasV1[actionId].safeParse(input);
+    if (!parsed.success) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+    if (parsed.data.homeId !== account.serverIdentityId) return { ok: false, errorCode: 'server_target_mismatch', error: 'server_target_mismatch' };
+    try {
+      const retainedMachine = await createManagedMachineActionClient({ request: account.request }).execute('machines.managed.get', {
+        homeId: parsed.data.homeId, managedId: parsed.data.managedId,
+      }, { signal: account.invocationSignal });
+      account.assertCurrent();
+      return retainedMachine.controller ? { actionId, retainedMachine } : null;
+    } catch (error) {
+      if (!(error instanceof ManagedMachineActionError)) throw error;
+      // The Account control owner admits power without requiring the public Manage read.
+      if (actionId === 'machines.managed.power.set' && error.code === 'permission_denied') return null;
+      return { ok: false, errorCode: error.code, error: error.code };
+    }
+  }
+  if (resolveActionExecutionPlacementForInput(getActionSpec(actionId), input) === 'account') return null;
   const parsed = ManagedMachineActionIdV1Schema.safeParse(actionId);
   return parsed.success && parsed.data !== 'machines.managed.list'
     && parsed.data !== 'machines.managed.get' && parsed.data !== 'machines.managed.cancel'
     && parsed.data !== 'machines.managed.setup.skip'
-    && parsed.data !== 'machines.managed.references.get' ? parsed.data : null;
+    && parsed.data !== 'machines.managed.references.get' ? { actionId: parsed.data } : null;
 }
 
 function executeManagedNativeActionWithApprovalObservation(params: Readonly<{
@@ -5139,8 +5166,9 @@ export function createDefaultActionExecutor(opts?: DefaultActionExecutorOptions)
     const serverId = resolveDefaultActionInvocationServerId(actionId, input, context);
     if (!serverId) return await (confirmInFlow ? ordinary().executeConfirmed : ordinary().execute)(actionId, input, actionContext);
     try {
-      const native = resolveNativeManagedAction(actionId, opts);
       const execute = (signal?: AbortSignal) => withDefaultActionExecuteContext(opts, { ...actionContext, signal, openRoute, archiveOperation, archiveInput: input, serverId }, async (executor, account) => {
+        const native = await resolveNativeManagedAction(actionId, input, account, actionContext, opts);
+        if (native && 'ok' in native) return native;
         const actionRequestId = native || confirmInFlow ? actionContext.actionRequestId ?? randomUUID() : actionContext.actionRequestId;
         const capturedContext = {
           ...actionContext,
@@ -5153,9 +5181,9 @@ export function createDefaultActionExecutor(opts?: DefaultActionExecutorOptions)
         account.assertCurrent();
         throwIfAborted(signal);
         if (!native) return await (confirmInFlow ? executor.executeConfirmed : executor.execute)(actionId, input, capturedContext);
-        return await executeManagedNativeActionWithApprovalObservation({ actionId: native,
+        return await executeManagedNativeActionWithApprovalObservation({ actionId: native.actionId,
           requestId: actionRequestId!, serverId, accountId: account.accountId,
-          execute: () => executor.executeNativeManagedAction(native, input, capturedContext) });
+          execute: () => executor.executeNativeManagedAction(native.actionId, input, capturedContext, native.retainedMachine) });
       }, actionId);
       return await execute(actionContext.signal);
     } catch (error) {
@@ -5201,19 +5229,26 @@ export function createDefaultActionExecutor(opts?: DefaultActionExecutorOptions)
         const executor = buildDefaultActionExecutor({ ...opts, archiveInvocation,
           ...(listContributedActionDefinitions ? { listContributedActionDefinitions } : {}),
           ...(openRoute ? { openRoute } : {}) }, { ...account, settings });
+        const native = await resolveNativeManagedAction(actionId, input, account, actionContext, opts);
+        if (native && 'ok' in native) {
+          finishSessionArchiveInvocation(archiveInvocation);
+          account.dispose();
+          return { kind: 'settled', result: native };
+        }
         const capturedContext = {
           ...actionContext,
           serverId,
+          ...(native ? { actionRequestId: actionContext.actionRequestId ?? randomUUID() } : {}),
           ...(account.serverIdentityId ? { serverIdentityId: account.serverIdentityId } : {}),
           runtimeAccountId: account.accountId,
         };
-        const native = resolveNativeManagedAction(actionId, opts);
         const preferenceFailure = resolveActionOriginationPreferenceFailureV1(actionId, {
           managedMachineCreationEnabled: settings.managedMachineCreationEnabled,
         });
         const prepared = native
           ? preferenceFailure ? { kind: 'settled' as const, result: preferenceFailure }
-            : { kind: 'ready' as const, invocation: { run: async () => await executor.executeNativeManagedAction(native, input, capturedContext) } }
+            : { kind: 'ready' as const, invocation: { run: async () =>
+              await executor.executeNativeManagedAction(native.actionId, input, capturedContext, native.retainedMachine) } }
           : await executor.prepare(actionId, input, capturedContext, options);
         account.assertCurrent();
         account.dispose();

@@ -53,11 +53,23 @@ async function installedPreview() {
     host: 'status-host', platform: 'linux', happyCliVersion: 'test', homeDir: '/home/status', happyHomeDir: '/home/status/.happier',
   }));
   const relay = await createInstalledMachineRpcRelay({ manager: f.rpcHandlerManager, machineId: f.machineId,
-    transportOwnerAccountId: 'requester', ui: { installation: f.installation }, methods: [actionId] });
+    transportOwnerAccountId: 'requester', ui: { installation: f.installation }, methods: [actionId, 'machines.agentIsolation.set'] });
   return { ...f, relay };
 }
 
 describe('installed Machine isolation preview admission', () => {
+  it('admits the fresh installed owner mutation and refuses Use and foreign requesters', async () => {
+    const f = await installedPreview();
+    const input = { serverId: f.homeServerIdentityId, machineId: f.machineId, enabled: true,
+      expectedPolicy: { enabled: false }, expectedMetadataVersion: 0, expectedPlanDigest: 'reviewed-plan' };
+    expect(await f.relay.invokeUi('machines.agentIsolation.set', input))
+      .toMatchObject({ kind: 'failed', code: 'unavailable' });
+    expect(await f.relay.invokeUi('machines.agentIsolation.set', input, { actorAccountId: 'member-use' }))
+      .toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
+    expect(await f.relay.invokeUi('machines.agentIsolation.set', input, { actorAccountId: 'foreign-account' }))
+      .toHaveProperty('errorCode');
+  });
+
   it('previews absent isolation through authenticated Home admission and refuses a foreign Home', async () => {
     const f = await installedPreview();
     const input = { serverId: f.homeServerIdentityId, machineId: f.machineId, enabled: true };

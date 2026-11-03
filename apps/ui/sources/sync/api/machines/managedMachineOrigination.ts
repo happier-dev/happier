@@ -21,6 +21,7 @@ type ManagedMachineNativeActionParams = Readonly<{
     actionId: ManagedMachineActionIdV1;
     input: unknown;
     context: ActionExecutorContext;
+    retainedMachine?: ManagedMachineActionOutputV1<'machines.managed.get'>;
     signal?: AbortSignal;
 }>;
 
@@ -96,7 +97,7 @@ async function executeManagedMachineNativeActionWithinLifetime(params: ManagedMa
     if (managedId) {
         let row: ManagedMachineActionOutputV1<'machines.managed.get'>;
         try {
-            row = await createManagedMachineActionClient({ request: account.request }).execute('machines.managed.get', {
+            row = params.retainedMachine ?? await createManagedMachineActionClient({ request: account.request }).execute('machines.managed.get', {
                 homeId, managedId,
             }, { signal: params.signal });
         } catch (error) {

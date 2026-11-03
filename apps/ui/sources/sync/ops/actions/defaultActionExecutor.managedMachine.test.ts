@@ -37,28 +37,39 @@ beforeAll(loadSyncSingletonForTests);
 afterEach(() => { resetRuntimeFetch(); invalidateAccountEncryptionModeCache(); actionOperationStore.reset(); vi.restoreAllMocks(); });
 
 describe('managed native UI Action frontdoor', () => {
-    it('settles Delete to its filed Ask when the retained daemon operation keeps the HTTP request open', async () => {
+    it.each(['execute', 'prepare'] as const)('keeps required Delete approval at the retained controller (%s)', async method => {
         const target = await upsertServerProfile({ serverUrl: 'https://native-delete-approval.test' });
         await setServerProfileIdentityForUrl(target.serverUrl, 'srv_native_delete');
         await resetPendingQueueState({ serverId: 'server-b', accountId: 'account-b' });
         const token = `e30.${encodeBase64(new TextEncoder().encode(JSON.stringify({ sub: 'account-a', tokenEpoch: 3,
             provenance: { v: 1, kind: 'account', authority: 'present_user' } })), 'base64url')}.signature`;
         vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token });
+        const artifacts = createArtifactStoreBoundary({ ownerAccountId: () => 'account-a', encryptionMode: 'plain' });
+        let retainedReads = 0;
         setRuntimeFetch(async (rawUrl, init) => {
             const url = new URL(String(rawUrl));
+            const artifact = artifacts.handle(url.pathname, init);
+            if (artifact) return artifact;
             if (url.pathname === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
-            if (url.pathname === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
-            if (url.pathname === '/v1/machines/managed/actions/get') return Response.json({
+            if (url.pathname === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {
+                actionsSettingsV1: { v: 1, actions: { 'machines.managed.delete': { approvalRequiredSurfaces: ['ui'] } } },
+            } }, version: 1 });
+            if (url.pathname === '/v1/machines/managed/actions/get') {
+                retainedReads++;
+                return Response.json({
                 id: 'managed-a', homeId: 'srv_native_delete', custodianAccountId: 'account-a',
                 controller: { machineId: 'controller-a', installationId: 'installation-a' },
                 launch: { provider: { pluginId: 'happier.machine.cua', localId: 'local-sandbox' }, schemaVersion: 1, name: 'Guest', choices: {} },
                 resource: { contributionRef: { pluginId: 'happier.machine.cua', localId: 'local-sandbox' }, schemaVersion: 1, value: {} },
                 desired: 'stop', desiredWhen: 'now', allocation: 'bound', creationState: 'active', intentRevision: 3,
                 retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
-            });
+                });
+            }
             if (url.pathname === '/v1/machines' || url.pathname === '/v1/machines/read-batch') return answerMachineRows(url, init, []);
             expect(url.pathname).toBe('/v1/actions/machines.managed.delete');
             const requestId = String((JSON.parse(String(init?.body)) as { requestId: string }).requestId);
+            if (method === 'prepare') return Response.json({ v: 1, requestId, actionId: 'machines.managed.delete',
+                execution: { ok: true, result: { kind: 'approval_request_created', artifactId: 'delete-ask', actionId: 'machines.managed.delete' } } });
             actionOperationStore.mergeSnapshots({ serverId: target.id, snapshots: [ActionOperationSnapshotV1Schema.parse({
                 version: 1, operationId: 'delete-operation', requestId, revision: 2,
                 actionId: 'machines.managed.delete', state: 'running', scope: { accountId: 'account-a', machineId: 'controller-a' },
@@ -68,13 +79,65 @@ describe('managed native UI Action frontdoor', () => {
             })] });
             return await new Promise<Response>(() => {});
         });
-        const execution = createDefaultActionExecutor().execute('machines.managed.delete', {
+        const executor = createDefaultActionExecutor();
+        const input = {
             homeId: 'srv_native_delete', managedId: 'managed-a', when: 'now', expectedRevision: 3,
             intent: 'delete', reviewedDependencies: true,
-        }, { serverId: target.id, expectedAccountId: 'account-a', surface: 'ui', authority: 'present_user' });
+        };
+        const context = { serverId: target.id, expectedAccountId: 'account-a', surface: 'ui' as const, authority: 'present_user' as const };
+        const execution = method === 'execute' ? executor.execute('machines.managed.delete', input, context)
+            : (async () => {
+                const prepared = await executor.prepare('machines.managed.delete', input, context);
+                return prepared.kind === 'ready' ? await prepared.invocation.run() : prepared.result;
+            })();
         expect(await Promise.race([execution, new Promise(resolve => setTimeout(() => resolve('still-pending'), 100))])).toEqual({
             ok: true, result: { kind: 'approval_request_created', artifactId: 'delete-ask', actionId: 'machines.managed.delete' },
         });
+        expect(artifacts.list()).toHaveLength(0);
+        expect(retainedReads).toBe(1);
+    });
+    it.each(['foreign', 'use', 'bypass', 'wrong-managed', 'wrong-home'] as const)('preserves Account approval and relay admission refusals (%s)', async relationship => {
+        const target = await upsertServerProfile({ serverUrl: `https://managed-delete-${relationship}.test` });
+        const homeId = `srv_managed_delete_${relationship}`;
+        await setServerProfileIdentityForUrl(target.serverUrl, homeId);
+        await resetPendingQueueState({ serverId: 'server-b', accountId: 'account-b' });
+        const token = `e30.${encodeBase64(new TextEncoder().encode(JSON.stringify({ sub: 'account-a', tokenEpoch: 3,
+            provenance: { v: 1, kind: 'account', authority: 'present_user' } })), 'base64url')}.signature`;
+        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token });
+        const artifacts = createArtifactStoreBoundary({ ownerAccountId: () => 'account-a', encryptionMode: 'plain' });
+        const nativeEffects: string[] = [];
+        setRuntimeFetch(async (rawUrl, init) => {
+            const url = new URL(String(rawUrl));
+            const artifact = artifacts.handle(url.pathname, init);
+            if (artifact) return artifact;
+            if (url.pathname === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+            if (url.pathname === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {
+                actionsSettingsV1: { v: 1, actions: { 'machines.managed.delete': { approvalRequiredSurfaces: ['ui'] } } },
+            } }, version: 1 });
+            if (url.pathname === '/v1/machines/managed/actions/get') {
+                // Home's Manage boundary refuses unrelated Accounts and Use-only members.
+                if (relationship === 'foreign' || relationship === 'use') return Response.json({ code: 'permission_denied' }, { status: 403 });
+                return Response.json({ id: relationship === 'wrong-managed' ? 'different-managed' : 'managed-a',
+                    homeId: relationship === 'wrong-home' ? 'different-home' : homeId, custodianAccountId: 'account-a',
+                    controller: { machineId: 'controller-a', installationId: 'installation-a' },
+                    launch: { provider: { pluginId: 'happier.machine.cua', localId: 'local-sandbox' }, schemaVersion: 1, name: 'Guest', choices: {} },
+                    resource: { contributionRef: { pluginId: 'happier.machine.cua', localId: 'local-sandbox' }, schemaVersion: 1, value: {} },
+                    desired: 'stop', desiredWhen: 'now', allocation: 'bound', creationState: 'active', intentRevision: 3,
+                    retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false });
+            }
+            if (url.pathname === '/v1/machines' || url.pathname === '/v1/machines/read-batch') return answerMachineRows(url, init, []);
+            nativeEffects.push(url.pathname);
+            return Response.json({ code: 'permission_denied' }, { status: 403 });
+        });
+        const executor = createDefaultActionExecutor();
+        const result = await executor.execute('machines.managed.delete', {
+            homeId, managedId: 'managed-a', when: 'now', expectedRevision: 3, intent: 'delete', reviewedDependencies: true,
+        }, { serverId: target.id, expectedAccountId: 'account-a', surface: 'ui', authority: 'present_user',
+            ...(relationship === 'bypass' ? { bypassApprovals: true } : {}) });
+        expect(result, JSON.stringify(result)).toMatchObject({ ok: false, errorCode: relationship === 'bypass' ? 'admission_unavailable'
+                : relationship === 'wrong-managed' || relationship === 'wrong-home' ? 'managed_response_invalid' : 'permission_denied' });
+        expect(artifacts.list()).toHaveLength(0);
+        expect(nativeEffects).toEqual([]);
     });
     it.each([
         ['ui', 'machines.provisioners.options'], ['voice', 'machines.provisioners.options'],
