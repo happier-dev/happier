@@ -11,7 +11,8 @@ import { SessionEffectiveAccessV1Schema } from '../access/sessionEffectiveAccess
 import { ConnectedServiceBindingsV2IngressSchema } from '../../connect/connectedServiceBindings.js';
 import { SessionModelSelectionV2Schema } from '../../providers/selection/v2.js';
 import { qualifiedPurposeKey, type QualifiedConnectedAccountPurposeBindingsV1, type QualifiedConnectedAccountPurposeTeamResourceSelectionV1 } from '../../connect/connectedAccountPurposeBindings.js';
-import { readDeclaredConnectedAccountPurposeV1, resolveConnectedAccountPurposeSelectedAccountV1 } from '../../connect/connectedAccountPurposeSelectionV1.js';
+import { readDeclaredConnectedAccountPurposeV1, resolveConnectedAccountPurposeSelectedAccountV1,
+  type ConnectedAccountNativePurposeDeclarationInputV1 } from '../../connect/connectedAccountPurposeSelectionV1.js';
 import { isQualifiedConnectedAccountProfileUsableV4 } from '../../connect/qualifiedConnectedAccountProjectionsV4.js';
 import type { TeamCredentialResourceCatalogEntryV1 } from '../../teams/credentials/resourceV1.js';
 import type { TeamResourceConnectedServiceSelectionV2 } from '../../connect/connectedServiceBindings.js';
@@ -85,8 +86,8 @@ export function readSessionPersonalCredentialReadiness(input: Parameters<typeof 
 export function readSessionOperationCredentialReadinessV1(input: Omit<Parameters<typeof resolveConnectedAccountPurposeSelectedAccountV1>[0], 'serviceRefs' | 'bindings'> & Readonly<{
   bindings: QualifiedConnectedAccountPurposeBindingsV1;
   teamSelection?: QualifiedConnectedAccountPurposeTeamResourceSelectionV1;
-  projection: Parameters<typeof readDeclaredConnectedAccountPurposeV1>[0]['projection'];
-  machineProvisionersById: Parameters<typeof readDeclaredConnectedAccountPurposeV1>[0]['machineProvisionersById'];
+  projection: ConnectedAccountNativePurposeDeclarationInputV1['projection'];
+  machineProvisionersById: ConnectedAccountNativePurposeDeclarationInputV1['machineProvisionersById'];
   teamResource: TeamCredentialResourceCatalogEntryV1 | null;
   machineId: string;
   executionAccountId: string | null;

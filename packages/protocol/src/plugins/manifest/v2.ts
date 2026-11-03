@@ -8,7 +8,7 @@ export { PluginEnginesV2Schema, type PluginEnginesV2 } from './engines.js';
 import { PluginOptionalStringSchema } from '../_shared.js';
 import { CanonicalHttpOriginSchema } from '../../http/canonicalHttpOrigin.js';
 import { CanonicalPluginNetworkHostSuffixSchema } from '../networkHostSuffix.js';
-import { PluginContributesV2Schema } from '../contributions/v2.js';
+import { PluginContributesV2Schema, isDynamicPluginResourceContributionV2 } from '../contributions/v2.js';
 import { PluginDeclaredExecutableRefSchema } from '../contributions/agentAcpTransport.js';
 import { PluginContributionLocalIdSchema } from '../contributionIdentity.js';
 import { PluginIdSchema } from '../pluginId.js';
@@ -426,9 +426,28 @@ export function resolvePluginActionConnectedAccountUseRequestsV2(
 ): readonly PluginActionConnectedAccountUseRequestV2[] | null {
   const actions = manifest.contributes.actions.filter(action => action.id === actionId);
   if (actions.length !== 1) return null;
+  return resolveConnectedAccountUseRequests(manifest, { family: 'actions', localId: actionId }, actions[0]!.hostAccess);
+}
+
+/** Dynamic Resources consume the same declared HostAccess requests as Actions. */
+export function resolvePluginResourceConnectedAccountUseRequestsV2(
+  manifest: Pick<ParsedPluginManifestV2, 'id' | 'hostAccess' | 'contributes'>,
+  resourceId: string,
+): readonly PluginActionConnectedAccountUseRequestV2[] | null {
+  const resources = manifest.contributes.resources.filter(resource => resource.id === resourceId);
+  const resource = resources.length === 1 ? resources[0] : null;
+  return resource && isDynamicPluginResourceContributionV2(resource)
+    ? resolveConnectedAccountUseRequests(manifest, { family: 'resources', localId: resourceId }, resource.hostAccess) : null;
+}
+
+function resolveConnectedAccountUseRequests(
+  manifest: Pick<ParsedPluginManifestV2, 'id' | 'hostAccess'>,
+  contribution: Readonly<{ family: 'actions' | 'resources'; localId: string }>,
+  requestIds: readonly string[] | undefined,
+): readonly PluginActionConnectedAccountUseRequestV2[] | null {
   try {
     return Object.freeze(resolvePluginContributionHostAccessRequestsV2({ manifest, pluginId: manifest.id,
-      contribution: { family: 'actions', localId: actionId }, requestIds: actions[0]!.hostAccess,
+      contribution, requestIds,
     }).flatMap(entry => entry.request.capability === 'connectedAccounts' && entry.request.scope.operations.includes('use')
       ? [Object.freeze({ request: entry.request, required: entry.required })] : []));
   } catch { return null; }
