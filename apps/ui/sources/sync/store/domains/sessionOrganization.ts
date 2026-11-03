@@ -73,6 +73,8 @@ export type SessionOrganizationConfirmableMapName =
 export type SessionOrganizationDomain = {
     sessionOrganizationSchemaVersionByServerId: Record<string, number>;
     sessionOrganizationSnapshotVersionByServerId: Record<string, number>;
+    /** Admitted full-assignment coverage, reset with the owning Account. Not persisted. */
+    sessionOrganizationFolderAssignmentsCompleteByServerId: Record<string, boolean>;
     sessionOrganizationPinsBySessionKey: Record<string, SessionOrganizationPin>;
     sessionOrganizationAttentionStandingsBySessionKey: Record<string, SessionAttentionStanding>;
     sessionOrganizationFoldersByFolderKey: Record<string, UiSessionOrganizationFolder>;
@@ -698,6 +700,7 @@ export function createSessionOrganizationDomain<S extends SessionOrganizationDom
 
     return {
         sessionOrganizationSnapshotVersionByServerId: {},
+        sessionOrganizationFolderAssignmentsCompleteByServerId: {},
         sessionOrganizationSchemaVersionByServerId: {},
         sessionOrganizationPinsBySessionKey: {},
         sessionOrganizationAttentionStandingsBySessionKey: {},
@@ -786,8 +789,12 @@ export function createSessionOrganizationDomain<S extends SessionOrganizationDom
                 );
                 const schemaVersions = setRecordValue(state.sessionOrganizationSchemaVersionByServerId, serverId, uiSnapshot.schemaVersion);
                 const snapshotVersions = setRecordValue(state.sessionOrganizationSnapshotVersionByServerId, serverId, uiSnapshot.version);
+                const assignmentCoverage = options?.includeAllFolderAssignments === true
+                    ? setRecordValue(state.sessionOrganizationFolderAssignmentsCompleteByServerId, serverId, true)
+                    : state.sessionOrganizationFolderAssignmentsCompleteByServerId;
                 if (schemaVersions === state.sessionOrganizationSchemaVersionByServerId
                     && snapshotVersions === state.sessionOrganizationSnapshotVersionByServerId
+                    && assignmentCoverage === state.sessionOrganizationFolderAssignmentsCompleteByServerId
                     && pins === state.sessionOrganizationPinsBySessionKey
                     && attentionStandings === state.sessionOrganizationAttentionStandingsBySessionKey
                     && folders === state.sessionOrganizationFoldersByFolderKey
@@ -799,6 +806,7 @@ export function createSessionOrganizationDomain<S extends SessionOrganizationDom
                 return {
                     sessionOrganizationSchemaVersionByServerId: schemaVersions,
                     sessionOrganizationSnapshotVersionByServerId: snapshotVersions,
+                    sessionOrganizationFolderAssignmentsCompleteByServerId: assignmentCoverage,
                     sessionOrganizationPinsBySessionKey: pins,
                     sessionOrganizationAttentionStandingsBySessionKey: attentionStandings,
                     sessionOrganizationFoldersByFolderKey: folders,
@@ -1113,6 +1121,7 @@ export function createSessionOrganizationDomain<S extends SessionOrganizationDom
                 );
                 const update = {
                     sessionOrganizationSnapshotVersionByServerId: removeRecordKeys(state.sessionOrganizationSnapshotVersionByServerId, [serverId]),
+                    sessionOrganizationFolderAssignmentsCompleteByServerId: removeRecordKeys(state.sessionOrganizationFolderAssignmentsCompleteByServerId, [serverId]),
                     sessionOrganizationSchemaVersionByServerId: removeRecordKeys(state.sessionOrganizationSchemaVersionByServerId, [serverId]),
                     sessionOrganizationPinsBySessionKey: removeSessionRecordEntries(
                         state.sessionOrganizationPinsBySessionKey,

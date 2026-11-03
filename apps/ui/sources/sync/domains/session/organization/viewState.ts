@@ -29,6 +29,7 @@ import type {
 import { sessionFolderAddressKey } from '../folders/assignmentKeys';
 import { normalizeSessionFolderWorkspaceRef } from '../folders/workspaceRefs';
 import { buildSessionOrganizationTagLabelById } from './tagLabels';
+import { projectSessionOrganizationSections, projectSessionSectionMembership, type SessionSection } from './sections';
 
 type HumanDisplayState =
     | Readonly<{ status: 'available'; value: string }>
@@ -50,6 +51,9 @@ export type SessionOrganizationOrderItemAddress =
     | Readonly<{ itemKind: 'folder'; serverId: string; folderId: string }>;
 
 export type SessionOrganizationListViewState = Readonly<{
+    sections: readonly SessionSection[];
+    sectionMemberSessionKeysBySectionKey: Readonly<Record<string, readonly string[]>>;
+    sectionMembershipCompleteByServerId: Readonly<Record<string, boolean>>;
     pinnedSessionKeysV1: readonly string[];
     sessionFoldersV1: SessionFolderList;
     sessionFolderAssignmentsBySessionKey: Record<string, string | null>;
@@ -480,6 +484,9 @@ export function buildSessionOrganizationListViewState(params: Readonly<{
     const projection = params.projection;
     if (!serverId || !projection) {
         return {
+            sections: [],
+            sectionMemberSessionKeysBySectionKey: {},
+            sectionMembershipCompleteByServerId: {},
             pinnedSessionKeysV1: [],
             sessionFoldersV1: { v: 1, folders: [] },
             sessionFolderAssignmentsBySessionKey: {},
@@ -550,6 +557,7 @@ export function buildSessionOrganizationListViewState(params: Readonly<{
         ]),
     );
 
+    const sections = projectSessionOrganizationSections(serverId, projection);
     const folderDisplayStatesByFolderKey: Record<string, HumanDisplayState> = {};
     const folders = Object.values(projection.foldersById)
         .filter((folder) => folder.archivedAt == null)
@@ -620,6 +628,9 @@ export function buildSessionOrganizationListViewState(params: Readonly<{
     }
 
     return {
+        sections,
+        sectionMemberSessionKeysBySectionKey: projectSessionSectionMembership(serverId, projection),
+        sectionMembershipCompleteByServerId: { [serverId]: projection.folderAssignmentsComplete === true },
         pinnedSessionKeysV1,
         sessionFoldersV1: { v: 1, folders },
         sessionFolderAssignmentsBySessionKey,
@@ -664,6 +675,9 @@ export function buildSessionOrganizationListViewStateForServers(params: Readonly
     };
 
     return {
+        sections: states.flatMap(state => state.sections),
+        sectionMemberSessionKeysBySectionKey: Object.assign({}, ...states.map(state => state.sectionMemberSessionKeysBySectionKey)),
+        sectionMembershipCompleteByServerId: Object.assign({}, ...states.map(state => state.sectionMembershipCompleteByServerId)),
         pinnedSessionKeysV1: states.flatMap((state) => state.pinnedSessionKeysV1),
         sessionFoldersV1: {
             v: 1,

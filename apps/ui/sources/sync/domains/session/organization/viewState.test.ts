@@ -52,6 +52,43 @@ function projectOrganizationPins(
 }
 
 describe('buildSessionOrganizationListViewState', () => {
+    it('projects Account sections with private icons and preserves unloaded assignment membership', () => {
+        const projection = projectOrganizationPins('home-a');
+        const state = buildSessionOrganizationListViewState({
+            serverId: 'home-a',
+            projection: {
+                ...projection,
+                folderAssignmentsComplete: true,
+                foldersById: {
+                    launch: {
+                        folderId: 'launch', folderKey: 'launch', parentFolderId: null, parentFolderKey: null,
+                        sortKey: '0002', display: { t: 'plain', v: { name: 'Launch', icon: 'rocket-outline' } },
+                        displayState: { status: 'available', value: { name: 'Launch', icon: 'rocket-outline' } },
+                        archivedAt: null, createdAt: 1, updatedAt: 1,
+                    },
+                    locked: {
+                        folderId: 'locked', folderKey: 'locked', parentFolderId: null, parentFolderKey: null,
+                        sortKey: '0001', display: { t: 'encrypted', c: 'sealed' },
+                        displayState: { status: 'locked', reason: 'account_key_unavailable' },
+                        archivedAt: null, createdAt: 1, updatedAt: 1,
+                    },
+                },
+                folderAssignmentsBySessionId: { 'off-window': 'launch', 'filed-child-under-lead': 'launch' },
+            },
+        });
+        expect(state.sections).toEqual([
+            { address: { serverId: 'home-a', sectionId: 'locked' }, sortKey: '0001',
+                display: { status: 'locked', reason: 'account_key_unavailable' } },
+            { address: { serverId: 'home-a', sectionId: 'launch' }, sortKey: '0002',
+                display: { status: 'available', value: { name: 'Launch', icon: 'rocket-outline' } } },
+        ]);
+        expect(state.sectionMemberSessionKeysBySectionKey['["home-a","launch"]']).toEqual([
+            sessionAddressKey({ serverId: 'home-a', sessionId: 'off-window' }),
+            sessionAddressKey({ serverId: 'home-a', sessionId: 'filed-child-under-lead' }),
+        ]);
+        expect(state.sectionMemberSessionKeysBySectionKey['["home-a","locked"]']).toEqual([]);
+        expect(state.sectionMembershipCompleteByServerId).toEqual({ 'home-a': true });
+    });
     it('composes exact per-Home organization state without allowing the active Home to overwrite another Home', () => {
         const makeProjection = (serverId: string, label: string, pinned: boolean): SessionOrganizationProjection => ({
             ...projectOrganizationPins(serverId, pinned

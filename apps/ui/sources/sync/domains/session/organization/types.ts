@@ -57,6 +57,7 @@ export type UiSessionOrganizationSnapshot = Omit<
 export type NormalizedSessionOrganizationState = Readonly<{
     schemaVersionByServerId: Readonly<Record<string, number>>;
     snapshotVersionByServerId: Readonly<Record<string, number>>;
+    folderAssignmentsCompleteByServerId?: Readonly<Record<string, boolean>>;
     pinsBySessionKey: Readonly<Record<string, SessionOrganizationPin>>;
     foldersByFolderKey: Readonly<Record<string, UiSessionOrganizationFolder>>;
     folderAssignmentsBySessionKey: Readonly<Record<string, SessionOrganizationFolderAssignmentEntry>>;
@@ -83,6 +84,8 @@ export type SessionOrganizationSnapshotApplyOptions = Partial<Pick<
 export type SessionOrganizationProjection = Readonly<{
     schemaVersion: number | null;
     version: number | null;
+    /** False/absent is unknown coverage, not evidence of zero members. */
+    folderAssignmentsComplete?: boolean;
     /** One personal order shared by list and rail membership, including retained demoted choices. */
     orderedPinSessionIds: readonly string[];
     pinnedSessionIds: readonly string[];

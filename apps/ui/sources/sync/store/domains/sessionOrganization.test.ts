@@ -34,6 +34,18 @@ function emptySnapshot(input: Partial<SessionOrganizationSnapshot> = {}): Sessio
 }
 
 describe('createSessionOrganizationDomain', () => {
+    it('proves zero section membership only after a complete assignment snapshot and retains that evidence through scoped updates', () => {
+        const harness = createHarness();
+        harness.get().applySessionOrganizationSnapshot('srv-a', emptySnapshot(), { assignmentSessionIds: ['one'] });
+        expect(harness.get().sessionOrganizationFolderAssignmentsCompleteByServerId?.['srv-a']).not.toBe(true);
+        harness.get().applySessionOrganizationSnapshot('srv-a', emptySnapshot({ version: 2 }), { includeAllFolderAssignments: true });
+        expect(harness.get().sessionOrganizationFolderAssignmentsCompleteByServerId?.['srv-a']).toBe(true);
+        harness.get().applySessionOrganizationSnapshot('srv-a', emptySnapshot({ version: 3 }), { assignmentSessionIds: ['one'] });
+        harness.get().applySessionFolderAssignments('srv-a', [{ sessionId: 'one', folderId: 'section' }]);
+        expect(harness.get().sessionOrganizationFolderAssignmentsCompleteByServerId?.['srv-a']).toBe(true);
+        harness.get().clearSessionOrganizationForServer('srv-a');
+        expect(harness.get().sessionOrganizationFolderAssignmentsCompleteByServerId?.['srv-a']).not.toBe(true);
+    });
     it('keeps repeated clear and legacy assignment writes quiet', () => {
         const harness = createHarness();
         const initial = harness.get();

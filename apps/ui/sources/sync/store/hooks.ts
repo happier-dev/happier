@@ -1264,6 +1264,7 @@ export function readSessionOrganizationProjectionCached(
   for (const input of [
     state.sessionOrganizationSchemaVersionByServerId,
     state.sessionOrganizationSnapshotVersionByServerId,
+    state.sessionOrganizationFolderAssignmentsCompleteByServerId,
     state.sessionOrganizationPinsBySessionKey,
     state.sessionOrganizationFoldersByFolderKey,
     state.sessionOrganizationFolderAssignmentsBySessionKey,
@@ -1286,6 +1287,7 @@ export function readSessionOrganizationProjectionCached(
   const value = buildSessionOrganizationProjection({
     schemaVersionByServerId: state.sessionOrganizationSchemaVersionByServerId,
     snapshotVersionByServerId: state.sessionOrganizationSnapshotVersionByServerId,
+    folderAssignmentsCompleteByServerId: state.sessionOrganizationFolderAssignmentsCompleteByServerId,
     pinsBySessionKey: state.sessionOrganizationPinsBySessionKey,
     foldersByFolderKey: state.sessionOrganizationFoldersByFolderKey,
     folderAssignmentsBySessionKey: state.sessionOrganizationFolderAssignmentsBySessionKey,

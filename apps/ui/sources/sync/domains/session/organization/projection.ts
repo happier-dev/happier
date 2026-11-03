@@ -105,6 +105,7 @@ export function buildSessionOrganizationProjection(
     return {
         schemaVersion: state.schemaVersionByServerId[serverId] ?? null,
         version: state.snapshotVersionByServerId[serverId] ?? null,
+        folderAssignmentsComplete: state.folderAssignmentsCompleteByServerId?.[serverId] === true,
         orderedPinSessionIds,
         pinnedSessionIds: orderedPinSessionIds.filter(sessionId => pinsBySessionId[sessionId]?.listPinned === true),
         railPinnedSessionIds: orderedPinSessionIds.filter(sessionId => pinsBySessionId[sessionId]?.railPinned === true),
