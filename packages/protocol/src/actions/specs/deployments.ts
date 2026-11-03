@@ -1,5 +1,6 @@
 import type { ActionSpecProjectionMetadata, PreNormalizedActionSpec } from './definition.js';
 import { DeploymentActionInputSchemasV1, DeploymentActionOutputSchemasV1, type DeploymentActionIdV1 } from '../../deployments/deploymentActionsV1.js';
+import { readRecord } from '../../inputs/inputRecords.js';
 
 type DeploymentActionSpec<TId extends DeploymentActionIdV1> = ActionSpecProjectionMetadata & Readonly<{
   id: TId;
@@ -28,6 +29,14 @@ function deploymentSpec<TId extends DeploymentActionIdV1>(id: TId, title: string
     cli: { acceptsServerId: true, commands: [{ path: id.split('.'), visibility: 'canonical' }] },
     ...(path === undefined ? {} : { serverTransport: { method: read ? 'GET' : id === 'deployments.environments.update' ? 'PATCH' : 'POST', path, preservePathFieldsInBody: true } }),
     inputSchema: DeploymentActionInputSchemasV1[id], outputSchema: DeploymentActionOutputSchemasV1[id],
+    // A restore is approved by its consequence; every id only correlates the request with the Environment, the
+    // capture receipt and the prepared operation, so they read under Technical details. The Machine stays named.
+    ...(id === 'deployments.backups.restore' ? { approvalPresentation: {
+      summary: (input: unknown) => readRecord(input).mode === 'confirm'
+        ? 'Replace this Environment\'s data with the checked backup. The running code stays as it is.'
+        : 'Check the backup and take a safety backup first. Nothing is replaced yet.',
+      technicalInputPaths: ['mode', 'serverId', 'environmentId', 'installationId', 'targetLinkId', 'deploymentId',
+        'restoreBackupId', 'expectedRevision', 'prepareOperationId'] } } : {}),
     inputHints: id === 'deployments.backups.restore' ? { fields: [
       { path: 'mode', title: 'Prepare or confirm restore', widget: 'text', required: true },
       { path: 'serverId', title: 'Home', widget: 'text', required: true },
