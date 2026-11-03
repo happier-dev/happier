@@ -2,7 +2,7 @@ import { listSecretReferenceOverlayV1BindingNames, readSecretReferenceOverlayV1R
 import type { SecretReferenceOverlayV1 } from '@happier-dev/protocol/profiles/secretReferenceOverlayV1';
 import { parseSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import type { EnvVarRequirement } from '@happier-dev/protocol/profiles/backendProfileSchema';
-import { createSavedSecretMaterializerV1, savedSecretOperationAdmissionReason, type SavedSecretCatalogResourceInputV1, type SavedSecretOperationAdmissionFailureReason } from './savedSecretCatalog';
+import { createSavedSecretMaterializerV1, savedSecretOperationAdmissionReason, type SavedSecretCatalogResourceInputV1, type SavedSecretMaterializerV1, type SavedSecretOperationAdmissionFailureReason } from './savedSecretCatalog';
 
 export type LaunchSecretReferenceOverlayFailureReasonV1 = 'undeclared_requirement' | SavedSecretOperationAdmissionFailureReason;
 
@@ -32,6 +32,7 @@ export function materializeSavedSecretReferenceBinding(params: Readonly<{
   binding: Readonly<{ ref: string; revision?: number }>;
   materializer: ReturnType<typeof createSavedSecretMaterializerV1>;
   exactReference: boolean;
+  required?: boolean;
 }>): string | null {
   if (params.exactReference && params.binding.revision === undefined
     && parseSavedSecretRefV1(params.binding.ref).kind === 'shared_resource') {
@@ -43,7 +44,7 @@ export function materializeSavedSecretReferenceBinding(params: Readonly<{
   }
   const resolved = params.materializer.resolve(params.binding.ref);
   if (resolved.status === 'ready' && resolved.value.length > 0) return resolved.value;
-  if (params.exactReference) {
+  if (params.exactReference || params.required) {
     throw new LaunchSecretReferenceOverlayError(
       resolved.status === 'ready' ? 'reference_missing' : savedSecretOperationAdmissionReason(resolved.status),
       params.requirementName,
@@ -56,12 +57,13 @@ export type SecretReferenceOverlayEnvironmentInput = Readonly<{
   accountSettings: Readonly<Record<string, unknown>>;
   settingsSecretsReadKeys: readonly Uint8Array[];
   savedSecretResources?: readonly SavedSecretCatalogResourceInputV1[];
+  savedSecretMaterializer?: SavedSecretMaterializerV1;
   secretReferenceOverlay: SecretReferenceOverlayV1;
 }>;
 
 /** Generic value-free one-launch binding owner; it imports no Profile/network reader. */
 export function resolveSecretReferenceOverlayEnvironment(params: SecretReferenceOverlayEnvironmentInput): Readonly<Record<string, string>> {
-  const materializer = createSavedSecretMaterializerV1({
+  const materializer = params.savedSecretMaterializer ?? createSavedSecretMaterializerV1({
     accountSettings: params.accountSettings,
     settingsSecretsReadKeys: params.settingsSecretsReadKeys,
     ...(params.savedSecretResources ? { resources: params.savedSecretResources } : {}),

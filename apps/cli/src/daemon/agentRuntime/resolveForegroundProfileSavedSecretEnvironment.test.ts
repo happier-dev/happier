@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { AIBackendProfileSchema, sealSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol';
+import { createSavedSecretMaterializerV1 } from '@/settings/secrets/savedSecretCatalog';
 
 import {
   ForegroundProfileSecretRecoveryRequiredError,
@@ -14,6 +15,19 @@ const profile = AIBackendProfileSchema.parse({
 });
 
 describe('resolveForegroundProfileSavedSecretEnvironment', () => {
+  it('consumes the admitted launch materializer for a selected profile binding', () => {
+    const secretId = 'happier:shared-secret:v1:admitted-profile';
+    const materializer = createSavedSecretMaterializerV1({ accountSettings: {}, settingsSecretsReadKeys: [], resources: [{
+      resourceId: 'admitted-profile', ownerAccountId: 'owner', displayName: 'Profile', kind: 'apiKey',
+      encryptionMode: 'plain', revision: 1, materialStatus: 'ready',
+      storedContent: sealSavedSecretResourceStoredContentV1({ resourceId: 'admitted-profile', mode: 'plain',
+        content: { v: 1, name: 'Profile', kind: 'apiKey', value: 'admitted-key' } }),
+    }] });
+    expect(resolveForegroundProfileSavedSecretEnvironment({
+      profile: { ...profile, secretBindings: { ANTHROPIC_API_KEY: secretId } }, accountSettings: {},
+      settingsSecretsReadKeys: [], foregroundSatisfiedSecretRequirementNames: [], savedSecretMaterializer: materializer,
+    })).toEqual({ ANTHROPIC_API_KEY: 'admitted-key' });
+  });
   it('uses destination binding authority without restoring retained Settings bindings', () => {
     const admittedProfile = { ...profile, profileRecordRevision: 4,
       secretBindings: { ANTHROPIC_API_KEY: 'happier:shared-secret:v1:current' } };

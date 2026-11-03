@@ -6,7 +6,7 @@ import {
   type SavedSecretCatalogResourceV1,
 } from '@happier-dev/protocol';
 
-import type { SavedSecretCatalogResourceInputV1 } from '@/settings/secrets/savedSecretCatalog';
+import { createSavedSecretMaterializerV1, type SavedSecretCatalogResourceInputV1 } from '@/settings/secrets/savedSecretCatalog';
 
 import type { ResolvedConfiguredAcpBackend } from './resolveBackend';
 import { materializeConfiguredAcpEnvironment } from './materializeEnvironment';
@@ -43,6 +43,20 @@ function savedSecret(encryptedValue: SavedSecret['encryptedValue']): SavedSecret
 }
 
 describe('materializeConfiguredAcpEnvironment', () => {
+  it('uses admitted material for a template without rebuilding a catalog', () => {
+    const secretId = formatSharedSavedSecretRefV1('admitted-acp');
+    const materializer = createSavedSecretMaterializerV1({ accountSettings: {}, settingsSecretsReadKeys: [], resources: [{
+      resourceId: 'admitted-acp', ownerAccountId: 'owner', displayName: 'ACP', kind: 'token',
+      relationship: 'owner', capabilities: { use: true },
+      encryptionMode: 'plain', revision: 1, materialStatus: 'ready',
+      storedContent: sealSavedSecretResourceStoredContentV1({ resourceId: 'admitted-acp', mode: 'plain',
+        content: { v: 2, name: 'ACP', kind: 'token', source: { kind: 'external', contribution: { pluginId: 'acme.vault', localId: 'main' },
+          account: 'account', reference: 'op://vault/item/field' } } }),
+    }], externalAcquisitions: new Map([[secretId, { status: 'ready', value: 'admitted-token' }]]) });
+    expect(materializeConfiguredAcpEnvironment({ backend: { ...backend(secretId), env: {
+      ACP_TOKEN: { t: 'template', template: 'Bearer {token}', vars: { token: { t: 'savedSecret', secretId } } },
+    } }, accountSettings: {}, processEnv: {}, savedSecretMaterializer: materializer })).toEqual({ ACP_TOKEN: 'Bearer admitted-token' });
+  });
   it.each([
     ['secret-acp', 'repair_required'], ['happier:shared-secret:v1:resource_1', 'deleted'],
   ] as const)('keeps ACP template secret authority and typed failure for %s', (secretId, status) => {

@@ -1,10 +1,12 @@
 import { createHash } from 'node:crypto';
+import type { PluginSecretSourceAcquisitionV1 } from '@happier-dev/plugin-sdk';
 
 import { decryptSecretValueWithKeysV1 } from '@happier-dev/protocol/crypto/settingsSecretStringsV1';
 import { SecretStringV1Schema } from '@happier-dev/protocol/crypto/settingsSecretStringSchemasV1';
 import type { SavedSecretImportSourceV1 } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
 import { openSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
 import { formatSavedSecretCatalogFingerprintV1, parseSavedSecretCatalogReferenceV1, projectSavedSecretCatalogCollisionStateV1 } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
+import type { SavedSecretOperationAdmissionFailureReasonV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import type { SavedSecretCatalogResourceV1, SavedSecretResourceContentV1, SavedSecretResourceStoredContentV1, SecretStringV1 } from '@happier-dev/protocol';
 import {
   getActiveAccountSettingsSnapshot,
@@ -55,6 +57,7 @@ export type SavedSecretResolutionV1 =
         | 'deleted'
         | 'mode_incompatible'
         | 'corrupt';
+      sourceFailure?: Omit<Extract<PluginSecretSourceAcquisitionV1, { ok: false }>, 'ok'>;
     }>;
 
 export type SavedSecretResolutionFailureStatusV1 = Exclude<
@@ -62,14 +65,18 @@ export type SavedSecretResolutionFailureStatusV1 = Exclude<
   { status: 'ready' }
 >['status'];
 
+/** Material captured only for the selected references in one admitted operation. */
+export type SavedSecretExternalAcquisitionV1 =
+  | Readonly<{ status: 'ready'; value: string }>
+  | Exclude<SavedSecretResolutionV1, { status: 'ready' }>;
+export type SavedSecretExternalAcquisitionsV1 = ReadonlyMap<string, SavedSecretExternalAcquisitionV1>;
+
 export type SavedSecretContentResolutionV1 =
   | Readonly<{ status: 'ready'; content: SavedSecretResourceContentV1; fingerprint: string; source: 'personal' | 'shared_resource' }>
   | Exclude<SavedSecretResolutionV1, { status: 'ready' }>;
 
-export type SavedSecretOperationAdmissionFailureReason =
-  | 'reference_missing' | 'reference_unavailable' | 'reference_forbidden'
-  | 'reference_deleted' | 'reference_mode_incompatible' | 'reference_repair_required'
-  | 'reference_corrupt' | 'reference_stale' | 'reference_collision_migration_required';
+/** The wire vocabulary is Protocol-owned so Provider refusals can carry it unchanged. */
+export type SavedSecretOperationAdmissionFailureReason = SavedSecretOperationAdmissionFailureReasonV1;
 
 /** One status/reason vocabulary for hydration and exact launch materialization. */
 export function savedSecretOperationAdmissionReason(status: SavedSecretResolutionFailureStatusV1): SavedSecretOperationAdmissionFailureReason {
@@ -204,6 +211,8 @@ export function createSavedSecretMaterializerV1(input: Readonly<{
   resourceCatalogState?: SavedSecretCatalogState;
   /** Captured invocation publication; async grant checks happen at its effect owner. */
   isCurrent?: () => boolean;
+  /** Host-private, already authenticated installation contents for this exact admitted catalog. */
+  openedInstallationContents?: ReadonlyMap<string, SavedSecretResourceContentV1>;
   externalAcquisitions?: SavedSecretExternalAcquisitionsV1;
 }>): SavedSecretMaterializerV1 {
   const personal = readPersonalSecrets(input.accountSettings);
@@ -263,6 +272,7 @@ export function createSavedSecretMaterializerV1(input: Readonly<{
         ? { status: 'forbidden' }
         : { status: 'temporarily_unavailable' };
     }
+    if (resource.capabilities?.use === false) return { status: 'forbidden' };
     if (resource.materialStatus !== 'ready') {
       switch (resource.materialStatus) {
         case 'preparing_encrypted_access':
@@ -278,10 +288,11 @@ export function createSavedSecretMaterializerV1(input: Readonly<{
           return { status: 'repair_required' };
       }
     }
-    if (resource.encryptionMode === 'e2ee' && !resource.resourceDataKey) {
+    const installedContent = input.isCurrent ? input.openedInstallationContents?.get(resource.resourceId) : undefined;
+    if (!installedContent && resource.encryptionMode === 'e2ee' && !resource.resourceDataKey) {
       return { status: 'temporarily_unavailable' };
     }
-    if (!resource.storedContent) return { status: 'corrupt' };
+    if (!installedContent && !resource.storedContent) return { status: 'corrupt' };
     return {
       status: 'ready',
       fingerprint: `saved-secret-record:v1:${digest({
@@ -317,21 +328,22 @@ export function createSavedSecretMaterializerV1(input: Readonly<{
     if (parsed.kind !== 'shared_resource') return { status: 'missing' };
     const resource = resources.get(parsed.id);
     if (!resource) return { status: 'missing' };
-    if (!resource.storedContent) return { status: 'corrupt' };
-    const content = resource.encryptionMode === 'plain'
+    const installedContent = input.isCurrent ? input.openedInstallationContents?.get(resource.resourceId) : undefined;
+    if (!installedContent && !resource.storedContent) return { status: 'corrupt' };
+    const content = installedContent ?? (resource.encryptionMode === 'plain'
       ? openSavedSecretResourceStoredContentV1({
         resourceId: resource.resourceId,
         mode: 'plain',
-        storedContent: resource.storedContent,
+        storedContent: resource.storedContent!,
       })
       : resource.resourceDataKey
         ? openSavedSecretResourceStoredContentV1({
           resourceId: resource.resourceId,
           mode: 'e2ee',
-          storedContent: resource.storedContent,
+          storedContent: resource.storedContent!,
           resourceDataKey: resource.resourceDataKey,
         })
-        : null;
+        : null);
     if (!content) return { status: 'corrupt' };
     // The Home projects display metadata separately so an encrypted resource
     // remains identifiable while access is preparing. Once opened, the
@@ -401,7 +413,8 @@ export function createSavedSecretMaterializerV1(input: Readonly<{
 
 export function createSavedSecretMaterializerFromSnapshotV1(
   snapshot: ActiveAccountSettingsSnapshot,
-  input?: Readonly<{ isCurrent?: () => boolean; externalAcquisitions?: SavedSecretExternalAcquisitionsV1 }>,
+  input?: Readonly<{ isCurrent?: () => boolean; externalAcquisitions?: SavedSecretExternalAcquisitionsV1;
+    openedInstallationContents?: ReadonlyMap<string, SavedSecretResourceContentV1> }>,
 ): SavedSecretMaterializerV1 {
   return createSavedSecretMaterializerV1({
     accountSettings: snapshot.settings,
@@ -410,6 +423,7 @@ export function createSavedSecretMaterializerFromSnapshotV1(
     resourceCatalogState: snapshot.savedSecretCatalogState,
     ...(input?.isCurrent ? { isCurrent: input.isCurrent } : {}),
     ...(input?.externalAcquisitions ? { externalAcquisitions: input.externalAcquisitions } : {}),
+    ...(input?.openedInstallationContents ? { openedInstallationContents: input.openedInstallationContents } : {}),
   });
 }
 
@@ -449,9 +463,3 @@ export function readSavedSecretRevisionsFromSnapshotV1(
   }
   return { status: 'ready', resourcesByRef };
 }
-
-export type SavedSecretExternalAcquisitionV1 =
-  | Readonly<{ status: 'ready'; value: string }>
-  | Exclude<SavedSecretResolutionV1, { status: 'ready' }>;
-
-export type SavedSecretExternalAcquisitionsV1 = ReadonlyMap<string, SavedSecretExternalAcquisitionV1>;

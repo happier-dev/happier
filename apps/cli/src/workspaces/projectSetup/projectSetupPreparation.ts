@@ -57,7 +57,8 @@ export type ProjectSetupPreparationInput = Readonly<{
     configEnvironment?: Readonly<Record<string, string>>;
     /** Host SCM catalog port; never a caller-provided repository or commit claim. */
     scmRegistry?: ScmBackendRegistry;
-    plugins?: Pick<ResolvedExecutablePluginRuntimeRegistry, 'resolveProjectNativeAdapter'>;
+    plugins?: Pick<ResolvedExecutablePluginRuntimeRegistry, 'resolveProjectNativeAdapter'>
+        & Partial<Pick<ResolvedExecutablePluginRuntimeRegistry, 'secretSources'>>;
     /** The containing accepted operation owns these invocations through actual settlement. */
     retainNativeInvocation?: (production: import('@/plugins/runtime/invocation/services/exec').ProjectNativeEffectCaptureForHost) => void;
     successHomeDir?: string;
@@ -293,7 +294,7 @@ export async function reviewProjectSetupEffect(input: ProjectSetupPreparationInp
         const bindings = overlay ? listSecretReferenceOverlayV1BindingNames(overlay).map(name => ({ name, ...readSecretReferenceOverlayV1Reference(overlay, name)! })) : [];
         const displayBindings: ProjectSetupReviewPresentation['bindings'][number][] = [];
         if (bindings.length > 0 && input.secretEnvironment) {
-            const materializer = createSavedSecretMaterializerV1({
+            const materializer = input.secretEnvironment.savedSecretMaterializer ?? createSavedSecretMaterializerV1({
                 accountSettings: input.secretEnvironment.accountSettings,
                 settingsSecretsReadKeys: input.secretEnvironment.settingsSecretsReadKeys,
                 resources: input.secretEnvironment.savedSecretResources,

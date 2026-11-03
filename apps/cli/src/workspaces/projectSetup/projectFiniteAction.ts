@@ -77,6 +77,9 @@ export type ProjectFiniteActionRuntime = ProjectRuntimeAccountAccess & Readonly<
     hostEnvironment?: ProcessEnvInput;
     successHomeDir?: string;
     secretEnvironment?: ProjectSetupPreparationInput['secretEnvironment'];
+    /** Private Account owner; invoked only when this Project effect selects Saved Secrets. */
+    resolveSecretEnvironment?: (bindings?: ProjectSetupPreparationInput['environmentBindings'], signal?: AbortSignal)
+        => Promise<ProjectSetupPreparationInput['secretEnvironment']>;
     configEnvironment?: ProjectSetupPreparationInput['configEnvironment'];
     plugins?: ProjectSetupPreparationInput['plugins'];
     /** Canonical projects.inspect on the exact accepted SOURCE, with requester Home authority. */
@@ -545,9 +548,10 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
             try { acceptedPrimaryBasis = await readPrimaryAdmissionBasis(); }
             catch (error) { preserveUnconfirmedNativeProcess(error); return failure(codeOf(error)); }
         }
+        let admittedSecretEnvironment: ReturnType<typeof resolveProjectRequesterSecretEnvironment> | undefined;
         const review = (sourceReview?: Awaited<ReturnType<typeof reviewSourcePlacement>>) => stage('project.command.review', async (): Promise<Review> => {
-            secretEnvironment = await stage('project.secret_environment.resolve', () => resolveProjectRequesterSecretEnvironment(runtime,
-                request.actionId === 'projects.compute.exec' ? request.input.environmentBindings : undefined, nativeExecutionSignal()));
+            secretEnvironment = await (admittedSecretEnvironment ??= stage('project.secret_environment.resolve', () => resolveProjectRequesterSecretEnvironment(runtime,
+                request.actionId === 'projects.compute.exec' ? request.input.environmentBindings : undefined, nativeExecutionSignal())));
             const prepared = await stage('project.setup.review', () => prepareProjectSetup(preparation()));
             await assertCurrent();
             if (prepared.kind === 'refused') return { kind: 'failed', result: failure(prepared.code) };

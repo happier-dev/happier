@@ -8,6 +8,7 @@ import {
   createSavedSecretMaterializerV1,
   SavedSecretResolutionError,
   type SavedSecretCatalogResourceInputV1,
+  type SavedSecretMaterializerV1,
 } from '@/settings/secrets/savedSecretCatalog';
 
 import type { ResolvedConfiguredAcpBackend } from './resolveBackend';
@@ -18,9 +19,10 @@ export function materializeConfiguredAcpEnvironment(params: Readonly<{
   credentials?: StoredCredentials;
   processEnv?: NodeJS.ProcessEnv;
   savedSecretResources?: readonly SavedSecretCatalogResourceInputV1[];
+  savedSecretMaterializer?: SavedSecretMaterializerV1;
 }>): Record<string, string> {
   const processEnv = params.processEnv ?? process.env;
-  const savedSecretMaterializer = createSavedSecretMaterializerV1({
+  const savedSecretMaterializer = params.savedSecretMaterializer ?? createSavedSecretMaterializerV1({
     accountSettings: params.accountSettings,
     settingsSecretsReadKeys: [],
     resources: params.savedSecretResources,

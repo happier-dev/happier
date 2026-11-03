@@ -18,11 +18,14 @@ import { replaceSavedSecretCatalogInSnapshot, withdrawSavedSecretCatalogInSnapsh
 import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
 
 import type { SavedSecretCatalogResourceInputV1, SavedSecretCatalogState, SavedSecretLegacyImportResultV1 } from './savedSecretCatalog';
+import type { TargetSecretSourcesV1 } from '@/plugins/runtime/lifecycle/contributions/targetSecretSources';
 
 /** Invocation-owned Account custody; it never publishes to the daemon Account. */
 export type SavedSecretOperationContextV1 = Readonly<{
   /** Existing authenticated Machine ingress, retained only in host-private invocation custody. */
   machineAdmission?: Readonly<Pick<NonNullable<RpcHandlerContext['machineAdmission']>, 'actorAccountId' | 'custodianAccountId'> & Partial<Pick<NonNullable<RpcHandlerContext['machineAdmission']>, 'role'>>>;
+  /** The executing runtime's already held contribution projection. */
+  secretSources?: TargetSecretSourcesV1;
   credentials: StoredCredentials;
   serverHttpBaseUrl: string;
   readSnapshot(): ActiveAccountSettingsSnapshot | null;
@@ -44,6 +47,7 @@ export type SavedSecretOperationContextV1 = Readonly<{
 
 export function createInvocationSavedSecretOperationContextV1(input: Readonly<{
   machineAdmission?: SavedSecretOperationContextV1['machineAdmission'];
+  secretSources?: TargetSecretSourcesV1;
   credentials: StoredCredentials;
   snapshot: ActiveAccountSettingsSnapshot;
   /** A long-lived Session refreshes source observations without replacing an in-flight reader. */
@@ -108,11 +112,17 @@ export function createInvocationSavedSecretOperationContextV1(input: Readonly<{
   const withdrawCatalog = () => {
     if (snapshot) snapshot = withdrawSavedSecretCatalogInSnapshot(snapshot);
   };
+  // A requester Session runner holds the daemon's admission in its private credential custody.
+  const requester = input.credentials.requesterSessionCredentialScope?.requesterSession;
+  const machineAdmission = input.machineAdmission ?? (requester?.machineAdmission
+    ? { actorAccountId: requester.attribution.accountId, ...requester.machineAdmission } : undefined);
   return Object.freeze({
-    ...(input.machineAdmission ? { machineAdmission: Object.freeze({
-      actorAccountId: input.machineAdmission.actorAccountId,
-      custodianAccountId: input.machineAdmission.custodianAccountId,
+    ...(machineAdmission ? { machineAdmission: Object.freeze({
+      actorAccountId: machineAdmission.actorAccountId,
+      custodianAccountId: machineAdmission.custodianAccountId,
+      ...(machineAdmission.role ? { role: machineAdmission.role } : {}),
     }) } : {}),
+    ...(input.secretSources ? { secretSources: input.secretSources } : {}),
     credentials: input.credentials,
     serverHttpBaseUrl: input.serverHttpBaseUrl,
     readSnapshot,

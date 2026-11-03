@@ -73,7 +73,7 @@ export async function prepareInactiveSessionControlLaunchScope(
       ? await (admission.readAccountLaunchProfiles?.() ?? readAccountLaunchProfiles(admission.readAccountSettingsSnapshot()?.settings, admission.credentials))
       : undefined;
     await assertCurrent();
-    const snapshot = admission.readAccountSettingsSnapshot();
+    let snapshot = admission.readAccountSettingsSnapshot();
     const profile = resolveSpawnLaunchProfileDefaults({ options, effectiveBackendTarget: backendTarget,
       rawSettings: readProfileSettingsFromAccountSnapshot(snapshot), profileCatalog: snapshot?.profileCatalog,
       artifactsById: profiles?.artifactsById, profilesSnapshot: profiles });
@@ -83,9 +83,11 @@ export async function prepareInactiveSessionControlLaunchScope(
     if (options.profileId) {
       const selected = profiles?.visibleProfiles.filter(candidate => candidate.id === options!.profileId);
       if (selected?.length !== 1 || !snapshot) unavailable();
-      const secrets = resolveLaunchProfileSavedSecretEnvironment({ profile: selected[0]!, accountSettings: snapshot.settings,
+      const secrets = await resolveLaunchProfileSavedSecretEnvironment({ profile: selected[0]!, accountSettings: snapshot.settings,
+        expectedScopeKey: snapshot.scopeKey ?? '', operationContext: admission.savedSecretOperationContext, signal,
         settingsSecretsReadKeys: snapshot.settingsSecretsReadKeys, savedSecretResources: snapshot.savedSecretResources,
         foregroundSatisfiedSecretRequirementNames: [], secretReferenceOverlay: options.secretReferenceOverlay });
+      snapshot = admission.readAccountSettingsSnapshot();
       redaction.add(Object.values(secrets));
       profileEnvironment = { ...profileEnvironment, ...secrets };
     }

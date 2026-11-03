@@ -36,6 +36,8 @@ export type HydratedSavedSecretCatalog = Readonly<{
 export type SavedSecretOperationReferenceV1 = Readonly<{
   ref: string;
   revision?: number;
+  /** Optional Profile defaults may be omitted after the same fresh authorization read. */
+  required?: boolean;
 }>;
 
 export class SavedSecretOperationAdmissionError extends Error {
@@ -50,6 +52,16 @@ export class SavedSecretOperationAdmissionError extends Error {
     this.name = 'SavedSecretOperationAdmissionError';
     this.reason = input.reason;
     this.reference = input.reference;
+  }
+}
+
+/** Native reads and writes share the Machine ingress' existing Manage authority. */
+export function assertSavedSecretNativeSourceAccessForOperation(
+  machine: SavedSecretOperationContextV1['machineAdmission'], reference = '',
+): void {
+  if (machine && machine.actorAccountId !== machine.custodianAccountId
+    && machine.role !== MACHINE_NATIVE_SECRET_SOURCE_ACCESS_POLICY_V1.sharedMachineAccess) {
+    throw new SavedSecretOperationAdmissionError({ reason: 'reference_forbidden', reference });
   }
 }
 
@@ -187,6 +199,11 @@ export type SavedSecretCatalogRefreshInputV1 = Readonly<{
   /** Resource imports need an authoritative absence/tombstone observation before create. */
   refreshCatalog?: boolean;
   operationContext?: SavedSecretOperationContextV1;
+  secretSources?: TargetSecretSourcesV1;
+  /** Existing host-private ingress proof when the caller already owns Account custody. */
+  machineAdmission?: SavedSecretOperationContextV1['machineAdmission'];
+  /** Native source bootstrap credentials must themselves be inline. */
+  sourceKind?: 'inline';
   /** Explicit editors pin their original source; unpinned demand loaders may rebase. */
   sourceExpectation?: Readonly<{ mode: 'plain' | 'e2ee'; raw: Readonly<Record<string, unknown>>; version: number }>;
 }>;
@@ -206,19 +223,17 @@ export function readRequestedSavedSecretOperationReferences(input: SavedSecretCa
   ]);
 }
 
-/** Read/admit only: composite dispatch and importer share this cut without recursively importing. */
-export async function readSavedSecretCatalogForOperation(input: SavedSecretCatalogRefreshInputV1): Promise<ActiveAccountSettingsSnapshot> {
-  const requestedReferences = readRequestedSavedSecretOperationReferences(input);
-  const context = input.operationContext;
-  if (context && !await context.isCurrent()) throw new Error('saved_secret_account_lifetime_changed');
-  const current = context ? context.readSnapshot() : getActiveAccountSettingsSnapshot();
-  if (!current || current.scopeKey !== input.expectedScopeKey) {
-    throw new Error('saved_secret_account_snapshot_unavailable');
-  }
+/** Host-only read outcome; no read is inferred from a shared-looking reference. */
+export type SavedSecretCatalogOperationAdmissionV1 = Readonly<{
+  snapshot: ActiveAccountSettingsSnapshot;
+  catalogRead: boolean;
+}>;
+
+function sharedOperationReferences(snapshot: ActiveAccountSettingsSnapshot, references: readonly SavedSecretOperationReferenceV1[]) {
   const collisionRefs = new Set(
-    resolveActiveSavedSecretCatalogCollisionState(current).collisions.map((collision) => collision.ref),
+    resolveActiveSavedSecretCatalogCollisionState(snapshot).collisions.map((collision) => collision.ref),
   );
-  for (const reference of requestedReferences) {
+  for (const reference of references) {
     if (reference.revision !== undefined && collisionRefs.has(reference.ref)) {
       throw new SavedSecretOperationAdmissionError({
         reason: 'reference_collision_migration_required',
@@ -226,13 +241,50 @@ export async function readSavedSecretCatalogForOperation(input: SavedSecretCatal
       });
     }
   }
-  const sharedReferences = requestedReferences.filter(
+  return references.filter(
     (reference) => !collisionRefs.has(reference.ref)
       && parseSavedSecretRefV1(reference.ref).kind === 'shared_resource',
   );
-  if (sharedReferences.length === 0 && input.refreshCatalog !== true) return current;
+}
+
+function assertSharedOperationReferencesReady(snapshot: ActiveAccountSettingsSnapshot,
+  references: readonly SavedSecretOperationReferenceV1[], isCurrent?: () => boolean): void {
+  const materializer = createSavedSecretMaterializerFromSnapshotV1(snapshot, isCurrent ? { isCurrent } : undefined);
+  for (const reference of references) {
+    if (resolveActiveSavedSecretCatalogCollisionState(snapshot).collisions.some(
+      (collision) => collision.ref === reference.ref,
+    )) {
+      throw new SavedSecretOperationAdmissionError({ reason: 'reference_collision_migration_required', reference: reference.ref });
+    }
+    if (reference.revision !== undefined && !materializer.matchesSharedResourceRevision(reference.ref, reference.revision)) {
+      throw new SavedSecretOperationAdmissionError({ reason: 'reference_stale', reference: reference.ref });
+    }
+    const resolved = materializer.resolveContent(reference.ref);
+    if (resolved.status !== 'ready' && reference.required !== false) {
+      throw new SavedSecretOperationAdmissionError({ reason: savedSecretOperationAdmissionReason(resolved.status), reference: reference.ref });
+    }
+  }
+}
+
+/** Validate newly selected references against this operation's already read catalog. */
+export function assertSavedSecretOperationReferencesReady(snapshot: ActiveAccountSettingsSnapshot,
+  references: readonly SavedSecretOperationReferenceV1[]): void {
+  assertSharedOperationReferencesReady(snapshot, sharedOperationReferences(snapshot, references));
+}
+
+/** Read/admit only: composite dispatch and importer share this cut without recursively importing. */
+export async function readSavedSecretCatalogAdmissionForOperation(input: SavedSecretCatalogRefreshInputV1): Promise<SavedSecretCatalogOperationAdmissionV1> {
+  input.signal?.throwIfAborted();
+  const requestedReferences = readRequestedSavedSecretOperationReferences(input);
+  const context = input.operationContext;
+  if (context && !await context.isCurrent(input.signal)) throw new Error('saved_secret_account_lifetime_changed');
+  const current = context ? context.readSnapshot() : getActiveAccountSettingsSnapshot();
+  if (!current || current.scopeKey !== input.expectedScopeKey) throw new Error('saved_secret_account_snapshot_unavailable');
+  const sharedReferences = sharedOperationReferences(current, requestedReferences);
+  if (sharedReferences.length === 0 && input.refreshCatalog !== true) return { snapshot: current, catalogRead: false };
 
   const credentials = context?.credentials ?? await readStoredCredentials().catch(() => null);
+  input.signal?.throwIfAborted();
   if (
     !credentials
     || resolveAccountSettingsScopeKeyForToken(credentials.token)
@@ -251,6 +303,7 @@ export async function readSavedSecretCatalogForOperation(input: SavedSecretCatal
     ...(input.signal ? { signal: input.signal } : {}),
     ...(context ? { operationContext: context } : {}),
   });
+  input.signal?.throwIfAborted();
   const refreshed = context ? context.readSnapshot() : getActiveAccountSettingsSnapshot();
   if (
     !refreshed
@@ -259,35 +312,80 @@ export async function readSavedSecretCatalogForOperation(input: SavedSecretCatal
   ) {
     throw new Error('saved_secret_catalog_refresh_unavailable');
   }
-  const materializer = createSavedSecretMaterializerFromSnapshotV1(refreshed,
-    context ? { isCurrent: () => context.readSnapshot() === refreshed } : undefined);
-  for (const reference of sharedReferences) {
-    if (resolveActiveSavedSecretCatalogCollisionState(refreshed).collisions.some(
-      (collision) => collision.ref === reference.ref,
-    )) {
-      throw new SavedSecretOperationAdmissionError({
-        reason: 'reference_collision_migration_required',
-        reference: reference.ref,
-      });
-    }
-    if (
-      reference.revision !== undefined
-      && !materializer.matchesSharedResourceRevision(reference.ref, reference.revision)
-    ) {
-      throw new SavedSecretOperationAdmissionError({
-        reason: 'reference_stale',
-        reference: reference.ref,
-      });
-    }
-    const resolved = materializer.resolve(reference.ref);
-    if (resolved.status !== 'ready') {
-      throw new SavedSecretOperationAdmissionError({
-        reason: savedSecretOperationAdmissionReason(resolved.status),
-        reference: reference.ref,
-      });
-    }
+  assertSharedOperationReferencesReady(refreshed, sharedReferences,
+    context ? () => context.readSnapshot() === refreshed : undefined);
+  return { snapshot: refreshed, catalogRead: true };
+}
+
+export async function readSavedSecretCatalogForOperation(input: SavedSecretCatalogRefreshInputV1): Promise<ActiveAccountSettingsSnapshot> {
+  return (await readSavedSecretCatalogAdmissionForOperation(input)).snapshot;
+}
+
+/** Consume catalog admission once, then hold only this operation's selected native material. */
+export async function acquireSavedSecretMaterializerForOperation(input: Readonly<{
+  snapshot: ActiveAccountSettingsSnapshot;
+  references: readonly SavedSecretOperationReferenceV1[];
+  operationContext?: SavedSecretOperationContextV1;
+  secretSources?: TargetSecretSourcesV1;
+  machineAdmission?: SavedSecretOperationContextV1['machineAdmission'];
+  sourceKind?: 'inline';
+  signal?: AbortSignal;
+  /** Already admitted invocation owners supply their existing lifetime witness. */
+  isCurrent?: () => boolean;
+}>): Promise<SavedSecretMaterializerV1> {
+  const context = input.operationContext;
+  const snapshot = input.snapshot;
+  const lifetime = getActiveAccountSettingsSnapshotLifetimeToken();
+  const isCurrent = input.isCurrent ?? (context ? () => context.readSnapshot()?.scopeKey === snapshot.scopeKey
+    : () => getActiveAccountSettingsSnapshot()?.scopeKey === snapshot.scopeKey
+      && getActiveAccountSettingsSnapshotLifetimeToken() === lifetime);
+  const materializer = createSavedSecretMaterializerFromSnapshotV1(snapshot, { isCurrent });
+  if (input.sourceKind === 'inline') return materializer;
+  const acquisitions = new Map<string, SavedSecretExternalAcquisitionV1>();
+  const contents = new Map<string, SavedSecretResourceContentV1>();
+  const externalReferences: { ref: string; source: SavedSecretExternalSourceV1 }[] = [];
+  const sources = input.secretSources ?? context?.secretSources;
+  for (const ref of new Set(input.references.map(reference => reference.ref))) {
+    input.signal?.throwIfAborted();
+    const resolved = materializer.resolveContent(ref);
+    if (resolved.status !== 'ready') continue;
+    const parsed = parseSavedSecretRefV1(ref);
+    if (parsed.kind === 'shared_resource') contents.set(parsed.resourceId, resolved.content);
+    if (resolved.content.v !== 2 || resolved.content.source.kind !== 'external') continue;
+    assertSavedSecretNativeSourceAccessForOperation(context?.machineAdmission ?? input.machineAdmission, ref);
+    externalReferences.push({ ref, source: resolved.content.source });
   }
-  return refreshed;
+  // Native bootstrap may refresh this same catalog and retire its old DEKs.
+  // Keep all selected authenticated content in this operation's existing
+  // opened-content projection before the first asynchronous native read.
+  for (const { ref, source } of externalReferences) {
+    input.signal?.throwIfAborted();
+    if (!sources) {
+      acquisitions.set(ref, { status: 'temporarily_unavailable' });
+      continue;
+    }
+    const acquired = await sources.acquire(source, { signal: input.signal });
+    input.signal?.throwIfAborted();
+    if (acquired.ok) acquisitions.set(ref, { status: 'ready', value: acquired.value });
+    else if (acquired.code === 'cancelled') throw new DOMException('Saved Secret acquisition canceled', 'AbortError');
+    else acquisitions.set(ref, { status: acquired.code === 'access_denied' ? 'forbidden'
+      : acquired.code === 'not_found' ? 'missing'
+        : acquired.code === 'authentication_required' || acquired.code === 'native_unavailable' ? 'repair_required'
+          : 'temporarily_unavailable',
+      sourceFailure: { code: acquired.code, ...(acquired.repair ? { repair: acquired.repair } : {}) } });
+  }
+  return createSavedSecretMaterializerFromSnapshotV1(snapshot, { isCurrent, externalAcquisitions: acquisitions,
+    openedInstallationContents: contents });
+}
+
+export async function readSavedSecretMaterializerForOperation(input: SavedSecretCatalogRefreshInputV1): Promise<Readonly<{
+  snapshot: ActiveAccountSettingsSnapshot;
+  materializer: SavedSecretMaterializerV1;
+}>> {
+  const { snapshot } = await readSavedSecretCatalogAdmissionForOperation(input);
+  const materializer = await acquireSavedSecretMaterializerForOperation({ ...input, snapshot,
+    references: readRequestedSavedSecretOperationReferences(input) });
+  return { snapshot, materializer };
 }
 
 /** Canonical row-write proof capture; it neither imports nor activates a domain. */
@@ -315,15 +413,4 @@ export async function captureSavedSecretReferencesForOperation(input: Readonly<{
   }
   return { referencedSavedSecretIds: references, savedSecretRevisions: [...captured.resourcesByRef.values()]
     .map(({ resourceId, revision }) => ({ resourceId, expectedRevision: revision })) };
-}
-
-export async function readSavedSecretMaterializerForOperation(input: SavedSecretCatalogRefreshInputV1): Promise<Readonly<{
-  snapshot: ActiveAccountSettingsSnapshot;
-  materializer: SavedSecretMaterializerV1;
-}>> {
-  const snapshot = await readSavedSecretCatalogForOperation(input);
-  const context = input.operationContext;
-  const materializer = createSavedSecretMaterializerFromSnapshotV1(snapshot,
-    context ? { isCurrent: () => context.readSnapshot() === snapshot } : undefined);
-  return { snapshot, materializer };
 }

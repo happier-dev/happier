@@ -2,6 +2,7 @@ import axios from 'axios';
 import tweetnacl from 'tweetnacl';
 import {
   AccountSettingsSchema,
+  AIBackendProfileSchema,
   ENCRYPTED_DATA_KEY_ENVELOPE_V1_BYTES,
   encryptSecretStringV1,
   FeaturesResponseSchema,
@@ -33,6 +34,7 @@ import { resetServerFeaturesClientForTests } from '@/features/serverFeaturesClie
 import { emptyMcpServerCatalogV1 } from '@happier-dev/protocol/mcp/servers/serverCatalogV1';
 import { DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1, ProviderConnectionsCatalogV1Schema } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
 import { sameProviderConnectionsCatalogAuthority } from '@/providers/lifecycle/currentAccountSettingsSnapshot';
+import { resolveLaunchProfileSavedSecretEnvironment } from '@/daemon/agentRuntime/resolveForegroundProfileSavedSecretEnvironment';
 
 vi.mock('axios', () => ({
   default: { get: vi.fn(), post: vi.fn() },
@@ -850,6 +852,65 @@ describe('Saved Secret catalog hydration', () => {
       source: 'personal',
     });
   });
+
+  it.each([
+    ['revoked', false], ['granted', false], ['rotated', false], ['optional', false],
+    ['revoked', true], ['rotated', true],
+  ] as const)(
+    'admits a persisted Profile through the real current catalog: %s (requester=%s)', async (state, requester) => {
+      const token = 'profile-admission-test-token';
+      const resourceId = 'profile-admission-resource';
+      const ref = formatSavedSecretCatalogReferenceV1({ kind: 'shared_resource', id: resourceId });
+      const profile = { ...AIBackendProfileSchema.parse({ id: 'profile-admission', name: 'Profile admission',
+        envVarRequirements: [{ name: 'PROFILE_SECRET', kind: 'secret', required: state !== 'optional' }] }),
+        profileRecordRevision: 1, secretBindings: { PROFILE_SECRET: ref } };
+      const resource = (revision: number) => ({ resourceId, ownerAccountId: 'owner-account',
+        displayName: 'Admission fixture', kind: 'token' as const, encryptionMode: 'plain' as const,
+        revision, materialStatus: 'ready' as const, storedContent: sealSavedSecretResourceStoredContentV1({
+          resourceId, mode: 'plain', content: { v: 1, name: 'Admission fixture', kind: 'token', value: `fixture-revision-${revision}` },
+        }) });
+      setActiveAccountSettingsSnapshot({ source: 'network', settings: AccountSettingsSchema.parse({
+        profiles: [profile], secretBindingsByProfileId: { [profile.id]: { PROFILE_SECRET: ref } },
+      }), settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [],
+        scopeKey: resolveAccountSettingsScopeKeyForToken(token), savedSecretCatalogState: 'ready', savedSecretResources: [resource(1)] });
+      persistenceMocks.readStoredCredentials.mockResolvedValue({ token, encryption: null });
+      const current = state === 'revoked' || state === 'optional' ? [] : [resource(state === 'rotated' ? 2 : 1)];
+      vi.mocked(axios.get).mockResolvedValue({ status: 200, data: { resources: current.map(row => ({
+        resourceId: row.resourceId,
+        entry: { ref, source: 'shared_resource', ownerAccountId: row.ownerAccountId, name: row.displayName,
+          kind: row.kind, revision: row.revision, materialStatus: row.materialStatus,
+          relationship: 'recipient', capabilities: { use: true, rename: false, rotate: false, manageAccess: false, delete: false } },
+        encryptionMode: row.encryptionMode, storedContent: row.storedContent, recipientEnvelope: null,
+      })) } });
+      const snapshot = getActiveAccountSettingsSnapshot()!;
+      const operationContext = requester ? createInvocationSavedSecretOperationContextV1({
+        credentials: { token, encryption: null }, snapshot,
+        serverHttpBaseUrl: 'https://requester-profile.example', isCurrent: async () => true,
+      }) : undefined;
+      if (requester) {
+        setActiveAccountSettingsSnapshot({ ...snapshot, settings: AccountSettingsSchema.parse({}),
+          scopeKey: 'unrelated-custodian', savedSecretResources: [] });
+      }
+      const ambient = getActiveAccountSettingsSnapshot();
+      const input = { profile, accountSettings: snapshot.settings, settingsSecretsReadKeys: snapshot.settingsSecretsReadKeys,
+        savedSecretResources: snapshot.savedSecretResources, foregroundSatisfiedSecretRequirementNames: [],
+        expectedScopeKey: resolveAccountSettingsScopeKeyForToken(token), operationContext };
+      const launch = Promise.resolve().then(() => resolveLaunchProfileSavedSecretEnvironment(input));
+      if (state === 'revoked') {
+        await expect(launch).rejects.toMatchObject({ reason: 'reference_forbidden', requirementName: 'PROFILE_SECRET' });
+      } else {
+        await expect(launch).resolves.toEqual(state === 'optional' ? {} : { PROFILE_SECRET: `fixture-revision-${state === 'rotated' ? 2 : 1}` });
+      }
+      // One current authorization read per launch; refusal never creates a Session or retries.
+      expect(axios.get).toHaveBeenCalledTimes(1);
+      expect(axios.post).not.toHaveBeenCalled();
+      if (requester) {
+        expect(vi.mocked(axios.get).mock.calls[0]?.[0]).toBe('https://requester-profile.example/v1/account/saved-secrets/resources/materials');
+        expect(persistenceMocks.readStoredCredentials).not.toHaveBeenCalled();
+        expect(getActiveAccountSettingsSnapshot()).toBe(ambient);
+      }
+    },
+  );
 
   it('refreshes shared references at operation admission so a missed invalidation cannot use revoked material', async () => {
     const token = 'account-token';

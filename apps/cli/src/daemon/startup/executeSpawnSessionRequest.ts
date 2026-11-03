@@ -452,8 +452,11 @@ export async function executeSpawnSessionRequest(
             if (matchingProfiles.length === 1 && activeAccountSettingsSnapshot) {
                 try {
                     const savedSecretEnvironment =
-                        resolveLaunchProfileSavedSecretEnvironment({
+                        await resolveLaunchProfileSavedSecretEnvironment({
                             profile: matchingProfiles[0]!,
+                            expectedScopeKey: activeAccountSettingsSnapshot.scopeKey ?? '',
+                            operationContext: requesterRuntime?.bootstrap.savedSecretOperationContext,
+                            signal: preparationSignal,
                             accountSettings:
                                 activeAccountSettingsSnapshot.settings,
                             settingsSecretsReadKeys:
@@ -462,8 +465,6 @@ export async function executeSpawnSessionRequest(
                             savedSecretResources:
                                 activeAccountSettingsSnapshot
                                     .savedSecretResources,
-                            ...(requesterRuntime ? { isCurrent: () => requesterRuntime.bootstrap.savedSecretOperationContext.readSnapshot()
-                                === activeAccountSettingsSnapshot } : {}),
                             foregroundSatisfiedSecretRequirementNames: [],
                             ...(options.secretReferenceOverlay
                                 ? {
@@ -472,6 +473,7 @@ export async function executeSpawnSessionRequest(
                                 }
                                 : {}),
                         });
+                    activeAccountSettingsSnapshot = requesterRuntime?.readAccountSettingsSnapshot() ?? getActiveAccountSettingsSnapshot();
                     profileLaunchEnvironment = Object.freeze({
                         ...profileLaunchEnvironment,
                         ...savedSecretEnvironment,

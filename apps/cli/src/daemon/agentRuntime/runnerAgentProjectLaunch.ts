@@ -9,7 +9,7 @@ import { runWithRequesterSessionCurrentnessCheckpoint } from "@/daemon/sessionEn
 import type { ProjectFiniteActionRuntime } from '@/workspaces/projectSetup/projectFiniteAction';
 import { createProjectAgentNativeLaunchOwner } from '@/workspaces/projectSetup/projectAgentNativeLaunch';
 import type { HostAgentNativeLaunchPreparation } from '@/plugins/runtime/invocation/services/exec';
-import { readSavedSecretCatalogForOperation } from "@/settings/secrets/savedSecretCatalogRead";
+import { readSavedSecretMaterializerForOperation } from "@/settings/secrets/savedSecretCatalogRead";
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { readAccountLaunchProfiles, readProfileSettingsFromAccountSnapshot } from '@/settings/profiles/readProfilesFromAccountSettings';
 import { resolveEffectiveLaunchProfileSecretBindings } from './resolveForegroundProfileSavedSecretEnvironment';
@@ -19,6 +19,9 @@ import type { ProjectSetupOperationContext } from '@/workspaces/projectSetup/pro
 import { createExecutionRunProjectSetupProjection, createExecutionRunProjectSetupProjectionOwner, projectExecutionRunSetupBase } from '@/agent/runtime/bridges/executionRun/executionRunProjectSetup';
 import type { ExecutionRunPublicState } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { logger } from '@/utils/logger';
+import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
+import { createInvocationSavedSecretOperationContextV1, type SavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
+import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 
 /** The retained producer owns review; its runner controller owns lifecycle and Stop. */
 function retainRunSetup(input: Readonly<{
@@ -130,6 +133,7 @@ export function createRunnerAgentProjectLaunchInvocation(input: Readonly<{
             if (!runtime) return installedAccount
                 ? unavailable('project_requester_credentials_unavailable', 'ingress_missing')
                 : unavailable('project_finite_execution_unavailable', 'finite_runtime_unavailable');
+            let installedSecretOperation: Promise<SavedSecretOperationContextV1> | undefined;
             if (!input.operation && input.executionRun) runSetup = retainRunSetup({ runId: input.executionRun.runId,
                 control: input.executionRun, signal: input.signal, runtime, ...(input.sessionId ? { sessionId: input.sessionId } : {}) });
             const operation = input.operation ?? runSetup?.context;
@@ -144,12 +148,34 @@ export function createRunnerAgentProjectLaunchInvocation(input: Readonly<{
                 async resolveSecretInputs() {
                     await assertCurrent();
                     const selected = input.references ?? {};
-                    const operationContext = input.requester?.bootstrap.savedSecretOperationContext
+                    let operationContext = input.requester?.bootstrap.savedSecretOperationContext
                         ?? (runtime.accountAuthorization ? readRequesterAccountActionContext(runtime.accountAuthorization)?.savedSecretOperationContext : undefined);
+                    const installedCredentials = runtime.credentials;
+                    if (!operationContext && installedAccount && installedCredentials) {
+                        // Association is already established by the canonical
+                        // preparer before it demands secrets. Capture only this
+                        // qualified runtime's Account; never publish or borrow an
+                        // ambient settings source, or manufacture Session birth.
+                        installedSecretOperation ??= runWithServerHttpBaseUrl(runtime.serverHttpBaseUrl, async () => {
+                            const credentials = installedCredentials;
+                            const snapshot = await bootstrapAccountSettingsContext({ credentials, signal,
+                                mode: 'blocking', publication: 'invocation', honorAccountSettingsModeEnv: false });
+                            await assertCurrent();
+                            if (runtime.isCurrent && !await runtime.isCurrent()) return unavailable('project_requester_credentials_unavailable', 'requester_not_current');
+                            return createInvocationSavedSecretOperationContextV1({ credentials, snapshot,
+                                secretSources: runtime.plugins?.secretSources,
+                                serverHttpBaseUrl: runtime.serverHttpBaseUrl, isCurrent: async () => {
+                                    await assertCurrent();
+                                    return !runtime.isCurrent || await runtime.isCurrent();
+                                } });
+                        });
+                        operationContext = await installedSecretOperation;
+                    }
                     if (!operationContext) return unavailable('project_requester_credentials_unavailable', 'settings_context_missing');
                     const credentials = operationContext.credentials;
                     const snapshot = operationContext.readSnapshot();
-                    if (!credentials || !snapshot || snapshot.scopeKey !== resolveAccountSettingsScopeKey(credentials)) {
+                    if (!credentials || !snapshot || snapshot.scopeKey !== runWithServerHttpBaseUrl(runtime.serverHttpBaseUrl,
+                        () => resolveAccountSettingsScopeKey(credentials))) {
                         return unavailable('project_requester_credentials_unavailable', 'settings_scope_unavailable');
                     }
                     let bindings = selected.secretReferenceOverlay?.bindings ?? {};
@@ -163,7 +189,8 @@ export function createRunnerAgentProjectLaunchInvocation(input: Readonly<{
                             accountSettings: readProfileSettingsFromAccountSnapshot(operationContext.readSnapshot() ?? snapshot) ?? {},
                             ...(selected.secretReferenceOverlay ? { secretReferenceOverlay: selected.secretReferenceOverlay } : {}) });
                     }
-                    const current = await readSavedSecretCatalogForOperation({ expectedScopeKey: snapshot.scopeKey,
+                    const { snapshot: current, materializer } = await readSavedSecretMaterializerForOperation({ expectedScopeKey: snapshot.scopeKey,
+                        secretSources: runtime.plugins?.secretSources,
                         references: Object.values(bindings), signal, operationContext });
                     await assertCurrent();
                     // Only Profile defaults may acquire their current shared revision.
@@ -180,6 +207,7 @@ export function createRunnerAgentProjectLaunchInvocation(input: Readonly<{
                         return [name, revision === undefined ? binding : { ...binding, revision }];
                     }));
                     return { secretEnvironment: { accountSettings: current.rawSettings ?? current.settings,
+                        savedSecretMaterializer: materializer,
                         settingsSecretsReadKeys: current.settingsSecretsReadKeys,
                         ...(current.savedSecretResources ? { savedSecretResources: current.savedSecretResources } : {}) },
                         ...(Object.keys(exact).length ? { environmentBindings: SecretReferenceOverlayV1Schema.parse({ v: 1, bindings: exact }) } : {}) };

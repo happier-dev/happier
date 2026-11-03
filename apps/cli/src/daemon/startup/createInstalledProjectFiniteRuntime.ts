@@ -14,6 +14,10 @@ import type { WorkspaceSyncHandoffAdapterDeps } from '@/workspaces/sync/workspac
 import type { CurrentMachineExecutionOriginContext } from '@/api/machine/resolveCurrentMachineExecutionOriginContext';
 import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
 import { logger } from '@/ui/logger';
+import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
+import { createInvocationSavedSecretOperationContextV1, type SavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
+import { readSavedSecretMaterializerForOperation } from '@/settings/secrets/savedSecretCatalogRead';
+import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 
 /** Installed composition shared by the daemon and its real ingress harness. */
 export function createInstalledProjectFiniteRuntime(params: Readonly<{
@@ -33,17 +37,19 @@ export function createInstalledProjectFiniteRuntime(params: Readonly<{
 }>): NonNullable<ApiMachineClientLifecycleDependencies['createProjectFiniteRuntime']> {
   const { api, credentials, externalActionAccountId, finiteServerId, finiteServerHttpBaseUrl,
     registeredMachineId, admission, isCurrent, resolveCurrentMachineExecutionOriginContext } = params;
+  const secretEnvironment = async (operationContext: SavedSecretOperationContextV1,
+    bindings: Parameters<NonNullable<ProjectFiniteActionRuntime['resolveSecretEnvironment']>>[0], signal?: AbortSignal) => {
+    const captured = operationContext.readSnapshot();
+    if (!captured?.scopeKey) throw Object.assign(new Error('project_requester_credentials_unavailable'), { code: 'project_requester_credentials_unavailable' });
+    const { snapshot, materializer } = await readSavedSecretMaterializerForOperation({ expectedScopeKey: captured.scopeKey,
+      operationContext, secretSources: params.plugins?.secretSources, secretReferenceOverlay: bindings, signal });
+    return { accountSettings: snapshot.rawSettings ?? snapshot.settings, settingsSecretsReadKeys: snapshot.settingsSecretsReadKeys,
+      savedSecretMaterializer: materializer, ...(snapshot.savedSecretResources ? { savedSecretResources: snapshot.savedSecretResources } : {}) };
+  };
   const nativeRuntime = (runtimeCurrent: () => Promise<boolean>) => ({
     workerAdmission: admission, isCurrent: runtimeCurrent,
     nativeIo: params.nativeIo.commandIo, environmentIo: params.nativeIo.environmentIo,
-    ...(params.plugins ? { plugins: { async resolveProjectNativeAdapter(
-      reference: Parameters<NonNullable<ProjectFiniteActionRuntime['plugins']>['resolveProjectNativeAdapter']>[0],
-      role: Parameters<NonNullable<ProjectFiniteActionRuntime['plugins']>['resolveProjectNativeAdapter']>[1],
-    ): ReturnType<NonNullable<ProjectFiniteActionRuntime['plugins']>['resolveProjectNativeAdapter']> {
-      if (!await runtimeCurrent()) return { kind: 'refused' as const, code: 'native_adapter_retired' };
-      const selected = await params.plugins!.resolveProjectNativeAdapter(reference, role);
-      return await runtimeCurrent() ? selected : { kind: 'refused' as const, code: 'native_adapter_retired' };
-    } } } : {}),
+    ...(params.plugins ? { plugins: params.plugins } : {}),
     successHomeDir: params.successHomeDir,
   });
   return async (ports, ingress) => {
@@ -76,6 +82,8 @@ export function createInstalledProjectFiniteRuntime(params: Readonly<{
         serverHttpBaseUrl: session.serverHttpBaseUrl,
         sessionCustody: { serverId: session.attribution.serverId, accountId: session.attribution.accountId,
           serverHttpBaseUrl: session.serverHttpBaseUrl, isCurrent: runtimeCurrent },
+        resolveSecretEnvironment: async (bindings, signal) => bindings
+          ? await secretEnvironment(session.savedSecretOperationContext, bindings, signal) : undefined,
         // Ordinary Session custody does not grant the custodian's worker/source
         // routing ports. Cold native launch consumes only the installed local IO.
         resolveWorkspaceExecutionConfig: async () => null,
@@ -108,6 +116,17 @@ export function createInstalledProjectFiniteRuntime(params: Readonly<{
     if (!accountAccess) return refuse('account_access_unavailable');
     return { ...ports, ...accountAccess, ...nativeRuntime(runtimeCurrent),
       ...(verifyCurrent ? { verifyCurrent } : {}),
+      ...(!requester ? { resolveSecretEnvironment: async (bindings, signal) => {
+        if (!bindings) return undefined;
+        return await runWithServerHttpBaseUrl(accountAccess.serverHttpBaseUrl, async () => {
+          const snapshot = await bootstrapAccountSettingsContext({ credentials: workerCredentials, signal,
+            mode: 'blocking', publication: 'invocation', honorAccountSettingsModeEnv: false });
+          const operationContext = createInvocationSavedSecretOperationContextV1({ credentials: workerCredentials, snapshot,
+            machineAdmission: ingress.machineAdmission, secretSources: params.plugins?.secretSources,
+            serverHttpBaseUrl: accountAccess.serverHttpBaseUrl, isCurrent: runtimeCurrent });
+          return await secretEnvironment(operationContext, bindings, signal);
+        });
+      } } satisfies Pick<ProjectFiniteActionRuntime, 'resolveSecretEnvironment'> : {}),
       inspectSourceProjectManifest: async input => {
         const { createProjectFiniteSourceManifestInspector } = await import('./createDaemonMachineBootstrapRuntime');
         return await createProjectFiniteSourceManifestInspector({

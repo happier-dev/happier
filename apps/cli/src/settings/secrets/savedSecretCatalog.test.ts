@@ -15,6 +15,34 @@ const randomBytes = (length: number) => new Uint8Array(length).fill(3);
 describe('Saved Secret catalog materializer', () => {
   afterEach(() => resetActiveAccountSettingsSnapshotForTests());
 
+  it('keeps an external locator out of scalar material until this operation supplies its acquisition', () => {
+    const ref = 'happier:shared-secret:v1:vault-field';
+    const source = { kind: 'external' as const,
+      contribution: { pluginId: 'dev.happier.onepassword', localId: 'onepassword' },
+      account: 'account-one', reference: 'op://vault/item/password' };
+    const resource = { resourceId: 'vault-field', ownerAccountId: 'owner', relationship: 'owner' as const,
+      displayName: 'Vault field', kind: 'password' as const, encryptionMode: 'plain' as const,
+      revision: 1, materialStatus: 'ready' as const,
+      storedContent: { t: 'plain' as const, v: { v: 2 as const, name: 'Vault field', kind: 'password' as const, source } } };
+    const input = { accountSettings: {}, settingsSecretsReadKeys: [], resources: [resource],
+      resourceCatalogState: 'ready' as const };
+    const metadata = createSavedSecretMaterializerV1(input);
+    expect(metadata.describe(ref)).toEqual({ status: 'ready', source: 'shared_resource', displayName: 'Vault field' });
+    expect(metadata.resolveContent(ref)).toMatchObject({ status: 'ready', content: { source } });
+    expect(metadata.resolve(ref)).toEqual({ status: 'temporarily_unavailable' });
+    const acquired = createSavedSecretMaterializerV1({ ...input,
+      externalAcquisitions: new Map([[ref, { status: 'ready' as const, value: 'first-rotation' }]]) });
+    expect(acquired.resolve(ref)).toMatchObject({ status: 'ready', value: 'first-rotation' });
+    expect(acquired.resolve(ref)).toMatchObject({ status: 'ready', value: 'first-rotation' });
+    const nextOperation = createSavedSecretMaterializerV1({ ...input,
+      externalAcquisitions: new Map([[ref, { status: 'ready' as const, value: 'second-rotation' }]]) });
+    expect(nextOperation.resolve(ref)).toMatchObject({ status: 'ready', value: 'second-rotation' });
+    expect(metadata.resolve(ref)).toEqual({ status: 'temporarily_unavailable' });
+    expect(createSavedSecretMaterializerV1({ ...input, resources: [{ ...resource, relationship: 'recipient' as const }],
+      externalAcquisitions: new Map([[ref, { status: 'ready' as const, value: 'first-rotation' }]]) })
+      .resolve(ref)).toEqual({ status: 'forbidden' });
+  });
+
   it('projects exact resource destination revisions without exporting credential material or guessing personal row revisions', () => {
     const ref = 'happier:shared-secret:v1:destination';
     const storedContent = sealSavedSecretResourceStoredContentV1({

@@ -9,7 +9,7 @@ import { getActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshotLifet
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { savedSecretOperationAdmissionStatus } from '@/settings/secrets/savedSecretCatalog';
-import { SavedSecretOperationAdmissionError } from "@/settings/secrets/savedSecretCatalogRead";
+import { acquireSavedSecretMaterializerForOperation, SavedSecretOperationAdmissionError } from "@/settings/secrets/savedSecretCatalogRead";
 import { type SavedSecretOperationContextV1 } from "@/settings/secrets/savedSecretOperationContext";
 import { SavedSecretResolutionError } from '@/settings/secrets/savedSecretCatalog';
 import { refreshActiveAcpCatalog } from '@/agent/acp/catalog/hydrateAcpCatalog';
@@ -110,6 +110,8 @@ export async function resolveAccountConfiguredAcpLaunch(
     const launchEnv = materializeConfiguredAcpEnvironment({
         backend: configuredBackend, accountSettings: launchSnapshot.settings, credentials,
         savedSecretResources: launchSnapshot.savedSecretResources,
+        savedSecretMaterializer: await acquireSavedSecretMaterializerForOperation({ snapshot: launchSnapshot, references,
+          operationContext: savedSecretOperationContext }),
     });
     const resolved = await ensureAcpLaunchForSession({
       accountId: savedSecretOperationContext?.machineAdmission?.actorAccountId ?? readAccountIdFromToken(credentials.token) ?? undefined,

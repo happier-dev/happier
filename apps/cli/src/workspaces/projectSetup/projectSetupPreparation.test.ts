@@ -1,5 +1,6 @@
 import axios from 'axios';
 import { sealSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
+import { createSavedSecretMaterializerV1 } from '@/settings/secrets/savedSecretCatalog';
 // Load the real child reader's lazy API graph before behavior timers; HTTP remains at the genuine boundary below.
 import '@/api/api';
 import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
@@ -442,6 +443,25 @@ describe('current Project setup effect and preparation admission', () => {
         expect(await reviewProjectSetupEffect({ ...sharedInput, secretEnvironment: { ...sharedInput.secretEnvironment,
             savedSecretResources: [{ ...resource, displayName: 'unauthenticated-name' }],
         } })).toMatchObject({ kind: 'refused', code: 'project_environment_binding_unavailable' });
+    });
+
+    it('keeps admitted secret material private while reviewing the bound project environment', async () => {
+        const { input } = await fixture({ version: 1, environmentVariables: [{ name: 'TOKEN', kind: 'secret', required: true }] });
+        // Acquisition belongs to the admitted operation. Project review consumes
+        // its real resolver without copying private material into the catalog.
+        const savedSecretMaterializer = createSavedSecretMaterializerV1({
+            accountSettings: { secrets: [{ id: 'admitted-token', name: 'Vault token',
+                encryptedValue: { _isSecretValue: true, value: 'private-admitted-value' } }] },
+            settingsSecretsReadKeys: [],
+        });
+        const plan = await reviewed({ ...input,
+            environmentBindings: { v: 1, bindings: { TOKEN: { ref: 'admitted-token' } } },
+            secretEnvironment: { accountSettings: {}, settingsSecretsReadKeys: [], savedSecretMaterializer },
+        });
+        expect(plan.reviewedEffect).toMatchObject({ presentation: { bindings: [
+            { name: 'TOKEN', ref: 'admitted-token', displayName: 'Vault token' },
+        ] } });
+        expect(JSON.stringify(plan)).not.toContain('private-admitted-value');
     });
 
     it('reviews teardown independently of setup trust and distinguishes empty/platform-inapplicable preparation', async () => {
