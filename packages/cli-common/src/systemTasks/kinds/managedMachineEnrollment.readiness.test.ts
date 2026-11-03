@@ -42,6 +42,38 @@ function retryGuest(operation: AbortController | undefined, readyAtMs: number) {
 }
 
 describe('retained native bootstrap readiness lifetime', () => {
+  it('restarts the retained user service onto the promoted payload even when both payloads have the same version', async () => {
+    let currentPayload = 'old-payload';
+    let runningPayload = currentPayload;
+    let runningPid = 5376;
+    const serviceCommands: string[] = [];
+    const result = await runManagedMachineEnrollment({ correlation, target, channel: 'stable',
+      carrier: { kind: 'native', transport: { contributionRef: resource.contributionRef, schemaVersion: 1 } } }, {
+      readCurrentManagedRow: async () => ({ ...machine, enrollmentIdentity: undefined }),
+      createPromptId: () => 'unused',
+      runTask: async () => { throw new Error('Retained retry must not pair again'); },
+      approveLocalAuthRequest: async () => { throw new Error('Retained retry must not approve auth again'); },
+      installNativePayload: async () => {
+        currentPayload = 'promoted-payload';
+        return { binaryPath: '/opt/happier/bin/happier' };
+      },
+      // Native CLI/service-manager IO boundary: installing an unchanged unit is
+      // a no-op; restarting resolves its stable launcher onto the new payload.
+      native: { putFile: async () => {}, exec: async ({ command }) => {
+        if (command.startsWith('uname -s;')) return { status: 0, stdout: 'Linux\nx86_64\n/home/guest\n', stderr: '' };
+        if (command.includes("'service'")) serviceCommands.push(command);
+        if (command.includes("'service' 'restart'")) { runningPayload = currentPayload; runningPid = 8574; }
+        return { status: 0, stderr: '', stdout: JSON.stringify({ daemon: { pid: runningPid, running: true, healthy: true,
+          startedWithCliVersion: '0.2.10' }, service: { installed: true },
+          auth: { needsAuth: false, machineId: 'same-machine' } }) };
+      } },
+    });
+    expect(result).toEqual({ machineId: 'same-machine' });
+    expect(runningPayload).toBe(currentPayload);
+    expect(runningPid).toBe(8574);
+    expect(serviceCommands).toHaveLength(2); // One install and one lifecycle restart; no install retry.
+  });
+
   afterEach(() => vi.useRealTimers());
 
   it('accepts registration after the standalone cutoff while its admitted operation is still active', async () => {

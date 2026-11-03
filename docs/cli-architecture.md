@@ -27,7 +27,10 @@ the same durable bootstrap observations described above. An admitted retained
 native retry waits for daemon registration within its operation's cancellation
 lifecycle, without the standalone setup cutoff. Initial enrollment continues to
 supply its remaining pairing lifetime; callers without a containing operation
-keep the standalone readiness timeout.
+keep the standalone readiness timeout. A retained service-managed native retry
+installs the promoted CLI and explicitly restarts its existing background service
+before waiting for registration. An unchanged service definition or CLI version
+does not prove that its running process adopted the promoted payload.
 
 
 This document describes the Happier CLI (`apps/cli`) and its daemon. The CLI is both an interactive tool and a background session manager that keeps machine state in sync with the server.

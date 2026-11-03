@@ -262,14 +262,19 @@ export async function runManagedMachineEnrollment(input: ManagedMachineEnrollmen
     // sign-in or changing the existing Machine. Native-process boot recovery is
     // handled above and continues to reuse its retained installation.
     await installRemoteCli(input.signal);
-    const args = nativeProcess ? ['daemon', 'start', '--json']
-      : ['daemon', 'service', 'install', ...(dedicatedIdentity ? ['--mode=user'] : []), '--json'];
-    const updated = await payloadExec({
-      command: buildRemoteHappierInvocationCommand({ binaryPath, args, channel: configuration.channel }),
-      timeoutMs: resolveLocalHappierCommandTimeoutMs(args),
-    });
-    if (updated.status !== 0) throw new SystemTaskExecutionError('background_service_failed', 'The updated guest background service could not be installed.');
-    input.signal?.throwIfAborted();
+    const commands = nativeProcess ? [['daemon', 'start', '--json']]
+      : ['install', 'restart'].map(action => ['daemon', 'service', action, ...(dedicatedIdentity ? ['--mode=user'] : []), '--json']);
+    // An unchanged service definition can keep running the old payload at the
+    // same CLI version. Adopt the promoted payload through its lifecycle owner.
+    for (const args of commands) {
+      const updated = await payloadExec({
+        command: buildRemoteHappierInvocationCommand({ binaryPath, args, channel: configuration.channel }),
+        signal: input.signal,
+        timeoutMs: resolveLocalHappierCommandTimeoutMs(args),
+      });
+      if (updated.status !== 0) throw new SystemTaskExecutionError('background_service_failed', 'The updated guest background service could not be activated.');
+      input.signal?.throwIfAborted();
+    }
     // Installation can replace the guest daemon before Home acknowledges its
     // new control socket. Reuse enrollment's native readiness owner before the
     // retained controller dispatches policy children; never retry installation.

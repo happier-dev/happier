@@ -5,6 +5,8 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
+import { createRequire } from 'node:module';
+import { safeBashSingleQuote } from '@happier-dev/cli-common/ssh';
 import { resolveHomeTargetFromDescriptor } from '@happier-dev/cli-common/homeTarget';
 import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { ManagedResourceV1Schema } from '@happier-dev/protocol/machines/managed/providerFactsV1';
@@ -22,6 +24,16 @@ const machine = ManagedMachineV1Schema.parse({
 });
 const target = resolveHomeTargetFromDescriptor({ descriptor: { v: 1, homeServerIdentityId: correlation.homeId, canonicalServerUrl: 'https://home.example.test', revision: 1, endpoints: [{ kind: 'https', url: 'https://home.example.test' }] }, authority: 'trusted_enrollment' });
 const carrier = { kind: 'native', transport: { contributionRef: resource.contributionRef, schemaVersion: 1 } };
+
+/** Fake only the installed executable's unrelated commands; payload promotion stays real. */
+function guestCliExecutable(body: string): string {
+  const installer = [
+    'import { installVersionedPayload } from "@happier-dev/cli-common/firstPartyRuntime";',
+    'const args = process.argv.slice(1); const value = flag => args[args.indexOf(flag) + 1];',
+    'await installVersionedPayload({ componentId: value("--component"), channel: value("--channel"), versionId: value("--version"), payloadRoot: value("--payload-root"), processEnv: process.env, selectAsDefaultReleaseChannel: true });',
+  ].join('\n');
+  return `#!/bin/sh\nif [ "$1 $2" = "self __install-payload" ]; then exec ${safeBashSingleQuote(process.execPath)} --conditions=happier-source --import ${safeBashSingleQuote(createRequire(import.meta.url).resolve('tsx'))} --input-type=module -e ${safeBashSingleQuote(installer)} "$@"; fi\n${body}`;
+}
 
 async function withReleaseMirror(run: (releases: string[]) => Promise<void>) {
   const releases: string[] = [];
@@ -182,7 +194,7 @@ describe('runManagedMachineEnrollment', () => {
       await mkdir(payloadRoot);
       await mkdir(guestHome);
       // The guest executable is the OS boundary, recording the actual service command.
-      const executable = `#!/bin/sh\nprintf "%s\\n" "$@" >> "$HOME/invoked-args"\nexit ${serviceExit}\n`;
+      const executable = guestCliExecutable(`printf "%s\\n" "$@" >> "$HOME/invoked-args"\nif [ "$1 $2" = "daemon status" ]; then printf '%s\\n' '{"daemon":{"running":true,"healthy":true},"service":{"installed":true},"auth":{"needsAuth":false,"machineId":"ordinary-machine"}}'; exit 0; fi\nexit ${serviceExit}\n`);
       await writeFile(join(payloadRoot, 'happier'), executable);
       vi.stubEnv('HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT', payloadRoot);
       const native: ManagedNativeBootstrapIO = {
@@ -196,7 +208,8 @@ describe('runManagedMachineEnrollment', () => {
       };
       await withReleaseMirror(async releases => {
         const update = runManagedMachineEnrollment({ correlation, target, carrier, channel: 'stable' }, {
-          readCurrentManagedRow: async () => ({ ...machine, enrolledMachineId: 'ordinary-machine' }), native,
+          readCurrentManagedRow: async () => ({ ...machine, enrollmentIdentity: serviceExit === 0 ? undefined : machine.enrollmentIdentity,
+            enrolledMachineId: 'ordinary-machine' }), native,
         });
         if (serviceExit === 0) await expect(update).resolves.toEqual({ machineId: 'ordinary-machine' });
         else await expect(update).rejects.toMatchObject({ code: 'background_service_failed' });
@@ -204,7 +217,7 @@ describe('runManagedMachineEnrollment', () => {
       });
       expect(await readFile(join(guestHome, '.happier/cli/current/happier'), 'utf8')).toBe(executable);
       const args = (await readFile(join(guestHome, 'invoked-args'), 'utf8')).trim().split('\n');
-      expect(args).toEqual(['daemon', 'service', 'install', '--json']);
+      expect(args).toEqual(['daemon', 'service', 'install', '--json', ...(serviceExit === 0 ? ['daemon', 'service', 'restart', '--json', 'daemon', 'status', '--json'] : [])]);
     } finally { await rm(root, { recursive: true, force: true }); }
   });
 
