@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useEventCallback } from '@/hooks/ui/useEventCallback';
 import type {
     BrowserDaemonViewV1,
     MachineLiveStreamCapsV1,
@@ -75,6 +76,17 @@ export function useBrowserStreamedSurfaceRuntime(input: Readonly<{
     const [attempt, setAttempt] = React.useState(0);
     const onBrowserEventRef = React.useRef(input.onBrowserEvent);
     onBrowserEventRef.current = input.onBrowserEvent;
+    const discoveredView = discovery.status === 'ready' && discovery.machineId === machineId && discovery.serverId === serverId
+        && discovery.view?.browserSessionId === browserSessionId && discovery.view.viewId === viewId
+        ? discovery.view : null;
+    const reconcileClosedView = useEventCallback((views: readonly BrowserDaemonViewV1[]) => {
+        // A seed may precede native creation. Only removal of a previously discovered native view
+        // proves closure; a missing capture source alone does not.
+        if (discoveredView && !views.some(candidate => candidate.viewId === discoveredView.viewId)) {
+            onBrowserEventRef.current?.({ kind: 'viewClosed', eventId: `browser-discovery-closed:${discoveredView.sourceId}`,
+                occurredAt: Date.now(), browserSessionId: discoveredView.browserSessionId, viewId: discoveredView.viewId });
+        }
+    });
 
     React.useEffect(() => {
         if (!browserSessionId || !machineId || !serverId) {
@@ -90,6 +102,7 @@ export function useBrowserStreamedSurfaceRuntime(input: Readonly<{
                 if (abort.signal.aborted) return;
                 if (!result.ok) { setDiscovery({ status: 'failed', reason: result.reason }); return; }
                 const views = result.views.filter(candidate => candidate.browserSessionId === browserSessionId);
+                reconcileClosedView(views);
                 for (const candidate of views) {
                     const target = resolveBrowserDaemonStreamTarget(candidate);
                     if (!target) continue;
@@ -106,6 +119,7 @@ export function useBrowserStreamedSurfaceRuntime(input: Readonly<{
                         viewId: candidate.viewId, target, platform: candidate.platform,
                         adapterKind: candidate.adapterKind, engineKind: 'streamedSurface',
                         adapterCapabilities,
+                        ...(opened?.kind === 'viewOpened' && opened.openerViewId ? { openerViewId: opened.openerViewId } : {}),
                         ...(opened?.kind === 'viewOpened' && opened.currentUrl ? { currentUrl: opened.currentUrl } : {}) });
                     for (const event of candidate.events) {
                         if (event.kind !== 'viewOpened' && event.browserSessionId === browserSessionId
@@ -116,11 +130,8 @@ export function useBrowserStreamedSurfaceRuntime(input: Readonly<{
                     && resolveBrowserDaemonStreamTarget(candidate) !== null) ?? null });
             });
         return () => abort.abort();
-    }, [attempt, browserSessionId, input.enabled, input.refreshKey, machineId, serverId, viewId]);
+    }, [attempt, browserSessionId, input.enabled, input.refreshKey, machineId, reconcileClosedView, serverId, viewId]);
 
-    const discoveredView = discovery.status === 'ready' && discovery.machineId === machineId && discovery.serverId === serverId
-        && discovery.view?.browserSessionId === browserSessionId && discovery.view.viewId === viewId
-        ? discovery.view : null;
     const captureSource = discoveredView?.captureSource ?? null;
     const sourceId = captureSource ? discoveredView?.sourceId ?? null : null;
     const socket = useMachineLiveStreamRelaySocket({
@@ -153,10 +164,21 @@ export function useBrowserStreamedSurfaceRuntime(input: Readonly<{
         ...(sourceId ? { sourceId } : {}),
         caps: NO_VIEWER_CAPS,
         sourceCodecs: captureSource?.supportedCodecs ?? [],
+        onReceipt: receipt => {
+            // A terminal capture is not proof of a closed native view. Reconcile once through
+            // discovery, which projects a confirmed removal into the existing workspace close path.
+            if (receipt.terminal && receipt.reasonCode === 'capture_source_unavailable') setAttempt(current => current + 1);
+        },
         onMetadataFrame: frame => {
             try {
                 const batch = BrowserEventBatchV1Schema.safeParse(JSON.parse(new TextDecoder().decode(decodeBase64(frame.payloadBase64, 'base64'))));
                 if (batch.success) for (const event of batch.data.events) {
+                    if (event.kind === 'viewOpened' && event.browserSessionId === browserSessionId && event.openerViewId === viewId) {
+                        // The child event announces adoption. Discovery supplies its registered
+                        // capture source and daemon tuple before the workspace opens its tab.
+                        setAttempt(current => current + 1);
+                        continue;
+                    }
                     if (event.browserSessionId === browserSessionId && 'viewId' in event && event.viewId === viewId) onBrowserEventRef.current?.(event);
                 }
             } catch { /* Malformed metadata never changes controller or view state. */ }

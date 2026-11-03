@@ -1,6 +1,8 @@
 import { BrowserEventV1Schema, type BrowserEventV1 } from '@happier-dev/protocol/browser/events/v1';
 import { describe, expect, it, vi } from 'vitest';
 import { createSurfaceInputControl, type SurfaceInputControl } from '../../surfaces/inputControl';
+import { createBrowserDaemonControlBroker } from '../control/broker';
+import { createBrowserDaemonControlRoutes } from '../control/routes';
 import {
     createBrowserSidecarCdpControlAdapter,
     type BrowserSidecarCdpEventCapableTransport,
@@ -57,6 +59,20 @@ describe('browser sidecar popup adoption', () => {
         const opened = h.events.find(event => event.kind === 'viewOpened');
         if (!opened || opened.kind !== 'viewOpened') throw new Error('Missing popup event');
         expect(opened).toMatchObject({ browserSessionId: 'browser', openerViewId: 'opener', currentUrl: 'https://example.test/popup' });
+        const broker = createBrowserDaemonControlBroker();
+        broker.registerAdapter(h.adapter);
+        const routes = createBrowserDaemonControlRoutes({ broker });
+        const discovered = routes.listViews('browser').find(view => view.viewId === opened.viewId);
+        expect(discovered?.events.find(event => event.kind === 'viewOpened')).toMatchObject({
+            browserSessionId: 'browser', viewId: opened.viewId, openerViewId: 'opener',
+            currentUrl: 'https://example.test/popup',
+        });
+        h.emit({ method: 'Page.navigatedWithinDocument', sessionId: 'session:popup-target',
+            params: { frameId: 'popup-target', url: 'https://example.test/popup#complete' } });
+        expect(routes.listViews('browser').find(view => view.viewId === opened.viewId)?.events
+            .find(event => event.kind === 'viewOpened')).toMatchObject({
+                openerViewId: 'opener', currentUrl: 'https://example.test/popup#complete',
+            });
         expect(h.adapter.resolvePageHandle(opened)).toEqual({ targetId: 'popup-target', sessionId: 'session:popup-target' });
         expect(h.lifecycle).toContainEqual({ type: 'bound', browserSessionId: 'browser', viewId: opened.viewId });
         expect(h.transport.dispatchBrowserCommand).toHaveBeenCalledWith({ method: 'Target.attachToTarget', params: { targetId: 'popup-target', flatten: true } });
@@ -64,6 +80,7 @@ describe('browser sidecar popup adoption', () => {
             url: 'https://example.test/next' })).toMatchObject({ status: 'dispatched' });
         expect(await h.adapter.dispatchCommand({ kind: 'closeView', commandId: 'close-child', browserSessionId: 'browser', viewId: opened.viewId })).toMatchObject({ status: 'dispatched' });
         expect(h.adapter.resolvePageHandle(opened)).toBeNull();
+        expect(routes.listViews('browser').some(view => view.viewId === opened.viewId)).toBe(false);
         expect(h.lifecycle).toContainEqual({ type: 'unbound', browserSessionId: 'browser', viewId: opened.viewId, sourceDestroyed: true });
         h.adapter.dispose();
     });
@@ -119,6 +136,9 @@ describe('browser sidecar popup adoption', () => {
         if (!opened || opened.kind !== 'viewOpened') throw new Error('Missing popup');
         expect(controls.get(opened.viewId)?.isObservationHeld()).toBe(true);
         expect(opened.currentUrl).toBeUndefined();
+        const discovered = h.adapter.listViews?.('browser').find(view => view.viewId === opened.viewId);
+        expect(discovered?.events.find(event => event.kind === 'viewOpened')).toMatchObject({ openerViewId: 'opener' });
+        expect(JSON.stringify(discovered)).not.toContain('/secret');
         expect(JSON.stringify(h.events)).not.toContain('/secret');
         h.adapter.dispose();
     });

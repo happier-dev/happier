@@ -1,6 +1,10 @@
 // Cross-app composition keeps the real daemon/server path in this test without
 // adding their source and package-local aliases to the UI compiler program.
 import * as React from 'react';
+import { PassThrough } from 'node:stream';
+import { BrowserEventBatchV1Schema, BrowserEventV1Schema } from '@happier-dev/protocol/browser/events/v1';
+import { MachineLiveStreamDecodedEnvelopeV1Schema } from '@happier-dev/protocol/machines/peer/mediation/stream/v1';
+import { createBrowserSidecarCdpControlAdapterFactory } from '../../../../../cli/src/daemon/browser/sidecar/controlAdapterFactory';
 import { act } from 'react-test-renderer';
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -702,4 +706,153 @@ describe('useBrowserStreamedSurfaceRuntime', () => {
         await hook.unmount();
         expect(boundary.listeners.size).toBe(0);
     });
+    it.each(['target-destroyed', 'capture-terminal-first', 'capture-unavailable', 'discovery-failed'] as const)('returns workspace selection only for a removed popup after native capture termination (%s)', async closePath => {
+        const removed = closePath === 'target-destroyed' || closePath === 'capture-terminal-first';
+        const listeners = new Set<BrowserSidecarCdpEventSubscriber>();
+        let rejectFrameAck: ((error: Error) => void) | undefined;
+        const created = await createBrowserSidecarCdpControlAdapterFactory({
+            browserSessionId: view.browserSessionId, sidecarId: 'popup-sidecar',
+            pipe: { readable: new PassThrough(), writable: new PassThrough() },
+            connectTransport: async () => ({ transport: {
+                openPage: async () => ({ targetId: 'popup-target', sessionId: 'popup-cdp' }),
+                dispatchPageCommand: async command => {
+                    if (closePath !== 'target-destroyed' && command.method === 'Page.screencastFrameAck') {
+                        return await new Promise((_, reject) => { rejectFrameAck = reject; });
+                    }
+                    return {};
+                },
+                dispatchBrowserCommand: async () => ({ success: true }),
+                subscribeCdpEvents: listener => { listeners.add(listener); return () => { listeners.delete(listener); }; },
+            } }),
+        })({ machineId: 'machine_1' });
+        if (!created.ok || !created.contextCapture) throw new Error('Missing popup CDP owner');
+        const producer = createBrowserCdpScreencastProducer({ contextCapture: created.contextCapture });
+        const registry = createMachineLiveStreamCaptureRegistry();
+        const registration = registerBrowserLiveCapture({ registry, contextCapture: created.contextCapture, producer, automation: () => null });
+        const produced: MachineLiveStreamRelayEnvelopeV1[] = [];
+        const relay = createMachineLiveStreamRelayTerminator({ machineId: 'machine_1', nowMs: Date.now,
+            captureAdapter: createDaemonMachineLiveStreamCaptureAdapter(registry), emitEnvelope: envelope => {
+                produced.push(envelope);
+                for (const listener of boundary.listeners) listener(envelope);
+            } });
+        const child = { browserSessionId: view.browserSessionId, viewId: 'popup' };
+        await created.adapter.dispatchCommand({ kind: 'openView', commandId: 'open-popup', focus: true,
+            ...child, platform: 'web', target: view.target });
+        const childSource = registry.resolve({ sourceId: browserViewKey(child) });
+        if (!childSource.ok) throw new Error('Missing popup capture source');
+        const { createBrowserWorkspaceOpeningFixture } = await import('@/dev/testkit/fixtures/browserWorkspaceOpening');
+        const { applyCloseDetailsTab, applyOpenDetailsTab, createEmptyPaneDetailsState } = await import('@/components/appShell/panes/details/workspace/detailsWorkspaceReducer');
+        const { resolveBrowserViewTargetOpenTab } = await import('../surfaces/openBrowserTargetInWorkspace');
+        const parentTab = resolveBrowserViewTargetOpenTab({ scope: 'sessionDetails', platform: 'web' }, view.target).tab;
+        let details = applyOpenDetailsTab(createEmptyPaneDetailsState(), { tab: parentTab, openAs: 'pinned' });
+        let openedTabs = 0;
+        let discoveryReadsWhenClosed: number | undefined;
+        const discoveryReadCount = () => boundary.requests.filter(request => typeof request === 'object' && request !== null
+            && 'method' in request && request.method === 'daemon.browser.view.list').length;
+        const opener = createBrowserWorkspaceOpeningFixture({ scope: 'sessionDetails', platform: 'web',
+            browserFeatureDecision: { featureId: 'browser', state: 'enabled', blockedBy: null,
+                blockerCode: 'none', diagnostics: [], evaluatedAt: 1, scope: { scopeKind: 'runtime' } },
+            openDetailsTab: tab => { openedTabs++; details = applyOpenDetailsTab(details, { tab, openAs: 'pinned' }); } });
+        const source = { v: 1, sourceId: 'browser-view-key-1', sourceKind: 'browser',
+            supportedCodecs: ['image.mjpeg'], inputMode: 'shared', sidebands: [], health: { status: 'available' } };
+        boundary.views = [daemonView(source)];
+        const parentOpened = BrowserEventV1Schema.parse({ kind: 'viewOpened', browserSessionId: view.browserSessionId,
+            viewId: view.viewId, eventId: 'parent-open', occurredAt: 1, platform: 'web', adapterKind: 'chromiumSidecar',
+            engineKind: 'streamedSurface', target: view.target, adapterCapabilities: view.adapterCapabilities });
+        const initialBrowserState = applyBrowserControlEvent(createBrowserControlState(), parentOpened);
+        const screen = await renderScreen(<BrowserSurfaceHost browserSessionId={view.browserSessionId} platform="web"
+            initialBrowserState={initialBrowserState}
+            pluginBrowserActionContext={{ machineId: 'machine_1', serverId, sessionId: 'session_1' }}
+            policy={{ browserEnabled: true, viewTargetsEnabled: true, diagnosticsEnabled: false, contextEnabled: false }}
+            onOpenTarget={opener.open} testID="popup-host" />);
+        try {
+            await flushHookEffects({ cycles: 6, turns: 6 });
+            await waitForStreamAdmission();
+            const start = boundary.requests.find((request): request is { method: string; payload: unknown } =>
+                typeof request === 'object' && request !== null && 'method' in request && request.method === RPC_METHODS.DAEMON_LIVE_STREAM_RELAY_START);
+            const { startRequest } = DaemonMachineLiveStreamRelayStartRequestV1Schema.parse(start?.payload);
+            const parent = daemonView(source);
+            const opened = { ...parentOpened, viewId: 'popup', openerViewId: view.viewId,
+                eventId: 'popup-open', currentUrl: 'https://example.test/popup' };
+            const popupView = { ...parent, ...child, sourceId: browserViewKey(child), events: [opened],
+                captureSource: childSource.source.capabilities };
+            boundary.views = [parent, popupView];
+            const bytes = new TextEncoder().encode(JSON.stringify({ v: 1, events: [opened] }));
+            await act(async () => {
+                for (const listener of boundary.listeners) listener({ v: 1, sourceMachineId: 'machine_1', targetMachineId: 'machine_1',
+                    message: { kind: 'frame', frame: { v: 1, streamId: startRequest.streamId, sequence: 1, timestampMs: 1,
+                        codecId: 'image.mjpeg', payloadKind: 'metadata', payloadEncoding: 'binary_base64',
+                        payloadBase64: encodeBase64(bytes), payloadSizeBytes: bytes.byteLength } } });
+            });
+            await flushHookEffects({ cycles: 6, turns: 6 });
+            expect(openedTabs).toBe(1);
+            const group = details.groupsById[details.focusedGroupId!];
+            const tab = details.tabsByKey[group.activeTabKey!];
+            expect(tab.key).not.toBe(parentTab.key);
+            expect(group.tabKeys).toEqual([parentTab.key, tab.key]);
+            expect(tab.resource).toMatchObject({ browserSessionId: view.browserSessionId, viewId: 'popup',
+                target: { kind: 'streamedBrowser', streamId: browserViewKey(child), daemonView: child } });
+            expect(boundary.requests.filter(request => typeof request === 'object' && request !== null
+                && 'method' in request && request.method === 'daemon.browser.view.list')).toHaveLength(2);
+            await screen.update(<BrowserSurfaceHost key="popup" browserSessionId={view.browserSessionId} platform="web"
+                initialBrowserState={applyBrowserControlEvent(createBrowserControlState(), opened)}
+                pluginBrowserActionContext={{ machineId: 'machine_1', serverId, sessionId: 'session_1' }}
+                policy={{ browserEnabled: true, viewTargetsEnabled: true, diagnosticsEnabled: false, contextEnabled: false }}
+                onOpenTarget={opener.open} onCloseTab={() => {
+                    discoveryReadsWhenClosed = discoveryReadCount();
+                    details = applyCloseDetailsTab(details, tab.key);
+                }}
+                testID="popup-host" />);
+            await flushHookEffects({ cycles: 6, turns: 6 });
+            const popupStart = boundary.requests.filter((request): request is { method: string; payload: unknown } =>
+                typeof request === 'object' && request !== null && 'method' in request
+                && request.method === RPC_METHODS.DAEMON_LIVE_STREAM_RELAY_START).at(-1);
+            const popupStream = DaemonMachineLiveStreamRelayStartRequestV1Schema.parse(popupStart?.payload).startRequest.streamId;
+            expect(popupStream).not.toBe(startRequest.streamId);
+            boundary.relaySend = raw => { relay.applyControl(MachineLiveStreamDecodedEnvelopeV1Schema.parse(raw)); };
+            await act(async () => {
+                expect(await relay.start(DaemonMachineLiveStreamRelayStartRequestV1Schema.parse(popupStart?.payload).startRequest, 'present_user'))
+                    .toMatchObject({ ok: true });
+            });
+            const discoveryReadsBeforeClose = discoveryReadCount();
+            boundary.views = closePath === 'capture-unavailable' ? [parent, { ...popupView, captureSource: undefined }] : [parent];
+            if (closePath === 'discovery-failed') boundary.discoveryError = 'request_failed';
+            await act(async () => {
+                if (closePath !== 'target-destroyed') {
+                    for (const listener of [...listeners]) listener({ method: 'Page.screencastFrame', sessionId: 'popup-cdp',
+                        params: { sessionId: 1, data: 'AQID', metadata: { deviceWidth: 400, deviceHeight: 200 } } });
+                    if (!rejectFrameAck) throw new Error('Missing native frame acknowledgement');
+                    rejectFrameAck(new Error('Target closed'));
+                    await Promise.resolve(); await Promise.resolve();
+                }
+                // Chromium reports window.close() through Target.targetDestroyed. Do not inject
+                // viewClosed into the UI: real capture/relay teardown determines what survives.
+                if (removed) for (const listener of [...listeners]) listener({ method: 'Target.targetDestroyed', params: { targetId: 'popup-target' } });
+            });
+            await flushHookEffects({ cycles: 6, turns: 6 });
+            expect(produced).toContainEqual(expect.objectContaining({ message: { kind: 'receipt', receipt: expect.objectContaining({
+                reasonCode: 'capture_source_unavailable', terminal: true,
+            }) } }));
+            const closeMetadata = produced.flatMap(envelope => {
+                if (envelope.message.kind !== 'frame' || envelope.message.frame.payloadKind !== 'metadata') return [];
+                return BrowserEventBatchV1Schema.parse(JSON.parse(Buffer.from(envelope.message.frame.payloadBase64, 'base64').toString('utf8')))
+                    .events.filter(event => event.kind === 'viewClosed');
+            });
+            expect(closeMetadata).toHaveLength(closePath === 'target-destroyed' ? 1 : 0);
+            if (removed) expect(details.tabsByKey[tab.key]).toBeUndefined();
+            else expect(details.tabsByKey[tab.key]).toBeDefined();
+            expect(details.groupsById[details.focusedGroupId!].activeTabKey).toBe(removed ? parentTab.key : tab.key);
+            expect(details.tabsByKey[parentTab.key]).toBeDefined();
+            if (closePath !== 'target-destroyed') {
+                // One reconciliation decides closure. Selecting the opener can then discover its
+                // own source; retained/error tabs must not keep retrying the unavailable capture.
+                expect(removed ? discoveryReadsWhenClosed : discoveryReadCount()).toBe(discoveryReadsBeforeClose + 1);
+            }
+        } finally {
+            boundary.relaySend = null;
+            await screen.unmount(); opener.dispose(); await relay.dispose(); registration.dispose(); await producer.dispose(); await created.dispose?.();
+        }
+    });
+
+
 });

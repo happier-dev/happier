@@ -2020,6 +2020,7 @@ it('explains a refused iframe collector in Diagnostics while keeping its engine 
         const dispose = vi.fn();
         let hasDraft = () => false;
         const sendDaemonCommand = vi.fn();
+        const onCloseTab = vi.fn();
         const initialBrowserState = openBrowserTarget(createBrowserViewState(), ingress === 'machine' ? {
             kind: 'streamedBrowser', targetId: 'exact-stream', streamId: 'exact-stream',
         } : target, { browserSessionId: 'session_1', viewId: 'agent-view', platform: 'web' });
@@ -2041,6 +2042,7 @@ it('explains a refused iframe collector in Diagnostics while keeping its engine 
             policy={{ browserEnabled: true, viewTargetsEnabled: true, diagnosticsEnabled: false, contextEnabled: false }}
             productModels={{ browserProfile: { profile: sessionBrowserProfile, activePermissionGrantCount: 0 } }}
             browserFeatureDecision={enabledBrowserDecision} sendDaemonCommand={sendDaemonCommand}
+            onCloseTab={onCloseTab}
             testID="browser-surface"
             />;
         }
@@ -2052,6 +2054,14 @@ it('explains a refused iframe collector in Diagnostics while keeping its engine 
             browserSessionId: 'session_1', viewId: 'agent-view', occurredAt: 999 }]));
         expect(hasDraft()).toBe(true);
         expect(dispose).not.toHaveBeenCalled();
+        await act(async () => control?.applyDaemonEvents?.([{
+            kind: 'viewOpened', eventId: 'other-open', browserSessionId: 'session_1', viewId: 'other-view',
+            occurredAt: 998, platform: 'web', target,
+            adapterKind: initialBrowserState.viewsById['agent-view']!.adapterKind,
+            engineKind: initialBrowserState.viewsById['agent-view']!.engineKind,
+            adapterCapabilities: initialBrowserState.viewsById['agent-view']!.adapterCapabilities,
+        }, { kind: 'viewClosed', eventId: 'other-close', browserSessionId: 'session_1', viewId: 'other-view', occurredAt: 999 }]));
+        expect(onCloseTab).not.toHaveBeenCalled();
         const result = BrowserCommandDispatchResultV1Schema.parse({ v: 1, commandId: 'close-machine',
             status: 'dispatched', adapterKind: 'chromiumSidecar', events: [{
                 kind: 'viewClosed', eventId: 'machine-closed', browserSessionId: 'session_1',
@@ -2071,6 +2081,7 @@ it('explains a refused iframe collector in Diagnostics while keeping its engine 
         expect(hasDraft()).toBe(false);
         expect(dispose).toHaveBeenCalledTimes(1);
         expect(sendDaemonCommand).not.toHaveBeenCalled();
+        expect(onCloseTab).toHaveBeenCalledTimes(1);
         await screen.unmount();
         expect(dispose).toHaveBeenCalledTimes(1);
     });

@@ -235,6 +235,7 @@ export function BrowserSurfaceHost(props: Readonly<{
     launchpadRefreshError?: string | null;
     onRefreshLaunchpad?: () => void;
     onOpenTarget?: (target: BrowserViewTargetV1, options?: BrowserLaunchpadOpenTargetOptions) => void;
+    onCloseTab?: () => void;
     browserFeatureDecision?: FeatureDecision | null;
     desktopWebViewAvailability?: DesktopWebViewNativeAvailability | null;
     allowExternalUrlBrowsing?: boolean;
@@ -375,13 +376,16 @@ export function BrowserSurfaceHost(props: Readonly<{
     }, [focusedView?.browserSessionId, focusedView?.viewId, focusedView?.title, focusedView?.currentUrl, props.onViewStateChange, resetKey]);
     const annotationContextRef = React.useRef(props.browserContext ?? props.productModels?.browserContext);
     annotationContextRef.current = props.browserContext ?? props.productModels?.browserContext;
-    const releaseClosedAnnotationView = React.useCallback((view: Readonly<{ browserSessionId: string; viewId: string }>) => {
+    const releaseClosedView = React.useCallback((view: Readonly<{ browserSessionId: string; viewId: string }>) => {
         const context = annotationContextRef.current;
-        if (!context) return;
-        const state = context.readState?.() ?? context.state;
-        const next = closeBrowserAnnotationView(state, view);
-        if (next !== state) context.onStateChange(next);
-    }, []);
+        if (context) {
+            const state = context.readState?.() ?? context.state;
+            const next = closeBrowserAnnotationView(state, view);
+            if (next !== state) context.onStateChange(next);
+        }
+        // The workspace owns tab selection and restores its previous tab when this one closes.
+        if (view.viewId === focusedView?.viewId && view.browserSessionId === focusedView.browserSessionId) props.onCloseTab?.();
+    }, [focusedView?.browserSessionId, focusedView?.viewId, props.onCloseTab]);
     const applyDaemonEvents = React.useCallback((events: readonly BrowserEventV1[]) => {
         const current = surfaceStateRef.current;
         const browserState = events.reduce((state, event) => {
@@ -390,7 +394,7 @@ export function BrowserSurfaceHost(props: Readonly<{
             if (event.kind === 'viewOpened' && state.viewsById[event.viewId]?.browserSessionId === event.browserSessionId) return state;
             const next = applyBrowserControlEvent(state, event);
             if (event.kind === 'viewClosed' && state.viewsById[event.viewId] && !next.viewsById[event.viewId]) {
-                releaseClosedAnnotationView(state.viewsById[event.viewId]!);
+                releaseClosedView(state.viewsById[event.viewId]!);
             }
             return next;
         }, current.browserState);
@@ -398,8 +402,16 @@ export function BrowserSurfaceHost(props: Readonly<{
         const next = { ...current, browserState };
         surfaceStateRef.current = next;
         setSurfaceState(next);
-    }, [releaseClosedAnnotationView]);
-    const receiveBrowserEvent = React.useCallback((event: BrowserEventV1) => applyDaemonEvents([event]), [applyDaemonEvents]);
+    }, [releaseClosedView]);
+    const receiveBrowserEvent = React.useCallback((event: BrowserEventV1) => {
+        const adopted = event.kind === 'viewOpened' && event.openerViewId === focusedView?.viewId
+            && !surfaceStateRef.current.browserState.viewsById[event.viewId];
+        applyDaemonEvents([event]);
+        // Use the existing workspace opener (and its createBrowserViewDetailsTab owner). The
+        // stream runtime supplies the daemon-discovered target, including its complete identity.
+        if (adopted && event.kind === 'viewOpened') props.onOpenTarget?.(event.target,
+            { platform: event.platform, ...(event.currentUrl ? { currentUrl: event.currentUrl } : {}) });
+    }, [applyDaemonEvents, focusedView?.viewId, props.onOpenTarget]);
     const logicalViewId = focusedView?.viewId ?? props.browserSessionId;
     // B-RC7 (dark-model wiring, §3.8): construct the already-built live-engine diagnostics runtime
     // for the active view. It is view-bound (it needs `focusedView`), so the host is its natural
@@ -570,14 +582,14 @@ export function BrowserSurfaceHost(props: Readonly<{
         setSurfaceState(next);
         for (const effect of result.effects) {
             if (effect.kind === 'clientLocalView' && effect.command.kind === 'closeView') {
-                releaseClosedAnnotationView(effect.command);
+                releaseClosedView(effect.command);
             }
             if (effect.kind === 'clientLocalView' && (effect.command.kind === 'openView' || effect.command.kind === 'setTarget')) {
                 props.onViewTargetChange?.({ browserSessionId: effect.command.browserSessionId,
                     viewId: effect.command.viewId, target: effect.command.target });
             }
         }
-    }, [isBrowserActionCurrent, props.onViewTargetChange, releaseClosedAnnotationView]);
+    }, [isBrowserActionCurrent, props.onViewTargetChange, releaseClosedView]);
 
     const daemonCommandSender = props.sendDaemonCommand ?? productModels?.browserContext?.daemonControl?.sendCommand;
     const receiveDaemonEvents = React.useCallback((events: readonly BrowserEventV1[]) => {

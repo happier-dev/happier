@@ -527,6 +527,11 @@ Only actions declared by `INJECTED_PAGE_AUTOMATION_ACTIONS` enter the installed 
   service regardless of surface. The element-picker capability that *is* live is the diagnostics
   family (`browser.diagnostics.elementPicker.start` / `.cancel`), which is wired end to end.
 
+  Adopted popup discovery preserves the daemon Session/view tuple and opener relationship
+  for the existing workspace details-tab opener, including after navigation or rediscovery.
+  A terminal `capture_source_unavailable` receipt refreshes discovery once: removal of a previously discovered view
+  follows the existing workspace tab-close path, which restores the previous tab. A view
+  still listed without capture, or a failed discovery request, keeps its tab for recovery.
 ## Related
 
 - `docs/browser-recording-capture-matrix.md` — the recording half of the same question.

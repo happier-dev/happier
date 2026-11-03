@@ -185,6 +185,7 @@ type BoundView = BrowserSidecarCdpPageHandle & {
     viewId: string;
     target: SidecarViewTarget;
     platform: BrowserPlatformV1;
+    openerViewId?: string;
     state: BrowserSidecarNavigationState;
     loaderId?: string;
     frameId?: string;
@@ -299,11 +300,11 @@ export function createBrowserSidecarCdpControlAdapter(
     function publishState(view: BoundView): void {
         publishEvent(stateEvent(view));
     }
-    function openedViewEvent(view: BoundView, openerViewId?: string): BrowserEventV1 {
+    function openedViewEvent(view: BoundView): BrowserEventV1 {
         const state = stateEvent(view);
         return BrowserEventV1Schema.parse({ kind: 'viewOpened', eventId: `cdp:${++eventSequence}`, occurredAt: Date.now(),
             browserSessionId: view.browserSessionId, viewId: view.viewId, target: view.target, platform: view.platform,
-            ...(openerViewId ? { openerViewId } : {}),
+            ...(view.openerViewId ? { openerViewId: view.openerViewId } : {}),
             ...('currentUrl' in state && state.currentUrl ? { currentUrl: state.currentUrl } : {}),
             adapterKind: 'chromiumSidecar', engineKind: 'streamedSurface', adapterCapabilities: {
                 adapterKind: 'chromiumSidecar', supportedTargetKinds: [view.target.kind], supportedRenderEngines: ['streamedSurface'],
@@ -375,14 +376,14 @@ export function createBrowserSidecarCdpControlAdapter(
                 ? { ...opener.target, targetId: viewId, streamId: browserViewKey({ browserSessionId: opener.browserSessionId, viewId }),
                     daemonView: { browserSessionId: opener.browserSessionId, viewId } }
                 : { ...opener.target, targetId: viewId, ...(currentUrl.success && !held ? { url: currentUrl.data } : {}) };
-            view = { browserSessionId: opener.browserSessionId, viewId, target, platform: opener.platform, targetId, sessionId,
+            view = { browserSessionId: opener.browserSessionId, viewId, openerViewId: opener.viewId, target, platform: opener.platform, targetId, sessionId,
                 state: { navigationGeneration: 0, ...(currentUrl.success ? { currentUrl: currentUrl.data } : {}),
                     loadingState: 'loading', canGoBack: false, canGoForward: false } };
             if (held) await input.resolveInputControl?.(view)?.beginConfidentialityHold();
             if (disposed || boundViews.get(browserViewKey(opener)) !== opener || !attachingTargets.has(targetId)) return;
             boundViews.set(browserViewKey(view), view);
             emitLifecycle({ type: 'bound', browserSessionId: view.browserSessionId, viewId });
-            publishEvent(openedViewEvent(view, opener.viewId));
+            publishEvent(openedViewEvent(view));
             publishState(view);
             await observePage(view);
         } catch {
@@ -585,7 +586,8 @@ export function createBrowserSidecarCdpControlAdapter(
             if (disposed || browserSessionId !== input.browserSessionId) return [];
             return [...boundViews.values()].map(view => ({ browserSessionId: view.browserSessionId, viewId: view.viewId,
                 sourceId: browserViewKey(view), target: view.target, platform: view.platform,
-                adapterKind: 'chromiumSidecar' as const, events: [stateEvent(view)] }));
+                adapterKind: 'chromiumSidecar' as const,
+                events: [...(view.openerViewId ? [openedViewEvent(view)] : []), stateEvent(view)] }));
         },
         getNavigationState(view) { return boundViews.get(browserViewKey(view))?.state ?? null; },
         resolvePageHandle(view) {
