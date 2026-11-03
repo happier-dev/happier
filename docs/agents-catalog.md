@@ -936,6 +936,17 @@ arguments, credential environment keys or JSON credential paths, and whether a
 status command is noninteractive. These fields never select an Agent parser or
 transfer process, environment, filesystem, or credential custody to plugin code.
 
+For a separated Machine member in 0.3 development, launch preparation at
+`agentCliBinding.ts` selects the Agent's managed runtime from the agent-readable
+install home and qualifies it for the member's native UID. The retained launch
+keeps that exact executable and JavaScript runtime, where required. An
+owner-private system installation cannot substitute for it. If no runnable
+managed runtime is available, launch returns `agent_cli_not_runnable`, names the
+Agent and asks the Machine owner to install its managed runtime. The RunAs shim
+executes the prepared launch without selecting a different Agent binary or
+falling back to the daemon identity. Machine inventory describes its own probe
+identity; an owner-visible installed binary alone does not prove member readiness.
+
 In 0.3 development source, `cli.commandPolicy` also carries the closed
 `daemonAutostartDefault: 'preferLocalTui'` declaration. The same manifest
 projector supplies the command descriptor consumed by CLI dispatch for bundled
@@ -1745,6 +1756,15 @@ machine transport and Action admission as Start. In the app, Actions and present
 share `agents/machineAgents/signIn/useAgentSignIn.ts`'s Account-scoped custody.
 Closing a presenter does not transfer process ownership to its terminal renderer.
 This is current development behavior, not a released availability claim.
+
+### Member-runnable Agent startup failures (0.3 development)
+
+When the selected Agent cannot run as the separated member, startup refuses with
+`agent_cli_not_runnable`. The Session issue and launch result name the selected
+Agent from the installed catalog and tell the member to install its
+Happier-managed runtime. This refusal is nonretryable; repeating the same creation
+request observes its settled result without another launch or nonce poll.
+Executable paths and native error text remain private.
 
 ### Checklist id conventions
 

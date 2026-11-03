@@ -1,3 +1,4 @@
+import { readSessionPreparationFailureCode, readSessionStartupFailurePreview } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import {
   type AgentExecutionRunConversationRuntimeV1,
   type AgentExecutionRunConversationSendOptionsV1,
@@ -397,6 +398,10 @@ function createSanitizedNativeStartupError(error: unknown): Error {
   const startupCause = error instanceof AggregateError ? error.errors[0] : error;
   const descriptor = startupCause instanceof Error ? Object.getOwnPropertyDescriptor(startupCause, 'code') : undefined;
   const errorCode: unknown = descriptor && 'value' in descriptor ? descriptor.value : undefined;
+  if (readSessionPreparationFailureCode(errorCode) === 'agent_cli_not_runnable') {
+    return new PluginError({ code: 'agent_cli_not_runnable', retryable: false,
+      message: readSessionStartupFailurePreview(errorCode)! });
+  }
   const nativeTransportFailure = readCodexNativeTransportStartupFailure(startupCause);
   const code = readAgentStartupFailureCode(errorCode)
     ?? (error instanceof TypeError ? 'agent_startup_invalid_state'

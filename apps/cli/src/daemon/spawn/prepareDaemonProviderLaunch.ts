@@ -54,6 +54,7 @@ type DaemonProviderLaunchRefusal = Readonly<{
 }>;
 
 export async function prepareDaemonProviderLaunch(input: Readonly<{
+    agentIsolation?: import('../agentIsolation/agentIsolationLaunchPolicy').HostAgentIsolationLaunchContext;
     signal?: AbortSignal;
     options: SpawnSessionOptions;
     effectiveBackendTarget: BackendTargetRefV2;
@@ -163,6 +164,7 @@ export async function prepareDaemonProviderLaunch(input: Readonly<{
             : false,
         resolvePrerequisites: async (providerBindingContext) => {
             const providerPrerequisites = await resolveSpawnChildEnvironment({
+                agentIsolation: input.agentIsolation,
                 happyHomeDir: configuration.happyHomeDir,
                 pluginRuntimeRegistry: appliedPluginRuntimeLease.registry,
                 options: optionsWithProviderIsolation,

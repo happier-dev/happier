@@ -8259,6 +8259,7 @@ localTailscale: {
         plugin_services_managed_provider_authority_unavailable: "共有プロバイダーにアクセスできません。Gateway とそのマシンへの接続を確認してから、セッションを再試行してください。",
         provider_endpoint_unavailable: "プロバイダーのエンドポイントを利用できません。Gateway とそのマシンへの接続を確認してから、セッションを再試行してください。",
         plugin_mcp_preparation_unavailable: "プラグインの MCP 準備を利用できません。対象のマシンを確認してから、セッションを再試行してください。",
+        agent_cli_not_runnable: "このメンバーではこのエージェントを実行できません。Happier が管理するランタイムをインストールしてください。",
         agent_runtime_daemon_service_generation_not_current: "ランナーのエージェント世代が最新ではありません。対象のマシンでセッションを再試行してください。",
         plugin_disabled: "このエージェントのプラグインは無効です。「プラグイン」で再度有効にすると、このセッションを再開できます。",
         native_agent_privileged_effect_authority_unavailable: "ランナーの daemon 権限を利用できません。対象のマシンを確認してから、セッションを再試行してください。",

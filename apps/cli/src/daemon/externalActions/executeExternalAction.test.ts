@@ -26,7 +26,7 @@ import {
 } from './executeExternalAction';
 import { createDaemonExternalActionTargetResolver } from './daemonExternalActionTargetResolver';
 import { SessionActionRpcOriginV1Schema } from '@happier-dev/protocol/socketRpc';
-import { ApprovalRequestV2Schema, requiresExactDaemonApprovalReplay, type ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { ApprovalRequestV2Schema, resolveApprovalExecutor, type ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { decideApprovalRequestTransition } from '@happier-dev/protocol/approvals/approvalRequestTransition';
 import { ActionsSettingsV1Schema, normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import { EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER,
@@ -817,7 +817,7 @@ describe('executeExternalAction', () => {
     const client = createActionExecutor({ ...createUnavailableHostActionDeps(), ...approvalStore,
       isApprovalExecutionOriginCurrent: currentness,
       approvalRequestApprovedReplay: async request => {
-        if (request.request.v !== 2 || !requiresExactDaemonApprovalReplay(request.request)) return null;
+        if (request.request.v !== 2 || resolveApprovalExecutor(request.request).kind !== 'daemon') return null;
         const result = await handlers.get(RPC_METHODS.APPROVAL_REQUEST_REPLAY_APPROVED)!({ artifactId: request.artifactId },
           { callerAuthority: 'present_user', signal: new AbortController().signal,
             ...(custody === 'admitted requester' ? { callerInputAuthorization: freshAdmission } : {}) });
@@ -841,6 +841,7 @@ describe('executeExternalAction', () => {
     const approval = ApprovalRequestV2Schema.parse(artifacts.get('approval-1'));
     expect(approval.executionOriginV1).toMatchObject({ authority, surface: 'ui', caller: { kind: 'host' },
       accountId: accountPrincipal.accountId, machineId: target.machineId, requestId: binding.requestId });
+    expect(resolveApprovalExecutor(approval)).toEqual({ kind: 'daemon', machineId: target.machineId });
     expect(await client.execute('approval.request.decide', { artifactId: 'approval-1', decision: 'approve' },
       { surface: 'voice', authority: 'account_automation', serverId: 'profile' }))
       .toMatchObject({ ok: false, errorCode: 'present_user_required' });

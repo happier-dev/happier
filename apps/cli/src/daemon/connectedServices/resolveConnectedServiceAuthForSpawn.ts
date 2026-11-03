@@ -1100,6 +1100,7 @@ function resolveSpawnMaterializationAttemptLimit(
 }
 
 async function materializeAndVerifyConnectedServiceAuthForSpawn(params: Readonly<{
+  agentLaunchTarget?: Parameters<typeof materializeConnectedServicesForSpawn>[0]['agentLaunchTarget'];
   signal?: AbortSignal;
   retainCleanup?: (cleanup: () => Promise<void>) => Promise<() => void>;
   agentId: CatalogAgentId;
@@ -1125,6 +1126,7 @@ async function materializeAndVerifyConnectedServiceAuthForSpawn(params: Readonly
 }>): Promise<ConnectedServicesMaterialization | null> {
   params.signal?.throwIfAborted();
   const materialized = await materializeConnectedServicesForSpawn({
+    agentLaunchTarget: params.agentLaunchTarget,
     signal: params.signal,
     retainCleanup: params.retainCleanup,
     agentId: params.agentId,
@@ -1180,6 +1182,7 @@ async function materializeAndVerifyConnectedServiceAuthForSpawn(params: Readonly
 }
 
 export async function resolveConnectedServiceAuthForSpawn(params: Readonly<{
+  agentLaunchTarget?: Parameters<typeof materializeConnectedServicesForSpawn>[0]['agentLaunchTarget'];
   signal?: AbortSignal;
   retainCleanup?: (cleanup: () => Promise<void>) => Promise<() => void>;
   agentId: CatalogAgentId;
@@ -1236,6 +1239,7 @@ export async function resolveConnectedServiceAuthForSpawn(params: Readonly<{
   }> | Promise<Readonly<{ subjectId: string; dispose(): void | Promise<void> }>>;
 }>): Promise<Readonly<{
   env: Record<string, string>;
+  agentLaunchMaterials?: ConnectedServicesMaterialization['agentLaunchMaterials'];
   unsetEnvKeys?: readonly string[];
   sessionConnectedAccounts?: ConnectedServicesMaterialization['sessionConnectedAccounts'];
   cleanupOnFailure: (() => void | Promise<void>) | null;
@@ -1391,6 +1395,7 @@ export async function resolveConnectedServiceAuthForSpawn(params: Readonly<{
       }
       params.signal?.throwIfAborted();
       const materialized = await materializeAndVerifyConnectedServiceAuthForSpawn({
+        agentLaunchTarget: params.agentLaunchTarget,
         signal: params.signal,
         retainCleanup: params.retainCleanup,
         agentId: params.agentId,

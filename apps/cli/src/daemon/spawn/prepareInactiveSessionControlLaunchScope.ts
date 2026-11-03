@@ -1,4 +1,7 @@
-import { PluginError } from '@happier-dev/plugin-sdk';
+import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
+import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol/spawnSession';
+import { readSessionStartupFailurePreview } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import { resolveAgentDisplayTitle } from '@/agent/catalog/agentDisplayTitle';
 import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { ConnectedServiceBindingsV2IngressSchema } from '@happier-dev/protocol/connect/connected-service-bindings';
@@ -28,11 +31,13 @@ type ProviderAdmission = Parameters<typeof prepareDaemonProviderLaunch>[0];
 
 export type InactiveSessionControlLaunchAdmission = Pick<ConnectedAdmission,
   'credentials' | 'api' | 'activeServerDir' | 'connectedServicesMaterializationBaseDir'
-  | 'connectedServiceRefreshCoordinator' | 'qualifiedConnectedAccountApi' | 'connectedAccountsOwner'
-  | 'activatePurposeBindings' | 'processEnv' | 'serverContract'
+  | 'connectedServiceRefreshCoordinator' | 'qualifiedConnectedAccountApi'
+  | 'activatePurposeBindings' | 'processEnv' | 'serverContract' | 'prepareAgentIsolationMember' | 'readAgentIsolationEnabled'
   | 'providerAccountUsageStore' | 'authGroupSwitchCoordinator' | 'predictiveSwitchGuard'> & Pick<ProviderAdmission,
   'savedSecretOperationContext' | 'providerRuntimeHomeDir' | 'resolveProvidersFeatureEnabled'
   | 'resolveManagedPurposeBindingIntent' | 'readModelProjection'> & Readonly<{
+    agentIsolation?: import('../agentIsolation/agentIsolationLaunchPolicy').HostAgentIsolationLaunchContext;
+    connectedAccountsOwner?: InactiveSessionControlLaunchScope['connectedAccountsOwner'];
     assertCurrent(): Promise<void>;
     readAccountSettingsSnapshot: NonNullable<ProviderAdmission['readAccountSettingsSnapshot']>;
     readAccountLaunchProfiles?: () => ReturnType<typeof readAccountLaunchProfiles>;
@@ -144,6 +149,10 @@ export async function prepareInactiveSessionControlLaunchScope(
       }
     }
     const child = await prepareDaemonSpawnChildEnvironment({
+      ...(connected.agentLaunchMaterials?.memberIdentity ? { memberAgentCliLaunch: {
+        identity: connected.agentLaunchMaterials.memberIdentity,
+        installedCli: admission.agentIsolation?.managedHappierBinaryPath ?? '', signal,
+      } } : {}),
       savedSecretOperationContext: admission.savedSecretOperationContext,
       options: connected.options, existingSessionMetadata: adapterParams.metadata, resolvedAgentId: agentId,
       effectiveModelSelection: persisted.selection ?? options.modelSelection, terminal: options.terminal,
@@ -156,7 +165,15 @@ export async function prepareInactiveSessionControlLaunchScope(
       providerBindingAttempt: provider.attempt, providerAgentTargetKey: provider.agentTargetKey,
       providerDiagnosticRedactionLease: redaction, launchResourceScope: resources,
     });
-    if (!child.ok) unavailable();
+    if (!child.ok) {
+      if (child.result.errorCode === SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED
+        && child.result.errorMessage === 'agent_cli_not_runnable') {
+        throw new PluginError({ code: child.result.errorMessage, retryable: false,
+          message: readSessionStartupFailurePreview(child.result.errorMessage, resolveAgentDisplayTitle(agentId))!,
+          details: { agentId, remedy: 'install_managed_runtime' } });
+      }
+      unavailable();
+    }
     if (provider.attempt && !(await provider.attempt.revalidateBeforeEffect(signal)).ok) unavailable();
     await assertCurrent();
     const selections = readConnectedServiceChildSelectionsFromEnv(child.extraEnvForChild);
@@ -184,6 +201,7 @@ export async function prepareInactiveSessionControlLaunchScope(
   } catch (error) {
     await resources.retire();
     signal.throwIfAborted();
+    if (isPluginError(error) && error.code === 'agent_cli_not_runnable') throw error;
     unavailable(error);
   }
 }

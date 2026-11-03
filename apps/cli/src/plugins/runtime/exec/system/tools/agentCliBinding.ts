@@ -1,4 +1,5 @@
-import { resolveAgentCliOverrideEnvKey } from '@happier-dev/cli-common/agents/resolution';
+import { agentCliPathRequiresJavaScriptRuntime, resolveAgentCliCommandForRuntime, resolveAgentCliOverrideEnvKey } from '@happier-dev/cli-common/agents/resolution';
+import { managedJavaScriptRuntimeBinPath, resolveDirectJavaScriptRuntimeCommand } from '@happier-dev/cli-common/agents/managedJavaScriptRuntime';
 import { isAbsolute } from 'node:path';
 
 import type {
@@ -9,8 +10,10 @@ import type {
 import type { AgentCliRuntimeDescriptor } from '@happier-dev/cli-common/agents';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol/spawnSession';
+import { resolveMachineAgentExecutionPlacementV1 } from '@happier-dev/protocol';
 import {
   resolveAgentCliLaunchSpecForRuntime,
+  buildAgentCliLaunchSpecFromResolution,
   type AgentCliLaunchSpec,
   type BoundAgentCliLaunchSpec,
 } from '@/packagedRuntime/managedTools/agentCliLaunchSpec';
@@ -19,6 +22,60 @@ import { AGENT_CLI_MISSING_PREVIEW } from '@/packagedRuntime/managedTools/agentC
 
 import type { PluginExecSystemToolDefinition } from './definitions';
 import { createPluginExecSystemToolResolver } from './resolveGrant';
+import { observeAgentIsolationMemberLaunchReadiness, type AgentIsolationReadinessSystem } from '@/daemon/agentIsolation/agentIsolationReadiness';
+import type { AgentIsolationMemberNativeIdentity } from '@/daemon/agentIsolation/agentIsolationNativeIdentity';
+import type { HostAgentIsolationLaunchContext } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
+
+export type MemberAgentCliLaunchContext = Readonly<{
+    identity: AgentIsolationMemberNativeIdentity;
+    installedCli: string;
+    signal?: AbortSignal;
+    system?: AgentIsolationReadinessSystem;
+}>;
+
+/** Consume the operation/Session owner's existing native selection. */
+export function readMemberAgentCliLaunchContext(context?: HostAgentIsolationLaunchContext): MemberAgentCliLaunchContext | undefined {
+    const snapshot = context?.read();
+    if (!snapshot || resolveMachineAgentExecutionPlacementV1({ policy: snapshot, platform: process.platform }) !== 'member') return undefined;
+    const installedCli = snapshot.launch?.managedHappierBinaryPath ?? context?.managedHappierBinaryPath;
+    if (!snapshot.memberIdentity || !installedCli) throw new PluginError({ code: 'agent_isolation_unavailable',
+        message: 'Current member launch material is unavailable', retryable: false });
+    return { identity: snapshot.memberIdentity, installedCli };
+}
+
+/** The member consumes machine-wide managed code, never the owner's PATH or
+ * overrides. Its actual UID qualifies the selected runner and entrypoint. */
+export async function resolveMemberRunnableAgentCliLaunch(params: Readonly<{
+    agentId: string;
+    runtimeSpec: AgentCliRuntimeDescriptor;
+    processEnv: NodeJS.ProcessEnv;
+    memberLaunch: MemberAgentCliLaunchContext;
+}>): Promise<AgentCliLaunchSpec> {
+    const refuse = (): never => { throw new PluginError({ code: 'agent_cli_not_runnable', retryable: false,
+        message: `Agent '${params.runtimeSpec.title}' cannot run as this member. Install its Happier-managed runtime.`,
+        details: { agentId: params.agentId, remedy: 'install_managed_runtime' } }); };
+    const processEnv = { ...params.processEnv,
+        HAPPIER_JS_RUNTIME_PATH: managedJavaScriptRuntimeBinPath(params.processEnv),
+        HAPPIER_MANAGED_NODE_BIN: undefined, HAPPIER_NODE_PATH: undefined };
+    params.memberLaunch.signal?.throwIfAborted();
+    const resolved = resolveAgentCliCommandForRuntime(params.runtimeSpec, { processEnv, sourcePolicy: 'managed_only' });
+    if (!resolved) return refuse();
+    let managedRuntime: string | undefined;
+    if (agentCliPathRequiresJavaScriptRuntime(resolved.command)) {
+        const runtime = resolveDirectJavaScriptRuntimeCommand({ processEnv, isBunRuntime: false });
+        if (!runtime) return refuse();
+        managedRuntime = runtime;
+        processEnv.HAPPIER_JS_RUNTIME_PATH = runtime;
+    }
+    const launch = buildAgentCliLaunchSpecFromResolution(resolved, { processEnv });
+    if (!launch || managedRuntime && launch.command !== managedRuntime) return refuse();
+    const observed = await observeAgentIsolationMemberLaunchReadiness({
+        installedCli: params.memberLaunch.installedCli, memberIdentity: params.memberLaunch.identity,
+        agentCliLaunch: launch, signal: params.memberLaunch.signal, system: params.memberLaunch.system,
+    });
+    if (observed.kind !== 'member_native_ready') return refuse();
+    return launch;
+}
 
 /** Shared composition for current and retained Agent CLI system-tool consumers. */
 export function createDeclaredAgentCliSystemToolService<T extends ExecSystemToolServiceV1 | undefined>(params: Readonly<{
@@ -29,6 +86,7 @@ export function createDeclaredAgentCliSystemToolService<T extends ExecSystemTool
     agentCliLaunch?: BoundAgentCliLaunchSpec;
     definitions: readonly PluginExecSystemToolDefinition[];
     processEnv: NodeJS.ProcessEnv;
+    memberLaunch?: MemberAgentCliLaunchContext;
     delegate: T;
 }>): ExecSystemToolServiceV1 | T {
     if (params.agentCliLaunch && params.agentCliLaunch.localAgentId !== params.localAgentId) {
@@ -61,6 +119,7 @@ export function createDeclaredAgentCliSystemToolService<T extends ExecSystemTool
     return createAgentCliSystemToolService({
         agentId: params.agentId, binding, definition,
         runtimeSpec: params.runtimeSpec, processEnv: params.processEnv, delegate: params.delegate,
+        ...(params.memberLaunch ? { memberLaunch: params.memberLaunch } : {}),
     });
 }
 
@@ -93,7 +152,7 @@ function createBoundAgentCliSystemToolService(params: Readonly<{
     agentId: string;
     binding: AgentCliSystemToolBinding;
     definition: PluginExecSystemToolDefinition;
-    resolveLaunch(request: SystemToolResolveRequestV1): AgentCliLaunchSpec | null;
+    resolveLaunch(request: SystemToolResolveRequestV1): AgentCliLaunchSpec | null | Promise<AgentCliLaunchSpec | null>;
     resolutionEnvironment(launch: AgentCliLaunchSpec): NodeJS.ProcessEnv;
     delegate: ExecSystemToolServiceV1;
 }>): ExecSystemToolServiceV1 {
@@ -109,7 +168,7 @@ function createBoundAgentCliSystemToolService(params: Readonly<{
                 return await params.delegate.resolve(request);
             }
 
-            const launch = params.resolveLaunch(request);
+            const launch = await params.resolveLaunch(request);
             if (!launch) {
                 throw new PluginError({
                     code: SPAWN_SESSION_ERROR_CODES.AGENT_CLI_MISSING,
@@ -169,20 +228,25 @@ export function createAgentCliSystemToolService(params: Readonly<{
     binding: AgentCliSystemToolBinding;
     definition: PluginExecSystemToolDefinition;
     processEnv: NodeJS.ProcessEnv;
+    memberLaunch?: MemberAgentCliLaunchContext;
     delegate: ExecSystemToolServiceV1;
 }>): ExecSystemToolServiceV1 {
     return createBoundAgentCliSystemToolService({
         agentId: params.agentId,
         binding: params.binding,
         definition: params.definition,
-        resolveLaunch: (request) => resolveAgentCliLaunchSpecForRuntime(
+        resolveLaunch: (request) => params.memberLaunch ? resolveMemberRunnableAgentCliLaunch({
+            agentId: params.agentId, runtimeSpec: params.runtimeSpec, processEnv: params.processEnv,
+            memberLaunch: { ...params.memberLaunch, signal: request.signal ?? params.memberLaunch.signal },
+        }) : resolveAgentCliLaunchSpecForRuntime(
             params.runtimeSpec,
             { processEnv: request.preferredPath ? {
                 ...params.processEnv,
                 [resolveAgentCliOverrideEnvKey(params.runtimeSpec.id)]: request.preferredPath,
             } : params.processEnv },
         ),
-        resolutionEnvironment: () => params.processEnv,
+        resolutionEnvironment: launch => params.memberLaunch
+            ? { HAPPIER_JS_RUNTIME_PATH: launch.command } : params.processEnv,
         delegate: params.delegate,
     });
 }

@@ -38,6 +38,7 @@ import {
 
 type ConnectedServiceAuth = Awaited<ReturnType<typeof resolveConnectedServiceAuthForSpawn>>;
 export async function prepareDaemonSpawnChildEnvironment(input: Readonly<{
+    memberAgentCliLaunch?: import('@/plugins/runtime/exec/system/tools/agentCliBinding').MemberAgentCliLaunchContext;
     savedSecretOperationContext?: import('@/settings/secrets/hydrateSavedSecretCatalog').SavedSecretOperationContextV1;
     readMachineResourcesPolicy?: MachineResourcesPolicyReader;
     options: SpawnSessionOptions;
@@ -86,6 +87,7 @@ export async function prepareDaemonSpawnChildEnvironment(input: Readonly<{
             ? providerBindingLaunchInput.attempt.materializeAfterHooks
             : null;
     const spawnEnvironment = await resolveSpawnChildEnvironment({
+        memberAgentCliLaunch: input.memberAgentCliLaunch,
         savedSecretOperationContext: input.savedSecretOperationContext,
         happyHomeDir: configuration.happyHomeDir,
         pluginRuntimeRegistry: input.pluginRuntimeRegistry,

@@ -178,7 +178,8 @@ export async function awaitTrackedRunnerAgentSessionOpen(
       // A retained failure from an older runner cannot explain this launch.
       if (code && tracked?.happySessionId === sessionId && issue?.scope === 'primary_session'
         && issue.status === 'failed' && (ProviderBrokerAdmissionFailureCodeV1Schema.safeParse(code).success
-          ? issue.source === 'team_credential' : issue.source === 'agent_session_error')
+          ? issue.source === 'team_credential' : issue.source === 'agent_session_error'
+            || issue.source === 'dependency_failure' && code === 'agent_cli_not_runnable')
         && typeof runnerStartTimeMs === 'number' && Number.isFinite(runnerStartTimeMs)
         && issue.occurredAt >= runnerStartTimeMs) {
         return Object.freeze({ status: 'runner_exited' as const, code });

@@ -1,3 +1,5 @@
+import { readSessionStartupFailurePreview } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import { resolveAgentDisplayTitle } from '@/agent/catalog/agentDisplayTitle';
 import { normalizeSpawnSessionNonceResolution } from '@happier-dev/protocol/sessions/spawnSessionNonce';
 import { isConnectedServiceUxDiagnosticSpawnErrorDetail, SessionSpawnLaunchErrorV1Schema, SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol/spawnSession';
 import type { SessionSpawnNewResultV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
@@ -34,6 +36,14 @@ export function projectSessionSpawnFailure(input: Readonly<{
     };
   }
   const detail = SessionSpawnLaunchErrorV1Schema.safeParse(input.errorDetail);
+  const code = detail.success ? detail.data.code
+    : input.errorCode === SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED && input.errorMessage === 'agent_cli_not_runnable'
+      ? 'agent_cli_not_runnable' : input.errorCode;
+  if (code === 'agent_cli_not_runnable') {
+    const title = typeof input.agentId === 'string' ? resolveAgentDisplayTitle(input.agentId) : null;
+    return { type: 'error', code: 'spawn_failed', retryable: false,
+      launchError: { kind: 'launch_error', code, message: readSessionStartupFailurePreview(code, title)! } };
+  }
   const fallback = SessionSpawnLaunchErrorV1Schema.safeParse({ kind: 'launch_error',
     code: input.errorCode || SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED,
     message: typeof input.errorMessage === 'string' && input.errorMessage.trim()

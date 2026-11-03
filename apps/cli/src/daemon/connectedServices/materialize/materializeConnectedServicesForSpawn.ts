@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import type { AgentLaunchMaterializationTarget } from '@/daemon/agentIsolation/agentLaunchMaterials';
+import type { AgentLaunchSelectedMaterial } from '@/daemon/agentIsolation/agentLaunchFrame';
 import { lstat, realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
@@ -182,6 +184,7 @@ function rewritePathRoot(
 type MaterializationArtifactWrite = <T>(write: () => Promise<T>) => Promise<T>;
 
 async function materializeQualifiedConnectedAccountLaunchForSpawn(params: Readonly<{
+  agentLaunchTarget?: AgentLaunchMaterializationTarget;
   signal?: AbortSignal;
   retainCleanup?: (cleanup: () => Promise<void>) => Promise<() => void>;
   agentId: CatalogAgentId;
@@ -197,7 +200,7 @@ async function materializeQualifiedConnectedAccountLaunchForSpawn(params: Readon
   sessionDirectory?: string | null;
   processEnv?: NodeJS.ProcessEnv;
   allowNativeAccountState?: boolean;
-  connectedAccountsOwner?: StablePluginConnectedAccountsOwner;
+  connectedAccountsOwner?: Parameters<typeof materializeQualifiedConnectedAccountLaunchUses>[0]['connectedAccountsOwner'];
   isAccountRuntimeCurrent?: () => Promise<boolean>;
   accountSettings?: AccountSettings | Readonly<Record<string, unknown>> | null;
   snapshot?: AgentSpawnQualifiedPurposeBindingSnapshot | null;
@@ -350,7 +353,7 @@ async function materializeQualifiedConnectedAccountLaunchForSpawn(params: Readon
         capturedPurposes.add(purposeKey);
       }
     }
-    const launchEnvironment = snapshot && connectedAccountsOwner && !projectionOnlyGeminiOauth
+    const launchEnvironment: Awaited<ReturnType<typeof materializeQualifiedConnectedAccountLaunchUses>> = snapshot && connectedAccountsOwner && !projectionOnlyGeminiOauth
       ? await observeConnectedServiceMaterializationPhase(params, 'launch_credentials', () => materializeQualifiedConnectedAccountLaunchUses({
         connectedAccountsOwner: {
           getBinding: input => connectedAccountsOwner.getBinding(input),
@@ -365,6 +368,7 @@ async function materializeQualifiedConnectedAccountLaunchForSpawn(params: Readon
           ? { sessionId: params.purposeBindingSessionId }
           : {}),
         signal: signalController.signal,
+        agentLaunchTarget: params.agentLaunchTarget,
         writeArtifacts,
         expectedAccountsByPurposeKey,
         ...(identity && currentRuntime
@@ -390,6 +394,10 @@ async function materializeQualifiedConnectedAccountLaunchForSpawn(params: Readon
 
     signalController.signal.throwIfAborted();
     const env: Record<string, string> = { ...launchEnvironment.env };
+    const agentSelectedMaterials: AgentLaunchSelectedMaterial[] = [
+      ...(launchEnvironment.agentLaunchMaterials?.selectedMaterials ?? []),
+    ];
+    const agentEnvironment: Record<string, string> = { ...(launchEnvironment.agentLaunchMaterials?.environment ?? {}) };
     if (params.requestAuthRequired) {
       env[CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV] =
         resolveConnectedAccountRequestAuthCapabilityPath(params.rootDir);
@@ -706,6 +714,18 @@ async function materializeQualifiedConnectedAccountLaunchForSpawn(params: Readon
             stateSharingDescriptor.authIsolation.secretEntries,
           files: Object.freeze(nativeHomeFiles),
         })));
+        if (params.agentLaunchTarget) {
+          const agentNativeHome = join(params.agentLaunchTarget.runtimeHome, 'native-home');
+          Object.assign(agentEnvironment, rewriteEnvRoot(env, nativeRoot, agentNativeHome), {
+            [nativeHome.environmentKey]: agentNativeHome,
+          });
+          // File-environment values keep their selected Agent paths when native
+          // environment projection adds its separately owned home.
+          Object.assign(agentEnvironment, launchEnvironment.agentLaunchMaterials?.environment);
+          agentSelectedMaterials.push(...Object.entries(nativeHomeFiles).map(([fileId, contents]) => Object.freeze({
+            relativePath: `native-home/${fileId}`, contentBase64: Buffer.from(contents).toString('base64'),
+          })));
+        }
       };
       if (durableNativeHome) {
         const entered = startConnectedServiceMaterializationPhase(params, 'native_home_queue');
@@ -735,6 +755,13 @@ async function materializeQualifiedConnectedAccountLaunchForSpawn(params: Readon
       && pluginSourceCustodyV1Equal(currentRuntime.sourceCustody, sourceCustody);
     return {
       env,
+      ...(params.agentLaunchTarget ? { agentLaunchMaterials: Object.freeze({
+        runtimeHome: params.agentLaunchTarget.runtimeHome,
+        ...(params.agentLaunchTarget.memberIdentity ? { memberIdentity: params.agentLaunchTarget.memberIdentity } : {}),
+        environment: Object.freeze(Object.fromEntries(Object.entries(agentEnvironment)
+          .filter(([key]) => !key.startsWith('HAPPIER_')))),
+        selectedMaterials: Object.freeze(agentSelectedMaterials),
+      }) } : {}),
       ...(materializedAccountsByPurposeKey.size > 0
         ? { sessionConnectedAccounts: Object.freeze([...materializedAccountsByPurposeKey.values()]) }
         : {}),
@@ -756,6 +783,7 @@ async function materializeQualifiedConnectedAccountLaunchForSpawn(params: Readon
 }
 
 export async function materializeConnectedServicesForSpawn(params: Readonly<{
+  agentLaunchTarget?: AgentLaunchMaterializationTarget;
   signal?: AbortSignal;
   retainCleanup?: (cleanup: () => Promise<void>) => Promise<() => void>;
   agentId: CatalogAgentId;
@@ -778,7 +806,7 @@ export async function materializeConnectedServicesForSpawn(params: Readonly<{
   accountSettings?: AccountSettings | Readonly<Record<string, unknown>> | null;
   processEnv?: NodeJS.ProcessEnv;
   allowNativeAccountState?: boolean;
-  connectedAccountsOwner?: StablePluginConnectedAccountsOwner;
+  connectedAccountsOwner?: Parameters<typeof materializeQualifiedConnectedAccountLaunchUses>[0]['connectedAccountsOwner'];
   isAccountRuntimeCurrent?: () => Promise<boolean>;
 }>): Promise<ConnectedServicesMaterialization | null> {
   const rootDir = resolveConnectedServiceMaterializedRootDir({
@@ -795,6 +823,7 @@ export async function materializeConnectedServicesForSpawn(params: Readonly<{
 }
 
 async function materializeConnectedServicesForSpawnUnlocked(params: Readonly<{
+  agentLaunchTarget?: AgentLaunchMaterializationTarget;
   signal?: AbortSignal;
   retainCleanup?: (cleanup: () => Promise<void>) => Promise<() => void>;
   agentId: CatalogAgentId;
@@ -816,7 +845,7 @@ async function materializeConnectedServicesForSpawnUnlocked(params: Readonly<{
   accountSettings?: AccountSettings | Readonly<Record<string, unknown>> | null;
   processEnv?: NodeJS.ProcessEnv;
   allowNativeAccountState?: boolean;
-  connectedAccountsOwner?: StablePluginConnectedAccountsOwner;
+  connectedAccountsOwner?: Parameters<typeof materializeQualifiedConnectedAccountLaunchUses>[0]['connectedAccountsOwner'];
   isAccountRuntimeCurrent?: () => Promise<boolean>;
 }>, rootDir: string): Promise<ConnectedServicesMaterialization | null> {
   // Qualified Agent ids contain '/'; staging has one owned root per attempt.

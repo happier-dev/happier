@@ -1,3 +1,7 @@
+import { admitRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
+import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
+import { openExternalActionRequestV2, prepareExternalActionResponseV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
+import type { StoredCredentials } from '@/persistence';
 import axios from 'axios';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -125,6 +129,80 @@ function driver() {
     return createManagedMachineAcquisitionDriver({ token: 'token', serverUrl: 'https://home.example', homeId: 'home', controller, runtimeRegistry, ...accountInputs });
 }
 describe('creation environment stage', () => {
+    it('previews isolation on an E2EE bootstrap retry with retained creation identity and requester custody', async () => {
+        const channel = await createRequesterCurrentnessSocketHarness();
+        const keys = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(42));
+        const material = { type: 'dataKey' as const, machineKey: new Uint8Array(32).fill(43) };
+        const credentials = { token: 'requester-token', credentialProvenance: 'stored_session',
+            encryption: { ...material, publicKey: tweetnacl.box.keyPair.fromSecretKey(material.machineKey).publicKey } } satisfies StoredCredentials;
+        const retained = ManagedMachineV1Schema.parse({ ...machine, homeId: 'srv_bootstrap', allocation: 'bound', enrolledMachineId: 'guest',
+            enrollmentIdentity: { kind: 'dedicatedDaemonUser', username: 'happier', serviceMode: 'user', role: 'deployTarget',
+                adminAccessAtCreation: 'preauthorized' },
+            resource: { contributionRef: input.selection.launch.provider, schemaVersion: 1, value: { id: 'retained-guest' } } });
+        const root = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'retry-root', binding: {
+            serverIdentityId: 'srv_bootstrap', accountId: 'owner', custodianAccountId: 'owner', authentication: { kind: 'account', tokenEpoch: 1 },
+            accountEncryptionMode: 'e2ee', actionId: 'machines.managed.bootstrap.retry', requestId: 'fresh-retry',
+            requestEnvelopeDigest: 'a'.repeat(43), ...controller, target: { kind: 'machine', machineId: controller.machineId },
+        } });
+        let previews = 0;
+        let installationReads = 0;
+        // Home HTTP and the Account socket are the system boundaries. The
+        // driver, requester admission, enrollment initializer and child codec run real.
+        vi.spyOn(axios, 'get').mockImplementation(async url => {
+            if (url.endsWith('/v1/account/profile')) return { status: 200, data: { id: 'owner' } };
+            if (url.endsWith('/v2/account/settings')) return { status: 200, data: { content: null, version: 0 } };
+            expect(url).toBe('https://home.example/v1/account/encryption/currentness');
+            return { status: 200, data: { mode: 'e2ee', version: 1, settingsVersion: 0,
+                signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
+        });
+        vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+            if (url.endsWith('/verify')) return { status: 200, data: { ok: true } };
+            if (url.endsWith('/v1/machines/managed/controller/context')) {
+                if (body && typeof body === 'object' && 'includeEnrollmentInstallation' in body) installationReads++;
+                return { status: 200, data: { machine: retained, requestId: 'original-creation',
+                    enrollmentInstallation: { machineId: 'guest', installationId: 'guest-installation',
+                        installationPublicKey: Buffer.from(keys.publicKey).toString('base64url') } } };
+            }
+            if (url.endsWith('/v1/actions/machines.agentIsolation.preview')) {
+                const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
+                expect(request.managedContinuation).toEqual({ managedId: retained.id, creationRequestId: 'original-creation', expectedIntentRevision: 0 });
+                expect(request.envelope).toHaveProperty('managedCreationCodec.kind', 'installation_sealed_v1');
+                if (request.envelope.v !== 2) throw new Error('Expected E2EE isolation request');
+                const binding = { serverIdentityId: 'srv_bootstrap', accountId: 'owner', actionId: 'machines.agentIsolation.preview',
+                    requestId: 'fresh-retry', target: { kind: 'machine' as const, machineId: 'guest' },
+                    authentication: { kind: 'account' as const, tokenEpoch: 1 } };
+                expect(openExternalActionRequestV2({ envelope: request.envelope, binding, material })?.input)
+                    .toEqual({ serverId: 'srv_bootstrap', machineId: 'guest', enabled: true });
+                previews++;
+                return { status: 200, data: prepareExternalActionResponseV2({ binding, request: request.envelope, material,
+                    randomBytes: tweetnacl.randomBytes, executedMachineId: 'guest', execution: { ok: true, result: {
+                        kind: 'unavailable', status: { kind: 'unavailable', code: 'provisioning_unavailable' },
+                    } } }).response };
+            }
+            return { status: 200, data: { machine: retained } };
+        });
+        const admitted = await admitRequesterAccountActionContext({ authorization: root, credentials, serverId: 'daemon-local-profile',
+            serverIdentityId: 'srv_bootstrap', serverHttpBaseUrl: 'https://home.example', isCurrent: async () => true });
+        if (!admitted) throw new Error('Requester admission failed');
+        try {
+            const authorization = await projectExternalActionRequesterHttpAuthorization({ authorization: admitted.authorization,
+                serverId: 'daemon-local-profile', serverIdentityId: 'srv_bootstrap', serverHttpBaseUrl: 'https://home.example',
+                target: root.binding.target, installationId: controller.installationId, privateKey: keys.secretKey, isCurrent: admitted.isCurrent });
+            if (!authorization) throw new Error('Requester HTTP projection failed');
+            const runtimeRegistry = { contributes: createResolvedContributionRegistry({}) } as ResolvedExecutablePluginRuntimeRegistry;
+            const recovery = createManagedMachineAcquisitionDriver({ ...accountInputs, homeTarget: { ...accountInputs.homeTarget, homeServerIdentityId: 'srv_bootstrap' }, credentials, token: credentials.token,
+                serverUrl: 'https://home.example', homeId: 'srv_bootstrap', controller, runtimeRegistry,
+                externalActionMachineRequestPrivateKey: keys.secretKey });
+            await expect(recovery.execute('machines.managed.bootstrap.retry', { homeId: 'srv_bootstrap', managedId: retained.id, expectedIntentRevision: 0 }, {
+                requestId: 'fresh-retry', context: { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' },
+                    externalActionTarget: root.binding.target, externalActionExecutionAuthorization: authorization,
+                    operationAcceptance: { operationId: 'bootstrap-operation', accept() {} } },
+            })).resolves.toMatchObject({ managedId: retained.id, operation: { operationId: 'bootstrap-operation' } });
+            expect(previews).toBe(1);
+            expect(installationReads).toBe(1);
+        } finally { await admitted.dispose(); await channel.close(); }
+    });
+
     it.each([
         { action: 'machines.managed.acquire', outcome: 'applied', storedEnabled: false },
         { action: 'machines.managed.acquire', outcome: 'outcomeUnknown', storedEnabled: false },

@@ -1,4 +1,8 @@
+import { PluginError } from '@happier-dev/plugin-sdk';
 import { CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
+import { readAgentIsolationNativeIdentity, type AgentIsolationMemberNativeIdentity } from '../agentIsolation/agentIsolationNativeIdentity';
+import type { RequesterWorkAttributionV1 } from '../lifecycle/requesterWorkAttribution';
+import { resolveConnectedServiceMaterializedRootDir } from '../connectedServices/materialize/resolveConnectedServiceMaterializedRootDir';
 import { resolveConnectedServicesProviderStateSharingPolicyV1 } from '@happier-dev/protocol/account/settings/connected-services';
 import type { ConnectedServiceBindingsV2, ConnectedServiceMaterializationIdentityV1 } from '@happier-dev/protocol';
 
@@ -9,7 +13,7 @@ import type {
 import { configuration } from '@/configuration';
 import { getActiveAccountSettingsSnapshot, type ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import type { SpawnSessionOptions, SpawnSessionResult } from '@/session/shared/spawnSessionContract';
-import { SPAWN_SESSION_ERROR_CODES } from '@/session/shared/spawnSessionContract';
+import { SPAWN_SESSION_ERROR_CODES, projectSessionRunnerLaunchAdmissionFailure } from '@/session/shared/spawnSessionContract';
 import { logger } from '@/ui/logger';
 
 import {
@@ -64,6 +68,14 @@ export type MissingConnectedServiceMaterializationIdentityRepair = Readonly<{
     persistAfterMaterialization: () => Promise<void>;
 }>;
 
+/** The admission owner binds canonical Home and Machine authority. Preparation
+ * consumes its one member observation without selecting another requester.
+ * Undefined selects only the admitted ordinary owner path; member refusals reject. */
+export type PrepareAgentIsolationMember = (input: Readonly<{
+    requesterWorkAttributionV1?: RequesterWorkAttributionV1;
+    signal?: AbortSignal;
+}>) => Promise<AgentIsolationMemberNativeIdentity | undefined>;
+
 function readConnectedServiceBindingsOrNull(raw: unknown): ConnectedServiceBindingsV2 | null {
     const parsed = ConnectedServicesBindingsIngressSchema.safeParse(raw);
     return parsed.success ? parsed.data ?? null : null;
@@ -106,6 +118,7 @@ export function buildConnectedServiceQuotaPreflightIncompleteSpawnErrorResult():
 }
 
 export type PreparedDaemonConnectedServices = Readonly<{
+    agentLaunchMaterials?: import('../agentIsolation/agentLaunchMaterials').AgentLaunchMaterialization;
     ok: true;
     auth: ConnectedServiceAuth;
     sessionConnectedAccounts?: NonNullable<ConnectedServiceAuth>['sessionConnectedAccounts'];
@@ -120,6 +133,9 @@ export type PreparedDaemonConnectedServices = Readonly<{
 }>;
 
 export async function prepareDaemonConnectedServices(input: Readonly<{
+    prepareAgentIsolationMember?: PrepareAgentIsolationMember;
+    readAgentIsolationEnabled?: () => boolean;
+    signal?: AbortSignal;
     options: SpawnSessionOptions;
     normalizedExistingSessionId: string;
     requestedSessionId: string;
@@ -224,6 +240,30 @@ export async function prepareDaemonConnectedServices(input: Readonly<{
         || 'unmaterialized-connected-services';
     const authSessionId = input.normalizedExistingSessionId || undefined;
     let auth: ConnectedServiceAuth = null;
+    let memberIdentity: AgentIsolationMemberNativeIdentity | undefined;
+    let nativeIdentity: Pick<AgentIsolationMemberNativeIdentity, 'agentUid' | 'agentGid' | 'home'> | undefined;
+    try {
+        memberIdentity = input.catalogAgentId ? await input.prepareAgentIsolationMember?.({
+            requesterWorkAttributionV1: options.requesterSessionBootstrap?.attribution
+                ?? options.requesterWorkAttributionV1,
+            signal: input.signal,
+        }) : undefined;
+        // Only the canonical admission producer may select the ordinary owner
+        // legacy account. A refused member throws and cannot reach this path.
+        nativeIdentity = memberIdentity ?? (input.prepareAgentIsolationMember
+            && input.readAgentIsolationEnabled?.() === true && input.catalogAgentId
+            ? await readAgentIsolationNativeIdentity(input.signal) : undefined);
+    } catch (error) {
+        if (!(error instanceof PluginError) || error.code !== 'agent_isolation_unavailable') throw error;
+        return { ok: false, result: projectSessionRunnerLaunchAdmissionFailure({
+            kind: 'launch_error', code: 'agent_isolation_unavailable', message: 'Member execution requires owner setup',
+        })! };
+    }
+    const agentLaunchTarget = nativeIdentity && input.catalogAgentId ? {
+        ...(memberIdentity ? { memberIdentity } : {}),
+        runtimeHome: resolveConnectedServiceMaterializedRootDir({ baseDir: nativeIdentity.home,
+            agentId: input.catalogAgentId, materializationKey }),
+    } : undefined;
 
     if (shouldResolveAuth && input.catalogAgentId) {
         const activeAccountSettings = input.accountSettingsSnapshot ?? getActiveAccountSettingsSnapshot();
@@ -234,6 +274,8 @@ export async function prepareDaemonConnectedServices(input: Readonly<{
         ).stateMode === 'shared';
         try {
             auth = await resolveConnectedServiceAuthForSpawn({
+                signal: input.signal,
+                ...(agentLaunchTarget ? { agentLaunchTarget } : {}),
                 agentId: input.catalogAgentId,
                 connectedServicesBindingsRaw: options.connectedServices,
                 materializationKey,
@@ -416,13 +458,14 @@ export async function prepareDaemonConnectedServices(input: Readonly<{
         logger.warn('[DAEMON RUN] Ignoring connected-services spawn request for configured backend target');
     }
 
-    if (!auth && input.options.requesterSessionBootstrap
-        && !input.options.requesterSessionBootstrap.allowNativeAccountCredentials && input.catalogAgentId) {
+    if (!auth && input.catalogAgentId && (agentLaunchTarget || input.options.requesterSessionBootstrap
+        && !input.options.requesterSessionBootstrap.allowNativeAccountCredentials)) {
         // Provider and API-key launches still need a real isolated Agent home.
         // This is the same native-home materializer, with no Connected Account
         // authority or credential selection manufactured for an empty home.
         try {
             const isolated = await materializeConnectedServicesForSpawn({ agentId: input.catalogAgentId,
+                ...(agentLaunchTarget ? { agentLaunchTarget } : {}),
                 materializationKey, activeServerDir: input.activeServerDir ?? configuration.activeServerDir,
                 baseDir: input.connectedServicesMaterializationBaseDir, sessionDirectory: options.directory,
                 recordsByServiceId: new Map(), allowNativeAccountState: false,
@@ -453,6 +496,7 @@ export async function prepareDaemonConnectedServices(input: Readonly<{
     return {
         ok: true,
         auth,
+        ...(auth?.agentLaunchMaterials ? { agentLaunchMaterials: auth.agentLaunchMaterials } : {}),
         ...(auth?.sessionConnectedAccounts ? { sessionConnectedAccounts: auth.sessionConnectedAccounts } : {}),
         materializationIdentity,
         options: {

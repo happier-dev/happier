@@ -1,3 +1,5 @@
+import { createSessionAgentIsolationMemberPreparation, type SessionAgentIsolationAccountSource } from '../agentIsolation/sessionPreparation';
+import { hasStoredSessionCredentialProvenance } from '@/persistence';
 import { dispatchOriginalAccountAction } from '@/api/externalActionExecutionAuthorization';
 import { refreshTrackedSessionsRuntimeSnapshot, resolveRespawnSessionOptionsWithRuntimeSnapshot } from '@/daemon/sessions/runtimeSnapshot/respawn';
 import { snapshotTrackedSessionForTemporaryThrottleResume, buildTrackedExistingSessionResumeSeed } from '@/daemon/connectedServices/usageLimitRecovery/resumeSource';
@@ -1688,6 +1690,25 @@ daemonWorkSignal: AbortSignal;
     context
       ? runWithServerHttpBaseUrl(context.bootstrap.serverHttpBaseUrl, operation)
       : operation();
+  const prepareSessionAgentIsolationMember = createSessionAgentIsolationMemberPreparation({
+    machineId: params.machineId, custodianAccountId: params.externalActionAccountId,
+    agentIsolation: params.agentIsolation,
+    resolveCurrentMachineExecutionOriginContext: params.resolveCurrentMachineExecutionOriginContext,
+  });
+  const captureFreshAgentIsolationAccountSource = async (signal: AbortSignal): Promise<
+    Extract<SessionAgentIsolationAccountSource, { kind: 'freshAccount' }> | undefined
+  > => {
+    const origin = await params.resolveCurrentMachineExecutionOriginContext?.(signal);
+    const installation = readInstallationIdentityIfExistsSync();
+    const accountId = params.externalActionAccountId;
+    if (!origin || origin.machineId !== params.machineId || !installation || !accountId || signal.aborted
+      || 'requesterSessionCredentialScope' in params.credentials || !hasStoredSessionCredentialProvenance(params.credentials)
+      || readPreviewAccountIdFromToken(params.credentials.token) !== accountId) return undefined;
+    // The daemon lifecycle already authenticated this Account and physical
+    // Machine. This is fresh Agent custody, never historical Session birth.
+    return { kind: 'freshAccount', origin, hostAccountAgent: { accountId, custodianAccountId: accountId,
+      machineId: params.machineId, installationId: installation.installationId } };
+  };
   // Attached Run authority belongs to the same tracked Session/requester as
   // other Session control reads, never to the worker custodian's credentials.
   const resolveExecutionRunLiveBrokerAuthority: NonNullable<MachineRpcHandlerDeps['resolveExecutionRunLiveBrokerAuthority']> = async input => {
@@ -1737,6 +1758,8 @@ daemonWorkSignal: AbortSignal;
     };
     try {
       const scope = await withSessionAccountHome(context, () => prepareInactiveSessionControlLaunchScope(input, {
+        agentIsolation: params.agentIsolation,
+        prepareAgentIsolationMember: prepareSessionAgentIsolationMember(context, input.signal),
         readAgentIsolationEnabled: () => params.agentIsolation?.read()?.enabled === true,
         credentials: context?.bootstrap.credentials ?? params.credentials,
         api: context?.api ?? params.api,
@@ -4364,6 +4387,10 @@ daemonWorkSignal: AbortSignal;
           const spawnResult = await spawnConcurrencyGate.run(
             async () =>
               await executeSpawnSessionRequest({
+                prepareAgentIsolationMember: prepareSessionAgentIsolationMember(requesterRuntime,
+                  shutdownCancellationDomains.daemonWorkSignal, !requesterRuntime && !existingSessionId
+                    ? await captureFreshAgentIsolationAccountSource(shutdownCancellationDomains.daemonWorkSignal) : undefined),
+                readAgentIsolationEnabled: () => params.agentIsolation?.read()?.enabled === true,
                 agentIsolation: params.agentIsolation,
                 signal: shutdownCancellationDomains.daemonWorkSignal,
                 readMachineResourcesPolicy: params.readMachineResourcesPolicy,
@@ -6815,8 +6842,13 @@ daemonWorkSignal: AbortSignal;
                 serverHttpBaseUrl: requester.bootstrap.serverHttpBaseUrl,
               }).homeDomainAction
             : undefined;
-          const prepared = await withSessionAccountHome(requester, () =>
+          const prepared = await withSessionAccountHome(requester, async () =>
             prepareForegroundAgentRuntimeAdmission(request, {
+              agentIsolation: params.agentIsolation,
+              prepareAgentIsolationMember: prepareSessionAgentIsolationMember(requester,
+                AbortSignal.any([signal, shutdownCancellationDomains.daemonWorkSignal]), !requester && !request.existingSessionId
+                  ? await captureFreshAgentIsolationAccountSource(signal) : undefined),
+              readAgentIsolationEnabled: () => params.agentIsolation?.read()?.enabled === true,
               signal: AbortSignal.any([signal, shutdownCancellationDomains.daemonWorkSignal]),
               isSessionAccountCurrent: isForegroundAccountCurrent,
               ...(requester

@@ -1,9 +1,11 @@
+import { resolveAgentDisplayTitle } from '@/agent/catalog/agentDisplayTitle';
+import { readSessionStartupFailurePreview } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { SPAWN_SESSION_ERROR_CODES } from '@/session/shared/spawnSessionContract';
 import { SessionStartupInputRefusalError } from '@/agent/runtime/session/input/sessionStartupInputRefusal';
 import { resolveSessionStartupTimeoutMs } from '@/daemon/spawn/waitForSessionWebhook';
 import type { ProjectSetupOperationContext } from '@/workspaces/projectSetup/projectSetupExecution';
 import { logger } from '@/ui/logger';
-import { readSessionPreparationFailureCode, SESSION_PREPARATION_FAILURE_PREVIEWS } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import { readSessionPreparationFailureCode } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 
 import type { SessionLifecycleActionHandler, SessionLifecycleMachineDeps, SessionLifecycleMachineHandlers } from './sessionLifecycleTypes';
 
@@ -73,9 +75,12 @@ export function createSessionStartupProjectSpawn(input: Readonly<{
         }
         if (opened.status !== 'opened') {
             const code = opened.status === 'runner_exited' ? readSessionPreparationFailureCode(opened.code) : null;
-            const message = code ? SESSION_PREPARATION_FAILURE_PREVIEWS[code]
-                : 'Agent runner exited before native Session startup completed';
+            const agentId = code === 'agent_cli_not_runnable' && options.backendTarget?.kind === 'backend'
+                ? options.backendTarget.backendId : undefined;
+            const message = readSessionStartupFailurePreview(code, agentId ? resolveAgentDisplayTitle(agentId) : null)
+                ?? 'Agent runner exited before native Session startup completed';
             return { type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED, errorMessage: message,
+                ...(agentId ? { agentId } : {}),
                 errorDetail: { kind: 'launch_error', code: code ?? SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED, message } };
         }
         return result;

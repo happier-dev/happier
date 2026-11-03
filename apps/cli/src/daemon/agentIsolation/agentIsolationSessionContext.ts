@@ -29,12 +29,14 @@ export function createAgentIsolationSessionContext(input: Readonly<{
     sessionRequesterHomeServerIdentityId: input.sessionRequesterHomeServerIdentityId,
     sessionCustodianAccountId: input.sessionCustodianAccountId, hostHomeServerIdentityId: input.hostHomeServerIdentityId });
   return {
+    ...(input.managedHappierBinaryPath ? { managedHappierBinaryPath: input.managedHappierBinaryPath } : {}),
     ...(input.resolveRequesterIdentity ? { resolveRequesterIdentity: input.resolveRequesterIdentity } : {}),
     requesterIdentity,
     read: () => {
       const snapshot = input.machine?.read();
       if (!snapshot?.enabled || requesterIdentity.kind !== 'isolated') return snapshot;
-      return withMemberWorkspace(snapshot, input.readMaterial()?.memberIdentity);
+      const memberIdentity = input.readMaterial()?.memberIdentity;
+      return withMemberWorkspace({ ...snapshot, ...(memberIdentity ? { memberIdentity } : {}) }, memberIdentity);
     },
     ...(input.machine ? { async prepareLaunch({ requesterIdentity, sessionMcpContext, mcpLaunchMaterial, agentNativeLaunch, signal }: Parameters<NonNullable<HostAgentIsolationLaunchContext['prepareLaunch']>>[0]) {
       const material = input.readMaterial();

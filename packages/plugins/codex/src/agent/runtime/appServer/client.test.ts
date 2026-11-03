@@ -16,6 +16,8 @@ import type {
 } from '@happier-dev/plugin-sdk/exec/protocol-clients';
 
 import { createCodexNativeAppServerClient } from './client';
+import { openCodexNativeAppServerSession } from './native';
+import type { AgentSessionRuntimeContext } from '@happier-dev/plugin-sdk/agents/runtime';
 import { buildCodexAppServerConfigOverrides } from './config/overrides';
 import { createCodexAppServerRealtimeConversation } from './realtime';
 import { PLUGIN_MANIFEST } from '../../../manifest.js';
@@ -136,6 +138,24 @@ function createCapturingExec(
 }
 
 describe('createCodexAppServerClient', () => {
+    it('preserves a member-runnable refusal through real native startup without retrying or private error data', async () => {
+        const capture = createCapturingExec();
+        const refusal = new PluginError({ code: 'agent_cli_not_runnable', retryable: false,
+            message: 'PRIVATE_OWNER_HOME /private/agent', details: { agentId: 'codex', private: 'PRIVATE_TOKEN' } });
+        vi.mocked(capture.exec.run).mockRejectedValue(refusal);
+        // Exec is the genuine process boundary; shared server, native startup and sanitizers are real.
+        const context = { signal: new AbortController().signal, services: { exec: capture.exec,
+            logger: { debug() {} }, sessions: { current: null } }, session: { id: 'member-startup', services: {} } } as unknown as AgentSessionRuntimeContext;
+        const error: unknown = await openCodexNativeAppServerSession({ kind: 'create', sessionId: 'member-startup',
+            cwd: osBoundary.home }, context).then(async runtime => { await runtime.dispose(); return null; }, error => error);
+        expect(error).toMatchObject({ code: 'agent_cli_not_runnable', retryable: false });
+        expect(JSON.stringify(error)).not.toContain('PRIVATE_');
+        expect((error as Error).message).toMatch(/install.*managed runtime/iu);
+        expect(capture.exec.run).toHaveBeenCalledTimes(1);
+        expect(capture.specs).toEqual([]);
+    });
+
+
     it.skipIf(process.platform !== 'linux')('pins projected SQLite in the real stdio launch and admits both warm clients before either initializes', async () => {
         await mkdir(join(osBoundary.home, '.codex'));
         await writeFile(join(osBoundary.home, '.codex', 'config.toml'), 'cli_auth_credentials_store = "keyring"\n');

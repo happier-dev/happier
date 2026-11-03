@@ -1,3 +1,5 @@
+import { readSessionStartupFailurePreview } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import { resolveAgentDisplayTitle } from '@/agent/catalog/agentDisplayTitle';
 import type {
   SessionRuntimeTeamCredentialDenialDetailsV1,
   SessionRuntimeTemporaryThrottleDetailsV1,
@@ -561,6 +563,7 @@ export function classifyPrimarySessionRuntimeIssue(
         || errorCode.value === 'identity_unobserved' || errorCode.value === 'identity_mismatch')
     ? errorCode.value : null;
   const source = missingCli || catalogUnavailable || metadataPrivacyUpgradeRequired || promptPreparationCode
+    || sessionPreparationFailureCode === 'agent_cli_not_runnable'
     ? 'dependency_failure' as const
     : teamCredentialDenial || brokerStartupCode
     ? 'team_credential' as const
@@ -605,6 +608,8 @@ export function classifyPrimarySessionRuntimeIssue(
         ? 'Session state could not be confirmed. Check the Home connection, then retry the Session.' : null)
       ?? (homeHttpFailure ? 'Session startup could not reach a ready Home. Check the Home connection, then retry the Session.' : null)
       ?? (promptPreparationCode ? 'Prompt context could not be prepared. Check the selected documents and Home connection, then retry the Session.' : null)
+      ?? (sessionPreparationFailureCode === 'agent_cli_not_runnable'
+        ? readSessionStartupFailurePreview(sessionPreparationFailureCode, agentId ? resolveAgentDisplayTitle(agentId) : null) : null)
       ?? (startupFailureCode ? AGENT_STARTUP_FAILURE_PREVIEWS[startupFailureCode] : null)
       ?? (sessionPreparationFailureCode ? SESSION_PREPARATION_FAILURE_PREVIEWS[sessionPreparationFailureCode] : null)
       ?? buildSafeModelNotFoundPreview(input.error)

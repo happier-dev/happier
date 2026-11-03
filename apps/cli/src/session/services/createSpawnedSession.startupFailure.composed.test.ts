@@ -34,7 +34,8 @@ import { buildSessionMetadataEnvelopeCreateFields } from '@/session/metadata/bui
 import { buildCommittedLaunchMetadata } from '@/agent/runtime/createSessionMetadata';
 import { resetServerFeaturesClientForTests } from '@/features/serverFeaturesClient';
 import { classifyPrimarySessionRuntimeIssue } from '@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue';
-import { SESSION_PREPARATION_FAILURE_PREVIEWS } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import { resolveAgentDisplayTitle } from '@/agent/catalog/agentDisplayTitle';
+import { readSessionStartupFailurePreview, SESSION_PREPARATION_FAILURE_PREVIEWS } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { SessionTeamCredentialLaunchUnavailableError } from './sessionTeamCredentialLaunch';
 
 afterEach(() => { vi.unstubAllEnvs(); reloadConfiguration(); });
@@ -42,6 +43,7 @@ afterEach(() => { vi.unstubAllEnvs(); reloadConfiguration(); });
 describe('durable creation after daemon startup refusal', () => {
     it.each([
         [null, 'returned'], [null, 'nonce'],
+        ['agent_cli_not_runnable', 'returned'], ['agent_cli_not_runnable', 'nonce'],
         ['plugin_mcp_preparation_unavailable', 'returned'], ['plugin_mcp_preparation_unavailable', 'nonce'],
         ['broker_unavailable', 'returned'], ['broker_unavailable', 'nonce'],
     ] as const)('preserves the same creation refusal (%s, %s) after its runner exits before native startup despite published Activity and hostPid', async (preparationCode, settlementKind) => {
@@ -56,6 +58,7 @@ describe('durable creation after daemon startup refusal', () => {
         const runners: ReturnType<typeof spawn>[] = [];
         const tracked = new Map<number, TrackedSession>();
         let launches = 0;
+        let nonceReads = 0;
         let admittedInputs = 0;
         let nativeStartupFailure: Extract<SpawnSessionResult, { type: 'error' }> | null = null;
         const unknownRequests: string[] = [];
@@ -104,7 +107,7 @@ describe('durable creation after daemon startup refusal', () => {
             stopSession: async () => ({ status: 'not_found' }),
         }, awaitAgentSessionOpen: input => awaitTrackedRunnerAgentSessionOpen({ ...input, getTrackedSessions: () => [...tracked.values()],
             readStartupFailure: async () => preparationCode ? classifyPrimarySessionRuntimeIssue({
-                cause: 'session_error', error: preparationCode === 'broker_unavailable'
+                cause: 'session_error', ...(preparationCode === 'agent_cli_not_runnable' ? { provider: 'codex' } : {}), error: preparationCode === 'broker_unavailable'
                     ? new SessionTeamCredentialLaunchUnavailableError(preparationCode) : { code: preparationCode }, occurredAt: Date.now(),
             }) : null,
         }) });
@@ -128,10 +131,11 @@ describe('durable creation after daemon startup refusal', () => {
                     // The physical launch nonce is already successful; the
                     // subsequent native startup refusal belongs to the Action.
                     resolveSpawnSessionByNonce: async () => {
+                        nonceReads += 1;
                         if (settlementKind === 'returned') return { status: 'success', sessionId };
                         if (!nativeStartupFailure?.errorCode) throw new Error('Missing native startup settlement');
                         return { status: 'error', errorCode: nativeStartupFailure.errorCode,
-                            errorMessage: nativeStartupFailure.errorMessage, errorDetail: nativeStartupFailure.errorDetail };
+                            errorMessage: nativeStartupFailure.errorMessage, agentId: nativeStartupFailure.agentId, errorDetail: nativeStartupFailure.errorDetail };
                     } },
             } }));
         const input = { creationKey: 'native-exit', executionTarget: { serverId: 'fixture-home', machineId },
@@ -146,13 +150,21 @@ describe('durable creation after daemon startup refusal', () => {
         try {
             await invoke();
             const first = await operations.handlers.getV2({ operationId: 'native-startup-1', waitForTerminal: true });
-            const launchError = { code: preparationCode ?? 'SPAWN_FAILED', message: preparationCode
-                ? SESSION_PREPARATION_FAILURE_PREVIEWS[preparationCode] : 'Agent runner exited before native Session startup completed' };
+            const nonRetryable = preparationCode === 'agent_cli_not_runnable';
+            const launchError = { code: preparationCode ?? 'SPAWN_FAILED', message: nonRetryable
+                ? readSessionStartupFailurePreview(preparationCode, resolveAgentDisplayTitle('codex'))!
+                : preparationCode ? SESSION_PREPARATION_FAILURE_PREVIEWS[preparationCode] : 'Agent runner exited before native Session startup completed' };
             expect(first).toMatchObject({ kind: 'found', operation: { result: { type: 'error', code: 'spawn_failed',
                 launchError } } });
             expect(launches).toBe(1);
-            await invoke();
-            expect(await operations.handlers.getV2({ operationId: 'native-startup-2', waitForTerminal: true }))
+            const settledNonceReads = nonceReads;
+            const repeated = await invoke();
+            if (nonRetryable) {
+                expect(repeated).toMatchObject({ ok: true, result: { type: 'error', code: 'spawn_failed', retryable: false, launchError } });
+                expect(operationSequence).toBe(1);
+                expect(nonceReads).toBe(settledNonceReads);
+            }
+            expect(await operations.handlers.getV2({ operationId: nonRetryable ? 'native-startup-1' : 'native-startup-2', waitForTerminal: true }))
                 .toMatchObject({ kind: 'found', operation: { result: { type: 'error', code: 'spawn_failed',
                     launchError } } });
             expect(launches).toBe(1);

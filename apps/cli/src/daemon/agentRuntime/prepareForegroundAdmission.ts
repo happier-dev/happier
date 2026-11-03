@@ -1,5 +1,8 @@
 import { acquireSavedSecretMaterializerForOperation } from '@/settings/secrets/savedSecretCatalogRead';
 import { homedir } from 'node:os';
+import type { PrepareAgentIsolationMember } from '../spawn/prepareDaemonConnectedServices';
+import type { AgentLaunchMaterialization } from '../agentIsolation/agentLaunchMaterials';
+import { readAgentIsolationNativeIdentity } from '../agentIsolation/agentIsolationNativeIdentity';
 import { realpath, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
@@ -117,6 +120,7 @@ import { preflightProjectAgentLaunch } from '@/workspaces/projectSetup/projectAg
 import { resolveConnectedServiceMaterializedRootDir } from '@/daemon/connectedServices/materialize/resolveConnectedServiceMaterializedRootDir';
 import { materializeConnectedServiceNativeHomeCredentials } from '@/daemon/connectedServices/stateSharing/materializeConnectedServiceNativeHomeCredentials';
 import { materializeQualifiedConnectedAccountLaunchUses } from '@/daemon/connectedServices/materialize/materializeQualifiedConnectedAccountLaunchUses';
+import { materializeConnectedServicesForSpawn } from '@/daemon/connectedServices/materialize/materializeConnectedServicesForSpawn';
 
 import type {
   ForegroundAgentRuntimeAdmissionOwnerRequestV1,
@@ -178,7 +182,10 @@ function readExactForegroundProfileSnapshot(
 }
 
 export type PrepareForegroundAgentRuntimeAdmissionDependencies = Readonly<{
+  agentIsolation?: import('../agentIsolation/agentIsolationLaunchPolicy').HostAgentIsolationLaunchContext;
   signal?: AbortSignal;
+  prepareAgentIsolationMember?: PrepareAgentIsolationMember;
+  readAgentIsolationEnabled?: () => boolean;
   /** Host-private admitted Account ports; never accepted from the foreground request body. */
   requesterSessionBootstrap?: AdmittedRequesterSessionBootstrap;
   requesterSessionRuntimeContext?: RequesterSessionRuntimeContext;
@@ -211,6 +218,9 @@ export type PrepareForegroundAgentRuntimeAdmissionDependencies = Readonly<{
     input: Omit<Pick<
       Parameters<typeof resolveConnectedServiceAuthForSpawn>[0],
       | 'connectedServicesBindingsRaw'
+      | 'modelId'
+      | 'agentLaunchTarget'
+      | 'signal'
       | 'materializationKey'
       | 'sessionDirectory'
       | 'sessionId'
@@ -285,6 +295,7 @@ function mergeForegroundAdmissionEnvironment(input: Readonly<{
 }
 
 export async function resolveForegroundFinalPluginPrerequisites(params: Readonly<{
+  agentIsolation?: import('../agentIsolation/agentIsolationLaunchPolicy').HostAgentIsolationLaunchContext;
   happyHomeDir: string;
   pluginRuntimeRegistry: ResolvedExecutablePluginRuntimeRegistry;
   resolvedAgentId: string;
@@ -293,6 +304,7 @@ export async function resolveForegroundFinalPluginPrerequisites(params: Readonly
   environment: Readonly<Record<string, string>>;
 }>): Promise<Awaited<ReturnType<typeof resolveSpawnChildEnvironment>>> {
   return await resolveSpawnChildEnvironment({
+    agentIsolation: params.agentIsolation,
     happyHomeDir: params.happyHomeDir,
     pluginRuntimeRegistry: params.pluginRuntimeRegistry,
     resolvedAgentId: params.resolvedAgentId,
@@ -410,6 +422,7 @@ async function prepareForegroundProviderLaunch(input: Readonly<{
   }, {
     resolvePrerequisites: async (providerBindingContext) => {
       const result = await resolveSpawnChildEnvironment({
+        agentIsolation: dependencies.agentIsolation,
         happyHomeDir: configuration.happyHomeDir,
         pluginRuntimeRegistry: lease.registry,
         resolvedAgentId: request.agentId,
@@ -742,10 +755,33 @@ export async function prepareForegroundAgentRuntimeAdmission(
         savedSecretOperationContext: requester?.savedSecretOperationContext,
       });
     }
+    const foregroundMemberIdentity = await dependencies.prepareAgentIsolationMember?.({
+      requesterWorkAttributionV1: dependencies.requesterSessionRuntimeContext?.bootstrap.attribution
+        ?? dependencies.requesterSessionBootstrap?.attribution,
+      signal: dependencies.signal,
+    });
+    if (foregroundMemberIdentity && !request.runtimeDescriptorV1) {
+      return refusal(createProviderErrorV1('provider_agent_runtime_unsupported', { machineId: request.machineId }));
+    }
+    const legacyOwnerIdentity = !foregroundMemberIdentity && dependencies.prepareAgentIsolationMember
+      && dependencies.readAgentIsolationEnabled?.() === true
+      ? await readAgentIsolationNativeIdentity(dependencies.signal) : undefined;
+    const foregroundNativeIdentity = foregroundMemberIdentity ?? legacyOwnerIdentity;
+    const agentLaunchTarget = foregroundNativeIdentity ? {
+      ...(foregroundMemberIdentity ? { memberIdentity: foregroundMemberIdentity } : {}),
+      runtimeHome: resolveConnectedServiceMaterializedRootDir({ baseDir: foregroundNativeIdentity.home,
+        agentId: request.agentId, materializationKey: request.sessionId }),
+    } : undefined;
+    let agentLaunchMaterials: AgentLaunchMaterialization | undefined = agentLaunchTarget ? Object.freeze({
+      ...agentLaunchTarget, environment: Object.freeze({}), selectedMaterials: Object.freeze([]),
+    }) : undefined;
     const bridge = await prepareForegroundAgentRuntimeBootstrapForLease({
       target: request.backendTarget,
       lease,
-      ...(request.runtimeDescriptorV1 ? { launch: { runtimeDescriptorV1: request.runtimeDescriptorV1 } } : {}),
+      ...(request.runtimeDescriptorV1 ? { launch: { runtimeDescriptorV1: request.runtimeDescriptorV1,
+        ...(agentLaunchMaterials ? { agentIsolationRuntimeHome: agentLaunchMaterials.runtimeHome } : {}),
+        ...(foregroundMemberIdentity ? { agentIsolationMemberIdentity: foregroundMemberIdentity } : {}),
+      } } : {}),
     });
     const registration = lease.registry.agentRuntimesByAgentId.get(
       request.agentId,
@@ -944,6 +980,7 @@ export async function prepareForegroundAgentRuntimeAdmission(
         { machineId: request.machineId },
       ));
     }
+    let connectedServiceAuth: Awaited<ReturnType<typeof resolveConnectedServiceAuthForSpawn>> = null;
     if (legacyConnectedServiceCatalogAgent && effectiveConnectedServices) {
       connectedServiceRedactionLease = createProviderRedactionLease({
         values: [],
@@ -954,9 +991,12 @@ export async function prepareForegroundAgentRuntimeAdmission(
       connectedServiceLaunchScope.setSanitizer(
         connectedServiceRedactionLease.redact,
       );
-      const connectedServiceAuth =
+      connectedServiceAuth =
         await dependencies.resolveConnectedServiceAuthForSpawn!({
           agentId: request.agentId,
+          modelId: request.selection?.ref.modelId,
+          ...(agentLaunchTarget ? { agentLaunchTarget } : {}),
+          signal: dependencies.signal ?? registration.retirementSignal,
           connectedServicesBindingsRaw: effectiveConnectedServices,
           materializationKey: request.sessionId,
           sessionDirectory: request.directory,
@@ -971,6 +1011,11 @@ export async function prepareForegroundAgentRuntimeAdmission(
               catalogEntry: connectedServiceCatalogEntry,
             }),
         });
+      if (connectedServiceAuth?.materializationPurposeLease) {
+        const materializationPurposeLease = connectedServiceAuth.materializationPurposeLease;
+        connectedServiceLaunchScope.register(() => materializationPurposeLease.dispose());
+      }
+      if (connectedServiceAuth?.agentLaunchMaterials) agentLaunchMaterials = connectedServiceAuth.agentLaunchMaterials;
       const daemonSpawnHooks =
         await dependencies.resolveDaemonSpawnHooks!(request.agentId);
       materializedStateObservationBinding = connectedServiceAuth?.materializedStateObservationBinding;
@@ -978,6 +1023,8 @@ export async function prepareForegroundAgentRuntimeAdmission(
       materializedConnectedServices = connectedServiceAuth?.connectedServicesBindings
         ?? effectiveConnectedServices;
       const childEnvironment = await resolveSpawnChildEnvironment({
+        ...(foregroundMemberIdentity ? { memberAgentCliLaunch: { identity: foregroundMemberIdentity,
+          installedCli: dependencies.agentIsolation?.managedHappierBinaryPath ?? '', signal: dependencies.signal } } : {}),
         happyHomeDir: configuration.happyHomeDir,
         pluginRuntimeRegistry: lease.registry,
         resolvedAgentId: request.agentId,
@@ -1060,6 +1107,7 @@ export async function prepareForegroundAgentRuntimeAdmission(
     }
     if (
       !legacyConnectedServiceCatalogAgent
+      && !agentLaunchTarget
       && resolveQualifiedRequestAuthPurposeBindingsFromSnapshot(
         sessionPurposeBindingSnapshot,
       ).length > 0
@@ -1106,7 +1154,7 @@ export async function prepareForegroundAgentRuntimeAdmission(
       });
     }
     let ownsConnectedServiceLaunchScope = Boolean(
-      effectiveConnectedServices || requestAuthMaterializedRoot,
+      effectiveConnectedServices || requestAuthMaterializedRoot || agentLaunchTarget,
     );
     const readExactProfileSnapshot = () =>
       readExactForegroundProfileSnapshot(request, launchProfileArtifacts, readAccountSettingsSnapshot);
@@ -1366,6 +1414,7 @@ export async function prepareForegroundAgentRuntimeAdmission(
             }
             if (
               sessionPurposeBindingSnapshot
+              && !agentLaunchTarget
               && sessionPurposeBindingLease
               && (
                 (sessionPurposeBindingSnapshot.environmentUses?.length ?? 0) > 0
@@ -1444,8 +1493,59 @@ export async function prepareForegroundAgentRuntimeAdmission(
                     sessionPurposeBindingLease?.resolvePurposeBinding(scope.purpose) !== null
                   ))
               : [];
-            if (
-              stateSharingDescriptor?.providerSupportStatus === 'supported'
+            if (agentLaunchTarget && !connectedServiceAuth) {
+              if (!dependencies.connectedServicesMaterializationBaseDir) {
+                throw new Error('Foreground member materialization authority is unavailable');
+              }
+              if (!connectedServiceRedactionLease) {
+                connectedServiceRedactionLease = createProviderRedactionLease({ values: [] });
+                connectedServiceLaunchScope.register(connectedServiceRedactionLease.close);
+                connectedServiceLaunchScope.setSanitizer(connectedServiceRedactionLease.redact);
+              }
+              const materialized = await materializeConnectedServicesForSpawn({
+                agentId: request.agentId, materializationKey: request.sessionId,
+                activeServerDir: configuration.activeServerDir,
+                baseDir: dependencies.connectedServicesMaterializationBaseDir,
+                sessionDirectory: request.directory, agentLaunchTarget,
+                requesterWorkAttributionV1: requester?.attribution,
+                recordsByServiceId: new Map(), allowNativeAccountState: false,
+                connectedAccountsOwner,
+                ...(sessionPurposeBindingSnapshot && sessionPurposeBindingLease ? {
+                  qualifiedPurposeBindingSnapshot: sessionPurposeBindingSnapshot,
+                  exactPurposeBindingSubjectId: sessionPurposeBindingLease.subjectId,
+                  purposeBindingSessionId: canonicalSessionId,
+                  connectedAccountMaterializationAuthority: {
+                    kind: 'qualified' as const,
+                    purposeBindings: sessionPurposeBindingSnapshot.bindings,
+                    requestAuthPurposeBindings: resolveQualifiedRequestAuthPurposeBindingsFromSnapshot(sessionPurposeBindingSnapshot),
+                  },
+                } : {}),
+                processEnv: { ...process.env, ...savedProfileEnvironment },
+                signal: registration.retirementSignal,
+                isAccountRuntimeCurrent: async () => !registration.retirementSignal.aborted
+                  && connectedAccountLaunchCurrent && registration.isCurrent(),
+              });
+              if (!materialized?.agentLaunchMaterials
+                || materialized.agentLaunchMaterials.runtimeHome !== agentLaunchTarget.runtimeHome) {
+                throw new Error('Foreground member native home is unavailable');
+              }
+              connectedServiceLaunchScope.register({ onFailure: materialized.cleanupOnFailure ?? (() => {}),
+                onExit: materialized.cleanupOnExit ?? (() => {}) });
+              agentLaunchMaterials = materialized.agentLaunchMaterials;
+              connectedServiceRedactionLease.add([
+                ...Object.values(materialized.env), ...Object.values(agentLaunchMaterials.environment),
+              ]);
+              connectedServiceEnvironment = Object.freeze({ ...connectedServiceEnvironment, ...materialized.env });
+              connectedServiceUnsetEnvironmentVariableNames = Object.freeze([
+                ...connectedServiceUnsetEnvironmentVariableNames, ...(materialized.unsetEnvKeys ?? []),
+              ]);
+              materializedSessionConnectedAccounts = materialized.sessionConnectedAccounts ?? [];
+              materializedStateObservationBinding = materialized.materializedStateObservationBinding;
+              if (materialized.requestAuthMaterializedRoot) requestAuthMaterializedRoot = materialized.requestAuthMaterializedRoot;
+              ownsConnectedServiceLaunchScope = true;
+            } else if (
+              !agentLaunchTarget
+              && stateSharingDescriptor?.providerSupportStatus === 'supported'
               && stateSharingDescriptor.nativeHome
               && (
                 Boolean(existingMaterializedRoot)
@@ -1609,6 +1709,7 @@ export async function prepareForegroundAgentRuntimeAdmission(
               providerUnset: providerUnsetEnvironmentVariableNames,
             });
             const finalSpawnEnvironment = await resolveForegroundFinalPluginPrerequisites({
+              agentIsolation: dependencies.agentIsolation,
               happyHomeDir: configuration.happyHomeDir,
               pluginRuntimeRegistry: lease.registry,
               resolvedAgentId: request.agentId,
@@ -1814,6 +1915,7 @@ export async function prepareForegroundAgentRuntimeAdmission(
             return {
               ok: true as const,
               environment: mergedEnvironment.environment,
+              ...(agentLaunchMaterials ? { agentLaunchMaterials } : {}),
               ...(sessionConnectedAccounts.length > 0
                 ? { sessionConnectedAccounts: Object.freeze(sessionConnectedAccounts) }
                 : {}),

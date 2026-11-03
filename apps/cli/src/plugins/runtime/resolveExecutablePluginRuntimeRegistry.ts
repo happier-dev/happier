@@ -369,6 +369,7 @@ import {
 import {
     createAgentCliHostResolutionEnvironment,
     createDeclaredAgentCliSystemToolService,
+    readMemberAgentCliLaunchContext,
 } from './exec/system/tools/agentCliBinding';
 import type {
     BoundAgentCliLaunchSpec,
@@ -7427,6 +7428,7 @@ agentIsolation?: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').Ho
         }
         const declaredAgentLocalId = declaredAgent.identity?.localId ?? declaredAgent.id;
         const agentSystemTools = createDeclaredAgentCliSystemToolService({
+            ...(!agentParams.agentCliLaunch ? { memberLaunch: readMemberAgentCliLaunchContext(params?.agentIsolation) } : {}),
             agentId: agentParams.agentId,
             localAgentId: declaredAgentLocalId,
             binding: declaredAgent.catalogEntry?.agentCliSystemTool,
@@ -8530,6 +8532,7 @@ agentIsolation?: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').Ho
                 registerGrant() {},
             });
             const systemTools = createDeclaredAgentCliSystemToolService({
+                ...(!agentParams.agentCliLaunch ? { memberLaunch: readMemberAgentCliLaunchContext(params?.agentIsolation) } : {}),
                 agentId: binding.agentId,
                 localAgentId: binding.localAgentId,
                 binding: declaredAgent.catalog?.agentCliSystemTool,

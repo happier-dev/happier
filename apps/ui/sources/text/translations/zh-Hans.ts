@@ -7639,6 +7639,7 @@ export const zhHans: TranslationStructure = {
         plugin_services_managed_provider_authority_unavailable: "无法访问共享提供商。请检查 Gateway 及其与机器的连接，然后重试会话。",
         provider_endpoint_unavailable: "提供商端点不可用。请检查 Gateway 及其与机器的连接，然后重试会话。",
         plugin_mcp_preparation_unavailable: "插件 MCP 准备不可用。请检查目标机器，然后重试会话。",
+        agent_cli_not_runnable: "此智能体无法以此成员身份运行。请安装由 Happier 管理的运行时。",
         agent_runtime_daemon_service_generation_not_current: "运行器的智能体代次已不是最新。请在目标机器上重试会话。",
         plugin_disabled: "此智能体插件已禁用。在“插件”中重新启用它以恢复此会话。",
         native_agent_privileged_effect_authority_unavailable: "运行器的 daemon 授权不可用。请检查目标机器，然后重试会话。",

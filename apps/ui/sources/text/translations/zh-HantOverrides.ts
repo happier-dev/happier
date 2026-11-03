@@ -6478,6 +6478,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
               plugin_services_managed_provider_authority_unavailable: "無法存取共用提供者。請檢查 Gateway 及其與機器的連線，然後重試工作階段。",
               provider_endpoint_unavailable: "提供者端點無法使用。請檢查 Gateway 及其與機器的連線，然後重試工作階段。",
               plugin_mcp_preparation_unavailable: "外掛程式 MCP 準備無法使用。請檢查目標機器，然後重試工作階段。",
+              agent_cli_not_runnable: "此代理程式無法以此成員身分執行。請安裝由 Happier 管理的執行環境。",
               agent_runtime_daemon_service_generation_not_current: "執行器的代理程式世代已不是最新。請在目標機器上重試工作階段。",
               plugin_disabled: "此代理程式外掛已停用。請在「外掛」中重新啟用，以繼續此工作階段。",
               native_agent_privileged_effect_authority_unavailable: "執行器的 daemon 授權無法使用。請檢查目標機器，然後重試工作階段。",

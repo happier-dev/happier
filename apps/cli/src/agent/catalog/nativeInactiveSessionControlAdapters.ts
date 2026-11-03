@@ -10,7 +10,7 @@ import {
   type AgentSessionRuntimeFactory,
   type AgentSessionUsageLimitRecoveryResult,
 } from '@happier-dev/plugin-sdk/agents/runtime';
-import { PluginError } from '@happier-dev/plugin-sdk';
+import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
 import { resolveInactiveSessionControlLaunchScope, type ResolveInactiveSessionControlLaunchScope,
   type InactiveSessionControlLaunchScope } from '@/daemon/spawn/inactiveSessionControlLaunchScope';
 import type { WorkStatePublisher } from '@happier-dev/plugin-sdk/sessions/work-state';
@@ -355,9 +355,10 @@ async function resolveNativeInvocation(params: Readonly<{
       launchScope = await (params.dependencies?.resolveLaunchScope ?? resolveInactiveSessionControlLaunchScope)({
         agentId: params.agentId, runtimeRegistryLease, adapterParams: params.adapterParams, signal,
       });
-    } catch {
+    } catch (error) {
       signal.throwIfAborted();
-      return { resolution: { kind: 'unavailable', code: 'inactive_agent_launch_scope_unavailable' }, release };
+      return { resolution: { kind: 'unavailable', code: isPluginError(error) && error.code === 'agent_cli_not_runnable'
+        ? error.code : 'inactive_agent_launch_scope_unavailable' }, release };
     }
     const built = await buildControlContext({
       registry,

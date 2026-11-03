@@ -136,6 +136,9 @@ type SpawnAccountUsageStore = Parameters<typeof resolveConnectedServiceAuthForSp
 type SpawnAuthGroupSwitchCoordinator = Parameters<typeof resolveConnectedServiceAuthForSpawn>[0]['authGroupSwitchCoordinator'];
 type SpawnPredictiveSwitchGuard = Parameters<typeof resolveConnectedServiceAuthForSpawn>[0]['predictiveSwitchGuard'];
 export type ExecuteSpawnSessionRequestParams = Readonly<{
+    prepareAgentIsolationMember?: import('../spawn/prepareDaemonConnectedServices').PrepareAgentIsolationMember;
+    readAgentIsolationEnabled?: () => boolean;
+    agentIsolation?: import('../agentIsolation/agentIsolationLaunchPolicy').HostAgentIsolationLaunchContext;
     signal?: AbortSignal;
     readMachineResourcesPolicy?: import('@/processes/toolIdleTimeouts').MachineResourcesPolicyReader;
     readSpawnFailureLimits?: SpawnFailureLimitsReader;
@@ -624,6 +627,7 @@ export async function executeSpawnSessionRequest(
             // runtime, so every refusal this owner can already establish is
             // established first.
             const daemonProviderLaunch = await prepareDaemonProviderLaunch({
+                agentIsolation: params.agentIsolation,
                 signal: params.signal,
                 readModelProjection: createAccountScopedProviderModelProjectionReader({
                     serverUrl: requesterRuntime?.bootstrap.savedSecretOperationContext.serverHttpBaseUrl
@@ -920,6 +924,9 @@ export async function executeSpawnSessionRequest(
             recordPreparationPhase('requester_custody');
 
             const connectedServices = await prepareDaemonConnectedServices({
+                prepareAgentIsolationMember: params.prepareAgentIsolationMember,
+                readAgentIsolationEnabled: params.readAgentIsolationEnabled,
+                signal: params.signal,
                 ...(requesterRuntime ? { accountSettingsSnapshot: requesterRuntime.readAccountSettingsSnapshot(),
                     activeServerDir: requesterRuntime.activeServerDir,
                     connectedAccountsOwner: requesterRuntime.connectedAccountsOwner,
@@ -1171,6 +1178,10 @@ export async function executeSpawnSessionRequest(
                 });
             }
             const childEnvironment = await prepareDaemonSpawnChildEnvironment({
+                ...(connectedServices.agentLaunchMaterials?.memberIdentity ? { memberAgentCliLaunch: {
+                    identity: connectedServices.agentLaunchMaterials.memberIdentity,
+                    installedCli: params.agentIsolation?.managedHappierBinaryPath ?? '', signal: params.signal,
+                } } : {}),
                 savedSecretOperationContext: acpOperationContext,
                 readMachineResourcesPolicy: params.readMachineResourcesPolicy,
                 options: effectiveOptionsForSpawn,
@@ -1204,6 +1215,12 @@ export async function executeSpawnSessionRequest(
                     descriptor: runnerAgentSessionDescriptor,
                     ...(startupRuntimeDescriptorV1 ? { launch: {
                         runtimeDescriptorV1: startupRuntimeDescriptorV1,
+                        ...(connectedServices.agentLaunchMaterials ? {
+                            agentIsolationRuntimeHome: connectedServices.agentLaunchMaterials.runtimeHome,
+                        } : {}),
+                        ...(connectedServices.agentLaunchMaterials?.memberIdentity ? {
+                            agentIsolationMemberIdentity: connectedServices.agentLaunchMaterials.memberIdentity,
+                        } : {}),
                         ...(terminalPresentation.kind === 'managed_terminal' || terminalPresentation.kind === 'provider_attach'
                             ? { terminalHostOwner: 'runtime' as const } : {}),
                         ...(connectedServices.sessionConnectedAccounts ? {

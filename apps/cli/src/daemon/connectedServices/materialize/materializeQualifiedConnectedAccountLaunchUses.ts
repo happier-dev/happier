@@ -12,6 +12,8 @@ import type {
   AgentSpawnQualifiedPurposeBindingSnapshot,
 } from '../requestAuth/prepareConnectedAccountRequestAuthForSpawn';
 import { normalizeUnsetEnvKeys } from '@/utils/processEnv/buildScopedProcessEnv';
+import { join } from 'node:path';
+import type { AgentLaunchMaterialization, AgentLaunchMaterializationTarget } from '@/daemon/agentIsolation/agentLaunchMaterials';
 
 type CredentialFileScope = Parameters<ManagedServiceCredentialFileOwner['materialize']>[0]['scope'];
 
@@ -27,6 +29,7 @@ export async function materializeQualifiedConnectedAccountLaunchUses(input: Read
   exactPurposeBindingSubjectId?: string;
   sessionId?: string;
   signal: AbortSignal;
+  agentLaunchTarget?: AgentLaunchMaterializationTarget;
   writeArtifacts?: <T>(write: () => Promise<T>) => Promise<T>;
   isPurposeBound?(purpose: QualifiedConnectedAccountPurposeV1): boolean;
   expectedAccountsByPurposeKey?: ReadonlyMap<string, QualifiedConnectedAccountRef>;
@@ -35,6 +38,7 @@ export async function materializeQualifiedConnectedAccountLaunchUses(input: Read
 }>): Promise<Readonly<{
   env: Readonly<Record<string, string>>;
   unsetEnvKeys: readonly string[];
+  agentLaunchMaterials?: AgentLaunchMaterialization;
 }>> {
   const materializedEnvironment: Record<string, string> = Object.create(null);
   const expectedAccountsByPurposeKey = new Map(
@@ -171,8 +175,20 @@ export async function materializeQualifiedConnectedAccountLaunchUses(input: Read
     }
   }
 
+  const agentLaunchMaterials = input.agentLaunchTarget ? Object.freeze({
+    runtimeHome: input.agentLaunchTarget.runtimeHome,
+    ...(input.agentLaunchTarget.memberIdentity ? { memberIdentity: input.agentLaunchTarget.memberIdentity } : {}),
+    environment: Object.freeze({ ...materializedEnvironment,
+      ...Object.fromEntries([...environmentKeysByMaterializedId].map(([id, key]) =>
+        [key, join(input.agentLaunchTarget!.runtimeHome, 'files', id)])),
+    }),
+    selectedMaterials: Object.freeze(Object.entries(files).map(([id, contents]) => Object.freeze({
+      relativePath: `files/${id}`, contentBase64: Buffer.from(contents).toString('base64'),
+    }))),
+  }) : undefined;
   return Object.freeze({
     env: Object.freeze(materializedEnvironment),
+    ...(agentLaunchMaterials ? { agentLaunchMaterials } : {}),
     unsetEnvKeys: normalizeUnsetEnvKeys((input.snapshot.environmentUnsetUses ?? [])
       .filter(use => isPurposeBound(use.purpose))
       .map(use => use.environmentKey)),

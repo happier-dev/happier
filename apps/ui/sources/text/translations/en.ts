@@ -9448,6 +9448,7 @@ const enSession = {
       plugin_services_managed_provider_authority_unavailable: 'Access to the shared provider is unavailable. Check the Gateway and its machine connection, then retry the session.',
       provider_endpoint_unavailable: 'The provider endpoint is unavailable. Check the Gateway and its machine connection, then retry the session.',
       plugin_mcp_preparation_unavailable: 'Plugin MCP preparation is unavailable. Check the target machine, then retry the session.',
+      agent_cli_not_runnable: "This Agent cannot run as this member. Install its Happier-managed runtime.",
       agent_runtime_daemon_service_generation_not_current: 'The runner agent generation is no longer current. Retry the session on the target machine.',
       plugin_disabled: "This Agent plugin is disabled. Re-enable it in Plugins to resume this Session.",
       native_agent_privileged_effect_authority_unavailable: 'Runner daemon authority is unavailable. Check the target machine, then retry the session.',

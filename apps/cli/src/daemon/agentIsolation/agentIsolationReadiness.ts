@@ -91,6 +91,7 @@ runtime_home=$4
 trap 'rm -rf -- "$runtime_home"' 0
 trap 'exit 1' HUP INT TERM
 ${nativeLaunchChecks}
+[ "$#" -lt 6 ] || { [ -x "$5" ] && { [ "$5" = "$6" ] || [ -r "$6" ]; }; } || exit 73
 printf 'member-native-ready\\n'
 `;
 
@@ -100,6 +101,8 @@ printf 'member-native-ready\\n'
 export async function observeAgentIsolationMemberLaunchReadiness(input: Readonly<{
   installedCli: string;
   memberIdentity: AgentIsolationMemberNativeIdentity;
+  /** The host selects this exact Agent tuple once, before granting its launch. */
+  agentCliLaunch?: Readonly<{ command: string; resolvedPath: string }>;
   signal?: AbortSignal;
   system?: AgentIsolationReadinessSystem;
 }>): Promise<Readonly<{ kind: 'member_native_ready';
@@ -115,7 +118,8 @@ export async function observeAgentIsolationMemberLaunchReadiness(input: Readonly
     const launch = createUnixAgentIdentityLaunch({ managedHappierBinaryPath: input.installedCli,
       memberIdentity: identity, executable: '/bin/sh',
       args: ['-c', memberProbe, 'happier-isolation-readiness', String(identity.agentUid), identity.home,
-        input.installedCli, runtimeHome], cwd: identity.home, runtimeHome,
+        input.installedCli, runtimeHome,
+        ...(input.agentCliLaunch ? [input.agentCliLaunch.command, input.agentCliLaunch.resolvedPath] : [])], cwd: identity.home, runtimeHome,
       environment: { PATH: '/usr/bin:/bin', LC_ALL: 'C', READINESS_EXPECTED_USER: identity.username,
         READINESS_ALLOWED_GROUPS: String(identity.agentGid) },
       selectedEnvironmentKeys: ['READINESS_EXPECTED_USER', 'READINESS_ALLOWED_GROUPS'], selectedMaterials: [] });

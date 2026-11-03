@@ -1,3 +1,4 @@
+import { isPluginError } from '@happier-dev/plugin-sdk';
 import { SPAWN_SESSION_ERROR_CODES } from '@/session/shared/spawnSessionContract';
 import type { SpawnSessionOptions } from '@/session/shared/spawnSessionContract';
 import type { SpawnSessionErrorCode } from '@/session/shared/spawnSessionContract';
@@ -5,6 +6,8 @@ import { ConnectedServiceBindingsV2IngressSchema } from '@happier-dev/protocol/c
 import { SessionEnvOverlayV1Schema } from '@happier-dev/protocol/spawn/envOverlay';
 import { SessionIdentityAdditionsV1Schema } from '@happier-dev/protocol/sessions/identity/sessionBotV1';
 import type { ProviderErrorV1, SessionEnvOverlayV1 } from '@happier-dev/protocol';
+import { resolveMachineAgentExecutionPlacementV1 } from '@happier-dev/protocol';
+import type { HostAgentIsolationLaunchContext } from '../agentIsolation/agentIsolationLaunchPolicy';
 import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
 import type { ProviderBindingLaunchHandoffV1 } from '@/plugins/runtime/providerBindings/handoff';
 import { AgentProviderRequirementsV1Schema } from '@happier-dev/protocol/providers/compatibility/v1';
@@ -56,6 +59,8 @@ import { HAPPIER_SESSION_CREATE_ROLES_ENV_KEY } from '@/session/shared/sessionCr
 import { HAPPIER_SESSION_CREATE_AUTHORING_ORIGIN_ENV_KEY } from '@/session/shared/sessionCreateAuthoringOrigin';
 import { resolveExistingSessionHandoffState } from '@/session/handoff/agentBundle/import';
 import { requiresAgentSessionCli } from '@/agent/catalog/runtimeEntry';
+import { resolveAgentCliRuntimeSpecForLookupId } from '@/packagedRuntime/managedTools/requireAgentCliCommand';
+import { resolveMemberRunnableAgentCliLaunch, type MemberAgentCliLaunchContext } from '@/plugins/runtime/exec/system/tools/agentCliBinding';
 
 type ResolveSpawnChildEnvironmentSuccess = {
   ok: true;
@@ -101,6 +106,7 @@ function expandSpawnProfileEnvironment(
 
 /** Shared executable admission before Session commit and against the final launch environment. */
 export async function validateSpawnAgentCliLaunch(input: Readonly<{
+  memberAgentCliLaunch?: MemberAgentCliLaunchContext;
   agentId: string;
   options: SpawnSessionOptions;
   processEnv: NodeJS.ProcessEnv;
@@ -111,7 +117,7 @@ export async function validateSpawnAgentCliLaunch(input: Readonly<{
   savedSecretOperationContext?: Parameters<typeof resolveAgentCliLaunchSpecForSession>[1]['savedSecretOperationContext'];
 }>): Promise<Readonly<
   | { ok: true; launchSpec?: AgentCliLaunchSpec }
-  | { ok: false; errorMessage: string }
+  | { ok: false; errorMessage: string; errorCode?: SpawnSessionErrorCode }
 >> {
   const profileEnv = input.profileEnvironmentVariables
     ? expandSpawnProfileEnvironment(
@@ -123,9 +129,20 @@ export async function validateSpawnAgentCliLaunch(input: Readonly<{
       ...(input.happyHomeDir ? { HAPPIER_HOME_DIR: input.happyHomeDir } : {}) },
     ...(input.pluginRuntimeRegistry ? { catalogSnapshot: input.pluginRuntimeRegistry.contributes } : {}),
   };
-  const launchSpec = await resolveAgentCliLaunchSpecForSession(input.agentId, {
-    ...resolutionOptions, options: input.options, savedSecretOperationContext: input.savedSecretOperationContext,
-  });
+  if (input.memberAgentCliLaunch && input.pluginRuntimeRegistry
+    && !requiresAgentSessionCli(input.agentId, input.pluginRuntimeRegistry)) return { ok: true };
+  let launchSpec: AgentCliLaunchSpec | null;
+  try {
+    launchSpec = input.memberAgentCliLaunch ? await resolveMemberRunnableAgentCliLaunch({
+      agentId: input.agentId, runtimeSpec: resolveAgentCliRuntimeSpecForLookupId(input.agentId, resolutionOptions),
+      processEnv: resolutionOptions.processEnv, memberLaunch: input.memberAgentCliLaunch,
+    }) : await resolveAgentCliLaunchSpecForSession(input.agentId, {
+      ...resolutionOptions, options: input.options, savedSecretOperationContext: input.savedSecretOperationContext,
+    });
+  } catch (error) {
+    if (!isPluginError(error) || error.code !== 'agent_cli_not_runnable') throw error;
+    return { ok: false, errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED, errorMessage: error.code };
+  }
   if (launchSpec !== null) return { ok: true, launchSpec };
   // Only an admitted, current native Session factory proves that no CLI is required.
   if (input.pluginRuntimeRegistry && !requiresAgentSessionCli(input.agentId, input.pluginRuntimeRegistry)) {
@@ -218,6 +235,8 @@ function chainCleanupCallbacks(
 }
 
 export async function resolveSpawnChildEnvironment(params: {
+  agentIsolation?: HostAgentIsolationLaunchContext;
+  memberAgentCliLaunch?: MemberAgentCliLaunchContext;
   savedSecretOperationContext?: import('@/settings/secrets/hydrateSavedSecretCatalog').SavedSecretOperationContextV1;
   happyHomeDir?: string;
   pluginRuntimeRegistry?: ResolvedExecutablePluginRuntimeRegistry;
@@ -264,6 +283,8 @@ export async function resolveSpawnChildEnvironment(params: {
 }
 
 async function resolveSpawnChildEnvironmentImpl(params: {
+  agentIsolation?: HostAgentIsolationLaunchContext;
+  memberAgentCliLaunch?: MemberAgentCliLaunchContext;
   savedSecretOperationContext?: import('@/settings/secrets/hydrateSavedSecretCatalog').SavedSecretOperationContextV1;
   happyHomeDir?: string;
   pluginRuntimeRegistry?: ResolvedExecutablePluginRuntimeRegistry;
@@ -519,15 +540,19 @@ async function resolveSpawnChildEnvironmentImpl(params: {
 
   async function validateAgentCliLaunch(agentId: string, processEnv: NodeJS.ProcessEnv): Promise<Readonly<
     | { ok: true; launchSpec?: AgentCliLaunchSpec }
-    | { ok: false; errorMessage: string }
+    | { ok: false; errorMessage: string; errorCode?: SpawnSessionErrorCode }
   >> {
     return validateSpawnAgentCliLaunch({ agentId, processEnv, options: params.options,
+      memberAgentCliLaunch: params.memberAgentCliLaunch,
       pluginRuntimeRegistry: params.pluginRuntimeRegistry,
       savedSecretOperationContext: params.savedSecretOperationContext });
   }
 
   let agentCliLaunchSpec: AgentCliLaunchSpec | undefined;
-  if (resolvedAgentId) {
+  const preliminaryIsolation = params.providerBindingPrerequisitesOnly ? params.agentIsolation?.read() : undefined;
+  const memberLaunchPending = preliminaryIsolation
+    && resolveMachineAgentExecutionPlacementV1({ policy: preliminaryIsolation, platform: process.platform }) === 'member';
+  if (resolvedAgentId && !memberLaunchPending && !params.memberAgentCliLaunch) {
     // Admission precedes prerequisite hooks: dependency setup cannot substitute
     // for the Agent executable or start a download for a missing Agent.
     const agentCliValidation = await validateAgentCliLaunch(resolvedAgentId, {
@@ -538,7 +563,7 @@ async function resolveSpawnChildEnvironmentImpl(params: {
     if (!agentCliValidation.ok) {
       return {
         ok: false,
-        errorCode: SPAWN_SESSION_ERROR_CODES.AGENT_CLI_MISSING,
+        errorCode: agentCliValidation.errorCode ?? SPAWN_SESSION_ERROR_CODES.AGENT_CLI_MISSING,
         errorMessage: agentCliValidation.errorMessage,
         agentId: resolvedAgentId,
         cleanupOnFailure,
@@ -774,7 +799,7 @@ async function resolveSpawnChildEnvironmentImpl(params: {
     if (!validation.ok) {
       return {
         ok: false,
-        errorCode: SPAWN_SESSION_ERROR_CODES.AGENT_CLI_MISSING,
+        errorCode: validation.errorCode ?? SPAWN_SESSION_ERROR_CODES.AGENT_CLI_MISSING,
         errorMessage: validation.errorMessage,
         agentId: resolvedAgentId,
         cleanupOnFailure,

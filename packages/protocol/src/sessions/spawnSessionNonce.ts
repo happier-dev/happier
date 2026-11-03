@@ -58,6 +58,10 @@ export function normalizeSpawnSessionNonceResolution(value: unknown): SpawnSessi
     if (!errorCode.success || !errorMessage) return { status: 'not_found' };
     const agentPrecondition = errorCode.data === SPAWN_SESSION_ERROR_CODES.AGENT_CLI_MISSING
       || errorCode.data === SPAWN_SESSION_ERROR_CODES.AGENT_SIGNED_OUT;
+    const errorDetail = isSpawnSessionErrorDetail(record.errorDetail) ? record.errorDetail : undefined;
+    const agentRuntimeRefusal = errorCode.data === SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED
+      && errorMessage === 'agent_cli_not_runnable'
+      || errorDetail?.kind === 'launch_error' && errorDetail.code === 'agent_cli_not_runnable';
     const agentId = typeof record.agentId === 'string' && record.agentId.trim().length > 0
       ? record.agentId
       : undefined;
@@ -66,8 +70,8 @@ export function normalizeSpawnSessionNonceResolution(value: unknown): SpawnSessi
       status: 'error',
       errorCode: errorCode.data,
       errorMessage,
-      ...(agentPrecondition ? { agentId } : {}),
-      ...(isSpawnSessionErrorDetail(record.errorDetail) ? { errorDetail: record.errorDetail } : {}),
+      ...(agentPrecondition || agentRuntimeRefusal && agentId ? { agentId } : {}),
+      ...(errorDetail ? { errorDetail } : {}),
     };
   }
   if (status === 'success') {

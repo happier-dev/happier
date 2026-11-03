@@ -1,4 +1,6 @@
 import { isDeepStrictEqual } from 'node:util';
+import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
+import { readSessionStartupFailurePreview } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 
 import { readProviderSessionIdSessionState } from '@happier-dev/agents';
 import { readRuntimeDescriptorV1FromMetadata } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor-compat';
@@ -14,7 +16,6 @@ import {
     type NativeForkSource,
     type SpawnSessionOptions,
 } from '@/session/shared/spawnSessionContract';
-import { isAmbiguousSpawnSessionFailure } from '@/session/shared/spawnNonce';
 import { fetchSessionTurnsProjection } from '@/session/transport/http/sessionsHttp';
 
 import {
@@ -36,6 +37,8 @@ import type {
 } from './forkLifecycleTypes';
 import type { SessionLifecycleMachineDeps } from '../sessionLifecycleTypes';
 import { prepareManagedForkDirectory } from './prepareManagedForkDirectory';
+import { projectSessionSpawnFailure } from '@/session/creation/projectSessionSpawnFailure';
+import { resolveAgentDisplayTitle } from '@/agent/catalog/agentDisplayTitle';
 
 function areNativeForkTargetsEquivalent(
     attested: Extract<
@@ -165,7 +168,11 @@ export async function attemptNativeForkOpen(params: Readonly<{
         ...prepareManagedForkDirectory(params),
     } satisfies SpawnSessionOptions);
 
-    if (isAmbiguousSpawnSessionFailure(result)) {
+    if (result.type === 'error') {
+        const failure = projectSessionSpawnFailure({ ...result, agentId: params.forkBackendResolution.agentHintAgentId });
+        if (failure.code === 'spawn_failed' && failure.launchError?.code === 'agent_cli_not_runnable') {
+            return { ok: false, errorCode: failure.launchError.code, errorMessage: failure.launchError.message };
+        }
         return {
             ok: false,
             errorCode: result.errorCode,
@@ -214,6 +221,11 @@ export async function attemptNativeForkOpen(params: Readonly<{
             };
         }
         if (openAttestation.status === 'runner_exited') {
+            if (openAttestation.code === 'agent_cli_not_runnable') {
+                throw new PluginError({ code: openAttestation.code, retryable: false,
+                    message: readSessionStartupFailurePreview(openAttestation.code,
+                        resolveAgentDisplayTitle(params.forkBackendResolution.agentHintAgentId))! });
+            }
             throw new Error('Child runner exited before native fork open attestation');
         }
         if (openAttestation.status === 'refused') {
@@ -289,7 +301,8 @@ export async function attemptNativeForkOpen(params: Readonly<{
         }
         return {
             ok: false,
-            errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
+            errorCode: isPluginError(error) && error.code === 'agent_cli_not_runnable'
+                ? error.code : SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
             errorMessage: error instanceof Error
                 ? error.message
                 : 'Failed to load native fork child session metadata',
