@@ -1791,6 +1791,20 @@ object fields. This reader is not request, Action, event or write admission.
 
 An app page's optional shell column has the same destination as its page but a distinct physical mount and renderer binding. The CLI's [UI projection producer](../apps/cli/src/plugins/projection/registry/ui/projection.ts) admits that column binding through the existing Protocol destination normalizer. UI projection and the app-page catalog carry it unchanged; the surface mount reader rejects renderer or plugin identity mismatches rather than retargeting the page's binding.
 
+Plugins are trusted, unsandboxed code (owner ruling 2026-10-29): Happier puts
+no egress, endpoint or DNS ceiling on plugin-authored pages. Remote plugin entry URLs still require HTTPS or
+loopback HTTP to protect the bridge from network attackers. Plugin declarations
+may enable eval, data/blob resources, connects and navigation without a separate
+restrictive-policy admission gate or a native development-channel exception.
+Served plugin assets keep the host-derived `frame-ancestors` boundary and mixed
+transport protection, without plugin resource restrictions; declared source maps
+are ordinary assets. Bridge origin, nonce and instance validation stay intact. Artifact HTML written
+by agents or other people additionally gets an egress ceiling, because that
+content must not exfiltrate E2EE plaintext. The `buildArtifactHtmlDocumentV1`
+owner applies it by default, and only plugin UI opts out (`pluginAuthored`, set
+by the plugin hosted-web pane for both inline documents and the plugin's own
+bundler-built generated UI).
+
 In 0.3 development source, native surface loading awaits the Artifact loader's
 outcome. Acquisition can await persistent storage before the daemon byte RPC,
 then verify and materialize those bytes; the renderer does not impose that
