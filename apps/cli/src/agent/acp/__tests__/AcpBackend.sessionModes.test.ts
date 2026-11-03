@@ -1,13 +1,26 @@
 import { describe, expect, it } from 'vitest';
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 
 import { AcpBackend } from '../AcpBackend';
 import { writeAcpTestAgentScript } from '../testkit/subprocessHarness';
 import type { AgentMessage } from '../../core/AgentMessage';
 import { withTempDir } from '@/testkit/fs/tempDir';
 
-function writeFakeAcpAgentScript(params: { dir: string; sessionId?: string }): string {
+function writeFakeAcpAgentScript(params: {
+  dir: string;
+  sessionId?: string;
+  modeIds?: readonly string[];
+  currentModeId?: string;
+  recordedRequestsPath?: string;
+  rejectMode?: boolean;
+}): string {
   const sessionId = params.sessionId ?? ' test-session ';
+  const modeIds = params.modeIds ?? ['ask', 'code'];
   const src = `
+    import { appendFileSync } from 'node:fs';
+    const recordedRequestsPath = ${JSON.stringify(params.recordedRequestsPath)};
+    const modes = ${JSON.stringify(modeIds)};
     const decoder = new TextDecoder();
     let buf = '';
 
@@ -35,27 +48,27 @@ function writeFakeAcpAgentScript(params: { dir: string; sessionId?: string }): s
         const params = req.params;
         if (id === undefined || id === null || typeof method !== 'string') continue;
 
+        if (recordedRequestsPath) appendFileSync(recordedRequestsPath, JSON.stringify({ method, params }) + '\\n');
         if (method === 'initialize') {
-          ok(id, { protocolVersion: 1, authMethods: [] });
+          ok(id, { protocolVersion: 1, authMethods: [], agentCapabilities: { loadSession: true } });
           continue;
         }
 
-        if (method === 'session/new') {
+        if (method === 'session/new' || method === 'session/load' || method === 'session/fork') {
           ok(id, {
             sessionId: ${JSON.stringify(sessionId)},
             modes: {
-              currentModeId: 'ask',
-              availableModes: [
-                { id: 'ask', name: 'Ask', description: 'Ask before changes' },
-                { id: 'code', name: 'Code', description: 'Write code' },
-              ],
+              currentModeId: ${JSON.stringify(params.currentModeId ?? 'ask')},
+              availableModes: modes.map(id => id === 'ask'
+                ? { id, name: 'Ask', description: 'Ask before changes' }
+                : id === 'code' ? { id, name: 'Code', description: 'Write code' } : { id, name: id }),
             },
           });
           continue;
         }
 
         if (method === 'session/set_mode') {
-          if (!params || params.sessionId !== ' test-session ' || params.modeId !== 'code' || 'currentModeId' in params) {
+          if (${JSON.stringify(params.rejectMode === true)} || !params || params.sessionId !== ${JSON.stringify(sessionId)} || !modes.includes(params.modeId) || 'currentModeId' in params) {
             send({ jsonrpc: '2.0', id, error: { code: -32602, message: 'directionally invalid mode params' } });
           } else {
             ok(id, {});
@@ -63,7 +76,7 @@ function writeFakeAcpAgentScript(params: { dir: string; sessionId?: string }): s
           continue;
         }
 
-        ok(id, {});
+        ok(id, method === 'session/prompt' ? { stopReason: 'end_turn' } : {});
       }
     });
   `;
@@ -157,6 +170,62 @@ describe('AcpBackend session modes', () => {
         await expect(backend.startSession()).rejects.toThrow(/session id/i);
       } finally {
         await backend.dispose().catch(() => {});
+      }
+    });
+  });
+});
+
+describe('AcpBackend required initial mode', () => {
+  it.each(['new', 'load', 'fork'] as const)('applies the required mode before %s becomes ready and keeps direct controls disabled', async (operation) => {
+    await withTempDir('happier-acp-initial-mode-', async (dir) => {
+      const recordedRequestsPath = join(dir, 'requests.jsonl');
+      const backend = new AcpBackend({
+        agentName: 'test', cwd: dir, command: process.execPath,
+        args: [writeFakeAcpAgentScript({ dir, modeIds: ['default', 'plan', 'auto', 'yolo'], currentModeId: 'default', recordedRequestsPath })],
+        initialSessionModeId: 'default',
+        sessionModesEnabled: false,
+      });
+      const readRequests = async () => (await readFile(recordedRequestsPath, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+      try {
+        const result = operation === 'new' ? await backend.startSession('initial fixture prompt')
+          : operation === 'load' ? await backend.loadSession(' test-session ')
+          : await backend.forkSession({ sessionId: 'original-session' });
+        const requests = await readRequests();
+        const initialized = requests.findIndex(request => request.method === 'session/set_mode');
+        expect(initialized).toBeGreaterThan(-1);
+        expect(requests[initialized].params).toEqual({ sessionId: result.sessionId, modeId: 'default' });
+        if (operation === 'new') {
+          await backend.waitForResponseComplete();
+          expect((await readRequests()).findIndex(request => request.method === 'session/prompt')).toBeGreaterThan(initialized);
+        }
+        expect(backend.getSessionModeState()).toBeNull();
+        await expect(backend.setSessionMode(result.sessionId, 'yolo')).rejects.toThrow(/disabled/);
+        await expect(backend.setSessionConfigOption(result.sessionId, 'mode', 'yolo')).rejects.toThrow(/disabled/);
+        expect((await readRequests()).filter(request => request.method === 'session/set_mode')).toHaveLength(1);
+        expect((await readRequests()).some(request => request.method === 'session/set_config_option')).toBe(false);
+      } finally {
+        await backend.dispose();
+      }
+    });
+  });
+
+  it.each([
+    { modeIds: ['ask', 'code'], rejectMode: false, error: /advertised/ },
+    { modeIds: ['default'], rejectMode: true, error: /invalid mode/ },
+  ])('refuses opening before prompt delivery if the required mode is unavailable or refused ($rejectMode)', async ({ modeIds, rejectMode, error }) => {
+    await withTempDir('happier-acp-initial-mode-refused-', async (dir) => {
+      const recordedRequestsPath = join(dir, 'requests.jsonl');
+      const backend = new AcpBackend({
+        agentName: 'test', cwd: dir, command: process.execPath,
+        args: [writeFakeAcpAgentScript({ dir, modeIds, rejectMode, recordedRequestsPath })],
+        initialSessionModeId: 'default', sessionModesEnabled: false,
+      });
+      try {
+        await expect(backend.startSession('must not dispatch')).rejects.toThrow(error);
+        const requests = (await readFile(recordedRequestsPath, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+        expect(requests.some(request => request.method === 'session/prompt')).toBe(false);
+      } finally {
+        await backend.dispose();
       }
     });
   });

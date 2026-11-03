@@ -16,6 +16,7 @@ describe('Gemini selected-account quota', () => {
         : { buckets: [{ modelId: 'gemini-pro', remainingFraction: 0.25, remainingAmount: '50' }] });
     } });
     const snapshot = await fetcher.fetch({ record: geminiQuotaRecord(), now: 2000, signal: new AbortController().signal });
+    expect(requests.every(({ init }) => !new Headers(init.headers).has('user-agent'))).toBe(true);
     expect(requests.map(r => r.url)).toEqual(['https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist', 'https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota']);
     expect(requests[1]?.init.headers).toMatchObject({ authorization: 'Bearer selected-token' });
     expect(JSON.parse(String(requests[1]?.init.body))).toEqual({ project: 'selected-project' });

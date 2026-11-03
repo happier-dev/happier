@@ -203,6 +203,7 @@ jobs:
       contents: read
     outputs:
       source_sha: ${{ steps.source.outputs.authorized_sha }}
+      channels: ${{ inputs.environment == 'preview-and-production' && '["preview","production"]' || format('["{0}"]', inputs.environment) }}
       source_ref: ${{ steps.dispatch.outputs.source_ref }}
       base_ref: ${{ steps.dispatch.outputs.base_ref }}
       validation_profile: ${{ steps.profile.outputs.profile }}
@@ -360,8 +361,12 @@ jobs:
       resume_cli_requested: ${{ inputs.resume_run_id != '' }}
       resume_stack_requested: ${{ inputs.resume_run_id != '' }}
       resume_server_requested: ${{ inputs.resume_run_id != '' }}
-  release_single:
-    name: Release single channel
+  release_channels:
+    name: Release ${{ matrix.channel }} channel
+    strategy:
+      fail-fast: false
+      matrix:
+        channel: ${{ fromJSON(needs.release_preflight.outputs.channels) }}
     needs: [snapshot_release_issues, source_validation, release_preflight]
     permissions:
       actions: write
@@ -375,7 +380,7 @@ jobs:
     with:
       validation_profile: ${{ needs.release_preflight.outputs.validation_profile }}
       dry_run: ${{ inputs.dry_run }}
-      environment: ${{ inputs.environment }}
+      environment: ${{ matrix.channel }}
       deploy_targets: ${{ inputs.deploy_targets }}
       force_deploy: ${{ inputs.force_deploy }}
       ui_expo_action: ${{ inputs.ui_expo_action }}
@@ -391,8 +396,8 @@ jobs:
       hmaint_operation_id: ${{ inputs.hmaint_operation_id }}
       hmaint_attempt_id: ${{ inputs.hmaint_attempt_id }}
       release_notes_id: ${{ inputs.release_notes_id }}
-      confirm: ${{ inputs.confirm }}
-      combined_preview_production: false
+      confirm: ${{ inputs.environment == 'preview-and-production' && (matrix.channel == 'preview' && 'release dev to preview' || 'release dev to main') || inputs.confirm }}
+      combined_preview_production: ${{ inputs.environment == 'preview-and-production' }}
 
       shared_source_contracts_preview: ${{ needs.source_validation.outputs.source_contracts_preview }}
       shared_source_contracts_production: ${{ needs.source_validation.outputs.source_contracts_production }}
@@ -403,105 +408,18 @@ jobs:
       shared_mysql_result: ${{ needs.source_validation.outputs.mysql_result }}
       shared_platform_result: ${{ needs.source_validation.outputs.platform_result }}
       shared_trust_roots_result: ${{ needs.source_validation.outputs.trust_roots_result }}
-    if: ${{ always() && inputs.environment != 'preview-and-production' && needs.release_preflight.result == 'success' && needs.source_validation.result == 'success' }}
-  release_preview:
-    name: Release preview channel
-    needs: [snapshot_release_issues, source_validation, release_preflight]
-    permissions:
-      actions: write
-      contents: write
-      id-token: write
-      issues: write
-      packages: write
-      pull-requests: read
-    uses: ./.github/workflows/release-channel.yml
-    secrets: inherit
-    with:
-      validation_profile: ${{ needs.release_preflight.outputs.validation_profile }}
-      dry_run: ${{ inputs.dry_run }}
-      environment: preview
-      deploy_targets: ${{ inputs.deploy_targets }}
-      force_deploy: ${{ inputs.force_deploy }}
-      ui_expo_action: ${{ inputs.ui_expo_action }}
-      desktop_mode: ${{ inputs.desktop_mode }}
-      waive_ci: ${{ inputs.waive_ci }}
-      include_validation_suites: ${{ inputs.include_validation_suites }}
-      waive_validation_suites: ${{ inputs.waive_validation_suites }}
-      override_reason: ${{ inputs.override_reason }}
-      authorized_promotion_source_sha: ${{ needs.release_preflight.outputs.source_sha }}
-      workflow_control_sha: ${{ inputs.workflow_control_sha }}
-      ci_run_id: ${{ inputs.ci_run_id }}
-      resume_run_id: ${{ inputs.resume_run_id }}
-      hmaint_operation_id: ${{ inputs.hmaint_operation_id }}
-      hmaint_attempt_id: ${{ inputs.hmaint_attempt_id }}
-      release_notes_id: ${{ inputs.release_notes_id }}
-      confirm: release dev to preview
-      combined_preview_production: true
-
-      shared_source_contracts_preview: ${{ needs.source_validation.outputs.source_contracts_preview }}
-      shared_source_contracts_production: ${{ needs.source_validation.outputs.source_contracts_production }}
-      shared_binary_smoke_preview: ${{ needs.source_validation.outputs.binary_smoke_preview }}
-      shared_binary_smoke_production: ${{ needs.source_validation.outputs.binary_smoke_production }}
-      shared_source_validation_sha: ${{ needs.source_validation.outputs.source_sha }}
-      shared_ci_result: ${{ needs.source_validation.outputs.ci_result }}
-      shared_mysql_result: ${{ needs.source_validation.outputs.mysql_result }}
-      shared_platform_result: ${{ needs.source_validation.outputs.platform_result }}
-      shared_trust_roots_result: ${{ needs.source_validation.outputs.trust_roots_result }}
-    if: ${{ always() && inputs.environment == 'preview-and-production' && needs.release_preflight.result == 'success' && needs.source_validation.result == 'success' }}
-  release_production:
-    name: Release production channel
-    needs: [snapshot_release_issues, source_validation, release_preflight]
-    permissions:
-      actions: write
-      contents: write
-      id-token: write
-      issues: write
-      packages: write
-      pull-requests: read
-    uses: ./.github/workflows/release-channel.yml
-    secrets: inherit
-    with:
-      validation_profile: ${{ needs.release_preflight.outputs.validation_profile }}
-      dry_run: ${{ inputs.dry_run }}
-      environment: production
-      deploy_targets: ${{ inputs.deploy_targets }}
-      force_deploy: ${{ inputs.force_deploy }}
-      ui_expo_action: ${{ inputs.ui_expo_action }}
-      desktop_mode: ${{ inputs.desktop_mode }}
-      waive_ci: ${{ inputs.waive_ci }}
-      include_validation_suites: ${{ inputs.include_validation_suites }}
-      waive_validation_suites: ${{ inputs.waive_validation_suites }}
-      override_reason: ${{ inputs.override_reason }}
-      authorized_promotion_source_sha: ${{ needs.release_preflight.outputs.source_sha }}
-      workflow_control_sha: ${{ inputs.workflow_control_sha }}
-      ci_run_id: ${{ inputs.ci_run_id }}
-      resume_run_id: ${{ inputs.resume_run_id }}
-      hmaint_operation_id: ${{ inputs.hmaint_operation_id }}
-      hmaint_attempt_id: ${{ inputs.hmaint_attempt_id }}
-      release_notes_id: ${{ inputs.release_notes_id }}
-      confirm: release dev to main
-      combined_preview_production: true
-
-      shared_source_contracts_preview: ${{ needs.source_validation.outputs.source_contracts_preview }}
-      shared_source_contracts_production: ${{ needs.source_validation.outputs.source_contracts_production }}
-      shared_binary_smoke_preview: ${{ needs.source_validation.outputs.binary_smoke_preview }}
-      shared_binary_smoke_production: ${{ needs.source_validation.outputs.binary_smoke_production }}
-      shared_source_validation_sha: ${{ needs.source_validation.outputs.source_sha }}
-      shared_ci_result: ${{ needs.source_validation.outputs.ci_result }}
-      shared_mysql_result: ${{ needs.source_validation.outputs.mysql_result }}
-      shared_platform_result: ${{ needs.source_validation.outputs.platform_result }}
-      shared_trust_roots_result: ${{ needs.source_validation.outputs.trust_roots_result }}
-    if: ${{ always() && inputs.environment == 'preview-and-production' && needs.release_preflight.result == 'success' && needs.source_validation.result == 'success' }}
+    if: ${{ always() && needs.release_preflight.result == 'success' && needs.source_validation.result == 'success' }}
   advance_release_issues:
     name: Advance issues to the highest completed channel
-    if: ${{ always() && inputs.environment == 'preview-and-production' && inputs.dry_run != true && needs.snapshot_release_issues.outputs.eligible == 'true' && (needs.release_preview.outputs.release_complete == 'true' || needs.release_production.outputs.release_complete == 'true') }}
-    needs: [snapshot_release_issues, release_preview, release_production]
+    if: ${{ always() && inputs.environment == 'preview-and-production' && inputs.dry_run != true && needs.snapshot_release_issues.outputs.eligible == 'true' }}
+    needs: [snapshot_release_issues, release_channels]
     continue-on-error: true
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: read
       issues: write
+      actions: read
     steps:
       - name: Checkout trusted combined-release control
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -511,13 +429,42 @@ jobs:
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version-file: .node-version
+      - name: Download terminal channel statuses
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: happier-release-status-*
+          path: ${{ runner.temp }}/release-channel-statuses
+          merge-multiple: false
+      - name: Select the highest completed channel
+        id: channel_status
+        env:
+          STATUS_DIRECTORY: ${{ runner.temp }}/release-channel-statuses
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import { appendFile, readFile } from 'node:fs/promises';
+          import { join } from 'node:path';
+          let stage = '';
+          for (const [channel, candidate] of [['preview', 'stage:preview'], ['production', 'stage:stable']]) {
+            let status;
+            try {
+              status = JSON.parse(await readFile(join(process.env.STATUS_DIRECTORY, `happier-release-status-${channel}`, 'release-status.json'), 'utf8'));
+            } catch (error) {
+              if (error.code === 'ENOENT') continue; // A channel can fail before projecting status.
+              throw error;
+            }
+            if (status.terminal === 'complete' || status.terminal === 'published') stage = candidate;
+          }
+          await appendFile(process.env.GITHUB_OUTPUT, `to_stage=${stage}\n`);
+          NODE
       - name: Advance the initially eligible issues to the completed channel
+        if: ${{ steps.channel_status.outputs.to_stage != '' }}
         env:
           DEV_ISSUES_JSON: ${{ needs.snapshot_release_issues.outputs.dev_issues_json }}
           GITHUB_TOKEN: ${{ github.token }}
           SOURCE_ISSUES_JSON: ${{ needs.snapshot_release_issues.outputs.source_issues_json }}
           PREVIEW_ISSUES_JSON: ${{ needs.snapshot_release_issues.outputs.preview_issues_json }}
-          TO_STAGE: ${{ needs.release_production.outputs.release_complete == 'true' && 'stage:stable' || 'stage:preview' }}
+          TO_STAGE: ${{ steps.channel_status.outputs.to_stage }}
         run: |
           set -euo pipefail
           node scripts/pipeline/github/reconcile-issue-stage.mjs advance \

@@ -72,7 +72,7 @@ test('network results are compared and retained after failure without granting w
   assert.match(compare.env.NETWORK_TRANSFER_ENFORCE, /github.event_name == 'push'.*refs\/heads\/dev/);
   const upload = job.steps.find((step) => step.name === 'Upload network transfer measurements');
   assert.match(upload.if, /!cancelled\(\)/);
-  assert.equal(upload.with.name, 'ui-e2e-network-transfer');
+  assert.ok(upload.with.name.endsWith('ui-e2e-network-transfer'));
   assert.equal(upload.with['if-no-files-found'], 'error');
   assert.doesNotMatch(JSON.stringify(job), /write|pull_request_target/);
 });

@@ -330,12 +330,15 @@ When the same approved source must ship to preview and production without a
 second operator cycle, use the private conductor target
 `preview-and-production`. The target dispatches the canonical `release.yml`,
 which snapshots source/dev/preview issue eligibility once, validates one source
-risk union, and invokes `release-channel.yml` for both channels in parallel.
+risk union, and invokes `release-channel.yml` through one channel matrix with
+`fail-fast: false`. Single-channel releases use the same matrix with one entry.
+Keeping one static call reduces expansion against GitHub's workflow object-size limit;
+the release graph contract caps recursively expanded reusable calls at 100.
 The retired `release-preview-and-production.yml` remains a supported historical
 resume origin; new operations use `release.yml`.
 
-The two calls share the exact authorized source, release notes, and successful
-CI run. Both channels publish concurrently from the reviewed source; this
+The two matrix entries share the exact authorized source, release notes, and
+successful CI run. Both channels publish concurrently from the reviewed source; this
 does not establish preview soak before production. Source-only MySQL, platform-service, and installer/updater trust-root
 checks are selected from the union of both release ranges and execute once in
 the combined parent. Each channel retains its own planning and final admission,
@@ -356,7 +359,9 @@ non-cancelling concurrency groups. Issue stages follow the highest channel with
 successful post-promotion verification and canonical terminal completion:
 production completion advances eligible issues to `stage:stable`, while preview
 completion alone advances source/dev issues to `stage:preview`. A failed sibling
-channel does not block verified availability in the completed channel.
+channel does not block verified availability in the completed channel. The
+parent reads the separate terminal status artifacts rather than reusable matrix
+outputs, which expose only one completed entry's value.
 
 Use GitHub's failed-job rerun when workflow control is unchanged. If control
 changes, resume the combined operation from its prior run; each channel reads

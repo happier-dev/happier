@@ -14,6 +14,7 @@ This release ships everything listed under release 2026-11-01.1 below, which had
 
 - CLI 0.2.20 ships the corrected Linux terminal support: the packaged CLI now includes the terminal (PTY) module that matches each Linux platform (x64 and arm64).
 - Server and stack 0.2.20 ship together with CLI 0.2.20.
+- The app ships as 0.2.21.
 
 ## Release 2026-11-01.1 - 2026-11-01
 

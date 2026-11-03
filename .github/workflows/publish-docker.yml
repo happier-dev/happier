@@ -61,6 +61,11 @@ on:
         required: false
         default: auto
         type: string
+      promotion_source_ref:
+        description: "Preflight-admitted promotion source branch (empty for standalone channel publication)"
+        required: false
+        default: ""
+        type: string
       authorized_sha:
         required: false
         default: ""
@@ -214,22 +219,26 @@ jobs:
           if [ -n "$AUTHORIZED_SHA" ]; then test "$source_sha" = "$AUTHORIZED_SHA"; fi
           echo "source_sha=$source_sha" >> "$GITHUB_OUTPUT"
 
-      - name: Verify stable candidate is current main
-        if: ${{ inputs.channel == 'stable' }}
+      - name: Verify admitted publication source
+        if: ${{ inputs.promotion_source_ref != '' || (inputs.channel == 'stable') }}
         working-directory: .candidate-source
         env:
-          SOURCE_SHA: ${{ steps.source.outputs.source_sha }}
+          AUTHORIZED_SHA: ${{ inputs.authorized_sha }}
+          PROMOTION_SOURCE_REF: ${{ inputs.promotion_source_ref }}
+          CANONICAL_REF: ${{ inputs.channel == 'stable' && 'main' || inputs.channel }}
         run: |
           set -euo pipefail
-          main_sha="$(git ls-remote --exit-code origin refs/heads/main | awk 'NR == 1 { print $1 }')"
-          if [ -z "$main_sha" ]; then
-            echo "Unable to resolve the stable main branch identity." >&2
-            exit 1
+          source_ref="$CANONICAL_REF"
+          args=()
+          if [ -n "$PROMOTION_SOURCE_REF" ]; then
+            test -n "$AUTHORIZED_SHA"
+            source_ref="$PROMOTION_SOURCE_REF"
+            args+=(--allow-source-ancestor)
           fi
-          if ! test "$SOURCE_SHA" = "$main_sha"; then
-            echo "Stable Docker candidate $SOURCE_SHA is not current main ($main_sha)." >&2
-            exit 1
-          fi
+          if [ -z "$AUTHORIZED_SHA" ]; then AUTHORIZED_SHA="$(git rev-parse HEAD)"; fi
+          node "$GITHUB_WORKSPACE/scripts/pipeline/github/resolve-authorized-release-source.mjs" \
+            --source-ref "refs/heads/$source_ref" \
+            --authorized-sha "$AUTHORIZED_SHA" "${args[@]}"
 
       - name: Pack exact candidate source as data
         working-directory: .candidate-source

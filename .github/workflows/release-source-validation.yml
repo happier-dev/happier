@@ -281,6 +281,7 @@ jobs:
       actions: read
     uses: ./.github/workflows/tests.yml
     with:
+      artifact_namespace: source-platform
       checkout_sha: ${{ needs.source_plan.outputs.source_sha }}
       select_jobs_explicitly: true
       run_ui_e2e: false

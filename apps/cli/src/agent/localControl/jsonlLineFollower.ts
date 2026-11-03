@@ -29,6 +29,8 @@ export type JsonlLineFollowerOptions = Readonly<{
     startAtEnd?: boolean;
     startOffsetBytes?: number;
     onLine: (line: string, source: JsonlLineSource) => void | Promise<void>;
+    /** Report proven discontinuity before replacement rows, even when the file is empty. */
+    onReset?: (reason: JsonlFollowerResetReason) => void;
     onError?: (error: unknown) => void;
     metrics?: JsonlFollowerMetrics;
 }>;
@@ -53,6 +55,7 @@ export class JsonlLineFollower {
     private readonly startAtEnd: boolean;
     private readonly startOffsetBytes: number | null;
     private readonly onLine: (line: string, source: JsonlLineSource) => void | Promise<void>;
+    private readonly onReset?: (reason: JsonlFollowerResetReason) => void;
     private readonly onError?: (error: unknown) => void;
     private readonly metrics?: JsonlFollowerMetrics;
 
@@ -79,6 +82,7 @@ export class JsonlLineFollower {
         this.startOffsetBytes = normalizeStartOffsetBytes(opts.startOffsetBytes);
         this.onLine = opts.onLine;
         this.onError = opts.onError;
+        this.onReset = opts.onReset;
         this.metrics = opts.metrics;
     }
 
@@ -193,6 +197,7 @@ export class JsonlLineFollower {
         this.scheduleNextPoll(aggregate);
     }
 
+    /** Preserve the cursor while the path is absent; only proven replacement or truncation resets it before row delivery. */
     private async drainInner(source: JsonlFollowerDrainSource): Promise<JsonlFollowerDrainOutcome> {
         let size = 0;
         let hadReset = false;
@@ -339,6 +344,7 @@ export class JsonlLineFollower {
         };
     }
 
+    /** Reset on a changed device/inode pair before adopting the replacement file, reporting whether continuity was lost. */
     private handleFileIdentity(statResult: Awaited<ReturnType<typeof stat>>): boolean {
         const nextIdentity = { dev: statResult.dev, ino: statResult.ino };
         if (this.fileIdentity && !isSameFileIdentity(this.fileIdentity, nextIdentity)) {
@@ -350,6 +356,7 @@ export class JsonlLineFollower {
         return false;
     }
 
+    /** Discard bytes from the old file and notify discontinuity before any replacement rows, including an empty replacement. */
     private resetReadState(reason: JsonlFollowerResetReason): void {
         this.offsetBytes = 0;
         this.bufferStartOffsetBytes = 0;
@@ -357,6 +364,11 @@ export class JsonlLineFollower {
         this.bufferFileIdentity = null;
         this.decoder = new StringDecoder('utf8');
         this.emitMetric({ type: 'file_reset', reason });
+        try {
+            this.onReset?.(reason);
+        } catch (error) {
+            this.onError?.(error);
+        }
     }
 
     private scheduleNextPoll(outcome: JsonlFollowerDrainOutcome): void {

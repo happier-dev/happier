@@ -1182,7 +1182,7 @@ jobs:
 
   publish_docker:
     if: always() && needs.resolve_resume.result == 'success' && needs.resolve_resume.outputs.docker_complete != 'true' && needs.plan.result == 'success' && inputs.dry_run != true && needs.plan.outputs.publish_docker_needed == 'true' && (needs.plan.outputs.publish_cli_binaries_needed != 'true' || needs.verify_cli_candidate.result == 'success') && (needs.plan.outputs.publish_server_runtime_needed != 'true' || needs.verify_server_candidate.result == 'success')
-    needs: [resolve_resume, plan, prepare_release_candidate, publish_cli_binaries, publish_server_runtime, verify_cli_candidate, verify_server_candidate]
+    needs: [release_preflight, resolve_resume, plan, prepare_release_candidate, publish_cli_binaries, publish_server_runtime, verify_cli_candidate, verify_server_candidate]
     permissions:
       contents: read
       packages: write
@@ -1191,6 +1191,7 @@ jobs:
     with:
       channel: ${{ inputs.environment == 'production' && 'stable' || 'preview' }}
       source_ref: ${{ needs.prepare_release_candidate.outputs.source_sha }}
+      promotion_source_ref: ${{ needs.release_preflight.outputs.source_ref }}
       authorized_sha: ${{ needs.prepare_release_candidate.outputs.source_sha }}
       server_version: ${{ needs.publish_server_runtime.outputs.version }}
       cli_version: ${{ needs.publish_cli_binaries.outputs.version }}
@@ -1231,7 +1232,7 @@ jobs:
 
   publish_npm:
     if: always() && needs.resolve_resume.result == 'success' && needs.resolve_resume.outputs.npm_complete != 'true' && needs.plan.result == 'success' && inputs.dry_run != true && needs.plan.outputs.publish_npm_needed == 'true' && (needs.plan.outputs.npm_publish_cli_needed != 'true' || needs.verify_cli_candidate.result == 'success') && (needs.plan.outputs.npm_publish_stack_needed != 'true' || needs.verify_stack_candidate.result == 'success') && (needs.plan.outputs.npm_publish_server_needed != 'true' || needs.verify_server_candidate.result == 'success')
-    needs: [resolve_resume, plan, prepare_release_candidate, publish_cli_binaries, publish_hstack_binaries, publish_server_runtime, verify_cli_candidate, verify_stack_candidate, verify_server_candidate]
+    needs: [release_preflight, resolve_resume, plan, prepare_release_candidate, publish_cli_binaries, publish_hstack_binaries, publish_server_runtime, verify_cli_candidate, verify_stack_candidate, verify_server_candidate]
     permissions:
       contents: write
       id-token: write
@@ -1247,6 +1248,7 @@ jobs:
       server_version: ${{ needs.publish_server_runtime.outputs.version }}
       channel: ${{ inputs.environment }}
       source_ref: ${{ needs.prepare_release_candidate.outputs.source_sha }}
+      promotion_source_ref: ${{ needs.release_preflight.outputs.source_ref }}
       authorized_sha: ${{ needs.prepare_release_candidate.outputs.source_sha }}
       npm_tag: ${{ inputs.environment == 'production' && 'latest' || 'next' }}
       run_tests: false

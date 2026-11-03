@@ -79,6 +79,18 @@ From `apps/ui/android`, run through the checkout's `hstack-exec` with a configur
 
 Use `gradlew.bat` on Windows. This extends the vendor project's existing native unit-test task; it does not install an app or replace SDK dependencies for the test. The Sentry vendor patch keeps Android dependencies coherent and includes the official profiler executor supplier adaptation needed by the updated native SDK. Its replay close contract comes from [Sentry's encoder shutdown fix](https://github.com/getsentry/sentry-java/pull/5842).
 
+## UI native Markdown regression
+
+The Android Markdown contract runs against the installed enriched-markdown Gradle project with Robolectric native graphics. It checks paragraph span ordering, selection and buffer ownership, nested checkbox drawing and reflow, and table measurement. Its dense-text probe reports render, view adoption, layout construction, width scanning, and measurement-store timings; timing values have no uncalibrated pass/fail threshold.
+
+From `apps/ui/android`, run through the checkout's `hstack-exec` with a configured Android SDK and JDK:
+
+```sh
+./gradlew -I ../tools/markdown/native-contract.init.gradle :react-native-enriched-markdown:testDebugUnitTest --tests com.swmansion.enriched.markdown.MarkdownLayoutContractTest
+```
+
+Use `gradlew.bat` on Windows. The vendor patch preserves the renderer's span index through measurement and view adoption, adapting [upstream's ordered no-copy buffer change](https://github.com/software-mansion/enriched-markdown/commit/7bcab4e4ac63bac876802b1603b058e0d625d765) to the 0.5.0 measurement and table consumers. This unit lane compiles the native module without installing an app; device validation still requires a client attributed to the current source.
+
 ## UI e2e authoring
 
 - Prefer stable React Native `testID` selectors, queried in Playwright with `getByTestId(...)`.

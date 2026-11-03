@@ -800,3 +800,21 @@ test('canonical combined resume binds successful OTA evidence to the selected ch
   assert.equal(resolveReleaseResume(input).uiCompleted.ota, true);
   assert.equal(resolveReleaseResume({ ...input, jobs: [{ ...input.jobs[0], name: 'Release production channel / deploy_ui / promote' }] }).uiCompleted.ota, false);
 });
+
+test('single-channel matrix resume accepts its channel job name and retains historical origins', () => {
+  const surfaces = [previewCliCandidate(), ...standardOptionalSurfaces(true)];
+  surfaces.find(surface => surface.id === 'deploy_ui').identity.expoAction = 'ota';
+  const input = {
+    originRun: originRun({ path: '.github/workflows/release.yml' }),
+    artifacts: [statusArtifact()], downloadedDigest: DIGEST,
+    status: status({ channel: 'preview', operationId: 'current-release', surfaces }),
+    expected: { repository: REPOSITORY, workflowPath: '.github/workflows/release.yml', channel: 'preview', sourceSha: SOURCE_SHA, operationId: 'current-release' },
+    jobs: [{ id: 2000, run_id: RUN_ID, head_sha: SOURCE_SHA, name: 'Release preview channel / deploy_ui / promote', status: 'completed', conclusion: 'success',
+      steps: ['Publish Android OTA from validated bytes', 'Publish iOS OTA from validated bytes'].map(name => ({ name, status: 'completed', conclusion: 'success' })) }],
+  };
+  for (const prefix of ['Release preview channel', 'Release single channel', '']) {
+    const name = `${prefix ? `${prefix} / ` : ''}deploy_ui / promote`;
+    assert.equal(resolveReleaseResume({ ...input, jobs: [{ ...input.jobs[0], name }] }).uiCompleted.ota, true, name);
+  }
+  assert.equal(resolveReleaseResume({ ...input, jobs: [{ ...input.jobs[0], name: 'Release production channel / deploy_ui / promote' }] }).uiCompleted.ota, false);
+});

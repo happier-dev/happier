@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { spawnSync } from 'node:child_process';
-import { readFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse } from 'yaml';
+import { summarizeReleaseStatus } from '../pipeline/release/summarize-release-status.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..');
@@ -13,86 +15,116 @@ async function workflow(name) {
   return parse(await readFile(join(repoRoot, '.github', 'workflows', name), 'utf8'));
 }
 
-test('combined preview and production release reuses the canonical channel workflow concurrently', async () => {
-  const [combined, release] = await Promise.all([
-    workflow('release.yml'),
-    workflow('release-channel.yml'),
-  ]);
+test('all release selections share one static channel tree and one source-risk union', async () => {
+  const [combined, release] = await Promise.all([workflow('release.yml'), workflow('release-channel.yml')]);
   await assert.rejects(readFile(join(repoRoot, '.github/workflows/release-preview-and-production.yml')), { code: 'ENOENT' });
   assert.ok(combined.on.workflow_dispatch.inputs.environment.options.includes('preview-and-production'));
   assert.equal(combined.jobs.source_validation.uses, './.github/workflows/release-source-validation.yml');
   assert.equal(combined.jobs.source_validation.with.base_refs, "${{ inputs.environment == 'preview-and-production' && 'preview,main' || inputs.environment == 'preview' && 'preview' || 'main' }}");
-  for (const name of ['release_single', 'release_preview', 'release_production']) {
-    const channel = combined.jobs[name];
-    assert.ok(channel.needs.includes('source_validation'));
-    assert.equal(channel.with.shared_source_validation_sha, '${{ needs.source_validation.outputs.source_sha }}');
+  const calls = Object.values(combined.jobs).filter(job => job.uses === './.github/workflows/release-channel.yml');
+  assert.equal(calls.length, 1, 'conditional copies expand even when they are skipped at runtime');
+  const channel = combined.jobs.release_channels;
+  assert.equal(channel, calls[0]);
+  assert.equal(channel.name, 'Release ${{ matrix.channel }} channel');
+  assert.equal(channel.strategy['fail-fast'], false, 'a failed channel must not cancel its sibling');
+  assert.equal(channel.strategy.matrix.channel, '${{ fromJSON(needs.release_preflight.outputs.channels) }}');
+  const evaluate = (expression, inputs, matrix = {}) => Function('inputs', 'matrix', 'format',
+    `return ${expression.slice(3, -2).trim()};`)(inputs, matrix, (pattern, value) => pattern.replace('{0}', value));
+  const planned = combined.jobs.release_preflight.outputs.channels;
+  for (const [environment, expected] of [['preview', ['preview']], ['production', ['production']], ['preview-and-production', ['preview', 'production']]]) {
+    const inputs = { environment, confirm: environment === 'production' ? 'reset main from preview' : 'release dev to preview' };
+    assert.deepEqual(JSON.parse(evaluate(planned, inputs)), expected);
+    for (const selected of expected) {
+      const matrix = { channel: selected };
+      assert.equal(evaluate(channel.with.environment, inputs, matrix), selected);
+      assert.equal(evaluate(channel.with.combined_preview_production, inputs, matrix), expected.length === 2);
+      assert.equal(evaluate(channel.with.confirm, inputs, matrix), expected.length === 2 ? `release dev to ${selected === 'preview' ? 'preview' : 'main'}` : inputs.confirm);
+    }
   }
+  assert.ok(channel.needs.includes('source_validation'));
+  assert.ok(channel.needs.includes('snapshot_release_issues'));
+  assert.equal(channel.with.shared_source_validation_sha, '${{ needs.source_validation.outputs.source_sha }}');
+  assert.equal(channel.with.authorized_promotion_source_sha, '${{ needs.release_preflight.outputs.source_sha }}');
+  assert.equal(channel.with.ci_run_id, '${{ inputs.ci_run_id }}');
+  assert.equal(channel.with.resume_run_id, '${{ inputs.resume_run_id }}');
   for (const name of ['ci', 'mysql_db_contract', 'platform_service_validation', 'trust_root_validation']) assert.equal(release.jobs[name], undefined);
-
-  assert.ok(release.on.workflow_call, 'the canonical channel workflow must be reusable');
   assert.equal(release.on.workflow_call.inputs.combined_preview_production.default, false);
   assert.equal(release.concurrency.group, 'release-channel-${{ inputs.environment }}');
   assert.equal(release.concurrency['cancel-in-progress'], false);
+  for (const forbiddenJob of ['plan', 'publish_cli_binaries', 'publish_server_runtime', 'deploy_ui', 'release_single', 'release_preview', 'release_production']) {
+    assert.equal(combined.jobs[forbiddenJob], undefined);
+  }
+});
 
-  const preview = combined.jobs.release_preview;
-  const production = combined.jobs.release_production;
-  assert.equal(preview.uses, './.github/workflows/release-channel.yml');
-  assert.equal(production.uses, './.github/workflows/release-channel.yml');
-  assert.ok(preview.needs.includes('snapshot_release_issues'));
-  assert.ok(production.needs.includes('snapshot_release_issues'));
-  assert.notEqual(preview.needs, 'release_production', 'preview must not wait for the production channel');
-  assert.notEqual(production.needs, 'release_preview', 'production must not wait for the preview channel');
-  assert.equal(preview.with.environment, 'preview');
-  assert.equal(preview.with.confirm, 'release dev to preview');
-  assert.equal(production.with.environment, 'production');
-  assert.equal(combined.on.workflow_dispatch.inputs.qualified_v4_activation_approval, undefined);
-  assert.equal(preview.with.qualified_v4_activation_approval, undefined);
-  assert.equal(production.with.qualified_v4_activation_approval, undefined);
-  assert.equal(production.with.confirm, 'release dev to main');
-  assert.equal(preview.with.authorized_promotion_source_sha, '${{ needs.release_preflight.outputs.source_sha }}');
-  assert.equal(production.with.authorized_promotion_source_sha, '${{ needs.release_preflight.outputs.source_sha }}');
-  assert.equal(preview.with.ci_run_id, '${{ inputs.ci_run_id }}');
-  assert.equal(production.with.ci_run_id, '${{ inputs.ci_run_id }}');
-  assert.equal(preview.with.combined_preview_production, true);
-  assert.equal(production.with.combined_preview_production, true);
-
+test('issue availability consumes each terminal channel artifact even when the matrix fails', async (t) => {
+  const combined = await workflow('release.yml');
   const advance = combined.jobs.advance_release_issues;
-  assert.deepEqual(advance.needs, ['snapshot_release_issues', 'release_preview', 'release_production']);
+  assert.deepEqual(advance.needs, ['snapshot_release_issues', 'release_channels']);
   assert.match(String(advance.if), /always\(\)/u);
-  assert.match(String(advance.if), /needs\.release_preview\.outputs\.release_complete == 'true' \|\| needs\.release_production\.outputs\.release_complete == 'true'/u);
-  assert.doesNotMatch(String(advance.if), /needs\.release_(?:preview|production)\.result/u, 'availability follows verified terminal channel completion even when the other channel fails');
-  const reconcile = advance.steps.find((step) => step.env?.TO_STAGE);
-  assert.equal(reconcile.env.TO_STAGE, "${{ needs.release_production.outputs.release_complete == 'true' && 'stage:stable' || 'stage:preview' }}");
-  const evaluate = (expression, needs, dryRun = false) => Function('needs', 'inputs', 'always',
-    `return ${expression.slice(3, -2).trim()};`)(needs, { dry_run: dryRun, environment: 'preview-and-production' }, () => true);
-  for (const [previewComplete, productionComplete, expectedStage] of [
-    ['false', 'false', null], ['true', 'false', 'stage:preview'],
-    ['false', 'true', 'stage:stable'], ['true', 'true', 'stage:stable'],
+  assert.doesNotMatch(String(advance.if), /needs\.release_channels\.(result|outputs)/u, 'matrix aggregate failure or last-writer outputs cannot hide a successful channel');
+  const download = advance.steps.find(step => step.uses?.startsWith('actions/download-artifact@'));
+  assert.equal(download.with.pattern, 'happier-release-status-*');
+  assert.notEqual(download.with['merge-multiple'], true, 'both channel files have the same basename');
+  const select = advance.steps.find(step => step.id === 'channel_status');
+  const reconcile = advance.steps.find(step => step.env?.TO_STAGE);
+  assert.equal(reconcile.env.TO_STAGE, '${{ steps.channel_status.outputs.to_stage }}');
+  assert.equal(reconcile.if, "${{ steps.channel_status.outputs.to_stage != '' }}");
+  const scratch = await mkdtemp(join(tmpdir(), 'happier-matrix-status-'));
+  t.after(() => rm(scratch, { recursive: true, force: true }));
+  const evaluate = (expression, dryRun) => Function('needs', 'inputs', 'always',
+    `return ${expression.slice(3, -2).trim()};`)({ snapshot_release_issues: { outputs: { eligible: 'true' } } }, { dry_run: dryRun, environment: 'preview-and-production' }, () => true);
+  assert.equal(evaluate(advance.if, false), true);
+  assert.equal(evaluate(advance.if, true), false);
+  assert.ok(combined.jobs.snapshot_release_issues.outputs.preview_issues_json, 'recovery must include already-preview issues');
+  for (const [preview, production, stage] of [
+    [null, null, ''], ['failed', 'partial', ''], ['complete', 'failed', 'stage:preview'],
+    ['failed', 'complete', 'stage:stable'], ['complete', 'complete', 'stage:stable'],
+    ['published', null, 'stage:preview'], [null, 'published', 'stage:stable'],
   ]) {
-    const needs = {
-      snapshot_release_issues: { outputs: { eligible: 'true' } },
-      release_preview: { result: previewComplete === 'true' ? 'success' : 'failure', outputs: { release_complete: previewComplete } },
-      release_production: { result: productionComplete === 'true' ? 'success' : 'failure', outputs: { release_complete: productionComplete } },
-    };
-    assert.equal(evaluate(advance.if, needs), expectedStage !== null);
-    assert.equal(evaluate(advance.if, needs, true), false, 'dry runs never advance even when channel evidence is complete');
-    if (expectedStage) assert.equal(evaluate(reconcile.env.TO_STAGE, needs), expectedStage);
+    const directory = await mkdtemp(join(scratch, 'case-'));
+    for (const [channel, terminal] of [['preview', preview], ['production', production]]) {
+      if (terminal === null) continue;
+      const status = summarizeReleaseStatus({
+        run: { id: 42, url: 'https://github.com/happier-dev/happier/actions/runs/42', name: 'RELEASE' },
+        channel, sourceSha: 'a'.repeat(40),
+        requestedSurfaces: [{ id: 'channel', requested: true, required: true, evidence: terminal === 'published' ? 'accepted' : 'verified' }],
+        surfaces: [{ id: 'channel', result: terminal === 'published' ? 'accepted' : terminal === 'complete' ? 'success' : terminal === 'failed' ? 'failed' : 'pending', identity: { verified: true } }],
+      });
+      assert.equal(status.terminal, terminal);
+      const artifact = join(directory, `happier-release-status-${channel}`);
+      await mkdir(artifact);
+      await writeFile(join(artifact, 'release-status.json'), JSON.stringify(status));
+    }
+    const output = join(directory, 'output');
+    const result = spawnSync('bash', ['-c', select.run], { cwd: repoRoot, encoding: 'utf8', env: { ...process.env, STATUS_DIRECTORY: directory, GITHUB_OUTPUT: output } });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal((await readFile(output, 'utf8')).trim(), `to_stage=${stage}`);
   }
   assert.match(reconcile.run, /--from-stage "stage:source"[\s\S]*--to-stage "\$TO_STAGE"/u);
   assert.match(reconcile.run, /--from-stage "stage:dev"[\s\S]*--to-stage "\$TO_STAGE"/u);
   assert.match(reconcile.run, /if \[ "\$TO_STAGE" = "stage:stable" \]; then[\s\S]*--from-stage "stage:preview"[\s\S]*--to-stage "\$TO_STAGE"/u);
-  assert.ok(combined.jobs.snapshot_release_issues.outputs.preview_issues_json, 'a later recovery must include already-preview issues');
+});
 
-  for (const forbiddenJob of ['plan', 'publish_cli_binaries', 'publish_server_runtime', 'deploy_ui']) {
-    assert.equal(combined.jobs[forbiddenJob], undefined, `combined workflow must not copy the canonical ${forbiddenJob} job`);
+test('the statically expanded release tree stays within the approved expansion budget', async () => {
+  async function expandedCalls(name, ancestors = []) {
+    assert.ok(!ancestors.includes(name), `recursive workflow call: ${[...ancestors, name].join(' -> ')}`);
+    const { jobs } = await workflow(name);
+    let calls = 0;
+    for (const job of Object.values(jobs)) {
+      if (!job.uses?.startsWith('./.github/workflows/')) continue;
+      calls += 1 + await expandedCalls(job.uses.slice('./.github/workflows/'.length), [...ancestors, name]);
+    }
+    return calls;
   }
+  const count = await expandedCalls('release.yml');
+  assert.ok(count <= 100, `${count} expanded reusable calls exceed the release loader budget (94 worked; 151 failed)`);
 });
 
 
 test('the reusable channel retains the canonical top-level OIDC caller identity', async () => {
   const [root, channel] = await Promise.all([workflow('release.yml'), workflow('release-channel.yml')]);
   assert.equal(root.permissions['id-token'], 'write');
-  for (const name of ['release_single', 'release_preview', 'release_production']) assert.equal(root.jobs[name].permissions['id-token'], 'write');
+  assert.equal(root.jobs.release_channels.permissions['id-token'], 'write');
   const env = { ...process.env, CALLER_REPOSITORY: 'happier-dev/happier', WORKFLOW_REPOSITORY: 'happier-dev/happier',
     WORKFLOW_REF: 'happier-dev/happier/.github/workflows/release-channel.yml@refs/heads/dev',
     CALLER_WORKFLOW_REF: 'happier-dev/happier/.github/workflows/release.yml@refs/heads/dev' };

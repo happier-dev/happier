@@ -10,6 +10,7 @@
  */
 
 import { logger } from '@/ui/logger';
+import type { AcpPermissionCallContext } from '@/agent/acp/AcpBackend';
 import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { PermissionMode } from '@/api/types';
 import {
@@ -98,11 +99,14 @@ export class ProviderEnforcedPermissionHandler extends BasePermissionHandler {
     this.resolvePendingRequestsIfNowDecidable();
   }
 
+  /** Reevaluate pending requests through their captured policy, preserving continuation ceilings across later mode changes. */
   private resolvePendingRequestsIfNowDecidable(): void {
     if (this.pendingRequests.size === 0) return;
 
     for (const [toolCallId, pending] of Array.from(this.pendingRequests.entries())) {
-      const decision = this.getImmediateDecision(toolCallId, pending.toolName, pending.input);
+      const decision = pending.resolveDecisionIfPolicyChanges
+        ? pending.resolveDecisionIfPolicyChanges()
+        : this.getImmediateDecision(toolCallId, pending.toolName, pending.input);
       if (!decision) continue;
       this.resolvePendingPermissionRequest(toolCallId, decision);
     }
@@ -113,7 +117,13 @@ export class ProviderEnforcedPermissionHandler extends BasePermissionHandler {
     return isTrustedAlwaysAutoApproveToolName(toolName, this.alwaysAutoApproveToolNameIncludes);
   }
 
-  getImmediateDecision(toolCallId: string, toolName: string, input: unknown): PermissionResult | null {
+  /** Apply explicit denials before safe-tool or full-access approval, using the admitted turn policy when supplied. */
+  getImmediateDecision(
+    toolCallId: string,
+    toolName: string,
+    input: unknown,
+    context?: AcpPermissionCallContext,
+  ): PermissionResult | null {
     if (this.isPermissionRequestClaimed(toolCallId)) {
       return null;
     }
@@ -129,7 +139,7 @@ export class ProviderEnforcedPermissionHandler extends BasePermissionHandler {
     })) {
       return { decision: 'denied' };
     }
-    if (isFullAccessPermissionMode(this.currentPermissionMode) && resolveAgentRequestKind(toolName) === 'permission') {
+    if (isFullAccessPermissionMode(context?.permissionMode ?? this.currentPermissionMode) && resolveAgentRequestKind(toolName) === 'permission') {
       return { decision: 'approved' };
     }
     if (this.isAlwaysAutoApprove(toolName, input)) {
@@ -138,11 +148,20 @@ export class ProviderEnforcedPermissionHandler extends BasePermissionHandler {
     return null;
   }
 
-  async handleToolCall(toolCallId: string, toolName: string, input: unknown): Promise<PermissionResult> {
-    if (this.isPermissionRequestClaimed(toolCallId)) {
+  /** Freeze the admitted policy before prompting so a later foreground mode cannot broaden this continuation's pending decision. */
+  async handleToolCall(
+    toolCallId: string,
+    toolName: string,
+    input: unknown,
+    context?: AcpPermissionCallContext,
+  ): Promise<PermissionResult> {
+    if (this.isPermissionRequestClaimed(toolCallId) || this.pendingRequests.has(toolCallId)) {
       return await this.requestPermissionDecision(toolCallId, toolName, input);
     }
-    const immediateDecision = this.getImmediateDecision(toolCallId, toolName, input);
+    // Provider continuations retain the policy of their admitted input.
+    const permissionMode = context?.permissionMode;
+    const admittedContext = permissionMode === undefined ? undefined : Object.freeze({ permissionMode });
+    const immediateDecision = this.getImmediateDecision(toolCallId, toolName, input, admittedContext);
     if (immediateDecision) {
       this.recordAutoDecision(toolCallId, toolName, input, immediateDecision.decision);
       logger.debug(`${this.getLogPrefix()} Auto-approving safe tool ${toolName} (${toolCallId})`);
@@ -156,7 +175,12 @@ export class ProviderEnforcedPermissionHandler extends BasePermissionHandler {
       return { decision: 'approved_for_session' };
     }
 
-    const pending = this.requestPermissionDecision(toolCallId, toolName, input);
+    const pending = this.requestPermissionDecision(
+      toolCallId,
+      toolName,
+      input,
+      admittedContext ? () => this.getImmediateDecision(toolCallId, toolName, input, admittedContext) : undefined,
+    );
     logger.debug(`${this.getLogPrefix()} Permission request sent for tool: ${toolName} (${toolCallId})`);
     return await pending;
   }

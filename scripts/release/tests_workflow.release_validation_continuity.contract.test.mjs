@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import YAML from 'yaml';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..');
@@ -39,16 +40,14 @@ test('tests workflow exposes thin release-validation continuity/update jobs thro
     /Run unified CLI update continuity validation[\s\S]*?env:[\s\S]*?GH_TOKEN:\s+\$\{\{\s*github\.token\s*\}\}[\s\S]*?run:/,
     'published release downloads should use the workflow read token instead of the shared-runner anonymous API quota',
   );
-  assert.doesNotMatch(
-    cliUpdateJob,
-    /name:\s*cli-update-continuity-artifacts[\s\S]*?path:\s*\.project\/logs\/e2e(?:\s|$)/,
-    'CLI update failure artifacts must not upload extracted release installs and dependency trees',
+  const upload = YAML.parse(raw).jobs['cli-update-continuity'].steps.find((step) =>
+    step.uses?.startsWith('actions/upload-artifact@') && step.with.name.endsWith('cli-update-continuity-artifacts'),
   );
-  assert.match(
-    cliUpdateJob,
-    /name:\s*cli-update-continuity-artifacts[\s\S]*?path:\s*\|[\s\S]*?cli-update-\*\/\*\.log/,
-    'CLI update failures should retain their scenario logs without retaining installed release payloads',
-  );
+  assert.ok(upload, 'CLI update failures should retain their scenario logs');
+  const artifactPaths = upload.with.path.trim().split(/\s+/);
+  assert.ok(artifactPaths.includes('.project/logs/e2e/*core*/cli-update-*/*.log'));
+  assert.ok(artifactPaths.every((path) => /\.(?:log|json|jsonl|ndjson)$/.test(path)),
+    'CLI update failure artifacts must retain diagnostic files without extracted release installs and dependency trees');
   assert.doesNotMatch(
     cliUpdateJob,
     /Install Sapling|Verify Sapling CLI/,

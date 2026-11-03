@@ -204,6 +204,7 @@ jobs:
       contents: read
     outputs:
       version: ${{ steps.version.outputs.version }}
+      base_version: ${{ steps.candidate_base.outputs.base_version }}
       source_sha: ${{ steps.source.outputs.source_sha }}
       embedded_policy_env: ${{ steps.channel_meta.outputs.embedded_policy_env }}
     steps:
@@ -691,6 +692,7 @@ jobs:
           ALLOW_STABLE: ${{ inputs.allow_stable }}
           RELEASE_MESSAGE: ${{ inputs.release_message }}
           VERSION: ${{ needs.prepare.outputs.version }}
+          BASE_VERSION: ${{ needs.prepare.outputs.base_version }}
           AUTHORIZED_SHA: ${{ needs.prepare.outputs.source_sha }}
           PUBLISH_PHASE: ${{ inputs.publish_rolling == false && 'publish-immutable' || 'publish' }}
         run: |
@@ -700,6 +702,7 @@ jobs:
             --allow-stable "$ALLOW_STABLE" \
             --release-message="$RELEASE_MESSAGE" \
             --version "$VERSION" \
+            --base-version "$BASE_VERSION" \
             --authorized-sha "$AUTHORIZED_SHA" \
             --phase "$PUBLISH_PHASE" \
             --prepared-artifacts \

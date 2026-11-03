@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import YAML from 'yaml';
@@ -192,6 +195,56 @@ for (const product of [
   { id: 'cli', workflow: 'publish-cli-binaries.yml', sourceArtifactPrefix: 'cli-source-' },
   { id: 'hstack', workflow: 'publish-hstack-binaries.yml', sourceArtifactPrefix: 'hstack-source-' },
 ]) {
+  test(`${product.id} finalizer resolves the candidate version when its base differs from trusted control`, async () => {
+    const { workflow } = await loadWorkflow(product.workflow);
+    const controlManifest = JSON.parse(await readFile(join(repoRoot, `apps/${product.id === 'cli' ? 'cli' : 'stack'}/package.json`), 'utf8'));
+    const [major, minor, patch] = controlManifest.version.split('.').map(Number);
+    const candidateBase = `${major}.${minor}.${patch + 1}`;
+    const directory = await mkdtemp(join(tmpdir(), 'publish-candidate-base-'));
+    try {
+      const context = {
+        'inputs.channel': 'preview',
+        'inputs.allow_stable': 'false',
+        'inputs.release_message': '',
+        'steps.candidate_base.outputs.base_version': candidateBase,
+        'github.repository': 'happier-dev/happier',
+      };
+      const resolveValue = (value) => context[String(value).replace(/^\$\{\{\s*|\s*\}\}$/g, '')] ?? '';
+      const stepEnv = (step) => Object.fromEntries(Object.entries(step.env ?? {}).map(([key, value]) => [key, resolveValue(value)]));
+      const allocation = workflow.jobs.prepare.steps.find((step) => step.id === 'version');
+      const allocationOutput = join(directory, 'allocation');
+      const boundaryEnv = {
+        ...process.env,
+        GH_TOKEN: '',
+        GITHUB_TOKEN: '',
+        MINISIGN_SECRET_KEY: '',
+        MINISIGN_PASSPHRASE: '',
+        HAPPIER_RELEASE_PUBLISHED_VERSIONS_JSON: JSON.stringify({ github: {}, npm: {} }),
+      };
+      execFileSync('bash', ['-c', allocation.run], {
+        cwd: repoRoot,
+        env: { ...boundaryEnv, ...stepEnv(allocation), GITHUB_OUTPUT: allocationOutput },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      const version = (await readFile(allocationOutput, 'utf8')).trim().split('=')[1];
+      assert.equal(version, `${candidateBase}-preview.1`);
+      context['needs.prepare.outputs.version'] = version;
+      context['needs.prepare.outputs.base_version'] = resolveValue(workflow.jobs.prepare.outputs.base_version);
+      context['needs.prepare.outputs.source_sha'] = '0123456789abcdef0123456789abcdef01234567';
+      const finalizer = workflow.jobs.finalize_publish.steps.find((step) => step.run?.includes(`release/publish-${product.id === 'cli' ? 'cli' : 'hstack'}-binaries.mjs`));
+      const finalOutput = join(directory, 'final');
+      // Stop at the real publisher's version resolution before any artifact or publication effects.
+      execFileSync('bash', ['-c', `${finalizer.run.trimEnd()} \\\n  --resolve-version-only --github-output "$GITHUB_OUTPUT" --dry-run`], {
+        cwd: repoRoot,
+        env: { ...boundaryEnv, ...stepEnv(finalizer), PUBLISH_PHASE: 'publish-immutable', GITHUB_OUTPUT: finalOutput },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      assert.equal((await readFile(finalOutput, 'utf8')).trim(), `version=${version}`);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   test(`${product.id} fresh publisher keeps candidate source inert until a permissionless builder`, async () => {
     const { workflow } = await loadWorkflow(product.workflow);
     const prepare = workflow.jobs.prepare;

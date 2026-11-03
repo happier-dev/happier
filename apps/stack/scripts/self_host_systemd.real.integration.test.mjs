@@ -39,7 +39,8 @@ function assertSystemdSystemManagerAvailable() {
     cwd: '/tmp',
   });
   const state = String(result.stdout ?? '').trim();
-  if (state === 'running' || state === 'degraded') return;
+  // 'starting' = systemd is PID 1 and manages units; a fresh CI runner can still have boot jobs queued.
+  if (state === 'running' || state === 'degraded' || state === 'starting') return;
 
   throw new Error(
     [

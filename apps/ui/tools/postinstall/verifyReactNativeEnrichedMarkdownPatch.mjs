@@ -3,8 +3,6 @@ import path from 'node:path';
 
 const PARSER_CACHE_DELETE_MARKER = 'parseCache.delete(cacheKey)';
 const MIN_EXPECTED_PARSER_CACHE_DELETE_OCCURRENCES = 4;
-// Selectable markdown takes focus on tap; without this guard the Android list scrolls to reveal it.
-const ANDROID_TOUCH_FOCUS_REVEAL_MARKER = 'isGainingTouchFocus';
 
 function countOccurrences(contents, marker) {
     return contents.split(marker).length - 1;
@@ -36,19 +34,15 @@ export function verifyReactNativeEnrichedMarkdownPatch({ packageDir }) {
         'text',
         'TailFadeInAnimator.kt',
     );
-    const androidMarkdownTextViewPath = path.resolve(
-        packageDir,
-        'android',
-        'src',
-        'main',
-        'java',
-        'com',
-        'swmansion',
-        'enriched',
-        'markdown',
-        'accessibility',
-        'AccessibleMarkdownTextView.kt',
-    );
+    const androidMarkdownDirectory = path.resolve(packageDir, 'android/src/main/java/com/swmansion/enriched/markdown');
+    const androidSpanIndexFiles = [
+        ['renderer/Renderer.kt', 'MarkdownSpannableFactory.newSpannable(builder)'],
+        ['utils/text/MarkdownSpannableFactory.kt', 'is SpannableStringBuilder -> InsertionOrderedSpannable(source)'],
+        ['utils/text/view/TextViewSetup.kt', 'setSpannableFactory(MarkdownSpannableFactory)'],
+        ['views/TableContainerView.kt', 'setSpannableFactory(MarkdownSpannableFactory)'],
+        // Selectable markdown takes focus on tap; without this guard the Android list scrolls to reveal it.
+        ['accessibility/AccessibleMarkdownTextView.kt', 'isGainingTouchFocus'],
+    ].map(([relativePath, marker]) => ({ filePath: path.join(androidMarkdownDirectory, relativePath), marker }));
 
     const requiredPaths = [
         enrichedMarkdownTextPath,
@@ -63,7 +57,7 @@ export function verifyReactNativeEnrichedMarkdownPatch({ packageDir }) {
         iosTailFadeAnimatorPath,
         iosRendererDirectory,
         androidTailFadeAnimatorPath,
-        androidMarkdownTextViewPath,
+        ...androidSpanIndexFiles.map(({ filePath }) => filePath),
     ];
     if (requiredPaths.some((filePath) => !fs.existsSync(filePath))) return false;
 
@@ -80,7 +74,6 @@ export function verifyReactNativeEnrichedMarkdownPatch({ packageDir }) {
     const wasmBuiltModuleBytes = fs.readFileSync(wasmBuiltModulePath);
     const iosTailFadeAnimatorContents = fs.readFileSync(iosTailFadeAnimatorPath, 'utf8');
     const androidTailFadeAnimatorContents = fs.readFileSync(androidTailFadeAnimatorPath, 'utf8');
-    const androidMarkdownTextViewContents = fs.readFileSync(androidMarkdownTextViewPath, 'utf8');
     // AttributedRenderer owns the factory. Its cached children must not own it back;
     // checking this also makes partial repair notice stale installed native files.
     const cachedRendererPaths = fs.readdirSync(iosRendererDirectory)
@@ -93,6 +86,7 @@ export function verifyReactNativeEnrichedMarkdownPatch({ packageDir }) {
 
     return (
         nativeRendererOwnershipPatched
+        && androidSpanIndexFiles.every(({ filePath, marker }) => fs.readFileSync(filePath, 'utf8').includes(marker))
         && enrichedMarkdownTextContents.includes('markStreamingRevealOffsets')
         && enrichedMarkdownTextContents.includes('streamingAnimation')
         && enrichedMarkdownTextContents.includes('updateStreamingRevealRanges')
@@ -132,6 +126,5 @@ export function verifyReactNativeEnrichedMarkdownPatch({ packageDir }) {
         && streamingRevealContents.includes('updateStreamingRevealRanges')
         && iosTailFadeAnimatorContents.includes('ENRMActiveFadeRange')
         && androidTailFadeAnimatorContents.includes('activeRanges')
-        && androidMarkdownTextViewContents.includes(ANDROID_TOUCH_FOCUS_REVEAL_MARKER)
     );
 }

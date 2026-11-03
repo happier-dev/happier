@@ -279,6 +279,7 @@ jobs:
       pull-requests: read
     uses: ./.github/workflows/tests.yml
     with:
+      artifact_namespace: ${{ format('verify-{0}-{1}-{2}-{3}-{4}', inputs.channel, inputs.candidate_cli_version, inputs.candidate_stack_version, inputs.candidate_server_version, inputs.candidate_ui_web_version) }}
       select_jobs_explicitly: true
       run_ui: false
       run_shared_packages: false
