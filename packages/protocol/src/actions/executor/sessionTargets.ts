@@ -1,4 +1,4 @@
-import { normalizeSessionTargetV1, type SessionTargetV1, type SessionTargetSelectorV1, type ActionResolvedSessionTargetsV1, type SessionTargetPreviewV1 } from '../sessionTargetV1.js';
+import { ActionSessionAddressV1Schema, normalizeSessionTargetV1, type ActionSessionAddressV1, type ActionSessionTargetDeclarationV1, type SessionTargetV1, type SessionTargetSelectorV1, type ActionResolvedSessionTargetsV1, type SessionTargetPreviewV1 } from '../sessionTargetV1.js';
 import { FollowRulePreviewResultV1Schema } from '../../sessions/follow/sessionFollowRulePreviewV1.js';
 import { parseSessionFollowActionResponse } from '../../sessions/follow/actionTransport.js';
 import { OpenedSessionFollowRuleV1Schema, type OpenedSessionFollowRuleV1 } from '../../sessions/follow/actions.js';
@@ -244,6 +244,31 @@ export function readActionSessionTargetOperands(input: Readonly<Record<string, u
     return visit((value as Readonly<Record<string, unknown>>)[key], rest, [...path, key]);
   };
   return visit(input, field.split('.'), []);
+}
+
+/** An exact routing option can bind only the same one concrete declared operand. */
+export function validateActionSessionAddressV1(input: Readonly<{
+  sessionTarget: ActionSessionTargetDeclarationV1 | undefined;
+  input: unknown;
+  sessionAddress: unknown;
+}>): Readonly<{ ok: true; sessionAddress: ActionSessionAddressV1 }> | ActionExecuteFailure {
+  const address = ActionSessionAddressV1Schema.safeParse(input.sessionAddress);
+  if (!address.success) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+  if (!input.sessionTarget) return { ok: false, errorCode: 'session_address_unsupported', error: 'session_address_unsupported' };
+  const operands = input.input && typeof input.input === 'object' && !Array.isArray(input.input)
+    ? readActionSessionTargetOperands(input.input as Readonly<Record<string, unknown>>, input.sessionTarget.field) : [];
+  if (operands.length !== 1 || operands[0]!.value !== address.data.sessionId) {
+    return { ok: false, errorCode: 'session_address_mismatch', error: 'session_address_mismatch' };
+  }
+  try {
+    const normalized = normalizeSessionTargetV1(operands[0]!.value);
+    if (typeof normalized !== 'string' || normalized !== address.data.sessionId) {
+      return { ok: false, errorCode: 'session_address_mismatch', error: 'session_address_mismatch' };
+    }
+  } catch {
+    return { ok: false, errorCode: 'session_address_mismatch', error: 'session_address_mismatch' };
+  }
+  return { ok: true, sessionAddress: address.data };
 }
 
 /** Replace only the declared target leaf, preserving its surrounding intent. */
