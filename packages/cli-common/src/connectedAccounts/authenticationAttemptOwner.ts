@@ -14,7 +14,7 @@ import type {
     ConnectedAccountManualInput,
 } from './authenticationTypes.js';
 import type { ConnectedAccountConfigurationOwner } from './configurationOwner.js';
-import type { ConnectedAccountAttemptTransactionRecord } from './attemptTransactionApi.js';
+import type { ConnectedAccountAttemptTransactionRecord, PendingConnectedAccountAttemptTransaction } from './attemptTransactionApi.js';
 import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1, listConnectedAccountSecretCredentialKeysV1 } from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
 import { QualifiedConnectedAccountIdSchema, sameQualifiedConnectedAccountRef,
     connectedAccountSourceCustodyV1Equal, type ConnectedAccountSourceCustodyV1 } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
@@ -229,6 +229,15 @@ export type ConnectedAccountAttemptAddressOwner = Readonly<{
     read(attemptId: string): Promise<ConnectedAccountAttemptTransactionRecord | null>;
     clear(attemptId: string): MaybePromise<void>;
 }>;
+
+function hasRestorableTransaction(input: Readonly<{
+    kind: ConnectedAccountAttemptTransactionRecord['kind'];
+    phase: ConnectedAccountAttemptTransactionRecord['scope']['phase'];
+}>): boolean {
+    // Manual forms and unfinished configuration retain their draft only in
+    // their host. OAuth/device transactions carry the content needed to resume.
+    return input.kind !== 'manual' && input.phase !== 'configurationRequired';
+}
 
 export type ConnectedAccountAttemptResponse =
     | Readonly<{ status: 'starting'; attemptId: string }>
@@ -553,6 +562,7 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
         }>>;
     }>;
 }>): Readonly<{
+    selectResumableAttempts(attempts: readonly PendingConnectedAccountAttemptTransaction[]): readonly PendingConnectedAccountAttemptTransaction[];
     ensureRestored(input: Readonly<{
         attemptId: string;
         record?: ConnectedAccountAttemptTransactionRecord;
@@ -2959,6 +2969,10 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
     }
 
     const owner: ReturnType<typeof createConnectedAccountAuthenticationAttemptOwner> = Object.freeze({
+        selectResumableAttempts(pending) {
+            return pending.filter(candidate => attempts.has(candidate.attemptId)
+                || hasRestorableTransaction(candidate));
+        },
         async ensureRestored(input) {
             input.signal?.throwIfAborted();
             if (readAttempt(input.attemptId) || terminalResponses.has(input.attemptId)) return null;
@@ -2970,7 +2984,7 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                     code: 'connected_account_attempt_internal_unavailable' };
             }
             input.signal?.throwIfAborted();
-            if (!record || record.kind === 'manual' || record.scope.phase === 'configurationRequired') {
+            if (!record || !hasRestorableTransaction({ kind: record.kind, phase: record.scope.phase })) {
                 return unavailable(input.attemptId);
             }
             if (record.kind === 'oauth') {

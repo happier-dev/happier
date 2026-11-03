@@ -546,9 +546,10 @@ export function createConnectedAccountDaemonRuntime(params: Readonly<{
                             code: 'connected_account_attempt_discovery_unavailable',
                         });
                     }
-                    const attempts = await params.persistence.attempts.listPending(command.service);
+                    const pending = await params.persistence.attempts.listPending(command.service);
                     assertNotAborted(options?.signal);
-                    return Object.freeze({ status: 'pendingAttempts' as const, attempts });
+                    return Object.freeze({ status: 'pendingAttempts' as const,
+                        attempts: attempts.selectResumableAttempts(pending) });
                 }
                 if (command.operation === 'describeService') {
                     const operationTransport = command.requiredOperation

@@ -207,8 +207,12 @@ export function createCredentialedConnectedAccountAuthenticationHost(input: Read
         },
         controlCommand(machineId, command, options): Promise<ConnectedAccountDaemonControlResponse> {
             return withHome(async () => {
-                if (command.operation === 'listPendingAttempts') return { status: 'pendingAttempts' as const,
-                    attempts: await api.listPending({ service: command.service, ...(machineId ? { machineId } : {}) }) };
+                if (command.operation === 'listPendingAttempts') {
+                    if (machineId) return options.native(machineId, command);
+                    const pending = await api.listPending({ service: command.service });
+                    return { status: 'pendingAttempts' as const, attempts: pending.length === 0 ? pending
+                        : runtime(await select(command.service)).attempts.selectResumableAttempts(pending) };
+                }
                 if (command.operation === 'describeService') {
                     try {
                         // Discovery consumes the admitted declaration, including native-only

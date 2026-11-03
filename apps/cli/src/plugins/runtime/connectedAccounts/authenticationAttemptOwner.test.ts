@@ -14,6 +14,7 @@ import {
     type ConnectedAccountAttemptProviderOperation,
     type ConnectedAccountAttemptProviderInvocation,
     type ConnectedAccountAttemptSettlementRequest,
+    type ConnectedAccountAttemptAddressOwner,
     type ConnectedAccountDeviceTransactionSnapshot,
     type ConnectedAccountOAuthCallbackCompletion,
 } from '@happier-dev/cli-common/connectedAccounts';
@@ -180,6 +181,7 @@ function harness(input: Readonly<{
     destroyAttemptConfiguration?: (attemptId: string) => void | Promise<void>;
     now?: () => number;
     onBackgroundTransition?: Parameters<typeof createConnectedAccountAuthenticationAttemptOwner>[0]['onBackgroundTransition'];
+    attemptAddresses?: ConnectedAccountAttemptAddressOwner | null;
     deviceTransactions?: Readonly<{
         acknowledge(input: unknown): void | Promise<void>;
         read(attemptId: string): unknown | Promise<unknown>;
@@ -271,12 +273,23 @@ function harness(input: Readonly<{
     const admitConfiguration = vi.fn(
         input.admitConfiguration ?? (async () => input.configuration ?? configured()),
     );
+    const transactionApi = createConnectedAccountAttemptTransactionApiBoundary();
+    const transactions = createQualifiedConnectedAccountAttemptTransactionAdapters({
+        credentials: { token: 'account-token', encryption: null },
+        getAccountEncryptionMode: async () => 'plain',
+        getMachineId: () => 'machine-1',
+        now: input.now ?? (() => 1_000),
+        api: transactionApi,
+    });
     const owner = createConnectedAccountAuthenticationAttemptOwner({
         createAttemptId:
             input.createAttemptId ?? (() => `attempt-${++attemptNumber}`),
         createAccountId: input.createAccountId ?? (() => 'host-account-1'),
         now: input.now ?? (() => 1_000),
         ...(input.onBackgroundTransition ? { onBackgroundTransition: input.onBackgroundTransition } : {}),
+        ...(input.attemptAddresses === null ? {} : {
+            attemptAddresses: input.attemptAddresses ?? transactions.address,
+        }),
         accounts: {
             readExact: vi.fn(input.readAccount ?? (async () =>
                 input.account === undefined
@@ -343,6 +356,8 @@ function harness(input: Readonly<{
         generationCurrent,
         destroyAttemptConfiguration,
         admitConfiguration,
+        transactionApi,
+        transactions,
     };
 }
 
@@ -637,6 +652,30 @@ function durableOAuthTransactions(input: Readonly<{
         readRecord: () => record,
     };
 }
+
+describe('addressed manual attempts', () => {
+    it('discovers only resumable drafts without discarding another host\'s addresses', async () => {
+        const h = harness();
+        const nextHost = harness();
+        try {
+            await h.owner.beginConnect({ service, modeId: 'manual' });
+            const pending = await h.transactions.listPending(service);
+            expect(h.owner.selectResumableAttempts(pending)).toEqual(pending);
+            // A new host sees the same addressed records, without the old draft.
+            expect(nextHost.owner.selectResumableAttempts(pending)).toEqual([]);
+            expect(h.transactionApi.records.has('attempt-1')).toBe(true);
+            const durable = [
+                { ...pending[0]!, attemptId: 'oauth', kind: 'oauth' as const, phase: 'awaitingOAuth' as const },
+                { ...pending[0]!, attemptId: 'device', kind: 'device' as const, phase: 'awaitingDeviceAuthorization' as const },
+            ];
+            expect(nextHost.owner.selectResumableAttempts(durable)).toEqual(durable);
+            expect(nextHost.owner.selectResumableAttempts(durable.map(attempt => ({
+                ...attempt, phase: 'configurationRequired' as const,
+            })))).toEqual([]);
+        } finally { h.owner.dispose(); nextHost.owner.dispose(); }
+    });
+
+});
 
 describe('ConnectedAccountAuthenticationAttemptOwner', () => {
     it('does not impose a guessed lifetime on a manual attempt', async () => {
