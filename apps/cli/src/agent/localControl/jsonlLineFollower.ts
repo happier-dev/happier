@@ -354,6 +354,7 @@ export class JsonlLineFollower {
         return false;
     }
 
+    /** Discard bytes from the old file and notify discontinuity before any replacement rows, including an empty replacement. */
     private resetReadState(reason: JsonlFollowerResetReason): void {
         this.offsetBytes = 0;
         this.bufferStartOffsetBytes = 0;

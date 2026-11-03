@@ -8,6 +8,7 @@ import {
   createApiSessionSocketStub,
 } from '@/testkit/backends/apiSessionSocketHarness';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
+import type { UsageReportV1 } from './acpTokenCountUsageReport';
 
 type Ack = { ok: true; id: string; seq: number; localId: string; didWrite?: boolean };
 
@@ -292,6 +293,59 @@ describe('ApiSessionClient message commit queue', () => {
       await client.close();
     } finally {
       debugSpy.mockRestore();
+    }
+  });
+
+  it.each(['agent', 'codex'] as const)('preserves complete scalar usage across paid context, replay, and a fresh %s client', async (path) => {
+    vi.resetModules();
+    const stored = new Map<string, UsageReportV1>();
+    const { ApiSessionClient } = await import('./sessionClient');
+    const createClient = () => {
+      sessionSocketStub = createApiSessionSocketStub({
+        connected: true,
+        emit: (event, args) => {
+          if (event !== 'usage-report') return;
+          const report = args[0] as UsageReportV1;
+          // Released scalar servers replace the entire session/key row.
+          stored.set(JSON.stringify([report.sessionId, report.key]), report);
+        },
+        emitWithAckResult: { ok: true, id: 'message', seq: 1, localId: 'local' },
+      });
+      userSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
+      return new ApiSessionClient('tok', createPlainSessionFixture({ id: 'usage-session' }));
+    };
+    const totals = () => [...stored.values()].reduce((sum, report) => ({
+      tokens: sum.tokens + report.tokens.total,
+      cost: sum.cost + report.cost.total,
+    }), { tokens: 0, cost: 0 });
+    const send = (client: InstanceType<typeof ApiSessionClient>, tokens: Record<string, number>, cost: number) => {
+      const body = { type: 'token_count' as const, key: 'acp-usage-update', tokens, cost: { total: cost } };
+      if (path === 'agent') client.sendAgentMessage('opencode', body);
+      else client.sendCodexMessage(body);
+    };
+    const context = { total: 900, used: 900, size: 1000 };
+    const first = createClient();
+    try {
+      send(first, { total: 100, input: 80, output: 20 }, 0.1);
+      send(first, context, 0.2);
+      expect(totals()).toEqual({ tokens: 100, cost: 0.1 });
+      send(first, { total: 150, input: 120, output: 30 }, 0.3);
+      send(first, { total: 150, input: 120, output: 30 }, 0.3);
+      expect(totals()).toEqual({ tokens: 150, cost: 0.3 });
+    } finally {
+      await first.close();
+    }
+    const resumed = createClient();
+    try {
+      send(resumed, context, 0.4);
+      expect(totals()).toEqual({ tokens: 150, cost: 0.3 });
+      send(resumed, { total: 150, input: 120, output: 30 }, 0.3);
+      send(resumed, { total: 200, input: 160, output: 40 }, 0.5);
+      send(resumed, context, 0.6);
+      expect(totals()).toEqual({ tokens: 200, cost: 0.5 });
+      expect(stored.size).toBe(1);
+    } finally {
+      await resumed.close();
     }
   });
 

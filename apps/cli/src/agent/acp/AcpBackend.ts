@@ -213,8 +213,7 @@ const PROMPT_CANCEL_SETTLEMENT_TIMEOUT_MS = 5_000;
 // Reuse the established disposal budget for every graceful native teardown.
 const GRACEFUL_TEARDOWN_BOUND_MS = 2_000;
 
-/** Bound best-effort cleanup and clear the losing timer without swallowing operation failures. */
-/** Apply the native teardown budget without leaving a deadline timer after settlement. */
+/** Apply the native teardown budget, preserve operation failures, and clear the losing deadline timer. */
 async function withGracefulTeardownBound(call: Promise<unknown>): Promise<'settled' | 'timed_out'> {
   let timer: NodeJS.Timeout | undefined;
   try {
@@ -634,6 +633,7 @@ export function buildInitializeRequest(params: {
   };
 }
 
+/** Apply workspace and permission policy to client filesystem calls, rechecking captured turn authority after I/O. */
 export function createAcpClientFsMethods(params: {
   cwd: string;
   permissionHandler?: AcpPermissionHandler;
@@ -1085,8 +1085,7 @@ export class AcpBackend implements AgentBackend {
     });
   }
 
-  /** Revoke admission synchronously; failed or stalled observers cannot prevent native teardown. */
-  /** Revoke source authority before bounded observer cleanup, so native Stop can proceed independently. */
+  /** Revoke admission synchronously; bounded observer cleanup cannot prevent native teardown. */
   private async stopProviderTurnSource(): Promise<void> {
     const source = this.providerSource;
     this.providerSource = null;
@@ -1122,6 +1121,7 @@ export class AcpBackend implements AgentBackend {
     }
   }
 
+  /** Reject filesystem requests outside the active admitted turn, including the cancellation/reload interval. */
   private assertClientFsRequestOwnership(sessionId: string): void {
     if (!this.options.providerTurnSource) return;
     if (
@@ -1147,12 +1147,17 @@ export class AcpBackend implements AgentBackend {
     };
   }
 
+  /** Retain the admitted permission policy only for tool calls witnessed in the current live turn. */
   private captureProviderToolContext(toolCallId: string): void {
     if (!this.providerSourceLifetime || !this.waitingForResponse || this.isCurrentTurnGenerationClosed()
       || !this.activePermissionContext || !this.toolCalls.get(toolCallId) || this.providerToolContexts.has(toolCallId)) return;
     this.providerToolContexts.set(toolCallId, this.activePermissionContext);
   }
 
+  /**
+   * Attach one source to the native session and admit only descendants of witnessed tool calls.
+   * Every callback is bound to this lifetime; source failure retires the native connection.
+   */
   private async startProviderTurnSource(): Promise<void> {
     if (!this.options.providerTurnSource || !this.acpSessionId) return;
     await this.stopProviderTurnSource();
@@ -1222,6 +1227,7 @@ export class AcpBackend implements AgentBackend {
     this.providerSource = source;
   }
 
+  /** Start a new response generation with its admitted policy, retiring timers and settlement state from the prior turn. */
   private beginResponseTurn(permissionContext?: AcpPermissionCallContext): void {
     this.turnGeneration++;
     this.closedTurnGeneration = null;
@@ -1267,6 +1273,7 @@ export class AcpBackend implements AgentBackend {
     return () => { this.providerTurnEventListeners.delete(handler); };
   }
 
+  /** Report activity only for the live session and admitted generation; replay and foreign events cannot wake the runtime. */
   private observeProviderTurnEvent(sessionId: unknown): void {
     if (
       this.disposed || this.replayCapture || this.acpSessionId === null || sessionId !== this.acpSessionId
@@ -1376,6 +1383,7 @@ export class AcpBackend implements AgentBackend {
     }
   }
 
+  /** Detach native resources before killing the child, while revoked observer cleanup proceeds independently. */
   private async cleanupInitializedProcessConnection(params: { graceMs: number }): Promise<void> {
     const sourceStopped = this.stopProviderTurnSource();
     const proc = this.process;
@@ -1409,6 +1417,7 @@ export class AcpBackend implements AgentBackend {
     await sourceStopped;
   }
 
+  /** Release launch-owned resources once and forget the process environment even if their cleanup fails. */
   private async cleanupPreparedProcessLaunch(): Promise<void> {
     const cleanup = this.processLaunchCleanup;
     this.processLaunchCleanup = null;
@@ -1493,6 +1502,7 @@ export class AcpBackend implements AgentBackend {
       : await initialize();
   }
 
+  /** Finalize the launch environment before ACP setup so the process and its journal observer share one configuration. */
   private async createUnlockedConnectionAndInitialize(params: { operationId: string }): Promise<{
     initTimeout: number;
     negotiatedSessionLoadSupport: boolean;
@@ -2186,6 +2196,7 @@ export class AcpBackend implements AgentBackend {
   }
 }
 
+  /** Return a native session only after required mode and journal ownership are established; tear down partial startup on failure. */
   async startSession(initialPrompt?: string): Promise<StartSessionResult> {
     if (this.disposed) {
       throw new Error('Backend has been disposed');
@@ -2284,6 +2295,7 @@ export class AcpBackend implements AgentBackend {
     }
   }
 
+  /** Resume the requested native session with replay capture, required mode and source ownership; never substitute a new session. */
   async loadSession(sessionId: SessionId): Promise<StartSessionResult> {
     if (this.disposed) {
       throw new Error('Backend has been disposed');
@@ -2559,6 +2571,7 @@ export class AcpBackend implements AgentBackend {
     };
   }
 
+  /** Normalize updates through the shared publishers, admitting journal output only for its captured provider generation. */
   private async handleSessionUpdate(params: SessionNotification, providerGeneration?: number): Promise<void> {
     const raw = asRecord(params) ?? {};
     const updateCandidates: unknown[] = [];
@@ -2944,6 +2957,7 @@ export class AcpBackend implements AgentBackend {
     }
   }
 
+  /** Require the declared native safety mode even when mode UI is disabled, and reject providers that do not advertise it. */
   private async applyInitialSessionMode(sessionResponse: unknown): Promise<void> {
     const requiredModeId = this.options.initialSessionModeId;
     if (requiredModeId === undefined) return;
@@ -3258,6 +3272,7 @@ export class AcpBackend implements AgentBackend {
     );
   }
 
+  /** Close the current generation before resolving waiters, then let the journal retry continuations waiting on that foreground owner. */
   private finalizeTurnOutcome(outcome: AcpTurnOutcome): void {
     this.clearResponseCompletionTimeout();
     if (this.postPromptCompletionIdleTimeout) {
@@ -3472,6 +3487,7 @@ export class AcpBackend implements AgentBackend {
     return this.sendPromptWithEvidence(sessionId, payload.text, payload.meta);
   }
 
+  /** Reject overlapping prompt, continuation or cancellation ownership before dispatch, then preserve evidence of provider acceptance. */
   async sendPromptWithEvidence(
     sessionId: SessionId,
     prompt: string,
@@ -4138,6 +4154,7 @@ export class AcpBackend implements AgentBackend {
     }
   }
 
+  /** Apply foreground idle heuristics only when no provider continuation owns completion and its prompt response has settled. */
   private emitIdleStatus(): void {
     if (this.providerTurn) return;
     if (
@@ -4178,6 +4195,7 @@ export class AcpBackend implements AgentBackend {
     this.finalizeIdleStatus();
   }
 
+  /** Schedule foreground quiet-period completion without allowing tool inactivity to end a journal-owned continuation. */
   private scheduleIdleStatusAfterToolCompletion(): void {
     if (this.providerTurn) return;
     if (this.toolCalls.activeSize > 0) return;
@@ -4251,7 +4269,6 @@ export class AcpBackend implements AgentBackend {
    * Stop native work before draining revoked observers. Successor readiness still waits for
    * the plan publication barrier because an in-flight metadata write cannot be undone.
    */
-  /** Stop native work before publication draining; reload and successor admission retain their existing barriers. */
   private async cancelProviderSession(sessionId: string): Promise<void> {
     const foregroundCancellation = this.activePromptRpc && this.connection
       ? this.connection.peer.cancel({ sessionId })
@@ -4304,6 +4321,7 @@ export class AcpBackend implements AgentBackend {
     this.emit({ type: 'status', status: 'stopped', detail: 'Cancelled by user' });
   }
 
+  /** Serialize whole-session cancellation for provider continuations; ordinary prompt cancellation retains its existing settlement path. */
   async cancel(sessionId: SessionId): Promise<void> {
     if (this.acpSessionId === sessionId) {
       if (this.providerCancellation) {
@@ -4403,6 +4421,7 @@ export class AcpBackend implements AgentBackend {
     return await this.disposePromise;
   }
 
+  /** Revoke observation and release native resources even if observer cleanup fails; optionally preserve the provider session for handoff. */
   private async disposeResources(preserveProviderSession: boolean): Promise<void> {
     logger.debug('[AcpBackend] Disposing backend');
     const sourceStopped = this.stopProviderTurnSource();

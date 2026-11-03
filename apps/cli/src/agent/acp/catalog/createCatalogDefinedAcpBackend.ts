@@ -23,6 +23,7 @@ export type CatalogDefinedAcpBackendOptions = AgentFactoryOptions & Readonly<{
   launch?: Readonly<{ command: string; args: readonly string[] }>;
 }>;
 
+/** Compose catalog transport policy with launch/source ownership, applying the configured permission mode after native open or resume. */
 export function createCatalogDefinedAcpBackend(
   agentId: AgentId,
   options: CatalogDefinedAcpBackendOptions,

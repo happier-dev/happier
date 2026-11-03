@@ -59,7 +59,7 @@ function normalizeCostMap(raw: unknown): { total: number; [key: string]: number 
   return out as { total: number; [key: string]: number };
 }
 
-/** Preserve inference report identity and cost while excluding context occupancy from consumed tokens. */
+/** Project token measurements to scalar replacement reports; partial context updates remain telemetry. */
 export function buildUsageReportFromAcpTokenCount(params: {
   provider: ACPProvider;
   sessionId: string;
@@ -72,14 +72,15 @@ export function buildUsageReportFromAcpTokenCount(params: {
   // If the provider supplies a key, use it; otherwise fall back to a per-provider session key.
   const key = extracted.key ?? `${params.provider}-session`;
 
-  const cost = normalizeCostMap((params.body as Record<string, unknown>).cost);
   const { used, size, ...tokens } = extracted.tokens;
   // ACP used/size describe the current context, not tokens consumed by an inference.
   const contextOnly = (used != null || size != null)
     && (tokens.total == null || tokens.total === (used ?? 0))
     && Object.keys(tokens).every(key => key === 'total');
-  if (contextOnly && cost.total === 0) return null;
-  const total = contextOnly ? 0 : typeof tokens.total === 'number' ? tokens.total : 0;
+  // Scalar servers replace tokens and cost together, so a partial context cost cannot safely update the row.
+  if (contextOnly) return null;
+  const cost = normalizeCostMap((params.body as Record<string, unknown>).cost);
+  const total = typeof tokens.total === 'number' ? tokens.total : 0;
   return {
     key,
     sessionId: params.sessionId,

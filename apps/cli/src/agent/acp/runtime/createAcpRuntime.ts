@@ -467,6 +467,7 @@ export async function abortAcpRuntimeTurnIfNeeded(
   return true;
 }
 
+/** Own transcript publication and turn settlement for both host prompts and provider-initiated continuations. */
 export function createAcpRuntime(params: {
   provider: string;
   directory: string;
@@ -911,6 +912,7 @@ export function createAcpRuntime(params: {
     }
   };
 
+  /** Share one completion promise per turn and observe rejection while publication delays its settlement consumer. */
   const waitForTurnResponse = (b: AcpRuntimeBackend, turn: RuntimeTurnState): Promise<AcpTurnOutcome | void> => {
     if (!turn.responseCompletion) {
       turn.responseCompletion = b.waitForResponseComplete?.() ?? Promise.resolve();
@@ -927,9 +929,10 @@ export function createAcpRuntime(params: {
     return error;
   };
 
-  // Transport/provider error prose is not evidence of a user cancellation.
+  /** Classify cancellation by its error type; provider error prose cannot establish user intent. */
   const isTurnCancellationError = (error: unknown): boolean => error instanceof Error && error.name === 'AbortError';
 
+  /** Preserve typed cancellation while distinguishing failures already surfaced by this turn from a fresh prompt error. */
   const rethrowPromptError = (error: unknown, turn: RuntimeTurnState = turnState): never => {
     if (isTurnCancellationError(error)) rememberTurnOutcome({ kind: 'aborted', stopReason: 'cancelled' }, turn);
     if (turn.turnAborted && !isTurnCancellationError(error)) {
@@ -1224,6 +1227,7 @@ export function createAcpRuntime(params: {
     });
   };
 
+  /** Publish a provider failure against its captured turn; only a typed cancellation suppresses the failure record. */
   const beginStatusErrorSurface = (
     detailRaw: unknown,
     turn: TerminalTurnSnapshot = captureTerminalTurn(),
@@ -1357,6 +1361,7 @@ export function createAcpRuntime(params: {
     return true;
   };
 
+  /** Queue failure settlement once for the originating turn without stopping a newer turn's activity indicator. */
   const surfacePromptFailure = async (detailRaw: unknown, turn = hostCallerTurn ?? turnState): Promise<boolean> => {
     if (isTurnCancellationError(detailRaw)) return false;
     if (turn.turnAborted) return true;
@@ -1368,6 +1373,7 @@ export function createAcpRuntime(params: {
     return enqueueTurnSettlement(() => settlePromptFailure(detailRaw, turn));
   };
 
+  /** Retire the captured turn before awaiting completion so late settlement cannot borrow a successor's transcript identity. */
   const flushCapturedTurn = (turn: RuntimeTurnState, completion?: Promise<AcpTurnOutcome | void>): Promise<void> => {
     if (turn.settlement) return turn.settlement;
     if (!turn.currentTurnId && !turn.turnInFlight) {

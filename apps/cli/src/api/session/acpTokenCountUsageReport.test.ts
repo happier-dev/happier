@@ -3,12 +3,12 @@ import { describe, expect, it } from 'vitest';
 import { buildUsageReportFromAcpTokenCount } from './acpTokenCountUsageReport';
 
 describe('acp token_count -> usage-report', () => {
-  it('keeps context snapshots out of accounting reports while preserving independently reported cost', () => {
+  it('keeps partial context snapshots out of scalar accounting reports even when they carry cost', () => {
     const body = { type: 'token_count', key: 'acp-usage-update', tokens: { total: 123, used: 123, size: 1000 } };
     expect(buildUsageReportFromAcpTokenCount({ provider: 'kimi', sessionId: 'sess-context', body })).toBeNull();
     expect(buildUsageReportFromAcpTokenCount({ provider: 'kimi', sessionId: 'sess-context', body: {
       ...body, cost: { total: 0.25 },
-    } })).toEqual({ key: 'acp-usage-update', sessionId: 'sess-context', tokens: { total: 0 }, cost: { total: 0.25 } });
+    } })).toBeNull();
   });
 
   it('preserves explicit billed categories alongside context counters', () => {

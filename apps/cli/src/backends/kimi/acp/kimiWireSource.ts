@@ -107,11 +107,13 @@ export function createKimiWireSource(): AcpProviderTurnSourceFactory {
             host.fail(failure);
             wake();
         };
+        /** Retry native task witnesses only through host admission; journal presence alone grants no continuation authority. */
         const registerTasks = () => {
             for (const [id, parentToolCallId] of pendingTasks) {
                 if (host.registerContinuation({ id, parentToolCallId })) pendingTasks.delete(id);
             }
         };
+        /** Retain ended parent witnesses while buffered turn delivery or pending task admission can still need them. */
         const releaseEndedTools = () => {
             const hasBufferedParent = (toolCallId: string) => deliveries.some(delivery =>
                 toolCallId.startsWith(`${delivery.turnId}:`));
@@ -138,6 +140,7 @@ export function createKimiWireSource(): AcpProviderTurnSourceFactory {
             host.releaseToolCalls(released);
             return pruned;
         };
+        /** Serialize admitted native updates and terminals, retaining exact task events until the foreground owner releases them. */
         const deliver = () => {
             deliveryTail = deliveryTail.then(async () => {
                 if (disposed || failure || host.signal.aborted) return;
@@ -240,6 +243,7 @@ export function createKimiWireSource(): AcpProviderTurnSourceFactory {
         if (failure) { await follower.stop(); throw failure; }
         host.signal.addEventListener('abort', wake, { once: true });
         return {
+            /** Drain journal evidence before permission admission and wait for the exact native turn or an ownership failure. */
             async catchUp(input) {
                 await follower.drainNow();
                 await deliver();

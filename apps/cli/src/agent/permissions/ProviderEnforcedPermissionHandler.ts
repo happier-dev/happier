@@ -99,6 +99,7 @@ export class ProviderEnforcedPermissionHandler extends BasePermissionHandler {
     this.resolvePendingRequestsIfNowDecidable();
   }
 
+  /** Reevaluate pending requests through their captured policy, preserving continuation ceilings across later mode changes. */
   private resolvePendingRequestsIfNowDecidable(): void {
     if (this.pendingRequests.size === 0) return;
 
@@ -116,6 +117,7 @@ export class ProviderEnforcedPermissionHandler extends BasePermissionHandler {
     return isTrustedAlwaysAutoApproveToolName(toolName, this.alwaysAutoApproveToolNameIncludes);
   }
 
+  /** Apply explicit denials before safe-tool or full-access approval, using the admitted turn policy when supplied. */
   getImmediateDecision(
     toolCallId: string,
     toolName: string,
@@ -146,6 +148,7 @@ export class ProviderEnforcedPermissionHandler extends BasePermissionHandler {
     return null;
   }
 
+  /** Freeze the admitted policy before prompting so a later foreground mode cannot broaden this continuation's pending decision. */
   async handleToolCall(
     toolCallId: string,
     toolName: string,
