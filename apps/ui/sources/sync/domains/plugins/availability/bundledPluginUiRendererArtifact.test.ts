@@ -1,16 +1,20 @@
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, onTestFinished } from 'vitest';
 import { PluginPortableReleaseManifestV1Schema } from '@happier-dev/protocol/plugins/availability';
 import { PluginUiArtifactsManifestEntryV2Schema } from '@happier-dev/protocol/plugins/ui';
 import { projectPluginPortableUiDeclarationsV1 } from '@happier-dev/protocol/plugins/contributions/ui';
 import { BUNDLED_PLUGIN_UI_APP_DECLARATIONS, installBundledPluginUiDeclarationsForTests } from '@/dev/testkit/mocks/bundledPluginUiAssets';
-import { resolveBundledPluginUiRendererArtifact as resolveRenderer } from './bundledPluginUiRendererArtifact';
+import { readCurrentPluginUiRendererProjection, resolveBundledPluginUiRendererArtifact as resolveRenderer } from './bundledPluginUiRendererArtifact';
 import { createPluginAccountAvailabilityReader } from './reader';
+import { clearPluginAccountAvailabilityProjection, readPluginAccountAvailability, replacePluginAccountAvailabilityProjection } from './projection';
+import { publishCommittedAppShellPluginUiProjection } from '@/components/appShell/plugins/committedPluginUiProjection';
+import { mergeInstalledPluginUiProjections } from '../ui/projectionUnion';
 
 function resolveBundledPluginUiRendererArtifact(entry: Parameters<typeof resolveRenderer>[0]) {
     const reader = createPluginAccountAvailabilityReader({ scope: { serverId: 'server', accountId: 'account' },
         snapshot: { availabilityCursor: 1, intentReads: [], materializations: [], snapshots: [] },
         hostBundledUi: BUNDLED_PLUGIN_UI_APP_DECLARATIONS });
-    return resolveRenderer(entry, reader.readAccountUiProjection());
+    const accountProjection = reader.readAccountUiProjection();
+    return resolveRenderer(entry, { accountProjection, selectedProjection: accountProjection });
 }
 
 const pluginId = 'happier.fixture';
@@ -18,12 +22,13 @@ const manifest = PluginPortableReleaseManifestV1Schema.parse({ schemaVersion: 2,
     displayName: 'Fixture', runtime: { apiVersion: 1 }, contributes: { ui: {
         renderers: [{ id: 'card', kind: 'reactNative', artifact: 'card', requiredHostMethods: [] }],
     } } });
-function declarations(digest: string) {
+function declarations(digest: string, version = manifest.version, declarationPluginId = pluginId) {
+    const releaseManifest = PluginPortableReleaseManifestV1Schema.parse({ ...manifest, version, id: declarationPluginId });
     const graph = PluginUiArtifactsManifestEntryV2Schema.parse({ artifactId: 'card', tier: 'reactNative', digest,
         entry: 'react-native/card/entry.cjs.bundle', files: [{ relativePath: 'react-native/card/entry.cjs.bundle', digest, byteSize: 1 }],
         executable: { exports: ['renderSurface'] }, builtWith: { bundler: 'esbuild', version: '0.27.2' }, hostUiApiRange: '^1.0.0' });
-    return { pluginId, pluginVersion: manifest.version, packageName: '@happier-dev/plugins-fixture', displayName: 'Fixture',
-        normalizedManifest: manifest, artifactGraphs: [graph], entriesById: projectPluginPortableUiDeclarationsV1(manifest, [graph]) };
+    return { pluginId: declarationPluginId, pluginVersion: version, packageName: '@happier-dev/plugins-fixture', displayName: 'Fixture',
+        normalizedManifest: releaseManifest, artifactGraphs: [graph], entriesById: projectPluginPortableUiDeclarationsV1(releaseManifest, [graph]) };
 }
 const current = declarations(`sha256:${'a'.repeat(64)}`);
 const retained = declarations(`sha256:${'b'.repeat(64)}`);
@@ -76,4 +81,49 @@ it('preserves a disabled renderer and plugins absent from this app inventory', (
     expect(resolveBundledPluginUiRendererArtifact(disabled)).toBe(disabled);
     const external = { ...oldEntry, pluginId: 'external.fixture' };
     expect(resolveBundledPluginUiRendererArtifact(external)).toBe(external);
+});
+
+it.each([false, true])('retains Machine A v1 for an external plugin when the global Machine B v2 omits its renderer: %s', (omitRenderer) => {
+    const scope = { serverId: 'server', accountId: 'account' };
+    // The packaged inventory is acquired once per app process. Keep the app
+    // fixture constant while the two Machine installations vary independently.
+    restore = installBundledPluginUiDeclarationsForTests([current]);
+    clearPluginAccountAvailabilityProjection();
+    onTestFinished(clearPluginAccountAvailabilityProjection);
+    replacePluginAccountAvailabilityProjection({ scope,
+        snapshot: { availabilityCursor: 1, intentReads: [], materializations: [], snapshots: [] } });
+    const externalPluginId = 'external.fixture';
+    const externalEntryId = `reactNativeBundle:${externalPluginId}:card`;
+    const machineA = { ...declarations(`sha256:${'b'.repeat(64)}`, '1.0.0', externalPluginId).entriesById[externalEntryId],
+        artifactSelectionOwner: 'daemonProjection', occurrenceId: 'machine-a-v1' };
+    const machineB = createPluginAccountAvailabilityReader({ scope,
+        snapshot: { availabilityCursor: 1, intentReads: [], materializations: [], snapshots: [] },
+        hostBundledUi: [declarations(`sha256:${'c'.repeat(64)}`, '2.0.0', externalPluginId)] }).readAccountUiProjection()!;
+    const global = mergeInstalledPluginUiProjections([], omitRenderer
+        ? { ...machineB, reactNativeBundlesById: {} } : machineB);
+    onTestFinished(publishCommittedAppShellPluginUiProjection(() => global));
+
+    expect(readPluginAccountAvailability(scope).readAccountUiProjection()?.installedPackagesById[externalPluginId]).toBeUndefined();
+    expect(global?.installedPackagesById[externalPluginId]?.version).toBe('2.0.0');
+    expect(resolveRenderer(machineA, readCurrentPluginUiRendererProjection(scope))).toBe(machineA);
+});
+
+it('keeps the current Account renderer when a retained Machine supplies an older graph in AppShell', () => {
+    const scope = { serverId: 'server', accountId: 'account' };
+    restore = installBundledPluginUiDeclarationsForTests([current]);
+    clearPluginAccountAvailabilityProjection();
+    onTestFinished(clearPluginAccountAvailabilityProjection);
+    replacePluginAccountAvailabilityProjection({ scope,
+        snapshot: { availabilityCursor: 1, intentReads: [], materializations: [], snapshots: [] } });
+    const account = createPluginAccountAvailabilityReader({ scope,
+        snapshot: { availabilityCursor: 1, intentReads: [], materializations: [], snapshots: [] },
+        hostBundledUi: [current] }).readAccountUiProjection()!;
+    const machine = createPluginAccountAvailabilityReader({ scope,
+        snapshot: { availabilityCursor: 1, intentReads: [], materializations: [], snapshots: [] },
+        hostBundledUi: [retained] }).readAccountUiProjection()!;
+    const global = mergeInstalledPluginUiProjections([account], machine);
+    onTestFinished(publishCommittedAppShellPluginUiProjection(() => global));
+
+    expect(readPluginAccountAvailability(scope).readAccountUiProjection()?.installedPackagesById[pluginId]).toBeDefined();
+    expect(resolveRenderer(oldEntry, readCurrentPluginUiRendererProjection(scope))?.artifactGraph).toEqual(current.artifactGraphs[0]);
 });

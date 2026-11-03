@@ -7095,7 +7095,10 @@ bodyless, and transcript/diagnostic redaction stays with its existing owner.
 
 In 0.3 development source, mounted renderers supplied by the app inventory
 use the app's current Plugin UI inventory, including direct Session and embedded
-mounts. Machine execution custody does not select a separate bundled renderer
+mounts. Account Availability's app/Account-release package census decides which
+plugins use that selection; Machine-only external plugins retain their exact
+Machine renderer even when AppShell's merged inventory contains another version
+or omits its renderer. Machine execution custody does not select a separate bundled renderer
 generation. Physical mounts and cache lifecycle reconciliation consume
 the current Account projection before admitting its graph and digest, including
 retained selections without a source-custody stamp. AppShell's installed merge
