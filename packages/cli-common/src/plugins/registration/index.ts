@@ -1,3 +1,5 @@
+export * from './targetedOperationInput.js';
+export * from './targetedOperationValidation.js';
 export * from './targetedContributions.js';
 export * from './targetedContributionAdmission.js';
 export * from './admittedTargetedOperation.js';
