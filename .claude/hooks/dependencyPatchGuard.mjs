@@ -5,6 +5,8 @@ import { fileURLToPath } from 'node:url';
 
 // One policy for Claude and the Codex envelope adapter. This catches literal
 // edit targets, not arbitrary programs or dynamically evaluated shell paths.
+// The dependency refresh owner can recover escaped edits to existing patches
+// only after proving patch-hash-only drift; this prevention policy still applies.
 const event = JSON.parse(readFileSync(0, 'utf8') || '{}');
 const tool = event.tool_name ?? event.tool;
 if (process.env.HAPPIER_DEPENDENCY_APPLIER === '1' || !['Write', 'Edit', 'MultiEdit', 'apply_patch', 'Bash'].includes(tool)) process.exit(0);

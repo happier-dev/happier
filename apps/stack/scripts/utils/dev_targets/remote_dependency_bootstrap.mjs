@@ -111,6 +111,7 @@ export async function bootstrapRemoteDependencies({
   // Runtime preparation emits executable prerequisites. Semantic checking is
   // owned by explicit strict/publication callers and the separate check lane.
   env = resolveRemoteValidationPreparationEnv(env, validationKind, defaultBuildMode);
+  if (executionPlacement === 'remote') env = { ...env, HAPPIER_DEV_TARGET_EXECUTION: '1' };
   const componentDir = join(repoDir, 'apps', 'stack');
   const componentPath = posix.normalize(String(componentRelativeDir).replaceAll('\\', '/'));
   const sourceToolsOnly = toolsOnly || validationKind === 'source-test' || validationKind === 'typecheck';

@@ -304,6 +304,22 @@ treated as possible writers by read-only verification.
 Agent hooks protect primary-checkout patch files and `patchedDependencies`; prepare changes in an outside worktree and hand the diff to Systemic.
 Only the dependency applier sets `HAPPIER_DEPENDENCY_APPLIER=1` in its hook environment when applying the complete validated change.
 
+In 0.3 development source, the primary dependency refresh owner can recover an
+escaped edit to an already registered patch after a frozen install reports
+`ERR_PNPM_LOCKFILE_CONFIG_MISMATCH`. It substitutes the locked patch digests into
+its existing readiness identity to prove that registrations, manifests, runtime
+and lockfile are unchanged. Each changed file must start with `diff --git`, and
+`pnpm patch` must apply it to the pristine locked package before the owner runs
+one script-free lockfile-only install and retries the frozen install once under
+the same writer lock. The owner logs the patch paths and publishes
+`patchHashRelock: { patches, at }` in the dependency generation state. Missing
+admission evidence, unsupported lockfile shapes, changed dependency inputs and
+invalid patches retain the ordinary failure path. Remote bootstrap and remote
+installers never self-relock; they receive the primary lockfile through Mutagen
+and retain their existing retry behavior. The literal edit hook remains a
+preventive guard, and deliberate dependency changes still follow the applier
+procedure above.
+
 Refresh reports `stacksNeedingRestart` for running Stacks; their owners restart
 them at the next boundary. Development Expo retains its Metro process and
 observes dependency writes through Metro's watcher. Package metadata and link

@@ -13,6 +13,7 @@ import { isJsonOwnerFileLockActive, readJsonOwnerLockSnapshot, withJsonOwnerFile
 import { collectWorkspacePackageJsonPaths, isYarnWorkspace, readWorkspacePatchPaths } from './workspace_package_manifests.mjs';
 import { prepareDependencyConsumersForRefresh } from './dependency_consumers.mjs';
 import { inspectUiPostinstallOutputs } from './ui_postinstall.mjs';
+import { inspectPatchHashDrift, relockPatchHashes, validateRegisteredPatches } from './patch_hash_relock.mjs';
 import { createWorkspaceBuildWaitNotifier } from './workspaceBuildWaitNotifier.mjs';
 import { DEPENDENCY_LOCK_STALE_AFTER_MS, dependencyWriterEnv, hasDependencyReadLock, inheritedDependencyWriter, waitForDependencyReaders, withDependencyReadLock } from './dependency_consumption.mjs';
 
@@ -451,6 +452,7 @@ export async function markDependencyMutation({ installDir, env = process.env, ou
     completedExpoGeneration: readCompletedExpoGeneration(previous),
     ...(output !== 'install' && previous?.installationFailure
       ? { installationFailure: previous.installationFailure } : {}),
+    ...(output !== 'install' && previous?.patchHashRelock ? { patchHashRelock: previous.patchHashRelock } : {}),
     outputsChanged: [...new Set([...outputsChanged, output])] });
 }
 
@@ -541,7 +543,33 @@ export async function withDependencyRefresh({
     const didRefresh = canInstall && (force || before.required);
     const installEnv = resolveLockedInstallEnv(env, context);
     try {
-      if (didRefresh) await refresh({ env: installEnv });
+      if (didRefresh) {
+        try { await refresh({ env: installEnv }); }
+        catch (error) {
+          signal?.throwIfAborted();
+          if (dependencyInstallationFailure(error).pnpmErrorCode !== 'ERR_PNPM_LOCKFILE_CONFIG_MISMATCH'
+            || String(env.HAPPIER_DEV_TARGET_EXECUTION ?? '').trim() === '1') throw error;
+          const marker = await readJsonIfExists(before.markerPath);
+          // Substitute only pnpm's previously locked patch digests into the
+          // existing identity. A match proves the same registrations, lockfile,
+          // manifests and runtime were admitted, without a second baseline.
+          const recovery = await inspectDependencyRefresh({ installDir, componentDir, runtimeIdentity, env });
+          const drift = await inspectPatchHashDrift({ installDir, inputSnapshot: recovery.inputSnapshot }).catch(() => null);
+          if (!drift || marker?.version !== REFRESH_STATE_VERSION
+            || marker.identity !== dependencyInputsIdentity(recovery.dependencyIdentity, drift.lockedInputSnapshot)) throw error;
+          await validateRegisteredPatches({ installDir, env: installEnv, signal, changed: drift.changed });
+          // Bind pnpm's validation to the inputs at the lockfile write boundary;
+          // an edit arriving while its child ran belongs to the next refresh.
+          const validated = await inspectDependencyRefresh({ installDir, componentDir, runtimeIdentity, env });
+          if (validated.installIdentity !== recovery.installIdentity) throw error;
+          const patchHashRelock = await relockPatchHashes({ installDir, env: installEnv, signal, changed: drift.changed });
+          const generationPath = `${context.lockPath}.generation`;
+          await writeJsonAtomic(generationPath, { ...await readJsonIfExists(generationPath), patchHashRelock });
+          console.log(`[local] Self-relocked patch hashes in pnpm-lock.yaml: ${patchHashRelock.patches.join(', ')}; retrying frozen install once.`);
+          before = await inspectDependencyRefresh({ installDir, componentDir, runtimeIdentity, env });
+          await refresh({ env: installEnv });
+        }
+      }
       if (onDependenciesReady) {
         await onDependenciesReady({ env: installEnv });
         readinessUnderWriter = true;
@@ -621,6 +649,7 @@ export async function readDependencyPublicationState({ installDir, env = process
     generation: generation?.generation ?? null, completedGeneration: generation?.completedGeneration ?? null,
     completedExpoGeneration: readCompletedExpoGeneration(generation),
     outputsChanged: generation?.outputsChanged ?? (generation?.generation ? ['install'] : []),
+    patchHashRelock: generation?.patchHashRelock ?? null,
     // Current readiness gates may only drain readers; marked unfinished
     // attempts mutate bytes. The predecessor installer has no generations.
     writerActive: (predecessorWriter || (generation?.generation != null && generation.generation !== generation.completedGeneration))

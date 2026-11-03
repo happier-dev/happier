@@ -26,8 +26,8 @@ function readWorkspaceString(item, unsupported) {
 
 // This reader runs before installation. Both workspace membership and patch
 // inputs consume block-string YAML and empty collections without installed parsers.
-async function readWorkspaceStringBlock(monorepoRoot, field, { mapping = false, optional = false } = {}) {
-  const workspacePath = join(monorepoRoot, 'pnpm-workspace.yaml');
+async function readWorkspaceStringBlock(monorepoRoot, field, { mapping = false, optional = false, file = 'pnpm-workspace.yaml' } = {}) {
+  const workspacePath = join(monorepoRoot, file);
   let contents;
   try { contents = await readFile(workspacePath, 'utf-8'); } catch (error) {
     if (optional && error.code === 'ENOENT') return [];
@@ -48,14 +48,26 @@ async function readWorkspaceStringBlock(monorepoRoot, field, { mapping = false, 
       ? line.match(/^ +("(?:[^"\\]|\\.)*"|'(?:[^']|'')*'|[^\s"'][^:]*):[ \t]+(.+)$/u)
       : line.match(/^ +-[ \t]+(.+)$/u);
     if (!item) throw unsupported();
-    if (mapping) readWorkspaceString(item[1], unsupported);
-    values.push(readWorkspaceString(item[mapping ? 2 : 1], unsupported));
+    const value = readWorkspaceString(item[mapping ? 2 : 1], unsupported);
+    values.push(mapping ? [readWorkspaceString(item[1], unsupported), value] : value);
   }
   return values;
 }
 
 export async function readWorkspacePatchPaths(monorepoRoot) {
+  return (await readWorkspacePatchEntries(monorepoRoot)).map(([, path]) => path);
+}
+
+export async function readWorkspacePatchEntries(monorepoRoot) {
   return await readWorkspaceStringBlock(monorepoRoot, 'patchedDependencies', { mapping: true, optional: true });
+}
+
+export async function readLockfilePatchHashes(monorepoRoot) {
+  // The pinned pnpm 12 lockfile stores scalar SHA-256 values. Older nested
+  // patch records remain unsupported for automatic recovery, never rewritten.
+  return await readWorkspaceStringBlock(monorepoRoot, 'patchedDependencies', {
+    mapping: true, optional: true, file: 'pnpm-lock.yaml',
+  });
 }
 
 export async function readWorkspacePatterns(monorepoRoot) {
