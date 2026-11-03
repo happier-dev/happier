@@ -10,7 +10,7 @@ import { activatePluginRuntimeRegistry } from '@/plugins/runtime/lifecycle/manag
 import { resolveDefaultScmBackendRegistry } from './scmBackendCatalog';
 
 describe('external SCM runtime consumer parity', () => {
-    it('demands qualified backend and hosting-provider registrations before resolving and invoking the backend', async () => {
+    it.each([false, true])('demands hosting only for full SCM use (local only: %s)', async localOnly => {
         const backendManifest = ingestCanonicalPluginManifest({
             schemaVersion: 2,
             id: 'acme.scm.backend',
@@ -90,10 +90,19 @@ describe('external SCM runtime consumer parity', () => {
             agentDefinitionsById: new Map(),             pluginDiagnosticsByPluginId: Object.freeze({}),
         } as unknown as ResolvedContributionRegistry;
         let detectedHostingProviderId: string | null = null;
+        let releaseHosting!: () => void;
+        const hostingHeld = new Promise<void>(resolve => { releaseHosting = resolve; });
+        let markHostingStarted!: () => void;
+        const hostingStarted = new Promise<'hosting_started'>(resolve => { markHostingStarted = () => resolve('hosting_started'); });
         const resolveActivationSource = (target: Readonly<{ pluginId: string }>) => ({
             kind: 'bundled' as const,
             moduleId: target.pluginId,
-            load: async () => ({
+            load: async () => {
+                if (localOnly && target.pluginId === 'acme.scm.hosting') {
+                    markHostingStarted();
+                    await hostingHeld;
+                }
+                return {
                 activate(api: PluginApi) {
                     if (target.pluginId === 'acme.scm.backend') {
                         api.scm.registerBackend('shared', {
@@ -145,7 +154,8 @@ describe('external SCM runtime consumer parity', () => {
                         },
                     });
                 },
-            }),
+                };
+            },
         });
         const runtimeRegistry = await activatePluginRuntimeRegistry({
             contributes,
@@ -157,12 +167,20 @@ describe('external SCM runtime consumer parity', () => {
         try {
             expect(runtimeRegistry.activatedPluginIds.has('acme.scm.backend')).toBe(false);
             expect(runtimeRegistry.activatedPluginIds.has('acme.scm.hosting')).toBe(false);
-            const registry = await resolveDefaultScmBackendRegistry({
+            const resolving = resolveDefaultScmBackendRegistry({
                 pluginRuntimeRegistry: Object.assign(runtimeRegistry, { contributes }),
+                includeHostingProviders: !localOnly,
             });
+            try {
+                expect(await Promise.race([resolving.then(() => 'ready'), hostingStarted])).toBe('ready');
+            } finally {
+                releaseHosting();
+                await resolving;
+            }
+            const registry = await resolving;
             expect(runtimeRegistry.activatedPluginIds.has('acme.scm.backend')).toBe(true);
-            expect(runtimeRegistry.activatedPluginIds.has('acme.scm.hosting')).toBe(true);
-            expect(runtimeRegistry.scmHostingProvidersById.get('acme.scm.hosting/shared')).toEqual(expect.objectContaining({
+            expect(runtimeRegistry.activatedPluginIds.has('acme.scm.hosting')).toBe(!localOnly);
+            if (!localOnly) expect(runtimeRegistry.scmHostingProvidersById.get('acme.scm.hosting/shared')).toEqual(expect.objectContaining({
                 pluginId: 'acme.scm.hosting',
             }));
 
@@ -182,7 +200,17 @@ describe('external SCM runtime consumer parity', () => {
                 request: { cwd: '/workspace' },
             });
             await expect(invokeRetainedStatus()).resolves.toEqual({ success: true });
-            expect(detectedHostingProviderId).toBe('acme.scm.hosting/shared');
+            expect(detectedHostingProviderId).toBe(localOnly ? null : 'acme.scm.hosting/shared');
+            if (localOnly) return;
+            // Already-active hosting providers must also stay out of local review.
+            const localRegistry = await resolveDefaultScmBackendRegistry({
+                pluginRuntimeRegistry: Object.assign(runtimeRegistry, { contributes }), includeHostingProviders: false,
+            });
+            const local = await localRegistry.selectBackend({ cwd: '/workspace', workingDirectory: '/workspace' });
+            if (!local) throw new Error('Expected a local backend');
+            await local.backend.statusSnapshot({ context: { cwd: '/workspace', projectKey: 'shared:/workspace',
+                detection: { isRepo: true, rootPath: '/workspace', mode: '.git' } }, request: { cwd: '/workspace' } });
+            expect(detectedHostingProviderId).toBeNull();
         } finally {
             await runtimeRegistry.dispose();
         }

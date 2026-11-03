@@ -9,8 +9,16 @@ import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtim
 
 function createScmBackendCatalogWithPlugins(input: Readonly<{
     pluginRuntimeRegistry: ScmBackendPluginRuntimeRegistry;
+    includeHostingProviders?: boolean;
 }>): readonly ScmBackend[] {
-    return Object.freeze([...createPluginScmBackendsFromRuntimeRegistry(input.pluginRuntimeRegistry)]);
+    const runtimeRegistry = input.pluginRuntimeRegistry;
+    // Local review needs repository facts, not forge deployment/account discovery.
+    const localRuntimeRegistry = input.includeHostingProviders === false ? {
+        ...runtimeRegistry,
+        contributes: { ...runtimeRegistry.contributes, scmHostingProviders: [] },
+        scmHostingProvidersById: new Map<never, never>(),
+    } : runtimeRegistry;
+    return Object.freeze([...createPluginScmBackendsFromRuntimeRegistry(localRuntimeRegistry)]);
 }
 
 export async function activateScmRuntimeContributionsOnDemand(
@@ -18,8 +26,9 @@ export async function activateScmRuntimeContributionsOnDemand(
         ResolvedExecutablePluginRuntimeRegistry,
         'activateContributionsOnDemand'
     >,
+    includeHostingProviders = true,
 ): Promise<void> {
-    const hostingProviderDemands = (runtimeRegistry.contributes.scmHostingProviders ?? []).flatMap((contribution) => (
+    const hostingProviderDemands = (includeHostingProviders ? runtimeRegistry.contributes.scmHostingProviders ?? [] : []).flatMap((contribution) => (
         contribution.pluginId
             ? [{
                 pluginId: contribution.pluginId,
@@ -51,17 +60,20 @@ export async function resolveDefaultScmBackendRegistry(input: Readonly<{
         ResolvedExecutablePluginRuntimeRegistry,
         'activateContributionsOnDemand'
     >;
+    /** Omit optional forge activation and deployment discovery for local-only reads. */
+    includeHostingProviders?: boolean;
 }>): Promise<ScmBackendRegistry> {
-    await activateScmRuntimeContributionsOnDemand(input.pluginRuntimeRegistry);
+    await activateScmRuntimeContributionsOnDemand(input.pluginRuntimeRegistry, input.includeHostingProviders);
     return createScmBackendRegistry(createScmBackendCatalogWithPlugins({
         pluginRuntimeRegistry: input.pluginRuntimeRegistry,
+        includeHostingProviders: input.includeHostingProviders,
     }));
 }
 
 export async function runWithScmBackendRegistryLease<T>(
     registry: ScmBackendRegistry | undefined,
     run: (registry: ScmBackendRegistry) => Promise<T>,
-    input?: Readonly<{ happyHomeDir?: string }>,
+    input?: Readonly<{ happyHomeDir?: string; includeHostingProviders?: boolean }>,
 ): Promise<T> {
     if (registry) {
         return await run(registry);
@@ -71,10 +83,10 @@ export async function runWithScmBackendRegistryLease<T>(
         happyHomeDir: input?.happyHomeDir,
     });
     try {
-        await activateScmRuntimeContributionsOnDemand(lease.registry);
-        const resolvedRegistry = createScmBackendRegistry(createScmBackendCatalogWithPlugins({
+        const resolvedRegistry = await resolveDefaultScmBackendRegistry({
             pluginRuntimeRegistry: lease.registry,
-        }));
+            includeHostingProviders: input?.includeHostingProviders,
+        });
         return await run(resolvedRegistry);
     } finally {
         await lease.release();
