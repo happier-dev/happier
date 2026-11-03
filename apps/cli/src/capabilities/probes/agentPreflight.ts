@@ -46,6 +46,7 @@ type ConnectedServiceProbeCredentials = NonNullable<
 type ConnectedServiceProbeApi = Parameters<typeof resolveConnectedServiceAuthForSpawn>[0]['api'];
 
 export type CliProbeDependencies = Readonly<{
+    secretSources?: import('@/plugins/runtime/lifecycle/contributions/targetSecretSources').TargetSecretSourcesV1;
     accountContext?: NonNullable<Parameters<typeof resolveProbeBackendContext>[1]>['accountContext'];
     createAgentInvocationServices?: CreateAgentInvocationServices;
     agentCatalogEntry?: AgentCatalogEntry | null;

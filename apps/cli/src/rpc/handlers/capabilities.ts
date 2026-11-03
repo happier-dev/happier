@@ -55,6 +55,7 @@ import { resolveInvokerName } from '@/cli/runtime/resolveInvokerName';
 import { ManagedInstallationServerOriginV1Schema } from '@happier-dev/protocol/machines/managed/managedInstallationV1';
 import { RPC_ERROR_CODES, RpcError } from '@happier-dev/protocol/rpcErrors';
 import { createFilesystemEffectAdmission, type FilesystemEffectAdmission } from './fileSystem/accessPolicy/filesystemEffectAdmission';
+import { SavedSecretVaultInvocationV1Schema, type SavedSecretVaultInvocationResultV1 } from '@happier-dev/protocol/account/settings/personalSavedSecretActionsV1';
 
 /** Installed inventory served to the Plugins UI; omit daemon-only catalog detail. */
 function projectInstalledPluginCapabilityEntry(entry: PluginCatalogEntry): InstalledPluginCapabilityEntryV1 {
@@ -424,6 +425,7 @@ function createPluginMarketplaceCapability(
 }
 
 export async function createCliCapabilitiesService(dependencies: Readonly<{
+    secretSources?: CliProbeDependencies['secretSources'];
     accountContext?: CliProbeDependencies['accountContext'];
     observeCliSnapshot?: (input: Readonly<{
         snapshot: NonNullable<Awaited<ReturnType<typeof buildDetectContext>>['cliSnapshot']>;
@@ -559,6 +561,27 @@ export function registerCapabilitiesHandlers(
     // Warm capability loaders at daemon boot to avoid late dynamic-import failures
     // if the local CLI dist is rebuilt while the daemon process is already running.
     void getService().catch(() => undefined);
+
+    rpcHandlerManager.registerHandler<unknown, SavedSecretVaultInvocationResultV1>(RPC_METHODS.DAEMON_SECRET_SOURCE_INVOKE, async (data, context) => {
+        const parsed = SavedSecretVaultInvocationV1Schema.safeParse(data);
+        if (!parsed.success) return { ok: false, code: 'unsupported' };
+        const input = parsed.data;
+        if (context?.contentMode !== input.accountEncryptionMode) return { ok: false, code: 'access_denied' };
+        const sources = dependencies.secretSources;
+        if (!sources) return { ok: false, code: 'source_unavailable', repair: 'configure' };
+        const options = { signal: context.signal };
+        if (input.operation === 'list') {
+            return sources.listFields(input.source.contribution, {
+                account: input.source.account,
+                ...(input.source.vaultId ? { vaultId: input.source.vaultId } : {}),
+                ...(input.source.itemId ? { itemId: input.source.itemId } : {}),
+            }, options);
+        }
+        return sources.store(input.target.contribution, {
+            account: input.target.account, vaultId: input.target.vaultId,
+            title: input.title, value: input.value,
+        }, options);
+    });
 
     rpcHandlerManager.registerHandler<{}, CapabilitiesDescribeResponse>(RPC_METHODS.CAPABILITIES_DESCRIBE, async () => {
         return (await getService()).describe();

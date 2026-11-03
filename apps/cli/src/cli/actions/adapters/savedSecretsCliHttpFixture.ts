@@ -17,7 +17,7 @@ import type { StoredCredentials } from '@/persistence';
 import type { ActionCliExecutionDeps } from '../executeCommand';
 
 /** Network/persistence fixture: all CLI composition, policy, custody and codecs stay real. */
-export async function createSavedSecretsCliHttpFixture() {
+export async function createSavedSecretsCliHttpFixture(options: Readonly<{ loseCreateResponse?: boolean; refuseCreate?: boolean; shared?: boolean; serverIdentityId?: string }> = {}) {
   const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString('base64url');
   const credentials: StoredCredentials = { token: `${encode({ alg: 'none', typ: 'JWT' })}.${encode({ sub: 'account-cli-fixture',
     session: 'fixture', tokenEpoch: 7, provenance: { v: 1, kind: 'account', authority: 'present_user' } })}.signature`,
@@ -41,6 +41,7 @@ export async function createSavedSecretsCliHttpFixture() {
   const entry = (resource: (typeof resources extends Map<string, infer R> ? R : never)) => SavedSecretCatalogEntryV1Schema.parse({
     ref: formatSharedSavedSecretRefV1(resource.resourceId), source: 'shared_resource', relationship: 'owner', ownerAccountId: 'account-cli-fixture',
     name: resource.displayName, kind: resource.kind, revision: resource.revision, materialStatus: 'ready',
+    audience: { accounts: [], teams: options.shared ? [{ kind: 'team', teamId: 'team-a', name: 'Team' }] : [], groups: [] },
     capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true },
   });
   const server = createServer(async (request, response) => {
@@ -53,7 +54,7 @@ export async function createSavedSecretsCliHttpFixture() {
       if (url.pathname === '/v1/account/encryption') return send({ mode: 'plain', updatedAt: 1 });
       if (url.pathname === '/v1/account/encryption/currentness') return send({ mode: 'plain', version: 1, settingsVersion: 7,
         signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 });
-      if (url.pathname.startsWith('/v1/features')) return send({ features: { teams: { enabled: true } }, capabilities: { serverIdentity: { serverIdentityId: 'srv_fixture' } } });
+      if (url.pathname.startsWith('/v1/features')) return send({ features: { teams: { enabled: true } }, capabilities: { serverIdentity: { serverIdentityId: options.serverIdentityId ?? 'srv_fixture' } } });
       if (url.pathname === '/v2/account/settings') return send({ content: { t: 'plain', v: rawSettings }, version: 7 });
       if (url.pathname === '/v1/account/saved-secrets/resources/materials') return send({ resources: [...resources.values()].map(resource => ({
         resourceId: resource.resourceId, encryptionMode: resource.encryptionMode, storedContent: resource.storedContent,
@@ -62,8 +63,10 @@ export async function createSavedSecretsCliHttpFixture() {
       if (url.pathname === '/v1/account/saved-secrets/resources' && request.method === 'GET') return send({ resources: [...resources.values()].map(entry) });
       if (url.pathname === '/v1/account/saved-secrets/resources' && request.method === 'POST') {
         const input = SharedSavedSecretCreateInputV1Schema.parse(JSON.parse(bytes));
+        if (options.refuseCreate) { response.statusCode = 409; return send({ error: 'resource_changed' }); }
         resources.set(input.resourceId, { ...input, revision: 1 });
         writes.push(input);
+        if (options.loseCreateResponse) { response.destroy(); return; }
         return send({ resourceId: input.resourceId, revision: 1 });
       }
       if (url.pathname === '/v1/account/saved-secrets/resources/update' && request.method === 'POST') {
@@ -108,7 +111,7 @@ export async function createSavedSecretsCliHttpFixture() {
     readCredentialsFn: async () => credentials, readCredentialsForServerIdFn: async () => credentials,
     getServerProfileFn: async () => ({ id: 'home-fixture', name: 'Fixture', serverUrl: origin, webappUrl: origin,
       createdAt: 1, updatedAt: 1, lastUsedAt: 1 }),
-    createExecutorFn: params => createCliActionExecutorFromCredentials({ ...params, serverIdentityId: 'srv_fixture',
+    createExecutorFn: params => createCliActionExecutorFromCredentials({ ...params, serverIdentityId: options.serverIdentityId ?? 'srv_fixture',
       actionsSettingsProvider: createActionSettingsProvider({ scopeKey, accountSettings: settings }), savedSecretOperationContext: operation }),
   };
   return { deps, writes, registryWrites, resources, origin,

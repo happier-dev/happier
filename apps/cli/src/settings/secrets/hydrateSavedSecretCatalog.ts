@@ -10,7 +10,7 @@ import { isDeepStrictEqual } from 'node:util';
 
 import { sealEncryptedDataKeyEnvelopeV1 } from "@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1";
 import { decryptSecretValueWithKeysV1 } from '@happier-dev/protocol/crypto/settingsSecretStringsV1';
-import { sealSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
+import { sealSavedSecretResourceStoredContentV1, SavedSecretResourceContentV1Schema, type SavedSecretResourceSourceV1, type SavedSecretResourceContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
 import { deriveSavedSecretImportResourceIdV1, promoteProfileEnvironmentVariableSavedSecretReferenceV1, promotePersonalSavedSecretReference,
   promoteLegacyInferenceSavedSecretReferenceV1,
   promoteLegacyVoiceSavedSecretReferenceV1,
@@ -495,11 +495,18 @@ export function prepareProfileEnvironmentVariableSavedSecretPromotionForOperatio
 /** Resource preparation is shared by composite Settings and Remote host transactions. */
 export function prepareSavedSecretResourceCreateForOperation(input: Readonly<{
   credentials: StoredCredentials; accountId: string; accountMode: 'plain' | 'e2ee';
-  resourceId: string; displayName: string; kind: SharedSavedSecretCreateInputV1['kind']; value: string;
+  resourceId: string; displayName: string; kind: SharedSavedSecretCreateInputV1['kind']; value?: string;
+  source?: SavedSecretResourceSourceV1;
+  content?: SavedSecretResourceContentV1;
+  createdByPlugin?: Readonly<{ pluginId: string; secretId: string }>;
   randomBytes?: (length: number) => Uint8Array;
 }>): SharedSavedSecretCreateInputV1 {
   if (readAccountIdFromToken(input.credentials.token) !== input.accountId) throw new Error('saved_secret_account_mode_or_identity_changed');
-  const content = { v: 1 as const, name: input.displayName, kind: input.kind, value: input.value };
+  const content = input.content ?? SavedSecretResourceContentV1Schema.parse(input.source
+    ? { v: 2 as const, name: input.displayName, kind: input.kind, source: input.source,
+        ...(input.createdByPlugin ? { createdByPlugin: input.createdByPlugin } : {}) }
+    : { v: 1 as const, name: input.displayName, kind: input.kind, value: input.value!,
+        ...(input.createdByPlugin ? { createdByPlugin: input.createdByPlugin } : {}) });
   if (input.accountMode === 'plain') return SharedSavedSecretCreateInputV1Schema.parse({
     resourceId: input.resourceId, displayName: input.displayName, kind: input.kind, encryptionMode: 'plain',
     storedContent: sealSavedSecretResourceStoredContentV1({ resourceId: input.resourceId, mode: 'plain', content }),

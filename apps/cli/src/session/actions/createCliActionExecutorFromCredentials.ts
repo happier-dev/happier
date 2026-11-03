@@ -127,6 +127,7 @@ import { SessionSpawnNewInputV2Schema } from '@happier-dev/protocol/sessions/cre
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { getActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshotLifetimeToken } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { createInvocationSavedSecretOperationContextV1 } from "@/settings/secrets/savedSecretOperationContext";
+import { createCliPersonalSavedSecretActionExecute } from '@/settings/secrets/personalSavedSecretActionHost';
 import { requiresExactDaemonApprovalReplay } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { isMachineTerminalActionId } from '@happier-dev/protocol/actions/specs/machineTerminal';
 import { verifyExternalActionApprovalInputV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
@@ -697,6 +698,7 @@ function createApprovalRoutingContext(
 
 function createCliActionExecutionCoreFromCredentials(params: Readonly<{
   credentials: StoredCredentials;
+  happyHomeDir?: Parameters<typeof createCliActionExecutor>[0]['happyHomeDir'];
   admittedAccountEncryptionMode?: Parameters<typeof createCliActionDeps>[0]['admittedAccountEncryptionMode'];
   requesterSessionBootstrap?: Parameters<typeof createCliActionDeps>[0]['requesterSessionBootstrap'];
   savedSecretOperationContext?: Parameters<typeof createCliActionDeps>[0]['savedSecretOperationContext'];
@@ -875,6 +877,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
     : params.credentials;
   const createExecutor = (
     credentials: StoredCredentials,
+    invocationSignal: AbortSignal | undefined,
     transcriptFollowLeaseRegistry: ReturnType<typeof createFollowLeaseRegistry>,
     sessionMemoryEnabled?: boolean,
     serverIdentityId = params.serverIdentityId,
@@ -1015,8 +1018,26 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
         ? { externalActionMachineInstallationId: params.externalActionMachineInstallationId } : {}),
       resolveServerFeaturesSnapshot,
     });
+    const personalSavedSecretActionExecute = accountServerActionDeps.homeDomainAction
+      ? createCliPersonalSavedSecretActionExecute({ credentials, home: accountServerActionDeps.homeDomainAction,
+          operationContext: savedSecretOperationContext, serverHttpBaseUrl: approvalServerApiUrl,
+          isCredentialCurrent: async () => !invocationSignal?.aborted,
+          resolveNativeSecretSourceRuntime: async (contribution, signal) => {
+            const { resolveExecutablePluginRuntimeRegistry } = await import('@/plugins/runtime/resolveExecutablePluginRuntimeRegistry');
+            return await resolveExecutablePluginRuntimeRegistry({
+              ...(params.happyHomeDir ? { happyHomeDir: params.happyHomeDir } : {}),
+              ...(signal ? { signal } : {}),
+              pluginIds: [contribution.pluginId],
+              scopedActionRuntime: { credentials,
+                actionsSettingsProvider: params.actionsSettingsProvider ?? createActionSettingsProvider({
+                  scopeKey: resolveAccountSettingsScopeKeyForToken(credentials.token),
+                }),
+                ...(savedSecretOperationContext ? { savedSecretOperationContext } : {}) },
+            });
+          } }) : undefined;
     return createCliActionExecutor({
       ...cryptoContext,
+      ...(personalSavedSecretActionExecute ? { personalSavedSecretActionExecute } : {}),
       ...(params.admittedAccountEncryptionMode !== undefined
         ? { admittedAccountEncryptionMode: params.admittedAccountEncryptionMode } : {}),
       ...(routeHostChildAction ? { routeHostChildAction } : {}),
@@ -1376,7 +1397,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
       ? null
       : shouldUsePatPublicActionTransport(params.credentials, undefined)
         ? null
-        : createExecutor(params.credentials, transcriptFollowLeaseRegistry, undefined, params.serverIdentityId, readInputTypeOptions(params.credentials), approvalLifetime, routeHostChildAction(params.credentials));
+        : createExecutor(params.credentials, invocationSignal, transcriptFollowLeaseRegistry, undefined, params.serverIdentityId, readInputTypeOptions(params.credentials), approvalLifetime, routeHostChildAction(params.credentials));
     let fixedExecutorServerIdentityId = params.serverIdentityId;
     const resolveExecutor = async (credentials: StoredCredentials, sessionMemoryEnabled?: boolean,
       routing?: Pick<ActionExecutorContext, 'serverIdentityId'> & Pick<ActionExecutorDeps, 'prepareApprovalExecutionOriginContext'>) => {
@@ -1387,11 +1408,11 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
       if (routing?.prepareApprovalExecutionOriginContext) {
         // This deferred Home fact belongs to this invocation, not the reused
         // executor of another Action whose eager lookup may have failed.
-        return createExecutor(credentials, transcriptFollowLeaseRegistry, sessionMemoryEnabled, serverIdentityId,
+        return createExecutor(credentials, invocationSignal, transcriptFollowLeaseRegistry, sessionMemoryEnabled, serverIdentityId,
           readInputTypeOptions(credentials), approvalLifetime, routeHostChildAction(credentials), routing.prepareApprovalExecutionOriginContext);
       }
       if (!fixedExecutor || sessionMemoryEnabled !== undefined) {
-        const executor = createExecutor(credentials, transcriptFollowLeaseRegistry, sessionMemoryEnabled, serverIdentityId, readInputTypeOptions(credentials), approvalLifetime, routeHostChildAction(credentials));
+        const executor = createExecutor(credentials, invocationSignal, transcriptFollowLeaseRegistry, sessionMemoryEnabled, serverIdentityId, readInputTypeOptions(credentials), approvalLifetime, routeHostChildAction(credentials));
         if (!params.readCredentials && sessionMemoryEnabled === undefined) {
           fixedExecutor = executor;
           fixedExecutorServerIdentityId = serverIdentityId;
@@ -1399,7 +1420,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
         return executor;
       }
       if (fixedExecutorServerIdentityId !== serverIdentityId) {
-        fixedExecutor = createExecutor(credentials, transcriptFollowLeaseRegistry, undefined, serverIdentityId, readInputTypeOptions(credentials), approvalLifetime, routeHostChildAction(credentials));
+        fixedExecutor = createExecutor(credentials, invocationSignal, transcriptFollowLeaseRegistry, undefined, serverIdentityId, readInputTypeOptions(credentials), approvalLifetime, routeHostChildAction(credentials));
         fixedExecutorServerIdentityId = serverIdentityId;
       }
       return fixedExecutor;

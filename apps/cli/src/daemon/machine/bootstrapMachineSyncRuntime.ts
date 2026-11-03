@@ -591,6 +591,7 @@ export async function retireMachineSyncRuntimeAttempt(
 }
 
 export type BootstrapMachineSyncRuntimeParams = Readonly<{
+  secretSources?: MachineRpcHandlerDeps['secretSources'];
   mcpServers?: MachineRpcHandlerDeps['mcpServers'];
   cliVersion: string;
   machineId: string;
@@ -1317,6 +1318,7 @@ export async function bootstrapMachineSyncRuntime(
           : {}),
       },
       {
+        secretSources: params.secretSources,
         createRegistryHost:(signal,context)=>createCliRegistryHostV1({credentials:params.credentials,signal,machineAdmission:context?.machineAdmission}),
         ...(params.mcpServers ? { mcpServers: params.mcpServers } : {}),
         ...(params.sessionRunnerStatus ? { sessionRunnerStatus: params.sessionRunnerStatus } : {}),

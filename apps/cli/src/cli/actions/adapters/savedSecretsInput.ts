@@ -3,6 +3,7 @@ import type { ActionExecuteResult, ActionId } from '@happier-dev/protocol';
 import { PERSONAL_SAVED_SECRET_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/account/settings/personalSavedSecretActionsV1';
 import { SharedSavedSecretListOutputV1Schema } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
 import { parseSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
+import { parseSavedSecretPasskeyImportV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
 import { REGISTRY_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/registries';
 import { promptInput, isInteractiveTerminal } from '@/terminal/prompts/promptInput';
 import { normalizeActionExecuteResult, unwrapCliActionSuccessPayload } from '@/cli/commands/session/shared/normalizeActionExecuteResult';
@@ -119,13 +120,29 @@ export async function prepareSavedSecretsCliInput(params: Readonly<{
   actionId: string; input: Input; execute: ReadAction; signal?: AbortSignal;
 }>): Promise<Input> {
   const { actionId, input, execute } = params;
-  if (actionId === 'secrets.create') return { ...input, value: await readSecretValue(params.signal) };
+  if (actionId === 'secrets.create') {
+    const { passkeyFormat, ...ordinaryInput } = input;
+    if (input.source !== undefined) {
+      if (passkeyFormat !== undefined) invalid('Choose one source or import format.');
+      return ordinaryInput;
+    }
+    const value = await readSecretValue(params.signal);
+    if (passkeyFormat === undefined) return { ...ordinaryInput, value };
+    let exported: unknown;
+    try { exported = JSON.parse(value); }
+    catch { throw new SavedSecretsInputFailure({ errorCode: 'input_invalid' }); }
+    const parsed = parseSavedSecretPasskeyImportV1({ format: passkeyFormat, value: exported });
+    if (parsed.status !== 'ready') throw new SavedSecretsInputFailure({ errorCode: parsed.status });
+    return { ...ordinaryInput, kind: 'other', source: parsed.source };
+  }
   if (actionId === 'secrets.update' || actionId === 'secrets.delete') {
     const parsed = PERSONAL_SAVED_SECRET_ACTION_OUTPUT_SCHEMAS_V1['secrets.list'].safeParse(await readMetadata(execute, 'secrets.list'));
     if (!parsed.success) invalid('Saved Secret metadata is unavailable.');
     const secret = selectUnique(matchPersonalSavedSecretMetadata(parsed.data.secrets, input.secretId), 'Saved Secret');
     const resolved = { secretId: secret.secretId, expectedUpdatedAt: secret.updatedAt };
     if (actionId === 'secrets.delete') return resolved;
+    if (input.source !== undefined) return { ...resolved, source: input.source,
+      ...(typeof input.rename === 'string' ? { name: input.rename } : {}) };
     return typeof input.rename === 'string'
       ? { ...resolved, name: input.rename }
       : { ...resolved, value: await readSecretValue(params.signal) };

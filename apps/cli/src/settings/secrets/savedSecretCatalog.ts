@@ -4,6 +4,7 @@ import type { PluginSecretSourceAcquisitionV1 } from '@happier-dev/plugin-sdk';
 import { decryptSecretValueWithKeysV1 } from '@happier-dev/protocol/crypto/settingsSecretStringsV1';
 import { SecretStringV1Schema } from '@happier-dev/protocol/crypto/settingsSecretStringSchemasV1';
 import type { SavedSecretImportSourceV1 } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
+import type { SavedSecretCatalogEntryV1 } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
 import { openSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
 import { formatSavedSecretCatalogFingerprintV1, parseSavedSecretCatalogReferenceV1, projectSavedSecretCatalogCollisionStateV1 } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
 import type { SavedSecretOperationAdmissionFailureReasonV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
@@ -17,6 +18,7 @@ import {
 export type SavedSecretCatalogResourceInputV1 = Omit<SavedSecretCatalogResourceV1, 'storedContent' | 'displayName'> & Readonly<{
   relationship?: 'owner' | 'recipient';
   capabilities?: Readonly<{ use: boolean }>;
+  audience?: SavedSecretCatalogEntryV1['audience'];
   /**
    * The Home's projected display name, which is genuinely absent for a retained
    * resource whose stored name is empty. Inventing one here would then disagree

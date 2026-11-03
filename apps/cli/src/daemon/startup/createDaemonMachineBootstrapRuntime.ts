@@ -177,6 +177,7 @@ export function createDaemonMachineBootstrapRuntime(
     controlPort: number;
     onMachineControlReadinessChange?: ApiMachineClientLifecycleDependencies['onMachineControlReadinessChange'];
     credentials: StoredCredentials;
+    secretSources?: BootstrapRuntime['secretSources'];
     requesterServerId?: BootstrapRuntime['requesterServerId'];
     resolveCurrentMachineExecutionOriginContext?: BootstrapRuntime['resolveCurrentMachineExecutionOriginContext'];
     resolveRequesterSessionRuntimeContext?: BootstrapRuntime['resolveRequesterSessionRuntimeContext'];
@@ -380,6 +381,7 @@ agentIsolation?: ApiMachineClientLifecycleDependencies['agentIsolation'];
       onError: (error) => logger.warn('[DAEMON RUN] Stopped watching the CLI update record; the next daemon start republishes it', error),
     }),
     credentials: params.credentials,
+    secretSources: params.secretSources,
     publicProfileRefreshHandle: params.publicProfileRefreshHandle,
     ...(params.requesterServerId ? { requesterServerId: params.requesterServerId } : {}),
     ...(params.resolveCurrentMachineExecutionOriginContext

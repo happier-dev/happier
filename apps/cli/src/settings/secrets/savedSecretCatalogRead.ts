@@ -158,6 +158,7 @@ export async function hydrateSavedSecretCatalog(input: Readonly<{
         ownerAccountId: row.entry.ownerAccountId ?? '',
         relationship: row.entry.relationship,
         capabilities: { use: row.entry.capabilities.use },
+        audience: row.entry.audience,
         displayName: row.entry.name,
         kind: row.entry.kind ?? 'other',
         encryptionMode: row.encryptionMode,

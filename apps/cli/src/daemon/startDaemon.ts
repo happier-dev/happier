@@ -578,6 +578,51 @@ export async function startDaemon(
     // connection, not a request claim or a persisted Account projection. An
     // opaque/malformed connection credential leaves public PAT ingress off.
     const externalActionAccountId = readAccountIdFromToken(credentials.token);
+    const daemonSecretSources: import('@/plugins/runtime/lifecycle/contributions/targetSecretSources').TargetSecretSourcesV1 = {
+      list: () => pluginReloadController.getState().activeRegistry?.secretSources?.list() ?? [],
+      async acquire(source, options) {
+        try {
+          const lease = await acquireAuthoritativePluginRuntimeRegistryLease({
+            happyHomeDir: configuration.happyHomeDir, controller: pluginReloadController,
+          });
+          try {
+            return await lease.registry.secretSources?.acquire(source, options)
+              ?? { ok: false, code: 'source_unavailable', repair: 'configure' };
+          } finally { await lease.release(); }
+        } catch {
+          return options?.signal?.aborted ? { ok: false, code: 'cancelled' }
+            : { ok: false, code: 'source_unavailable', repair: 'configure' };
+        }
+      },
+      async listFields(contribution, input, options) {
+        try {
+          const lease = await acquireAuthoritativePluginRuntimeRegistryLease({
+            happyHomeDir: configuration.happyHomeDir, controller: pluginReloadController,
+          });
+          try {
+            return await lease.registry.secretSources?.listFields(contribution, input, options)
+              ?? { ok: false, code: 'source_unavailable', repair: 'configure' };
+          } finally { await lease.release(); }
+        } catch {
+          return options?.signal?.aborted ? { ok: false, code: 'cancelled' }
+            : { ok: false, code: 'source_unavailable', repair: 'configure' };
+        }
+      },
+      async store(contribution, input, options) {
+        try {
+          const lease = await acquireAuthoritativePluginRuntimeRegistryLease({
+            happyHomeDir: configuration.happyHomeDir, controller: pluginReloadController,
+          });
+          try {
+            return await lease.registry.secretSources?.store(contribution, input, options)
+              ?? { ok: false, code: 'source_unavailable', repair: 'configure' };
+          } finally { await lease.release(); }
+        } catch {
+          return options?.signal?.aborted ? { ok: false, code: 'cancelled' }
+            : { ok: false, code: 'source_unavailable', repair: 'configure' };
+        }
+      },
+    };
     let pluginChangeService: DaemonPluginChangeOwner | null = null;
     const admissionDrain = createDaemonAdmissionDrain({
       isPluginHandoffQuiescing: () => pluginChangeService?.isQuiescing() === true,
@@ -3225,6 +3270,7 @@ const pluginRuntimeOwner = createDaemonPluginRuntimeOwner({
           }
           fileState.machineControlReady = machineControlReady;
         },
+        secretSources: daemonSecretSources,
 agentIsolation,
 
         api,

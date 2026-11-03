@@ -366,6 +366,7 @@ export type MachineRpcHandlerDeps = Readonly<{
     featureGate: Readonly<{ isEnabled(featureId: 'providers'): boolean }>;
   }>;
   agentCatalogObservation?: AgentProviderCatalogObservationService;
+  secretSources?: NonNullable<Parameters<typeof registerCapabilitiesHandlers>[1]>['secretSources'];
   createCapabilitiesApiClient?: NonNullable<
     Parameters<typeof registerCapabilitiesHandlers>[1]
   >['createApiClient'];
@@ -613,6 +614,7 @@ function registerMachineRpcHandlersOnce(params: Readonly<{
   // the incumbent execution-run bridge/action family with its nullable scope;
   // no Admin target picker, Session projection, or parallel daemon registry.
   registerCapabilitiesHandlers(rpcHandlerManager, {
+    ...(params.deps?.secretSources ? { secretSources: params.deps.secretSources } : {}),
     filesystemEffectAdmission,
     ...(params.deps?.observeCapabilitiesCliSnapshot
       ? { observeCliSnapshot: params.deps.observeCapabilitiesCliSnapshot }

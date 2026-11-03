@@ -1,4 +1,5 @@
 import { Readable } from 'node:stream';
+import { generateKeyPairSync } from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { captureConsoleJsonOutput } from '@/testkit/logger/captureOutput';
 import { handleActionsCommand } from '@/cli/commands/actions';
@@ -12,8 +13,8 @@ vi.mock('@/terminal/prompts/promptInput', () => terminal);
 const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const close of cleanups.splice(0)) await close(); vi.restoreAllMocks(); terminal.promptInput.mockClear(); process.exitCode = 0; });
 
-async function harness() {
-  const fixture = await createSavedSecretsCliHttpFixture();
+async function harness(options?: Parameters<typeof createSavedSecretsCliHttpFixture>[0]) {
+  const fixture = await createSavedSecretsCliHttpFixture(options);
   cleanups.push(fixture.close);
   const stdout: string[] = [];
   async function run(leaf: string, rest: readonly string[], value: string, tty = false) {
@@ -51,6 +52,59 @@ describe('compiled secret input custody', () => {
     expect(h.opened(h.writes[0]!)).toMatchObject({ name: 'Acme', kind: 'token', value: '  stdin-value' });
     expect(h.stdout.join('\n')).not.toContain('stdin-value');
     expect(terminal.promptInput).not.toHaveBeenCalled();
+  });
+  it('links and updates an external source without asking for a scalar value', async () => {
+    const h = await harness();
+    const source = { kind: 'external', contribution: { pluginId: 'acme.vault', localId: 'vault' }, account: 'account', reference: 'op://vault/item/token' };
+    const created = await h.run('create', ['Vault', '--kind', 'token', '--source-json', JSON.stringify(source)], '', true);
+    expect(created, JSON.stringify(created)).toMatchObject({ ok: true });
+    expect(h.opened(h.writes[0]!)).toEqual({ v: 2, name: 'Vault', kind: 'token', source });
+    expect(await h.run('update', ['resource-id', '--source-json', JSON.stringify(source)], '', true)).toMatchObject({ ok: true });
+    expect(h.opened(h.writes[1]!)).toEqual({ v: 2, name: 'Acme', kind: 'token', source });
+    expect(terminal.promptInput).not.toHaveBeenCalled();
+    expect(h.stdout.join('\n')).not.toContain('op://vault/item/token');
+  });
+  it('refuses replacing a Team-shared inline value with an external source before dispatch', async () => {
+    const h = await harness({ shared: true });
+    const source = { kind: 'external', contribution: { pluginId: 'acme.vault', localId: 'vault' }, account: 'account', reference: 'op://vault/item/token' };
+    expect(await h.run('update', ['resource-id', '--source-json', JSON.stringify(source)], '', true))
+      .toMatchObject({ ok: false, error: { code: 'recipient_mode_unsupported' } });
+    expect(h.writes).toEqual([]);
+    expect(terminal.promptInput).not.toHaveBeenCalled();
+  });
+  it('imports an explicitly selected native passkey export through the normal private Saved Secret writer', async () => {
+    const h = await harness();
+    const privateKey = generateKeyPairSync('ec', { namedCurve: 'prime256v1' }).privateKey
+      .export({ type: 'pkcs8', format: 'der' }).toString('base64');
+    const exported = { credentialId: 'Y3JlZGVudGlhbA==', isResidentCredential: true, rpId: 'login.example',
+      privateKey, userHandle: 'dXNlcg==', signCount: -1, backupEligibility: true, backupState: true,
+      userName: 'person', userDisplayName: 'Person' };
+    expect(await h.run('create', ['Passkey', '--passkey-format', 'chromium-cdp'], JSON.stringify(exported))).toMatchObject({ ok: true });
+    expect(h.writes).toHaveLength(1);
+    expect(h.opened(h.writes[0]!)).toEqual({ v: 2, name: 'Passkey', kind: 'other', source: {
+      kind: 'passkey', rpId: exported.rpId, credentialId: exported.credentialId, userHandle: exported.userHandle,
+      privateKey, algorithm: -7, signCount: 0, backupEligibility: true, backupState: true,
+      userName: 'person', userDisplayName: 'Person',
+    } });
+    expect(h.stdout.join('\n')).not.toContain(privateKey);
+  });
+  it('preserves JSON-looking inline values unless the person selects a passkey export format', async () => {
+    const h = await harness();
+    const value = '{"kind":"passkey","privateKey":"inline-sentinel"}';
+    expect(await h.run('create', ['JSON value'], value)).toMatchObject({ ok: true });
+    expect(h.opened(h.writes[0]!)).toMatchObject({ v: 1, value });
+  });
+  it.each([
+    ['{"privateKey":"private-sentinel"}', 'input_invalid'],
+    ['{"type":"passkey","key":"private-sentinel"}', 'input_invalid'],
+    ['{"privateKey":"private-sentinel" invalid-json', 'input_invalid'],
+    [JSON.stringify({ credentialId: 'YQ==', isResidentCredential: true, rpId: 'login.example',
+      privateKey: 'a2V5', userHandle: 'dQ==', signCount: 0 }), 'source_format_unsupported'],
+  ])('refuses an incomplete or unsupported export without disclosing it', async (value, code) => {
+    const h = await harness();
+    expect(await h.run('create', ['Passkey', '--passkey-format', 'chromium-cdp'], value)).toMatchObject({ ok: false, error: { code } });
+    expect(h.writes).toEqual([]);
+    expect(h.stdout.join('\n')).not.toContain('private-sentinel');
   });
   it('uses the canonical hidden prompt on a terminal', async () => {
     const h = await harness();

@@ -395,6 +395,7 @@ export class RpcHandlerManager {
         let rpcContent: SocketRpcContent = admittedContent;
         const privateMethod = this.readUnprefixedMethod(request.method);
         const confidential = privateMethod === RPC_METHODS.APPROVAL_REQUEST_SECRET_CONTINUE
+            || privateMethod === RPC_METHODS.DAEMON_SECRET_SOURCE_INVOKE
             || privateMethod === RPC_METHODS.DAEMON_BROWSER_PROFILE_COOKIE_SOURCE_READ
             || privateMethod === RPC_METHODS.DAEMON_BROWSER_PROFILE_COOKIES_APPLY;
         let callId: string | null = null;
