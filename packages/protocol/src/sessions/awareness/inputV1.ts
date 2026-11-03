@@ -9,6 +9,7 @@ import type {
   SessionAwarenessLineageV1,
   SessionAwarenessOriginV1,
   SessionAwarenessWorkspaceV1,
+  SessionRuntimeWorkStatusV1,
 } from './projectionV1.js';
 
 /**
@@ -55,6 +56,7 @@ export type SessionLifecycleAwarenessInputV1 = Readonly<{
  * presence channel reports `unknown` instead of asserting `offline`.
  */
 export type SessionRuntimeAwarenessInputV1 = Readonly<{
+  workStatus?: SessionRuntimeWorkStatusV1 | null;
   presence: 'online' | 'offline' | 'unknown';
   active?: boolean | null;
   /** Last instant the runtime was observed at all (the death fact behind stale/offline). */

@@ -225,6 +225,7 @@ export function createCodexNativeAppServerRuntimeHost(params: Readonly<{
           exec: params.context.services.exec,
           logger: params.context.services.logger,
           nativeLaunch: params.context.session.services.nativeLaunch,
+          onStartupWaiting: waiting => params.context.session.services.publishWorkStatus?.(waiting ? 'waiting_for_startup_lock' : null),
           cwd: clientRequest.cwd,
           processEnv: clientRequest.processEnv,
           configOverrides: clientRequest.configOverrides,
@@ -1044,6 +1045,7 @@ export async function openCodexNativeAppServerSession(
       logger: context.services.logger,
       nativeLaunch: context.session.services.nativeLaunch,
       cwd: request.cwd,
+      onStartupWaiting: waiting => context.session.services.publishWorkStatus?.(waiting ? 'waiting_for_startup_lock' : null),
       processEnv,
       signal: context.signal,
       configOverrides: buildCodexAppServerConfigOverrides(request.mcpServers ?? {}, { ...request.configuration, skills: request.skills, mcpToolPolicy: request.mcpToolPolicy }),
@@ -1074,6 +1076,7 @@ export async function openCodexNativeAppServerSession(
         logger: context.services.logger,
         nativeLaunch: context.session.services.nativeLaunch,
         processEnv,
+        onStartupWaiting: waiting => context.session.services.publishWorkStatus?.(waiting ? 'waiting_for_startup_lock' : null),
         signal: context.signal,
       });
 

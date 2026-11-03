@@ -6,8 +6,10 @@ import { SessionQuestionContextV1Schema, SessionQuestionHandlerV1Schema } from '
 import { ResolvedMcpToolIdentityV1Schema } from '@happier-dev/protocol/mcp/servers/tools/mcpToolIdentityV1';
 import { CURRENT_SESSION_PRESENTATION_AGENT_STATE_KEY, CurrentSessionPresentationStateV1Schema } from '@happier-dev/protocol/sessions/presentation/currentSessionPresentationV1';
 import { SESSION_FOLLOW_RULE_EVIDENCE_META_KEY_V1, SessionFollowRuleSourceEvidenceV1Schema } from '@happier-dev/protocol/sessions/follow/sessionFollowRuleOccurrenceV1';
+import { SessionRuntimeWorkStatusV1Schema } from '@happier-dev/protocol/sessions/awareness/projectionV1';
 
 const AgentStateObjectSchema = z.looseObject({
+    workStatus: z.catch(z.nullish(SessionRuntimeWorkStatusV1Schema), null),
     // Protocol-owned schemas use Zod Mini, whose composition helpers live on the namespace.
     [CURRENT_SESSION_PRESENTATION_AGENT_STATE_KEY]: zMini.optional(CurrentSessionPresentationStateV1Schema),
     controlledByUser: z.nullish(z.boolean()),

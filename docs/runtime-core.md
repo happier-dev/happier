@@ -2373,6 +2373,15 @@ work-state publisher as later controls; no pending-objective store is added.
 A missing native thread retains the unavailable result and names the
 `native_effect` failure phase.
 
+While a native Codex start waits for another start on the same Machine, its
+existing Session Agent-state publication carries the optional, content-free
+`workStatus: 'waiting_for_startup_lock'`. Protocol's awareness presenter maps it
+to working and the Session line explains the wait beside the queued-input count.
+Acquiring the lock or failing/cancelling the start clears the detail. Older
+Agent-state readers ignore the optional detail and retain their generic status;
+the startup lock's scope, cancellation and readiness boundary are unchanged.
+This is 0.3 development-source behavior, not loaded-runtime certification.
+
 On native Codex resume, the Goal source reads `thread/goal/get` before accepting
 empty-state notifications. The resume response has no Goal field, and initial
 absence before that read cannot clear a retained Goal. An explicit `goal: null`

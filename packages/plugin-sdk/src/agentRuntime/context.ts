@@ -21,6 +21,7 @@ import type { AgentRuntimeProtocolComposers } from './acp.js';
 import type { Disposable } from '../lifecycle.js';
 import type { JsonValue } from '../identity.js';
 import type { AgentPermissionIntent, AgentSessionMcpLaunchConfig } from './session.js';
+import type { SessionRuntimeWorkStatusV1 } from '@happier-dev/protocol/sessions/awareness/projectionV1';
 import type {
   AgentModelOptionOverrideRule,
   AgentSessionAuthRefreshClassificationV1,
@@ -663,6 +664,8 @@ export type AgentSessionSubagentObservationPublisher = Readonly<{
  * bag rather than duplicating it.
  */
 export type AgentSessionHostServices = Readonly<{
+  /** Optional, content-free Session progress detail through the existing awareness publication. */
+  publishWorkStatus?(status: SessionRuntimeWorkStatusV1 | null): void;
   nativeLaunch?: AgentNativeLaunchQualifier;
   features: AgentFeatureDecisionService;
   /** Host-bound native authentication; it grants no general Session capability. */

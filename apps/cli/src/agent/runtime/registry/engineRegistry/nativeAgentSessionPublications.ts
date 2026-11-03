@@ -20,7 +20,7 @@ type PublicationSession = Readonly<{
 }>;
 
 export type NativeAgentSessionPublications = Readonly<{
-  services: Pick<AgentSessionHostServices, 'models' | 'modes' | 'activeInput'>;
+  services: Pick<AgentSessionHostServices, 'models' | 'modes' | 'activeInput' | 'publishWorkStatus'>;
   modelsSource: AgentSessionModelsSource;
   modesSource: AgentSessionModesSource;
   readActiveInputBinding(): AgentSessionActiveInputBinding | null;
@@ -37,9 +37,16 @@ export function createNativeAgentSessionPublications(params: Readonly<{
 }>): NativeAgentSessionPublications {
   let disposed = false;
   let activeInputBinding: AgentSessionActiveInputBinding | null = null;
+  let workStatus: Parameters<NonNullable<AgentSessionHostServices['publishWorkStatus']>>[0] = null;
+  const publishWorkStatus: NonNullable<AgentSessionHostServices['publishWorkStatus']> = (status) => {
+    if (!isAvailable(status === null) || !params.session || status === workStatus) return;
+    workStatus = status;
+    updateAgentStateBestEffort(params.session, state => ({ ...state, workStatus: status }),
+      `[${params.agentId}]`, 'native_agent_work_status');
+  };
 
-  const isAvailable = (): boolean => {
-    if (disposed || params.signal.aborted) return false;
+  const isAvailable = (allowAborted = false): boolean => {
+    if (disposed || !allowAborted && params.signal.aborted) return false;
     try {
       return params.isCurrent();
     } catch {
@@ -176,6 +183,7 @@ export function createNativeAgentSessionPublications(params: Readonly<{
 
   const dispose = (): void => {
     if (disposed) return;
+    publishWorkStatus(null);
     disposed = true;
     modelPublication.dispose();
     modePublication.dispose();
@@ -186,6 +194,7 @@ export function createNativeAgentSessionPublications(params: Readonly<{
 
   return Object.freeze({
     services: Object.freeze({
+      publishWorkStatus,
       models: modelPublication.service,
       modes: Object.freeze({
         ...modePublication.service,

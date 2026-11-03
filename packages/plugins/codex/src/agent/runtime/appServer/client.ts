@@ -418,6 +418,7 @@ type CodexNativeAppServerClientParams = Readonly<{
     initializeRequestOptions?: CodexAppServerRequestOptions;
     /** Content-free control diagnostics distinguish transport creation from initialization. */
     onInitialize?: () => void;
+    onStartupWaiting?: (waiting: boolean) => void;
     transport?: CodexAppServerTransport;
 }>;
 
@@ -443,6 +444,7 @@ export async function createCodexNativeAppServerClient(params: CodexNativeAppSer
         params.initializeRequestOptions?.signal ?? params.signal,
         params.logger,
         { processEnv: env, readVersion, configOverrides: params.configOverrides, cwd: params.cwd },
+        params.onStartupWaiting,
     );
 }
 

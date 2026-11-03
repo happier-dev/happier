@@ -211,7 +211,7 @@ describe('resolveSessionViewConnectionStatus', () => {
         });
 
         it.each(['permission_required', 'action_required'] as const)(
-            'yields to a request that needs the person now (%s)',
+            'keeps a request visible alongside binding recovery (%s)',
             (state) => {
                 const status = resolveSessionViewConnectionStatus({
                     ...baseInput,
@@ -219,8 +219,10 @@ describe('resolveSessionViewConnectionStatus', () => {
                     sessionStatusState: state,
                     sessionStatusText: 'Permission required',
                     providerBinding,
+                    pendingQueue: { line: null, countText: '1 queued' },
                 });
-                expect(status?.text).toBe('Permission required');
+                expect(status?.text).toBe('Permission required · 1 queued');
+                expect(status?.providerBindingAction).toBe('restart');
                 expect(status).not.toHaveProperty('inactiveAction');
             },
         );

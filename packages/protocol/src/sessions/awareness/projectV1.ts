@@ -87,6 +87,9 @@ export function projectSessionAwarenessV1(
     workEvidenceUnavailable: input.currentness.work === 'unavailable',
   });
   const workspace = contentReadable ? normalizeAwarenessWorkspaceV1(input.workspace) : undefined;
+  const workStatus = contentReadable && !runtimeUnavailable && runtimeFacts.runtime !== 'offline'
+    && lifecycle.processTerminalState !== 'stopped' && !lifecycle.archivedAtMs
+    ? input.runtime.workStatus : null;
   const lineage = contentReadable ? input.lineage ?? undefined : undefined;
 
   return {
@@ -100,7 +103,8 @@ export function projectSessionAwarenessV1(
     ...(statusReason ? { statusReason } : {}),
     lifecycle: resolveSessionAwarenessLifecycleV1(lifecycle, lifecycleUnavailable),
     ...(contentReadable && lifecycle.processTerminalState === 'stopped' ? { processTerminalState: 'stopped' as const } : {}),
-    runtime: runtimeFacts.runtime,
+    runtime: workStatus ? 'waiting' : runtimeFacts.runtime,
+    ...(workStatus ? { workStatus } : {}),
     freshness: runtimeFacts.freshness,
     operational,
     ...(currentWork ? { currentWork } : {}),

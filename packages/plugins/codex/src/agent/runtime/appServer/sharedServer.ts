@@ -290,6 +290,7 @@ export async function createCodexSharedAppServer(params: Readonly<{
   platform?: NodeJS.Platform;
   signal?: AbortSignal;
   dependencies?: Partial<Dependencies>;
+  onStartupWaiting?: (waiting: boolean) => void;
 }>): Promise<Readonly<{
   endpoint: string;
   createClient: (request: Readonly<{
@@ -392,7 +393,7 @@ export async function createCodexSharedAppServer(params: Readonly<{
         }
         throw error;
       }
-    }, params.signal, params.logger, { processEnv: request.processEnv, configOverrides: request.configOverrides, cwd: request.cwd, versionOutput });
+    }, params.signal, params.logger, { processEnv: request.processEnv, configOverrides: request.configOverrides, cwd: request.cwd, versionOutput }, params.onStartupWaiting);
     try {
       await startPromise;
     } catch (error) {

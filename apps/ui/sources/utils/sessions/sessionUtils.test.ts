@@ -8,7 +8,7 @@ import {
 import { flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';
 import { storage } from '@/sync/domains/state/storage';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
-import { createSessionAccessFixture, createSessionListRenderableSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { createSessionAccessFixture, createSessionFixture, createSessionListRenderableSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { createSessionMessagesFixture, createToolCallMessageFixture } from '@/dev/testkit/fixtures/transcriptFixtures';
 import { getServerUrl, setServerUrl } from '@/sync/domains/server/serverConfig';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
@@ -17,6 +17,7 @@ import type { ToolCall, ToolCallMessage } from "@happier-dev/session-core/messag
 import type { SessionMessages } from '@/sync/store/domains/messages';
 import type { PendingMessage, Session } from '@/sync/domains/state/storageTypes';
 import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
+import { resolveSessionViewConnectionStatus } from '@/components/sessions/shell/view/resolveSessionViewConnectionStatus';
 
 vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
@@ -89,6 +90,29 @@ function setWorkingTextAnimation(enabled: boolean) {
 }
 
 describe('nullable static session presentation', () => {
+    it('shows the native startup wait before a turn is observed and clears it when the turn runs', async () => {
+        const { getSessionStatus } = await import('./sessionUtils');
+        const waiting = createSessionFixture({ encryptionMode: 'plain', active: true,
+            presence: 'online', activeAt: 1_000, thinking: false, pendingCount: 1,
+            agentState: { workStatus: 'waiting_for_startup_lock' } });
+        const presentLine = (session: typeof waiting) => {
+            const status = getSessionStatus(session, 1_001);
+            return resolveSessionViewConnectionStatus({
+                connectedServicesRestartState: null, restartingText: 'Restarting', switchFailedText: 'Switch failed',
+                inactiveStatusText: null, sessionStatusResuming: false,
+                sessionStatusState: status.state, sessionStatusText: status.statusText,
+                sessionStatusColor: status.statusColor, sessionStatusDotColor: status.statusDotColor,
+                sessionStatusPulsing: status.isPulsing === true,
+                pendingQueue: { line: null, countText: '1 queued' },
+            });
+        };
+        expect(getSessionStatus(waiting, 1_001)).toMatchObject({ state: 'waiting_for_startup_lock', bucket: 'working' });
+        expect(presentLine(waiting)?.text).toBe('status.waitingForStartupLock · 1 queued');
+        const running = createSessionFixture({ ...waiting, thinking: true, thinkingAt: 1_001,
+            agentState: { workStatus: null } });
+        expect(getSessionStatus(running, 1_001).state).toBe('thinking');
+        expect(presentLine(running)?.text).not.toContain('status.waitingForStartupLock');
+    });
     it('carries canonical blocked-input recovery through localized Session presentation', async () => {
         const { getSessionStatus, presentSessionAwarenessV1 } = await import('./sessionUtils');
         const blocked = createSessionListRenderableSessionFixture({ encryptionMode: 'plain', active: true,

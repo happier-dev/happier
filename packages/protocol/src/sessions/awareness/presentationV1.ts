@@ -7,6 +7,7 @@ import type { SessionPersonalAttentionReasonV1 } from '../personal/attention.js'
 
 export type SessionAwarenessPresentationFactsV1 = Readonly<{
   runtime: SessionAwarenessProjectionV1['runtime'];
+  workStatus?: SessionAwarenessProjectionV1['workStatus'];
   encryption?: SessionAwarenessProjectionV1['encryption'];
   lifecycle?: SessionAwarenessProjectionV1['lifecycle'];
   freshness?: SessionAwarenessProjectionV1['freshness'];
@@ -24,6 +25,7 @@ export const SESSION_AWARENESS_PRESENTATION_STATES_V1 = [
   'preparing', 'repair_needed', 'locked', 'access_pending', 'setup_required', 'content_unavailable', 'unknown',
   'failed', 'permission_required', 'action_required', 'usage_limited', 'stopped', 'finished_unseen', 'mentioned', 'unread', 'ready', 'pending_input',
   'archiving',
+  'waiting_for_startup_lock',
   'archived', 'recoverable_unservable', 'resuming', 'disconnected', 'stale', 'background_active', 'waiting', 'thinking',
 ] as const;
 export const SessionAwarenessPresentationStateV1Schema = lazyZodSchema(() => z.enum(SESSION_AWARENESS_PRESENTATION_STATES_V1));
@@ -49,6 +51,7 @@ export function readSessionAwarenessPresentationV1(awareness: SessionAwarenessPr
   // The issue owner removes it only when actual later work is observed.
   if (primary === 'usage_limited') return 'usage_limited';
   if (awareness.operational.reasons?.includes('runtime_unservable')) return 'recoverable_unservable';
+  if (awareness.workStatus === 'waiting_for_startup_lock') return 'waiting_for_startup_lock';
   if (awareness.operational.reasons?.includes('resuming')) return 'resuming';
   // A completed turn is settled evidence even after its publisher detaches. Process stop,
   // presence loss and observation expiry describe runtime reachability; none reopens that work.
@@ -103,7 +106,7 @@ function readSessionPresentationStateWorkStatusV1(
   // A settlement the runtime can no longer stand behind reads offline.
   if (state === 'disconnected' || state === 'recoverable_unservable') return { state, bucket: 'offline', tone: 'neutral' };
   if (state === 'finished_unseen' || settled === true && (state === 'ready' || state === 'waiting')) return { state, bucket: 'finished', tone: 'neutral' };
-  return { state, bucket: state === 'thinking' || state === 'background_active' || state === 'archiving' ? 'working' : 'idle', tone: 'neutral' };
+  return { state, bucket: state === 'thinking' || state === 'background_active' || state === 'archiving' || state === 'waiting_for_startup_lock' ? 'working' : 'idle', tone: 'neutral' };
 }
 
 /** One compact urgency order for rows, Activity and report rollups. */
@@ -113,6 +116,7 @@ export function readSessionAwarenessPresentationRankV1(state: SessionAwarenessPr
     case 'permission_required': return 9;
     case 'action_required': return 8;
     case 'thinking':
+    case 'waiting_for_startup_lock':
     case 'background_active': return 7;
     case 'usage_limited': return 6;
     case 'stopped': return 5;

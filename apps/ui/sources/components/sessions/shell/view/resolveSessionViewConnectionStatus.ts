@@ -16,7 +16,7 @@ export type SessionViewConnectionStatus = Readonly<{
     transitionKey?: 'warning' | 'stopped' | 'waking';
     /** The longer explanation behind a short line, read on hover/focus and by assistive tech. */
     detail?: string;
-    /** The Provider binding's one recovery, when the binding's state won the line and the viewer can take it. */
+    /** The Provider binding's recovery, including beside a current request, when the viewer can take it. */
     providerBindingAction?: SessionViewProviderBindingAction;
     /** The pending queue's one recovery, when its waiting state won the line. */
     pendingQueueAction?: SessionViewPendingQueueAction;
@@ -157,6 +157,8 @@ export function resolveSessionViewConnectionStatus(input: Readonly<{
         // and resuming speaks alone: the resume is what delivers the queue.
         text: queueCountText && !restartActive && !input.sessionStatusResuming ? `${statusText} · ${queueCountText}` : statusText,
         ...(showsInactive && input.inactiveDetail ? { detail: input.inactiveDetail } : {}),
+        ...(!restartActive && !input.sessionStatusResuming && input.sessionUnservable !== true && sessionNeedsPersonNow && binding?.action
+            ? { providerBindingAction: binding.action, detail: binding.detail ?? binding.text } : {}),
         ...(!restartActive && !input.sessionStatusResuming && !sessionNeedsPersonNow && input.inactiveResumeAvailable
             ? { inactiveAction: 'resume' as const } : {}),
         color: input.sessionStatusColor,

@@ -3290,6 +3290,7 @@ export const ja: TranslationStructure = {
     encryptedPreparing: "暗号化アクセスを準備中",
     encryptedRepairNeeded: "暗号化アクセスの修復が必要です",
     awaitingUpdates: "更新を待機中",
+    waitingForStartupLock: 'このマシンで別のセッションの起動が完了するのを待っています…',
     queuedInput: "入力待ち",
     unread: "未読",
     mentioned: "あなたへのメンション",

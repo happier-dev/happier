@@ -1341,6 +1341,7 @@ export function createNativeAgentSessionHostServices(params: Readonly<{
         models: params.publications.models,
         modes: params.publications.modes,
         activeInput: params.publications.activeInput,
+        ...(params.publications.publishWorkStatus ? { publishWorkStatus: params.publications.publishWorkStatus } : {}),
         sessionHooks,
         transcripts: Object.freeze({
             ...(params.followSource ? {

@@ -3190,6 +3190,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         encryptedPreparing: "正在準備加密存取",
         encryptedRepairNeeded: "加密存取需要修復",
         awaitingUpdates: "等待更新",
+        waitingForStartupLock: '正在等待此機器上的另一個工作階段完成啟動…',
         queuedInput: "佇列中的輸入",
         unread: "未讀",
         mentioned: "提到了你",

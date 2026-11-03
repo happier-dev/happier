@@ -28,7 +28,7 @@ export function resolvePhoneWorkingCapsuleKind(
 ): PhoneWorkingCapsuleKind | null {
   if (state === 'thinking' || state === 'resuming') return 'working';
   // The message waits with no turn running (an inactive Session): it is queued, not being worked on.
-  if (state === 'pending_input') return 'queued';
+  if (state === 'pending_input' || state === 'waiting_for_startup_lock') return 'queued';
   if (state === 'permission_required' || state === 'action_required')
     return 'needsYou';
   return null;

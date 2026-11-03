@@ -29,6 +29,26 @@ function input(
 }
 
 describe('projectSessionAwarenessV1 — operational semantics', () => {
+  it('presents startup-lock waiting without overriding requests or retaining it after disconnect', () => {
+    const waiting = input({ runtime: { presence: 'online', active: true, workStatus: 'waiting_for_startup_lock' },
+      pending: { queuedInputCount: 1 } });
+    const projection = projectSessionAwarenessV1(waiting);
+    expect(projection).toMatchObject({ runtime: 'waiting', workStatus: 'waiting_for_startup_lock' });
+    expect(SessionAwarenessProjectionV1Schema.safeParse(projection).success).toBe(true);
+    expect(readSessionAwarenessPresentationV1(projection)).toBe('waiting_for_startup_lock');
+    expect(readSessionAwarenessPresentationV1(projectSessionAwarenessV1({ ...waiting,
+      runtime: { ...waiting.runtime, resumingAtMs: NOW } }))).toBe('waiting_for_startup_lock');
+    expect(readSessionAwarenessPresentationV1(projectSessionAwarenessV1({ ...waiting,
+      pending: { hasPendingPermissionRequests: true } }))).toBe('permission_required');
+    for (const unavailable of [
+      { ...waiting, runtime: { ...waiting.runtime, presence: 'offline' as const, active: false } },
+      { ...waiting, lifecycle: { processTerminalState: 'stopped' as const } },
+      { ...waiting, lifecycle: { archivedAtMs: NOW } },
+      { ...waiting, content: { mode: 'e2ee' as const, keyState: 'locked' as const } },
+    ]) {
+      expect(projectSessionAwarenessV1(unavailable)).not.toHaveProperty('workStatus');
+    }
+  });
   it('presents a blocking usage issue specifically even after its turn failed, without automatic recovery', () => {
     const projection = projectSessionAwarenessV1(input({
       lifecycle: { latestTurnStatus: 'failed' },

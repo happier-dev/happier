@@ -5,6 +5,13 @@ import { AgentStateSchema } from "./agentState.js";
 import { listPendingRequests } from '../pending/listPendingRequests.js';
 
 describe('AgentStateSchema', () => {
+    it('reads optional startup progress and ignores unknown progress without discarding Session state', () => {
+        const state = { controlledByUser: false, workStatus: 'waiting_for_startup_lock' };
+        expect(AgentStateSchema.parse(JSON.stringify(state))).toMatchObject(state);
+        expect(AgentStateSchema.parse({ controlledByUser: false, workStatus: 'future_progress' }))
+            .toMatchObject({ controlledByUser: false, workStatus: null });
+        expect(AgentStateSchema.parse({ controlledByUser: false })).not.toHaveProperty('workStatus');
+    });
     it('retains the host question mode and its one current handler across a stored read', () => {
         const request = { tool: 'AskUserQuestion', kind: 'user_action', arguments: { questions: [] }, createdAt: 1,
             questionV1: { mode: 'continue', assumption: 'Use revision 3', lasting: true },

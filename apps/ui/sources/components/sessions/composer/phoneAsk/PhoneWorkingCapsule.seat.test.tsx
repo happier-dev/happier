@@ -122,9 +122,10 @@ describe('the phone working capsule takes the seat above the page bottom bar', (
 });
 
 describe('the phone working capsule says what the Session is doing', () => {
-  it('reads a send that only queued as queued, not as working', async () => {
+  it.each(['pending_input', 'waiting_for_startup_lock'] as const)('reads %s as queued, not as working', async (state) => {
     // The canonical Session status for input waiting with no turn running (an inactive Session).
-    const kind = resolvePhoneWorkingCapsuleKind('pending_input');
+    const kind = resolvePhoneWorkingCapsuleKind(state);
+    expect(kind).toBe('queued');
     expect(kind).not.toBe('working');
     const screen = await renderScreen(
       <PhoneWorkingCapsuleView kind={kind!} agent="Codex" onView={() => {}} />,

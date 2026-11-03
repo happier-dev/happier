@@ -8000,6 +8000,7 @@ encryptedUnavailable: "Зашифрованные данные недоступ�
     encryptedPreparing: "Подготовка доступа к зашифрованным данным",
     encryptedRepairNeeded: "Доступ к зашифрованным данным требует восстановления",
     awaitingUpdates: "Ожидание обновлений",
+    waitingForStartupLock: 'Ожидание завершения запуска другого сеанса на этой Машине…',
     queuedInput: "Ввод в очереди",
     unread: "Непрочитано",
     mentioned: "Вас упомянули",

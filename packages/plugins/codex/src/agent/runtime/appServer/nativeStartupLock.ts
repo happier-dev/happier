@@ -84,6 +84,7 @@ export async function withCodexNativeStartupLock<TResult>(
   signal?: AbortSignal,
   logger?: Pick<LoggerService, 'debug'>,
   configuration?: StartupConfiguration,
+  onWaiting?: (waiting: boolean) => void,
 ): Promise<TResult> {
   signal?.throwIfAborted();
   const projectedRoot = configuration?.processEnv.CODEX_SQLITE_HOME;
@@ -108,22 +109,30 @@ export async function withCodexNativeStartupLock<TResult>(
     signal?.throwIfAborted();
     return await initialize(overrides);
   }
-  return await withExclusiveFileLock({
-    lockPath,
-    timeoutMs: Number.POSITIVE_INFINITY,
-    ...(signal ? { signal } : {}),
-    ...(logger ? { onWait: info => logger.debug('Codex native startup is waiting for another start', info) } : {}),
-  }, async () => {
-    const result = await initialize(overrides);
-    if (root && version) {
-      // Readiness is the native completion boundary. A failed start never
-      // publishes; marker IO failure merely makes the next start lock again.
-      await writeAtomicTextFile({ path: markerPath, contents: `${version}\n`, mode: 0o600 })
-        .catch(() => {
-          try { logger?.debug('Codex native startup version could not be recorded'); }
-          catch { /* Diagnostics must not turn a ready native client into a failed start. */ }
-        });
-    }
-    return result;
-  });
+  try {
+    return await withExclusiveFileLock({
+      lockPath,
+      timeoutMs: Number.POSITIVE_INFINITY,
+      ...(signal ? { signal } : {}),
+      onWait: info => {
+        onWaiting?.(true);
+        logger?.debug('Codex native startup is waiting for another start', info);
+      },
+    }, async () => {
+      onWaiting?.(false);
+      const result = await initialize(overrides);
+      if (root && version) {
+        // Readiness is the native completion boundary. A failed start never
+        // publishes; marker IO failure merely makes the next start lock again.
+        await writeAtomicTextFile({ path: markerPath, contents: `${version}\n`, mode: 0o600 })
+          .catch(() => {
+            try { logger?.debug('Codex native startup version could not be recorded'); }
+            catch { /* Diagnostics must not turn a ready native client into a failed start. */ }
+          });
+      }
+      return result;
+    });
+  } finally {
+    onWaiting?.(false);
+  }
 }

@@ -2742,6 +2742,7 @@ export const zhHans: TranslationStructure = {
     encryptedPreparing: "正在准备加密访问",
     encryptedRepairNeeded: "加密访问需要修复",
     awaitingUpdates: "等待更新",
+    waitingForStartupLock: '正在等待此机器上的另一个会话完成启动…',
     queuedInput: "排队中的输入",
     unread: "未读",
     mentioned: "提到了你",

@@ -1,5 +1,6 @@
 import { readSessionDirectoryKind } from '@happier-dev/protocol/sessions/metadata/directory';
 import { projectSessionAwarenessV1 } from '@happier-dev/protocol/sessions/awareness/projectV1';
+import { readSessionRuntimeWorkStatusV1 } from '@happier-dev/protocol/sessions/awareness/projectionV1';
 import { readSessionTerminalControlServiceabilityStateV1 } from '@happier-dev/protocol/sessions/metadata/terminalMetadata';
 import { readSessionWorkStateV1FromMetadata } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateV1';
 import { resolveAwarenessCurrentnessV1 } from '@happier-dev/protocol/sessions/awareness/runtime';
@@ -111,6 +112,7 @@ export function createUiSessionAwarenessInput(
         nowMs,
         title: options.includeTitle === false ? undefined : readSessionDisplayTitleField({ metadata }).value ?? metadata?.name,
         ...components,
+        runtime: { ...components.runtime, workStatus: readSessionRuntimeWorkStatusV1(source ? source.pending.agentState : hydrated ? session.agentState : null) },
         lifecycle,
         runtimeIssue: session.lastRuntimeIssue,
         usageLimitRecovery: source?.metadataFromRow ? source.row.metadata?.sessionUsageLimitRecoveryV1 ?? null

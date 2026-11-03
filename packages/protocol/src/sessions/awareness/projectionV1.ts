@@ -25,6 +25,16 @@ import {
  */
 export const SESSION_AWARENESS_PROJECTION_VERSION_V1 = 1 as const;
 
+/** Optional presentation detail; unknown details leave the generic runtime state usable. */
+export const SessionRuntimeWorkStatusV1Schema = lazyZodSchema(() => z.literal('waiting_for_startup_lock'));
+export type SessionRuntimeWorkStatusV1 = z.infer<typeof SessionRuntimeWorkStatusV1Schema>;
+
+export function readSessionRuntimeWorkStatusV1(agentState: unknown): SessionRuntimeWorkStatusV1 | null {
+  if (!agentState || typeof agentState !== 'object') return null;
+  const status = SessionRuntimeWorkStatusV1Schema.safeParse(Reflect.get(agentState, 'workStatus'));
+  return status.success ? status.data : null;
+}
+
 /** Whole-Session lifecycle, independent of whether its runtime process is reachable. */
 export const SessionAwarenessLifecycleV1Schema = lazyZodSchema(() => z.enum([
   'active',
@@ -187,6 +197,7 @@ export const SessionAwarenessProjectionV1Schema = lazyZodSchema(() => z.strictOb
     lifecycle: SessionAwarenessLifecycleV1Schema,
     processTerminalState: z.optional(z.literal('stopped')),
     runtime: SessionAwarenessRuntimeV1Schema,
+    workStatus: z.optional(SessionRuntimeWorkStatusV1Schema),
     freshness: SessionAwarenessFreshnessV1Schema,
     operational: SessionAwarenessOperationalV1Schema,
     currentWork: z.optional(SessionAwarenessWorkHeadlineV1Schema),

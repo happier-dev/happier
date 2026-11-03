@@ -2,11 +2,24 @@ import { describe, expect, it, vi } from 'vitest';
 import { SessionWorkflowActivityHeadlineV1Schema } from '@happier-dev/protocol/sessions/work/workflow/sessionWorkflowActivityHeadlineV1';
 import { createSessionFixture, createSessionListRenderableSessionFixture } from '@/dev/testkit';
 import { buildSessionListRenderableFromSession } from '../listing/sessionListRenderable';
+import { createSessionListPresentationSource } from '../listing/sessionListRenderableSessionProjection';
 import { projectUiSessionAwareness } from './sessionAwareness';
 import { SessionUsageLimitRecoveryV1Schema } from '@happier-dev/protocol/sessions/state/valueSchemas/usageLimitRecovery';
 import { readSessionWorkStateV1FromMetadata } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateV1';
 
 describe('UI Session awareness acquisition adapter', () => {
+    it('reads startup progress from the admitted list source without reviving an older Agent state', () => {
+        const session = createSessionFixture({ encryptionMode: 'plain', active: true, presence: 'online',
+            activeAt: 1_000, agentStateVersion: 4, agentState: { workStatus: 'waiting_for_startup_lock' } });
+        const row = buildSessionListRenderableFromSession(session, undefined, []);
+        const source = createSessionListPresentationSource(row, { baseSession: session });
+        expect(projectUiSessionAwareness(row, 1_001, { presentationSource: source }).workStatus)
+            .toBe('waiting_for_startup_lock');
+        const newerRow = { ...row, agentStateVersion: 5 };
+        const newerSource = createSessionListPresentationSource(newerRow, { baseSession: session });
+        expect(projectUiSessionAwareness(newerRow, 1_001, { presentationSource: newerSource }))
+            .not.toHaveProperty('workStatus');
+    });
     it('keeps canonical current work in the compact row without retaining work history', () => {
         const task = { id: 'task', kind: 'task' as const, origin: 'happier' as const,
             status: 'blocked' as const, statusReason: 'blocked' as const, title: 'Current task', updatedAt: 100 };

@@ -411,6 +411,7 @@ export function presentSessionAwarenessStateV1(
     if (state === 'unknown') return { state: 'unknown', statusText: '—', quiet: true };
     if (state === 'stale') return { state: 'stale', statusText: t('status.awaitingUpdates'), quiet: false };
     switch (state) {
+        case 'waiting_for_startup_lock': return { state, statusText: t('status.waitingForStartupLock'), quiet: false };
         case 'archiving': return { state, statusText: t('status.archiving'), quiet: false };
         case 'stopped': return { state, statusText: t('sessionWork.states.stopped'), quiet: false };
         case 'usage_limited': return { state, statusText: t('session.usageLimitRecovery.banner.title'), quiet: false };
