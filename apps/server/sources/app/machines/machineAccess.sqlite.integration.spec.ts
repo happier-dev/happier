@@ -39,6 +39,27 @@ describe('Machine current access (real SQLite)', () => {
     }
     const grant = (actorAccountId: string, machineId: string, accountId: string, level: 'view' | 'admin' = 'view') => inTx(tx => access.setMachineAccessGrantInTx(tx, { actorAccountId, machineId, principal: { kind: 'account', accountId }, level }));
 
+    it('admits extension discovery with Use and profile mutations only with Manage', async () => {
+        const f = await fixture();
+        const viewer = await account();
+        const manager = await account();
+        await grant(f.owner.id, f.machine.id, viewer.id, 'view');
+        await grant(f.owner.id, f.machine.id, manager.id, 'admin');
+        for (const operation of ['install', 'update', 'enable', 'disable', 'remove']) {
+            const actionId = `browser.extensions.${operation}`;
+            expect(await access.resolveMachineAdmission({ actorAccountId: viewer.id, machineId: f.machine.id, actionId }))
+                .toEqual({ kind: 'denied', code: 'access_denied' });
+            for (const actorAccountId of [f.owner.id, manager.id]) {
+                expect(await access.resolveMachineAdmission({ actorAccountId, machineId: f.machine.id, actionId }))
+                    .toMatchObject({ kind: 'admitted', role: 'manage' });
+            }
+        }
+        for (const operation of ['list', 'openActionPopup', 'openOptions']) {
+            expect(await access.resolveMachineAdmission({ actorAccountId: viewer.id, machineId: f.machine.id,
+                actionId: `browser.extensions.${operation}` })).toMatchObject({ kind: 'admitted', role: 'use' });
+        }
+    });
+
     it('admits host Computer controls only for the custodian and Manage grantees', async () => {
         const f = await fixture();
         const viewer = await account();
