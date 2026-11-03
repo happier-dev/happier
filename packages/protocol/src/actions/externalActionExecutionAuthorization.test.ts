@@ -1,3 +1,4 @@
+import { encodeReviewedActionChildHttpProofV1, decodeReviewedActionChildHttpProofV1 } from './externalActionExecutionAuthorization.js';
 import { expect, it } from 'vitest';
 import tweetnacl from 'tweetnacl';
 import { computeExternalActionRequestEnvelopeDigestV1, signExternalActionMachineRequestV1, verifyExternalActionMachineRequestV1, signExternalActionApprovalInputV1, verifyExternalActionApprovalInputV1, signExternalActionMachineRpcRequestV1, verifyExternalActionMachineRpcRequestV1 } from './externalActionExecutionAuthorization.js';
@@ -258,4 +259,52 @@ it('digests the complete original V1 or opaque V2 envelope without input disclos
   const projectEnvelope = { ...envelope, target: { ...envelope.target, project: { machineId: 'machine-1', directory: '/repo/a' } } };
   const projectDigest = computeExternalActionRequestEnvelopeDigestV1(projectEnvelope);
   expect(computeExternalActionRequestEnvelopeDigestV1({ ...projectEnvelope, target: { ...projectEnvelope.target, project: { ...projectEnvelope.target.project, directory: '/repo/b' } } })).not.toBe(projectDigest);
+});
+
+it('binds a reviewed child to the exact Machine HTTP signature without changing ordinary request bytes', () => {
+  const key = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(7));
+  const request = { authorizationToken: 'home-root', effectActionId: 'deployments.bindings.set',
+    target: { kind: 'machine' as const, machineId: 'machine-1' }, installationId: 'installation-1',
+    requestId: 'copy-root', method: 'POST', path: '/v1/deployments/environments/new/bindings', body: { revision: 1 } };
+  const ordinarySignature = signExternalActionMachineRequestV1({ ...request, privateKey: key.secretKey });
+  const childRequest = { ...request, reviewedChild: { actionId: 'deployments.bindings.set',
+    role: 'copied-bindings', inputDigest: 'A'.repeat(43) } };
+  const signature = signExternalActionMachineRequestV1({ ...childRequest, privateKey: key.secretKey });
+  const encoded = encodeReviewedActionChildHttpProofV1(childRequest.reviewedChild);
+  expect(decodeReviewedActionChildHttpProofV1(encoded)).toEqual(childRequest.reviewedChild);
+  expect(decodeReviewedActionChildHttpProofV1(`${encoded}=`)).toBeNull();
+  for (const malformed of [
+    { ...childRequest.reviewedChild, input: { privateContent: 'must-not-travel' } },
+    { ...childRequest.reviewedChild, inputDigest: 'not-a-digest' },
+  ]) {
+    expect(decodeReviewedActionChildHttpProofV1(Buffer.from(JSON.stringify(malformed)).toString('base64url'))).toBeNull();
+  }
+  expect(signature).not.toBe(ordinarySignature);
+  expect(verifyExternalActionMachineRequestV1({ ...childRequest, signature, publicKey: key.publicKey })).toBe(true);
+  expect(verifyExternalActionMachineRequestV1({ ...request, signature, publicKey: key.publicKey })).toBe(false);
+  for (const changed of [
+    { actionId: 'deployments.bindings.remove' }, { role: 'other-child' }, { inputDigest: 'B'.repeat(43) },
+  ]) {
+    expect(verifyExternalActionMachineRequestV1({ ...request,
+      reviewedChild: { ...childRequest.reviewedChild, ...changed }, signature, publicKey: key.publicKey })).toBe(false);
+  }
+  expect(verifyExternalActionMachineRequestV1({ ...childRequest, signature: ordinarySignature, publicKey: key.publicKey })).toBe(false);
+});
+
+
+it('authenticates the exact reviewed-child operand proof on the existing Machine RPC signature', () => {
+  const key = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(91));
+  const reviewedChild = { actionId: 'deployments.domains.add', role: 'create.domain', inputDigest: 'a'.repeat(43) };
+  const request = { authorizationToken: 'admitted-create-root', effectActionId: 'deployments.domains.add',
+    target: { kind: 'machine' as const, machineId: 'controller' }, installationId: 'controller-installation',
+    method: `receiver:${RPC_METHODS.DAEMON_DEPLOYMENT_CHILD}`, requestId: 'domain-child',
+    params: 'encrypted-private-domain-input', reviewedChild };
+  const signature = signExternalActionMachineRpcRequestV1({ ...request, privateKey: key.secretKey });
+  expect(verifyExternalActionMachineRpcRequestV1({ ...request, publicKey: key.publicKey, signature })).toBe(true);
+  const { reviewedChild: _proof, ...unsigned } = request;
+  expect(verifyExternalActionMachineRpcRequestV1({ ...unsigned, publicKey: key.publicKey, signature })).toBe(false);
+  for (const patch of [{ inputDigest: 'b'.repeat(43) }, { actionId: 'deployments.domains.remove' }, { role: 'other' }]) {
+    expect(verifyExternalActionMachineRpcRequestV1({ ...request, reviewedChild: { ...reviewedChild, ...patch },
+      publicKey: key.publicKey, signature })).toBe(false);
+  }
 });

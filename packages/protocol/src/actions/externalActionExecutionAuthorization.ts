@@ -18,6 +18,7 @@ export type ExternalActionMachineRpcEventV1 = typeof SOCKET_RPC_EVENTS.CALL
   | typeof SESSION_PENDING_ENQUEUE_BY_MACHINE_EVENT_V1
   | typeof SESSION_PENDING_EXECUTION_RUN_ENQUEUE_BY_MACHINE_EVENT_V2;
 import { ExternalActionRequestEnvelopeSchema, ExternalActionRequestIdV1Schema, ExternalActionTargetV1Schema,
+  ReviewedActionChildHttpProofV1Schema, type ReviewedActionChildHttpProofV1,
   type ExternalActionExecutionAuthorizationBindingV1, type ExternalActionExecutionAuthorizationV1,
   type ExternalActionTargetV1, type ExternalActionRequestEnvelope } from './externalActionApi.js';
 
@@ -67,6 +68,19 @@ export function decodeExternalActionResolvedTargetV1(value: string): ExternalAct
   } catch { return null; }
 }
 
+export function encodeReviewedActionChildHttpProofV1(value: ReviewedActionChildHttpProofV1): string {
+  return encodeBase64(new TextEncoder().encode(createCanonicalJsonSigningInput(
+    ReviewedActionChildHttpProofV1Schema.parse(value))), 'base64url');
+}
+
+export function decodeReviewedActionChildHttpProofV1(value: string): ReviewedActionChildHttpProofV1 | null {
+  try {
+    const proof = ReviewedActionChildHttpProofV1Schema.parse(JSON.parse(new TextDecoder('utf-8', { fatal: true })
+      .decode(decodeBase64(value, 'base64url'))));
+    return encodeReviewedActionChildHttpProofV1(proof) === value ? proof : null;
+  } catch { return null; }
+}
+
 type MachineRequest = Readonly<{
   authorizationToken: string;
   effectActionId: string;
@@ -77,6 +91,7 @@ type MachineRequest = Readonly<{
   path: string;
   body?: unknown;
   idempotencyKey?: string;
+  reviewedChild?: ReviewedActionChildHttpProofV1;
 }>;
 
 function machineRequestBytes(request: MachineRequest): Uint8Array {
@@ -88,6 +103,8 @@ function machineRequestBytes(request: MachineRequest): Uint8Array {
     request.body === undefined ? 'absent' : 'json',
     createCanonicalJsonSigningInput(request.body === undefined ? null : request.body),
     ...(request.idempotencyKey === undefined ? [] : ['idempotency-key', request.idempotencyKey]),
+    ...(request.reviewedChild === undefined ? [] : ['reviewed-action-child-http-v1',
+      encodeReviewedActionChildHttpProofV1(request.reviewedChild)]),
   ]);
 }
 
@@ -108,6 +125,7 @@ type MachineRpcRequest = Readonly<{
   workspaceSyncSourceRouting?: WorkspaceSyncSourceRoutingV1;
   workspaceSyncSourceWriterTargetRouting?: WorkspaceSyncSourceWriterTargetRoutingV1;
   workspaceSyncSeedRouting?: WorkspaceSyncSeedRoutingV1;
+  reviewedChild?: ReviewedActionChildHttpProofV1;
 }>;
 
 function machineRpcRequestBytes(request: MachineRpcRequest): Uint8Array {
@@ -147,6 +165,8 @@ function machineRpcRequestBytes(request: MachineRpcRequest): Uint8Array {
       'workspace-sync-seed-routing-v1',
       createCanonicalJsonSigningInput(WorkspaceSyncSeedRoutingV1Schema.parse(request.workspaceSyncSeedRouting)),
     ] : []),
+    ...(request.reviewedChild === undefined ? [] : ['reviewed-action-child-rpc-v1',
+      encodeReviewedActionChildHttpProofV1(request.reviewedChild)]),
   ]);
 }
 

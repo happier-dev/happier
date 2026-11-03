@@ -1311,6 +1311,7 @@ export const ExternalActionMachineRpcExecutionV1Schema = lazyZodSchema(() => z.s
 }));
 export type ExternalActionMachineRpcExecutionV1 = z.infer<typeof ExternalActionMachineRpcExecutionV1Schema>;
 
+export const EXTERNAL_ACTION_REVIEWED_CHILD_HEADER = 'x-happier-action-reviewed-child';
 export const EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER = 'x-happier-action-execution-authorization';
 export const EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER = 'x-happier-action-machine-signature';
 export const EXTERNAL_ACTION_EFFECT_ACTION_HEADER = 'x-happier-action-effect';
