@@ -1,11 +1,11 @@
 import type { ReadonlyAuthorDeclaration } from './definePlugin.js';
+import type { DeploymentTargetContributionV1 as CanonicalDeploymentTargetContributionV1 } from '@happier-dev/protocol/plugins/contributions/deploymentTargets';
 import type { ProtocolComposableSchema } from './protocol/protocolFacade.js';
 import {
     DeploymentTargetFailureTransitionV1ProtocolSchema as canonicalFailureTransition,
     DeploymentTargetRoleInputProtocolSchemasV1 as canonicalRoleInputs,
     DeploymentTargetRoleResultV1ProtocolSchema as canonicalRoleResult,
     DeploymentTargetPreparationBaseV1ProtocolSchema as canonicalPreparationBase,
-    type DeploymentTargetContributionV1 as CanonicalDeploymentTargetContributionV1,
     type DeploymentTargetFailureTransitionV1,
     type DeploymentTargetInspectInputV1,
     type DeploymentTargetLinkRoleInputV1,
@@ -18,7 +18,7 @@ import {
     type DeploymentTargetTeardownInputV1,
     type DeploymentTargetRoleResultV1,
     type DeploymentTargetPreparationBaseV1,
-} from '@happier-dev/protocol/plugins/contributions/v2';
+} from '@happier-dev/protocol/plugins/contributions/deploymentTargetRolesV1';
 
 export type {
     DeploymentTargetFailureTransitionV1, DeploymentTargetCredentialPrincipalV1,
@@ -32,8 +32,8 @@ export type {
     DeploymentTargetPromoteInputV1, DeploymentTargetTeardownInputV1,
     DeploymentTargetRuntimeRoleV1, DeploymentTargetRoleInputV1,
     DeploymentTargetRoleResultV1, DeploymentTargetRoleFailureV1,
-} from '@happier-dev/protocol/plugins/contributions/v2';
-export { hasDeploymentTargetPreparationCoordinatesV1 } from '@happier-dev/protocol/plugins/contributions/v2';
+} from '@happier-dev/protocol/plugins/contributions/deploymentTargetRolesV1';
+export { hasDeploymentTargetPreparationCoordinatesV1 } from '@happier-dev/protocol/plugins/contributions/deploymentTargetRolesV1';
 export const DeploymentTargetFailureTransitionV1ProtocolSchema: ProtocolComposableSchema<DeploymentTargetFailureTransitionV1> = canonicalFailureTransition;
 export const DeploymentTargetRoleInputProtocolSchemasV1: Readonly<{
     inspect: ProtocolComposableSchema<DeploymentTargetInspectInputV1>;

@@ -1,4 +1,5 @@
 export { CURRENT_UI_CONTEXT_ATTACHMENT_IDENTITY_V1 } from './currentUiContext.js';
+export { DeploymentTargetPreparationBaseV1ProtocolSchema } from '../deploymentTargets.js';
 export { MAX_TRIAGE_COLLISION_SCOPE_UTF8_BYTES_V1 } from './triageEntryRef.js';
 export { MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1 } from './triageEntryRef.js';
 export type { PluginJsonSchema } from './protocolFacade.js';
