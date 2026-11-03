@@ -6,3 +6,5 @@ export * from './sessionEffectiveAccessV1.js';
 export * from './sessionAccessOperationsV1.js';
 export * from './sessionAccessActionsV1.js';
 export * from './releasedDirectSessionShareV1.js';
+export * from './sessionInitialAccessCreateV1.js';
+export * from './sessionRecipientEnvelopeBindingV1.js';

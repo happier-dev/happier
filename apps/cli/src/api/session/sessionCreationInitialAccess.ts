@@ -1,16 +1,15 @@
-import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
+import { SessionInitialAccessEnvelopeHostError, materializeSessionInitialAccessCreateFields as materializeSessionInitialAccessCreateFieldsV1 } from '@happier-dev/protocol/sessions';
+export { SessionInitialAccessEnvelopeHostError, addSessionInitialAccessTeamShareStatement } from '@happier-dev/protocol/sessions';
 import { readActionCredentialScopeDeniedHttpFailureV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { ENCRYPTED_DATA_KEY_V1_BYTES } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeFormatV1';
 import { PatchSessionDataKeyEnvelopesResultV1Schema, PatchSessionDataKeyEnvelopesV1Schema, SessionDataKeyEnvelopePageV1Schema } from '@happier-dev/protocol/sessions/encryption/sessionDataKeyEnvelopes';
-import { SessionInitialAccessDraftV1Schema, SessionInitialAccessMaterializedV1Schema } from '@happier-dev/protocol/sessions/access/sessionInitialAccessDraftV1';
+import { SessionInitialAccessDraftV1Schema } from '@happier-dev/protocol/sessions/access/sessionInitialAccessDraftV1';
 import { SessionAccessErrorCodeV1Schema } from '@happier-dev/protocol/sessions/access/sessionAccessOperationsV1';
 import { prepareSessionDataKeyEnvelopeItemV1 } from '@happier-dev/protocol/sessions/encryption/prepareSessionDataKeyEnvelopeItemV1';
 import { runSessionDataKeyPreparationPass } from '@happier-dev/protocol/sessions/encryption/sessionDataKeyPreparationPass';
 import type { PatchSessionDataKeyEnvelopesV1, SessionDataKeyEnvelopeItemV1, SessionDataKeyPreparationPassResult, OperationUpdateRequiredV1, SessionAccessErrorCodeV1, SessionInitialAccessDraftV1, SessionInitialAccessMaterializedV1 } from '@happier-dev/protocol';
 import { OperationUpdateRequiredV1Schema } from '@happier-dev/protocol/compat/operationUpdateRequiredV1';
-import { sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
 import { SessionSpawnNewInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
-import { addSessionTeamsToShareStatementV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import axios from '@/api/client/credentialAxios';
 import { setImmediate } from 'node:timers/promises';
 
@@ -24,24 +23,6 @@ import {
   resolveVerifiedSessionRecipientContentPublicKey,
   SessionRecipientEnvelopeBindingError,
 } from './sessionRecipientEnvelopeBinding';
-
-export class SessionInitialAccessEnvelopeHostError extends Error {
-  constructor(
-    readonly code:
-      | 'not_authenticated'
-      | 'credential_scope_denied'
-      | 'recipient_key_unavailable'
-      | 'session_access_invalid_recipient_envelope'
-      | 'session_access_request_failed'
-      | 'session_access_subject_not_found'
-      | 'session_data_key_unavailable'
-      | 'unsupported_action',
-    readonly status?: number,
-  ) {
-    super(code);
-    this.name = 'SessionInitialAccessEnvelopeHostError';
-  }
-}
 
 /**
  * Collective grants commit with the row. The physical creator then prepares
@@ -226,19 +207,6 @@ export function buildSessionInitialAccessCreateFields(
   };
 }
 
-/** A creator holds the key, so a collective E2EE create carries its share statement from birth. */
-export function addSessionInitialAccessTeamShareStatement<T extends Readonly<Record<string, unknown>>>(
-  metadata: T,
-  fields: Readonly<{ initialAccess?: SessionInitialAccessDraftV1; primaryTeamId?: string | null }>,
-  sessionEncryptionMode: 'e2ee' | 'plain',
-): T {
-  if (sessionEncryptionMode === 'plain') return metadata;
-  return addSessionTeamsToShareStatementV1(metadata, [
-    ...(fields.primaryTeamId ? [fields.primaryTeamId] : []),
-    ...(fields.initialAccess?.grants ?? []).flatMap(({ subject }) => subject.kind === 'account' ? [] : [subject.teamId]),
-  ]);
-}
-
 /**
  * Adds direct-recipient envelopes only to the private physical create body.
  * The authoring draft remains key-free; collective/Plain grants bypass crypto,
@@ -252,76 +220,43 @@ export async function materializeSessionInitialAccessCreateFields(params: Readon
   serverHttpBaseUrl: string;
   signal?: AbortSignal;
 }>): Promise<Readonly<{ initialAccess?: SessionInitialAccessMaterializedV1; primaryTeamId?: string | null }>> {
-  if (params.sessionEncryptionMode === 'plain' || params.fields.initialAccess === undefined) {
-    return params.fields;
-  }
-
-  const grants = await Promise.all(params.fields.initialAccess.grants.map(async (grant) => {
-    if (grant.subject.kind !== 'account') return grant;
-    const response = await axios.get<unknown>(
-      `${params.serverHttpBaseUrl}/v1/user/${encodeURIComponent(grant.subject.accountId)}`,
-      {
-        headers: {
-          Authorization: `Bearer ${params.token}`,
-          'Content-Type': 'application/json',
+  return materializeSessionInitialAccessCreateFieldsV1({ ...params, randomBytes: getRandomBytes,
+    resolveRecipientContentPublicKey: async accountId => {
+      const response = await axios.get<unknown>(
+        `${params.serverHttpBaseUrl}/v1/user/${encodeURIComponent(accountId)}`,
+        {
+          headers: {
+            Authorization: `Bearer ${params.token}`,
+            'Content-Type': 'application/json',
+          },
+          timeout: configuration.sessionControlHttpTimeoutMs,
+          ...(params.signal ? { signal: params.signal } : {}),
+          validateStatus: () => true,
         },
-        timeout: configuration.sessionControlHttpTimeoutMs,
-        ...(params.signal ? { signal: params.signal } : {}),
-        validateStatus: () => true,
-      },
-    );
-    if (response.status === 401 || response.status === 403) {
-      throw new SessionInitialAccessEnvelopeHostError('not_authenticated', response.status);
-    }
-    if (response.status === 404) {
-      throw new SessionInitialAccessEnvelopeHostError('session_access_subject_not_found', response.status);
-    }
-    if (response.status !== 200) {
-      throw new SessionInitialAccessEnvelopeHostError('session_access_request_failed', response.status);
-    }
-
-    let recipientContentPublicKey: ReturnType<typeof resolveVerifiedSessionRecipientContentPublicKey>;
-    try {
-      recipientContentPublicKey = resolveVerifiedSessionRecipientContentPublicKey(response.data);
-    } catch (error) {
-      if (error instanceof SessionRecipientEnvelopeBindingError) {
-        if (error.code === 'unsupported_action') {
-          throw new SessionInitialAccessUpdateRequiredError('server');
-        }
-        throw new SessionInitialAccessEnvelopeHostError(error.code);
+      );
+      if (response.status === 401 || response.status === 403) {
+        throw new SessionInitialAccessEnvelopeHostError('not_authenticated', response.status);
       }
-      throw error;
-    }
+      if (response.status === 404) {
+        throw new SessionInitialAccessEnvelopeHostError('session_access_subject_not_found', response.status);
+      }
+      if (response.status !== 200) {
+        throw new SessionInitialAccessEnvelopeHostError('session_access_request_failed', response.status);
+      }
 
-    // Caller-authored creation remains key-free. If an internal caller carries
-    // stale physical material, replace it from current server readiness rather
-    // than turning the caller into a second key-currentness authority.
-    const keyFreeGrant = {
-      subject: grant.subject,
-      accessLevel: grant.accessLevel,
-      canApprovePermissions: grant.canApprovePermissions,
-    };
-    if (recipientContentPublicKey === null) return keyFreeGrant;
-    if (params.sessionDataKey === null) {
-      throw new SessionInitialAccessEnvelopeHostError('session_data_key_unavailable');
-    }
-    return {
-      ...keyFreeGrant,
-      accountEnvelopeInput: {
-        v: 1 as const,
-        encryptedDataKey: encodeBase64(sealEncryptedDataKeyEnvelopeV1({
-          dataKey: params.sessionDataKey,
-          recipientPublicKey: recipientContentPublicKey,
-          randomBytes: getRandomBytes,
-        })),
-      },
-    };
-  }));
-
-  return {
-    ...params.fields,
-    initialAccess: SessionInitialAccessMaterializedV1Schema.parse({ grants }),
-  };
+      try {
+        return resolveVerifiedSessionRecipientContentPublicKey(response.data);
+      } catch (error) {
+        if (error instanceof SessionRecipientEnvelopeBindingError) {
+          if (error.code === 'unsupported_action') {
+            throw new SessionInitialAccessUpdateRequiredError('server');
+          }
+          throw new SessionInitialAccessEnvelopeHostError(error.code);
+        }
+        throw error;
+      }
+    },
+  });
 }
 
 /**
