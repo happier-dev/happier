@@ -47,12 +47,14 @@ export function createCliWorkspaceSyncActionDeps(
     workspaceSyncRelationshipObserveCreation: async ({ input, operationId, serverId, signal }) => {
       const denied = await projectHomeAdmission(serverId);
       if (denied) throw Object.assign(new Error(denied.errorCode), { code: denied.errorCode });
-      const rows = await readProjectRows({ kinds: ['workspace-ref'], serverId }, signal);
+      const homeIdentityId = await resolveProjectHomeIdentity();
+      const rows = await readProjectRows({ kinds: ['workspace-ref'], serverId: homeIdentityId }, signal);
       const { resolveWorkspaceRefById } = await import('@/workspaces/workspaceRefsV1');
-      const source = resolveWorkspaceRefById(rows.workspaceRefs, input.sourceWorkspaceRefId, serverId);
+      const source = resolveWorkspaceRefById(rows.workspaceRefs, input.sourceWorkspaceRefId, homeIdentityId);
       if (!source) throw Object.assign(new Error('workspace_ref_not_ready'), { code: 'workspace_ref_not_ready' });
       const { WorkspaceSyncRelationshipCreationObservationV1Schema } = await import('@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas');
       return WorkspaceSyncRelationshipCreationObservationV1Schema.parse(await callMachineAction({ machineId: source.machineId,
+        serverId,
         method: RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIP_CREATION_OBSERVE,
         request: { v: 1, operationId, actionInput: input }, exactMachine: true, ...(signal ? { signal } : {}) }));
     },

@@ -18,12 +18,12 @@ async function reconcileWorkspaceLink(request: ApprovalRequest, artifactId: stri
     || request.status !== 'outcome_unknown' || request.execution?.effectAttempted !== true
     || !deps.workspaceSyncRelationshipObserveCreation || !deps.approvalsUpdate) return request;
   const input = WorkspaceSyncRelationshipCreateActionInputV1Schema.safeParse(request.actionArgs);
-  if (!input.success || input.data.purpose !== 'worker_clean_copy') return request;
+  if (!input.success) return request;
   try {
     const observed = WorkspaceSyncRelationshipCreationObservationV1Schema.parse(await deps.workspaceSyncRelationshipObserveCreation({
       input: input.data,
       operationId: request.handoffTargetReplacementApproval?.operationId ?? request.executionOriginV1.requestId,
-      serverId: request.executionOriginV1.serverIdentityId ?? request.executionOriginV1.serverId,
+      serverId: request.executionOriginV1.serverId,
       ...(context.signal ? { signal: context.signal } : {}),
     }));
     if (observed.outcome === 'unknown') return request;

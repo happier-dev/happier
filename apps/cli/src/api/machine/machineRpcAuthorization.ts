@@ -738,9 +738,10 @@ export async function authorizeMachineRpcRequest(request: Readonly<{
         !writerTargetRouting &&
         !seedRouting &&
         (finiteProjectMethods.includes(rpcMethod) ||
-          // Workspace linking owns native root mapping and copy custody. It
-          // launches no requester command and needs no raw Session authority.
+          // Workspace linking and read-back own native root mapping and copy
+          // custody. Neither launches a requester command or needs raw Session authority.
           rpcMethod === RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIP_CREATE ||
+          rpcMethod === RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIP_CREATION_OBSERVE ||
           rpcMethod === RPC_METHODS.BASH ||
           nativeFilesystemMethods.includes(rpcMethod) ||
           rpcMethod === RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_START ||

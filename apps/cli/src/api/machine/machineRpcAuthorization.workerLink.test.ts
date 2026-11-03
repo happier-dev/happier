@@ -29,17 +29,20 @@ function boundary(current = true): MachineRpcAdmissionBoundary {
 }
 
 describe('worker link requester admission', () => {
-    it('admits the native workspace copy owner without granting raw Session execution', async () => {
-        expect(await authorizeMachineRpcRequest(request, boundary())).toEqual({ ok: true });
+    it.each([RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIP_CREATE,
+        RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIP_CREATION_OBSERVE])(
+        'admits the native workspace owner for %s without granting raw Session execution', async method => {
+        const nativeRequest = { ...request, method: `controller:${method}` };
+        expect(await authorizeMachineRpcRequest(nativeRequest, boundary())).toEqual({ ok: true });
         expect(await authorizeMachineRpcRequest({ ...request,
             method: `controller:${RPC_METHODS.SCM_STATUS_SNAPSHOT}` }, boundary()))
             .toMatchObject({ ok: false, errorCode: 'agent_isolation_unavailable' });
         for (const machineAdmission of [{ ...admission, machineId: 'foreign' },
             { ...admission, installationId: 'foreign' }, { ...admission, custodianAccountId: 'foreign' }]) {
-            expect(await authorizeMachineRpcRequest({ ...request, machineAdmission }, boundary()))
+            expect(await authorizeMachineRpcRequest({ ...nativeRequest, machineAdmission }, boundary()))
                 .toMatchObject({ ok: false, errorCode: 'RPC_FORBIDDEN' });
         }
-        expect(await authorizeMachineRpcRequest(request, boundary(false)))
+        expect(await authorizeMachineRpcRequest(nativeRequest, boundary(false)))
             .toMatchObject({ ok: false, errorCode: 'RPC_FORBIDDEN' });
     });
 

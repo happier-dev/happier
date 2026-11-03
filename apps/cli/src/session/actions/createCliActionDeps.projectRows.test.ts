@@ -98,6 +98,10 @@ describe('credentialed Session Project mutation and Sync row ports', () => {
         const boundary = accountRows([refRow(portableRef), refRow({ ...refB, serverId: homeId }), graphRow()]);
         const invoke = vi.fn().mockImplementation(async method => method.startsWith('usage.sources.') ? { sources: [] }
           : method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_REPLACEMENT_PREFLIGHT ? { type: 'not_required' }
+          : method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIP_CREATION_OBSERVE ? {
+              outcome: 'succeeded', relationshipId: 'rel-portable', controllerMachineId: ref.machineId,
+              sourceWorkspaceRefId: ref.id, targetWorkspaceRefId: refB.id,
+            }
           : method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIP_CREATE ? {
               v: 1, created: true, relationshipId: 'rel-portable', controllerMachineId: ref.machineId,
               sourceWorkspaceRefId: ref.id, targetWorkspaceRefId: refB.id,
@@ -122,6 +126,11 @@ describe('credentialed Session Project mutation and Sync row ports', () => {
           expect.objectContaining({ operationId: 'portable-sync' }),
           expect.objectContaining({ localActionContext: expect.objectContaining({ surface: 'agent' }) }),
         );
+        await expect(actions.workspaceSyncRelationshipObserveCreation!({ serverId: profileId, operationId: 'portable-sync',
+          input: { v: 1, sourceWorkspaceRefId: ref.id, targetMachineId: refB.machineId, targetPath: refB.rootPath,
+            mode: 'keep_synced', contentPolicy: relationship().contentPolicy,
+            destinationIntent: 'materialize_from_source_workspace', purpose: 'worker_clean_copy' },
+        })).resolves.toMatchObject({ outcome: 'succeeded', relationshipId: 'rel-portable' });
         const syncRead = await actions.workspaceSyncConflictsList!({ input: { controllerMachineId: ref.machineId, relationshipId: 'rel-ab', limit: 50 } })
           .catch(error => ({ errorCode: error.code }));
         expect.soft(syncRead).toMatchObject({ status: 'page', relationshipId: 'rel-ab' });

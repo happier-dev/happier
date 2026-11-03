@@ -31,7 +31,8 @@ it('settles an admitted unknown link from its owner without replaying the effect
         },
         workspaceSyncRelationshipObserveCreation: async request => {
           observations += 1;
-          expect(request).toMatchObject({ operationId: 'admitted-request', input: original.actionArgs, serverId: 'home' });
+          // The transport routes by the local profile, not the portable Home identity.
+          expect(request).toMatchObject({ operationId: 'admitted-request', input: original.actionArgs, serverId: 'profile' });
           if (scenario === 'offline') throw new Error('Peer offline');
           return scenario === 'absent' ? { outcome: 'failed', errorCode: 'workspace_sync_relationship_not_committed' }
             : { outcome: 'succeeded', relationshipId: 'relationship', controllerMachineId: 'controller',
