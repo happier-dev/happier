@@ -217,6 +217,8 @@ import { createWidgetCatalogActionDepsV1 } from './widgetCatalogActionDeps';
 import { publishHomeAccountChange, subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { captureMountedWorkspaceAction, invokeWorkspaceAction } from '@/components/appShell/workspace/workspaceActionRuntime';
 import { invokeWorkflowAuthoringAction } from './workflowAuthoringAction';
+import { executeAdmittedClientActionChildAtMachine, type AdmittedClientActionParent } from './admittedClientActionChild';
+import { isWorkflowHostAdmittedChildActionIdV1 } from '@happier-dev/protocol/actions/clientDispatchV1';
 import { openSessionAuthoringDraft } from './sessionAuthoringOpenAction';
 import { invokeSessionListOrganizationAction } from '@/components/sessions/shell/drag/sessionListOrganizationAction';
 import { createSessionOrganizationMutationScopeForAccount, writeSessionOrganizationPin } from '@/sync/ops/sessionOrganization/sessionOrganizationMutationOwner';
@@ -706,6 +708,8 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
   apiTokenAction?: ApiTokenActionTransport;
   /** Private Machine reverse-RPC continuation: admission/approval happened in the daemon. */
   admittedClientActionId?: ActionId;
+  /** The daemon still awaiting that continuation; its Session caller's Workflow children return there. */
+  admittedClientActionParent?: AdmittedClientActionParent;
   resolveServerIdForSessionId?: (sessionId: string) => string | null;
   resolveServerNameForSessionId?: (sessionId: string) => string | null;
   openSession?: (sessionId: string, options?: OpenSessionOptions) => void | Promise<void>;
@@ -1951,7 +1955,26 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     } : {}),
 
     workspaceAction: invokeWorkspaceAction,
-    workflowAuthoringAction: invokeWorkflowAuthoringAction,
+    workflowAuthoringAction: request => invokeWorkflowAuthoringAction({ ...request,
+      context: { ...request.context,
+        // Keep the admitted binding, but enter each child's ordinary captured
+        // Account/approval lifecycle rather than the parent's lower-level graph.
+        ...(opts?.admittedClientActionId ? {
+          executeChildAction: (actionId: ActionId, input: unknown, context?: ActionExecutorContext) => {
+            const parent = opts.admittedClientActionParent;
+            const caller = context?.actionCaller;
+            // The Machine host admits a non-person caller's Workflow writes; only
+            // the daemon holding this Session caller's parent can continue it.
+            return parent && caller?.kind === 'session' && context?.authority !== 'present_user'
+              && context?.serverId && context.runtimeAccountId && isWorkflowHostAdmittedChildActionIdV1(actionId)
+              ? executeAdmittedClientActionChildAtMachine({ parent, serverId: context.serverId,
+                accountId: context.runtimeAccountId, sessionId: caller.sessionId, actionId, input,
+                ...(context.signal ? { signal: context.signal } : {}) })
+              : createDefaultActionExecutor(opts).execute(actionId, input, context);
+          },
+        } : {}),
+      },
+    }),
     sessionOrganizationMove: async request => {
       if (!accountContext) return { status: 'unavailable' as const };
       return await invokeSessionListOrganizationAction({

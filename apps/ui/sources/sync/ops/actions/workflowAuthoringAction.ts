@@ -95,6 +95,7 @@ export async function invokeWorkflowAuthoringAction(request: BindingRequest & Re
     const execute = owner.kind === 'review' ? owner.execute : owner.actions?.execute;
     return execute ? await execute(request.actionId, parsed.data, request.signal, {
         surface: request.context.surface, authority: request.context.authority,
+        executeChildAction: request.context.executeChildAction,
         serverId, serverIdentityId: request.context.serverIdentityId,
         runtimeAccountId: accountId, expectedAccountId: request.context.expectedAccountId,
         actionCaller: request.context.actionCaller, defaultSessionId: request.context.defaultSessionId,

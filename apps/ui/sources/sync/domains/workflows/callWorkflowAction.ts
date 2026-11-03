@@ -1,4 +1,5 @@
-import type { ActionExecutorContext, ActionId } from '@happier-dev/protocol';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
+import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { WorkflowActionFailureV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { randomUUID } from '@/platform/randomUUID';
 
@@ -27,6 +28,7 @@ import { WorkflowActionError } from './workflowActionError';
  */
 
 export type WorkflowActionExecute = ReturnType<typeof createFrontDoorActionExecute>;
+type WorkflowChildActionExecute = (...args: Parameters<WorkflowActionExecute>) => ReturnType<WorkflowActionExecute>;
 /** Caller facts retained across a mounted operation's child Actions, without parent consent. */
 export type WorkflowActionCallerContext = Pick<ActionExecutorContext,
     'surface' | 'authority' | 'serverId' | 'serverIdentityId' | 'runtimeAccountId' | 'expectedAccountId'
@@ -35,12 +37,14 @@ export type WorkflowActionCallerContext = Pick<ActionExecutorContext,
     | 'causalPermissionAuthority' | 'sessionInputSource' | 'agentStartContext' | 'sessionRoleConfiguration'
     | 'requesterWorkAttributionV1' | 'actionsSettings' | 'approvalOrigin' | 'externalActionCredential'
     | 'externalActionTarget' | 'rpcSessionAuthorization' | 'requiredContributedActionDangerLevel'
-    | 'expectedContributedActionOccurrenceId' | 'signal' | 'onTransportIssued'>;
+    | 'expectedContributedActionOccurrenceId' | 'signal' | 'onTransportIssued'> & Readonly<{
+    /** In-process continuation of the admitted executor; never part of wire context or consent. */
+    executeChildAction?: WorkflowChildActionExecute;
+}>;
 
 let sharedExecute: WorkflowActionExecute | null = null;
 
-function resolveExecute(injected: WorkflowActionExecute | undefined): WorkflowActionExecute {
-    if (injected !== undefined) return injected;
+function resolveExecute(): WorkflowActionExecute {
     // Resolved lazily and reused, so mounting a surface never eagerly builds the
     // executor dependency graph.
     sharedExecute ??= createFrontDoorActionExecute();
@@ -54,7 +58,7 @@ export async function callWorkflowAction<TResult>(params: Readonly<{
     parseResult: (value: unknown) => TResult;
     signal?: AbortSignal;
     /** Host-owned target facts; never merged into caller-authored Action input. */
-    context?: Omit<ActionExecutorContext, 'signal'>;
+    context?: Omit<ActionExecutorContext, 'signal'> & Pick<WorkflowActionCallerContext, 'executeChildAction'>;
     /** Routed fields use their captured Home binding; undefined preserves incumbent workflow scope. */
     accountLifetime?: ServerAccountScopeLifetime | null;
     /** Supplied by tests and by callers that own their executor lifetime. */
@@ -71,8 +75,10 @@ export async function callWorkflowAction<TResult>(params: Readonly<{
         || (params.context?.runtimeAccountId && params.context.runtimeAccountId !== activeLifetime.scope.accountId))) {
         throw new WorkflowActionError({ message: 'action_account_scope_changed', rawCode: 'action_account_scope_changed' });
     }
-    const result = await resolveExecute(params.execute)(params.actionId, params.input, {
-        ...params.context,
+    const { executeChildAction, ...context } = params.context ?? {};
+    const execute = params.execute ?? executeChildAction ?? resolveExecute();
+    const result = await execute(params.actionId, params.input, {
+        ...context,
         ...(activeLifetime ? {
             serverId: activeLifetime.scope.serverId,
             runtimeAccountId: activeLifetime.scope.accountId,

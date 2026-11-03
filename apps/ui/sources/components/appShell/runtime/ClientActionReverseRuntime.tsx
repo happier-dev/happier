@@ -88,7 +88,7 @@ function useMachineClientActionBindings({
                             return await createDefaultActionExecutor().execute(...args);
                         },
                     })
-                    : createUiClientActionReverseHandler(binding);
+                    : createUiClientActionReverseHandler({ ...binding, machineId });
                 const unregister = apiSocket.registerMachineScopedRpcHandler(machineId, method, handler, { settleInFlight: true });
                 registered.set(method, () => { mounted = false; unregister(); });
             }

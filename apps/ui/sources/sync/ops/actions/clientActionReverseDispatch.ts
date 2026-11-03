@@ -11,6 +11,8 @@ import { createDefaultActionExecutor } from './defaultActionExecutor';
 export function createUiClientActionReverseHandler(binding: Readonly<{
     serverId: string;
     accountId: string;
+    /** The dispatching Machine that admitted, and awaits, this continuation. */
+    machineId?: string;
     isCurrent(): boolean;
     canExecute?(): boolean;
 }>) {
@@ -22,7 +24,10 @@ export function createUiClientActionReverseHandler(binding: Readonly<{
         const { actionId, input, context: admitted } = request.data;
         const spec = getActionSpec(actionId);
         const readOnly = spec.sideEffectClass === 'read' || spec.sideEffectClass === 'none';
-        const executor = createDefaultActionExecutor({ admittedClientActionId: actionId });
+        const parentRequestId = admitted.actionRequestId;
+        const executor = createDefaultActionExecutor({ admittedClientActionId: actionId,
+            ...(binding.machineId && parentRequestId
+                ? { admittedClientActionParent: { machineId: binding.machineId, requestId: parentRequestId } } : {}) });
         try {
             const execution = await executor.execute(actionId, input, {
                 ...admitted,

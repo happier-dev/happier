@@ -26,7 +26,8 @@ import { readNewSessionDraftProjectionFromRepository } from '@/components/sessio
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createWorkflowDefinitionFixture, createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
 import { createSessionMessagesFixture, createToolCallMessageFixture } from '@/dev/testkit/fixtures/transcriptFixtures';
-import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { createPlainSessionByIdResponseFixture, createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { createSessionReadBatchHttpBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { getActionSpec } from '@happier-dev/protocol';
 import { buildWorkflowReviewedRunSeed, storeWorkflowReviewedRunSeed } from '@/sync/domains/workflows/workflowReviewedRunSeed';
 import { readWorkflowAgentRevision, storeWorkflowAgentRevision } from '@/sync/domains/workflows/workflowAgentRevision';
@@ -318,6 +319,12 @@ const daemonProjection = vi.hoisted(() => ({
     resolves: false,
 }));
 
+/** Children returned to the daemon that admitted their client Action parent. */
+const admittedParentChildren = vi.hoisted(() => ({
+    calls: [] as Array<{ method: string; params: unknown }>,
+    outcome: 'refused' as 'applied' | 'refused',
+}));
+
 vi.mock('socket.io-client', async (importOriginal) =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
 installDisconnectedServerSocketBoundary((socket) => {
@@ -329,6 +336,21 @@ installDisconnectedServerSocketBoundary((socket) => {
             throw new Error('Malformed native Machine RPC');
         }
         const method = raw.method.slice(raw.method.indexOf(':') + 1);
+        if (method === RPC_METHODS.UI_ACTION_CHILD_EXECUTE) {
+            admittedParentChildren.calls.push({ method: raw.method, params: 'params' in raw ? raw.params : undefined });
+            if (admittedParentChildren.outcome === 'applied') {
+                const { UiActionChildExecuteRequestV1Schema } = await import('@happier-dev/protocol/actions/clientDispatchV1');
+                const child = UiActionChildExecuteRequestV1Schema.parse('params' in raw ? raw.params : undefined);
+                const input = WorkflowDefinitionUpdateRequestV1Schema.parse(child.input);
+                return { ok: true, result: { v: 1, execution: { ok: true, result: {
+                    definitionId: input.definitionId, definition: input.definition, metadata: input.metadata,
+                    revision: { headerVersion: input.expectedRevision.headerVersion + 1, bodyVersion: input.expectedRevision.bodyVersion + 1 },
+                    access: 'owner',
+                } } } };
+            }
+            // The admitting daemon owns the child's caller policy; this fixture refuses it.
+            return { ok: true, result: { v: 1, execution: { ok: false, errorCode: 'run_access_denied', error: 'run_access_denied' } } };
+        }
         if (method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE && daemonProjection.resolves) {
             return { ok: true, result: DaemonContributionRegistryProjectionDescribeResponseSchema.parse({
                 protocolVersion: 1, projection: { v: 2, generation: 1, familiesById: {}, agentsById: {
@@ -769,6 +791,15 @@ async function serveMountedDraftActionHome(definition = createWorkflowDefinition
     const creates: Array<{ id: string; header: string; body: string; headerVersion: number; bodyVersion: number }> = [];
     const automationBoundary = createWorkflowAutomationHttpBoundary();
     const automationCreates = automationBoundary.creates;
+    // Session callers carry their approval profile in the real owner metadata.
+    // Serve those external records through both supported snapshot transports.
+    const callerSessions = new Set(['session-agent', 'authoring-session', 'unavailable-author']);
+    const sessionBoundary = createSessionReadBatchHttpBoundary(request => {
+        const id = /^\/v2\/sessions\/([^/]+)$/.exec(request.path)?.[1];
+        return id && callerSessions.has(id) ? Response.json(createPlainSessionByIdResponseFixture(
+            createSessionFixture({ id }),
+        )) : undefined;
+    });
     const artifactCreated = createDeferred<void>();
     let updateGate: ReturnType<typeof createDeferred<void>> | null = null;
     let updateIssued: ReturnType<typeof createDeferred<void>> | null = null;
@@ -776,6 +807,14 @@ async function serveMountedDraftActionHome(definition = createWorkflowDefinition
     let readIssued: ReturnType<typeof createDeferred<void>> | null = null;
     const boundary = await serveActionHomes({ homes: [{ key: 'home', serverUrl: 'https://workflow-mcp.test',
         accountId: 'account-a', currentAccount: true, settings, ...(serverIdentityId ? { serverIdentityId } : {}) }], route: async request => {
+        const sessionResponse = await sessionBoundary.handle(request);
+        if (sessionResponse) return sessionResponse;
+        if (request.method === 'POST' && request.path === '/v1/machines/read-batch') {
+            return createMachineReadBatchResponseFixture(request.body,
+                id => id === 'machine-a' ? createPlainMachineRowFixture({ id, accountId: 'account-a' }) : null);
+        }
+        if (request.path === '/v1/machines/machine-a') return Response.json({
+            machine: createPlainMachineRowFixture({ id: 'machine-a', accountId: 'account-a' }) });
         if (request.path === '/v1/features' || request.path === '/v1/features/authenticated') return Response.json(features);
         if (request.path === '/v1/account/encryption/currentness') {
             const { createPlainAccountEncryptionCurrentnessFixture } = await import('@/dev/testkit/fixtures/accountEncryptionCurrentness');
@@ -1527,6 +1566,60 @@ describe('WorkflowEditorHostScreen composition', () => {
         expect(boundary.updates).toHaveLength(child === 'definition' ? 1 : 0);
         expect(boundary.creates).toHaveLength(1);
         expect(readBodyProps()!.savePending).toBe(false);
+    });
+
+    it.each(['applied', 'refused'] as const)('mounted Agent Save returns a Session caller’s definition child after a typed outside-child refusal (%s)', async (outcome) => {
+        const boundary = await serveMountedDraftActionHome(undefined, true, 'srv_workflow-approval-home');
+        await (await import('@/sync/sync')).sync.awaitBootstrapForegroundAcquisition();
+        const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+        const { DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1 } = await import('@happier-dev/protocol/account/settings/sessionAgentSpawnPolicyV1');
+        const { UiActionChildExecuteRequestV1Schema, buildUiActionDispatchRequestV1 } = await import('@happier-dev/protocol/actions/clientDispatchV1');
+        const { createUiClientActionReverseHandler } = await import('@/sync/ops/actions/clientActionReverseDispatch');
+        const { executeAdmittedClientActionChildAtMachine } = await import('@/sync/ops/actions/admittedClientActionChild');
+        // The daemon's reverse dispatch: it admitted this Session caller and awaits this Save.
+        const executor = createDefaultActionExecutor({ admittedClientActionId: 'workflow.authoring.draft.save',
+            admittedClientActionParent: { machineId: 'machine-a', requestId: 'mounted-parent-save' } });
+        const context = { surface: 'agent' as const, authority: 'account_automation' as const,
+            serverId: boundary.scope.serverId, serverIdentityId: 'srv_workflow-approval-home',
+            runtimeAccountId: boundary.scope.accountId, expectedAccountId: boundary.scope.accountId,
+            callerPermissionMode: 'yolo', sessionAgentSpawnPolicyV1: DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1,
+            actionCaller: { kind: 'session', sessionId: 'authoring-session', starterDepth: 0, turnDepth: 0 },
+            defaultSessionId: 'authoring-session', actionRequestId: 'mounted-parent-save' } satisfies ActionExecutorContext;
+        const receive = createUiClientActionReverseHandler({ ...boundary.scope, machineId: 'machine-a', isCurrent: () => true });
+        await renderRunEditor(<WorkflowEditorHostScreen source={{ kind: 'saved', definitionId: SAVED_TRIGGER_WORKFLOW_ID }} />);
+        const snapshot = readBodyProps()!.mountedDraftActions!.getSnapshot()!;
+        const address = { scope: boundary.scope, draftId: snapshot.draftId };
+        await act(async () => { expect(await executor.execute('workflow.authoring.draft.edit', { ...address,
+            expectedDraftRevision: snapshot.draftRevision, settings: { description: 'Review this project every day' } }, context))
+            .toMatchObject({ ok: true, result: { status: 'applied' } }); });
+        admittedParentChildren.calls.length = 0;
+        // Replay JQ-R14's exact probe order: outside child first, then the valid
+        // mounted Save. A throwing parse previously prevented that Save entirely.
+        expect(await executeAdmittedClientActionChildAtMachine({
+            parent: { machineId: 'machine-a', requestId: context.actionRequestId },
+            serverId: boundary.scope.serverId, accountId: boundary.scope.accountId,
+            sessionId: context.defaultSessionId, actionId: 'session.list', input: {},
+        })).toEqual({ ok: false, errorCode: 'invalid_action_input', error: 'invalid_action_input' });
+        expect(admittedParentChildren.calls).toHaveLength(0);
+        admittedParentChildren.outcome = outcome;
+        try {
+            await act(async () => { expect(await receive(buildUiActionDispatchRequestV1({
+                actionId: 'workflow.authoring.draft.save', input: address, context,
+            }), { signal: new AbortController().signal })).toMatchObject({
+                v: 1, execution: { ok: true, result: outcome === 'applied'
+                    ? { status: 'applied' } : { status: 'refused', reason: 'run_access_denied' } },
+            }); });
+        } finally {
+            admittedParentChildren.outcome = 'refused';
+        }
+        expect(admittedParentChildren.calls).toHaveLength(1);
+        expect(admittedParentChildren.calls[0]!.method).toBe(`machine-a:${RPC_METHODS.UI_ACTION_CHILD_EXECUTE}`);
+        expect(UiActionChildExecuteRequestV1Schema.parse(admittedParentChildren.calls[0]!.params)).toMatchObject({
+            v: 1, parentRequestId: 'mounted-parent-save', sessionId: 'authoring-session', actionId: 'workflow.definition.update' });
+        // The App neither writes the definition nor authors the child's approval.
+        expect(boundary.updates).toHaveLength(0);
+        expect(boundary.creates).toHaveLength(0);
+        expect(readBodyProps()!.mountedDraftActions!.getSnapshot()).toMatchObject({ dirty: outcome !== 'applied' });
     });
 
     it('mounted settings preserve a view recipient’s personal target and trigger authority without definition writes', async () => {
