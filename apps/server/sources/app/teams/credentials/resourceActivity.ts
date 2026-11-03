@@ -203,7 +203,7 @@ async function admitSavedSecretDisclosureInTx(tx: Tx, input: SavedSecretDisclosu
         return { ok: false as const, error: 'resource_forbidden' as const };
     }
     const admitted = await admitSavedSecretResourceManagementInTx(tx, { accountId: input.actorAccountId,
-        resourceId: input.resourceId, expectedRevision: input.expectedRevision });
+        resourceId: input.resourceId, expectedRevision: input.expectedRevision, authentication: input.authentication });
     return admitted.ok ? admitted : { ok: false as const, error: admitted.error === 'resource_changed'
         ? 'resource_changed' as const : admitted.error === 'forbidden' ? 'resource_forbidden' as const : 'resource_not_found' as const };
 }
@@ -270,7 +270,7 @@ export async function readSavedSecretDisclosureActivityInTx(tx: Tx, input: Reado
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100 || !input.resourceId.trim()) return { ok: false, error: 'invalid_resource_input' };
     if (input.authentication.authenticationAuthority !== 'present_user') return { ok: false, error: 'resource_forbidden' };
     const admitted = await admitSavedSecretResourceManagementInTx(tx, { accountId: input.actorAccountId, resourceId: input.resourceId,
-    });
+        authentication: input.authentication });
     if (!admitted.ok) {
         // Resource ids can be reused after deletion. Retained history belongs to
         // its recorded owning scope, never to a later same-id resource's owner.
