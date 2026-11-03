@@ -211,6 +211,19 @@ it('binds pre-forward managed admission without admitting prompt custody or dupl
     managedAdmission: { ...managedAdmission, input: { ...compute, agentStart: { initialInput: { text: 'private' } } } } }).success).toBe(false);
 });
 
+it('admits only closed transport causes on an uncertain Action acknowledgement', () => {
+  const payload = { error: 'invalid_request', code: 'action_outcome_unknown', requestId: 'request',
+    diagnostic: { reason: 'daemon_rpc_refused', errorCode: 'RPC_FORBIDDEN' } };
+  expect(externalActionApi.ExternalActionHttpErrorSchema.safeParse(payload).success).toBe(true);
+  expect(externalActionApi.ExternalActionHttpErrorSchema.safeParse({ ...payload,
+    diagnostic: { reason: 'managed_wake_unconfirmed' } }).success).toBe(true);
+  for (const diagnostic of [{ ...payload.diagnostic, message: 'private' },
+    { ...payload.diagnostic, errorCode: 'private' }, { reason: 'private' }]) {
+    expect(externalActionApi.ExternalActionHttpErrorSchema.safeParse({ ...payload, diagnostic }).success).toBe(false);
+  }
+  expect(externalActionApi.ExternalActionHttpErrorSchema.safeParse({ ...payload, code: 'target_unavailable' }).success).toBe(false);
+});
+
 it('carries an offline admitted row receipt only on target unavailability, never as execution authority', () => {
   const receipt = { managedId: 'waiting-row' };
   expect(externalActionApi.projectExternalActionHttpError('target_unavailable', 'request', receipt)).toEqual({

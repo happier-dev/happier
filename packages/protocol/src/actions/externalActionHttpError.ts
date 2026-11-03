@@ -4,6 +4,7 @@ import { maxCodeUnits } from '../strings/maxCodeUnits.js';
 import { ApiTokenGrantDenialReasonV1Schema } from '../auth/apiTokenGrant.js';
 import { UNEXPECTED_ACTION_FAILURE_CODES_V1 } from './actionExecutionResult.js';
 import { EXTERNAL_ACTION_REQUEST_ID_MAX_LENGTH_V1 } from './externalActionLimits.js';
+import { RPC_ERROR_CODES } from '../rpc/errors.js';
 
 export const ExternalActionRequestIdV1Schema = lazyZodSchema(() => z.string().check(z.minLength(1), maxCodeUnits(EXTERNAL_ACTION_REQUEST_ID_MAX_LENGTH_V1), z.refine((value) => value.trim() === value, 'requestId must not have outer whitespace')));
 
@@ -94,6 +95,17 @@ const ExternalActionCredentialScopeHttpErrorSchema = lazyZodSchema(() => z.stric
   diagnostic: z.optional(ExternalActionCredentialScopeDiagnosticV1Schema),
 }));
 
+/** Transport evidence only: an RPC refusal is not an authenticated Action settlement. */
+export const ExternalActionSubmittedUnknownCauseV1Schema = lazyZodSchema(() => z.union([
+  z.strictObject({ reason: z.literal('daemon_rpc_refused'), errorCode: z.enum(Object.values(RPC_ERROR_CODES)) }),
+  z.strictObject({ reason: z.enum(['daemon_acknowledgement_lost', 'daemon_response_invalid', 'managed_wake_unconfirmed']) }),
+]));
+export type ExternalActionSubmittedUnknownCauseV1 = z.infer<typeof ExternalActionSubmittedUnknownCauseV1Schema>;
+const ExternalActionSubmittedUnknownHttpErrorSchema = lazyZodSchema(() => z.strictObject({
+  error: z.literal('invalid_request'), code: z.literal('action_outcome_unknown'),
+  requestId: z.optional(ExternalActionRequestIdV1Schema), diagnostic: ExternalActionSubmittedUnknownCauseV1Schema,
+}));
+
 export type ActionCredentialScopeDeniedFailureV1 = Readonly<{
   ok: false;
   errorCode: 'credential_scope_denied';
@@ -111,6 +123,7 @@ export function readActionCredentialScopeDeniedHttpFailureV1(
 
 /** One strict redacted outer error union shared by both Action HTTP origins. */
 export const ExternalActionHttpErrorSchema = lazyZodSchema(() => z.union([
+  ExternalActionSubmittedUnknownHttpErrorSchema,
   ExternalActionInvalidRequestHttpErrorSchema,
   ExternalActionManagedWaitingHttpErrorSchema,
   ExternalActionAuthenticationHttpErrorSchema,
