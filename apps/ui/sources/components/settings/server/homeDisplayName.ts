@@ -67,3 +67,8 @@ export function useHomeDisplayLabel(profile: HomeDisplayProfile | null | undefin
 export function resolveHomeDisplayNameForRelayUrl(relayUrl: string): string | null {
     return resolveHomeDisplayName(resolveUniqueServerProfileByUrl(relayUrl));
 }
+
+export function resolveHomeDisplayLabelForServerIdentity(serverIdentityId: string): string {
+    const resolution = resolveServerProfileForPortableIdentity(serverIdentityId);
+    return resolution.kind === 'resolved' ? resolveHomeDisplayLabel(resolution.profile, serverIdentityId) : t('common.homeProductName');
+}
