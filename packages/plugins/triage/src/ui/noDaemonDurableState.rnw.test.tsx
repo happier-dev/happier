@@ -34,8 +34,10 @@ import {
 } from '../settings/testkit/accountKv.test-support.js';
 import { TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1, mutateTriageAction } from '../settings/actions.js';
 import { TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1 } from '../settings/savedViews.js';
-import { readTriageEntryDetail } from '../actions/readEntryDetail.js';
-import { createTestkitSourceSessionRelations } from '../sessions/testkit/entrySessionTestkit.test-support.js';
+import { readTriageEntryDetail, createTriageReadEntryDetailActionHandler } from '../actions/readEntryDetail.js';
+import { TriageReadEntryDetailInputV1Schema } from '../actions/entryDetailProtocol.js';
+import type { TriageDataActionContext } from '../actions/dataContext.js';
+import { createTestkitSourceSessionRelations, testkitReadOnlySourceSnapshot } from '../sessions/testkit/entrySessionTestkit.test-support.js';
 import { linkEntryToSession } from '../sessions/entrySessionLinks.js';
 import {
     createActionTriageUnlinkTransport,
@@ -93,6 +95,7 @@ type DurableHarness = Readonly<{
     accountKv: TestkitAccountKv;
     client: PluginUiDataClient;
     actionCalls: readonly string[];
+    accountActionCalls: readonly string[];
     admissionDenied: boolean;
 }>;
 
@@ -115,6 +118,7 @@ function createDurableHarness(options: Readonly<{
     const corpus = createTestkitCorpusCollections();
     const accountKv = createTestkitAccountKv();
     const actionCalls: string[] = [];
+    const accountActionCalls: string[] = [];
     const sourceInstances = options.sourceRemoveConflict !== true
         ? corpus.collections.sourceInstances
         : {
@@ -156,6 +160,7 @@ function createDurableHarness(options: Readonly<{
         accountKv,
         client: options.accountReachable === false ? (null as unknown as PluginUiDataClient) : client,
         actionCalls,
+        accountActionCalls,
         admissionDenied: options.admissionDenied === true,
     };
 }
@@ -318,9 +323,21 @@ async function mountProbe(harness: DurableHarness, surfaceContext = createSurfac
                     return true;
                 },
                 confirm: async () => true,
-                // No daemon is reachable. Every Action dispatch fails exactly as
-                // it does when the mount cannot reach a machine at all.
-                executeAction: async ({ action }) => {
+                // Account Actions remain reachable without a Machine. Their
+                // real handlers run over the persistence boundary testkit.
+                executeAction: async ({ action, input }) => {
+                    if (harness.client !== null && String(action) === 'entries/read-detail-v1') {
+                        (harness.accountActionCalls as string[]).push(String(action));
+                        if (harness.admissionDenied) throw new PluginError({ code: 'denied' });
+                        // The invocation test boundary supplies only the services these handlers consume.
+                        const context = { surface: 'ui', caller: { kind: 'plugin', pluginId: PLUGIN_ID }, signal: new AbortController().signal,
+                            services: { storage: { account: { collection: (definition: { id: string }) => harness.client.collection(definition as Parameters<PluginUiDataClient['collection']>[0]) } },
+                                targetedContributions: { observeForSelf: () => ({ readCurrent: async () => testkitReadOnlySourceSnapshot(), dispose: () => {} }) },
+                                actions: { executeAdmittedTargetedOperation: async () => { throw new Error('No source role was declared'); } },
+                            },
+                        } as unknown as TriageDataActionContext;
+                        return await createTriageReadEntryDetailActionHandler()(TriageReadEntryDetailInputV1Schema.parse(input), context) as never;
+                    }
                     calls.push(String(action));
                     throw new Error('No daemon is reachable from this mount.');
                 },
@@ -556,6 +573,7 @@ describe('durable Account state with no daemon reachable', () => {
         expect(harness.corpus.control.userMarks.inspect(markTag)?.deleted).toBe(false);
         await expect(fixture.getByText('detail:ready:1:done'))
             .resolves.toEqual({ content: 'detail:ready:1:done' });
+        expect(harness.accountActionCalls).toEqual(['entries/read-detail-v1']);
 
         await act(async () => {
             await fixture.press(await fixture.getByRole('button', { name: 'probe-unpin' }));
