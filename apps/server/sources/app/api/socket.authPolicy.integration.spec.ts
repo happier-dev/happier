@@ -1,4 +1,9 @@
 import { stopLocalMachinePresenceTimeout } from '@/app/presence/timeout';
+import tweetnacl from 'tweetnacl';
+import { decodeBase64 } from 'privacy-kit';
+import { MACHINE_PLAIN_DATA_KEY_MARKER, encodePlainMachineStoredContent } from '@happier-dev/protocol';
+import { encodeBase64 as encodeProtocolBase64 } from '@happier-dev/protocol/crypto/base64';
+import { signMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import Fastify from "fastify";
 import { Server } from "socket.io";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -247,6 +252,43 @@ describe("startSocket (auth policy enforcement)", () => {
         await db.session.deleteMany();
         await db.machine.deleteMany();
         await db.account.deleteMany();
+    });
+
+    it.each(['installation-id', 'public-key'])('refuses a displaced %s on its next authenticated connection', async (change) => {
+        const account = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const oldKey = tweetnacl.sign.keyPair();
+        const newKey = change === 'public-key' ? tweetnacl.sign.keyPair() : oldKey;
+        const machine = await db.machine.create({ data: {
+            id: `rebound-${account.id}`, accountId: account.id,
+            installationId: change === 'installation-id' ? 'installation-new' : 'installation-old',
+            installationPublicKey: new Uint8Array(newKey.publicKey),
+            metadata: encodePlainMachineStoredContent({ host: 'rebound' }),
+            dataEncryptionKey: new Uint8Array(decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER)),
+        } });
+        const token = await auth.createToken(account.id, undefined, { kind: 'account', authority: 'present_user' });
+        const app = Fastify({ logger: false }) as unknown as AppFastify;
+        startSocket(app);
+        await app.listen({ port: 0, host: '127.0.0.1' });
+        const address = app.server.address();
+        if (!address || typeof address === 'string') throw new Error('Missing socket listener');
+        const socket = ioClient(`http://127.0.0.1:${address.port}`, { path: '/v1/updates', transports: ['websocket'],
+            reconnection: false, autoConnect: false, auth: { token, clientType: 'machine-scoped', machineId: machine.id,
+                runtimeId: 'displaced-runtime', startupSource: 'manual', serviceManaged: false,
+                installationId: 'installation-old', installationPublicKey: encodeProtocolBase64(oldKey.publicKey, 'base64url'),
+                installationProof: signMachineInstallationProof({ payload: { version: 1, installationId: 'installation-old',
+                    machineId: machine.id, accountId: account.id }, privateKey: oldKey.secretKey }) } });
+        try {
+            const connection = waitForConnectionSuccess(socket);
+            socket.connect();
+            await expect(connection).rejects.toMatchObject({ data: { error: 'machine_revoked', statusCode: 410 } });
+            expect(socket.connected).toBe(false);
+            expect(await db.machine.findUniqueOrThrow({ where: { id: machine.id } })).toMatchObject({
+                installationId: machine.installationId, revokedAt: null,
+            });
+        } finally {
+            socket.disconnect();
+            await app.close();
+        }
     });
 
     it('admits connect only when ready and keeps superseded and ordinary disconnects out of presence transitions', async () => {

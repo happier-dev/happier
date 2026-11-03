@@ -12,17 +12,18 @@ export type MachineSocketInstallationRow = Readonly<{
     installationPublicKey: Uint8Array | null;
 }>;
 
-/**
- * Verifies the machine-scoped Socket proof against the persisted installation
- * identity. A missing or invalid proof stays compatible for general machine
- * sockets, but it cannot attest a reserved server-origin daemon method.
- */
-export function resolveVerifiedMachineSocketInstallationId(params: Readonly<{
+export type MachineSocketInstallationIdentity =
+    | Readonly<{ kind: 'verified'; installationId: string }>
+    | Readonly<{ kind: 'unverified' }>
+    | Readonly<{ kind: 'displaced' }>;
+
+/** Valid proofs identify the current or displaced installation; legacy proofs remain unverified. */
+export function resolveMachineSocketInstallationIdentity(params: Readonly<{
     accountId: string;
     machineId: string;
     machine: MachineSocketInstallationRow;
     socketAuth: unknown;
-}>): string | null {
+}>): MachineSocketInstallationIdentity {
     const ownership = readMachineDaemonOwnershipMetadataFromSocketAuth(params.socketAuth);
     const verification = validateMachineInstallationProof({
         accountId: params.accountId,
@@ -36,15 +37,23 @@ export function resolveVerifiedMachineSocketInstallationId(params: Readonly<{
         // carry machine-registration-only replacement/content-key fields.
         contentPublicKeyFingerprint: null,
     });
-    if (!verification.ok || !verification.identity) return null;
-    if (params.machine.installationId !== verification.identity.installationId) return null;
+    if (!verification.ok || !verification.identity) return { kind: 'unverified' };
+    if (params.machine.installationId !== verification.identity.installationId) return { kind: 'displaced' };
     if (!machineInstallationPublicKeysEqual(
         params.machine.installationPublicKey,
         verification.identity.installationPublicKey,
     )) {
-        return null;
+        return { kind: 'displaced' };
     }
-    return verification.identity.installationId;
+    return { kind: 'verified', installationId: verification.identity.installationId };
+}
+
+/** Existing attestation consumers need only the verified installation, not the refusal classification. */
+export function resolveVerifiedMachineSocketInstallationId(
+    params: Parameters<typeof resolveMachineSocketInstallationIdentity>[0],
+): string | null {
+    const identity = resolveMachineSocketInstallationIdentity(params);
+    return identity.kind === 'verified' ? identity.installationId : null;
 }
 
 /** Reads only the identity the Socket authentication owner has attested. */

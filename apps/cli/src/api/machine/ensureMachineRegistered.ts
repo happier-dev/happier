@@ -20,7 +20,10 @@ function throwIfMachineRegistrationIsQuiescing(isShuttingDown: (() => boolean) |
   throw error;
 }
 
-async function rotateMachineIdForActiveServer(opts: Readonly<{ expectedCurrentMachineId: string }>): Promise<string> {
+export async function rotateMachineIdForActiveServer(opts: Readonly<{
+  expectedCurrentMachineId: string;
+  recordReplacementCandidate?: boolean;
+}>): Promise<string> {
   // Extremely defensive: UUID collisions are practically impossible, but avoid a no-op rotation.
   let nextMachineId = randomUUID();
   if (nextMachineId === opts.expectedCurrentMachineId) nextMachineId = randomUUID();
@@ -57,11 +60,16 @@ async function rotateMachineIdForActiveServer(opts: Readonly<{ expectedCurrentMa
     const nextReplacementCandidates = { ...(settings.machineReplacementCandidatesByServerIdByAccountId ?? {}) };
     if (normalizedAccountId) {
       const byAccount = { ...(nextReplacementCandidates[activeServerId] ?? {}) };
-      byAccount[normalizedAccountId] = {
-        machineId: opts.expectedCurrentMachineId,
-        replacementReason: 'rotation',
-        createdAt: Date.now(),
-      };
+      if (opts.recordReplacementCandidate === false) {
+        // A displaced installation must not retire the Machine now owned by its successor.
+        delete byAccount[normalizedAccountId];
+      } else {
+        byAccount[normalizedAccountId] = {
+          machineId: opts.expectedCurrentMachineId,
+          replacementReason: 'rotation',
+          createdAt: Date.now(),
+        };
+      }
       nextReplacementCandidates[activeServerId] = byAccount;
     }
 
@@ -237,7 +245,8 @@ export async function ensureMachineRegistered(opts: Readonly<{
       `[MACHINE] [RECOVERED] Machine identity invalid${caller}: ${opts.machineId} cannot be reused on this server; generating a new machine id and retrying once.`,
     );
 
-    const rotated = await rotateMachineIdForActiveServer({ expectedCurrentMachineId: opts.machineId });
+    const rotated = await rotateMachineIdForActiveServer({ expectedCurrentMachineId: opts.machineId,
+      recordReplacementCandidate: !isMachineRevokedError(error) });
 
     throwIfMachineRegistrationIsQuiescing(opts.isShuttingDown);
     const machine = await opts.api.getOrCreateMachine({

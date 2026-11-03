@@ -62,7 +62,7 @@ import {
     createSessionServerStartAutomationIngress,
     createSessionServerStartDaemonDispatcher,
 } from "./socket/sessionServerStartDispatcher";
-import { resolveVerifiedMachineSocketInstallationId } from "./socket/machineSocketInstallationProof";
+import { resolveMachineSocketInstallationIdentity } from "./socket/machineSocketInstallationProof";
 import { installSessionPublisherCredentialCurrentness } from "./socket/socketCredentialCurrentness";
 import { rejectSocket, resolveSocketAuthUnavailableError } from "./socket/socketAuthError";
 import { resolveMachineAdmission } from '@/app/machines/machineAccess';
@@ -609,12 +609,17 @@ export function startSocket(app: Fastify) {
                     observeHandshakeStage("error");
                     return rejectHandshake({ statusCode: 403, error: "invalid-machine" });
                 }
-                verifiedMachineInstallationId = resolveVerifiedMachineSocketInstallationId({
+                const installationIdentity = resolveMachineSocketInstallationIdentity({
                     accountId: verified.userId,
                     machineId: machine.id,
                     machine,
                     socketAuth: socket.handshake.auth,
                 });
+                if (installationIdentity.kind === 'displaced') {
+                    observeHandshakeStage("error");
+                    return rejectHandshake({ statusCode: 410, error: 'machine_revoked' });
+                }
+                verifiedMachineInstallationId = installationIdentity.kind === 'verified' ? installationIdentity.installationId : null;
                 if (
                     ephemeralRunnerAdmission?.kind === "machine-runtime"
                     && verifiedMachineInstallationId !== ephemeralRunnerAdmission.principal.installationId

@@ -1,4 +1,3 @@
-import { machineInstallationPublicKeysEqual } from "./installationProof";
 import { isPersistentMachine, type MachineKind } from '@happier-dev/protocol/machines/machineKind';
 
 export type MachineReplacementSource = "automatic" | "manual";
@@ -56,7 +55,7 @@ export function validateMachineReplacement(input: MachineReplacementValidationIn
             return { ok: false, statusCode: 409, reason: "old_machine_replacement_conflict" };
         }
     }
-    const target = validateMachineReplacementTarget({ oldMachine, replacementMachine, source });
+    const target = validateMachineReplacementTarget({ oldMachine, replacementMachine });
     if (!target.ok) return target;
 
     if (source === "manual" && oldMachine.active && input.confirmActiveOldMachine !== true) {
@@ -68,9 +67,9 @@ export function validateMachineReplacement(input: MachineReplacementValidationIn
 
 /** Initial admission and terminal publication enforce the same destination rule. */
 export function validateMachineReplacementTarget(input: Readonly<{
-    oldMachine: MachineReplacementRow; replacementMachine: MachineReplacementRow; source: MachineReplacementSource;
+    oldMachine: MachineReplacementRow; replacementMachine: MachineReplacementRow;
 }>): MachineReplacementValidationResult {
-    const { oldMachine, replacementMachine, source } = input;
+    const { oldMachine, replacementMachine } = input;
     if (replacementMachine.revokedAt) {
         return { ok: false, statusCode: 400, reason: "replacement_machine_revoked" };
     }
@@ -79,19 +78,6 @@ export function validateMachineReplacementTarget(input: Readonly<{
     }
     if (hasIncompatibleKeyspace(oldMachine, replacementMachine)) {
         return { ok: false, statusCode: 400, reason: "content_public_key_fingerprint_mismatch" };
-    }
-
-    if (source === "automatic") {
-        if (!oldMachine.installationId || oldMachine.installationId !== replacementMachine.installationId) {
-            return { ok: false, statusCode: 400, reason: "installation_id_mismatch" };
-        }
-        if (
-            oldMachine.installationPublicKey
-            && replacementMachine.installationPublicKey
-            && !machineInstallationPublicKeysEqual(oldMachine.installationPublicKey, replacementMachine.installationPublicKey)
-        ) {
-            return { ok: false, statusCode: 400, reason: "installation_public_key_mismatch" };
-        }
     }
 
     return { ok: true };

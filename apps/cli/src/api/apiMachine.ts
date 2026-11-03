@@ -590,14 +590,17 @@ function readSocketConnectErrorDiagnostic(error: unknown): Readonly<{
 
 type SessionFollowSourceInvalidation = Readonly<{ full: boolean; workflowRunIds: readonly string[]; discussionIds?: readonly string[] }>;
 
-function isMachineReplacedSocketError(error: unknown): boolean {
+function readMachineSocketRetirementReason(error: unknown): 'replaced' | 'revoked' | null {
     const record = asRecord(error);
     const data = asRecord(record?.data);
     const errorCode = typeof data?.error === 'string' ? data.error.trim() : '';
     const message = typeof record?.message === 'string' ? record.message.trim() : '';
     const statusRaw = data?.statusCode ?? data?.status;
     const statusCode = typeof statusRaw === 'number' && Number.isFinite(statusRaw) ? statusRaw : null;
-    return statusCode === 410 && (errorCode === 'machine-replaced' || errorCode === 'machine_replaced' || message === 'machine-replaced');
+    if (statusCode !== 410) return null;
+    if (errorCode === 'machine_revoked') return 'revoked';
+    return errorCode === 'machine-replaced' || errorCode === 'machine_replaced' || message === 'machine-replaced'
+        ? 'replaced' : null;
 }
 
 /** Serialize the consumed machine activity stream through one Account encryption boundary. */
@@ -4761,7 +4764,7 @@ export class ApiMachineClient {
         takeover?: boolean;
         onConnect?: () => void | Promise<void>;
         onOwnershipConflict?: (conflict: { owner: MachineOwnerConflictDetails }) => void;
-        onMachineReplaced?: (event: { machineId: string }) => void;
+        onMachineReplaced?: (event: { machineId: string; reason?: 'revoked' }) => void;
         prepareServerTransportForReconnect?: () => Promise<ReadinessProbeResult>;
     }) {
         logger.debug(`[API MACHINE] Connecting to ${resolveServerHttpBaseUrl()}`);
@@ -5005,7 +5008,7 @@ export class ApiMachineClient {
             takeover?: boolean;
             onConnect?: () => void | Promise<void>;
             onOwnershipConflict?: (conflict: { owner: MachineOwnerConflictDetails }) => void;
-            onMachineReplaced?: (event: { machineId: string }) => void;
+            onMachineReplaced?: (event: { machineId: string; reason?: 'revoked' }) => void;
         },
     ) {
         socket.on('connect_error', (error: unknown) => {
@@ -5016,9 +5019,11 @@ export class ApiMachineClient {
             if (!ownershipConflict) {
                 const diagnostic = readSocketConnectErrorDiagnostic(error);
                 logger.warn('[API MACHINE] Machine socket connect error', diagnostic);
-                if (isMachineReplacedSocketError(error)) {
+                const retirementReason = readMachineSocketRetirementReason(error);
+                if (retirementReason) {
                     void this.connectionSupervisor?.stop().catch(() => {});
-                    params?.onMachineReplaced?.({ machineId: this.machine.id });
+                    params?.onMachineReplaced?.({ machineId: this.machine.id,
+                        ...(retirementReason === 'revoked' ? { reason: 'revoked' } : {}) });
                 }
                 return;
             }

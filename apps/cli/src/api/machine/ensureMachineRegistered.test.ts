@@ -371,6 +371,10 @@ describe('ensureMachineRegistered', () => {
             machineIdConfirmedByServerByServerId: {
               cloud: true,
             },
+            lastTokenSubByServerId: { cloud: 'account-rebound' },
+            machineReplacementCandidatesByServerIdByAccountId: { cloud: {
+              'account-rebound': { machineId: oldMachineId, replacementReason: 'rotation', createdAt: 1 },
+            } },
             lastChangesCursorByServerIdByAccountId: {},
           },
           null,
@@ -415,6 +419,7 @@ describe('ensureMachineRegistered', () => {
       expect(machine.id).toBe(calls[1]);
 
       const settings = await readSettings();
+      expect(settings.machineReplacementCandidatesByServerIdByAccountId?.cloud?.['account-rebound']).toBeUndefined();
       expect(settings.machineId).toBe(calls[1]);
       expect(settings.machineIdConfirmedByServer).toBe(true);
     } finally {

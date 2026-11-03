@@ -1500,7 +1500,8 @@ export class ApiClient {
       if (axios.isAxiosError(error) && error.response?.status === 400) {
         const body = error.response.data as any;
         const reason = typeof body?.reason === 'string' ? body.reason : '';
-        if (body?.error === 'invalid-params' && reason === 'content_public_key_mismatch') {
+        if (body?.error === 'invalid-params'
+          && (reason === 'content_public_key_mismatch' || reason === 'content_public_key_fingerprint_mismatch')) {
           // Do not retry: this indicates a credentials/key mismatch, not a transient network failure.
           throw new MachineContentPublicKeyMismatchError(opts.machineId, reason);
         }

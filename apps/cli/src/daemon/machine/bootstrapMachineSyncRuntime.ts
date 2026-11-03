@@ -9,6 +9,7 @@ import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLo
 import type { CurrentMachineExecutionOriginContext } from '@/api/machine/resolveCurrentMachineExecutionOriginContext';
 
 import type { ApiMachineClient } from '@/api/apiMachine';
+import { rotateMachineIdForActiveServer } from '@/api/machine/ensureMachineRegistered';
 import type { MachineRpcHandlerDeps } from '@/api/machine/rpcHandlers';
 import type { RpcHandlerContext } from '@/api/rpc/types';
 import type { ReadinessProbeResult } from '@happier-dev/connection-supervisor';
@@ -2194,6 +2195,17 @@ export async function bootstrapMachineSyncRuntime(
         params.requestShutdown('exception', 'machine-owner-conflict');
       },
       onMachineReplaced: (event) => {
+        if (event.reason === 'revoked') {
+          logger.warn('[DAEMON RUN] Machine installation was displaced; rotating its registration before restart', event);
+          void rotateMachineIdForActiveServer({ expectedCurrentMachineId: event.machineId, recordReplacementCandidate: false }).then(
+            () => params.requestShutdown('exception', 'machine-revoked'),
+            error => {
+              logger.warn('[DAEMON RUN] Machine identity rotation failed; stopping the displaced daemon', serializeAxiosErrorForLog(error));
+              params.requestShutdown('happier-app', 'machine-identity-rotation-failed');
+            },
+          );
+          return;
+        }
         logger.warn('[DAEMON RUN] Machine was replaced by the server; shutting down stale daemon connection', event);
         params.requestShutdown('happier-app', 'machine-replaced');
       },

@@ -47,7 +47,7 @@ export async function applyMachineReplacement(params: ApplyMachineReplacementPar
         if (!oldMachine || !replacementMachine || oldMachine.accountId !== params.accountId
             || replacementMachine.accountId !== params.accountId
             || (previous?.replacedByMachineId !== params.replacementMachineId
-                && !validateMachineReplacementTarget({ oldMachine, replacementMachine, source: params.source }).ok)) {
+                && !validateMachineReplacementTarget({ oldMachine, replacementMachine }).ok)) {
             throw new TransactionReplayRequiredError('transaction-account-audience-changed');
         }
     });

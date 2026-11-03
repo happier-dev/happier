@@ -21,6 +21,9 @@ async function fixture(initialMode: 'plain' | 'e2ee' = 'e2ee') {
   let modeReads = 0;
   let identityReads = 0;
   let writes = 0;
+  let machineReplacement: unknown;
+  let registrationBody: unknown;
+  let registrationRefusal: string | undefined;
   let afterMachine = () => {};
   const metadata = { host: 'private-host', homeDir: '/home/owner', platform: 'linux', happyCliVersion: 'test', happyHomeDir: '/home/owner/.happier' };
   const row = { id: 'machine', storageMode: initialMode,
@@ -36,7 +39,11 @@ async function fixture(initialMode: 'plain' | 'e2ee' = 'e2ee') {
     return revoked ? reply.code(401).send({ error: 'unauthorized' }) : { mode, updatedAt: 1 };
   });
   app.get('/v1/machines/machine', async () => { afterMachine(); return { machine: row }; });
-  app.post('/v1/machines', async () => { writes++; return { machine: row }; });
+  app.post('/v1/machines', async (request, reply) => {
+    registrationBody = request.body; writes++;
+    if (registrationRefusal) return reply.code(400).send({ error: 'invalid-params', reason: registrationRefusal });
+    return { machine: row, ...(machineReplacement === undefined ? {} : { machineReplacement }) };
+  });
   app.post('/v1/machines/machine/content-key/transition', async () => {
     writes++;
     return { kind: 'refused', code: 'machine_unavailable' };
@@ -50,10 +57,22 @@ async function fixture(initialMode: 'plain' | 'e2ee' = 'e2ee') {
     api, metadata, channel, serverBaseUrl,
     run: <T>(action: () => T) => runWithServerHttpBaseUrl(serverBaseUrl, action),
     afterMachine(action: () => void) { afterMachine = action; },
+    replacement(value: unknown) { machineReplacement = value; },
+    registration: () => registrationBody,
+    refuseRegistration(reason: string) { registrationRefusal = reason; },
     change(change: 'mode' | 'epoch') { if (change === 'mode') mode = initialMode === 'plain' ? 'e2ee' : 'plain'; else revoked = true; },
     counts: () => ({ modeReads, identityReads, writes }),
   };
 }
+
+it.each(['content_public_key_mismatch', 'content_public_key_fingerprint_mismatch'])(
+  'preserves a reachable registration content refusal as its typed reason (%s)', async reason => {
+    const f = await fixture('plain');
+    f.refuseRegistration(reason);
+    await expect(f.run(() => f.api.getOrCreateMachine({ machineId: 'machine', metadata: f.metadata })))
+      .rejects.toMatchObject({ name: 'MachineContentPublicKeyMismatchError', machineId: 'machine', reason });
+  },
+);
 
 it('keeps ordinary Machine opening on the connected observed identity', async () => {
   const f = await fixture('plain');

@@ -2804,6 +2804,20 @@ or retired RPC material remains a refusal, including for server-origin reads.
 
 ### Machine metadata + daemon state
 
+- In unreleased 0.3 source, an Account-authenticated registration with a valid
+  installation signature may rebind that Account's existing Machine id to a
+  different installation id or public key. Registration preserves the incumbent
+  metadata, daemon state and content-key envelope; content-key compatibility
+  checks still apply. Another Account cannot claim the Machine id. Controller-bound
+  managed resources retain their Machine id and follow its new installation in
+  the same transaction, so the owner can admit Stop or Delete again.
+  Existing Machine sockets close after commit. A displaced installation receives
+  `410 machine_revoked` at its next authenticated socket connection. The CLI
+  rotates its local Machine id without making the rebound Machine a replacement
+  candidate, then uses normal daemon restart/registration (or the next manual
+  daemon start). No installation history is retained: a later explicit, valid
+  same-Account registration can rebind again. Missing/invalid legacy socket proof
+  remains unverified and cannot authorize installation-bound RPCs.
 - In unreleased 0.3 source, the existing Machine census and exact-row projection
   carry `recipientWorkPending` and `recipientWorkCursor` for current encrypted
   Manage holders. The access owner derives pending work through the same

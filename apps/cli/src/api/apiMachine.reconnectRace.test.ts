@@ -613,6 +613,33 @@ describe('ApiMachineClient reconnect race handling', () => {
         expect(machineReplaced).toHaveBeenCalledWith({ machineId: 'machine-1' });
     });
 
+    it('stops a displaced installation and reports the existing revoked reason', async () => {
+        const { ApiMachineClient } = await import('./apiMachine');
+
+        const machine: Machine = {
+            id: 'machine-1',
+            encryptionKey: new Uint8Array(32).fill(7),
+            encryptionVariant: 'legacy',
+            metadata: null,
+            metadataVersion: 0,
+            daemonState: null,
+            daemonStateVersion: 0,
+        };
+
+        const client = new ApiMachineClient('token', machine);
+        const machineReplaced = vi.fn();
+        client.connect({ onMachineReplaced: machineReplaced });
+
+        harness.getSocket(0).trigger('connect_error', {
+            message: 'machine_revoked',
+            data: { error: 'machine_revoked', statusCode: 410 },
+        });
+
+        const supervisor = createManagedConnectionSupervisorMock.mock.results[0]?.value;
+        expect(supervisor?.stop).toHaveBeenCalledTimes(1);
+        expect(machineReplaced).toHaveBeenCalledWith({ machineId: 'machine-1', reason: 'revoked' });
+    });
+
     it('ignores a stale connect_error ownership conflict from an older transport socket', async () => {
         const { ApiMachineClient } = await import('./apiMachine');
 

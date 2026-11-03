@@ -1,3 +1,4 @@
+import { resolveInstallationIdentityUpdate, updateMachineInstallationIdentityInTx } from "@/app/machines/installationIdentityUpdate";
 import { Fastify } from "../../types";
 import { persistentMachineWhere } from '@/app/machines/machineSelection';
 import { z } from "zod/mini";
@@ -20,12 +21,10 @@ import {
     computeContentPublicKeyFingerprint,
     normalizeContentPublicKeyFingerprint,
     validateMachineInstallationProof,
-    type VerifiedMachineInstallationIdentity,
 } from "@/app/machines/installationProof";
 import {
     acquireMachineRegistrationAccountsInTx,
     createMachineWithInstallationIdentityInTx,
-    resolveMachineContentPublicKeyFingerprintForStorage,
     MachineStorageModeMismatchError,
     revokeMachineInTx,
     recheckMachineStoredContentMutationAdmissionInTx,
@@ -141,66 +140,6 @@ async function serializeMachineRowForRequest(
             readAccountStoredContentCompatibilityForHttpRequest(request)
                 .declaration?.protocolVersion,
     });
-}
-
-type ExistingMachineInstallationIdentity = Readonly<{
-    dataEncryptionKey: Uint8Array | null;
-    installationId?: string | null;
-    installationPublicKey?: Uint8Array | null;
-    contentPublicKeyFingerprint?: string | null;
-}>;
-
-type InstallationIdentityUpdateResolution =
-    | Readonly<{
-        ok: true;
-        data: {
-            installationId?: string;
-            installationPublicKey?: Uint8Array<ArrayBuffer>;
-            contentPublicKeyFingerprint?: string | null;
-        };
-    }>
-    | Readonly<{ ok: false; reason: string }>;
-
-function resolveInstallationIdentityUpdate(
-    machine: ExistingMachineInstallationIdentity,
-    identity: VerifiedMachineInstallationIdentity | null,
-): InstallationIdentityUpdateResolution {
-    if (!identity) {
-        return { ok: true, data: {} };
-    }
-
-    if (machine.installationId && machine.installationId !== identity.installationId) {
-        return { ok: false, reason: "installation_id_mismatch" };
-    }
-    if (machine.installationPublicKey && !bytesEqual(machine.installationPublicKey, identity.installationPublicKey)) {
-        return { ok: false, reason: "installation_public_key_mismatch" };
-    }
-    const currentFingerprint = resolveMachineContentPublicKeyFingerprintForStorage({
-        dataEncryptionKey: machine.dataEncryptionKey,
-        contentPublicKeyFingerprint: machine.contentPublicKeyFingerprint ?? null,
-    });
-    const incomingFingerprint = resolveMachineContentPublicKeyFingerprintForStorage({
-        dataEncryptionKey: machine.dataEncryptionKey,
-        contentPublicKeyFingerprint: identity.contentPublicKeyFingerprint,
-    });
-    if (
-        currentFingerprint
-        && incomingFingerprint
-        && currentFingerprint !== incomingFingerprint
-    ) {
-        return { ok: false, reason: "content_public_key_fingerprint_mismatch" };
-    }
-
-    return {
-        ok: true,
-        data: {
-            ...(!machine.installationId ? { installationId: identity.installationId } : {}),
-            ...(!machine.installationPublicKey ? { installationPublicKey: identity.installationPublicKey } : {}),
-            ...((machine.contentPublicKeyFingerprint ?? null) !== (currentFingerprint ?? incomingFingerprint)
-                ? { contentPublicKeyFingerprint: currentFingerprint ?? incomingFingerprint }
-                : {}),
-        },
-    };
 }
 
 function describeUnknownError(error: unknown): { code?: string; message: string } {
@@ -647,14 +586,7 @@ export function machinesRoutes(app: Fastify) {
                     // encrypted value. Daemons refresh their owned fields through the versioned
                     // machine-update-metadata socket after registration.
                     const updatedMachine = currentWantsInstallationUpdate
-                        ? await tx.machine.update({
-                            where: { accountId_id: { accountId: userId, id } },
-                            data: {
-                                ...(currentWantsInstallationUpdate && verifiedInstallationIdentity
-                                    ? currentInstallationIdentityUpdate.data
-                                    : {}),
-                            },
-                        })
+                        ? await updateMachineInstallationIdentityInTx(tx, current, currentInstallationIdentityUpdate.data)
                         : current;
 
                     if (
@@ -808,12 +740,13 @@ export function machinesRoutes(app: Fastify) {
                                     const current = await tx.machine.findUnique({ where: { accountId_id: { accountId: userId, id } } });
                                     if (!current || current.revokedAt) throw new ManagedMachineError("enrollment_retired");
                                     let winningMachine = current;
-                                    if (managedEnrollment) {
-                                        const identityUpdate = resolveInstallationIdentityUpdate(current, verifiedInstallationIdentity);
-                                        if (!identityUpdate.ok) throw new ManagedMachineError("enrollment_retired");
-                                        if (Object.keys(identityUpdate.data).length > 0) winningMachine = await tx.machine.update({ where: { accountId_id: { accountId: userId, id } }, data: identityUpdate.data });
-                                        await linkManagedEnrollmentInTx(tx, managedEnrollment, userId, existingSameAccount.id);
+                                    const identityUpdate = resolveInstallationIdentityUpdate(current, verifiedInstallationIdentity);
+                                    if (!identityUpdate.ok) throw new MachineRegistrationReplacementError(400, identityUpdate.reason);
+                                    if (Object.keys(identityUpdate.data).length > 0) {
+                                        winningMachine = await updateMachineInstallationIdentityInTx(tx, current, identityUpdate.data);
+                                        await markAccountChanged(tx, { accountId: userId, kind: 'machine', entityId: current.id });
                                     }
+                                    if (managedEnrollment) await linkManagedEnrollmentInTx(tx, managedEnrollment, userId, existingSameAccount.id);
                                     if (verifiedInstallationIdentity?.replacesMachineId) {
                                         machineReplacement = await applyVerifiedMachineRegistrationReplacement({ tx, accountId: userId,
                                             replacementMachineId: existingSameAccount.id, replacementMachine: winningMachine,
