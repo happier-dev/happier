@@ -55,7 +55,6 @@ export function createWorkspaceSyncWorkerPreparation(input: Readonly<{
   targetMachineId: string;
   credentials: StoredCredentials;
   authorization?: ExternalActionExecutionAuthorizationV1;
-  isCurrent(): Promise<boolean>;
   prepareBetween(request: Readonly<{ sourceWorkspaceRefId: string; targetWorkspaceRefId: string }>, signal: AbortSignal): Promise<WorkspaceSyncPrepareBetweenResultV1>;
 }>) {
   const fail = (code: string): never => { throw Object.assign(new Error(code), { code }); };
@@ -66,7 +65,7 @@ export function createWorkspaceSyncWorkerPreparation(input: Readonly<{
   };
   return {
     resolveWorkerTarget: async ({ source, signal }: Readonly<{ source: WorkspaceRefV1; signal: AbortSignal }>): Promise<WorkspaceSyncWorkerTargetBasis> => {
-      if (!await input.isCurrent()) fail('project_requester_credentials_unavailable');
+      signal.throwIfAborted();
       const snapshot = await readCurrent(signal, source);
       const basis = resolveWorkspaceSyncWorkerTarget({ serverId: source.serverId,
         sourceWorkspaceRefId: source.id, targetMachineId: input.targetMachineId,
@@ -82,7 +81,7 @@ export function createWorkspaceSyncWorkerPreparation(input: Readonly<{
     }>): Promise<Extract<WorkspaceSyncPrepareBetweenResultV1, { ok: true }> | void> => withWebLatencyTrace(
       readWebLatencyTracePoint()?.requestId ?? input.authorization?.binding.requestId,
       () => timeWebLatencyPhase('workspaceSync.worker.prepareDequeue', async () => {
-        if (!await input.isCurrent()) fail('project_requester_credentials_unavailable');
+        signal.throwIfAborted();
         if (choice.kind !== 'workers') return;
         if (!basis) return fail('workspace_sync_source_unavailable');
         assertWorkspaceSyncWorkerTargetCurrent(basis, { ...await readCurrent(signal, basis.source), serverId: basis.source.serverId });
@@ -90,7 +89,7 @@ export function createWorkspaceSyncWorkerPreparation(input: Readonly<{
         const prepared = await input.prepareBetween({ sourceWorkspaceRefId: basis.source.id, targetWorkspaceRefId: basis.target.id }, signal);
         if (!prepared.ok) return fail(prepared.errorCode);
         assertWorkspaceSyncWorkerTargetCurrent(basis, { ...await readCurrent(signal, basis.source), serverId: basis.source.serverId });
-        if (!await input.isCurrent()) fail('project_requester_credentials_unavailable');
+        signal.throwIfAborted();
         return prepared;
       })),
   };

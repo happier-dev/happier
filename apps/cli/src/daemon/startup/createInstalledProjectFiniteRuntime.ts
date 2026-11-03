@@ -139,7 +139,7 @@ export function createInstalledProjectFiniteRuntime(params: Readonly<{
       },
       ...createWorkspaceSyncWorkerPreparation({ serverId: finiteServerId,
         serverHttpBaseUrl: accountAccess.serverHttpBaseUrl, targetMachineId: registeredMachineId,
-        credentials: workerCredentials, isCurrent: runtimeCurrent,
+        credentials: workerCredentials,
         ...(requester ? { authorization: requester.accountAuthorization } : {}),
         prepareBetween: (request, signal) => params.prepareBetween(request, signal, requester ? ingress : undefined) }),
       resolveWorkspaceExecutionConfig: async (context, currentIngress, actionId) => {

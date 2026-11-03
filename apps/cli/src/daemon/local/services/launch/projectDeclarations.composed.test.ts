@@ -705,7 +705,7 @@ describe('accepted Project Service declaration starter', () => {
             environmentIo: createProjectNativeEnvironmentIoForHost({ resolveTool: async () => null }),
             platform: 'linux', arch: 'x64', hostEnvironment: {}, successHomeDir: join(targetRoot, 'success'),
             ...(workerExecution ? createWorkspaceSyncWorkerPreparation({ serverId: profileId, serverHttpBaseUrl: 'https://home.example',
-                targetMachineId: targetWorkspace.machineId, credentials, isCurrent: async () => true,
+                targetMachineId: targetWorkspace.machineId, credentials,
                 prepareBetween }) : {}) };
         function projectDefinitionActionFor(ref: typeof workspace) {
             const nativeIo = { resolveTool: async () => nativeTool };

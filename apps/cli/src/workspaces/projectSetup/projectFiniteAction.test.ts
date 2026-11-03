@@ -458,7 +458,7 @@ describe('authenticated finite Project Action owner', () => {
                     : previousGet(...args));
                 const preparation = createWorkspaceSyncWorkerPreparation({ serverId: profileId,
                     serverHttpBaseUrl: worker.runtime.serverHttpBaseUrl, credentials: worker.runtime.credentials, targetMachineId: 'machine',
-                    isCurrent: worker.runtime.isCurrent!, prepareBetween: (request, signal) => prepareWorkspaceSyncBetween({ ...request,
+                    prepareBetween: (request, signal) => prepareWorkspaceSyncBetween({ ...request,
                         signal, serverId, readCurrent: async () => ({ workspaceRefs: worker.workspaceRefs, relationships: worker.relationships }),
                         // Only the remote controller's file-transfer/clean-status reply is substituted.
                         flush: async relationshipId => {
@@ -2117,11 +2117,8 @@ describe('authenticated finite Project Action owner', () => {
         });
         let permitFlush!: () => void;
         const flushAllowed = new Promise<void>(resolve => { permitFlush = resolve; });
-        const isCurrent = h.runtime.isCurrent;
-        if (!isCurrent) throw new Error('The fixture must retain its actual requester lifetime');
         const workerPreparation = createWorkspaceSyncWorkerPreparation({ serverId: 'home',
             serverHttpBaseUrl: h.runtime.serverHttpBaseUrl, targetMachineId: 'machine', credentials: h.runtime.credentials,
-            isCurrent,
             prepareBetween: async (request, signal) => prepareWorkspaceSyncBetween({ ...request, signal, serverId: 'home',
                 readCurrent: async () => ({ workspaceRefs: h.workspaceRefs, relationships: h.relationships }),
                 // Only the external Sync controller's completed file-transfer reply is substituted.
