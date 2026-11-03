@@ -42,6 +42,11 @@ const FAMILIES = [
     kinds: ['turn-start', 'turn-progress', 'turn-agent-id-observed', 'turn-complete', 'turn-failed', 'turn-cancelled', 'turn-rollback-boundary', 'provider-session-id', 'runtime-ended'],
   },
   {
+    title: 'Background continuation correlation',
+    lede: 'Native task evidence connects a continuation to its originating tool call. The host retains the original turn authority and releases it when the observer no longer needs it.',
+    kinds: ['provider-continuation-registered', 'provider-continuation-released', 'provider-tool-contexts-released'],
+  },
+  {
     title: 'Output',
     lede: 'What the agent produced, as it produces it.',
     kinds: ['message-delta', 'tool-call', 'tool-progress', 'tool-result', 'transcript-message-committed', 'file-edit', 'usage-observed', 'mcp-tool-usage', 'skill-usage'],

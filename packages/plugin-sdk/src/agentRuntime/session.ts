@@ -7,11 +7,13 @@ import type {
 import type { $brand } from 'zod/mini';
 import type { AgentTerminalLaunchPlan, AgentTerminalLaunchRequest } from './surfaces.js';
 import type { AgentSessionIdleCompactionPreferenceV1 } from '@happier-dev/protocol/runtime/agentSessionV1';
+export type { AgentSessionIdleCompactionPreferenceV1 } from '@happier-dev/protocol/runtime/agentSessionV1';
 
 import type { JsonValue } from '../identity.js';
 import type { Disposable } from '../lifecycle.js';
 import type { PluginDiagnosticData } from '../diagnostics.js';
 import type { AgentSessionConversationRollbackControl, AgentSessionGoalControl, AgentSessionUsageLimitRecoveryControl } from './controls.js';
+import type { AgentSessionModelOption } from './context.js';
 
 export type {
   AgentSessionCompactionCapability,
@@ -169,6 +171,24 @@ export type AgentSessionRuntimeEvent =
       sequence: number;
       sessionId: string;
       emittedAtMs: number;
+      kind: 'connected-account-identity-observed';
+      service: Readonly<{ pluginId: string; localId: string }>;
+      nativeSessionId: string;
+      providerOrganizationId: string | null;
+      observedAtMs: number;
+    }>
+  | Readonly<{
+      sequence: number;
+      sessionId: string;
+      emittedAtMs: number;
+      kind: 'config-options';
+      configOptions: readonly AgentSessionModelOption[];
+      modelConfigOptionId?: string;
+    }>
+  | Readonly<{
+      sequence: number;
+      sessionId: string;
+      emittedAtMs: number;
       kind: 'input-accepted';
       inputIds: [string, ...string[]];
       delivery:
@@ -227,11 +247,38 @@ export type AgentSessionRuntimeEvent =
       sequence: number;
       sessionId: string;
       emittedAtMs: number;
+      kind: 'provider-continuation-registered';
+      continuationId: string;
+      parentTurnId: string;
+      parentToolCallId: string;
+    }>
+  | Readonly<{
+      sequence: number;
+      sessionId: string;
+      emittedAtMs: number;
+      kind: 'provider-continuation-released';
+      continuationId: string;
+    }>
+  | Readonly<{
+      sequence: number;
+      sessionId: string;
+      emittedAtMs: number;
+      kind: 'provider-tool-contexts-released';
+      parentTurnId: string;
+      toolCallIds: string[];
+    }>
+  | Readonly<{
+      sequence: number;
+      sessionId: string;
+      emittedAtMs: number;
       turnId: string;
       agentTurnId?: string;
       kind: 'turn-start';
       startedBy: 'host' | 'provider';
       causedByTurnId?: string;
+      /** Host-stamped Queue localId; native Agent declarations cannot supply this proof. */
+      startingInputId?: string;
+      continuationId?: string;
     }>
   | Readonly<{
       sequence: number;

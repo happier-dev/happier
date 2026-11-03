@@ -14,6 +14,21 @@ import {
   AgentSessionSendRequestV1Schema,
 } from './agentSessionV1.js';
 
+it('admits typed native Connected Account identity evidence without authority or native grammar bags', () => {
+  const event = { kind: 'connected-account-identity-observed', sequence: 1, sessionId: 'session', emittedAtMs: 20,
+    service: { pluginId: 'plugin.acme', localId: 'subscription' }, nativeSessionId: 'native-session',
+    providerOrganizationId: 'organization-2', observedAtMs: 10 };
+  expect(AgentSessionRuntimeEventV1Schema.parse(event)).toEqual(event);
+  expect(AgentSessionRuntimeEventV1Schema.parse({ ...event, providerOrganizationId: null }))
+    .toEqual({ ...event, providerOrganizationId: null });
+  for (const invalid of [{ ...event, groupId: 'host-owned' },
+    { ...event, service: { ...event.service, authority: true } },
+    { ...event, nativeSessionId: '' }, { ...event, observedAtMs: -1 },
+    { ...event, providerOrganizationId: 42 }]) {
+    expect(AgentSessionRuntimeEventV1Schema.safeParse(invalid).success).toBe(false);
+  }
+});
+
 const diagnostic = {
   code: 'provider_unavailable',
   severity: 'warning',
@@ -291,6 +306,24 @@ describe('AgentRuntimeJsonValueV1Schema', () => {
 });
 
 describe('AgentSessionRuntimeEventV1Schema', () => {
+  it('keeps provider continuation correlation closed and separate from host permission authority', () => {
+    const base = { sequence: 1, sessionId: 'session-1', emittedAtMs: 1 };
+    const facts = [
+      { ...base, kind: 'provider-continuation-registered', continuationId: 'task', parentTurnId: 'first', parentToolCallId: 'tool' },
+      { ...base, kind: 'provider-continuation-released', continuationId: 'task' },
+      { ...base, kind: 'provider-tool-contexts-released', parentTurnId: 'first', toolCallIds: ['tool'] },
+      { ...base, kind: 'turn-start', turnId: 'next', startedBy: 'provider', causedByTurnId: 'first', continuationId: 'task' },
+    ];
+    for (const fact of facts) {
+      expect(AgentSessionRuntimeEventV1Schema.safeParse(fact).success).toBe(true);
+      expect(AgentSessionRuntimeEventV1Schema.safeParse({ ...fact, permissionMode: 'yolo' }).success).toBe(false);
+    }
+    const start = facts[3]!;
+    expect(AgentSessionRuntimeEventV1Schema.safeParse({ ...start, startedBy: 'host' }).success).toBe(false);
+    expect(AgentSessionRuntimeEventV1Schema.safeParse({ ...start, causedByTurnId: undefined }).success).toBe(false);
+  });
+
+
   it('accepts only internally consistent complete runtime activity snapshots', () => {
     const base = { kind: 'runtime-activity-snapshot', sequence: 1, sessionId: 'session-1', emittedAtMs: 1 } as const;
 

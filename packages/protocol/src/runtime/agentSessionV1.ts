@@ -23,6 +23,8 @@ import { NonBlankOpaqueIdentifierSchema } from '../strings/opaqueIdentifier.js';
 import { UsagePromptCacheSchema, UsageRequestAttributionSchema } from '../usage/usageAnalyticsContracts.js';
 import { McpToolLaunchPoliciesV1Schema, type McpToolLaunchPolicyV1 } from '../mcp/servers/tools/resolveMcpToolDecisionV1.js';
 import { TranscriptPeerSenderV1Schema } from '../sessions/messages/transcriptPeerSenderV1.js';
+import { ProbedCatalogOptionSchema } from '../capabilities/probedCatalogOption.js';
+import { PluginContributionIdentityV1Schema } from '../plugins/contributionIdentity.js';
 
 export { AGENT_SESSION_RUNTIME_EVENT_KINDS_V1 } from './eventKindsV1.js';
 export { AgentRuntimeDiagnosticDataV1Schema } from './agentRuntimeDiagnosticV1.js';
@@ -298,7 +300,23 @@ const InputCustodySchemas = [
   }))),
 ] as const;
 
+export const AgentSessionConnectedAccountIdentityObservedEventV1Schema = lazyZodSchema(() => z.strictObject({
+  ...EventBaseSchema.shape,
+  kind: z.literal('connected-account-identity-observed'),
+  service: asProtocolZod(PluginContributionIdentityV1Schema),
+  nativeSessionId: ProviderIdSchema,
+  providerOrganizationId: z.nullable(ProviderIdSchema),
+  observedAtMs: SafeIntegerSchema,
+}));
+
 const LifecycleSchemas = [
+  AgentSessionConnectedAccountIdentityObservedEventV1Schema,
+  lazyZodSchema(() => z.strictObject({
+    ...EventBaseSchema.shape,
+    kind: z.literal('config-options'),
+    configOptions: z.readonly(z.array(ProbedCatalogOptionSchema)),
+    modelConfigOptionId: z.optional(NonBlankOpaqueIdentifierSchema),
+  })),
   lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(EventBaseSchema, {
     kind: z.literal('provider-session-id'),
     providerSessionId: ProviderIdSchema,
@@ -325,10 +343,31 @@ const LifecycleSchemas = [
     })).check(z.maxLength(4_096)),
   }))),
   lazyZodSchema(() => z.strictObject({
+    ...EventBaseSchema.shape,
+    kind: z.literal('provider-continuation-registered'),
+    continuationId: ProviderIdSchema,
+    parentTurnId: HostIdSchema,
+    parentToolCallId: ProviderIdSchema,
+  })),
+  lazyZodSchema(() => z.strictObject({
+    ...EventBaseSchema.shape,
+    kind: z.literal('provider-continuation-released'),
+    continuationId: ProviderIdSchema,
+  })),
+  lazyZodSchema(() => z.strictObject({
+    ...EventBaseSchema.shape,
+    kind: z.literal('provider-tool-contexts-released'),
+    parentTurnId: HostIdSchema,
+    toolCallIds: z.array(ProviderIdSchema),
+  })),
+  lazyZodSchema(() => z.strictObject({
     ...TurnEventBaseShape,
     kind: z.literal('turn-start'),
     startedBy: z.enum(['host', 'provider']),
     causedByTurnId: z.optional(HostIdSchema),
+    /** Host-correlated Queue localId that caused this exact native new-turn start. */
+    startingInputId: z.optional(InputIdSchema),
+    continuationId: z.optional(ProviderIdSchema),
   })),
   lazyZodSchema(() => z.strictObject({ ...TurnEventBaseShape, kind: z.literal('turn-progress') })),
   lazyZodSchema(() => z.strictObject({ ...TurnEventBaseShape, kind: z.literal('turn-agent-id-observed'), agentTurnId: ProviderIdSchema })),
@@ -519,6 +558,10 @@ function jsonByteLength(value: unknown): number {
 }
 
 export const AgentSessionRuntimeEventV1Schema = lazyZodSchema(() => AgentSessionRuntimeEventCoreV1Schema.check(z.superRefine((value, context) => {
+  if (value.kind === 'turn-start' && value.continuationId !== undefined
+    && (value.startedBy !== 'provider' || value.causedByTurnId === undefined)) {
+    context.addIssue({ code: 'custom', message: 'Provider continuations require their originating turn' });
+  }
   if (jsonByteLength(value) > EVENT_JSON_BYTES_CANDIDATE_MAX) {
     context.addIssue({ code: 'custom', message: 'Agent runtime event exceeds the CORE-A candidate byte bound' });
   }

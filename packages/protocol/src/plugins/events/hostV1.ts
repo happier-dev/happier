@@ -88,13 +88,19 @@ type HostEventDeliveryScopeByIdV1 = {
   [HAPPIER_AUTOMATION_EVENT_SOURCES_INVALIDATED_HOST_EVENT_ID_V1]: AutomationHostEventScopeV1;
 }>;
 
-export type HostEventTargetV1<Id extends HostEventIdV1 = HostEventIdV1> =
-  Id extends HostEventIdV1
-    ? Readonly<{
-      eventId: Id;
-      scope: HostEventScopeByIdV1[Id];
-    }>
-    : never;
+type HostEventTargetScopeV1 =
+  | Readonly<{ eventId: RuntimeHostEventIdV1; scope: HostEventScopeV1 }>
+  | {
+    [Kind in Exclude<HostEventIdV1, RuntimeHostEventIdV1>]: Readonly<{
+      eventId: Kind;
+      scope: HostEventScopeByIdV1[Kind];
+    }>;
+  }[Exclude<HostEventIdV1, RuntimeHostEventIdV1>];
+
+export type HostEventTargetV1<Id extends HostEventIdV1 = HostEventIdV1> = Readonly<{
+  eventId: Id;
+  scope: HostEventScopeByIdV1[Id];
+}> & HostEventTargetScopeV1;
 
 export type HostEventEnvelopeV1<Id extends HostEventIdV1 = HostEventIdV1> =
   Id extends HostEventIdV1
