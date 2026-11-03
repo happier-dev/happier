@@ -1938,6 +1938,7 @@ describe('executeExternalAction', () => {
           ok: false,
           errorCode: 'target_not_local',
           error: 'target_not_local',
+          details: { phase: 'target_machine_locality' },
         },
       },
     });
@@ -1974,6 +1975,7 @@ describe('executeExternalAction', () => {
           ok: false,
           errorCode: 'target_not_local',
           error: 'target_not_local',
+          details: { phase: 'target_session_locality' },
         },
       },
     });

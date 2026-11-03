@@ -30,6 +30,7 @@ vi.mock('@/api/machine/fetchAccountMachineReplacements', () => ({
 }));
 
 import { createDaemonExternalActionTargetResolver, createDaemonApprovalExecutionOriginCurrentness } from './daemonExternalActionTargetResolver';
+import { reconcileExternalActionTarget, resolveExternalActionMachineTarget } from './reconcileExternalActionTarget';
 import { encryptSessionPayload } from '@/session/transport/encryption/sessionEncryptionContext';
 
 const ENCRYPTION_KEY = new Uint8Array(32).fill(7);
@@ -96,6 +97,23 @@ describe('createDaemonExternalActionTargetResolver', () => {
   afterEach(() => {
     vi.restoreAllMocks();
     resetActiveAccountSettingsSnapshotForTests();
+  });
+
+  it('accepts an exact explicit spawn Machine through caller selection, ingress and the real locality resolver', async () => {
+    const actionId = 'session.spawn_new' as const;
+    const rawInput = { directory: { kind: 'path', path: '/tmp' },
+      executionTarget: { serverId: 'home', machineId: 'machine-selected' } };
+    const target = { kind: 'machine', machineId: 'machine-selected' } as const;
+    expect(resolveExternalActionMachineTarget({ actionId, rawInput, target, fallbackMachineId: 'machine-ambient' }))
+      .toEqual({ kind: 'ready', machineId: 'machine-selected' });
+    const reconciled = reconcileExternalActionTarget({ actionId, rawInput, target, currentMachineId: 'machine-selected' });
+    expect(reconciled).toMatchObject({ kind: 'ready', target });
+    if (reconciled.kind !== 'ready') throw new Error('Exact Machine reconciliation failed');
+    const resolveTarget = createDaemonExternalActionTargetResolver({ credentials: TOKEN_ONLY_CREDENTIALS });
+    await expect(resolveTarget({ actionId, actionInput: rawInput, target: reconciled.target,
+      currentMachineId: 'machine-selected' })).resolves.toEqual(target);
+    await expect(resolveTarget({ actionId, actionInput: rawInput, target,
+      currentMachineId: 'machine-ambient' })).resolves.toBeNull();
   });
 
   it('rechecks an Agent-produced private fill approval without requiring public signed-root admission', async () => {

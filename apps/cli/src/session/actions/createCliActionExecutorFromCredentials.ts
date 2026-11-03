@@ -1526,7 +1526,8 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
           target: context.externalActionTarget ?? controlControllerTarget ?? undefined, fallbackMachineId: params.machineId }) : null;
       if (selectedOriginalMachine && (selectedOriginalMachine.kind === 'rejected'
         || params.machineId && params.machineId !== selectedOriginalMachine.machineId)) return { context,
-          invocation: createOneShotPatInvocation(async () => routingFailure(actionId, actionFailure('target_unavailable'))) };
+          invocation: createOneShotPatInvocation(async () => routingFailure(actionId,
+            selectedOriginalMachine.kind === 'rejected' ? selectedOriginalMachine.execution : actionFailure('target_unavailable'))) };
       const pairedTerminal = originalCliCaller && provenance?.provenance.kind === 'terminal';
       let requiresSessionDaemonAdmission = false;
       let sessionDispatch: Readonly<{

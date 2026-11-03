@@ -127,8 +127,8 @@ function isTitleOnlySessionOpen(
     && readNonEmptyString(input.sessionTitle) !== null;
 }
 
-function targetNotLocal(): ActionExecuteResult {
-  return { ok: false, errorCode: 'target_not_local', error: 'target_not_local' };
+function targetNotLocal(phase: 'target_machine_selection' | 'target_machine_locality' | 'target_session_selection'): ActionExecuteResult {
+  return { ok: false, errorCode: 'target_not_local', error: 'target_not_local', details: { phase } };
 }
 
 function targetRequired(): ActionExecuteResult {
@@ -200,7 +200,7 @@ export function reconcileExternalActionTarget(input: Readonly<{
   const sessionSelectorIds = readSessionSelectorIds(input.actionId, parsedInput);
   const distinctSessionSelectorIds = [...new Set(sessionSelectorIds)];
   if (distinctSessionSelectorIds.length > 1) {
-    return { kind: 'rejected', execution: targetNotLocal() };
+    return { kind: 'rejected', execution: targetNotLocal('target_session_selection') };
   }
 
   if (isTitleOnlySessionOpen(input.actionId, parsedInput, sessionSelectorIds)) {
@@ -221,7 +221,7 @@ export function reconcileExternalActionTarget(input: Readonly<{
   if (executionPlacement === 'machine') {
     const machineSelectorIds = readMachineSelectorIds(input.actionId, parsedInput);
     if (machineSelectorIds.some((machineId) => machineId !== input.currentMachineId)) {
-      return { kind: 'rejected', execution: targetNotLocal() };
+      return { kind: 'rejected', execution: targetNotLocal('target_machine_locality') };
     }
   }
 
@@ -233,7 +233,7 @@ export function reconcileExternalActionTarget(input: Readonly<{
       return { kind: 'rejected', execution: targetRequired() };
     }
     if (sessionSelectorId && sessionSelectorId !== input.target.sessionId) {
-      return { kind: 'rejected', execution: targetNotLocal() };
+      return { kind: 'rejected', execution: targetNotLocal('target_session_selection') };
     }
     return {
       kind: 'ready',
@@ -287,10 +287,10 @@ export function resolveExternalActionMachineTarget(input: Readonly<{
   const machineIds = readMachineSelectorIds(input.actionId, asRecord(parsed.data) ?? {});
   const explicitMachineId = input.target?.kind === 'machine' ? input.target.machineId : null;
   const distinctMachineIds = new Set([...machineIds, ...(explicitMachineId ? [explicitMachineId] : [])]);
-  if (distinctMachineIds.size > 1) return reject(targetNotLocal());
+  if (distinctMachineIds.size > 1) return reject(targetNotLocal('target_machine_selection'));
   const machineId = input.ownerMachineId ?? machineIds[0] ?? explicitMachineId ?? readNonEmptyString(input.fallbackMachineId);
   if (!machineId) return reject(targetRequired());
-  if (explicitMachineId && explicitMachineId !== machineId) return reject(targetNotLocal());
+  if (explicitMachineId && explicitMachineId !== machineId) return reject(targetNotLocal('target_machine_selection'));
   const reconciliation = reconcileExternalActionTarget({
     actionId: input.actionId, rawInput: parsed.data, target: input.target, currentMachineId: machineId,
   });

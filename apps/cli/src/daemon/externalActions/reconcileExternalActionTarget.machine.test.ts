@@ -103,10 +103,21 @@ it('selects an inherited spawn Machine before creation choices are resolved whil
   const selected = { ...spawn, rawInput: { ...spawn.rawInput,
     executionTarget: { serverId: 'home', machineId: 'selected-machine' } } };
   expect(resolveExternalActionMachineTarget(selected)).toEqual({ kind: 'ready', machineId: 'selected-machine' });
+  expect(resolveExternalActionMachineTarget({ ...selected, target: { kind: 'machine', machineId: 'other' } }))
+    .toMatchObject({ kind: 'rejected', execution: { errorCode: 'target_not_local',
+      details: { phase: 'target_machine_selection' } } });
   expect(reconcileExternalActionTarget({ ...selected, target: { kind: 'machine', machineId: 'other' },
-    currentMachineId: 'other' })).toMatchObject({ kind: 'rejected', execution: { errorCode: 'target_not_local' } });
+    currentMachineId: 'other' })).toMatchObject({ kind: 'rejected', execution: { errorCode: 'target_not_local',
+      details: { phase: 'target_machine_locality' } } });
   expect(resolveExternalActionMachineTarget({ ...spawn, rawInput: { ...spawn.rawInput, agentTarget: null } }))
     .toMatchObject({ kind: 'rejected', execution: { errorCode: 'invalid_parameters' } });
+});
+
+it('identifies a conflicting Session selector without disclosing either target', () => {
+  expect(reconcileExternalActionTarget({ actionId: 'session.open', rawInput: { sessionId: 'selected-session' },
+    target: { kind: 'session', sessionId: 'envelope-session' }, currentMachineId: 'machine' }))
+    .toMatchObject({ kind: 'rejected', execution: { errorCode: 'target_not_local',
+      details: { phase: 'target_session_selection' } } });
 });
 
 it('binds plugin installation to its semantic Machine at caller selection and actual daemon ingress', () => {

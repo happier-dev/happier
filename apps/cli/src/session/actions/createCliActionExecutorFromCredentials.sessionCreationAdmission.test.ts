@@ -29,6 +29,23 @@ import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 describe('paired terminal Action admission', () => {
     afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
+    it('retains the canonical selector refusal when an explicit terminal Machine conflicts with the envelope', async () => {
+        await withConfiguredDaemonTestHome({ prefix: 'happier-cli-terminal-selection-' }, async () => {
+            const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner', tokenEpoch: 4,
+                provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`;
+            const executor = createCliActionExecutorFromCredentials({
+                credentials: { token, encryption: null, credentialProvenance: 'stored_session' }, externalActionClient: true,
+                serverId: configuration.activeServerId, serverIdentityId: 'srv_home', serverApiUrl: 'https://home.test',
+                actionsSettingsProvider: { getActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1 }) },
+            });
+            const result = await executor.execute('machines.terminal.list', {
+                serverId: configuration.activeServerId, machineId: 'selected-machine',
+            }, { surface: 'cli', externalActionTarget: { kind: 'machine', machineId: 'envelope-machine' } });
+            expect(result).toEqual({ ok: false, errorCode: 'target_not_local', error: 'target_not_local',
+                details: { phase: 'target_machine_selection' } });
+        });
+    });
+
     it.each([false, true])('routes protected CLI input through its existing Session custody before the native runtime is ready (other local daemon: %s)', async otherLocalDaemon => {
         await withConfiguredDaemonTestHome({ prefix: 'happier-cli-starting-session-input-' }, async () => {
             const token = `header.${Buffer.from(JSON.stringify({ sub: 'requester', tokenEpoch: 4,

@@ -521,7 +521,7 @@ export async function executeExternalAction(input: Readonly<{
       v: 1,
       actionId: actionId.data,
       ...(envelope.data.requestId ? { requestId: envelope.data.requestId } : {}),
-      execution: targetNotLocal(),
+      execution: targetNotLocal(reconciliation.target?.kind === 'session' ? 'target_session_locality' : 'target_machine_locality'),
     });
   }
 
@@ -852,11 +852,12 @@ function preparedResponse(
   };
 }
 
-function targetNotLocal(): ActionExecuteResult {
+function targetNotLocal(phase: 'target_machine_locality' | 'target_session_locality'): ActionExecuteResult {
   return {
     ok: false,
     errorCode: 'target_not_local',
     error: 'target_not_local',
+    details: { phase },
   };
 }
 

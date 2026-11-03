@@ -4009,6 +4009,10 @@ Run-on writer or store is added.
 
 ## SDK protocol evolution
 
+Unreleased 0.3 External Action locality refusals retain their selector or
+locality phase in the existing Action failure details. Exact matching Machine
+targets remain supported; admission decisions and error codes are unchanged.
+
 Unreleased 0.3 native service observations add optional `displayName`, retained
 through the existing host snapshot as `nativeDisplayName` and projected as
 `native.displayName` in Machine service rows. The native adapter owns this display
