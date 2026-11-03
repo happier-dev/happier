@@ -1107,6 +1107,14 @@ export function resolveMachineRpcRoutePolicy(method: string): MachineRpcRoutePol
 export function resolveMachineRpcExternalActionEffectV1(method: string,
   binding?: ExternalActionExecutionAuthorizationV1['binding'],
   selectedTarget?: Readonly<{ machineId: string; installationId: string }>): string | null {
+  if (binding?.actionId === 'machines.agents.list'
+    && (method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE
+      || method === RPC_METHODS.CAPABILITIES_DETECT)) {
+    // Both read phases spend the signed inventory root on its exact installation.
+    return binding.target.kind === 'machine' && binding.target.machineId === binding.machineId
+      && (!selectedTarget || selectedTarget.machineId === binding.machineId && selectedTarget.installationId === binding.installationId)
+      ? binding.actionId : null;
+  }
   if (method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_PREPARE_BETWEEN) {
     return binding && isProjectWorkspaceSyncPreparationActionV1(binding.actionId)
       && binding.target.kind === 'machine' && binding.target.machineId === binding.machineId ? binding.actionId : null;

@@ -84,7 +84,10 @@ async function apt(run: NativeRun, step: PackageStep) {
     const changes = pending(step, installed);
     if (!changes.length) return observation(step, 'satisfied', facts);
     const lock = await inspectAptLocks(run);
-    if (lock !== 'clear') return observation(step, 'unavailable', facts, lock === 'busy' ? 'package_manager_busy' : 'required_fact_unavailable');
+    if (lock === 'busy') return observation(step, 'unavailable', facts, 'package_manager_busy');
+    if (lock === 'unknown') return observation(step, 'unavailable', {
+        ...facts, requiredFact: 'packageManagerLocks', remedy: 'check_with_administrator',
+    }, 'needs_admin_to_check');
     if (step.state === 'absent') return observation(step, 'drifted', facts);
     const unresolved: string[] = [];
     for (const pkg of changes) {

@@ -19,6 +19,27 @@ async function importRpcPolicy() {
 }
 
 describe('MachineRpcRoutePolicyV1', () => {
+  it('spends the exact Agent inventory root on both inventory observation phases', async () => {
+    const { resolveMachineRpcExternalActionEffectV1: resolve } = await import('./routePolicyV1');
+    const binding = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'inventory-root', binding: {
+      accountId: 'requester', custodianAccountId: 'owner', authentication: { kind: 'account', tokenEpoch: 1 },
+      serverIdentityId: 'home', machineId: 'guest', installationId: 'guest-installation',
+      actionId: 'machines.agents.list', requestId: 'inventory', requestEnvelopeDigest: 'a'.repeat(43),
+      target: { kind: 'machine', machineId: 'guest' },
+    } }).binding;
+    const selected = { machineId: 'guest', installationId: 'guest-installation' };
+    for (const method of [RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE,
+      RPC_METHODS.CAPABILITIES_DETECT]) {
+      expect(resolve(method, binding, selected)).toBe('machines.agents.list');
+      expect(resolve(method, { ...binding, accountId: 'owner' }, selected)).toBe('machines.agents.list');
+      expect(resolve(method)).toBeNull();
+      expect(resolve(method, { ...binding, actionId: 'machines.agents.install' }, selected)).toBeNull();
+      expect(resolve(method, { ...binding, target: { kind: 'machine', machineId: 'foreign' } }, selected)).toBeNull();
+      expect(resolve(method, binding, { ...selected, machineId: 'foreign' })).toBeNull();
+      expect(resolve(method, binding, { ...selected, installationId: 'replacement' })).toBeNull();
+    }
+    expect(resolve(RPC_METHODS.CAPABILITIES_INVOKE, binding, selected)).toBeNull();
+  });
   it('admits private native vault operations only with Machine Manage authority', async () => {
     const { resolveMachineRpcRoutePolicy } = await import('./routePolicyV1');
     expect(resolveMachineRpcRoutePolicy(RPC_METHODS.DAEMON_SECRET_SOURCE_INVOKE)).toMatchObject({

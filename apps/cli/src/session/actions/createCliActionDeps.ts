@@ -699,6 +699,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
     orchestrationDirectory: configuration.happyHomeDir,
     startCombined: startCombinedWorkflow,
     waitForRun: request => waitForCombinedWorkflow(request, request.start.runId),
+    readInvocations: readCombinedWorkflowInvocations,
     readHostFacts: async (context, selectedMachineId, requestedTargetMachineIds) => {
       const [{ listCurrentAccountMachines }, { isMachineReachableV1 }] = await Promise.all([
         import('@/api/machine/resolveCurrentAccountMachineTarget'), import('@happier-dev/protocol/machines/machineReachabilityV1'),

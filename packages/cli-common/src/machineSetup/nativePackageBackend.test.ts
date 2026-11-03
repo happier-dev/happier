@@ -22,6 +22,24 @@ async function apply(step: MachineRecipeStepV1, run: (input: MachineSetupNativeC
 }
 
 describe('native package effects through the public recipe interpreter', () => {
+    it('names unreadable APT lock ownership and the administrator-check remedy without treating it as a busy manager', async () => {
+        const step = declaration({ id: 'docker', kind: 'package', manager: 'apt', packages: [{ name: 'docker.io' }, { name: 'docker-compose-v2' }] });
+        const backend = createMachineSetupNativeBackend({ run: async input => {
+            if (input.executable === 'dpkg') return ok('amd64\n');
+            if (input.executable === 'apt-get') return ok('apt 3.2.0\n');
+            if (input.executable === 'dpkg-query') return { code: 1, stdout: '', stderr: '' };
+            // Ubuntu 26.04 unprivileged lslocks cannot resolve other users' FDs,
+            // even with --notruncate; /run... is its fallback, not an APT lock.
+            if (input.executable === 'lslocks') return ok('{"locks":[{"path":"/run..."}]}');
+            throw new Error('An unresolved lock observation must not mutate or claim repository availability');
+        } });
+        const plan = await checkMachineSetupEffectPlan({ basis, steps: [step], backend });
+        expect(plan.nativeFacts).toMatchObject([{ status: 'unavailable', reason: 'needs_admin_to_check', facts: {
+            manager: 'apt', requiredFact: 'packageManagerLocks', remedy: 'check_with_administrator',
+            packages: [{ name: 'docker.io', present: false }, { name: 'docker-compose-v2', present: false }],
+        } }]);
+    });
+
     it('refuses foreign or multiple apt architectures instead of treating an unqualified installed package as absent', async () => {
         const step = declaration({ id: 'remove', kind: 'package', manager: 'apt', state: 'absent', packages: [{ name: 'libfoo' }] });
         for (const output of [

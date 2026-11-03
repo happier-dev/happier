@@ -1,4 +1,4 @@
-import { MachineSetupApplyInputV1Schema, MachineSetupCombinedPlanInputV1Schema, MachineSetupCombinedPlanResultV1Schema, MachineSetupPlanResultV1Schema, admitCombinedActionWorkflowHostV1, resolveCombinedActionWorkflowHostV1, deriveWorkflowReplacementId, prepareWorkflowRunStartV1, type ActionExecutorContext, type ActionExecutorDeps, type MachineSetupApplyInputV1, type MachineSetupApplyTargetV1, type MachineSetupCombinedPlanResultV1 } from '@happier-dev/protocol';
+import { MachineSetupApplyInputV1Schema, MachineSetupCombinedPlanInputV1Schema, MachineSetupCombinedPlanResultV1Schema, MachineSetupPlanResultV1Schema, admitCombinedActionWorkflowHostV1, resolveCombinedActionWorkflowHostV1, deriveWorkflowReplacementId, prepareWorkflowRunStartV1, type ActionExecutorContext, type ActionExecutorDeps, type MachineSetupApplyInputV1, type MachineSetupApplyTargetV1, type MachineSetupCombinedPlanResultV1, type WorkflowActionExecuteArgs } from '@happier-dev/protocol';
 import { selectMachineSetupRecipeItemsV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
 import type { MachineSetupPlanResultV1, MachineSetupPlanReviewV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ActionExecuteFailureSchema, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -87,6 +87,8 @@ export function createCombinedMachineSetupActionDeps(host: Readonly<{
   orchestrationDirectory: string;
   startCombined(request: WorkflowCombinedRunStartV1): Promise<unknown>;
   waitForRun(request: WorkflowCombinedRunStartV1): Promise<unknown>;
+  readInvocations(request: WorkflowCombinedRunStartV1,
+    input: WorkflowActionExecuteArgs<'workflow.run.invocations.list'>['input']): Promise<unknown>;
 }>): Pick<ActionExecutorDeps, 'machineSetupPlan' | 'prepareMachineSetupApply' | 'machineSetupApply'> {
   const prepare: Preparation = async ({ input: raw, context }) => {
     const input = MachineSetupApplyInputV1Schema.parse(raw);
@@ -239,8 +241,26 @@ export function createCombinedMachineSetupActionDeps(host: Readonly<{
       acceptance.accept(result);
       const settled = WorkflowActionOutputSchemasV1['workflow.run.wait'].safeParse(await host.waitForRun(request));
       if (!settled.success || settled.data.observation !== 'terminal') return failure('outcome_unknown');
-      return settled.data.run.state === 'succeeded' ? result
-        : failure(settled.data.run.state === 'cancelled' ? 'cancelled' : 'machine_setup_child_failed');
+      if (settled.data.run.state === 'succeeded') return result;
+      if (settled.data.run.state === 'cancelled') return failure('cancelled');
+      // Failed Runs have no final output. Their retained Action invocation owns
+      // the typed failure and native details; do not replace it with parent prose.
+      let cursor: string | undefined;
+      do {
+        const observed = await host.readInvocations(request, { runId, lifecycles: ['failed'], includeContent: true,
+          ...(cursor ? { cursor } : {}) });
+        const refused = ActionExecuteFailureSchema.safeParse(observed);
+        if (refused.success) return refused.data;
+        const page = WorkflowActionOutputSchemasV1['workflow.run.invocations.list'].safeParse(observed);
+        if (!page.success || !page.data.invocationDetails) return failure('outcome_unknown');
+        for (const { progress } of page.data.invocationDetails) {
+          if (progress.blockKind !== 'action' || !progress.reason) continue;
+          return { ok: false, errorCode: progress.reason.code, error: progress.reason.message ?? progress.reason.code,
+            ...(progress.result === undefined ? {} : { details: progress.result }) };
+        }
+        cursor = page.data.nextCursor;
+      } while (cursor);
+      return failure('machine_setup_child_failed');
     },
   };
 }
