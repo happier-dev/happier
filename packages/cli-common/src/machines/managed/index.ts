@@ -1,4 +1,5 @@
 export * from './controllerErrors.js';
+export * from './bootstrapCredential.js';
 export * from './reconcile.js';
 
 
