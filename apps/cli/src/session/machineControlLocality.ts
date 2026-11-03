@@ -119,7 +119,7 @@ export async function readOwnSessionMachineWorkspace(input: Readonly<{
   const session = await fetchSessionById({ reason: 'session-control', token: input.credentials.token, serverUrl: input.serverHttpBaseUrl,
     sessionId: input.sessionId, signal: input.signal, accessProjectionVersion: 1 });
   if (!session || session.id !== input.sessionId || session.effectiveAccess?.level !== 'owner') return null;
-  const mode = await readAccountEncryptionModeOnce({ request: () => axios.get(`${input.serverHttpBaseUrl}/v1/account/encryption`, {
+  const mode = await readAccountEncryptionModeOnce({ credentials: input.credentials, request: () => axios.get(`${input.serverHttpBaseUrl}/v1/account/encryption`, {
     headers: { Authorization: `Bearer ${input.credentials.token}` }, signal: input.signal,
     timeout: configuration.sessionControlHttpTimeoutMs, validateStatus: () => true,
   }) });

@@ -180,6 +180,7 @@ export function createAccountPluginSettingsRecordStorage(params: Readonly<{
                 if (!await isStillCurrent(options?.signal)) return unavailableRead();
                 if (response.status < 200 || response.status >= 300) return unavailableRead();
                 const mode = await readAccountEncryptionModeOnce({
+                    credentials,
                     request: async () => await http.get(
                         `${baseUrl}/v1/account/encryption`,
                         requestConfig(credentials, options?.signal),
@@ -213,6 +214,7 @@ export function createAccountPluginSettingsRecordStorage(params: Readonly<{
             let issued = false;
             try {
                 const mode = await readAccountEncryptionModeOnce({
+                    credentials,
                     request: async () => await http.get(
                         `${baseUrl}/v1/account/encryption`,
                         requestConfig(credentials, options?.signal),

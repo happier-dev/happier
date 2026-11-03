@@ -24,7 +24,7 @@ export async function captureSessionOrganizationDisplayHost(params: Readonly<{
     }
   };
   await assertCurrent();
-  const mode = await readAccountEncryptionModeOnce({ request: () => axios.get<unknown>(
+  const mode = await readAccountEncryptionModeOnce({ credentials: params.credentials ?? { token: params.token }, request: () => axios.get<unknown>(
     `${params.serverHttpBaseUrl}/v1/account/encryption`, {
       headers: { Authorization: `Bearer ${params.token}` },
       timeout: configuration.sessionControlHttpTimeoutMs,

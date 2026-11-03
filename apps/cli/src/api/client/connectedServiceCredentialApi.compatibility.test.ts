@@ -67,7 +67,7 @@ describe('connected-service credential exact 0.2.1 response boundary', () => {
     try {
       await holder.read();
       const request = vi.fn(async () => ({ status: 200, data: { mode: 'e2ee', updatedAt: 2 } }));
-      await expect(readAccountEncryptionModeOnce({ scope, request, usage: 'fresh-authority' }))
+      await expect(readAccountEncryptionModeOnce({ credentials: { token: scope.token }, scope, request, usage: 'fresh-authority' }))
         .resolves.toEqual({ kind: 'resolved', mode: 'e2ee' });
       expect(request).toHaveBeenCalledTimes(1);
     } finally { await holder.dispose(); await channel.close(); }

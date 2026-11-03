@@ -651,6 +651,7 @@ export async function runCliAccountServiceSetupEntry(
           let mode: Awaited<ReturnType<typeof readAccountEncryptionModeOnce>>;
           try {
             mode = await readAccountEncryptionModeOnce({
+              credentials: inputValue.credential,
               request: async () => {
                 const response = await fetch(endpointUrl(inputValue.runtimeOrigin, '/v1/account/encryption'), {
                   headers: { Authorization: `Bearer ${inputValue.credential.token}`, ...buildTerminalAuthorityCeilingHttpHeaders({ token: inputValue.credential.token, serverHttpBaseUrl: inputValue.runtimeOrigin }) },

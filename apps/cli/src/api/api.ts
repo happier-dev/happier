@@ -1070,7 +1070,7 @@ export class ApiClient {
         // to be unsent, so it must not enter unknown-outcome reconciliation.
         try {
           const currentMode = options?.request
-            ? await readAccountEncryptionModeOnce({ request: () => options.request!({
+            ? await readAccountEncryptionModeOnce({ credentials: this.credential, request: () => options.request!({
                 method: 'GET', path: '/v1/account/encryption', ...(signal ? { signal } : {}),
               }) })
             : null;
@@ -1099,6 +1099,7 @@ export class ApiClient {
     };
     options?.signal?.throwIfAborted();
     const boundAccountMode = options?.request ? await readAccountEncryptionModeOnce({
+      credentials: this.credential,
       usage: 'identity',
       ...(options.serverHttpBaseUrl ? { scope: { token: this.credential.token, serverBaseUrl: options.serverHttpBaseUrl, signal: options.signal } } : {}),
       request: () => request('GET', '/v1/account/encryption', undefined, options.signal),

@@ -1,6 +1,7 @@
 import { classifyServerEndpointError } from './classifyServerEndpointError';
 import { AccountEncryptionModeResponseSchema } from '@happier-dev/protocol/account/encryptionMode';
 import { readObservedAccountEncryptionCurrentness } from './accountEncryptionCurrentnessObservation';
+import { admitCliReportedAccountMode, type AccountModeRequestCredential } from './accountModeAdmission';
 
 type AccountEncryptionMode = 'plain' | 'e2ee';
 
@@ -11,6 +12,8 @@ export type AccountEncryptionModeReadResult =
 
 export async function readAccountEncryptionModeOnce(input: Readonly<{
   request: () => Promise<Readonly<{ status: number; data: unknown }>>;
+  /** The credential that made `request`; its custody admits a reported plain. */
+  credentials: AccountModeRequestCredential;
   scope?: Readonly<{ token: string; serverBaseUrl: string; signal?: AbortSignal }>;
   /** Only descriptive identity may borrow; final authority stays fresh. */
   usage?: 'identity' | 'fresh-authority';
@@ -30,6 +33,6 @@ export async function readAccountEncryptionModeOnce(input: Readonly<{
   }
   const parsed = AccountEncryptionModeResponseSchema.safeParse(response.data);
   return parsed.success
-    ? { kind: 'resolved', mode: parsed.data.mode }
+    ? { kind: 'resolved', mode: await admitCliReportedAccountMode(parsed.data.mode, input.credentials) }
     : { kind: 'invalid_response', status: response.status };
 }

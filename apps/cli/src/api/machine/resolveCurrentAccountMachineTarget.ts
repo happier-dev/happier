@@ -112,7 +112,7 @@ export async function listCurrentAccountMachines(params: Readonly<{
     if (!inventory.success) throw new Error('invalid machine inventory');
     const rows = demandedIds === undefined ? inventory.data : inventory.data.filter(row => demandedIds.has(row.id));
     let accountMode: Promise<'plain' | 'e2ee' | 'unknown'> | undefined;
-    const readAccountMode = (credentials: StoredCredentials) => accountMode ??= readAccountEncryptionModeOnce({ request: () => axios.get(
+    const readAccountMode = (credentials: StoredCredentials) => accountMode ??= readAccountEncryptionModeOnce({ credentials, request: () => axios.get(
       `${serverHttpBaseUrl}/v1/account/encryption`, { headers: { Authorization: `Bearer ${credentials.token}` },
         timeout: 20_000, ...(params.signal ? { signal: params.signal } : {}) },
     ) }).then(mode => mode.kind === 'resolved' ? mode.mode : 'unknown' as const).catch(() => 'unknown' as const);

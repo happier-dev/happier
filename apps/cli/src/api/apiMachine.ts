@@ -622,7 +622,7 @@ export function createActionOperationSnapshotPublisher(input: Readonly<{
             logger.warn('Withheld Action operation snapshot because the credential Account differs from the machine connection Account');
         }
         if (admitted.length === 0) return;
-        const accountMode = await readAccountEncryptionModeOnce({ scope: { token: credentials.token, serverBaseUrl: input.serverBaseUrl }, request: () => axios.get(
+        const accountMode = await readAccountEncryptionModeOnce({ credentials, usage: 'identity', scope: { token: credentials.token, serverBaseUrl: input.serverBaseUrl }, request: () => axios.get(
             `${input.serverBaseUrl.replace(/\/+$/, '')}/v1/account/encryption`, {
                 headers: { ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(), Authorization: `Bearer ${credentials.token}` },
                 timeout: resolveConnectedServicesServerApiTimeoutMs(), validateStatus: () => true,

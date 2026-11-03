@@ -45,6 +45,7 @@ export async function createAccountServerWorkspaceWorkerPreferenceClient(input: 
   if (!await isCurrent()) return null;
   let mode: Awaited<ReturnType<typeof readAccountEncryptionModeOnce>>;
   try { mode = await readAccountEncryptionModeOnce({
+    credentials: { token: input.token },
     scope: { token: input.token, serverBaseUrl: input.serverHttpBaseUrl, signal: input.signal },
     request: () => request('/v1/account/encryption'),
   }); }

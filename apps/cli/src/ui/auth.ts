@@ -1084,6 +1084,7 @@ async function authAndPrepareMachineIfNeeded(
                 verifyTerminalAuthEnrollmentRuntime({ target, runtime: acquired.runtime, snapshot });
             }
             const mode = await readAccountEncryptionModeOnce({
+                credentials: authenticatedCredentials,
                 request: async () => {
                     const response = await fetch(`${runtimeOrigin.replace(/\/+$/u, '')}/v1/account/encryption`, {
                         headers: { Authorization: `Bearer ${authenticatedCredentials.token}` },

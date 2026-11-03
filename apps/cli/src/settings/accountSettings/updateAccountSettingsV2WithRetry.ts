@@ -434,6 +434,7 @@ function resolveAccountSettingsV2UpdateDeps(params: Readonly<{
   const resolveAccountEncryptionModeFromServer = async (signal?: AbortSignal) => {
     const accountSettingsBaseUrl = resolveAccountSettingsHttpBaseUrl();
     const result = await readAccountEncryptionModeOnce({
+      credentials: params.credentials,
       scope: { token: params.credentials.token, serverBaseUrl: accountSettingsBaseUrl, signal },
       request: async () => await axios.get(`${accountSettingsBaseUrl}/v1/account/encryption`, {
         headers: {

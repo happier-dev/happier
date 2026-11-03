@@ -272,7 +272,7 @@ async function resolveMachineRpcContentCodec(params: Readonly<{
   }
   let expectedAccountMode: 'plain' | 'e2ee' | 'unknown' = access?.resourceMode ?? raw?.storageMode ?? 'unknown';
   if (expectedAccountMode === 'unknown' && !params.deploymentArchiveExecution && !params.deploymentSetupExecution) {
-    const mode = await readAccountEncryptionModeOnce({ request: () => axios.get(
+    const mode = await readAccountEncryptionModeOnce({ credentials: params.credentials, request: () => axios.get(
       `${params.serverUrl ?? resolveServerHttpBaseUrl()}/v1/account/encryption`, {
         headers: { Authorization: `Bearer ${params.credentials.token}` },
         timeout: params.timeoutMs,

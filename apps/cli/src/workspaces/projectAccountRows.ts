@@ -185,6 +185,7 @@ async function readMode(input: ReadInput): Promise<'plain' | 'e2ee'> {
     return input.authorization.requesterAccountProjection!.accountEncryptionMode;
   }
   const result = await readAccountEncryptionModeOnce({
+    credentials: input.credentials,
     ...(input.credentials ? { scope: { token: input.credentials.token, serverBaseUrl: baseUrl(input), signal: input.signal } } : {}),
     request: () => axios.get(`${baseUrl(input)}/v1/account/encryption`, {
     headers: headers(input.credentials), validateStatus: () => true, ...(input.signal ? { signal: input.signal } : {}),

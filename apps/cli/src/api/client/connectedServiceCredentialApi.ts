@@ -364,6 +364,7 @@ export class ConnectedServiceCredentialHttpClient implements ConnectedServiceCre
     const serverUrl = resolveServerHttpBaseUrl();
     try {
       const result = await readAccountEncryptionModeOnce({
+        credentials: { token: this.token },
         scope: { token: this.token, serverBaseUrl: serverUrl, ...(signal ? { signal } : {}) },
         usage,
         request: async () => await axios.get(`${serverUrl}/v1/account/encryption`, {

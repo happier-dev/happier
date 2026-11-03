@@ -89,8 +89,9 @@ export async function createAuthoringMemoryClient(input: AuthoringMemoryClientIn
     ...(input.signal ? { signal: input.signal } : {}),
   };
   const mode = account ? { kind: 'resolved' as const, mode: account.accountEncryptionMode }
-    : await readAccountEncryptionModeOnce({ request: () => axios.get(`${baseUrl}/v1/account/encryption`, options) });
-  if (mode.kind !== 'resolved') throw new AuthoringMemoryReadUnavailableError();
+    : input.credentials ? await readAccountEncryptionModeOnce({ credentials: input.credentials,
+      request: () => axios.get(`${baseUrl}/v1/account/encryption`, options) }) : null;
+  if (mode?.kind !== 'resolved') throw new AuthoringMemoryReadUnavailableError();
   const accountMode = mode.mode;
   if (!input.authorization && accountMode === 'e2ee' && !hasUsableAccountSettingsEncryptionMaterial(input.credentials)) {
     throw new AccountSettingsEncryptionMaterialUnavailableError();

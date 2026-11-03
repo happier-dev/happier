@@ -411,7 +411,7 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
   // These passive reads already have the exact target and authenticated requester. Join them
   // before interpreting mode/ownership, minting authority or disclosing material.
   const [modeRead, inventoryRead, installedRead] = await Promise.allSettled([
-    phase('account_mode', () => readAccountEncryptionModeOnce({ request: () => axios.get<unknown>(`${homeUrl}/v1/account/encryption`, {
+    phase('account_mode', () => readAccountEncryptionModeOnce({ credentials: input.credentials, request: () => axios.get<unknown>(`${homeUrl}/v1/account/encryption`, {
       headers, ...(input.signal ? { signal: input.signal } : {}), validateStatus: () => true,
     }) })),
     input.target.kind === 'machine' && !machines

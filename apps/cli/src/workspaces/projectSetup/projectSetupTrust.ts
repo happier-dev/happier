@@ -87,7 +87,8 @@ export function createProjectSetupTrustClient(input: ProjectSetupTrustClientInpu
         await assertCurrent();
         const projection = input.authorization?.requesterAccountProjection;
         const result = projection ? { kind: 'resolved' as const, mode: projection.accountEncryptionMode }
-            : await readAccountEncryptionModeOnce({ request: () => axios.get(`${baseUrl}/v1/account/encryption`, options)
+            : !input.credentials ? fail('project_trust_encryption_material_unavailable')
+            : await readAccountEncryptionModeOnce({ credentials: input.credentials, request: () => axios.get(`${baseUrl}/v1/account/encryption`, options)
                 .catch(() => fail('project_trust_storage_unavailable')) });
         if (result.kind !== 'resolved') return fail('project_trust_storage_unavailable');
         if (projection?.projectTrustRowCipher) return { mode: result.mode, cipher: projection.projectTrustRowCipher };
