@@ -1,6 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { openPluginContributedAction } from './openPluginContributedAction';
+import { Modal } from '@/modal';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/actionExecutorBoundary';
+import { PluginInputTypeContributionV1Schema } from '@happier-dev/protocol/plugins/contributions/inputTypes';
+import { projectedActionToDefinition } from '@/components/appShell/currentUiContext/contributedActionDefinition';
+
+vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock().module);
 import { MessageActionAvailableSnapshotV1Schema } from '@happier-dev/protocol/sessions/messages/messageActionReferenceV1';
 
 // The machine RPC is the system boundary: Action schemas are read per Action
@@ -379,6 +387,57 @@ function clientRegisteredCacheIdentity(): PluginReactNativeBundleCacheIdentity {
  * are never presented", so this fixture commits a real registration through the
  * production projection, cache and executable composition the gate reads.
  */
+describe('contributed Action form discovery', () => {
+    it('addresses the reload-17 flower picker by its public Action identity while retaining the Machine draft', async () => {
+        const machineId = 'ffd72b3e-40ca-4644-9bd2-46753a01d8cb';
+        const base = snapshot([action({ id: 'change', scopes: ['global', 'machine'],
+            placementBindings: ['commandPalette'],
+            inputSchema: { type: 'object', properties: { flower: { type: 'string', enum: ['marigold', 'rose'] } },
+                required: ['flower'], additionalProperties: false },
+            inputHints: { fields: [{ path: 'flower', title: 'Flower', widget: 'select', required: true,
+                inputType: { pluginId: 'qa.qar90s-r8', localId: 'flower' } }] },
+        })], { pluginId: 'qa.qar90s-r8' });
+        const current = { ...base, host: { ...base.host, machineId, sessionId: null } };
+        const controller = createPluginContributedActionController({ resolveCurrent: () => current });
+        const descriptor = controller.list({ placement: 'commandPalette', scope: 'global' })[0]!;
+        expect(descriptor.qualifiedActionId).toBe('qa.qar90s-r8/change');
+        vi.mocked(Modal.show).mockClear();
+        const opened = await openPluginContributedAction({ controller, action: descriptor });
+        expect(opened.kind).toBe('form');
+        if (opened.kind !== 'form') throw new Error('Expected the flower form');
+        try {
+            const modal = vi.mocked(Modal.show).mock.calls.at(-1)?.[0];
+            // Replay the captured query using the identity actually supplied to
+            // ActionInputFormModal, rather than an invented discovery identity.
+            const query = { actionId: modal?.props?.actionId, fieldPath: 'flower', draftInput: { machineId } };
+            const projected = current.resolveContributedAction!({ pluginId: 'qa.qar90s-r8', localId: 'change' })!;
+            const executor = createActionExecutor(createActionExecutorBoundaryFixture({
+                listContributedActionDefinitions: () => [projectedActionToDefinition(projected, null)],
+                // The daemon descriptor is the external boundary. Keep the real
+                // declaration, identity, and options admission beneath it.
+                resolveInputType: async () => ({
+                    identity: { pluginId: 'qa.qar90s-r8', localId: 'flower' },
+                    occurrenceId: projected.occurrenceId,
+                    definition: PluginInputTypeContributionV1Schema.parse({ id: 'flower', title: 'Flower',
+                        semantic: 'qa-qar90s-flower', valueSchema: { type: 'string', enum: ['marigold', 'rose'] },
+                        picker: 'flower-picker-renderer' }),
+                }),
+            }));
+            expect(await executor.execute('action.options.resolve', query, {
+                surface: 'ui', authority: 'present_user',
+                serverId: 'srv_niq7wbpMyJviL4EtO5YlTEd0Us0Ou0nN',
+                runtimeAccountId: '5e3a0581-6f3d-4e73-bf40-383db0be6c3e',
+                externalActionTarget: { kind: 'machine', machineId },
+            })).toEqual({
+                ok: true, result: { actionId: 'qa.qar90s-r8/actions/change', fieldPath: 'flower',
+                    optionsSourceId: null, options: [] },
+            });
+        } finally {
+            opened.form.retire();
+        }
+    });
+});
+
 function createRegisteredClientActionFixture(
     handler: PluginClientActionHandler,
     presentation: Pick<PluginProjectedActionV2, 'scopes' | 'placementBindings'> = {
