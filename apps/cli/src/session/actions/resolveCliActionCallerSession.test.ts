@@ -5,6 +5,22 @@ import { resolveSessionTransportContext } from '@/session/services/resolveSessio
 import { createCliBoundSessionMetadataReader, resolveCliActionCallerSession, resolveCliActionCallerWorkflowTarget } from './resolveCliActionCallerSession';
 
 describe('Account Action caller Session metadata authority', () => {
+  it('settles an unloaded live snapshot without fetching and reads later metadata on the next admission', async () => {
+    const credentials = { token: 'token', encryption: null };
+    let snapshot: Readonly<Record<string, unknown>> | null = null;
+    const get = vi.spyOn(axios, 'get').mockRejectedValue(new Error('live_snapshot_must_not_fetch'));
+    try {
+      const read = createCliBoundSessionMetadataReader({ credentials, token: credentials.token,
+        sessionId: 'c111111111111111111111111', mode: 'plain', ctx: null,
+        getCurrentSessionMetadata: () => snapshot,
+        resolveTransportForSession: (id, signal) => resolveSessionTransportContext({ reason: 'requester-binding', credentials, idOrPrefix: id, signal }),
+      });
+      await expect(read()).resolves.toBeNull();
+      snapshot = { path: '/workspace', machineId: 'machine-1' };
+      await expect(read()).resolves.toEqual(snapshot);
+      expect(get).not.toHaveBeenCalled();
+    } finally { get.mockRestore(); }
+  });
   it.each(['cli-global', 'plugin-global'])('keeps the unbound %s host out of Session selector transport', async sessionId => {
     const credentials = { token: 'token', encryption: null };
     const get = vi.spyOn(axios, 'get').mockRejectedValue(new Error('unbound_host_has_no_session'));
@@ -80,6 +96,12 @@ describe('Account Action caller Session metadata authority', () => {
         resolveTransportForSession: (id) => resolveSessionTransportContext({ reason: 'requester-binding', credentials, idOrPrefix: id }),
       });
       await expect(read()).resolves.toMatchObject({ path: '/bound/owner', machineId: 'bound-machine' });
+      if (source === 'fetched') {
+        expect(get).toHaveBeenCalledWith(expect.stringContaining(`/v2/sessions/${sessionId}`),
+          expect.objectContaining({ headers: expect.objectContaining({
+            'X-Happier-Request-Purpose': 'session-detail:requester-binding',
+          }) }));
+      }
     } finally { get.mockRestore(); }
   });
 
