@@ -6,6 +6,9 @@ import { getStorage } from '@/sync/domains/state/storageStore';
 import { readProjectWorkspaceRefs } from '@/sync/store/domains/projectAccountRows';
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
 import { resolveWorkspaceRefById } from '@/sync/domains/workspaces/workspaceRefs';
+import { WorkspaceSyncRelationshipCreationObservationV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
+import { createUiProjectAccountRowsClient } from '@/sync/api/projects/projectAccountRowsClient';
+import type { LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 
 /**
  * Transport for direct Project linking, kept free of the Action executor so the
@@ -57,4 +60,27 @@ export async function createWorkspaceSyncRelationshipOnController(
         }),
         ...(request.signal ? { signal: request.signal } : {}),
     });
+}
+
+export async function observeWorkspaceSyncRelationshipCreationOnController(
+    request: Readonly<{ input: WorkspaceSyncRelationshipCreateActionInputV1; operationId: string; serverId: string;
+        account: LazyActionAccountContext | undefined; signal?: AbortSignal }>,
+) {
+    const { account, signal } = request;
+    if (!account) throw Object.assign(new Error('not_authenticated'), { code: 'not_authenticated' });
+    account.assertCurrent();
+    const rows = await createUiProjectAccountRowsClient(account).read(signal);
+    if (rows.status !== 'ready' || rows.coverage !== 'complete') {
+        throw Object.assign(new Error('workspace_ref_not_ready'), { code: 'workspace_ref_not_ready' });
+    }
+    const source = resolveWorkspaceRefById(rows.workspaceRefs, request.input.sourceWorkspaceRefId, request.serverId);
+    if (source.kind !== 'resolved') throw Object.assign(new Error('workspace_ref_not_ready'), { code: 'workspace_ref_not_ready' });
+    const result = await machineRpcWithServerScope<unknown, unknown>({ serverId: request.serverId,
+        accountId: account.accountId, machineId: source.ref.machineId,
+        method: RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIP_CREATION_OBSERVE,
+        payload: { v: 1, operationId: request.operationId, actionInput: request.input },
+        ...(signal ? { signal } : {}),
+    });
+    account.assertCurrent();
+    return WorkspaceSyncRelationshipCreationObservationV1Schema.parse(result);
 }

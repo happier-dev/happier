@@ -56,6 +56,7 @@ function createHarness(options: Readonly<{
   preparedStatus?: (relationshipId: string) => WorkspaceSyncStatusV1;
   existingRelationships?: readonly WorkspaceSyncRelationshipV1[];
   freshTarget?: boolean;
+  targetCopy?: 'present' | 'absent' | 'unavailable';
 }> = {}) {
   let snapshot = parseProjectAccountSnapshotV1({
     workspaceRefs: [
@@ -97,6 +98,10 @@ function createHarness(options: Readonly<{
     })(),
     deriveRelationshipId: (operationId) => `relationship_${operationId}`,
     nowMs: () => 100,
+    observeRelationshipTarget: async () => {
+      if (options.targetCopy === 'unavailable') throw new Error('Target offline');
+      return options.targetCopy ?? 'present';
+    },
   });
   return {
     dependencies: {
@@ -139,6 +144,43 @@ function request(overrides: Readonly<{
 }
 
 describe('createWorkspaceSyncRelationshipForProject', () => {
+  it('observes an interrupted admission without preparing another copy and distinguishes committed, absent and offline targets', async () => {
+    const raw = request({ mode: 'keep_synced', destinationIntent: 'materialize_from_source_workspace' });
+    const worker = { ...raw, actionInput: { ...raw.actionInput, purpose: 'worker_clean_copy' as const } };
+    for (const targetCopy of ['present', 'absent', 'unavailable'] as const) {
+      const h = createHarness({ targetCopy, freshTarget: true });
+      await createWorkspaceSyncRelationshipForProject(h.dependencies, worker);
+      const effects = h.ensureRelationship.mock.calls.length;
+      const observation = await h.owner.observeCreation({ ...worker, serverId: 'server_a' });
+      expect(observation).toMatchObject(targetCopy === 'present'
+        ? { outcome: 'succeeded', relationshipId: 'relationship_link_1', targetWorkspaceRefId: 'unexpected_source' }
+        : targetCopy === 'absent' ? { outcome: 'failed', errorCode: 'workspace_sync_copy_absent' }
+          : { outcome: 'unknown' });
+      expect(h.ensureRelationship.mock.calls).toHaveLength(effects);
+    }
+    const h = createHarness();
+    await expect(h.owner.observeCreation({ ...worker, serverId: 'server_a' })).resolves.toEqual({
+      outcome: 'failed', errorCode: 'workspace_sync_relationship_not_committed',
+    });
+    expect(h.ensureRelationship).not.toHaveBeenCalled();
+  });
+
+  it('keeps an admitted creation unknown while its original effect is still active', async () => {
+    const h = createHarness({ freshTarget: true, targetCopy: 'absent' });
+    const requested = request({ mode: 'keep_synced', destinationIntent: 'materialize_from_source_workspace' });
+    const raw = { ...requested, actionInput: { ...requested.actionInput, purpose: 'worker_clean_copy' as const } };
+    let release!: () => void;
+    let entered!: () => void;
+    const started = new Promise<void>(resolve => { entered = resolve; });
+    const pending = new Promise<void>(resolve => { release = resolve; });
+    h.ensureRelationship.mockImplementationOnce(async definition => { entered(); await pending; return status(definition.relationshipId); });
+    const creation = createWorkspaceSyncRelationshipForProject(h.dependencies, raw);
+    await started;
+    try {
+      await expect(h.owner.observeCreation({ ...raw, serverId: 'server_a' })).resolves.toEqual({ outcome: 'unknown' });
+    } finally { release(); await creation; }
+  });
+
   it('creates a dedicated copy at the explicitly chosen root with provenance before bootstrap and preserves it on retry', async () => {
     const h = createHarness({ freshTarget: true });
     const raw = request({ mode: 'keep_synced', destinationIntent: 'materialize_from_source_workspace' });

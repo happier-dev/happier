@@ -389,6 +389,7 @@ export const RPC_METHODS = {
   DAEMON_WORKSPACE_SYNC_FILE_READ: 'daemon.workspaceSync.file.read.v1',
   DAEMON_WORKSPACE_SYNC_RELATIONSHIPS_LIST: 'daemon.workspaceSync.relationships.list.v1',
   DAEMON_WORKSPACE_SYNC_RELATIONSHIP_CREATE: 'daemon.workspaceSync.relationship.create.v1',
+  DAEMON_WORKSPACE_SYNC_RELATIONSHIP_CREATION_OBSERVE: 'daemon.workspaceSync.relationship.creation.observe.v1',
   DAEMON_WORKSPACE_SYNC_CONFLICT_INSPECT: 'daemon.workspaceSync.conflict.inspect.v1',
   DAEMON_WORKSPACE_SYNC_SELECTION_DIAGNOSE: 'daemon.workspaceSync.selection.diagnose.v1',
   DAEMON_WORKSPACE_SYNC_TARGET_CONFLICT_STAGE: 'daemon.workspaceSync.target.conflict.stage.v1',

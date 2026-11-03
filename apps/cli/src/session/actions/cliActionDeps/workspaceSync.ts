@@ -20,7 +20,7 @@ export function createCliWorkspaceSyncActionDeps(
     readRecord: (value: unknown) => Record<string, unknown>;
     resolveProjectHomeIdentity: CliProjectAdmission['resolveProjectHomeIdentity'];
   }>,
-): Pick<ActionExecutorDeps, 'workspaceSyncRelationshipCreate' | 'workspaceSyncRelationshipTerminate' | 'workspaceSyncRelationshipDisable' | 'workspaceSyncRelationshipEnable' | 'workspaceSyncRelationshipFlush' | 'workspaceSyncConflictResolve' | 'workspaceSyncRelationshipsList' | 'workspaceSyncConflictsList' | 'workspaceSyncConflictInspect'> {
+): Pick<ActionExecutorDeps, 'workspaceSyncRelationshipObserveCreation' | 'workspaceSyncRelationshipCreate' | 'workspaceSyncRelationshipTerminate' | 'workspaceSyncRelationshipDisable' | 'workspaceSyncRelationshipEnable' | 'workspaceSyncRelationshipFlush' | 'workspaceSyncConflictResolve' | 'workspaceSyncRelationshipsList' | 'workspaceSyncConflictsList' | 'workspaceSyncConflictInspect'> {
 
   const resolveWorkspaceSyncReadController = async (input: Readonly<{
     controllerMachineId?: string;
@@ -44,6 +44,18 @@ export function createCliWorkspaceSyncActionDeps(
     return resolveWorkspaceSyncReadControllerV1({ ...input, workspaceRefs, relationships, serverId: currentServerId });
   };
   return {
+    workspaceSyncRelationshipObserveCreation: async ({ input, operationId, serverId, signal }) => {
+      const denied = await projectHomeAdmission(serverId);
+      if (denied) throw Object.assign(new Error(denied.errorCode), { code: denied.errorCode });
+      const rows = await readProjectRows({ kinds: ['workspace-ref'], serverId }, signal);
+      const { resolveWorkspaceRefById } = await import('@/workspaces/workspaceRefsV1');
+      const source = resolveWorkspaceRefById(rows.workspaceRefs, input.sourceWorkspaceRefId, serverId);
+      if (!source) throw Object.assign(new Error('workspace_ref_not_ready'), { code: 'workspace_ref_not_ready' });
+      const { WorkspaceSyncRelationshipCreationObservationV1Schema } = await import('@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas');
+      return WorkspaceSyncRelationshipCreationObservationV1Schema.parse(await callMachineAction({ machineId: source.machineId,
+        method: RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIP_CREATION_OBSERVE,
+        request: { v: 1, operationId, actionInput: input }, exactMachine: true, ...(signal ? { signal } : {}) }));
+    },
     workspaceSyncRelationshipCreate: async ({
       input,
       operationId,

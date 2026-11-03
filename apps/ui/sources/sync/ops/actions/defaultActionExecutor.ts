@@ -319,7 +319,7 @@ import {
   preflightWorkspaceDestinationReplacement,
   startSessionHandoff as startSessionHandoffOp,
 } from '@/sync/ops/sessionHandoffs';
-import { createWorkspaceSyncRelationshipOnController } from '@/sync/ops/workspaceSyncRelationshipCreateRpc';
+import { createWorkspaceSyncRelationshipOnController, observeWorkspaceSyncRelationshipCreationOnController } from '@/sync/ops/workspaceSyncRelationshipCreateRpc';
 import { listWorkspaceSyncRelationshipsOnController } from '@/sync/ops/workspaceSyncRelationshipsListRpc';
 import {
   disableWorkspaceSyncRelationship,
@@ -2559,6 +2559,8 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     workspaceSyncRelationshipsList: async ({ input, signal }) => await listWorkspaceSyncRelationshipsOnController({
       input, account: accountContext, ...(signal ? { signal } : {}),
     }),
+
+    workspaceSyncRelationshipObserveCreation: request => observeWorkspaceSyncRelationshipCreationOnController({ ...request, account: accountContext }),
 
     workspaceSyncRelationshipCreate: async ({
       input,

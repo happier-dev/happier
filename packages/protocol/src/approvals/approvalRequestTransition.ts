@@ -32,6 +32,7 @@ const SETTLED_STATUSES: ReadonlySet<ApprovalRequestStatus> = new Set([
   'canceled',
   'executed',
   'failed',
+  'outcome_unknown',
 ]);
 
 function isSettled(status: ApprovalRequestStatus): boolean {
@@ -178,7 +179,7 @@ export function decideApprovalRequestTransition(
   const isApprovedPreExecutionFailure = existing.v === 2
     && existing.status === 'approved'
     && next.v === 2
-    && next.status === 'failed'
+    && (next.status === 'failed' || next.status === 'outcome_unknown')
     && next.decision?.kind === 'approve'
     && next.execution?.ok === false;
   // Released V1 has no replay authority or executing claim; the decision owner
@@ -195,18 +196,28 @@ export function decideApprovalRequestTransition(
   const isExecutingTerminal = existing.v === 2
     && existing.status === 'executing'
     && next.v === 2
-    && (next.status === 'executed' || next.status === 'failed')
+    && (next.status === 'executed' || next.status === 'failed' || next.status === 'outcome_unknown')
     && next.decision?.kind === 'approve'
     && next.execution !== undefined
     // Cancellation owns only unclaimed custody. The writer may have re-read
     // an execution claim after the canceling caller read `approved`.
     && !(next.execution.errorCode === 'approval_canceled' && next.execution.effectAttempted === false);
+  // Read-back may settle the original admitted worker link, but can never
+  // grant another effect claim or rewrite its subject, decision or start time.
+  const isWorkspaceLinkReadBack = existing.v === 2 && next.v === 2
+    && existing.actionId === 'workspace.sync.relationship.create'
+    && existing.status === 'outcome_unknown' && existing.execution?.effectAttempted === true
+    && next.execution?.effectAttempted === true
+    && next.execution.executedAtMs === existing.execution.executedAtMs
+    && (next.status === 'executed' && next.execution.ok === true
+      || next.status === 'failed' && next.execution.ok === false);
   if (
     (!isOpenDecision
       && !isApprovedExecution
       && !isApprovedPreExecutionFailure
       && !isLegacyApprovedStaleFailure
       && !isExecutingTerminal
+      && !isWorkspaceLinkReadBack
       && !isStorageRetryReceipt)
     || next.updatedAtMs < existing.updatedAtMs
   ) {

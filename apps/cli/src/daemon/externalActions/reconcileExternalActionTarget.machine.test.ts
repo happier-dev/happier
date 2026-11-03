@@ -2,6 +2,17 @@ import { expect, it } from 'vitest';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { reconcileExternalActionTarget, resolveExternalActionMachineTarget } from './reconcileExternalActionTarget';
 
+it.each([
+  { actionId: 'workspace.sync.relationships.list' as const, rawInput: { workspaceRefId: 'source-ref' } },
+  { actionId: 'workspace.sync.conflicts.list' as const, rawInput: { controllerMachineId: 'controller', relationshipId: 'relationship', limit: 50 } },
+  { actionId: 'workspace.sync.conflict.inspect' as const, rawInput: { controllerMachineId: 'controller', workspaceRefId: 'source-ref', path: 'file.txt' } },
+])('admits $actionId without manufacturing a Session execution target', ({ actionId, rawInput }) => {
+  expect(getActionSpec(actionId).inputSchema.safeParse(rawInput).success).toBe(true);
+  expect(reconcileExternalActionTarget({ actionId,
+    rawInput, currentMachineId: '', target: undefined }))
+    .toMatchObject({ kind: 'ready' });
+});
+
 it('refuses an execution Run retargeting its authenticated receiver with noRunCreated evidence', () => {
   const start = { actionId: 'execution.run.start' as const, rawInput: {
     sessionId: null, machineId: 'worker', cwd: '/worker', intent: 'delegate',

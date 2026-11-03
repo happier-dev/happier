@@ -5,12 +5,13 @@ import { areWorkspaceSyncRelationshipDefinitionsEqual, areWorkspaceSyncWorkerCop
 import type { WorkspaceContentPolicyV1, WorkspaceRefV1, WorkspaceSyncPersistentModeV1, WorkspaceSyncRelationshipV1, WorkspaceSyncStatusV1, HandoffTargetReplacementApprovalV1 } from '@happier-dev/protocol';
 import type { WorkspaceSyncCommittedCopyTargetV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncCommittedCopyV1';
 
-import { materializeWorkspaceRefForMachineRoot, resolveWorkspaceRefById } from '@/workspaces/workspaceRefsV1';
+import { materializeWorkspaceRefForMachineRoot, resolveWorkspaceRefById, resolveWorkspaceRefForMachineRoot } from '@/workspaces/workspaceRefsV1';
 import { createProjectAccountSnapshotMutation, type ProjectAccountSnapshotMutation, type ProjectAccountSnapshotMutationResult } from '@/workspaces/projectAccountRows';
 import type { StoredCredentials } from '@/persistence';
 import type { ProjectWorkerDependency } from '@/workspaces/execution/projectWorkerAdmission';
 import { deriveWorkspaceSyncRelationshipId } from './workspaceSyncRelationshipIdentity';
 import { validateWorkspaceSyncRelationship } from './workspaceSyncSettings';
+import type { WorkspaceSyncRelationshipCreateRpcRequestV1, WorkspaceSyncRelationshipCreationObservationV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 
 export type { ProjectAccountSnapshotMutation } from '@/workspaces/projectAccountRows';
 
@@ -57,6 +58,7 @@ export type WorkspaceSyncRelationshipOwner = Readonly<{
     signal?: AbortSignal;
   }>): Promise<MaterializedWorkspaceSyncEndpoints>;
   prepareCreate(input: PrepareWorkspaceSyncRelationshipInput): Promise<PreparedWorkspaceSyncRelationship>;
+  observeCreation(input: WorkspaceSyncRelationshipCreateRpcRequestV1 & Readonly<{ serverId: string }>): Promise<WorkspaceSyncRelationshipCreationObservationV1>;
   setEnabled(relationshipId: string, enabled: boolean, signal?: AbortSignal): Promise<void>;
   /** Settlement failures carry definitionRetired:true only after the graph mutation is confirmed. */
   stop(relationshipId: string, signal?: AbortSignal, retirement?: WorkspaceSyncRelationshipRetirement): Promise<void>;
@@ -96,6 +98,8 @@ export type WorkspaceSyncRelationshipOwnerOptions = Readonly<{
   createId?: () => string;
   deriveRelationshipId?: (operationId: string) => string;
   nowMs?: () => number;
+  /** Passive target observation; absence is distinct from an unreachable peer. */
+  observeRelationshipTarget?(relationship: WorkspaceSyncRelationshipV1, target: WorkspaceRefV1): Promise<'present' | 'absent'>;
 }>;
 
 function ownerError(code: string, message: string): Error & { code: string } {
@@ -333,9 +337,8 @@ export function createWorkspaceSyncRelationshipOwner(
     }
   };
 
-  return Object.freeze({
-    materializeEndpoints,
-    async prepareCreate(input): Promise<PreparedWorkspaceSyncRelationship> {
+  const activeCreations = new Set<string>();
+  const prepareCreate = async (input: PrepareWorkspaceSyncRelationshipInput): Promise<PreparedWorkspaceSyncRelationship> => {
       input.signal?.throwIfAborted();
       if (input.sourceMachineId !== options.localMachineId) {
         throw ownerError('workspace_sync_controller_mismatch', 'Relationship creation must run on its source controller machine');
@@ -527,6 +530,50 @@ export function createWorkspaceSyncRelationshipOwner(
           closed = true;
         },
       });
+
+  };
+
+  return Object.freeze({
+    materializeEndpoints,
+    async prepareCreate(input): Promise<PreparedWorkspaceSyncRelationship> {
+      activeCreations.add(input.operationId);
+      try {
+        const prepared = await prepareCreate(input);
+        return { ...prepared,
+          commit: async () => { try { return await prepared.commit(); } finally { activeCreations.delete(input.operationId); } },
+          abort: async () => { try { await prepared.abort(); } finally { activeCreations.delete(input.operationId); } },
+        };
+      } catch (error) { activeCreations.delete(input.operationId); throw error; }
+    },
+    async observeCreation(input): Promise<WorkspaceSyncRelationshipCreationObservationV1> {
+      if (activeCreations.has(input.operationId)) return { outcome: 'unknown' };
+      // Attaching an existing checkout has no materialization custody to read
+      // back. Do not mistake mere directory presence for a committed copy.
+      if (input.actionInput.purpose !== 'worker_clean_copy') return { outcome: 'unknown' };
+      const snapshot = parseProjectAccountSnapshotV1(await options.readProjectSnapshot());
+      const source = resolveWorkspaceRefById(snapshot.workspaceRefs, input.actionInput.sourceWorkspaceRefId, input.serverId);
+      if (!source || source.machineId !== options.localMachineId) {
+        throw ownerError('workspace_sync_controller_mismatch', 'Creation read-back must run on its source controller');
+      }
+      const target = resolveWorkspaceRefForMachineRoot(snapshot.workspaceRefs, { serverId: input.serverId,
+        machineId: input.actionInput.targetMachineId, rootPath: input.actionInput.targetPath });
+      const relationship = snapshot.relationships.find(value => value.relationshipId === deriveRelationshipId(input.operationId));
+      if (!relationship) return { outcome: 'failed', errorCode: 'workspace_sync_relationship_not_committed' };
+      if (!target) return { outcome: 'unknown' };
+      const candidate = validateWorkspaceSyncRelationship({ ...relationship, controllerMachineId: options.localMachineId,
+        alphaWorkspaceRefId: source.id, betaWorkspaceRefId: target.id,
+        mode: input.actionInput.mode, contentPolicy: input.actionInput.contentPolicy,
+        provenance: { kind: 'worker_clean_copy', sourceWorkspaceRefId: source.id, targetWorkspaceRefId: target.id },
+      });
+      resolveEndpointPair(snapshot.relationships, candidate);
+      if (!options.observeRelationshipTarget) return { outcome: 'unknown' };
+      try {
+        if (await options.observeRelationshipTarget(relationship, target) === 'absent') {
+          return { outcome: 'failed', errorCode: 'workspace_sync_copy_absent' };
+        }
+      } catch { return { outcome: 'unknown' }; }
+      return { outcome: 'succeeded', relationshipId: relationship.relationshipId,
+        controllerMachineId: relationship.controllerMachineId, sourceWorkspaceRefId: source.id, targetWorkspaceRefId: target.id };
     },
 
     async setEnabled(relationshipId, enabled, signal): Promise<void> {

@@ -1339,6 +1339,18 @@ export type WorkspaceSyncRelationshipCreateRpcRequestV1 = z.infer<
   typeof WorkspaceSyncRelationshipCreateRpcRequestV1Schema
 >;
 
+/** Read-back of an admitted operation; never authorizes creation or bootstrap. */
+export const WorkspaceSyncRelationshipCreationObservationV1Schema = lazyZodSchema(() => z.discriminatedUnion('outcome', [
+  z.strictObject({ outcome: z.literal('unknown') }),
+  z.strictObject({ outcome: z.literal('failed'), errorCode: z.enum([
+    'workspace_sync_relationship_not_committed', 'workspace_sync_copy_absent',
+  ]) }),
+  z.strictObject({ outcome: z.literal('succeeded'), relationshipId: exactBoundedString(MAX_RELATIONSHIP_ID_LENGTH),
+    controllerMachineId: exactBoundedString(MAX_MACHINE_ID_LENGTH), sourceWorkspaceRefId: exactBoundedString(MAX_WORKSPACE_REF_ID_LENGTH),
+    targetWorkspaceRefId: exactBoundedString(MAX_WORKSPACE_REF_ID_LENGTH) }),
+]));
+export type WorkspaceSyncRelationshipCreationObservationV1 = z.infer<typeof WorkspaceSyncRelationshipCreationObservationV1Schema>;
+
 const WorkspaceSyncReadyComponentV1Schema = lazyZodSchema(() => z.strictObject({ state: z.literal('ready') }));
 const WorkspaceSyncUnavailableComponentV1Schema = lazyZodSchema(() => z.strictObject({
   state: z.literal('unavailable'),
@@ -1388,6 +1400,11 @@ export type WorkspaceSyncCleanupWarningV1 = z.infer<typeof WorkspaceSyncCleanupW
 
 export const WorkspaceSyncLegacyStateInspectionV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
   z.strictObject({ status: z.literal('absent') }),
+  z.strictObject({
+    status: z.literal('preserved'),
+    path: z.string().check(z.trim(), z.minLength(1), z.maxLength(MAX_PATH_LENGTH)),
+  }),
+  // Read older development-daemon diagnostics; current daemons never quarantine.
   z.strictObject({
     status: z.literal('legacy_workspace_sync_state_unsupported'),
     classification: z.literal('retired_v1'),

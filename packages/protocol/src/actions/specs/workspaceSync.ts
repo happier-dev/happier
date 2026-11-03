@@ -180,7 +180,7 @@ export const WORKSPACE_SYNC_ACTION_SPECS = Object.freeze([
     inputSchema: WorkspaceSyncRelationshipTerminateActionInputV1Schema,
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'workspace.sync.relationships.list', executionPlacement: 'session', sideEffectClass: 'read', approval: {result: 'required'},
+    id: 'workspace.sync.relationships.list', executionPlacement: 'account', sideEffectClass: 'read', approval: {result: 'required'},
     title: 'List linked workspace relationships',
     description: 'List linked workspace relationships and their current sync status on the exact controller. Missing status stays unknown, never zero.',
     safety: 'safe',
@@ -209,7 +209,7 @@ export const WORKSPACE_SYNC_ACTION_SPECS = Object.freeze([
     inputSchema: WorkspaceSyncRelationshipsListActionInputV1Schema,
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'workspace.sync.conflicts.list', executionPlacement: 'session', sideEffectClass: 'read', approval: {result: 'required'},
+    id: 'workspace.sync.conflicts.list', executionPlacement: 'account', sideEffectClass: 'read', approval: {result: 'required'},
     title: 'List workspace sync conflicts',
     description: 'Read one bounded conflict page for a linked workspace relationship. Pages keep their cursor; coverage can be partial.',
     safety: 'safe',
@@ -239,7 +239,7 @@ export const WORKSPACE_SYNC_ACTION_SPECS = Object.freeze([
     inputSchema: WorkspaceSyncConflictsListActionInputV1Schema,
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'workspace.sync.conflict.inspect', executionPlacement: 'session', sideEffectClass: 'read', approval: {result: 'required'},
+    id: 'workspace.sync.conflict.inspect', executionPlacement: 'account', sideEffectClass: 'read', approval: {result: 'required'},
     title: 'Inspect workspace sync conflict',
     description: 'Inspect the current endpoint versions of a linked workspace path. Reads current bytes, not history; coverage can be partial.',
     safety: 'safe',

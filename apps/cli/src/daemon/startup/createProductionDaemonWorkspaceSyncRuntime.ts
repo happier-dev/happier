@@ -1542,6 +1542,13 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
 
   relationshipOwner = factories.createRelationshipOwner({
     localMachineId: input.localMachineId,
+    observeRelationshipTarget: async (relationship, target) => {
+      const result = await targetAuthority.previewCommittedCopyAtTarget({ kind: 'preview',
+        workspace: { serverId: semanticServerId, refId: relationship.alphaWorkspaceRefId },
+        machineId: relationship.controllerMachineId, expectedRelationship: relationship,
+        targetMachineId: target.machineId, targetWorkspaceRefId: target.id });
+      return result.ok ? 'present' : 'absent';
+    },
     mutateProjectSnapshot: createProjectAccountRowsWorkspaceSyncRelationshipMutation(input.credentials),
     readProjectSnapshot: async () => {
       return await factories.refreshProjectRows({ credentials: input.credentials, publication: 'installed' });
@@ -1729,6 +1736,7 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
     controller: runtime.managedWorkspaceSync,
     prepareBetween: prepareBetweenAtController,
     relationshipOwner: {
+      observeCreation: request => committedRelationshipOwner.observeCreation({ ...request, serverId: semanticServerId }),
       setEnabled: async (relationshipId, enabled, signal) => await committedRelationshipOwner.setEnabled(relationshipId, enabled, signal),
       stop: async (relationshipId, signal, retirement) => await committedRelationshipOwner.stop(relationshipId, signal, retirement),
       create: async (request, signal) => await factories.createRelationshipForProject(

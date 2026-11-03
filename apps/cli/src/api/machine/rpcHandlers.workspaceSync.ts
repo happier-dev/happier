@@ -4,7 +4,7 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { RpcError, readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { z } from 'zod/mini';
 import type { RpcHandler, RpcHandlerRegistrar, RpcHandlerContext } from '../rpc/types';
-import { WorkspaceSyncStatusWatchRequestV1Schema, WorkspaceSyncStatusWatchResultV1Schema,
+import { WorkspaceSyncRelationshipCreationObservationV1Schema, WorkspaceSyncStatusWatchRequestV1Schema, WorkspaceSyncStatusWatchResultV1Schema,
   type WorkspaceSyncStatusWatchRequestV1, type WorkspaceSyncStatusWatchResultV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { WorkspaceSyncHandoffSourcePhaseRequestV1Schema, WorkspaceSyncHandoffSourcePhaseResultV1Schema,
   type WorkspaceSyncHandoffSourcePhaseRequestV1, type WorkspaceSyncHandoffSourcePhaseResultV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
@@ -44,6 +44,7 @@ export type MachineWorkspaceSyncRpcService = Readonly<{
   relationshipOwner: Readonly<{
     setEnabled(relationshipId: string, enabled: boolean, signal?: AbortSignal): Promise<void>;
     stop: WorkspaceSyncRelationshipOwner['stop'];
+    observeCreation?: (request: WorkspaceSyncRelationshipCreateRpcRequestV1) => Promise<import('@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas').WorkspaceSyncRelationshipCreationObservationV1>;
     /** Direct Project linking; the same single relationship writer as handoff. */
     create(
       request: WorkspaceSyncRelationshipCreateRpcRequestV1,
@@ -308,6 +309,11 @@ export function registerMachineWorkspaceSyncRpcHandlers(params: Readonly<{
     return WorkspaceSyncRelationshipCreateResultV1Schema.parse(
       await service().relationshipOwner.create(request, signal(context?.signal)),
     );
+  });
+  rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIP_CREATION_OBSERVE, async raw => {
+    const observe = service().relationshipOwner.observeCreation;
+    if (!observe) unavailable();
+    return WorkspaceSyncRelationshipCreationObservationV1Schema.parse(await observe(WorkspaceSyncRelationshipCreateRpcRequestV1Schema.parse(raw)));
   });
   rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_WORKSPACE_SYNC_TERMINATE, async (raw, context) => {
     const request = WorkspaceSyncRelationshipIdV1Schema.parse(raw);

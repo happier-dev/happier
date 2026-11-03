@@ -1784,6 +1784,13 @@ export type ActionExecutorDeps = Readonly<{
     context: ActionExecutorContext;
     signal?: AbortSignal;
   }>) => Promise<WorkspaceSyncRelationshipCreateResultV1 | unknown>;
+  /** Read-only recovery of the original admitted link; this port cannot create it. */
+  workspaceSyncRelationshipObserveCreation?: (args: Readonly<{
+    input: import('../../sessions/control/handoff/workspaceSyncSchemas.js').WorkspaceSyncRelationshipCreateActionInputV1;
+    operationId: string;
+    serverId: string;
+    signal?: AbortSignal;
+  }>) => Promise<import('../../sessions/control/handoff/workspaceSyncSchemas.js').WorkspaceSyncRelationshipCreationObservationV1>;
   workspaceSyncRelationshipTerminate?: (args: Readonly<{
     input: WorkspaceSyncRelationshipTerminateActionInputV1;
     serverId?: string | null;

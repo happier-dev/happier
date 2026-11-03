@@ -7550,3 +7550,22 @@ key, while changed choices start a new request. Changing the service generation
 or Account retires the old review before another apply. UI dispatch uses the
 canonical Action front door; the receiving daemon's reviewed-child preparation
 owns adoption rather than the native observation runtime.
+
+### Worker-link outcome reconciliation (0.3 development source)
+
+An exact `approval.request.get` for an admitted `worker_clean_copy` link whose
+execution is `outcome_unknown` asks the original source controller to observe the
+original operation. The relationship owner matches its immutable definition and
+uses the existing committed-copy custody reader at the target. A committed owned
+copy settles the approval as executed. A missing relationship or owned copy
+settles it as failed with `workspace_sync_relationship_not_committed` or
+`workspace_sync_copy_absent`. An active creation, unreachable target, unavailable
+observation or failed receipt update preserves the unknown outcome. A registered
+WorkspaceRef alone is not evidence of a committed copy.
+
+This read creates no link or copy and does not grant another execution claim.
+It preserves the original approval subject, decision and execution start time,
+and runs after the existing approval visibility admission. Older controllers
+without the observation method leave the outcome unknown. Relationship listing
+and conflict reads use Account placement; their WorkspaceRef or relationship
+selects the controller without requiring a Session execution target.

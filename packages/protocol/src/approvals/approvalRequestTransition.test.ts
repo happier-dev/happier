@@ -7,6 +7,27 @@ import { computeExternalActionRequestEnvelopeDigestV1 } from '../actions/externa
 
 const target = { kind: 'window', displayId: ':73', pid: 42, windowId: 123 } as const;
 
+describe('admitted workspace link read-back settlement', () => {
+  it('allows unknown links to settle once without granting another execution claim or changing their admitted subject', () => {
+    const base = openRequest();
+    const existing = ApprovalRequestV2Schema.parse({ ...base, actionId: 'workspace.sync.relationship.create',
+      executionOriginV1: { ...base.executionOriginV1, actionId: 'workspace.sync.relationship.create' },
+      status: 'outcome_unknown', decision: { kind: 'approve', decidedAtMs: 1 },
+      execution: { executedAtMs: 2, ok: false, effectAttempted: true, errorCode: 'RPC_OUTCOME_UNKNOWN' } });
+    const next = ApprovalRequestV2Schema.parse({ ...existing, status: 'failed', updatedAtMs: 3,
+      execution: { executedAtMs: 2, ok: false, effectAttempted: true, errorCode: 'workspace_sync_copy_absent' } });
+    expect(decideApprovalRequestTransition(existing, next)).toEqual({ ok: true, changed: true });
+    expect(decideApprovalRequestTransition(existing, { ...next, status: 'executed',
+      execution: { executedAtMs: 2, ok: true, effectAttempted: true, result: { relationshipId: 'link' } } })).toEqual({ ok: true, changed: true });
+    expect(decideApprovalRequestTransition(existing, { ...existing, status: 'executing', execution: undefined }))
+      .toMatchObject({ ok: false, errorCode: 'invalid_transition' });
+    expect(decideApprovalRequestTransition(existing, { ...next, actionArgs: { changed: true } }))
+      .toMatchObject({ ok: false, errorCode: 'subject_mismatch' });
+    expect(decideApprovalRequestTransition(next, { ...next, status: 'outcome_unknown' }))
+      .toMatchObject({ ok: false, errorCode: 'invalid_transition' });
+  });
+});
+
 describe('finite original envelope settlement', () => {
   it.each(['rejected', 'canceled', 'executed', 'failed'] as const)('removes the replay envelope only on %s settlement', status => {
     const actionId = 'projects.compute.exec';

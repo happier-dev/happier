@@ -734,6 +734,10 @@ describe('createProductionDaemonWorkspaceSyncRuntime', () => {
     })]);
     expect(await readFile(join(fixture.targetPath, 'payload.txt'), 'utf8')).toBe('before quiesce');
     if (intent === 'fresh') {
+      const observe = fixture.parentRpcHandlers.get(RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIP_CREATION_OBSERVE);
+      if (!observe) throw new Error('The production creation observation RPC is not registered');
+      await expect(observe(request)).resolves.toMatchObject({ outcome: 'succeeded', relationshipId: created.relationshipId,
+        sourceWorkspaceRefId: fixture.sourceRef.id, targetWorkspaceRefId: created.targetWorkspaceRefId });
       const committedAtMs = getActiveProjectAccountRowsSnapshot()!.relationships[0]!.committedAtMs;
       await fixture.parent.workspaceSync.relationshipOwner.setEnabled(created.relationshipId, false);
       expect(getActiveProjectAccountRowsSnapshot()?.relationships[0]).toMatchObject({ enabled: false, committedAtMs });
@@ -1191,6 +1195,7 @@ describe('createProductionDaemonWorkspaceSyncRuntime', () => {
     const relationshipOwner = {
       materializeEndpoints: vi.fn(),
       prepareCreate: vi.fn(),
+      observeCreation: vi.fn(async () => ({ outcome: 'unknown' as const })),
       setEnabled: vi.fn(async () => undefined),
       stop: vi.fn(async () => undefined),
     };
