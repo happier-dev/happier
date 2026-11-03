@@ -17,7 +17,8 @@ type FindingDraft = {
   bodyLines: string[];
 };
 
-type JsonSpan = { text: string; start: number; end: number };
+type TextSpan = { start: number; end: number };
+type JsonSpan = TextSpan & { text: string };
 
 const REVIEW_COMMENTS_HEADER_PATTERN = /^(?:Full review comments|Review comment):\s*$/i;
 const FINDING_BULLET_PATTERN = /^\s*-\s+(.+?)\s+(?:--|[-\u2013\u2014])\s+(.+):(\d+)(?:-(\d+))?\s*$/u;
@@ -88,10 +89,17 @@ function canStartJsonValue(text: string, start: number): boolean {
   return tail.startsWith('"') && key.complete && /^\s*:/.test(key.rest);
 }
 
-function extractJsonSpans(text: string): JsonSpan[] {
+function extractJsonSpans(text: string, examples: readonly TextSpan[]): JsonSpan[] {
   // Keep outer JSON values whole; JSON.parse owns syntax validation.
   const spans: JsonSpan[] = [];
+  let exampleIndex = 0;
   for (let start = 0; start < text.length; start += 1) {
+    while (exampleIndex < examples.length && examples[exampleIndex].start < start) exampleIndex += 1;
+    const example = examples[exampleIndex];
+    if (example?.start === start) {
+      start = example.end - 1;
+      continue;
+    }
     if (text[start] !== '{' && text[start] !== '[') continue;
     if (!canStartJsonValue(text, start)) continue;
     let depth = 0;
@@ -119,11 +127,43 @@ function extractJsonSpans(text: string): JsonSpan[] {
   return spans;
 }
 
+function hasExampleIntroduction(prefix: string): boolean {
+  const introduction = prefix.trim();
+  // Evidence must be introduced immediately as an example, source behavior,
+  // or an input/response under discussion. Earlier prose is not a signal.
+  return /\bexamples?\s*:?$/i.test(introduction)
+    || /\be\.g\.\s*:?$/i.test(introduction)
+    || /\b(?:inputs?|responses?|payloads?)\s+(?:like|such as)\s*:?$/i.test(introduction)
+    || /(?:^|[.!?;:]\s*)(?:the\s+)?(?:code|api|function|implementation|bug)\s+(?:(?:currently|wrongly)\s+)?(?:returns?|emits?|produces?|turns?)(?:\s+[^.!?;]*\binto)?\s*:?$/i.test(introduction)
+    || /\b(?:invalid|malformed|truncated|previous)\s+(?:inputs?|responses?|payloads?)\s*:?$/i.test(introduction);
+}
+
 function isInlineOverviewExample(text: string, span: JsonSpan, overviewEnd: number): boolean {
   if (span.end > overviewEnd) return false;
   const lineStart = text.lastIndexOf('\n', span.start - 1) + 1;
-  const prefix = text.slice(lineStart, span.start).trim();
-  return prefix.length > 0 && !prefix.endsWith(':') && !/^(?:`{3,}|~{3,})/.test(prefix);
+  const prefix = text.slice(lineStart, span.start).replace(/`+$/, '').trim();
+  return hasExampleIntroduction(prefix);
+}
+
+function findQuotedOverviewExamples(text: string, overviewEnd: number): TextSpan[] {
+  const overview = text.slice(0, overviewEnd);
+  const examples: TextSpan[] = [];
+  for (const block of overview.matchAll(/(^|\n)[ \t]{0,3}(`{3,}|~{3,})[^\n]*\n[\s\S]*?\n[ \t]{0,3}\2[ \t]*\r?(?=\n|$)/g)) {
+    const introduction = overview.slice(0, block.index).trimEnd().split('\n').at(-1) ?? '';
+    // Fences alone also wrap native review envelopes. Only an explicit
+    // example introduction makes their contents evidence instead.
+    if (hasExampleIntroduction(introduction)) {
+      examples.push({ start: block.index, end: block.index + block[0].length });
+    }
+  }
+  for (const quoted of overview.matchAll(/(`+)([^`\r\n]+)\1/g)) {
+    const lineStart = overview.lastIndexOf('\n', quoted.index - 1) + 1;
+    const prefix = overview.slice(lineStart, quoted.index).trim();
+    if (hasExampleIntroduction(prefix)) {
+      examples.push({ start: quoted.index, end: quoted.index + quoted[0].length });
+    }
+  }
+  return examples.sort((left, right) => left.start - right.start || right.end - left.end);
 }
 
 function firstNonEmptyParagraph(text: string): string {
@@ -180,7 +220,7 @@ function parseNativeFindings(text: string): {
   const outsideLines = [...lines];
   const findings: ReviewFinding[] = [];
   let inComments = false;
-  let overviewEnd = 0;
+  let overviewEnd = text.length;
   let current: FindingDraft | null = null;
 
   const flush = () => {
@@ -245,8 +285,11 @@ export function parseCodexNativeReviewText(rawText: string): ParsedCodexNativeRe
   const textFindings = prose.findings;
   let jsonReview: z.infer<typeof CODEX_JSON_REVIEW_SCHEMA> | null = null;
   // Native prose can quote JSON examples that are unrelated to review output.
-  for (const span of extractJsonSpans(prose.textOutsideFindings)) {
-    if (textFindings.length > 0 && isInlineOverviewExample(prose.textOutsideFindings, span, prose.overviewEnd)) continue;
+  // Skip delimited evidence only outside JSON values: an envelope owns all
+  // of its strings, while a truncated example cannot consume a later envelope.
+  const examples = findQuotedOverviewExamples(prose.textOutsideFindings, prose.overviewEnd);
+  for (const span of extractJsonSpans(prose.textOutsideFindings, examples)) {
+    if (isInlineOverviewExample(prose.textOutsideFindings, span, prose.overviewEnd)) continue;
     let json: unknown;
     try {
       json = JSON.parse(span.text);

@@ -146,6 +146,9 @@ describe('normalizeReviewOutput codex reviews', () => {
   it.each([
     'No correctness issues found. The configuration {"enabled":true} is valid.',
     'No correctness issues found.\n\nThe following configuration remains valid:\n```json\n{"enabled":true}\n```',
+    'No issues found; invalid inputs like `{"findings" []}` are now rejected.',
+    'No issues found; truncated inputs like `{"findings":[` are now rejected.',
+    'No issues found; the previous response `{"findings":[]}` is now rejected.',
   ])('preserves no-findings prose containing a JSON example: %s', (rawText) => {
     const payload = parseFindingsPayload(normalizeCodex(rawText));
     expect(payload.overviewMarkdown).toBe(rawText);
@@ -184,6 +187,70 @@ describe('normalizeReviewOutput codex reviews', () => {
     ].join('\n')));
     expect(payload.findings).toHaveLength(1);
     expect(payload.overviewMarkdown).toContain(overview);
+  });
+
+  it.each([
+    ['```', '{"findings":[]}'],
+    ['~~~', '{"findings" []}'],
+    ['```', '{"findings":['],
+    ['```', JSON.stringify({ findings: [], overall_explanation: 'This is example output.' })],
+  ])('preserves fenced overview evidence with or without findings: %s %s', (fence, example) => {
+    const overview = [
+      'The code rejects invalid inputs such as this example:',
+      `${fence}json`,
+      example,
+      fence,
+    ].join('\n');
+    for (const comments of ['', '\n\nReview comment:\n- Preserve authorization -- /repo/auth.ts:10-12\n  The write skips authorization.']) {
+      const rawText = overview + comments;
+      const payload = parseFindingsPayload(normalizeCodex(rawText));
+      expect(payload.overviewMarkdown).toBe(rawText);
+      expect(payload.findings).toHaveLength(comments ? 1 : 0);
+    }
+  });
+
+  it('preserves fenced overview evidence with Windows line endings', () => {
+    const rawText = [
+      'The code rejects this example:',
+      '```json',
+      '{"findings":[]}',
+      '```',
+      '',
+      'Review comment:',
+      '- Preserve authorization -- /repo/auth.ts:10-12',
+      '  The write skips authorization.',
+    ].join('\r\n');
+    const payload = parseFindingsPayload(normalizeCodex(rawText));
+    expect(payload.overviewMarkdown).toBe(rawText);
+    expect(payload.findings).toHaveLength(1);
+  });
+
+  it.each([
+    'Review result: `{"findings" []}`',
+    'The review result is `{"findings" []}`',
+    'The final review looks like: {"findings" []}',
+    'Here is the review result:\n```json\n{"findings" []}\n```',
+    'The code rejects this example:\n```json\n{"findings":[]}\n```\n\nReview result: {"findings" []}',
+    `The code rejects this example:\n\`\`\`json\n{"findings":[]}\n\`\`\`\n\n${JSON.stringify(nativeReview)}\n\n${JSON.stringify(nativeReview)}`,
+    `The code rejects this example:\n\`\`\`json\n{"findings":[]}\n\`\`\`\n\n${JSON.stringify(nativeReview)}\n\nReview comment:\n- Preserve authorization -- /repo/auth.ts:10-12\n  The write skips authorization.`,
+  ])('does not hide malformed or ambiguous review envelopes behind evidence: %s', (rawText) => {
+    const result = normalizeCodex(rawText);
+    expect(result.status).toBe('failed');
+    expect(result.toolResultOutput).toMatchObject({ error: { code: 'invalid_output' } });
+  });
+
+  it.each([
+    `The review result is \`${JSON.stringify(nativeReview)}\``,
+    `The final review looks like: ${JSON.stringify(nativeReview)}`,
+    `The examples were covered. Here is the review result:\n\`\`\`json\n${JSON.stringify(nativeReview)}\n\`\`\``,
+  ])('preserves labelled structured results instead of treating them as examples: %s', (rawText) => {
+    const payload = parseFindingsPayload(normalizeCodex(rawText));
+    expect(payload.summary).toBe(nativeReview.overall_explanation);
+    expect(payload.findings).toHaveLength(1);
+
+    const ambiguous = normalizeCodex(`${rawText}\n\nReview comment:\n- Preserve authorization -- /repo/auth.ts:10-12\n  The write skips authorization.`);
+    expect(ambiguous.status).toBe('failed');
+    expect(ambiguous.toolResultOutput).toMatchObject({ error: { code: 'invalid_output' } });
   });
 
   it('fails clearly for empty Codex native review output', () => {
@@ -311,6 +378,20 @@ describe('normalizeReviewOutput codex reviews', () => {
     const payload = parseFindingsPayload(result);
     expect(payload.summary).toBe('Codex review completed.');
     expect(payload.findings[0]).toMatchObject({ severity: 'high', startLine: 10, endLine: 12 });
+  });
+
+  it.each([undefined, 2])('preserves code quotes in structured review strings (indent %s)', (indent) => {
+    const explanation = 'The `[1]` input is accepted, but `{"findings" []}` is rejected.';
+    const body = 'The `[2]` value must be checked before accepting `{"findings":[]}`.';
+    const payload = parseFindingsPayload(normalizeCodex(JSON.stringify({
+      ...nativeReview,
+      findings: [{ ...nativeReview.findings[0], body }],
+      overall_explanation: explanation,
+      related_values: ['The `[3]` array item is evidence.'],
+    }, null, indent)));
+    expect(payload.overviewMarkdown).toBe(explanation);
+    expect(payload.findings).toHaveLength(1);
+    expect(payload.findings[0].summary).toBe(body);
   });
 
   it.each([
