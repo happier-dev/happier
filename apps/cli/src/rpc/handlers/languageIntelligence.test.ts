@@ -68,6 +68,45 @@ describe('language intelligence registered Machine transport', () => {
     } finally { await host.dispose(); }
   });
 
+  it('admits format/import Actions through their own routes and preserves guarded writes and inverse edits', async () => {
+    const rootPath = await mkdtemp(join(tmpdir(), 'happier-lsp-format-action-'));
+    roots.push(rootPath);
+    await writeFile(join(rootPath, 'a.ts'), 'old');
+    const handlers = new Map<string, RpcHandler>();
+    const registrar: RpcHandlerRegistrar = { registerHandler: (method, handler) => { handlers.set(method, handler); } };
+    const host = createLanguageServerHost({ readCurrentContributionRegistry: () => null });
+    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(),
+      languageIntelligenceApply: ({ request }, context) => host.apply(request, { signal: context.signal }) });
+    const context = { signal: new AbortController().signal, localActionContext: { surface: 'ui', authority: 'present_user' } } as const;
+    const range = { start: { line: 0, character: 0 }, end: { line: 0, character: 3 } };
+    const files = [{ path: 'a.ts', expectedHash: createHash('sha256').update('old').digest('hex'), edits: [{ range, text: 'new' }] }];
+    try {
+      registerLanguageIntelligenceHandlers(registrar, rootPath, { machineId: 'machine', host, resolveActionExecutor: () => executor });
+      const format = handlers.get('daemon.lsp.format.apply.v1');
+      const imports = handlers.get('daemon.lsp.imports.organize.apply.v1');
+      expect(format).toBeDefined();
+      expect(imports).toBeDefined();
+      if (!format || !imports) throw new Error('Missing format/import Action routes');
+      const request = { rootPath, path: 'a.ts', operation: { kind: 'format', files } };
+      expect(await imports(createTargetedActionRpcRequestV1(request, { kind: 'machine', machineId: 'machine' }), context))
+        .toMatchObject({ ok: false, errorCode: 'invalid_action_transport_input' });
+      expect(await readFile(join(rootPath, 'a.ts'), 'utf8')).toBe('old');
+      for (const [handler, kind] of [[format, 'format'], [imports, 'organizeImports']] as const) {
+        expect(await handler(createTargetedActionRpcRequestV1({ rootPath, path: 'a.ts',
+          operation: { kind, files: [{ ...files[0], renameTo: 'moved.ts' }] } }, { kind: 'machine', machineId: 'machine' }), context))
+          .toMatchObject({ status: 'error', errorCode: 'invalid_request' });
+        expect(await readFile(join(rootPath, 'a.ts'), 'utf8')).toBe('old');
+        await expect(readFile(join(rootPath, 'moved.ts'))).rejects.toMatchObject({ code: 'ENOENT' });
+      }
+      expect(await format(createTargetedActionRpcRequestV1(request, { kind: 'machine', machineId: 'machine' }), context))
+        .toMatchObject({ ok: true, results: [{ status: 'replaced', edits: [{ originalText: 'old', insertText: 'new' }] }] });
+      expect(await readFile(join(rootPath, 'a.ts'), 'utf8')).toBe('new');
+      expect(await imports(createTargetedActionRpcRequestV1({ rootPath, path: 'a.ts', operation: { kind: 'organizeImports', files } },
+        { kind: 'machine', machineId: 'machine' }), context)).toMatchObject({ ok: true, results: [{ status: 'changed' }] });
+      expect(await readFile(join(rootPath, 'a.ts'), 'utf8')).toBe('new');
+    } finally { await host.dispose(); }
+  });
+
   it('settles admitted language mutations through the credentialed CLI factories and native guarded writer', async () => {
     await withConfiguredDaemonTestHome({ prefix: 'happier-lsp-native-action-' }, async () => {
       const rootPath = await mkdtemp(join(tmpdir(), 'happier-lsp-native-action-'));

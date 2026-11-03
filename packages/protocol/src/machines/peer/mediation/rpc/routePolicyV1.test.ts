@@ -603,6 +603,15 @@ describe('MachineRpcRoutePolicyV1', () => {
       routeClass: 'server_required', serverRequiredReason: 'destructive_or_recovery_mutation',
       rpcClassification: 'action_spec_bound', actionSpecId: 'code.restart',
     });
+    for (const [method, actionSpecId] of [
+      ['daemon.lsp.format.apply.v1', 'code.format.apply'],
+      ['daemon.lsp.imports.organize.apply.v1', 'code.imports.organize'],
+    ]) {
+      expect(protocol.resolveMachineRpcRoutePolicy(method)).toMatchObject({
+        routeClass: 'server_required', serverRequiredReason: 'destructive_or_recovery_mutation',
+        rpcClassification: 'action_spec_bound', actionSpecId,
+      });
+    }
   });
 
   it('keeps durable session writes and unknown methods server-routed by default', async () => {

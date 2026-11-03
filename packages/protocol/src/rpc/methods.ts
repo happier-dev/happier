@@ -494,6 +494,8 @@ export const RPC_METHODS = {
   DAEMON_LSP_RENAME_APPLY: 'daemon.lsp.rename.apply.v1',
   DAEMON_LSP_FILE_RENAME_APPLY: 'daemon.lsp.fileRename.apply.v1',
   DAEMON_LSP_CODE_ACTION_APPLY: 'daemon.lsp.codeAction.apply.v1',
+  DAEMON_LSP_FORMAT_APPLY: 'daemon.lsp.format.apply.v1',
+  DAEMON_LSP_IMPORTS_ORGANIZE_APPLY: 'daemon.lsp.imports.organize.apply.v1',
   DAEMON_WORKSPACE_FILES_REPLACE_PREVIEW: 'daemon.workspaceFiles.replace.preview.v1',
   DAEMON_WORKSPACE_FILES_REPLACE_APPLY: 'daemon.workspaceFiles.replace.apply.v1',
   STAT_FILE: 'statFile',

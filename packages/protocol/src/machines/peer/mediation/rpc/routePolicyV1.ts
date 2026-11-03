@@ -987,6 +987,8 @@ export const MACHINE_RPC_ROUTE_POLICIES = Object.freeze([
   actionSpecServerRequired(RPC_METHODS.DAEMON_LSP_RENAME_APPLY, 'destructive_or_recovery_mutation', 'Semantic rename requires reviewed hashes and its canonical Action admission.', 'code.rename.apply'),
   actionSpecServerRequired(RPC_METHODS.DAEMON_LSP_FILE_RENAME_APPLY, 'destructive_or_recovery_mutation', 'File rename and importer edits require their canonical Action admission.', 'code.file.rename.apply'),
   actionSpecServerRequired(RPC_METHODS.DAEMON_LSP_CODE_ACTION_APPLY, 'destructive_or_recovery_mutation', 'Server code actions require explicit mutation authority through their canonical Action.', 'code.codeAction.apply'),
+  actionSpecServerRequired(RPC_METHODS.DAEMON_LSP_FORMAT_APPLY, 'destructive_or_recovery_mutation', 'Formatting reviewed file edits requires canonical Action admission.', 'code.format.apply'),
+  actionSpecServerRequired(RPC_METHODS.DAEMON_LSP_IMPORTS_ORGANIZE_APPLY, 'destructive_or_recovery_mutation', 'Organizing imports requires reviewed hashes and canonical Action admission.', 'code.imports.organize'),
   actionSpecServerRequired(RPC_METHODS.PROJECTS_OPEN, 'auth', 'Project Open requires current requester Account and exact Machine admission before SCM/Sync realization and Account ref acceptance.', 'projects.open'),
   ...Object.entries(PROJECT_FINITE_ACTION_RPC_METHODS_V1).map(([actionId, method]) => actionSpecServerRequired(method, 'auth',
     'Finite Project execution requires its original admitted Action and exact Machine authority before the incumbent finite operation accepts work.', actionId)),

@@ -183,6 +183,8 @@ const ACTION_SPEC_RPC_METHOD_IDS = Object.freeze({
   [RPC_METHODS.DAEMON_LSP_RENAME_APPLY]: 'code.rename.apply',
   [RPC_METHODS.DAEMON_LSP_FILE_RENAME_APPLY]: 'code.file.rename.apply',
   [RPC_METHODS.DAEMON_LSP_CODE_ACTION_APPLY]: 'code.codeAction.apply',
+  [RPC_METHODS.DAEMON_LSP_FORMAT_APPLY]: 'code.format.apply',
+  [RPC_METHODS.DAEMON_LSP_IMPORTS_ORGANIZE_APPLY]: 'code.imports.organize',
   [RPC_METHODS.DAEMON_WORKSPACE_FILES_REPLACE_PREVIEW]: 'workspace.files.replace.preview',
   [RPC_METHODS.DAEMON_WORKSPACE_FILES_REPLACE_APPLY]: 'workspace.files.replace',
   [RPC_METHODS.BUGREPORT_COLLECT_DIAGNOSTICS]: 'bugreport.collectDiagnostics',

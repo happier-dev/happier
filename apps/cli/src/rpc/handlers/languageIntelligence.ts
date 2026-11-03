@@ -60,7 +60,7 @@ export function registerLanguageIntelligenceHandlers(
   register(RPC_METHODS.DAEMON_LSP_RESTART, DaemonLspRestartRequestSchema, () => [],
     (host, request, context) => host.restart(request, context));
   registerActionSpecRpcHandlers({
-    rpcHandlerManager: registrar, actionIds: ['code.rename.apply', 'code.file.rename.apply', 'code.codeAction.apply'],
+    rpcHandlerManager: registrar, actionIds: ['code.rename.apply', 'code.file.rename.apply', 'code.codeAction.apply', 'code.format.apply', 'code.imports.organize'],
     ...(options?.machineId ? { targetMachineId: options.machineId, defaultMachineTarget: true } : {}),
     resolveActionExecutor: () => options?.resolveActionExecutor?.() ?? { execute: async () => ({ ok: false, errorCode: 'language_intelligence_action_owner_unavailable', error: 'Language Action admission is unavailable' }) },
   });
