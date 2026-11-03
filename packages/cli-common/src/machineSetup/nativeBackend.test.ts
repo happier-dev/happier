@@ -43,6 +43,26 @@ async function fixture() {
 }
 const basis = { kind: 'bootstrap' as const, managedId: 'm-a', operationId: 'op-a', admittedInputDigest: 'a'.repeat(64) };
 
+it('settles a directory mkdir with a missing parent as a known unmet prerequisite without claiming an effect', async () => {
+    const f = await fixture();
+    const step: MachineRecipeStepV1 = { id: 'caddy-state-directory', kind: 'directory', path: join(f.root, 'missing', 'caddy'),
+        owner: userInfo().username, group: userInfo().username, mode: 0o750 };
+    const plan = await checkMachineSetupEffectPlan({ basis, steps: [step], backend: f.backend });
+    expect(await applyMachineSetupEffectPlan({ plan, backend: f.backend })).toMatchObject({ status: 'failed',
+        reason: 'required_fact_unavailable', stepId: step.id, completedStepIds: [] });
+    await expect(lstat(step.path)).rejects.toMatchObject({ code: 'ENOENT' });
+});
+
+it('retains an uncertain directory effect when IO fails after mkdir', async () => {
+    const f = await fixture();
+    const step: MachineRecipeStepV1 = { id: 'directory', kind: 'directory', path: join(f.root, 'caddy'),
+        owner: userInfo().username, group: userInfo().username, mode: 0o750 };
+    const plan = await checkMachineSetupEffectPlan({ basis, steps: [step], backend: f.backend });
+    vi.spyOn(filesystem, 'chmod').mockRejectedValueOnce(Object.assign(new Error('Lost native result'), { code: 'EIO' }));
+    expect(await applyMachineSetupEffectPlan({ plan, backend: f.backend })).toMatchObject({ status: 'outcome_unknown', completedStepIds: [] });
+    expect((await lstat(step.path)).isDirectory()).toBe(true);
+});
+
 async function rootSecretFixture() {
     const f = await fixture();
     const actualLstat = filesystem.lstat;

@@ -4,6 +4,7 @@ import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { MachineRecipeStepV1Schema, type MachineRecipeStepV1 } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
 import type { MachineAdminAccessObservationV1 } from '@happier-dev/protocol';
 import { resolveManagedToolsRoot } from '@happier-dev/cli-common/agents';
+import { machineStateRootStep } from '@happier-dev/cli-common/machineSetup';
 import type { HostRequesterExecutionIdentity } from './agentIsolationLaunchPolicy';
 
 export type AgentIsolationMemberRequester = Extract<HostRequesterExecutionIdentity, { kind: 'isolated' }>
@@ -83,8 +84,7 @@ export function buildAgentIsolationProvisioningSteps(input: Readonly<{
   const member = deriveAgentIsolationMemberIdentity(input.requesterIdentity!);
   return [
     buildAgentIsolationMemberAccountStep(member, input.retainedMemberUid),
-    { id: 'member-home-root', kind: 'directory', path: '/var/lib/happier', owner: 'root', group: 'root',
-      mode: 0o711, preserveExistingOwnership: true },
+    machineStateRootStep,
     { id: 'member-homes', kind: 'directory', path: '/var/lib/happier/members', owner: 'root', group: 'root',
       mode: 0o711, preserveExistingOwnership: true },
     { id: 'member-home-traversal', kind: 'pathTraversal', path: '/var/lib/happier', agentUsername: member.username },

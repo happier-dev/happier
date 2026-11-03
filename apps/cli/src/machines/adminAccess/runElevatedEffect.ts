@@ -597,6 +597,11 @@ async function runElevatedProcessInternal(input: Pick<RunElevatedEffectInput, 'm
         if (result.status === 'cancelled' && (result.completedStepIds.length === 0 || result.restoration)) {
             return { outcome: 'not_applied', reasonCode: 'cancelled', ...(result.restoration ? { restoration: result.restoration } : {}) };
         }
+        // A missing prerequisite before any completed step is a known refusal.
+        // A failed native command may have partly run despite zero completed steps.
+        if (result.status === 'failed' && result.reason === 'required_fact_unavailable' && result.completedStepIds.length === 0) {
+            return nativeRefused(rememberNativeFailure('native_effect_failed', result.reason));
+        }
         if (result.status === 'outcome_unknown' || effectStarted || result.completedStepIds.length > 0) {
             rememberNativeFailure('native_effect_failed', result.reason);
             return { outcome: 'outcome_unknown', failure: nativeFailure, ...(result.restoration ? { restoration: result.restoration } : {}) };

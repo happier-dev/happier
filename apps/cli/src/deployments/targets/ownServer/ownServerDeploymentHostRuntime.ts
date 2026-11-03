@@ -313,7 +313,11 @@ export function createOwnServerDeploymentRuntimeForHost(host: OwnServerDeploymen
                         }, { ...elevation, verifyCurrent: async () => !signal.aborted }));
                         if (elevated.outcome !== 'applied') return refuse('reasonCode' in elevated ? elevated.reasonCode : elevated.outcome, {
                             ...('recovery' in elevated && elevated.recovery ? { recovery: elevated.recovery } : {}),
-                            ...('failure' in elevated && elevated.failure ? { failure: elevated.failure } : {}),
+                            ...('failure' in elevated && elevated.failure ? { failure: elevated.failure,
+                                remedy: elevated.outcome === 'outcome_unknown'
+                                    ? 'Inspect and reconcile Caddy setup on this Machine before retrying the Domain action.'
+                                    : 'Check Caddy setup prerequisites on this Machine, including parent directories and the configured owner/group, then retry the Domain action.',
+                            } : {}),
                         });
                         if (!applied) return refuse('outcome_unknown');
                         if (input.privateBinding && !setup.settleCaddyFirewall) return refuse('private_scope_unenforceable');

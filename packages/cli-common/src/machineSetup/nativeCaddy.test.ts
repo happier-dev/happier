@@ -1,12 +1,12 @@
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { mkdtemp, mkdir, readFile, rm, writeFile, lstat, chmod } from 'node:fs/promises';
+import { tmpdir, userInfo } from 'node:os';
 import { join } from 'node:path';
 import { createServer, type Server } from 'node:http';
 import { afterEach, expect, it } from 'vitest';
 import { DeploymentDomainMachineTopologyV1Schema } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 import { applyMachineSetupEffectPlan, checkMachineSetupEffectPlan } from './index.js';
 import { createMachineSetupNativeBackend, type MachineSetupNativeCommand, type MachineSetupNativeCommandResult } from './nativeBackend.js';
-import { ensureNativeCaddyContainer, nativeCaddyImage, readCaddyContainerFirewallExposures, observeNativeCaddyContainer, createNativeCaddyBindings, connectNativeCaddyNetworks, hashNativeCaddyPassword, type NativeCaddySetupInput } from './nativeCaddy.js';
+import { ensureNativeCaddyContainer, nativeCaddyImage, readCaddyContainerFirewallExposures, observeNativeCaddyContainer, createNativeCaddyBindings, connectNativeCaddyNetworks, hashNativeCaddyPassword, createCaddyContainerSetupSteps, type NativeCaddySetupInput } from './nativeCaddy.js';
 
 const roots: string[] = [];
 const servers: Server[] = [];
@@ -16,6 +16,33 @@ afterEach(async () => {
 });
 const ok = (stdout = ''): MachineSetupNativeCommandResult => ({ code: 0, stdout, stderr: '' });
 const basis = { kind: 'bootstrap' as const, managedId: 'm-a', operationId: 'op-a', admittedInputDigest: 'a'.repeat(64) };
+
+it.skipIf(process.platform === 'win32')('prepares Caddy on a fresh host with no Happier state parent and remains idempotent', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-caddy-fresh-')); roots.push(root);
+    const stateDirectory = join(root, 'happier', 'caddy');
+    const adminDirectory = join(root, 'happier-caddy');
+    const steps = createCaddyContainerSetupSteps({ containerName: 'happier-caddy', stateDirectory, adminDirectory,
+        daemonGroup: userInfo().username, daemonGroupId: process.getgid!(), initialConfig: '{}', originPort: 8080, routedNetworks: [] });
+    // Local identity resolution is the OS boundary; directory creation, exact
+    // ownership/modes, file publication and both interpreters stay real.
+    const backend = createMachineSetupNativeBackend({ run: async command => {
+        if (command.executable !== 'getent') throw new Error('Unexpected native command');
+        return ok(command.args.includes('passwd')
+            ? `${command.args.at(-1)}:x:${process.getuid!()}:${process.getgid!()}::/home/test:/bin/sh\n`
+            : `${command.args.at(-1)}:x:${process.getgid!()}:\n`);
+    } });
+    for (let attempt = 0; attempt < 2; attempt++) {
+        const plan = await checkMachineSetupEffectPlan({ basis, steps, backend });
+        expect(await applyMachineSetupEffectPlan({ plan, backend })).toMatchObject({ status: 'applied' });
+        expect(await readFile(join(stateDirectory, 'initial.json'), 'utf8')).toBe('{}');
+        expect((await lstat(stateDirectory)).mode & 0o777).toBe(0o750);
+        expect((await lstat(adminDirectory)).mode & 0o777).toBe(0o750);
+    }
+    await chmod(join(root, 'happier'), 0o700);
+    const conflict = await checkMachineSetupEffectPlan({ basis, steps, backend });
+    expect(await applyMachineSetupEffectPlan({ plan: conflict, backend })).toMatchObject({ status: 'unavailable', reason: 'foreign_effect_conflict' });
+    expect((await lstat(join(root, 'happier'))).mode & 0o777).toBe(0o700);
+});
 
 it('hashes the exact password through native Caddy stdin and clears the encoded secret after settlement', async () => {
     const password = ' leading\r unicode🐙 trailing ';

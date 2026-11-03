@@ -15,6 +15,8 @@ it.each([
     ['unsupported', 'native_check_unsupported', 'private_scope_unenforceable'],
     ['terminal', 'native_effect_failed', 'validation_failed'],
     ['private reason', 'native_effect_failed', undefined],
+    ['failed apply', 'native_effect_failed', 'required_fact_unavailable'],
+    ['partial native apply', 'native_effect_failed', 'native_effect_failed'],
 ] as const)('retains %s native failure once without private helper output', async (scenario, reasonCode, reason) => {
     const log = vi.spyOn(logger, 'warnLocalFile');
     const basis = { kind: 'setup' as const, machineId: 'machine', desiredRevision: 1 };
@@ -36,6 +38,14 @@ it.each([
                 const plan = MachineSetupEffectPlanV1Schema.parse({ v: 1, basis, steps,
                     nativeFacts: [{ stepId: 'prepare', status: scenario, reason, facts: {} }], planDigest: 'a'.repeat(64) });
                 stdout.write(JSON.stringify({ type: 'result', result: { status: 'checked', plan } }) + '\n');
+            } else if (scenario === 'failed apply' || scenario === 'partial native apply') {
+                const plan = MachineSetupEffectPlanV1Schema.parse({ v: 1, basis, steps,
+                    nativeFacts: [{ stepId: 'prepare', status: 'drifted', facts: {} }], planDigest: 'a'.repeat(64) });
+                stdout.write(JSON.stringify({ type: 'result', result: { status: 'checked', plan } }) + '\n');
+                await iterator.next();
+                stdout.write(JSON.stringify({ type: 'progress', stepId: 'prepare', phase: 'apply', status: 'started' }) + '\n');
+                stdout.write(JSON.stringify({ type: 'result', result: { status: 'failed', stepId: 'prepare', reason,
+                    completedStepIds: [], daemonRestartRequired: false } }) + '\n');
             } else if (scenario !== 'missing') stdout.write(JSON.stringify({ type: 'result', result: {
                 status: 'failed', reason: reason ?? '/private/native/path token=secret', completedStepIds: [], daemonRestartRequired: false,
             } }) + '\n');
@@ -50,7 +60,9 @@ it.each([
             daemonIdentity: 'nonRoot', rootEquivalentGroups: [], passwordlessSudoToRoot: 'allowed',
             managedDropIn: 'valid', tailscaledOperator: { authorization: 'unknown' } }),
     });
-    const expected = { outcome: 'not_applied', reasonCode, failure: { kind: reasonCode, ...(reason ? { reason } : {}) } };
+    const failure = { kind: reasonCode, ...(reason ? { reason } : {}) };
+    const expected = scenario === 'partial native apply' ? { outcome: 'outcome_unknown', failure }
+        : { outcome: 'not_applied', reasonCode, failure };
     expect(result).toEqual(expected);
     expect(MachineElevatedResultV1Schema.parse(result)).toEqual(expected);
     const retained = log.mock.calls.filter(([message]) => message === '[machine-elevation] settled');

@@ -1,7 +1,8 @@
 import type { MachineRecipeStepV1, MachineSetupApplyResultV1 } from './index.js';
+import { machineStateRootStep } from './stateRoot.js';
 import { runMachineSetupNativeCommand, type MachineSetupNativeCommand, type MachineSetupNativeCommandResult } from './nativeBackend.js';
 import { isIP } from 'node:net';
-import { join, posix } from 'node:path';
+import { dirname, join, posix } from 'node:path';
 import { readFile } from 'node:fs/promises';
 import { request } from 'node:http';
 import type { MachinePrivateNetworkObservationV1 } from '@happier-dev/protocol/plugins/contributions/accessProviders';
@@ -43,12 +44,13 @@ export function createNativeCaddySetupInput(input: Readonly<{
 
 export function createCaddyContainerSetupSteps(input: NativeCaddySetupInput): MachineRecipeStepV1[] {
     return [
+        { ...machineStateRootStep, path: dirname(input.stateDirectory) },
         { id: 'caddy-state-directory', kind: 'directory', path: input.stateDirectory, owner: 'root', group: input.daemonGroup, mode: 0o750 },
         ...['data', 'config', 'logs'].map((name): MachineRecipeStepV1 => ({
             id: `caddy-${name}-directory`, kind: 'directory', path: join(input.stateDirectory, name), owner: 'root', group: 'root', mode: 0o700,
         })),
         { id: 'caddy-admin-directory', kind: 'directory', path: input.adminDirectory, owner: 'root', group: input.daemonGroup, mode: 0o750 },
-        { id: 'caddy-initial-config', kind: 'file', path: join(input.stateDirectory, 'initial.json'), owner: 'root', group: 'root', mode: 0o600,
+        { id: 'caddy-initial-config', kind: 'file', path: join(input.stateDirectory, 'initial.json'), owner: 'root', group: input.daemonGroup, mode: 0o640,
             content: { kind: 'literal', value: input.initialConfig } },
     ];
 }

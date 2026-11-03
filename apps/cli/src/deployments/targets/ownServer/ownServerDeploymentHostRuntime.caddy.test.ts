@@ -109,7 +109,7 @@ it('prepares Caddy without ingress and preserves the Admin Access None refusal b
 });
 
 
-it.each(['preauthorized', 'ask'] as const)('runs the canonical Caddy setup and native container leaf with %s administrator access', async mode => {
+it.each(['preauthorized', 'ask', 'failed-setup'] as const)('runs the canonical Caddy setup and native container leaf with %s administrator access', async mode => {
     const runtime = createOwnServerDeploymentRuntimeForHost({ credentials: { token: 'fixture', encryption: null },
         serverId: 'home', serverHttpBaseUrl: 'https://home.test', machineId: `machine-${mode}`,
         resolveRequesterIdentity: async () => ({ kind: 'unknown', reason: 'requester_authority_unavailable' }),
@@ -149,6 +149,12 @@ it.each(['preauthorized', 'ask'] as const)('runs the canonical Caddy setup and n
                 const next = await frames.next();
                 const apply = MachineEffectInternalRequestSchema.parse(JSON.parse(next.value!));
                 if (apply.mode !== 'apply' || !('plans' in apply)) throw new Error('Expected setup APPLY');
+                if (mode === 'failed-setup') {
+                    stdout.write(JSON.stringify({ type: 'progress', stepId: 'caddy-state-directory', phase: 'apply', status: 'started' }) + '\n');
+                    stdout.write(JSON.stringify({ type: 'result', result: { status: 'failed', reason: 'required_fact_unavailable',
+                        completedStepIds: [], daemonRestartRequired: false } }) + '\n');
+                    return { code: 1, signal: null };
+                }
                 const result = await machineSetup.applyMachineSetupEffectPlans({ plans: apply.plans, backend });
                 stdout.write(JSON.stringify({ type: 'result', result }) + '\n');
                 return { code: 0, signal: null };
@@ -157,12 +163,12 @@ it.each(['preauthorized', 'ask'] as const)('runs the canonical Caddy setup and n
         })();
         return { stdin, stdout, stderr, settled, terminate: async () => { stdin.destroy(); await settled; } };
     };
-    const result = await prepared.ensure({
+    const result = prepared.ensure({
         setup: { readDesired: () => getMachineSetupDesiredV1({
             read: async () => ({ status: 'ready', metadata: {}, metadataVersion: 0 }),
             compareAndSwap: async () => { throw new Error('Discovery cannot change desired policy'); },
         }), elevation: {
-            readPolicy: async () => mode === 'ask' ? { version: 1, mode, administratorUsername: 'operator' } : { version: 1, mode },
+            readPolicy: async () => mode === 'ask' ? { version: 1, mode, administratorUsername: 'operator' } : { version: 1, mode: 'preauthorized' },
             observe: async () => ({ version: 1, observedAt: 0, daemonUid: 1001, daemonUsername: 'happier',
                 daemonIdentity: 'nonRoot', rootEquivalentGroups: [], passwordlessSudoToRoot: 'allowed',
                 managedDropIn: 'valid', tailscaledOperator: { authorization: 'unknown' } }),
@@ -178,8 +184,15 @@ it.each(['preauthorized', 'ask'] as const)('runs the canonical Caddy setup and n
             throw new Error('Unexpected Docker command');
         },
     });
+    if (mode === 'failed-setup') {
+        await expect(result).rejects.toMatchObject({ code: 'native_effect_failed', details: {
+            failure: { kind: 'native_effect_failed', reason: 'required_fact_unavailable' }, remedy: expect.any(String),
+        } });
+        expect(dockerCommands).toEqual([]);
+        return;
+    }
     expect(failures).toEqual([]);
-    expect(result).toEqual({ status: 'ready', containerId: 'owned-caddy' });
+    expect(await result).toEqual({ status: 'ready', containerId: 'owned-caddy' });
     expect(prompts).toBe(mode === 'ask' ? 1 : 0);
     expect(dockerCommands.find(args => args[1] === 'create')).toEqual(expect.arrayContaining([
         '--restart', 'unless-stopped', 'caddy', 'run', '--resume',

@@ -361,7 +361,15 @@ export function createMachineSetupNativeBackend(options: Readonly<{
                     } finally { await rm(staging, { recursive: true, force: true }); }
                     return;
                 }
-                if (state.kind === 'absent') await mkdir(step.path, { mode: step.mode });
+                if (state.kind === 'absent') {
+                    try { await mkdir(step.path, { mode: step.mode }); }
+                    catch (error) {
+                        // mkdir's missing-parent refusal creates nothing. Keep
+                        // other IO errors uncertain: an effect may have occurred.
+                        if (isMissing(error)) throw new MachineSetupEffectError('required_fact_unavailable');
+                        throw error;
+                    }
+                }
                 await chown(step.path, owner.uid, owner.gid); await chmod(step.path, step.mode);
                 return;
             }
