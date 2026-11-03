@@ -128,15 +128,15 @@ async function fixture(listing?: Readonly<{ symbolic: string; numeric: string }>
             await fs.symlink('/usr/sbin/service-proxy', disk('/proc/413/exe'));
             listeners4 = ipv4; listeners6 = ipv6;
         },
-        async listenSocketSsh(executable = '/usr/sbin/sshd', readable = true) {
+        async listenSocketSsh(executable = '/usr/sbin/sshd', readable = true, port = 2205) {
             await fs.mkdir(disk('/usr/lib/systemd'), { recursive: true, mode: 0o755 });
             await rootFile('/usr/lib/systemd/systemd', 'system socket manager fixture', 0o755);
             await fs.symlink('/usr/lib/systemd/systemd', disk('/proc/1/exe'));
             await rootFile(executable, 'native socket service fixture', 0o755);
             socketServiceExecutable = executable; socketUnitsReadable = readable;
-            listeners4 = 'LISTEN 0 4096 0.0.0.0:2205 0.0.0.0:* users:(("systemd",pid=1,fd=77))\n';
-            listeners6 = 'LISTEN 0 4096 [::]:2205 [::]:* users:(("systemd",pid=1,fd=79))\n';
-            socketUnits = '0.0.0.0:2205 remote-login.socket remote-login.service\n[::]:2205 remote-login.socket remote-login.service\n';
+            listeners4 = `LISTEN 0 4096 0.0.0.0:${port} 0.0.0.0:* users:(("systemd",pid=1,fd=77))\n`;
+            listeners6 = `LISTEN 0 4096 [::]:${port} [::]:* users:(("systemd",pid=1,fd=79))\n`;
+            socketUnits = `0.0.0.0:${port} remote-login.socket remote-login.service\n[::]:${port} remote-login.socket remote-login.service\n`;
         },
         setNativePolicy(value: unknown) { nativePolicy = value; },
         unreadableNetwork() { networkReadable = false; },
@@ -170,6 +170,38 @@ describe('native owned firewall', () => {
         const repeated = await checkMachineSetupEffectPlan({ basis, steps: [step], backend: f.backend });
         expect(await applyMachineSetupEffectPlan({ plan: repeated, backend: f.backend })).toMatchObject({ status: 'applied' });
         expect(await f.fs.readFile(f.disk(rulesPath), 'utf8')).toBe(step.kind === 'firewall' ? step.rules : '');
+    });
+
+    it('derives retained SSH policy before Ubuntu 26.04 socket activation with nft 1.1.6 list expressions', async () => {
+        const f = await fixture();
+        await f.backend.apply(f.step);
+        await f.listenSocketSsh(undefined, true, 22);
+        f.setNetwork({ interfaces: { ens18: [nativeInterface('10.10.0.4'), nativeInterface('2001:db8::4')] } });
+        // Read-only capture from guest c7911a7d, payload v3, 2026-11-03.
+        // This partial Domain policy permits HTTP(S), but no new SSH traffic.
+        f.setNativePolicy({ nftables: [
+            {"metainfo": {"version": "1.1.6", "release_name": "Commodore Bullmoose #7", "json_schema_version": 1}},
+            {"table": {"family": "inet", "name": "happier", "handle": 14}},
+            {"chain": {"family": "inet", "table": "happier", "name": "input", "handle": 1, "type": "filter", "hook": "input", "prio": -10, "policy": "accept"}},
+            {"chain": {"family": "inet", "table": "happier", "name": "forward", "handle": 2, "type": "filter", "hook": "forward", "prio": -10, "policy": "accept"}},
+            {"rule": {"family": "inet", "table": "happier", "chain": "input", "handle": 3, "expr": [{"match": {"op": "in", "left": {"ct": {"key": "state"}}, "right": ["established", "related"]}}, {"accept": null}]}},
+            {"rule": {"family": "inet", "table": "happier", "chain": "input", "handle": 4, "expr": [{"match": {"op": "==", "left": {"meta": {"key": "iifname"}}, "right": "lo"}}, {"accept": null}]}},
+            {"rule": {"family": "inet", "table": "happier", "chain": "input", "handle": 5, "expr": [{"match": {"op": "==", "left": {"meta": {"key": "nfproto"}}, "right": "ipv4"}}, {"match": {"op": "==", "left": {"payload": {"protocol": "tcp", "field": "dport"}}, "right": 80}}, {"accept": null}]}},
+            {"rule": {"family": "inet", "table": "happier", "chain": "input", "handle": 6, "expr": [{"match": {"op": "==", "left": {"meta": {"key": "nfproto"}}, "right": "ipv4"}}, {"match": {"op": "==", "left": {"payload": {"protocol": "tcp", "field": "dport"}}, "right": 443}}, {"accept": null}]}},
+            {"rule": {"family": "inet", "table": "happier", "chain": "input", "handle": 7, "expr": [{"match": {"op": "in", "left": {"ct": {"key": "state"}}, "right": "new"}}, {"drop": null}]}},
+            {"rule": {"family": "inet", "table": "happier", "chain": "forward", "handle": 8, "expr": [{"match": {"op": "in", "left": {"ct": {"key": "state"}}, "right": ["established", "related"]}}, {"accept": null}]}},
+            {"rule": {"family": "inet", "table": "happier", "chain": "forward", "handle": 9, "expr": [{"match": {"op": "==", "left": {"meta": {"key": "l4proto"}}, "right": "tcp"}}, {"match": {"op": "==", "left": {"meta": {"key": "nfproto"}}, "right": "ipv4"}}, {"match": {"op": "==", "left": {"ct": {"key": "proto-dst", "dir": "original"}}, "right": 80}}, {"accept": null}]}},
+            {"rule": {"family": "inet", "table": "happier", "chain": "forward", "handle": 10, "expr": [{"match": {"op": "==", "left": {"meta": {"key": "l4proto"}}, "right": "tcp"}}, {"match": {"op": "==", "left": {"meta": {"key": "nfproto"}}, "right": "ipv4"}}, {"match": {"op": "==", "left": {"ct": {"key": "proto-dst", "dir": "original"}}, "right": 443}}, {"accept": null}]}},
+            {"rule": {"family": "inet", "table": "happier", "chain": "forward", "handle": 11, "expr": [{"match": {"op": "in", "left": {"ct": {"key": "state"}}, "right": "new"}}, {"match": {"op": "==", "left": {"ct": {"key": "direction"}}, "right": "original"}}, {"match": {"op": "in", "left": {"ct": {"key": "status"}}, "right": "dnat"}}, {"drop": null}]}},
+        ] });
+        expect(readMachineFirewallTransitionFactsV1(await f.backend.observe(f.step))).toMatchObject({
+            status: 'available', ownedTable: 'present', retainedSshEndpoints: [
+                { interfaceName: 'ens18', hostAddress: '0.0.0.0', port: 22, sourceCidrs: [] },
+                { interfaceName: 'ens18', hostAddress: '::', port: 22, sourceCidrs: [] },
+            ],
+        });
+        await expect(f.fs.lstat(f.disk('/run/sshd'))).rejects.toMatchObject({ code: 'ENOENT' });
+        expect(f.calls.some(call => call.executable === '/usr/sbin/sshd')).toBe(false);
     });
 
     it('observes route-selected external and exposure-selected private interfaces and every live SSH endpoint without guessing from private addresses', async () => {

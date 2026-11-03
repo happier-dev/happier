@@ -113,7 +113,8 @@ function retainedSources(value: unknown, endpoint: Omit<SshEndpoint, 'sourceCidr
     const sources: string[] = [];
     const matches = (actual: string | number, expected: unknown): boolean | null => {
         if (typeof expected === 'string' || typeof expected === 'number') return actual === expected;
-        const set = record(expected)?.set;
+        // libnftables emits list expressions as bare arrays (including ct state).
+        const set = Array.isArray(expected) ? expected : record(expected)?.set;
         return Array.isArray(set) && set.every(item => typeof item === typeof actual) ? set.includes(actual) : null;
     };
     for (const item of items) {
