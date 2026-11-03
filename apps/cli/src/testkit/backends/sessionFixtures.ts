@@ -457,21 +457,29 @@ export function createCompactSessionListQueryResponseFixture(params: Readonly<{
 export type SessionReadBatchDetailFailureFixture = Exclude<
     NonNullable<SessionReadBatchResponseV1['results'][number]['detail']>, { status: 200 }>;
 
-/** A snapshot-only HTTP boundary; documents still pass the real full-detail schema. */
+/** Session-parts HTTP boundary; every supplied document passes its real wire schema. */
 export function createSessionReadBatchResponseFixture(params: Readonly<{
     request: unknown;
     sessions: readonly SessionRecordFixture[];
     failures?: ReadonlyMap<string, SessionReadBatchDetailFailureFixture>;
+    turns?: ReadonlyMap<string, NonNullable<SessionReadBatchResponseV1['results'][number]['turns']>>;
+    messages?: ReadonlyMap<string, NonNullable<SessionReadBatchResponseV1['results'][number]['messages']>>;
 }>) {
     const demand = SessionReadBatchRequestV1Schema.parse(params.request);
-    if (!demand.includeSnapshot || demand.includeTurns !== false || demand.includeMessages) {
-        throw new Error('Session list fixture requires snapshot-only document demand');
-    }
     const byId = new Map(params.sessions.map(session => [session.id, session]));
     return SessionReadBatchResponseV1Schema.parse({ results: demand.sessionIds.map(sessionId => {
         const session = byId.get(sessionId);
-        return { sessionId, detail: params.failures?.get(sessionId)
+        const detail = params.failures?.get(sessionId)
             ?? (session ? { status: 200, body: { session } }
-                : { status: 404, body: { error: 'Session not found' } }) };
+                : { status: 404, body: { error: 'Session not found' } });
+        const includeParts = !demand.includeSnapshot || detail.status === 200;
+        const turns = includeParts && demand.includeSnapshot && demand.includeTurns !== false ? params.turns?.get(sessionId) : undefined;
+        const messages = includeParts && demand.includeMessages ? params.messages?.get(sessionId) : undefined;
+        if (includeParts && demand.includeSnapshot && demand.includeTurns !== false && !turns
+            || includeParts && demand.includeMessages && !messages) {
+            throw new Error('Session batch fixture is missing a demanded part');
+        }
+        return { sessionId, ...(demand.includeSnapshot ? { detail } : {}),
+            ...(turns ? { turns } : {}), ...(messages ? { messages } : {}) };
     }) });
 }

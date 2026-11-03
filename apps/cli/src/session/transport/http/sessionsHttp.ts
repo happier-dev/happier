@@ -24,6 +24,7 @@ import { SessionListQueryResponseV1Schema, SessionCurrentProjectionRecordV1Schem
   type SessionRuntimeManagedSubtreeListResponseV1 } from '@happier-dev/protocol/sessions/listing/response';
 import { SessionReadBatchRequestV1Schema, SessionReadBatchResponseV1Schema,
   type SessionReadBatchResponseV1 } from '@happier-dev/protocol/sessions/read/sessionReadBatchV1';
+import type { OperationUpdateRequiredV1 } from '@happier-dev/protocol/compat/operationUpdateRequiredV1';
 import { createServerHttpRequestBodyItemBudgetV1 } from '@happier-dev/protocol/server/http/requestBodyBoundsV1';
 import { buildSessionListServerQueryV1, SessionListUnavailableQueryV1Schema } from '@happier-dev/protocol/sessions/listing/query';
 import { SessionAttentionSetResultV1Schema, buildSessionAttentionStandingHttpPath } from '@happier-dev/protocol/sessions/organization/attentionAction';
@@ -1269,6 +1270,8 @@ type SessionSnapshotBatchParams = Readonly<{
   sessionIds: readonly string[];
   underSessionId?: string;
   accessProjectionVersion?: 1;
+  includeTurns?: boolean;
+  includeMessages?: boolean;
   signal?: AbortSignal;
   resolveAuthorizationHeaders?: SessionListDocumentAuthorization;
 }>;
@@ -1284,7 +1287,7 @@ export async function fetchSessionSnapshotsBatch(params: SessionSnapshotBatchPar
   params.signal?.throwIfAborted();
   const serverUrl = params.serverUrl ?? resolveServerHttpBaseUrl();
   const emptyBody = SessionReadBatchRequestV1Schema.parse({ sessionIds: [], includeSnapshot: true,
-    includeTurns: false, includeMessages: false, accessProjectionVersion: params.accessProjectionVersion,
+    includeTurns: params.includeTurns ?? false, includeMessages: params.includeMessages ?? false, accessProjectionVersion: params.accessProjectionVersion,
     ...(params.underSessionId === undefined ? {} : { underSessionId: params.underSessionId }) });
   const chunks: string[][] = [];
   let chunk: string[] = [];
@@ -1317,6 +1320,12 @@ export async function fetchSessionSnapshotsBatch(params: SessionSnapshotBatchPar
     });
     params.signal?.throwIfAborted();
     if (isAuthenticationStatus(response.status)) throwAuthenticationStatusError(response.status);
+    if (response.status === 404) {
+      const details: OperationUpdateRequiredV1 = { kind: 'update_required', operation: 'session.detail',
+        component: 'server', reason: 'session_read_batch_unsupported' };
+      throw Object.assign(createHttpStatusError(response.status, 'Session batch read requires a newer server', 'update_required'),
+        { retryable: false, details });
+    }
     if (response.status !== 200) throwUnexpectedStatusError(path, response.status);
     const parsed = SessionReadBatchResponseV1Schema.safeParse(response.data);
     if (!parsed.success) throw invalidSessionReadBatchResponse();
