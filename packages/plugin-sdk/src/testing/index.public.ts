@@ -1,3 +1,4 @@
+export { createPluginHttpFixture } from './http.js';
 export type { AgentSessionRuntimeEventKind } from './runtimeEvents.js';
 export type { ObservedAgentLaunch, AgentLaunchObserverBoundaries } from './observeAgentLaunch.js';
 export { createAgentLaunchObserver } from './observeAgentLaunch.js';

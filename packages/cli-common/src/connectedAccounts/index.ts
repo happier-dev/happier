@@ -18,3 +18,4 @@ export * from './producerResultSnapshot.js';
 export * from './establishedRuntimeDispatcher.js';
 export * from './hostAccessScopes.js';
 export * from './purposeInventory.js';
+export * from './purposeBinding.js';
