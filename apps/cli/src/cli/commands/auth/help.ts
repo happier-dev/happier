@@ -66,6 +66,8 @@ ${chalk.bold('Usage:')}
   happier auth service use <endpoint>   Select a sign-in service and sign in through it
   happier auth service logout     Sign out of the selected service (Homes already entered keep their access)
   happier auth status             Show authentication status
+  happier auth keep-encryption-keys
+                                  After another device switched this Account to unencrypted, keep this computer's keys for older encrypted history and continue
   happier auth help               Show this help message
 
 ${chalk.bold('Options:')}

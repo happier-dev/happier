@@ -667,7 +667,9 @@ const credentialsSchema = z.object({
   encryption: z.nullish(z.object({
     publicKey: z.string().check(z.base64()),
     machineKey: z.string().check(z.base64())
-  }))
+  })),
+  /** This computer's own reclassification of its keys; absent means active. */
+  custody: z.optional(z.literal('historical')),
 })
 
 export type AccountEncryptionCredentials =
@@ -701,7 +703,12 @@ type CredentialProvenanceMarker = Readonly<{
 
 export type Credentials = CredentialProvenanceMarker & {
   token: string,
-  encryption: AccountEncryptionCredentials
+  encryption: AccountEncryptionCredentials,
+  /**
+   * Only this computer writes `historical` (keyless re-auth or the person's
+   * confirmation); a Home's reported mode never does. Absent means active.
+   */
+  accountE2eeCustody?: 'historical',
 }
 
 export type TokenOnlyCredentials = CredentialProvenanceMarker & {
@@ -742,24 +749,38 @@ export function decodeStoredCredentials(value: unknown): StoredCredentials | nul
   const parsed = credentialsSchema.safeParse(value);
   if (!parsed.success || !parsed.data.token) return null;
   const credentials = parsed.data;
-  return {
-    token: credentials.token!,
-    encryption: credentials.secret
-      ? { type: 'legacy', secret: decodeBase64(credentials.secret) }
-      : credentials.encryption
-        ? { type: 'dataKey', publicKey: decodeBase64(credentials.encryption.publicKey), machineKey: decodeBase64(credentials.encryption.machineKey) }
-        : null,
-    credentialProvenance: 'stored_session',
-  };
+  const encryption: AccountEncryptionCredentials | null = credentials.secret
+    ? { type: 'legacy', secret: decodeBase64(credentials.secret) }
+    : credentials.encryption
+      ? { type: 'dataKey', publicKey: decodeBase64(credentials.encryption.publicKey), machineKey: decodeBase64(credentials.encryption.machineKey) }
+      : null;
+  return encryption
+    ? { token: credentials.token!, encryption, ...(credentials.custody ? { accountE2eeCustody: credentials.custody } : {}),
+        credentialProvenance: 'stored_session' }
+    : { token: credentials.token!, encryption: null, credentialProvenance: 'stored_session' };
+}
+
+/** The person's explicit reclassification of this computer's keys; the bytes never change. */
+export async function writeAccountE2eeCustodyForServerId(
+  serverIdRaw: string,
+  expectedToken: string,
+  custody: 'active' | 'historical',
+): Promise<boolean> {
+  const stored = await readStoredCredentialsForServerId(serverIdRaw);
+  if (!stored?.encryption || stored.token !== expectedToken) return false;
+  const { accountE2eeCustody: _previous, ...material } = stored;
+  await writeStoredCredentialsForServerId(serverIdRaw, custody === 'historical' ? { ...material, accountE2eeCustody: 'historical' } : material);
+  return true;
 }
 
 export function encodeStoredCredentials(credentials: StoredCredentials): z.infer<typeof credentialsSchema> & Pick<StoredCredentials, 'token'> {
+  const custody = credentials.encryption && credentials.accountE2eeCustody === 'historical' ? { custody: 'historical' as const } : {};
   return credentials.encryption?.type === 'legacy'
-    ? { token: credentials.token, secret: encodeBase64(credentials.encryption.secret) }
+    ? { token: credentials.token, secret: encodeBase64(credentials.encryption.secret), ...custody }
     : credentials.encryption?.type === 'dataKey'
       ? { token: credentials.token, encryption: {
           publicKey: encodeBase64(credentials.encryption.publicKey), machineKey: encodeBase64(credentials.encryption.machineKey),
-        } }
+        }, ...custody }
       : { token: credentials.token };
 }
 
@@ -786,6 +807,7 @@ export function sameStoredCredentials(
   if (left.requesterSessionCredentialScope?.serverId !== right.requesterSessionCredentialScope?.serverId
     || left.requesterSessionCredentialScope?.serverHttpBaseUrl !== right.requesterSessionCredentialScope?.serverHttpBaseUrl) return false;
   if (left.encryption === null || right.encryption === null) return left.encryption === right.encryption;
+  if (readAccountE2eeCustody(left) !== readAccountE2eeCustody(right)) return false;
   if (left.encryption.type === 'legacy' && right.encryption.type === 'legacy') {
     return sameCredentialBytes(left.encryption.secret, right.encryption.secret);
   }
@@ -960,7 +982,9 @@ export async function prepareCredentialsTokenOnlyForServerId(
     throw new HistoricalEncryptionIdentityUnavailableError();
   }
   if (previousAccountId.trim() !== accountId.trim()) return { token, encryption: null };
-  return { token, encryption };
+  // A keyless sign-in to the same Account keeps the keys for encrypted
+  // history; they no longer pin this computer to E2EE mode.
+  return { token, encryption, accountE2eeCustody: 'historical' };
 }
 
 export async function writeCredentialsTokenOnly(

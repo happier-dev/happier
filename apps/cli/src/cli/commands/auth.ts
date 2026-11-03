@@ -66,6 +66,9 @@ export async function handleAuthCommand(args: string[], signal?: AbortSignal): P
     case 'status':
       await (await import('./auth/status')).handleAuthStatus(args.slice(1), signal);
       return;
+    case 'keep-encryption-keys':
+      await (await import('./auth/keepEncryptionKeys')).handleAuthKeepEncryptionKeys(args.slice(1), signal);
+      return;
     case 'service':
       await (await import('./auth/service')).handleAuthServiceCommand(args.slice(1), signal);
       return;

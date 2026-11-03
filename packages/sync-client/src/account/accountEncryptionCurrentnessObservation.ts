@@ -171,6 +171,11 @@ export class AccountModeDowngradeUnverifiedError extends Error {
     }
 }
 
+export function isAccountModeDowngradeUnverifiedError(error: unknown): boolean {
+    return typeof error === 'object' && error !== null && 'code' in error
+        && error.code === ACCOUNT_MODE_DOWNGRADE_UNVERIFIED;
+}
+
 export const ACCOUNT_MODE_DOWNGRADE_UNVERIFIED = 'account_mode_downgrade_unverified' as const;
 
 export function admitMachineRowPlainMode(input: Readonly<{
