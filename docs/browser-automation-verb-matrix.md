@@ -20,6 +20,13 @@ UPDATE_AUTOMATION_VERB_MATRIX=1 ../../apps/stack/bin/hstack-exec --local -- \
 
 ## Controller and cancellation (development source)
 
+`browser.view.setViewport` selects a per-view device preset or `fitViewer` through the
+existing Browser command Action. Managed Chromium's `sidecar/viewport.ts` owns the complete
+metrics, touch and UA/client-hint tuple.
+The shared preset catalog is exported by `browser/control/v1`; native views return the existing
+typed `unsupported_command` result. These are development-source contracts, not physical-device
+or Safari certification.
+
 An approved first `browser.view.open` on a Machine retains the original command while managed
 Chromium is installed. Concurrent requests share the existing provisioner. Installation is
 followed by the canonical route refresh, then the original dispatch reads that refreshed control

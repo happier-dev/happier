@@ -574,6 +574,7 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
     'browser.view.openExternal',
     'browser.view.close',
     'browser.view.focus',
+    'browser.view.setViewport',
     'browser.target.set',
     'browser.navigate',
     'browser.reload',

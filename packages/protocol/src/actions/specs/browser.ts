@@ -31,6 +31,7 @@ import {
   BrowserStopCommandV1Schema,
   BrowserTakeControlCommandV1Schema,
   BrowserHandBackCommandV1Schema,
+  BrowserSetViewportCommandV1Schema,
 } from '../../browser/control/v1.js';
 import {
   BrowserContextAttachmentV1Schema,
@@ -202,6 +203,7 @@ export const BROWSER_RUNTIME_ACTION_TITLES: Readonly<Partial<Record<RuntimeActio
   'browser.view.openDevtools': 'Open native browser developer tools',
   'browser.view.close': 'Close browser view',
   'browser.view.focus': 'Focus browser view',
+  'browser.view.setViewport': 'Set browser device emulation',
   'browser.target.set': 'Set browser target',
   'browser.navigate': 'Navigate browser',
   'browser.reload': 'Reload browser',
@@ -362,6 +364,7 @@ export const BROWSER_RUNTIME_ACTION_INPUT_SCHEMAS = Object.freeze({
   'browser.view.openDevtools': RuntimeBrowserViewEffectInputSchema,
   'browser.view.close': BrowserCloseViewCommandV1Schema,
   'browser.view.focus': BrowserFocusViewCommandV1Schema,
+  'browser.view.setViewport': BrowserSetViewportCommandV1Schema,
   'browser.target.set': BrowserSetTargetCommandV1Schema,
   'browser.navigate': BrowserNavigateCommandV1Schema,
   'browser.reload': BrowserReloadCommandV1Schema,
@@ -437,6 +440,7 @@ const browserRuntimeOutputGeneralSchemas: Readonly<typeof BROWSER_EXTENSION_ACTI
   'browser.view.openDevtools': typeof BrowserCommandDispatchResultV1Schema;
   'browser.view.close': typeof BrowserCommandDispatchResultV1Schema;
   'browser.view.focus': typeof BrowserCommandDispatchResultV1Schema;
+  'browser.view.setViewport': typeof BrowserCommandDispatchResultV1Schema;
   'browser.target.set': typeof BrowserCommandDispatchResultV1Schema;
   'browser.navigate': typeof BrowserCommandDispatchResultV1Schema;
   'browser.reload': typeof BrowserCommandDispatchResultV1Schema;
@@ -476,6 +480,7 @@ const browserRuntimeOutputGeneralSchemas: Readonly<typeof BROWSER_EXTENSION_ACTI
   'browser.view.openDevtools': BrowserCommandDispatchResultV1Schema,
   'browser.view.close': BrowserCommandDispatchResultV1Schema,
   'browser.view.focus': BrowserCommandDispatchResultV1Schema,
+  'browser.view.setViewport': BrowserCommandDispatchResultV1Schema,
   'browser.target.set': BrowserCommandDispatchResultV1Schema,
   'browser.navigate': BrowserCommandDispatchResultV1Schema,
   'browser.reload': BrowserCommandDispatchResultV1Schema,
@@ -559,6 +564,7 @@ const BROWSER_APPROVAL_TECHNICAL_INPUT_PATHS = {
   'browser.workspace.open': ['commandId', 'target.targetId'],
   'browser.view.close': BROWSER_VIEW_COMMAND_TECHNICAL_INPUT_PATHS,
   'browser.view.focus': BROWSER_VIEW_COMMAND_TECHNICAL_INPUT_PATHS,
+  'browser.view.setViewport': BROWSER_VIEW_COMMAND_TECHNICAL_INPUT_PATHS,
   'browser.navigate': BROWSER_VIEW_COMMAND_TECHNICAL_INPUT_PATHS,
   'browser.reload': BROWSER_VIEW_COMMAND_TECHNICAL_INPUT_PATHS,
   'browser.goBack': BROWSER_VIEW_COMMAND_TECHNICAL_INPUT_PATHS,
@@ -590,6 +596,7 @@ export const BROWSER_RUNTIME_ACTION_SPEC_FAMILY: Readonly<{
     'browser.view.openDevtools': { agentDefault: 'authority' },
     'browser.workspace.open': { uiConfirmation: 'direct' },
     'browser.view.open': { uiConfirmation: 'direct' },
+    'browser.view.setViewport': { uiConfirmation: 'direct', agentDefault: 'authority' },
     'browser.automation.cancelActive': { agentDefault: 'authority', requiredSurfaces: ['agent', 'mcp', 'plugin', 'api'] },
     'browser.control.takeControl': { agentDefault: 'authority' },
     'browser.control.handBack': { agentDefault: 'authority' },

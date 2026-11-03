@@ -7,6 +7,7 @@ const CONTROL_ACTION_IDS = {
     openView: 'browser.view.open',
     closeView: 'browser.view.close',
     focusView: 'browser.view.focus',
+    setViewport: 'browser.view.setViewport',
     setTarget: 'browser.target.set',
     navigate: 'browser.navigate',
     reload: 'browser.reload',

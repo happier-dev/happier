@@ -292,6 +292,15 @@ describe('browser runtime action executor', () => {
         expect(executeOnMachine).not.toHaveBeenCalled();
         expect(engine).not.toHaveBeenCalled();
     });
+    it('returns typed unsupported device emulation for a mounted native view', async () => {
+        const { createBrowserRuntimeActionExecutor } = await import('./runtimeActionExecutor');
+        const state = openViewState({ adapterKind: 'externalUrl', engineKind: 'desktopWebView', target: externalTarget,
+            capabilities: localPreviewCapabilities, currentUrl: externalTarget.url });
+        const execute = createBrowserRuntimeActionExecutor({ control: { readState: () => state, applyDispatchResult: () => {} } });
+        expect(await execute(runtimeArgs({ actionId: 'browser.view.setViewport', input: {
+            kind: 'setViewport', browserSessionId: 'browser_session_1', viewId: 'view_1', commandId: 'emulate', emulation: { kind: 'preset', presetId: 'phone' },
+        } }))).toMatchObject({ status: 'failed', error: { code: 'unsupported_command', retryable: false } });
+    });
     it('opens the exact mounted page in the system browser without navigating or replacing it', async () => {
         const { createBrowserRuntimeActionExecutor } = await import('./runtimeActionExecutor');
         const state = openViewState({ adapterKind: 'localPreview', engineKind: 'webIframe', target: localPreviewTarget,

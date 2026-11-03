@@ -112,7 +112,7 @@ export function createBrowserDaemonControlRoutes(input: Readonly<{
 
       if (command.data.kind === 'focusView' || ((context?.authority === 'present_user' || context?.authority === 'account_automation') && (
         command.data.kind === 'navigate' || command.data.kind === 'goBack' || command.data.kind === 'goForward'
-        || command.data.kind === 'reload' || command.data.kind === 'stop'
+        || command.data.kind === 'reload' || command.data.kind === 'stop' || command.data.kind === 'setViewport'
       ))) {
         const automation = input.automation?.();
         if (automation) {

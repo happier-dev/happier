@@ -185,6 +185,7 @@ function mapControlRejectedReason(
 ): BrowserRuntimeActionDisabledReason {
     switch (reasonCode) {
         case 'adapter_unavailable':
+        case 'unsupported_command':
             return 'browser_adapter_unavailable';
         case 'page_history_uncontrollable':
             return 'browser_page_history_uncontrollable';
@@ -336,6 +337,10 @@ async function executeBrowserControlAction(
         effect.kind === 'commandRejected'
     ));
     if (rejected) {
+        if (rejected.reasonCode === 'unsupported_command') {
+            return BrowserCommandDispatchResultV1Schema.parse({ v: 1, commandId: command.data.commandId,
+                status: 'failed', error: { code: 'unsupported_command', message: 'Device emulation requires managed Chromium.', retryable: false } });
+        }
         if (rejected.reasonCode === 'automation_busy') {
             return BrowserCommandDispatchResultV1Schema.parse({ v: 1, commandId: command.data.commandId,
                 status: 'failed', error: { code: 'permission_denied', message: 'Browser input is still settling', retryable: true } });

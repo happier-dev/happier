@@ -8,6 +8,7 @@ import { isBrowserSidecarCdpCommandNotDispatched } from './cdpTransport';
 import type { HappierProcessRoot } from '@/daemon/processes/ownership/types';
 import type { HappierProcessRootSource } from '@/daemon/processes/roots/listHappierProcessRoots';
 import type { MachineGuardActivityEntryV1 } from '@happier-dev/protocol/machines/guard/activityV1';
+import { createBrowserViewportOwner, type BrowserViewportOwner } from './viewport';
 
 import {
     browserCommandDispatchFailure,
@@ -155,6 +156,7 @@ type BrowserSidecarCdpControlAdapterInput = Readonly<{
  * the binding state. Returns `null` for an unbound view so the producer stays fail-closed.
  */
 export type BrowserSidecarCdpControlAdapter = BrowserDaemonControlAdapter & Readonly<{
+    viewportOwner: BrowserViewportOwner;
     getNavigationState(view: Readonly<{ browserSessionId: string; viewId: string }>): BrowserSidecarNavigationState | null;
     subscribeBrowserEvents(listener: (event: BrowserEventV1) => void): () => void;
     resolvePageHandle(
@@ -263,6 +265,10 @@ export function createBrowserSidecarCdpControlAdapter(
     let unsubscribeCdp: (() => void) | undefined;
     let eventSequence = 0;
     let disposed = false;
+    const viewportOwner = createBrowserViewportOwner({ transport: input.transport,
+        resolvePageHandle: view => boundViews.get(browserViewKey(view)) ?? null,
+        subscribeViewLifecycle: listener => { lifecycleListeners.add(listener); return () => { lifecycleListeners.delete(listener); }; },
+    });
 
     function publishEvent(event: BrowserEventV1): void {
         for (const listener of [...eventListeners]) { try { listener(event); } catch { /* Observers cannot break control. */ } }
@@ -564,9 +570,11 @@ export function createBrowserSidecarCdpControlAdapter(
 
     return {
         adapterKind: 'chromiumSidecar',
+        viewportOwner,
         dispose() {
             if (disposed) return;
             disposed = true;
+            viewportOwner.dispose();
             unsubscribeCdp?.();
             unsubscribeCdp = undefined;
             attachingTargets.clear();
@@ -676,6 +684,13 @@ export function createBrowserSidecarCdpControlAdapter(
                     return dispatchPage(command, 'Page.stopLoading', undefined, scope);
                 case 'setTarget':
                     return failed(command, 'unsupported_command', 'Browser sidecar CDP setTarget is not backed.');
+                case 'setViewport':
+                    try {
+                        await viewportOwner.setEmulation(command, command.emulation, scope);
+                        return { v: 1, commandId: command.commandId, status: 'dispatched', adapterKind: 'chromiumSidecar', events: [] };
+                    } catch (error) {
+                        return cdpFailure(command, isBrowserSidecarCdpCommandNotDispatched(error) ? 'known' : 'unknown');
+                    }
                 case 'takeControl':
                 case 'handBack':
                     return failed(command, 'unsupported_command', 'Controller commands belong to the automation owner.');

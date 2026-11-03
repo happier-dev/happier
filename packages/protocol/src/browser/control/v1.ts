@@ -7,6 +7,9 @@ import { BrowserEventV1Schema } from '../events/v1.js';
 import { BrowserViewTargetV1Schema } from '../target/v1.js';
 import { BrowserHttpUrlV1Schema } from '../url.js';
 import { BrowserPlatformV1Schema } from '../view/v1.js';
+import { BrowserViewportEmulationV1Schema } from '../input/v1.js';
+export { BROWSER_VIEWPORT_PRESETS, BrowserViewportEmulationV1Schema, BrowserViewportPresetIdV1Schema } from '../input/v1.js';
+export type { BrowserViewportEmulationV1, BrowserViewportPresetIdV1 } from '../input/v1.js';
 
 const BrowserCommandBaseV1Schema = lazyZodSchema(() => z.strictObject({
     commandId: z.string().check(z.trim(), z.minLength(1), z.maxLength(256)),
@@ -32,6 +35,7 @@ export const BrowserCommandKindV1Schema = lazyZodSchema(() => z.enum([
   'setTarget',
   'takeControl',
   'handBack',
+  'setViewport',
 ]));
 export type BrowserCommandKindV1 = z.infer<typeof BrowserCommandKindV1Schema>;
 
@@ -83,6 +87,10 @@ export const BrowserSetTargetCommandV1Schema = lazyZodSchema(() => z.extend(Brow
 export const BrowserTakeControlCommandV1Schema = lazyZodSchema(() => z.extend(BrowserViewCommandBaseV1Schema, { kind: z.literal('takeControl') }));
 export const BrowserHandBackCommandV1Schema = lazyZodSchema(() => z.extend(BrowserViewCommandBaseV1Schema, { kind: z.literal('handBack') }));
 
+export const BrowserSetViewportCommandV1Schema = lazyZodSchema(() => z.extend(BrowserViewCommandBaseV1Schema, {
+  kind: z.literal('setViewport'), emulation: BrowserViewportEmulationV1Schema,
+}));
+
 export const BrowserCommandV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   BrowserOpenViewCommandV1Schema,
   BrowserCloseViewCommandV1Schema,
@@ -95,6 +103,7 @@ export const BrowserCommandV1Schema = lazyZodSchema(() => z.discriminatedUnion('
   BrowserSetTargetCommandV1Schema,
   BrowserTakeControlCommandV1Schema,
   BrowserHandBackCommandV1Schema,
+  BrowserSetViewportCommandV1Schema,
 ]));
 export type BrowserCommandV1 = z.infer<typeof BrowserCommandV1Schema>;
 

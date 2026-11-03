@@ -53,7 +53,7 @@ export type BrowserControlCommandEffect =
     | Readonly<{
         kind: 'commandRejected';
         command: BrowserCommandV1;
-        reasonCode: BrowserNavigationUnavailableReasonCode | 'view_not_found' | 'automation_busy';
+        reasonCode: BrowserNavigationUnavailableReasonCode | 'view_not_found' | 'automation_busy' | 'unsupported_command';
       }>;
 
 export type BrowserControlCommandDispatchResult = Readonly<{
@@ -361,6 +361,14 @@ export function dispatchBrowserControlCommand(
                 return { state, effects: [{ kind: 'commandRejected', command, reasonCode: 'automation_busy' }] };
             }
             return { state, effects: [] };
+        }
+        options.sendDaemonCommand?.(command);
+        return { state, effects: [{ kind: 'daemonCommand', command }] };
+    }
+
+    if (command.kind === 'setViewport') {
+        if (!isDaemonAuthoritativeView(state, command.viewId)) {
+            return { state, effects: [{ kind: 'commandRejected', command, reasonCode: 'unsupported_command' }] };
         }
         options.sendDaemonCommand?.(command);
         return { state, effects: [{ kind: 'daemonCommand', command }] };
