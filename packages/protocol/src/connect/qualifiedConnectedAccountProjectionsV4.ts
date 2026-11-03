@@ -160,6 +160,7 @@ export const QualifiedConnectedAccountListResponseV4Schema = lazyZodSchema(() =>
   service: QualifiedConnectedAccountServiceRefZodSchema,
   accounts: z.array(QualifiedConnectedAccountProfileV4Schema),
 }));
+export type QualifiedConnectedAccountListResponseV4 = z.infer<typeof QualifiedConnectedAccountListResponseV4Schema>;
 
 export const QualifiedConnectedAccountConfigurationTargetV4Schema = lazyZodSchema(() => z.strictObject({
   kind: z.literal('account'),
