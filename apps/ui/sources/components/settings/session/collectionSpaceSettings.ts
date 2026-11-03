@@ -1,5 +1,5 @@
 import { CollectionSpaceSelectionValueV1Schema, getDefaultCollectionSpaceIdV1, reduceCollectionSpacesV1, resolveCollectionSpacesV1, resolveCollectionSpaceSelectionV1,
-    type CollectionEntityKindV1 } from '@happier-dev/protocol/collections/spaces/collectionSpacesV1';
+    type CollectionEntityKindV1, type CollectionSpacesV1 } from '@happier-dev/protocol/collections/spaces/collectionSpacesV1';
 import { accountSettingsScopeKeySuffix } from '@/sync/domains/settings/scope/accountSettingsScope';
 import { builtInSettingUiDeclaration, SETTING_VALUE_UNAVAILABLE,
     type SettingDeclaration, type SettingOperationContext, type SettingsPageDeclaration, type SettingRef } from '@/components/settings/catalog/settingDeclarations';
@@ -20,13 +20,13 @@ export async function invokeCollectionSpaceSetting(entityKind: CollectionEntityK
         return { status: 'unavailable' as const, reason: 'setting_not_bound' };
     }
     const defaultId = getDefaultCollectionSpaceIdV1(entityKind);
-    const needsDefault = mutation.op === 'resetDefault' || mutation.op === 'edit' && mutation.spaceId === defaultId
+    const needsDefault = mutation.op === 'resetDefault' || (mutation.op === 'edit' || mutation.op === 'associateTag') && mutation.spaceId === defaultId
         || mutation.op === 'reorder' && (mutation.spaceId === defaultId || mutation.beforeSpaceId === defaultId);
     if (needsDefault && !context.readLocalSettings) return { status: 'unavailable' as const, reason: 'setting_not_bound' };
     const defaultSpace = needsDefault && context.readLocalSettings
         ? readCollectionSpaceDefaultV1(entityKind, await context.readSettings(), context.readLocalSettings()) : undefined;
     if (!context.isCurrent()) return { status: 'unavailable' as const, reason: 'setting_not_bound' };
-    let accepted: import('@happier-dev/protocol/collections/spaces/collectionSpacesV1').CollectionSpacesV1 | undefined;
+    let accepted: CollectionSpacesV1 | undefined;
     let reason = 'space_not_found';
     try {
         await context.mutateSettings(settings => {
@@ -53,7 +53,7 @@ export async function invokeCollectionSpaceSetting(entityKind: CollectionEntityK
                 readLocalSettings: context.readLocalSettings, writeLocalSettings: context.writeLocalSettings });
         }
     }
-    return accepted ? { status: 'completed' as const, value: accepted as import('@/components/settings/catalog/settingDeclarations').SettingValue }
+    return accepted ? { status: 'completed' as const, value: accepted as CollectionSpacesV1 & import('@/components/settings/catalog/settingDeclarations').SettingValue }
         : { status: 'unavailable' as const, reason: 'setting_not_bound' };
 }
 
