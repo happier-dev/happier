@@ -38,8 +38,10 @@ describe('Action failure presentation', () => {
             .toBe(t('errors.machineAdminAccessRequired'));
     });
 
-    it('uses the existing permission denial for credential scope refusals', () => {
-        expect(resolveActionExecutionFailureMessage({ ok: false, errorCode: 'credential_scope_denied', error: 'credential_scope_denied' }, 'Fallback'))
+    it.each(['credential_scope_denied', 'action_forbidden'])('uses the existing permission denial for %s refusals', (errorCode) => {
+        expect(resolveActionExecutionFailureMessage({ ok: false, errorCode, error: errorCode }, 'Fallback'))
+            .toBe(t('errors.permissionDenied'));
+        expect(resolveActionExecutionErrorMessage({ code: errorCode }, 'Fallback'))
             .toBe(t('errors.permissionDenied'));
     });
     it('uses runner restart guidance for returned Review launch failures at each Action envelope', () => {

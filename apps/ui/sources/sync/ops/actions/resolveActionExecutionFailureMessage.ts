@@ -51,7 +51,7 @@ function readFailureMessage(value: unknown): string | null {
     if (code === 'native_check_unavailable') return t('errors.machineNativeCheckUnavailable');
     if (code === 'native_check_unsupported') return t('errors.machineNativeCheckUnsupported');
     if (code === 'native_effect_failed') return t('errors.machineNativeEffectFailed');
-    if (code === 'credential_scope_denied') return t('errors.permissionDenied');
+    if (code === 'action_forbidden' || code === 'credential_scope_denied') return t('errors.permissionDenied');
     if (code === 'server_unreachable' || code === 'home_unreachable') return t('settingsPlugins.targetSelection.unreachableThisHome');
     if (isActionTurnedOffErrorCode(code)) return t('actionConfirmations.turnedOffMessage');
     if (code === 'outcome_unknown' || code === 'approval_execution_outcome_unknown') return t('entityDragDrop.preview.unknownDetail');
