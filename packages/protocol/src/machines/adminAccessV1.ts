@@ -86,7 +86,7 @@ export type MachineFirewallRestorationV1 = z.infer<typeof MachineFirewallRestora
 const MachineElevationFailureKindV1Schema = lazyZodSchema(() => z.enum([
   'native_protocol_invalid', 'native_check_unavailable', 'native_check_unsupported', 'native_effect_failed',
 ]));
-const MachineElevationFailureV1Schema = lazyZodSchema(() => z.strictObject({
+export const MachineElevationFailureV1Schema = lazyZodSchema(() => z.strictObject({
   kind: MachineElevationFailureKindV1Schema,
   reason: z.optional(MachineSetupObservationReasonV1Schema),
 }));

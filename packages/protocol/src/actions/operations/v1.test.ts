@@ -34,6 +34,23 @@ const baseSnapshot = {
 } as const;
 
 describe('Action operation v1 contract', () => {
+  it('retains closed Software Apply causes for current readers without native output', () => {
+    const error = { errorCode: 'outcome_unknown', error: 'outcome_unknown', details: {
+      kind: 'machineSetup', failure: { kind: 'native_effect_failed', reason: 'required_fact_unavailable' },
+    } };
+    const current = ActionOperationSnapshotV1Schema.parse({ ...baseSnapshot, actionId: 'machines.setup.apply',
+      state: 'failed', startedAt: 110, settledAt: 120, error });
+    expect(current.error).toEqual(error);
+    expect(projectActionOperationSnapshotForV1Reader(current).error).toEqual({ errorCode: error.errorCode, error: error.error });
+    for (const failure of [
+      { ...error.details.failure, stderr: 'private native output' },
+      { ...error.details.failure, reason: 'arbitrary native prose' },
+      { ...error.details.failure, kind: 'unknown_failure' },
+    ]) expect(ActionOperationFailureV1Schema.safeParse({ ...error, details: { ...error.details, failure } }).success).toBe(false);
+    expect(ActionOperationFailureV1Schema.safeParse({ ...error, errorCode: 'cancelled' }).success).toBe(false);
+    expect(ActionOperationFailureV1Schema.safeParse({ errorCode: 'platform_unsupported', error: 'platform_unsupported',
+      details: { kind: 'machineSetup', failure: { kind: 'native_effect_failed' } } }).success).toBe(true);
+  });
   it('carries the exact blocking Ask only during its approval wait and omits the reference for V1 readers', () => {
     const approval = { kind: 'approval_request_created', artifactId: 'stop-ask', actionId: 'machines.managed.power.set' };
     const progress = { kind: 'phase', phase: 'waiting_for_approval', label: 'Waiting for approval', approval };

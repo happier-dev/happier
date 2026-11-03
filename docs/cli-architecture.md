@@ -1352,6 +1352,14 @@ These are development-source contracts. Shared-development migration deployment,
 integrated package validation and composed loaded-runtime qualification are
 owned by the corridor integration boundary, not evidence of released availability.
 
+Development Software Apply retains the elevation owner's closed failure kind and
+optional native reason in `error.details` with `kind: 'machineSetup'`. Combined
+Workflow setup preserves that diagnostic through the public operation owner.
+An `outcome_unknown` settlement stays unknown even when a native failure is known;
+the diagnostic does not establish which mutations completed. Native output,
+submitted plans and recovery payloads remain private. Historical failures that
+discarded these details cannot recover them from the retained operation.
+
 Development Software Apply uses the same lifecycle owner to expose group refresh
 as a reviewed, manual recovery step. A daemon group grant (including a user
 declaration's supplementary groups) adds `review.requiresSessionRefresh` and

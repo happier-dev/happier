@@ -1,6 +1,6 @@
 import { MachineRebootResultV1Schema } from '../specs/machine/reboot.js';
 import { MachineVitalsHostFactsV1Schema } from '../../machines/vitals/machineVitalsSampleV1.js';
-import { MachineSudoPasswordPromptV1Schema } from '../../machines/adminAccessV1.js';
+import { MachineSudoPasswordPromptV1Schema, MachineElevationFailureV1Schema } from '../../machines/adminAccessV1.js';
 import { MachineAdministratorUsernameV1Schema } from '../../machines/adminAccessV1.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { MachineAgentIsolationReadyPreviewV1Schema, MachineAgentIsolationUnavailableStatusV1Schema } from '../../machines/agentIsolationV1.js';
@@ -154,16 +154,23 @@ export const ManagedAgentIsolationFailureDetailsV1Schema = lazyZodSchema(() => z
   status: MachineAgentIsolationUnavailableStatusV1Schema,
 }));
 export type ManagedAgentIsolationFailureDetailsV1 = Readonly<z.infer<typeof ManagedAgentIsolationFailureDetailsV1Schema>>;
+/** Reuse the elevation owner's closed diagnostic; native output remains private. */
+export const MachineSetupFailureDetailsV1Schema = lazyZodSchema(() => z.strictObject({
+  kind: z.literal('machineSetup'), failure: MachineElevationFailureV1Schema,
+}));
 export const ActionOperationFailureV1Schema = lazyZodSchema(() => z.strictObject({
   errorCode: ActionOperationErrorCodeV1Schema,
   error: z.string().check(z.trim(), z.minLength(1), z.maxLength(ACTION_OPERATION_ERROR_MAX_LENGTH_V1)),
   details: z.optional(z.union([ProjectSetupConsentFailureDetailsV1Schema, ProjectScriptEffectChangedFailureDetailsV1Schema,
-    ProjectWorkerNoAcceptanceFailureDetailsV1Schema, ApprovalStaleFailureDetailsSchema, ManagedControllerRequestFailureDetailsV1Schema, ManagedNativeFailureDetailsV1Schema,
+    ProjectWorkerNoAcceptanceFailureDetailsV1Schema, ApprovalStaleFailureDetailsSchema, ManagedControllerRequestFailureDetailsV1Schema, MachineSetupFailureDetailsV1Schema, ManagedNativeFailureDetailsV1Schema,
     ManagedAgentIsolationFailureDetailsV1Schema, ActionExceptionFailureDetailsV1Schema])),
 }).check(z.refine(failure => !failure.details || (!('kind' in failure.details)
   ? failure.errorCode === 'approval_stale'
   : failure.details.kind === 'actionException'
   ? failure.errorCode === 'action_failed'
+  : failure.details.kind === 'machineSetup'
+  ? failure.errorCode === 'outcome_unknown' || failure.errorCode === failure.details.failure.kind
+    || failure.errorCode === 'platform_unsupported'
   : failure.details.kind === 'managedAgentIsolation'
   ? failure.details.status.code === failure.errorCode
   : failure.details.kind === 'managedNative'

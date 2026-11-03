@@ -3986,6 +3986,14 @@ Run-on writer or store is added.
 
 ## SDK protocol evolution
 
+Unreleased 0.3 Software Apply operation failures may carry closed
+`details: { kind: 'machineSetup', failure: { kind, reason? } }`, reusing the
+elevation owner's diagnostic schema. Current operation readers preserve this
+presentation data; the existing released V1 projection omits all error details.
+Matching development readers must refresh together because earlier strict current
+readers reject the new detail kind. Failure codes and uncertainty semantics stay
+unchanged. No wire epoch, runtime ABI, migration or compatibility adapter is added.
+
 Unreleased 0.3 Machine isolation unavailable status adds optional
 `prerequisite: { reason, requiredFact, remedy }` for preparation refusals before
 native CHECK. The reason and required fact are closed; the remedy is non-secret

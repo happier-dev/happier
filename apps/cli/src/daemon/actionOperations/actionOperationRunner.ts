@@ -341,9 +341,11 @@ export function createActionOperationRunner(deps: Readonly<{
             }
           } else {
             const failure = { errorCode: executionResult.errorCode, error: executionResult.error };
-            // Only named Project and managed-controller producers carry these
+            // Only named Project, Machine setup and managed-controller producers carry these
             // validated public facts. Arbitrary executor details remain private.
             const reviewedFailure = isFiniteProjectCommand(action.actionId) || action.actionId.startsWith('machines.managed.')
+              || action.actionId === 'machines.setup.apply'
+              || action.actionId === 'machines.setup.remove' || action.actionId === 'machines.setup.updates.apply'
               ? ActionOperationFailureV1Schema.safeParse({ ...failure, details: executionResult.details }) : null;
             deps.store.fail(operationId, reviewedFailure?.success ? reviewedFailure.data : failure);
           }

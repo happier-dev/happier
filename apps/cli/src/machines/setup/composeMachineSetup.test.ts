@@ -14,12 +14,13 @@ import { createActionOperationStore } from '@/daemon/actionOperations/actionOper
 import { createWorkflowRunStorageTestkit } from '@/daemon/workflows/workflowRunStorage.testkit';
 import { DurableWorkflowCoordinatorStore } from '@/daemon/workflows/production';
 import { workflowInvocationKey } from '@/daemon/workflows/coordinator';
+import type { WorkflowJsonValue } from '@/daemon/workflows/input';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { buildMachineSetupWorkflow, createCombinedMachineSetupActionDeps } from './composeMachineSetup';
 
 // The opaque Home storage boundary is faked; Run admission, content opening,
 // invocation paging and setup composition all use their real owners.
-async function retainedSetup(state: 'failed' | 'cancelled' | 'succeeded', errorCode: string, details?: Record<string, string | number>, readRefusalCode?: string) {
+async function retainedSetup(state: 'failed' | 'cancelled' | 'succeeded', errorCode: string, details?: Record<string, WorkflowJsonValue>, readRefusalCode?: string) {
   const accountId = 'actor', machineId = 'guest', rootId = 'setup-root';
   const input = MachineSetupApplyInputV1Schema.parse({ homeId: 'home', machineId, targets: [{
     homeId: 'home', machineId, desiredRevision: 0, sources: [{ kind: 'direct', setup: {} }],
@@ -88,6 +89,24 @@ async function retainedSetup(state: 'failed' | 'cancelled' | 'succeeded', errorC
 }
 
 describe('Combined Machine setup child settlement', () => {
+  it.each([
+    { actionId: 'machines.setup.apply', errorCode: 'native_effect_failed', reason: 'required_fact_unavailable' },
+    { actionId: 'machines.setup.apply', errorCode: 'outcome_unknown', reason: 'native_effect_failed' },
+    { actionId: 'machines.setup.remove', errorCode: 'outcome_unknown', reason: 'native_effect_failed' },
+    { actionId: 'machines.setup.updates.apply', errorCode: 'outcome_unknown', reason: 'native_effect_failed' },
+  ] as const)('retains the closed $errorCode diagnostic through Workflow and $actionId', async ({ actionId, errorCode, reason }) => {
+    const details = { kind: 'machineSetup', failure: { kind: 'native_effect_failed', reason } };
+    const fixture = await retainedSetup('failed', errorCode, details);
+    const store = createActionOperationStore();
+    const spec = getActionSpec(actionId);
+    const scope = { accountId: 'actor', machineId: 'guest' };
+    const runner = createActionOperationRunner({ store, generateOperationId: () => 'setup-operation',
+      resolveAction: () => ({ actionId: spec.id, title: spec.title, operation: spec.operation! }) });
+    await runner.observe({ actionId: spec.id, scope, requestId: 'setup-request',
+      execute: async () => ActionExecuteFailureSchema.parse(await fixture.apply()) });
+    expect(store.get(scope, 'setup-operation')).toMatchObject({ state: 'failed',
+      error: { errorCode, error: errorCode, details } });
+  });
   it('reports an unknown outcome when the failed-child content read is refused', async () => {
     const fixture = await retainedSetup('failed', 'native_effect_failed', undefined, 'permission_denied');
     expect(await fixture.apply()).toEqual({ ok: false, errorCode: 'outcome_unknown', error: 'outcome_unknown' });

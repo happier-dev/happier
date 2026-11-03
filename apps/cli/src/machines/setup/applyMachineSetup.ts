@@ -241,8 +241,13 @@ async function applyAdmittedMachineSetup(input: AdmittedMachineSetupInput): Prom
         effect: { kind: 'setupOperation', plans },
         onSetupApplied: result => { daemonRestartRequired = result.daemonRestartRequired; },
       }, input.elevation);
-      if (elevated.outcome !== 'applied') return fail(elevated.outcome === 'not_applied'
-        ? elevated.reasonCode === 'plan_stale' ? 'plan_changed' : elevated.reasonCode : elevated.outcome);
+      if (elevated.outcome !== 'applied') {
+        const code = elevated.outcome === 'not_applied'
+          ? elevated.reasonCode === 'plan_stale' ? 'plan_changed' : elevated.reasonCode : elevated.outcome;
+        return { ok: false, errorCode: code, error: code,
+          ...('failure' in elevated && elevated.failure
+            ? { details: { kind: 'machineSetup', failure: elevated.failure } } : {}) };
+      }
     } else {
       const result = await applyMachineSetupEffectPlans({ plans, signal,
         backend: createMachineSetupNativeBackend({ signal, run: async command => {
