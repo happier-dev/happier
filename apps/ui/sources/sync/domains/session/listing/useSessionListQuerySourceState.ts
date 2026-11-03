@@ -2,7 +2,7 @@ import { resolveHomeDisplayLabel } from '@/components/settings/server/homeDispla
 import * as React from 'react';
 import { useSessionListAgentTargetDemand } from './useSessionListAgentTargetDemand';
 import { featureRequiresServerSnapshot, type FeatureId } from '@happier-dev/protocol/features/catalog';
-import type { SessionListQueryV1 } from '@happier-dev/protocol/sessions/listing/query';
+import { supportsSessionListMembershipSelectionV1, supportsSessionListProjectSelectionV1, type SessionListQueryV1 } from '@happier-dev/protocol/sessions/listing/query';
 
 import {
     useMachineListByServerId,
@@ -63,6 +63,8 @@ export type SessionListQueryHomeInput = Readonly<{
      */
     queryKey?: string;
     query: SessionListQueryV1;
+    /** Apply only exhausted relations for consumers that need the whole corpus. */
+    readMode?: 'complete';
     /**
      * Mounted Sessions corpora use `query`. Independent secondary consumers
      * use `rowOnly` to hydrate the shared exact-Home rows without publishing a
@@ -154,14 +156,22 @@ export function resolveSessionListQueryHomeSupport(
     serverId: string,
     enabled: boolean,
     settings: FeatureLocalPolicySettings,
+    query?: Pick<SessionListQueryV1, 'membership' | 'projectKeys'>,
 ): boolean | null {
-    return resolveSessionListFeatureHomeSupport(
+    const endpoint = resolveSessionListFeatureHomeSupport(
         'sessions.filteredListing',
         featureSnapshots,
         serverId,
         enabled,
         settings,
     );
+    const projectSelected = Boolean(query?.projectKeys?.include.length || query?.projectKeys?.exclude.length);
+    if (endpoint !== true || (!query?.membership && !projectSelected)) return endpoint;
+    const snapshot = featureSnapshots.snapshotsByServerId[serverId];
+    if (snapshot?.status !== 'ready') return false;
+    // A strict query reader never receives a selector its Home has not advertised.
+    return (!query?.membership || supportsSessionListMembershipSelectionV1(snapshot.features))
+        && (!projectSelected || supportsSessionListProjectSelectionV1(snapshot.features));
 }
 
 /**
@@ -184,6 +194,7 @@ type NormalizedQueryHome = Readonly<{
     serverId: string;
     queryKey: string;
     query: SessionListQueryV1;
+    readMode?: 'complete';
     queryMembership: 'query' | 'rowOnly';
     ordinaryAdapter: SessionListOrdinaryPageAdapter | null;
 }>;
@@ -226,8 +237,14 @@ export function useSessionListFeatureHomeSupportByServerId(
 export function useSessionListQueryHomeSupportByServerId(
     serverIds: readonly string[],
     enabled: boolean,
+    queriesByServerId?: ReadonlyMap<string, SessionListQueryV1>,
 ): Readonly<Record<string, boolean | null>> {
-    return useSessionListFeatureHomeSupportByServerId('sessions.filteredListing', serverIds, enabled);
+    const normalizedServerIds = React.useMemo(() => [...new Set(serverIds.map(id => id.trim()).filter(Boolean))], [serverIds]);
+    const snapshots = useServerFeaturesMainSelectionSnapshot(normalizedServerIds, { enabled });
+    const localPolicySettings = useFeatureLocalPolicySettings();
+    return React.useMemo(() => Object.fromEntries(normalizedServerIds.map(serverId => [serverId,
+        resolveSessionListQueryHomeSupport(snapshots, serverId, enabled, localPolicySettings, queriesByServerId?.get(serverId)),
+    ])), [enabled, localPolicySettings, normalizedServerIds, queriesByServerId, snapshots]);
 }
 
 const NO_QUERY_HOMES: readonly NormalizedQueryHome[] = Object.freeze([]);
@@ -243,6 +260,7 @@ function normalizeHomes(homes: readonly SessionListQueryHomeInput[]): readonly N
             serverId,
             query: home.query,
             queryKey: buildSessionListQueryKey(serverId, home.query),
+            readMode: home.readMode,
             queryMembership: home.queryMembership ?? 'query',
             ordinaryAdapter: home.ordinaryAdapter ?? null,
         });
@@ -373,7 +391,8 @@ export function useSessionListQueryHomeStates(input: SessionListQueryInput): Ses
 function useSessionListQueryHomeStatesLayer(input: SessionListQueryInput): SessionListQueryHomeStatesLayer {
     const homes = React.useMemo(() => normalizeHomes(input.homes), [input.homes]);
     const homeServerIds = React.useMemo(() => homes.map((home) => home.serverId), [homes]);
-    const supportByServerId = useSessionListQueryHomeSupportByServerId(homeServerIds, input.enabled);
+    const queriesByServerId = React.useMemo(() => new Map(homes.map(home => [home.serverId, home.query])), [homes]);
+    const supportByServerId = useSessionListQueryHomeSupportByServerId(homeServerIds, input.enabled, queriesByServerId);
     const followingHomeServerIds = React.useMemo(
         () => homes.filter((home) => home.query.scope === 'following').map((home) => home.serverId),
         [homes],
@@ -497,6 +516,7 @@ function useSessionListQueryHomeStatesLayer(input: SessionListQueryInput): Sessi
             const availability = getSessionListQueryHomeAvailability(home.serverId);
             void controller.update({
                 query: home.query,
+                readMode: home.readMode,
                 selected: input.enabled,
                 online: availability === 'pending' ? null : availability === 'online',
                 supported: resolveSessionListQueryHomeAdmissionSupport(

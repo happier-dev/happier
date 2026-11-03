@@ -1,12 +1,18 @@
 import { describe, expect, it } from 'vitest';
-import type { SessionListQueryV1 } from '@happier-dev/protocol';
+import type { SessionListQueryV1 } from '@happier-dev/protocol/sessions/listing/query';
 
 import {
     createSessionListQueryHomeController,
+    canSessionListOrdinaryPageAnswerQuery,
     type SessionListQueryHomeState,
     type SessionListQueryPageRequest,
 } from './sessionListQueryController';
 import { buildSessionListQueryKey } from './sessionListQueryKey';
+import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
+import { captureSessionListRetirementFence, wasSessionRetiredSinceFence } from '@/sync/store/domains/sessions';
+import { storage } from '@/sync/domains/state/storageStore';
+import { isSessionListQueryHomeCoverageComplete } from './sessionListHomeObservation';
+import { resolveSessionListQueryPresentation } from './sessionListIndexPresentation';
 
 const QUERY_A: SessionListQueryV1 = {
     v: 1,
@@ -57,6 +63,258 @@ function result(
 }
 
 describe('SessionListQueryHomeController', () => {
+    it('retains manual pages while an unavailable smart branch keeps coverage partial', async () => {
+        const query = { ...QUERY_ORDINARY, membership: { mode: 'filter_or_manual' as const, tagIds: ['member'] } };
+        let smartAvailable = false;
+        const controller = createSessionListQueryHomeController({ serverId: 'home-a', fetchPage: async () => ({
+            ...result(['manual']), ...(smartAvailable ? {} : { membershipUnavailableReason: 'following' as const }),
+        }) });
+        try {
+            await controller.update({ query, selected: true, online: true, supported: true });
+            const state = controller.getSnapshot();
+            expect(state.addresses.map(address => address.sessionId)).toEqual(['manual']);
+            expect(isSessionListQueryHomeCoverageComplete({ state, requestedQueryKey: buildSessionListQueryKey('home-a', query), query })).toBe(false);
+            expect(resolveSessionListQueryPresentation({ selectedServerIds: ['home-a'], statesByServerId: { 'home-a': state },
+                coverageComplete: false, retainedRowCount: 1 })).toEqual({ kind: 'partial', unavailableHomes: [{ serverId: 'home-a', reason: 'unsupported' }] });
+            smartAvailable = true;
+            await controller.refresh();
+            expect(isSessionListQueryHomeCoverageComplete({ state: controller.getSnapshot(),
+                requestedQueryKey: buildSessionListQueryKey('home-a', query), query })).toBe(true);
+        } finally { controller.dispose(); }
+    });
+    it('keeps manual membership corpora distinct and refuses an ordinary GET adapter', () => {
+        const query = { ...QUERY_ORDINARY, membership: { mode: 'filter_or_manual' as const, tagIds: ['b', 'a'],
+            filter: { scope: 'all_accessible' as const, attention: 'any' as const, audiences: [], tagIds: ['smart-b', 'smart-a'] } } };
+        const key = buildSessionListQueryKey('home-a', query);
+        expect(key).toBe(buildSessionListQueryKey('home-a', { ...query, membership: { ...query.membership,
+            tagIds: ['a', 'b'], filter: { ...query.membership.filter, tagIds: ['smart-a', 'smart-b'] } } }));
+        expect(key).not.toBe(buildSessionListQueryKey('home-a', { ...query, membership: { ...query.membership, tagIds: ['other'] } }));
+        expect(key).not.toBe(buildSessionListQueryKey('home-a', { ...query, membership: { ...query.membership, mode: 'manual_only' } }));
+        expect(canSessionListOrdinaryPageAnswerQuery(query)).toBe(false);
+    });
+    it('publishes zero complete membership changes for equal pages and replaces only one address for a real id change', async () => {
+        const rows = Array.from({ length: 1_000 }, (_, index) => `identity-${index}`);
+        let requests = 0;
+        const controller = createSessionListQueryHomeController({ serverId: 'home-a', fetchPage: async request => {
+            requests++;
+            const offset = Number(request.cursor ?? 0);
+            return result(rows.slice(offset, offset + 500), offset === 0 ? { hasNext: true, nextCursor: '500' } : {});
+        } });
+        try {
+            await controller.update({ query: QUERY_A, selected: true, online: true, supported: true, readMode: 'complete' });
+            const original = controller.getSnapshot().addresses;
+            let previous = original;
+            let membershipChanges = 0;
+            controller.subscribe(() => {
+                const next = controller.getSnapshot().addresses;
+                if (next !== previous) membershipChanges++;
+                previous = next;
+            });
+            await controller.refresh();
+            expect(controller.getSnapshot().addresses).toBe(original);
+            expect(membershipChanges).toBe(0);
+            rows[500] = 'replaced-id';
+            await controller.refresh();
+            const changed = controller.getSnapshot().addresses;
+            expect(changed.map(address => address.sessionId)).toEqual(rows);
+            expect(changed.filter((address, index) => address !== original[index])).toHaveLength(1);
+            expect(membershipChanges).toBe(1);
+            expect(requests).toBe(6);
+        } finally { controller.dispose(); }
+    });
+
+    it('keeps a progressive first page and its committed membership when a refetch answers the same ids', async () => {
+        const rows = ['one', 'two', 'three'];
+        const committed: (readonly string[] | null)[] = [];
+        const controller = createSessionListQueryHomeController({ serverId: 'home-a',
+            commitMembership: (_key, ids) => { committed.push(ids); },
+            fetchPage: async () => result([...rows]) });
+        try {
+            await controller.update({ query: QUERY_A, selected: true, online: true, supported: true });
+            const original = controller.getSnapshot().addresses;
+            let previous = original;
+            let membershipChanges = 0;
+            controller.subscribe(() => {
+                const next = controller.getSnapshot().addresses;
+                if (next !== previous) membershipChanges++;
+                previous = next;
+            });
+            await controller.refresh();
+            await controller.invalidate();
+            expect(controller.getSnapshot()).toMatchObject({ phase: 'ready' });
+            expect(controller.getSnapshot().addresses).toBe(original);
+            expect(membershipChanges).toBe(0);
+            expect(committed).toHaveLength(1);
+            rows[1] = 'replaced';
+            await controller.refresh();
+            const changed = controller.getSnapshot().addresses;
+            expect(changed.map(address => address.sessionId)).toEqual(rows);
+            expect(changed.filter((address, index) => address !== original[index])).toHaveLength(1);
+            expect(membershipChanges).toBe(1);
+            expect(committed).toHaveLength(2);
+        } finally { controller.dispose(); }
+    });
+
+    it('applies a complete read once after ordinary and attention pages exhaust', async () => {
+        const requests: SessionListQueryPageRequest[] = [];
+        const applied: string[][] = [];
+        const controller = createSessionListQueryHomeController({ serverId: 'home-a',
+            commitMembership: (_key, ids) => { if (ids) applied.push([...ids]); },
+            fetchPage: async request => {
+                requests.push(request);
+                if (request.attentionCursor) return { ...result(['attention']), metadataUpgradeRequiredCount: 3 };
+                if (request.cursor) return { ...result(['middle']), metadataUpgradeRequiredCount: 2 };
+                return { ...result(['head'], { nextCursor: 'ordinary', hasNext: true,
+                    attentionNextCursor: 'attention', attentionHasNext: true }), metadataUpgradeRequiredCount: 1 };
+            } });
+        try {
+            await controller.update({ query: QUERY_A, selected: true, online: true, supported: true, readMode: 'complete' });
+            expect(requests.map(request => [request.cursor ?? null, request.attentionCursor ?? null]))
+                .toEqual([[null, null], ['ordinary', null], [null, 'attention']]);
+            expect(applied).toEqual([['head', 'middle', 'attention']]);
+            expect(controller.getSnapshot()).toMatchObject({ phase: 'ready', hasNext: false, attentionHasNext: false,
+                metadataUpgradeRequiredCount: 6 });
+        } finally { controller.dispose(); }
+    });
+
+    it('rechecks early-page retirement at complete commit and retains that answer while queued refresh starts', async () => {
+        const tail = createDeferred<ReturnType<typeof result>>();
+        const replacement = createDeferred<ReturnType<typeof result>>();
+        const previousState = storage.getState();
+        let requests = 0;
+        const controller = createSessionListQueryHomeController({ serverId: 'home-a', fetchPage: async () => {
+            requests++;
+            if (requests === 1) {
+                const fence = captureSessionListRetirementFence();
+                return { ...result(['keep', 'complete-retired'], { hasNext: true, nextCursor: 'tail' }),
+                    isSessionCurrent: (id: string) => !wasSessionRetiredSinceFence(fence, 'home-a', id) };
+            }
+            return requests === 2 ? tail.promise : replacement.promise;
+        } });
+        const input = { query: QUERY_A, selected: true, online: true, supported: true, readMode: 'complete' } as const;
+        const initial = controller.update(input);
+        let invalidation: Promise<void> | undefined;
+        try {
+            await Promise.resolve();
+            expect(requests).toBe(2);
+            expect(controller.getSnapshot().appliedQueryKey).toBeNull();
+            storage.getState().deleteSession('complete-retired', 'home-a');
+            controller.retire('complete-retired');
+            invalidation = controller.invalidate('structural');
+            tail.resolve(result(['tail']));
+            await initial;
+            expect(requests).toBe(3);
+            expect(controller.getSnapshot()).toMatchObject({ phase: 'refreshing', appliedQueryKey: KEY_A,
+                hasNext: false, attentionHasNext: false,
+                addresses: [{ serverId: 'home-a', sessionId: 'keep' }, { serverId: 'home-a', sessionId: 'tail' }] });
+        } finally {
+            controller.dispose();
+            tail.resolve(result([]));
+            replacement.resolve(result([]));
+            await Promise.all([initial, invalidation]);
+            storage.setState(previousState, true);
+        }
+    });
+
+    it.each([{ ids: [] }, { ids: ['one'] }])('keeps a complete answer applied when its queued replacement fails immediately: %j', async ({ ids }) => {
+        const first = createDeferred<ReturnType<typeof result>>();
+        let requests = 0;
+        const controller = createSessionListQueryHomeController({ serverId: 'home-a', fetchPage: async () => {
+            if (++requests === 1) return first.promise;
+            throw new Error('Home unavailable');
+        } });
+        const initial = controller.update({ query: QUERY_A, selected: true, online: true, supported: true, readMode: 'complete' });
+        const invalidation = controller.invalidate();
+        try {
+            first.resolve(result(ids));
+            await Promise.all([initial, invalidation]);
+            expect(controller.getSnapshot()).toMatchObject({ phase: 'error', appliedQueryKey: KEY_A,
+                hasNext: false, attentionHasNext: false });
+            expect(controller.getSnapshot().addresses.map(address => address.sessionId)).toEqual(ids);
+        } finally { controller.dispose(); first.resolve(result([])); await Promise.all([initial, invalidation]); }
+    });
+
+    it('keeps the last complete answer after a continuation fails and restarts the whole read on retry', async () => {
+        const requests: Array<string | null> = [];
+        let failing = false;
+        let version = 'old';
+        const controller = createSessionListQueryHomeController({ serverId: 'home-a', fetchPage: async request => {
+            requests.push(request.cursor ?? null);
+            if (request.cursor && failing) throw new Error('Home unavailable');
+            return request.cursor ? result([`${version}-tail`]) : result([`${version}-head`], { hasNext: true, nextCursor: 'tail' });
+        } });
+        try {
+            await controller.update({ query: QUERY_A, selected: true, online: true, supported: true, readMode: 'complete' });
+            const answer = controller.getSnapshot().addresses;
+            failing = true;
+            version = 'new';
+            await controller.refresh();
+            expect(controller.getSnapshot()).toMatchObject({ phase: 'error', failedOperation: 'replace' });
+            expect(controller.getSnapshot().addresses).toBe(answer);
+            expect(answer.map(address => address.sessionId)).toEqual(['old-head', 'old-tail']);
+            failing = false;
+            await controller.retry();
+            expect(requests).toEqual([null, 'tail', null, 'tail', null, 'tail']);
+            expect(controller.getSnapshot().addresses.map(address => address.sessionId)).toEqual(['new-head', 'new-tail']);
+        } finally { controller.dispose(); }
+    });
+
+    it.each(['ordinary', 'attention'] as const)('rejects a non-advancing complete %s cursor without applying a prefix', async family => {
+        const controller = createSessionListQueryHomeController({ serverId: 'home-a', fetchPage: async () => result(['prefix'],
+            family === 'ordinary' ? { hasNext: true, nextCursor: 'same' } : { attentionHasNext: true, attentionNextCursor: 'same' }) });
+        try {
+            await controller.update({ query: QUERY_A, selected: true, online: true, supported: true, readMode: 'complete' });
+            expect(controller.getSnapshot()).toMatchObject({ phase: 'error', failureReason: 'cursor_not_advancing',
+                appliedQueryKey: null, addresses: [] });
+        } finally { controller.dispose(); }
+    });
+
+    it('withdraws a progressive prefix when complete mode replaces an in-flight continuation', async () => {
+        const held = createDeferred<ReturnType<typeof result>>();
+        const requests: SessionListQueryPageRequest[] = [];
+        const controller = createSessionListQueryHomeController({ serverId: 'home-a', fetchPage: async request => {
+            requests.push(request);
+            if (requests.length === 1) return result(['prefix'], { hasNext: true, nextCursor: 'tail' });
+            if (requests.length === 2) return held.promise;
+            return result(['complete']);
+        } });
+        const input = { query: QUERY_A, selected: true, online: true, supported: true } as const;
+        let pending: Promise<void> | undefined;
+        try {
+            await controller.update(input);
+            pending = controller.loadNext();
+            await controller.update({ ...input, readMode: 'complete' });
+            expect(requests[1]?.signal.aborted).toBe(true);
+            expect(requests[2]?.cursor).toBeUndefined();
+            expect(controller.getSnapshot().addresses.map(address => address.sessionId)).toEqual(['complete']);
+            held.resolve(result(['late-prefix-tail']));
+            await pending;
+            expect(controller.getSnapshot().addresses.map(address => address.sessionId)).toEqual(['complete']);
+        } finally { controller.dispose(); held.resolve(result([])); await pending; }
+    });
+
+    it.each(['offline', 'support', 'dispose'] as const)('fences a complete read between pages on %s retirement', async reason => {
+        const held = createDeferred<ReturnType<typeof result>>();
+        const requests: SessionListQueryPageRequest[] = [];
+        const controller = createSessionListQueryHomeController({ serverId: 'home-a', fetchPage: async request => {
+            requests.push(request);
+            return requests.length === 1 ? result(['prefix'], { hasNext: true, nextCursor: 'tail' }) : held.promise;
+        } });
+        const input = { query: QUERY_A, selected: true, online: true, supported: true, readMode: 'complete' } as const;
+        const initial = controller.update(input);
+        try {
+            await Promise.resolve();
+            expect(requests).toHaveLength(2);
+            if (reason === 'dispose') controller.dispose();
+            else await controller.update({ ...input, ...(reason === 'offline' ? { online: false } : { supported: false }) });
+            expect(requests[1]?.signal.aborted).toBe(true);
+            held.resolve(result(['late-tail']));
+            await initial;
+            expect(controller.getSnapshot().addresses).toEqual([]);
+            expect(controller.getSnapshot().appliedQueryKey).toBeNull();
+        } finally { controller.dispose(); held.resolve(result([])); await initial; }
+    });
+
     it.each(['replace', 'ordinary', 'attention'] as const)('retries the failed %s operation and clears its recovery state after success', async (operation) => {
         const requests: SessionListQueryPageRequest[] = [];
         let failing = false;
@@ -175,7 +433,7 @@ describe('SessionListQueryHomeController', () => {
             addresses: [{ serverId: 'home-a', sessionId: 'private-row' }],
             nextCursor: 'ordinary-next', hasNext: true,
             attentionNextCursor: 'attention-next', attentionHasNext: true,
-            phase: 'error', failureReason: 'network',
+            phase: 'error', failureReason: 'response',
         } : {
             addresses: [], appliedQueryKey: null, freshnessAt: null,
             nextCursor: null, hasNext: false,

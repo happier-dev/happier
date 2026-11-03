@@ -1,4 +1,4 @@
-import type { SessionAudienceSelectionV1, SessionListQueryV1 } from '@happier-dev/protocol';
+import { SessionListMembershipFilterV1Schema, type SessionAudienceSelectionV1, type SessionListQueryV1 } from '@happier-dev/protocol/sessions/listing/query';
 
 function audienceIdentity(audience: SessionAudienceSelectionV1): readonly string[] {
     if (audience.kind === 'outside_teams') return ['outside_teams'];
@@ -37,5 +37,14 @@ export function buildSessionListQueryKey(serverIdRaw: string, query: SessionList
         query.includeAttention === true,
         ...(query.coordinator === undefined ? [] : [{ coordinator: query.coordinator }]),
         ...(query.underSessionId === undefined ? [] : [query.underSessionId]),
+        ...(query.folderIds?.length ? [{ folderIds: [...new Set(query.folderIds)].sort() }] : []),
+        ...(query.projectKeys && (query.projectKeys.include.length || query.projectKeys.exclude.length) ? [{ projectKeys: {
+            include: [...new Set(query.projectKeys.include)].sort(), exclude: [...new Set(query.projectKeys.exclude)].sort(),
+        } }] : []),
+        ...(query.membership ? [{ membership: {
+            mode: query.membership.mode,
+            tagIds: [...new Set(query.membership.tagIds)].sort(),
+            ...(query.membership.filter ? { filter: SessionListMembershipFilterV1Schema.parse(query.membership.filter) } : {}),
+        } }] : []),
     ]);
 }

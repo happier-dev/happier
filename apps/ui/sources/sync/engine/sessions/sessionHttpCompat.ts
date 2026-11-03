@@ -1,4 +1,4 @@
-import { SessionListQueryResponseV1Schema } from '@happier-dev/protocol/sessions/listing/response';
+import { SessionListQueryResponseV1Schema, type SessionListQueryResponseV1 } from '@happier-dev/protocol/sessions/listing/response';
 import { V2SessionListResponseSchema, V2SessionRecordSchema, V2SessionByIdNotFoundSchema, type V2SessionListResponse, type V2SessionRecord } from '@happier-dev/protocol/sessions/control/contract';
 import { parseSessionRuntimeActivityProjectionFields } from '@happier-dev/protocol/sessions/runtime/activity/sessionRuntimeActivity';
 import { buildSessionListServerQueryV1, type SessionListQueryV1 } from '@happier-dev/protocol/sessions/listing/query';
@@ -304,6 +304,7 @@ export async function fetchSessionListPageCompat(params: Readonly<{
     attentionHasNext: boolean;
     /** Rows the Home selected but withheld pending their owner's metadata upgrade. */
     metadataUpgradeRequiredCount: number;
+    membershipUnavailableReason?: SessionListQueryResponseV1['membershipUnavailableReason'];
     source: 'v2' | 'v1';
 }> {
     const source = params.source;
@@ -400,6 +401,7 @@ export async function fetchSessionListPageCompat(params: Readonly<{
                 attentionNextCursor: parsedQuery.data.attentionNextCursor,
                 attentionHasNext: parsedQuery.data.attentionHasNext,
                 metadataUpgradeRequiredCount: parsedQuery.data.metadataUpgradeRequiredCount ?? 0,
+                membershipUnavailableReason: parsedQuery.data.membershipUnavailableReason,
                 source: 'v2',
             };
         }

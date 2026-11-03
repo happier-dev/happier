@@ -1,12 +1,17 @@
-import type { SessionListQueryV1 } from '@happier-dev/protocol';
+import type { SessionListQueryV1 } from '@happier-dev/protocol/sessions/listing/query';
 
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
 import { normalizeSessionAddress, sessionAddressKey } from '@/sync/domains/session/sessionAddress';
 import type { SessionListFetchResult, fetchAndApplySessions } from '@/sync/engine/sessions/sessionSnapshot';
 import type { SessionListPageSource } from '@/sync/engine/sessions/sessionHttpCompat';
-import { HappyError } from '@/utils/errors/errors';
+import { classifySessionListFailure, type SessionListQueryFailureReason } from './sessionListFailure';
+export type { SessionListQueryFailureReason } from './sessionListFailure';
 
 import { buildSessionListQueryKey } from './sessionListQueryKey';
+import {
+    canSessionListOrdinaryPageAnswerQuery,
+} from './sessionListQuerySelection';
+export { canSessionListOrdinaryPageAnswerQuery };
 
 /** One strict-query corpus's applied membership as the store holds it. */
 export type SessionListQueryMembership = Readonly<{
@@ -21,12 +26,6 @@ export type SessionListQueryMembership = Readonly<{
     lastKnown?: true;
 }>;
 
-export type SessionListQueryFailureReason =
-    | 'unsupported'
-    | 'invalid_query'
-    | 'access_denied'
-    | 'cursor_not_advancing'
-    | 'network';
 
 export type SessionListQueryHomeState = Readonly<{
     requestedQueryKey: string;
@@ -54,6 +53,7 @@ export type SessionListQueryHomeState = Readonly<{
      * non-zero count are a read-to-the-end corpus that is still not whole.
      */
     metadataUpgradeRequiredCount?: number;
+    membershipUnavailableReason?: SessionListFetchResult['membershipUnavailableReason'];
 }>;
 
 /**
@@ -86,21 +86,6 @@ export type SessionListQueryPageRequest = Readonly<{
     signal: AbortSignal;
 }>;
 
-/**
- * Whether one released owner/direct GET corpus can answer the structural part
- * of this query. Source and text search remain local row projections, so their
- * pagination may reuse this adapter; Team/Group/tag/attention selections may
- * not silently broaden to the ordinary corpus.
- */
-export function canSessionListOrdinaryPageAnswerQuery(query: SessionListQueryV1): boolean {
-    return query.audiences.length === 0
-        && query.underSessionId === undefined
-        && query.coordinator === undefined
-        && query.tagIds.length === 0
-        && query.attention === 'any'
-        && query.scope === 'my_work';
-}
-
 export type SessionListQueryHomeController = Readonly<{
     getSnapshot(): SessionListQueryHomeState;
     subscribe(listener: () => void): () => void;
@@ -126,6 +111,8 @@ export type SessionListQueryHomeController = Readonly<{
 
 type ControllerInput = Readonly<{
     query: SessionListQueryV1;
+    /** Exhaustive consumers apply one exhausted relation; omission preserves progressive pages. */
+    readMode?: 'complete';
     selected: boolean;
     /** `null` means the selected Home's transport ownership is being transferred. */
     online: boolean | null;
@@ -194,52 +181,21 @@ function appendAddresses(
     current: readonly SessionAddress[],
     serverId: string,
     sessionIds: readonly string[],
+    previous?: readonly SessionAddress[],
 ): readonly SessionAddress[] {
     const next = [...current];
     const seen = new Set(current.map(sessionAddressKey));
+    const previousByKey = previous ? new Map(previous.map(address => [sessionAddressKey(address), address])) : null;
     for (const sessionId of sessionIds) {
         const address = normalizeSessionAddress(serverId, sessionId);
         if (!address) continue;
         const key = sessionAddressKey(address);
         if (seen.has(key)) continue;
         seen.add(key);
-        next.push(address);
+        next.push(previousByKey?.get(key) ?? address);
     }
+    if (previous && previous.length === next.length && next.every((address, index) => address === previous[index])) return previous;
     return next.length === current.length ? current : next;
-}
-
-function readFailureCode(error: unknown): string | null {
-    if (error instanceof HappyError) return error.code?.trim() || null;
-    if (!error || typeof error !== 'object' || !('code' in error)) return null;
-    return typeof error.code === 'string' && error.code.trim() ? error.code.trim() : null;
-}
-
-function readFailureStatus(error: unknown): number | null {
-    if (error instanceof HappyError) return error.status ?? null;
-    if (!error || typeof error !== 'object' || !('status' in error)) return null;
-    return typeof error.status === 'number' && Number.isFinite(error.status) ? error.status : null;
-}
-
-function classifyFailure(error: unknown): Readonly<{
-    reason: Exclude<SessionListQueryFailureReason, 'cursor_not_advancing'>;
-    code: string | null;
-}> {
-    const code = readFailureCode(error);
-    const status = readFailureStatus(error);
-    if (
-        code === 'operation_not_supported'
-        || code === 'feature_not_supported'
-        || code === 'filtered_session_listing_unavailable'
-    ) {
-        return { reason: 'unsupported', code };
-    }
-    if (code === 'invalid_query' || code === 'invalid_request' || status === 400 || status === 422) {
-        return { reason: 'invalid_query', code };
-    }
-    if (code === 'access_denied' || code === 'not_authenticated' || status === 401 || status === 403) {
-        return { reason: 'access_denied', code };
-    }
-    return { reason: 'network', code };
 }
 
 export function createSessionListQueryHomeController(params: Readonly<{
@@ -346,8 +302,10 @@ export function createSessionListQueryHomeController(params: Readonly<{
         }
         const abortController = new AbortController();
         activeAbortController = abortController;
-        const requestedCursor = family === 'ordinary' ? state.nextCursor : null;
-        const requestedAttentionCursor = family === 'attention' ? state.attentionNextCursor : null;
+        let operation = family;
+        let requestedCursor = family === 'ordinary' ? state.nextCursor : null;
+        let requestedAttentionCursor = family === 'attention' ? state.attentionNextCursor : null;
+        const complete = requestInput.readMode === 'complete' && family === 'replace';
 
         publish({
             ...state,
@@ -363,77 +321,119 @@ export function createSessionListQueryHomeController(params: Readonly<{
         let promise: Promise<void> | undefined;
         promise = (async () => {
             try {
-                const result = await params.fetchPage({
-                    source: plan.source,
-                    membership: plan.membership,
-                    ...(typeof requestInput.query.limit === 'number'
-                        ? { limit: requestInput.query.limit }
-                        : {}),
-                    ...(family === 'ordinary' ? { cursor: requestedCursor } : {}),
-                    ...(family === 'attention' ? { attentionCursor: requestedAttentionCursor } : {}),
-                    signal: abortController.signal,
-                });
-                if (!isRequestCurrent(requestRevision, abortController.signal)) return;
-                if (!result.current) {
-                    publish({ ...state, phase: 'offline', failureReason: null, failureCode: null });
-                    return;
-                }
+                const completePages: Pick<SessionListFetchResult, 'sessionIds' | 'isSessionCurrent'>[] = [];
+                let metadataUpgradeRequiredCount = 0;
+                let membershipUnavailableReason: SessionListFetchResult['membershipUnavailableReason'];
+                let nextCursor: string | null = null;
+                let hasNext = false;
+                let attentionNextCursor: string | null = null;
+                let attentionHasNext = false;
+                while (true) {
+                    if (!isRequestCurrent(requestRevision, abortController.signal)) return;
+                    const result = await params.fetchPage({
+                        source: plan.source,
+                        membership: plan.membership,
+                        ...(typeof requestInput.query.limit === 'number'
+                            ? { limit: requestInput.query.limit }
+                            : {}),
+                        ...(operation === 'ordinary' ? { cursor: requestedCursor } : {}),
+                        ...(operation === 'attention' ? { attentionCursor: requestedAttentionCursor } : {}),
+                        signal: abortController.signal,
+                    });
+                    if (!isRequestCurrent(requestRevision, abortController.signal)) return;
+                    if (!result.current) {
+                        publish({ ...state, phase: 'offline', failureReason: null, failureCode: null });
+                        return;
+                    }
 
-                const repeatedOrdinaryCursor = family === 'ordinary'
-                    && result.hasNext
-                    && Boolean(requestedCursor)
-                    && result.nextCursor === requestedCursor;
-                const repeatedAttentionCursor = family === 'attention'
-                    && result.attentionHasNext
-                    && Boolean(requestedAttentionCursor)
-                    && result.attentionNextCursor === requestedAttentionCursor;
-                const addresses = appendAddresses(
-                    family === 'replace' ? [] : state.addresses,
-                    serverId,
-                    result.sessionIds.filter((sessionId) => result.isSessionCurrent?.(sessionId) !== false),
-                );
+                    const repeatedOrdinaryCursor = operation === 'ordinary'
+                        && result.hasNext
+                        && Boolean(requestedCursor)
+                        && result.nextCursor === requestedCursor;
+                    const repeatedAttentionCursor = operation === 'attention'
+                        && result.attentionHasNext
+                        && Boolean(requestedAttentionCursor)
+                        && result.attentionNextCursor === requestedAttentionCursor;
+                    const missingCompleteCursor = complete && ((operation !== 'attention' && result.hasNext && !result.nextCursor)
+                        || (operation !== 'ordinary' && plan.supportsAttentionContinuation && result.attentionHasNext && !result.attentionNextCursor));
 
-                if (repeatedOrdinaryCursor || repeatedAttentionCursor) {
+                    if (repeatedOrdinaryCursor || repeatedAttentionCursor || missingCompleteCursor) {
+                        publish({
+                            ...state,
+                            ...(!complete ? {
+                                appliedQueryKey: requestQueryKey,
+                                appliedSourceKind: plan.source.kind,
+                                addresses: appendAddresses(family === 'replace' ? [] : state.addresses, serverId,
+                                    result.sessionIds.filter(sessionId => result.isSessionCurrent?.(sessionId) !== false)),
+                                ...(repeatedOrdinaryCursor ? { nextCursor: null, hasNext: false } : {}),
+                                ...(repeatedAttentionCursor ? { attentionNextCursor: null, attentionHasNext: false } : {}),
+                            } : {}),
+                            phase: 'error',
+                            failureReason: 'cursor_not_advancing',
+                            failureCode: 'cursor_not_advancing',
+                            // The non-advancing cursor was withdrawn; only a replacement can recover.
+                            failedOperation: undefined,
+                        });
+                        return;
+                    }
+
+                    if (operation !== 'attention') {
+                        nextCursor = result.nextCursor;
+                        hasNext = result.hasNext;
+                    }
+                    if (operation !== 'ordinary') {
+                        attentionNextCursor = result.attentionNextCursor;
+                        attentionHasNext = complete ? plan.supportsAttentionContinuation && result.attentionHasNext : result.attentionHasNext;
+                    }
+                    if (complete) {
+                        completePages.push({ sessionIds: result.sessionIds, isSessionCurrent: result.isSessionCurrent });
+                        metadataUpgradeRequiredCount += result.metadataUpgradeRequiredCount ?? 0;
+                        membershipUnavailableReason ??= result.membershipUnavailableReason;
+                        if (hasNext && nextCursor) {
+                            operation = 'ordinary';
+                            requestedCursor = nextCursor;
+                            continue;
+                        }
+                        if (attentionHasNext && attentionNextCursor) {
+                            operation = 'attention';
+                            requestedAttentionCursor = attentionNextCursor;
+                            continue;
+                        }
+                    }
+                    // Each page's retirement fence stays live until the whole relation commits.
+                    // An equal replacement keeps the published membership identity, so a background
+                    // refetch never re-publishes unchanged membership to its consumers.
+                    const addresses = appendAddresses(family === 'replace' ? [] : state.addresses, serverId,
+                        (complete ? completePages : [result]).flatMap(page => page.sessionIds.filter(
+                            sessionId => page.isSessionCurrent?.(sessionId) !== false)), family === 'replace' ? state.addresses : undefined);
                     publish({
                         ...state,
                         appliedQueryKey: requestQueryKey,
                         appliedSourceKind: plan.source.kind,
                         addresses,
-                        ...(repeatedOrdinaryCursor ? { nextCursor: null, hasNext: false } : {}),
-                        ...(repeatedAttentionCursor ? { attentionNextCursor: null, attentionHasNext: false } : {}),
-                        phase: 'error',
-                        failureReason: 'cursor_not_advancing',
-                        failureCode: 'cursor_not_advancing',
-                        // The non-advancing cursor was withdrawn; only a replacement can recover.
+                        metadataUpgradeRequiredCount: complete ? metadataUpgradeRequiredCount
+                            : (family === 'replace' ? 0 : state.metadataUpgradeRequiredCount ?? 0) + (result.metadataUpgradeRequiredCount ?? 0),
+                        membershipUnavailableReason: complete ? membershipUnavailableReason
+                            : result.membershipUnavailableReason ?? (family === 'replace' ? undefined : state.membershipUnavailableReason),
+                        ...(complete || family !== 'attention' ? {
+                            nextCursor,
+                            hasNext,
+                        } : {}),
+                        ...(complete || family !== 'ordinary' ? {
+                            attentionNextCursor,
+                            attentionHasNext,
+                        } : {}),
+                        phase: 'ready',
+                        freshnessAt: now(),
+                        failureReason: null,
+                        failureCode: null,
                         failedOperation: undefined,
                     });
                     return;
                 }
-
-                publish({
-                    ...state,
-                    appliedQueryKey: requestQueryKey,
-                    appliedSourceKind: plan.source.kind,
-                    addresses,
-                    metadataUpgradeRequiredCount: (family === 'replace' ? 0 : state.metadataUpgradeRequiredCount ?? 0)
-                        + (result.metadataUpgradeRequiredCount ?? 0),
-                    ...(family !== 'attention' ? {
-                        nextCursor: result.nextCursor,
-                        hasNext: result.hasNext,
-                    } : {}),
-                    ...(family !== 'ordinary' ? {
-                        attentionNextCursor: result.attentionNextCursor,
-                        attentionHasNext: result.attentionHasNext,
-                    } : {}),
-                    phase: 'ready',
-                    freshnessAt: now(),
-                    failureReason: null,
-                    failureCode: null,
-                    failedOperation: undefined,
-                });
             } catch (error) {
                 if (!isRequestCurrent(requestRevision, abortController.signal)) return;
-                const failure = classifyFailure(error);
+                const failure = classifySessionListFailure(error);
                 publish({
                     ...state,
                     ...(failure.reason === 'access_denied' ? {
@@ -446,6 +446,7 @@ export function createSessionListQueryHomeController(params: Readonly<{
                         attentionHasNext: false,
                         freshnessAt: null,
                         metadataUpgradeRequiredCount: 0,
+                        membershipUnavailableReason: undefined,
                     } : {}),
                     phase: 'error',
                     failureReason: failure.reason,
@@ -495,7 +496,14 @@ export function createSessionListQueryHomeController(params: Readonly<{
             const previousInput = input;
             const previousQueryKey = previousInput ? deriveQueryKey(previousInput) : null;
             const nextQueryKey = deriveQueryKey(nextInput);
+            const readModeChanged = previousInput !== null && previousInput.readMode !== nextInput.readMode;
             input = nextInput;
+            if (readModeChanged && nextInput.readMode === 'complete') {
+                // A progressive prefix cannot become a complete answer merely by changing policy.
+                publish({ ...state, addresses: [], appliedQueryKey: null, appliedSourceKind: null,
+                    nextCursor: null, hasNext: false, attentionNextCursor: null, attentionHasNext: false,
+                    freshnessAt: null, metadataUpgradeRequiredCount: 0, membershipUnavailableReason: undefined });
+            }
             if (!nextInput.selected) {
                 revision += 1;
                 activeAbortController?.abort('session-list-query-home-not-selected');
@@ -560,12 +568,13 @@ export function createSessionListQueryHomeController(params: Readonly<{
             const requestAlreadyInFlight = inFlight !== null
                 && previousQueryKey === nextQueryKey
                 && state.requestedQueryKey === nextQueryKey
-                && !membershipChanged;
+                && !membershipChanged
+                && !readModeChanged;
             if (requestAlreadyInFlight) {
                 await inFlight;
                 return;
             }
-            if (queryChanged || membershipChanged) {
+            if (queryChanged || membershipChanged || readModeChanged) {
                 await startPage('replace');
             }
         },

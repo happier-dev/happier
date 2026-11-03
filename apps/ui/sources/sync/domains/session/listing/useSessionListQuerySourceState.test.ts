@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { FeaturesResponseSchema, type SessionListQueryV1 } from '@happier-dev/protocol';
+import { FeaturesResponseSchema} from '@happier-dev/protocol/features/payload/featuresResponseSchema';
+import { type SessionListQueryV1 } from '@happier-dev/protocol/sessions/listing/query';
 
 import type { ServerFeaturesMainSelectionSnapshot } from '@/sync/domains/features/featureDecisionRuntime';
 import type { FeatureLocalPolicySettings } from '@/sync/domains/features/featureLocalPolicy';
@@ -39,6 +40,17 @@ function readyFoldersSnapshot(enabled: boolean) {
 const DEFAULT_LOCAL_POLICY: FeatureLocalPolicySettings = { experiments: false, featureToggles: {} };
 
 describe('resolveSessionListQueryHomeSupport', () => {
+    it('settles older strict Homes unavailable for membership queries', () => {
+        const aggregate: ServerFeaturesMainSelectionSnapshot = { status: 'ready', serverIds: ['home-a'], snapshotsByServerId: {
+            'home-a': readyFilteredListingSnapshot(true),
+        } };
+        const query = { membership: { mode: 'manual_only' as const, tagIds: ['member'] } };
+        expect(resolveSessionListQueryHomeSupport(aggregate, 'home-a', true, DEFAULT_LOCAL_POLICY, query)).toBe(false);
+        const ready = { ...aggregate, snapshotsByServerId: { 'home-a': { status: 'ready' as const, features: FeaturesResponseSchema.parse({
+            features: { sessions: { enabled: true, filteredListing: { enabled: true, membershipSelectorVersion: 1 } } }, capabilities: {},
+        }) } } };
+        expect(resolveSessionListQueryHomeSupport(ready, 'home-a', true, DEFAULT_LOCAL_POLICY, query)).toBe(true);
+    });
     it('keeps opposite folder bits qualified to each exact Home', () => {
         const aggregate: ServerFeaturesMainSelectionSnapshot = {
             status: 'ready',

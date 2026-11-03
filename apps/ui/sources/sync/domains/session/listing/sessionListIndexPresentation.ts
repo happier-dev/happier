@@ -163,6 +163,7 @@ function resolveSessionQueryPresentation(input: Readonly<{
         }
         if (state.phase === 'ready') {
             hasReadyHome = true;
+            if (state.membershipUnavailableReason) unavailableHomes.push({ serverId, reason: 'unsupported' });
             continue;
         }
         if (state.phase === 'not_selected') {

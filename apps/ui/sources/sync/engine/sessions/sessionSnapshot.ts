@@ -9,6 +9,7 @@ import { StoredSessionSharedMetadataV1Schema } from '@happier-dev/protocol/sessi
 import { isSessionEncryptionModeAllowedByClientRequirement, type ClientEncryptionRequirement } from '@happier-dev/protocol/encryption/clientEncryptionRequirement';
 import type { AccountEncryptionCurrentnessResponse } from '@happier-dev/protocol/account/encryptionMode';
 import type { V2SessionListResponse, V2SessionRecord } from '@happier-dev/protocol/sessions/control/contract';
+import type { SessionListQueryResponseV1 } from '@happier-dev/protocol/sessions/listing/response';
 import { matchSessionListStartedByV1, readSessionListStartedByV1, type SessionListFilterV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
@@ -183,6 +184,7 @@ export type SessionListFetchResult = Readonly<{
      * means the pages were read to the end yet the corpus is not whole.
      */
     metadataUpgradeRequiredCount?: number;
+    membershipUnavailableReason?: SessionListQueryResponseV1['membershipUnavailableReason'];
 }>;
 type CurrentSessionListRenderableLookup = (sessionId: string) => SessionListRenderableSession | null | undefined;
 type HydratedSessionApplyBatcherStats = Readonly<{
@@ -1654,6 +1656,7 @@ export async function fetchAndApplySessions(params: {
         return result.value;
     };
     let metadataUpgradeRequiredCount = 0;
+    let membershipUnavailableReason: SessionListFetchResult['membershipUnavailableReason'];
     const fullRows = new Map<string, V2SessionRecord>();
     const failedFullSessionReads = new Map<string, import('./sessionById').SessionByIdPrefetchedRead>();
     const buildFetchResult = (): SessionListFetchResult => ({
@@ -1669,6 +1672,7 @@ export async function fetchAndApplySessions(params: {
         source,
         ...(accountCurrentness ? { accountCurrentness } : {}),
         metadataUpgradeRequiredCount,
+        membershipUnavailableReason,
     });
     const appendRows = (rows: V2SessionListResponse['sessions']): void => {
         for (const row of rows) {
@@ -1717,6 +1721,7 @@ export async function fetchAndApplySessions(params: {
         );
         appendRows(activePage.sessions);
         metadataUpgradeRequiredCount += activePage.metadataUpgradeRequiredCount;
+        membershipUnavailableReason ??= activePage.membershipUnavailableReason;
     }
 
     while (fetchedPages < sessionListMaxPages) {
@@ -1761,6 +1766,7 @@ export async function fetchAndApplySessions(params: {
             () => {
                 appendRows(page.sessions);
                 metadataUpgradeRequiredCount += page.metadataUpgradeRequiredCount;
+                membershipUnavailableReason ??= page.membershipUnavailableReason;
                 source = page.source;
                 if (page.source === 'v1') {
                     usedLegacyV1Snapshot = true;
@@ -1818,6 +1824,7 @@ export async function fetchAndApplySessions(params: {
             });
             appendRows(attentionPage.sessions);
             metadataUpgradeRequiredCount += attentionPage.metadataUpgradeRequiredCount;
+            membershipUnavailableReason ??= attentionPage.membershipUnavailableReason;
             fetchedAttentionPages += 1;
             attentionNextCursor = attentionPage.attentionNextCursor;
             attentionHasNext = attentionPage.attentionHasNext;
