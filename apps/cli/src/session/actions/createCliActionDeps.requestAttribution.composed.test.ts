@@ -5,7 +5,6 @@ import {
   buildTrustedHostSessionInputAdmissionV1, settleSessionInputRequestV1, withSessionInputAuthorityV1,
   type ApprovalRequest, type SessionInputAdmissionReceiptV1,
 } from '@happier-dev/protocol';
-import { createBlockingApprovalCoordinator } from '@happier-dev/protocol/actions/blockingApprovalCoordinator';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { deriveSessionInputActionRequestAttributionV1 } from '@happier-dev/protocol/actions/actionRequestAttributionV1';
 import { decideApprovalRequestTransition } from '@happier-dev/protocol/approvals/approvalRequestTransition';
@@ -141,9 +140,6 @@ describe('CLI input requester through protected custody and danger approval', ()
     let stored: ApprovalRequest | null = null;
     let cardCount = 0;
     let effects = 0;
-    const coordinator = createBlockingApprovalCoordinator();
-    let waiterReady: (() => void) | undefined;
-    const waiting = new Promise<void>(resolve => { waiterReady = resolve; });
     const danger = createActionExecutor({
       // Artifact persistence and the actual MCP process are system boundaries.
       // Real approval admission, transitions, replay and MCP schemas run here.
@@ -154,15 +150,7 @@ describe('CLI input requester through protected custody and danger approval', ()
         const transition = decideApprovalRequestTransition(stored, next);
         if (!transition.ok) return transition;
         stored = ApprovalRequestV2Schema.parse(next);
-        coordinator.notifyApprovalUpdated({ artifactId: 'd22-card', request: stored });
         return { ok: true };
-      },
-      approvalsResolveBlockingDecision: args => coordinator.resolveBlockingDecision(args),
-      approvalsWaitForDecision: async args => {
-        const pending = coordinator.waitForDecision(args);
-        waiterReady?.();
-        const decision = await pending;
-        return { ...decision, request: ApprovalRequestV2Schema.parse(decision.request) };
       },
       isApprovalExecutionOriginCurrent: createDaemonApprovalExecutionOriginCurrentnessFromCredentials({
         credentials, machineId, serverId, serverApiUrl: resolveServerHttpBaseUrl(),
@@ -185,19 +173,18 @@ describe('CLI input requester through protected custody and danger approval', ()
     });
     const call = () => bridge.executeActionByToolName('action_execute', { actionId: 'mcp.servers.test',
       input: { t: 'byId', serverId: 'mcp-server', machineId, directory: '/workspace' } }, sessionId);
-    const pendingAction = call();
-    const admission = await Promise.race([waiting.then(() => ({ kind: 'waiting' as const })),
-      pendingAction.then(result => ({ kind: 'settled' as const, result }))]);
-    expect(admission, JSON.stringify(admission)).toEqual({ kind: 'waiting' });
+    const proposal = await call();
+    expect(proposal, JSON.stringify(proposal)).toMatchObject({ ok: true,
+      result: { kind: 'approval_request_created', artifactId: 'd22-card', actionId: 'mcp.servers.test' } });
     expect(stored).toMatchObject({ executionOriginV1: { actionRequestAttributionV1: { requester: { accountId } } } });
     expect(cardCount).toBe(1);
     expect(effects).toBe(0);
     const approve = () => danger.execute('approval.request.decide', { artifactId: 'd22-card', decision: 'approve' },
       { surface: 'ui', authority: 'present_user', runtimeAccountId: accountId, serverId });
     const decision = await approve();
-    expect(decision, JSON.stringify(decision)).toMatchObject({ ok: true });
-    const executed = await pendingAction;
-    expect(executed, JSON.stringify(executed)).toMatchObject({ ok: true, result: { ok: true } });
+    expect(decision, JSON.stringify(decision)).toMatchObject({ ok: true,
+      result: { status: 'executed', execution: { ok: true, result: { ok: true } } } });
+    expect(stored).toMatchObject({ status: 'executed', execution: { ok: true, result: { ok: true } } });
     await approve();
     expect(effects).toBe(1);
     expect(cardCount).toBe(1);
@@ -206,7 +193,6 @@ describe('CLI input requester through protected custody and danger approval', ()
     expect(await call()).toMatchObject({ ok: true, result: { ok: true } });
     expect(effects).toBe(2);
     expect(cardCount).toBe(1);
-    coordinator.dispose();
   });
 
   it.each(['e2ee', 'plain'] as const)('attributes an admitted shared Machine %s send to its authenticated Account rather than the custodian', async mode => {
