@@ -22,6 +22,7 @@ import { resolvePnpmCommandInvocation } from '../../../scripts/workspaces/execPn
 import { createWorkspaceChildBuildEnv } from '../../../scripts/workspaces/workspaceChildBuildEnv.mjs'
 import { readBundledPluginPackageNames } from '../scripts/build-owned/bundledPluginMembership'
 import { ensureBuildArtifactsReadyOnce, withCliTestBuildLock } from './testSetupBuildCoordinator'
+import { isCliTestBuildSkipped } from '../scripts/vitestPreparation.mjs'
 
 export type CliTestBuildMode = 'none' | 'full'
 
@@ -179,17 +180,9 @@ async function ensureBundledPluginPublicationReady(projectRoot: string): Promise
   })
 }
 
-function readSkipBuildOverride(): boolean {
-  const raw = process.env.HAPPIER_CLI_TEST_SKIP_BUILD
-  if (typeof raw !== 'string') return false
-  return ['1', 'true', 'yes'].includes(raw.trim().toLowerCase())
-}
-
 export async function setup(options: CliTestSetupOptions = {}) {
   // Extend test timeout for integration tests
   process.env.VITEST_POOL_TIMEOUT = '60000'
-
-  const skipBuild = readSkipBuildOverride()
 
   const dependencies: CliTestSetupDependencies = {
     platform: process.platform,
@@ -199,7 +192,7 @@ export async function setup(options: CliTestSetupOptions = {}) {
     ...options.dependencies,
   }
 
-  const buildMode = options.buildMode ?? 'full'
+  const buildMode = isCliTestBuildSkipped() ? 'none' : options.buildMode ?? 'full'
   const projectRoot = dependencies.resolveProjectRoot()
 
   // POSIX public dispatch prepares current native source before charging the
@@ -216,7 +209,6 @@ export async function setup(options: CliTestSetupOptions = {}) {
   if (buildMode === 'none') return
 
   await ensureBundledPluginPublicationReady(projectRoot)
-  if (skipBuild) return
 
   if (buildMode === 'full') {
     await dependencies.ensureDistBuiltOnce(projectRoot)

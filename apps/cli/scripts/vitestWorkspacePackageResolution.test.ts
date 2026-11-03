@@ -174,10 +174,21 @@ describe('CLI Vitest workspace package source resolution', () => {
                 'src',
             );
             expect(existsSync(sourceRoot), packageName).toBe(true);
-            expect(
-                normalize(workspacePackageSourcesPlugin.resolveId(packageName) ?? ''),
-                packageName,
-            ).toContain(normalize(sourceRoot));
+            const packageExports = readPackageExports(resolve(sourceRoot, '..'));
+            const subpaths = Object.keys(packageExports).filter((entry) => entry.startsWith('.'));
+            // An exports map owns the public entrypoints; subpath-only packages
+            // deliberately have no root for the source resolver to invent.
+            const hasRoot = subpaths.length === 0 || subpaths.includes('.');
+            const entrypoints = hasRoot ? [packageName]
+                : subpaths.map((entry) => `${packageName}/${entry.slice('./'.length)}`);
+            expect(entrypoints.length, packageName).toBeGreaterThan(0);
+            if (!hasRoot) expect(workspacePackageSourcesPlugin.resolveId(packageName), packageName).toBeNull();
+            for (const entrypoint of entrypoints) {
+                expect(
+                    normalize(workspacePackageSourcesPlugin.resolveId(entrypoint) ?? ''),
+                    entrypoint,
+                ).toContain(normalize(sourceRoot));
+            }
         }
 
         for (const workspacePackage of workspacePackages) {

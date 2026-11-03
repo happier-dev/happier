@@ -90,24 +90,29 @@ describe('CLI test global setup', () => {
         expect(ensureDistBuiltOnce).toHaveBeenCalledWith(projectRoot);
     });
 
-    it('prepares native custody while respecting the full-dist skip-build override', async () => {
+    it('uses prepared native custody and skips bundled publication and dist with the skip-build override', async () => {
         const { projectRoot, executablePath, runCommand } = await createSetupFixture();
-        const { setup } = await importSetupModule();
+        const pluginRoot = join(projectRoot, '..', '..', 'packages', 'plugins', 'codex');
+        await mkdir(join(pluginRoot, 'src'), { recursive: true });
+        await writeFile(join(pluginRoot, 'package.json'), JSON.stringify({ name: '@happier-dev/plugins-codex' }));
+        await writeFile(join(pluginRoot, 'src', 'manifest.ts'), 'export const manifest = {};');
+        const { setup, prepareNativeCustody } = await importSetupModule();
+        await prepareNativeCustody(projectRoot, runCommand);
         process.env.HAPPIER_CLI_TEST_SKIP_BUILD = 'true';
-
-        const ensureDistBuiltOnce = vi.fn(async () => undefined);
 
         await setup({
             buildMode: 'full',
             dependencies: {
                 resolveProjectRoot: () => projectRoot,
-                ensureDistBuiltOnce,
                 runCommand,
             },
         });
 
         await expect(readFile(executablePath, 'utf8')).resolves.toBe('compiled native custody');
-        expect(ensureDistBuiltOnce).not.toHaveBeenCalled();
+        await expect(stat(join(projectRoot, 'dist'))).rejects.toMatchObject({ code: 'ENOENT' });
+        // A missing publisher in this source fixture must never be imported.
+        await expect(stat(join(projectRoot, 'scripts', 'buildSharedDeps.mjs'))).rejects.toMatchObject({ code: 'ENOENT' });
+        expect(runCommand).toHaveBeenCalledTimes(process.platform === 'win32' ? 2 : 1);
     });
 
     it.skipIf(process.platform === 'win32')('reuses prepared native custody on a later source setup', async () => {
