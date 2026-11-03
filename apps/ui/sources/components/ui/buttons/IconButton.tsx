@@ -187,6 +187,7 @@ export function IconButton(props: Readonly<{
     /** A secondary invocation (press and hold); when it fires, `onPress` does not. */
     onLongPress?: HappierPressableProps['onLongPress'];
     onPressIn?: HappierPressableProps['onPressIn'];
+    preserveFocusOnPress?: HappierPressableProps['preserveFocusOnPress'];
     onPressOut?: HappierPressableProps['onPressOut'];
     onFocusChange?: HappierPressableProps['onFocusChange'];
     /** The pointer's secondary click on the web, for the same secondary invocation as a long press. */
@@ -322,6 +323,7 @@ export function IconButton(props: Readonly<{
             onPress={props.onPress}
             onLongPress={props.onLongPress}
             onPressIn={handlePressIn}
+            preserveFocusOnPress={props.preserveFocusOnPress}
             onHoverChange={onHoverChange}
             onPressOut={props.onPressOut}
             onFocusChange={handleFocusChange}

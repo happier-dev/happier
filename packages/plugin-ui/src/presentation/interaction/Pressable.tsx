@@ -84,6 +84,8 @@ export type HappierPressableProps = Readonly<{
    */
   onPress: (event?: HappierGestureResponderEvent) => unknown;
   onPressIn?: (event?: HappierGestureResponderEvent) => void;
+  /** A pointer press leaves focus with its current editor/input; keyboard traversal is unchanged. */
+  preserveFocusOnPress?: boolean;
   /** Pairs with `onPressIn`: fires when the press releases or is cancelled. */
   onPressOut?: (event?: HappierGestureResponderEvent) => void;
   /** Native touch context invocation; callers retain the semantic outcome. */
@@ -256,6 +258,7 @@ function isFocusVisible(event: unknown): boolean {
 export function HappierPressable({
   onPress,
   onPressIn,
+  preserveFocusOnPress,
   onPressOut,
   onLongPress,
   onContextMenu,
@@ -552,6 +555,7 @@ export function HappierPressable({
       hitSlop={hitArea.hitSlop}
       onLayout={hitArea.onLayout}
       onPress={handlePress}
+      onPointerDown={Platform.OS === 'web' && preserveFocusOnPress ? event => event.preventDefault() : undefined}
       onPressIn={(event) => { setPressed(true); onPressIn?.(event); }}
       onPressOut={(event) => { setPressed(false); onPressOut?.(event); }}
       onLongPress={isDisabled ? undefined : onLongPress}
