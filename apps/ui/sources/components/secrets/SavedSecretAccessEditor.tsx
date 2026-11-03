@@ -16,6 +16,7 @@ import {
     readSavedSecretResourceRecipientReadiness,
     repairApprovedSavedSecretResourceEnvelopesBestEffort,
     setSavedSecretResourceGrants,
+    type SavedSecretResourceOperationResult,
 } from '@/sync/ops/settings/savedSecretResourceOperations';
 import { formatAccountDisplayName } from '@/sync/domains/account/formatAccountDisplayName';
 import { isTeamActionApprovalPendingError } from '@/sync/ops/teams/teamActionClient';
@@ -130,7 +131,7 @@ export const SavedSecretAccessEditor = React.memo(function SavedSecretAccessEdit
     const dirty = !sameSavedSecretGrantDraft(draft, baselineDraft);
     React.useEffect(() => { props.onDirtyChange?.(dirty); }, [dirty, props.onDirtyChange]);
     const [saving, setSaving] = React.useState(false);
-    const [failure, setFailure] = React.useState<'changed' | 'unavailable' | 'failed' | 'outcome_unknown' | null>(null);
+    const [failure, setFailure] = React.useState<Extract<SavedSecretResourceOperationResult, { ok: false }>['reason'] | null>(null);
     /**
      * Which revision an in-flight save was issued against. A response that
      * arrives after the row moved must not close the editor.

@@ -1,6 +1,7 @@
 import {
     SavedSecretResourceMaterialsResponseV1Schema,
     type SavedSecretResourceMaterialV1,
+    type SavedSecretCatalogEntryV1,
 } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
 import { parseSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { SharedSavedSecretListOutputV1Schema } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
@@ -18,6 +19,7 @@ function catalogProviderDeclarations(scope: ServerAccountScope) {
     return installedSecretSourceDeclarations(readPluginAccountAvailability(scope).readInstalledPlugins());
 }
 
+import type { SavedSecretResourceMaterialSelectionV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
 import type { SavedSecret } from '@/sync/domains/settings/savedSecretTypes';
 import type { SavedSecretResourceContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
 
@@ -63,10 +65,15 @@ export async function readSavedSecretCatalog(
 export async function readSavedSecretCatalogInContext(
     context: Pick<LazyActionAccountContext, 'serverId' | 'accountId' | 'request' | 'assertCurrent'>,
     signal?: AbortSignal,
+    selection?: SavedSecretResourceMaterialSelectionV1,
 ): Promise<SavedSecretCatalogReadResult> {
+    const query = new URLSearchParams();
+    if (selection?.resourceId) query.set('resourceId', selection.resourceId);
+    if (selection?.expectedRevision !== undefined) query.set('expectedRevision', String(selection.expectedRevision));
+    if (selection?.requireManage) query.set('requireManage', 'true');
     const result = await requestHomeDomain({
         scope: { serverId: context.serverId, accountId: context.accountId },
-        path: '/v1/account/saved-secrets/resources/materials', effect: 'read', method: 'GET',
+        path: `/v1/account/saved-secrets/resources/materials${query.size ? `?${query}` : ''}`, effect: 'read', method: 'GET',
         input: undefined, schema: SavedSecretResourceMaterialsResponseV1Schema, signal,
         requestAuthority: context,
     });
@@ -76,6 +83,8 @@ export async function readSavedSecretCatalogInContext(
 export type SavedSecretReferenceReadResult =
     | Readonly<{ ok: true; value: string; revision: number }>
     | Readonly<{ ok: false; reason: 'unavailable' | 'changed' }>;
+
+type SavedSecretReferenceMaterial = Readonly<{ value: string; revision: number; name: string; kind: SavedSecret['kind'] }>;
 
 type SavedSecretReferenceAccountContext = Pick<LazyActionAccountContext,
     'serverId' | 'accountId' | 'request' | 'assertCurrent' | 'credentials' | 'resolveAccountMode' | 'resolveAccountEncryption'>;
@@ -130,65 +139,101 @@ export async function readSavedSecretReferenceInContext(
     context: SavedSecretReferenceAccountContext,
     reference: string,
     signal?: AbortSignal,
+    admission?: Readonly<{ expectedRevision: number; requireManage: true; isCurrent?: () => boolean }>,
 ): Promise<SavedSecretReferenceReadResult> {
-    const read = await readSavedSecretReferencesInContext(context, [reference], signal);
-    return read.ok ? { ok: true, ...read.values.get(reference)! } : read;
+    const read = await readSavedSecretReferencesInContext(context, [reference], signal, admission);
+    if (!read.ok) return read;
+    const material = read.values.get(reference)!;
+    return { ok: true, value: material.value, revision: material.revision };
 }
 
-async function readSavedSecretReferencesInContext(
+export async function readSavedSecretReferencesInContext(
     context: SavedSecretReferenceAccountContext,
     references: readonly string[],
     signal?: AbortSignal,
-): Promise<Readonly<{ ok: true; values: ReadonlyMap<string, Readonly<{ value: string; revision: number }>> }>
+    admission?: Readonly<{ expectedRevision: number; requireManage?: true; isCurrent?: () => boolean }>,
+): Promise<Readonly<{ ok: true; values: ReadonlyMap<string, SavedSecretReferenceMaterial> }>
     | Readonly<{ ok: false; reason: 'unavailable' | 'changed' }>> {
-    try {
+    const read = await readSavedSecretContentsInContext(context, references, signal, admission);
+    if (!read.ok) return read;
+    const values = new Map<string, SavedSecretReferenceMaterial>();
+    for (const [ref, { content, revision }] of read.contents) {
+        if (content.v !== 1) return { ok: false, reason: 'unavailable' };
+        values.set(ref, { value: content.value, revision, name: content.name, kind: content.kind });
+    }
+    return { ok: true, values };
+}
+
+/** Scalar and native consumers open the same admitted content and project their own supported form. */
+export async function readSavedSecretContentsInContext(
+    context: SavedSecretReferenceAccountContext,
+    references: readonly string[],
+    signal?: AbortSignal,
+    admission?: Readonly<{ expectedRevision: number; requireManage?: true; isCurrent?: () => boolean }>,
+): Promise<Readonly<{ ok: true; contents: ReadonlyMap<string, Readonly<{ content: SavedSecretResourceContentV1; revision: number; entry: SavedSecretCatalogEntryV1 }>> }>
+    | Readonly<{ ok: false; reason: 'unavailable' | 'changed' }>> {
+    const assertCurrent = () => {
         signal?.throwIfAborted();
         context.assertCurrent();
+        if (admission?.isCurrent?.() === false) throw new Error('saved-secret-read-retired');
+    };
+    try {
+        assertCurrent();
         const accountMode = await context.resolveAccountMode();
-        context.assertCurrent();
-        const result = await readSavedSecretCatalogInContext(context, signal);
-        context.assertCurrent();
-        if (!result.ok) return { ok: false, reason: 'unavailable' };
+        assertCurrent();
+        const parsedRef = references.length === 1 ? parseSavedSecretRefV1(references[0]!) : null;
+        if (admission && parsedRef?.kind !== 'shared_resource') return { ok: false, reason: 'unavailable' };
+        const result = await readSavedSecretCatalogInContext(context, signal,
+            parsedRef?.kind === 'shared_resource' ? { resourceId: parsedRef.resourceId,
+                ...(admission ? { expectedRevision: admission.expectedRevision,
+                    ...(admission.requireManage ? { requireManage: true } : {}) } : {}) } : undefined);
+        assertCurrent();
+        if (!result.ok) return { ok: false, reason: result.failure.kind === 'conflict' ? 'changed' : 'unavailable' };
         const resources = result.resources.filter((row): row is Extract<SavedSecretResourceMaterialV1, { resourceId: string }> =>
             'resourceId' in row && references.includes(row.entry.ref));
         if (resources.length !== references.length || resources.some(resource => resource.entry.materialStatus !== 'ready' || !resource.entry.capabilities.use
             || resource.entry.revision === null)) return { ok: false, reason: 'unavailable' };
+        if (admission && resources.some(resource => resource.entry.revision !== admission.expectedRevision)) return { ok: false, reason: 'changed' };
+        if (admission?.requireManage && resources.some(resource => !resource.entry.capabilities.manageAccess)) return { ok: false, reason: 'unavailable' };
 
         // Resource protection is independent of Account Settings protection. Only an
         // encrypted resource requires this Account's recipient-envelope material.
         const needsAccountEncryption = resources.some(resource => resource.encryptionMode === 'e2ee');
         const encryption = needsAccountEncryption ? (await context.resolveAccountEncryption()).encryption : null;
+        assertCurrent();
         if (needsAccountEncryption) {
             const storage = await resolveAccountStorageContext(context.credentials, { encryption, request: context.request, usage: 'identity' });
+            assertCurrent();
             if (storage.mode !== accountMode) return { ok: false, reason: 'unavailable' };
         }
-        context.assertCurrent();
+        assertCurrent();
 
         const opened = await materializeSavedSecretResources({
             resources,
+            isCurrent: () => { try { assertCurrent(); return true; } catch { return false; } },
             decryptDataKeyEnvelope: async encryptedDataKey => encryption
                 ? encryption.decryptEncryptionKey(encryptedDataKey, { serverId: context.serverId, accountId: context.accountId })
                 : null,
         });
+        assertCurrent();
         // Opening private material cannot authorize its later disclosure: the
         // server may have committed revocation before the socket delivers it.
         const currentMode = needsAccountEncryption
             ? (await resolveAccountStorageContext(context.credentials, { encryption, request: context.request, usage: 'fresh-authority' })).mode
             : (await fetchAccountEncryptionMode(context.credentials, { request: context.request, usage: 'fresh-authority' })).mode;
-        signal?.throwIfAborted();
-        context.assertCurrent();
+        assertCurrent();
         if (currentMode !== accountMode) return { ok: false, reason: 'unavailable' };
-        const values = new Map<string, Readonly<{ value: string; revision: number }>>();
+        const contents = new Map<string, Readonly<{ content: SavedSecretResourceContentV1; revision: number; entry: SavedSecretCatalogEntryV1 }>>();
         for (const resource of resources) {
-            const secret = opened.materializedSecrets.find(row => row.id === resource.entry.ref);
+            const content = opened.contents.get(resource.entry.ref);
             const entry = opened.entries.find(row => row.ref === resource.entry.ref);
-            if (!secret || entry?.materialStatus !== 'ready' || !entry.capabilities.use
-                || typeof secret.encryptedValue.value !== 'string') return { ok: false, reason: 'unavailable' };
-            values.set(resource.entry.ref, { value: secret.encryptedValue.value, revision: resource.entry.revision! });
+            if (!content || entry?.materialStatus !== 'ready' || !entry.capabilities.use) return { ok: false, reason: 'unavailable' };
+            contents.set(resource.entry.ref, { content, revision: resource.entry.revision!, entry });
         }
-        return { ok: true, values };
+        return { ok: true, contents };
     } catch {
-        try { context.assertCurrent(); }
+        if (signal?.aborted) return { ok: false, reason: 'unavailable' };
+        try { assertCurrent(); }
         catch { return { ok: false, reason: 'changed' }; }
         return { ok: false, reason: 'unavailable' };
     }

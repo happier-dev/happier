@@ -1,4 +1,5 @@
 import { openSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
+import type { SavedSecretResourceContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
 import type { SavedSecretCatalogCorruptEntryV1, SavedSecretCatalogEntryV1, SavedSecretResourceMaterialV1 } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
 
 import type { SavedSecret } from '@/sync/domains/settings/savedSecretTypes';
@@ -17,14 +18,19 @@ function isHealthySavedSecretResourceMaterialV1(
 export async function materializeSavedSecretResources(params: Readonly<{
     resources: readonly SavedSecretResourceMaterialV1[];
     decryptDataKeyEnvelope: (encryptedDataKey: string) => Promise<Uint8Array | null>;
+    /** Optional mounted-consumer lifetime; never an authorization decision. */
+    isCurrent?: () => boolean;
 }>): Promise<Readonly<{
     entries: readonly SavedSecretCatalogEntryV1[];
     corruptEntries: readonly SavedSecretCatalogCorruptEntryV1[];
     materializedSecrets: readonly SavedSecret[];
+    /** Operation-local opened content; never persisted in catalog display state. */
+    contents: ReadonlyMap<string, SavedSecretResourceContentV1>;
 }>> {
     const entries: SavedSecretCatalogEntryV1[] = [];
     const corruptEntries: SavedSecretCatalogCorruptEntryV1[] = [];
     const materialized: SavedSecret[] = [];
+    const contents = new Map<string, SavedSecretResourceContentV1>();
     for (const resource of params.resources) {
         // Corrupt rows expose only row-local repair metadata and deliberately
         // have no canonical Saved Secret reference. They cannot enter the
@@ -39,6 +45,7 @@ export async function materializeSavedSecretResources(params: Readonly<{
         }
 
         try {
+            if (params.isCurrent?.() === false) throw new Error('Saved Secret material read retired');
             if (!resource.storedContent) throw new Error('Ready Saved Secret resource omitted content');
             const content = resource.encryptionMode === 'plain'
                 ? openSavedSecretResourceStoredContentV1({
@@ -51,6 +58,7 @@ export async function materializeSavedSecretResources(params: Readonly<{
                     const dataKey = await params.decryptDataKeyEnvelope(resource.recipientEnvelope.encryptedDataKey);
                     if (!dataKey) return null;
                     try {
+                        if (params.isCurrent?.() === false) return null;
                         return openSavedSecretResourceStoredContentV1({
                             resourceId: resource.resourceId,
                             mode: 'e2ee',
@@ -73,6 +81,7 @@ export async function materializeSavedSecretResources(params: Readonly<{
             }
 
             entries.push(resource.entry);
+            contents.set(resource.entry.ref, content);
             if (content.v !== 1) continue;
             materialized.push(Object.freeze({
                 id: resource.entry.ref,
@@ -94,5 +103,6 @@ export async function materializeSavedSecretResources(params: Readonly<{
         entries: Object.freeze(entries),
         corruptEntries: Object.freeze(corruptEntries),
         materializedSecrets: Object.freeze(materialized),
+        contents,
     });
 }

@@ -7,7 +7,7 @@ import { buildApprovalRequestArtifactHeaderV1, decodePlainArtifactStoredContent,
     type ApprovalRequestV2, type SavedSecretResourceStoredContentV1 } from '@happier-dev/protocol';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
-import { SharedSavedSecretCreateInputV1Schema, SharedSavedSecretPromoteInputV1Schema,
+import { SharedSavedSecretCreateInputV1Schema, SharedSavedSecretPromoteInputV1Schema, SharedSavedSecretListOutputV1Schema,
     SharedSavedSecretUpdateInputV1Schema, SharedSavedSecretGrantsSetInputV1Schema, SharedSavedSecretDeleteInputV1Schema,
     SavedSecretResourceEnvelopeRepairInputV1Schema, SHARED_SAVED_SECRET_ACTION_PATHS_V1 } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
 import { PROJECT_ACCOUNT_ROWS_ROUTE_V1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
@@ -170,6 +170,7 @@ async function openAccount(mode: 'plain' | 'e2ee' = 'plain', options: { ask?: bo
         voicePresent: boolean }[] = [];
     const censusReads: string[] = [];
     const catalogReadPaths: string[] = [];
+    const materialReadPaths: string[] = [];
     const historyReadPaths: string[] = [];
     const artifacts = createArtifactStoreBoundary({ ownerAccountId: () => accountId, encryptionMode: mode });
     let materialReadStatus = 200;
@@ -255,9 +256,18 @@ async function openAccount(mode: 'plain' | 'e2ee' = 'plain', options: { ask?: bo
             }
             const artifactResponse = artifacts.handle(new URL(String(rawUrl)).pathname + new URL(String(rawUrl)).search, init);
             if (artifactResponse) return await artifactResponse;
+            // Profile revision admission consumes the value-free catalog, independently of material acquisition.
+            if (path === '/v1/account/saved-secrets/resources' && (init?.method ?? 'GET') === 'GET') {
+                return Response.json(SharedSavedSecretListOutputV1Schema.parse({
+                    resources: [...resources.values()].map(resource => resource.entry),
+                }));
+            }
             if (path === '/v1/account/saved-secrets/resources/materials') {
+                const url = new URL(String(rawUrl));
+                materialReadPaths.push(url.pathname + url.search);
+                const resourceId = url.searchParams.get('resourceId');
                 const response = materialReadStatus === 200
-                    ? Response.json({ resources: [...resources.values()] })
+                    ? Response.json({ resources: [...resources.values()].filter(row => !resourceId || 'resourceId' in row && row.resourceId === resourceId) })
                     : Response.json({ error: 'temporarily_unavailable' }, { status: materialReadStatus });
                 // HTTP can deliver a snapshot captured before a concurrent write commits.
                 await beforeMaterialRead?.();
@@ -316,10 +326,12 @@ async function openAccount(mode: 'plain' | 'e2ee' = 'plain', options: { ask?: bo
                 ownerAccountId: relationship === 'owner' ? accountId : 'other-owner', name: content?.name ?? 'Key', kind: content?.kind ?? 'token', revision,
                 materialStatus: 'ready', capabilities: { use: true, rename: relationship === 'owner', rotate: relationship === 'owner',
                     manageAccess: relationship === 'owner', delete: relationship === 'owner' } } }] }).resources[0]!;
-        resources.set(resourceId, row);
-        return row;
+        if (!('resourceId' in row)) throw new Error('Expected ready fixture material');
+        const material = { ...row, entry: row.entry };
+        resources.set(resourceId, material);
+        return material;
     }
-    return { scope, writes, settingsWriteStacks, sourceReads, censusReads, catalogReadPaths, historyReadPaths, get artifacts() { return artifacts.list(); }, rows, catalogRows, resources, materialRow,
+    return { scope, writes, settingsWriteStacks, sourceReads, censusReads, catalogReadPaths, materialReadPaths, historyReadPaths, get artifacts() { return artifacts.list(); }, rows, catalogRows, resources, materialRow,
         get raw() { return raw; }, set raw(value: Record<string, unknown>) { raw = value; },
         get settingsVersion() { return settingsVersion; }, set settingsVersion(value: number) { settingsVersion = value; },
         get referenceGuardRevision() { return referenceGuardRevision; }, set referenceGuardRevision(value: number) { referenceGuardRevision = value; },
@@ -2673,6 +2685,94 @@ describe('Saved Secret operations through their real Account and Action owners',
             releaseResponse();
             await initialRead;
         }
+    });
+
+    it.each(['plain', 'e2ee'] as const)('bulk vault links prepare external resources in one Home transaction: %s', async mode => {
+        const account = await openAccount(mode);
+        const source = { kind: 'external' as const, contribution: { pluginId: 'happier.secret-source.onepassword', localId: 'onepassword' },
+            account: 'vault-account', reference: 'op://vault/item/field' };
+        const drafts = ['vault-one', 'vault-two'].map(id => ({ id, name: id, kind: 'token' as const, source }));
+        account.setEffect(async (path, body) => {
+            expect(path).toBe(SHARED_SAVED_SECRET_ACTION_PATHS_V1['secrets.shared.promote']);
+            const input = SharedSavedSecretPromoteInputV1Schema.parse(body);
+            for (const resource of [input, ...(input.additionalSavedSecretResources ?? [])]) {
+                const encryption = getSyncSingleton().encryption;
+                const envelope = resource.keyEnvelopes?.[0];
+                const key = envelope && encryption ? await encryption.decryptEncryptionKey(envelope.encryptedDataKey, account.scope) : undefined;
+                let content;
+                if (mode === 'plain') {
+                    content = openSavedSecretResourceStoredContentV1({ resourceId: resource.resourceId, mode,
+                        storedContent: resource.storedContent });
+                } else {
+                    if (!key) throw new Error('Expected encrypted fixture material key');
+                    content = openSavedSecretResourceStoredContentV1({ resourceId: resource.resourceId, mode,
+                        storedContent: resource.storedContent, resourceDataKey: key });
+                }
+                expect(content).toMatchObject({ v: 2, source });
+                account.materialRow(resource.resourceId, mode, resource.storedContent, 1, key ?? undefined);
+            }
+            return Response.json({ resourceId: input.resourceId, settingsVersion: 7 });
+        });
+        const context = await captureLazyActionAccountContext(account.scope.serverId);
+        try {
+            const { createSavedSecretResourcesWithCatalogMutationInContext } = await import('./savedSecretResourceOperations');
+            const result = await createSavedSecretResourcesWithCatalogMutationInContext(context, {
+                scope: account.scope, referenceScope: 'resources', resources: drafts,
+            });
+            expect(result).toMatchObject({ ok: true });
+            if (result.ok) expect([...result.resourceRefs.keys()]).toEqual(['vault-one', 'vault-two']);
+            expect(account.resources.size).toBe(2);
+            expect(account.writes).toHaveLength(1);
+            expect(account.raw.secrets).toBeUndefined();
+        } finally { context.dispose(); }
+    });
+
+    it.each(['plain', 'e2ee'] as const)('keeps an external source personal through the %s mutation owner', async mode => {
+        const account = await openAccount(mode);
+        const source = { kind: 'external' as const, contribution: { pluginId: 'acme.vault', localId: 'vault' }, account: 'account', reference: 'op://vault/item/token' };
+        account.setEffect((_path, body) => Response.json({ resourceId: SharedSavedSecretCreateInputV1Schema.parse(body).resourceId, revision: 1 }));
+        const shared = await createSavedSecretResource({ scope: account.scope, name: 'Key', kind: 'token', source,
+            accountGrants: ['account-b'], teamGrants: [], groupGrants: [] });
+        expect(shared).toMatchObject({ ok: false, reason: 'recipient_mode_unsupported' });
+        expect(account.writes).toHaveLength(0);
+        const created = await createSavedSecretResource({ scope: account.scope, name: 'Key', kind: 'token', source,
+            accountGrants: [], teamGrants: [], groupGrants: [] });
+        expect(created).toMatchObject({ ok: true });
+        const input = SharedSavedSecretCreateInputV1Schema.parse(account.writes[0]!.body);
+        const key = mode === 'e2ee' ? await getSyncSingleton().encryption!.decryptEncryptionKey(input.keyEnvelopes![0]!.encryptedDataKey, account.scope) : null;
+        const opened = mode === 'plain'
+            ? openSavedSecretResourceStoredContentV1({ resourceId: input.resourceId, mode, storedContent: input.storedContent })
+            : key ? openSavedSecretResourceStoredContentV1({ resourceId: input.resourceId, mode, storedContent: input.storedContent, resourceDataKey: key }) : null;
+        expect(opened).toEqual({ v: 2, name: 'Key', kind: 'token', source });
+        account.materialRow(input.resourceId, mode, input.storedContent, 1, key ?? undefined);
+        if (mode === 'e2ee') expect(await setSavedSecretResourceGrants({ scope: account.scope, resourceId: input.resourceId, expectedRevision: 1,
+            encryptionMode: mode, accountGrants: [], teamGrants: ['team-a'], groupGrants: [],
+            decryptDataKeyEnvelope: async () => key?.slice() ?? null })).toEqual({ ok: false, reason: 'recipient_mode_unsupported' });
+        expect(account.writes.filter(write => write.path.endsWith('/grants/set'))).toHaveLength(0);
+        const resource = account.resources.get(input.resourceId);
+        if (!resource || !('resourceId' in resource)) throw new Error('Expected the created external Resource');
+        account.resources.set(input.resourceId, { ...resource, entry: { ...resource.entry, audience: {
+            accounts: [{ kind: 'account', accountId: account.scope.accountId, name: null, firstName: null,
+                lastName: null, username: null, avatarUrl: null }], teams: [], groups: [],
+        } } });
+        account.setEffect((_path, body) => Response.json({ resourceId: SharedSavedSecretUpdateInputV1Schema.parse(body).resourceId, revision: 2 }));
+        expect(await updateSavedSecretResource({ scope: account.scope, resourceId: input.resourceId, expectedRevision: 1,
+            nextName: 'Renamed external source', decryptDataKeyEnvelope: async () => key?.slice() ?? null })).toEqual({ ok: true });
+    });
+
+    it('refuses changing Team-shared E2EE inline material to an external source before dispatch', async () => {
+        const account = await openAccount('e2ee');
+        const key = new Uint8Array(32).fill(9);
+        const storedContent = sealSavedSecretResourceStoredContentV1({ resourceId: 'resource-a', mode: 'e2ee', resourceDataKey: key,
+            content: { v: 1, name: 'Key', kind: 'token', value: 'inline' }, randomBytes: tweetnacl.randomBytes });
+        const row = account.materialRow('resource-a', 'e2ee', storedContent, 3, key);
+        if (!('resourceId' in row)) throw new Error('Expected healthy fixture');
+        account.resources.set('resource-a', { ...row, entry: { ...row.entry, audience: { accounts: [], groups: [],
+            teams: [{ kind: 'team', teamId: 'team-a', name: 'Team' }] } } });
+        const source = { kind: 'external' as const, contribution: { pluginId: 'acme.vault', localId: 'vault' }, account: 'account', reference: 'op://vault/item/token' };
+        expect(await updateSavedSecretResource({ scope: account.scope, resourceId: 'resource-a', expectedRevision: 3,
+            nextSource: source, decryptDataKeyEnvelope: async () => key.slice() })).toEqual({ ok: false, reason: 'recipient_mode_unsupported' });
+        expect(account.writes).toEqual([]);
     });
 
     it.each(['plain', 'e2ee'] as const)('creates %s material with exact initial grants and a usable owner envelope', async mode => {
