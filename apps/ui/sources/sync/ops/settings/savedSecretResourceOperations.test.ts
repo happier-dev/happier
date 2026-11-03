@@ -2728,6 +2728,54 @@ describe('Saved Secret operations through their real Account and Action owners',
         } finally { context.dispose(); }
     });
 
+    it.each([false, true])('personal list retains linked vault metadata without acquiring values or opening inline resources; corrupt row=%s', async corruptRow => {
+        const account = await openAccount();
+        const source = { kind: 'external' as const, contribution: { pluginId: 'happier.secret-source.onepassword', localId: 'onepassword' },
+            account: 'vault-account', reference: 'op://vault/item/password', metadata: { vault: { id: 'vault', name: 'Private' },
+                item: { id: 'item', title: 'Example' }, field: { id: 'password', title: 'Password', kind: 'password' } } };
+        const linked = account.materialRow('linked', 'plain', sealSavedSecretResourceStoredContentV1({ resourceId: 'linked', mode: 'plain',
+            content: { v: 2, name: 'Example / Password', kind: 'password', source } }), 3);
+        account.resources.set('linked', { ...linked, entry: { ...linked.entry, storage: { kind: 'external', provider: source.contribution } } });
+        account.materialRow('inline', 'plain', sealSavedSecretResourceStoredContentV1({ resourceId: 'inline', mode: 'plain',
+            content: { v: 1, name: 'Inline', kind: 'token', value: 'never-return-inline-marker' } }), 3);
+        if (corruptRow) account.resources.set('opaque-row-id', { entry: {
+            materialStatus: 'resource_corrupt', relationship: 'owner',
+            repair: { kind: 'delete_resource', resourceId: 'opaque-row-id', expectedRevision: -3 },
+        } });
+        const context = await captureLazyActionAccountContext(account.scope.serverId);
+        try {
+            const execute = createUiPersonalSavedSecretActionExecute(context, createHomeDomainActionExecutorForScope(account.scope));
+            const result = await execute({ actionId: 'secrets.list', input: {}, context: { surface: 'ui' } });
+            expect(result).toMatchObject({ secrets: [ { secretId: 'linked', source }, { secretId: 'inline' } ] });
+            expect(JSON.stringify(result)).not.toContain('never-return-inline-marker');
+            expect(account.materialReadPaths).toHaveLength(1);
+            expect(account.materialReadPaths[0]).toContain('resourceId=linked');
+            expect(account.writes).toHaveLength(0);
+        } finally { context.dispose(); }
+    });
+
+    it.each(['plain', 'e2ee'] as const)('imports a passkey through the private %s Action and incumbent resource writer', async mode => {
+        const account = await openAccount(mode);
+        const source = { kind: 'passkey' as const, rpId: 'example.com', credentialId: 'AQID', userHandle: 'BAUG',
+            privateKey: 'cHJpdmF0ZS1wYXNza2V5LWtleS1tYXRlcmlhbA==', algorithm: -7 as const, signCount: 0,
+            backupEligibility: true, backupState: true };
+        account.setEffect((_path, body) => Response.json({ resourceId: SharedSavedSecretCreateInputV1Schema.parse(body).resourceId, revision: 1 }));
+        const context = await captureLazyActionAccountContext(account.scope.serverId);
+        const execute = createUiPersonalSavedSecretActionExecute(context, createHomeDomainActionExecutorForScope(account.scope));
+        const result = await execute({ actionId: 'secrets.create', input: { name: 'Passkey', source }, context: { surface: 'ui' } });
+        expect(result).toMatchObject({ secretId: expect.any(String), secretRef: expect.any(String) });
+        expect(account.writes).toHaveLength(1);
+        const input = SharedSavedSecretCreateInputV1Schema.parse(account.writes[0]!.body);
+        const key = mode === 'e2ee' ? await getSyncSingleton().encryption!.decryptEncryptionKey(input.keyEnvelopes![0]!.encryptedDataKey, account.scope) : null;
+        const opened = mode === 'plain'
+            ? openSavedSecretResourceStoredContentV1({ resourceId: input.resourceId, mode, storedContent: input.storedContent })
+            : key ? openSavedSecretResourceStoredContentV1({ resourceId: input.resourceId, mode, storedContent: input.storedContent, resourceDataKey: key }) : null;
+        expect(opened).toEqual({ v: 2, name: 'Passkey', kind: 'other', source });
+        if (mode === 'e2ee') expect(JSON.stringify(input)).not.toContain(source.privateKey);
+        else expect(input.keyEnvelopes ?? []).toEqual([]);
+        key?.fill(0);
+    });
+
     it.each(['plain', 'e2ee'] as const)('keeps an external source personal through the %s mutation owner', async mode => {
         const account = await openAccount(mode);
         const source = { kind: 'external' as const, contribution: { pluginId: 'acme.vault', localId: 'vault' }, account: 'account', reference: 'op://vault/item/token' };
