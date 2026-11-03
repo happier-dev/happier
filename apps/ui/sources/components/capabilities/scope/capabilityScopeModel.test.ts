@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { ReachPlaceV1 } from '@happier-dev/protocol/reach/reachPlaceV1';
 import type { ReachRuleV1 } from '@happier-dev/protocol/reach/reachRuleV1';
 import { applyReachRulesChangeV1 } from '@happier-dev/protocol/reach/reachRulesChangeV1';
+import { resolveSkillReachV1 } from '@happier-dev/protocol/prompts/library/skills/firstPartySkillsV1';
 import type { WhereItsOnNames } from '@/components/capabilities/where/whereItsOnPresentation';
 import {
   describeScope,
@@ -80,6 +81,17 @@ function after(
 
 describe("a machine's switch", () => {
   const machines = [machine('nl2', ['codex', 'gemini'])];
+
+  it('persists an explicit Off against a built-in default and can return to that default', () => {
+    const resolve: Parameters<typeof readScope>[3] = (rules, context) =>
+      resolveSkillReachV1('happier:workflows', rules, context, () => true);
+    expect(readScope([], nl2, machines, resolve).on).toBe(true);
+    const change = scopeWrite([], nl2, machines, false, resolve);
+    expect(change).toMatchObject({ write: { state: 'off' } });
+    const rules = after([], change);
+    expect(readScope(rules, nl2, machines, resolve).on).toBe(false);
+    expect(scopeWrite(rules, nl2, machines, true, resolve)).toMatchObject({ write: { state: 'inherit' } });
+  });
 
   it('reads the agent-general state and names the Agents that differ (D33)', () => {
     const rules = [everywhere(true), everywhere(false, 'gemini')];

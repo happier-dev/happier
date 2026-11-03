@@ -49,6 +49,12 @@ describe('shortWhereItsOn', () => {
 });
 
 describe('sayWhereItsOn', () => {
+    it('shows an admitted built-in default and preserves explicit Off without seeding rules', () => {
+        const rules: ReachRuleV1[] = [];
+        expect(formatWhereItsOnSentence(sayWhereItsOn(rules, names, true))).toBe('On everywhere');
+        expect(rules).toEqual([]);
+        expect(formatWhereItsOnSentence(sayWhereItsOn([everywhere(false)], names, true))).toBe('Off');
+    });
     it('states base On with an agent and a project exception', () => {
         expect(text([everywhere(true), agent('gemini', false), project('client-site', false)]))
             .toBe('On everywhere · except Gemini · except in client-site');

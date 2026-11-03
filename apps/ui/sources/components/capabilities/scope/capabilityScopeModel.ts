@@ -100,18 +100,19 @@ export function readScope(
   rules: ReachRulesV1,
   place: ScopePlace,
   machines: readonly ScopeMachine[],
+  resolve: typeof resolveReachV1 = resolveReachV1,
 ): ScopeRead {
   const covered = contexts(place, machines);
   const general = covered.map((machine): Cell => ({
     machineId: machine.machineId,
     agentId: null,
-    ...resolveReachV1(rules, contextFor(place, machine, null)),
+    ...resolve(rules, contextFor(place, machine, null)),
   }));
   const agents = covered.flatMap((machine) =>
     machine.agentIds.map((agentId): Cell => ({
       machineId: machine.machineId,
       agentId,
-      ...resolveReachV1(rules, contextFor(place, machine, agentId)),
+      ...resolve(rules, contextFor(place, machine, agentId)),
     })),
   );
   return {
@@ -132,13 +133,14 @@ export function scopeWrite(
   place: ScopePlace,
   machines: readonly ScopeMachine[],
   requestedOn: boolean,
+  resolve: typeof resolveReachV1 = resolveReachV1,
 ): ReachRulesChangeV1 {
   const broader = rules.filter(
     (rule) => !(rule.agentId === undefined && isHere(rule.target, place)),
   );
   const inherit = contexts(place, machines).every(
     (machine) =>
-      resolveReachV1(broader, contextFor(place, machine, null)).enabled ===
+      resolve(broader, contextFor(place, machine, null)).enabled ===
       requestedOn,
   );
   return {

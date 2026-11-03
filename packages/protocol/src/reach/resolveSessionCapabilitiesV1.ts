@@ -4,6 +4,8 @@ import { SessionMcpSelectionV1Schema } from '../mcp/servers/sessionSelectionV1.j
 import type { SkillRuleV1 } from './reachRuleV1.js';
 import { resolveReachV1, type ReachContextV1, type ReachDecisionV1 } from './resolveReachV1.js';
 import { applySessionSelectionV1, SessionSkillSelectionV1Schema, type SessionCapabilitySelectionV1, type CapabilitySelectionReasonV1 } from './sessionCapabilitySelectionV1.js';
+import { resolveSkillReachV1 } from '../prompts/library/skills/firstPartySkillsV1.js';
+import type { FeatureId } from '../features/catalog.js';
 
 export type CapabilityItemStateV1 = Readonly<{ kind: 'mcp_server' | 'skill'; id: string; name: string; title?: string;
   selected: boolean; selectable: boolean; reason: CapabilitySelectionReasonV1; decidedBy: ReachDecisionV1['decidedBy']; sessionOverride: 'added' | 'removed' | null }>;
@@ -13,6 +15,7 @@ export type ResolveSessionCapabilitiesV1Result = Readonly<{ mcp: Readonly<{ stri
 
 export function resolveSessionCapabilitiesV1(input: Readonly<{ context: ReachContextV1; mcp: McpServersSettingsV1 | null;
   mcpPluginItems?: readonly McpPluginItemV1[];
+  isFeatureEnabled?: (featureId: FeatureId) => boolean;
   skills: Readonly<{ items: readonly { skillId: string; name: string }[]; rules: readonly SkillRuleV1[] }> | null;
   selection: SessionCapabilitySelectionV1; agentAcceptsUserMcp: boolean }>): ResolveSessionCapabilitiesV1Result {
   const mcpSelection = SessionMcpSelectionV1Schema.parse(input.selection.mcp ?? {});
@@ -35,10 +38,10 @@ export function resolveSessionCapabilitiesV1(input: Readonly<{ context: ReachCon
       source, effectiveConfig: source === 'plugin' ? server : resolveMcpServerConfigForContextV1(server, input.context),
     };
   }) }, skills: { items: (input.skills?.items ?? []).map(item => {
-    const reach = resolveReachV1(input.skills!.rules.filter(rule => rule.skillId === item.skillId), input.context);
+    const reach = resolveSkillReachV1(item.skillId, input.skills!.rules.filter(rule => rule.skillId === item.skillId), input.context, input.isFeatureEnabled);
     const forceIncluded = skillIncludes.has(item.skillId), forceExcluded = skillExcludes.has(item.skillId);
-    return { kind: 'skill', id: item.skillId, name: item.name, ...applySessionSelectionV1({ reach, selectable: true, forceIncluded, forceExcluded, managedEnabled: true }),
-      selectable: true, decidedBy: reach.decidedBy, sessionOverride: forceExcluded ? 'removed' : forceIncluded ? 'added' : null };
+    return { kind: 'skill', id: item.skillId, name: item.name, ...applySessionSelectionV1({ reach, selectable: reach.available, forceIncluded, forceExcluded, managedEnabled: true }),
+      selectable: reach.available, decidedBy: reach.decidedBy, sessionOverride: forceExcluded ? 'removed' : forceIncluded ? 'added' : null };
   }), excludeNativeSkillNames: skillSelection.excludeNativeSkillNames } };
 }
 

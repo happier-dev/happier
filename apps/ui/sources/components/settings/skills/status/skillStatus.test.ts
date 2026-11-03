@@ -8,6 +8,13 @@ const item = SkillListItemV1Schema.parse({ skillId: 'review', name: 'review', de
   modified: false, updatePolicy: 'manual', createdAt: 40 * day, migratedFromContext: false, userInvocable: true, folderId: null });
 
 describe('skill status usage truth', () => {
+  it('shows admitted built-ins as on without seed writes, and retains explicit off', () => {
+    const builtIn = { ...item, skillId: 'happier:workflows', provenance: { kind: 'first_party' as const } };
+    expect(skillStatus(builtIn)).not.toContainEqual({ kind: 'off' });
+    expect(skillStatus({ ...builtIn, rules: [{ id: 'off', skillId: builtIn.skillId, target: { t: 'allMachines' },
+      enabled: false, createdAt: 1, updatedAt: 1 }] })).toContainEqual({ kind: 'off' });
+    expect(builtIn.rules).toEqual([]);
+  });
   it('keeps Session delivery failures and native masks with the canonical skill status owner', () => {
     const plan = { plan: 'session_dir' as const, nativeDisables: [], diagnostics: [], items: [{ skillId: item.skillId, name: item.name,
       digest: 'digest', state: 'masked_by_native' as const, reason: 'native_same_name' as const, maskedBy: { path: '/native/review' } }] };

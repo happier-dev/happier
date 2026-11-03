@@ -52,6 +52,8 @@ export type WhereItsOnControlProps = Omit<
 > &
   Readonly<{
     rules: ReachRulesV1;
+    /** Read-only default decided by the capability owner; never becomes a stored rule. */
+    defaultEnabled?: boolean;
     projection: NonNullable<HappierWhereItsOnControlProps['projection']> | null;
     /** One change = one call carrying the whole next value. */
     onChange: (change: WhereItsOnReplaceChange) => Promise<WhereItsOnChangeResult>;
@@ -300,6 +302,7 @@ export const WhereItsOnControl = React.memo(function WhereItsOnControl({
   onUndo: _onUndo,
   rules: storedRules,
   onChange,
+  defaultEnabled = false,
   ...props
 }: WhereItsOnControlProps) {
   const { theme } = useUnistyles();
@@ -321,7 +324,7 @@ export const WhereItsOnControl = React.memo(function WhereItsOnControl({
   const state = React.useMemo<HappierWhereItsOnState>(() => {
     const base = rules.find((rule) => rule.target.t === 'allMachines' && rule.agentId === undefined);
     return {
-      everywhere: base?.enabled === true ? 'on' : 'off',
+      everywhere: (base?.enabled ?? defaultEnabled) ? 'on' : 'off',
       rules: rules
         .filter((rule) => rule !== base)
         .map((rule) => ({
@@ -330,9 +333,9 @@ export const WhereItsOnControl = React.memo(function WhereItsOnControl({
           ...(rule.agentId !== undefined ? { agentId: rule.agentId } : {}),
           on: rule.enabled,
         })),
-      sentence: sayWhereItsOn(rules, names),
+      sentence: sayWhereItsOn(rules, names, defaultEnabled),
     };
-  }, [rules, names]);
+  }, [rules, names, defaultEnabled]);
   const onIntent = React.useCallback(
     (intent: HappierWhereItsOnIntent) => onChange(applyWhereItsOnIntent(rules, intent)),
     [rules, onChange],

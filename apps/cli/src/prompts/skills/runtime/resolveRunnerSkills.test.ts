@@ -17,6 +17,7 @@ import { mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from 'node:
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
+import { resetServerFeaturesClientForTests } from '@/features/serverFeaturesClient';
 import { createSkillStore } from '../store/skillStore';
 import { resolveRunnerSkills, type ResolveRunnerSkillsInput } from './resolveRunnerSkills';
 import { prepareGeminiNativeMcpShaping } from '../../../../../../packages/plugins/gemini/src/agent/mcp/shaping';
@@ -63,6 +64,9 @@ const bundle = (artifactId: string, name: string): AccountArtifact & AccountArti
     { path: 'references/note.md', contentKind: 'utf8', contentBase64: Buffer.from('Supporting file').toString('base64'), retainedAnnotation: 'read-only extension' },
   ] }),
 });
+// These delivery scenarios isolate Account skills; built-in defaults have dedicated coverage.
+const coreOff = { id: 'test-core-off', skillId: 'happier:happier', target: { t: 'allMachines' as const },
+  enabled: false, createdAt: 1, updatedAt: 1 };
 async function fixture(platform?: NodeJS.Platform) {
   const home = await mkdtemp(join(tmpdir(), 'happier-p3b-runner-')); dirs.push(home);
   const directory = join(home, 'project'); await mkdir(directory);
@@ -81,13 +85,41 @@ async function fixture(platform?: NodeJS.Platform) {
     credentials: { token: 'token', encryption: null }, sessionMetadata: {}, agentHasActionChannel: true,
     contributes: { catalogEntriesById: { test: { skills: { delivery: 'session_dir', nativeDisable: 'supported', liveReload: 'supported' } } } },
     accountSnapshot: { source: 'network', settings: accountSettingsParse({}), settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [],
-      promptLibraryCatalog: { status: 'ready', rows: [{ revision: 1, record: { key: 'skill-rules', value: { v: 1, rules: [
+      promptLibraryCatalog: { status: 'ready', rows: [{ revision: 1, record: { key: 'skill-rules', value: { v: 1, rules: [coreOff,
         { id: 'everywhere', skillId: 'library', target: { t: 'allMachines' }, enabled: true, createdAt: 1, updatedAt: 1 },
       ] } } }], tombstones: [], diagnostics: [] } },
   };
   return { home, directory, input, artifacts, store, readIds };
 }
 describe('runner skill resolution', () => {
+  it('delivers feature-admitted built-ins for an existing Account and retains its explicit opt-out', async () => {
+    const f = await fixture();
+    const actualFetch = globalThis.fetch;
+    let featureReads = 0;
+    const featureHttp = vi.spyOn(globalThis, 'fetch').mockImplementation((url, init) => {
+      const href = url instanceof Request ? url.url : String(url);
+      if (new URL(href).pathname !== '/v1/features') return actualFetch(url, init);
+      featureReads++;
+      return Promise.resolve(new Response(JSON.stringify({ features: { automations: { enabled: true }, workflows: { enabled: true }, deployments: { enabled: true } }, capabilities: {} })));
+    });
+    resetServerFeaturesClientForTests();
+    try {
+      const transports = { artifacts: f.artifacts, ensureSessionDir: (request: Parameters<typeof f.store.ensureSkillSessionDir>[0]) => f.store.ensureSkillSessionDir(request) };
+      const input = { ...f.input, accountSnapshot: { ...f.input.accountSnapshot!, settings: accountSettingsParse({ featureToggles: { automations: true, deployments: true } }) } };
+      const enabled = await resolveRunnerSkills(input, transports);
+      expect(enabled.delivery?.items.map(item => item.skillId)).toEqual(['library', 'happier:deploy', 'happier:workflows']);
+      const optedOut = await resolveRunnerSkills({ ...input, accountSnapshot: { ...input.accountSnapshot,
+        settings: accountSettingsParse({ featureToggles: { automations: false, deployments: false } }) },
+        sessionMetadata: { skillSelectionV1: { v: 1, forceIncludeSkillIds: ['happier:deploy', 'happier:workflows'], forceExcludeSkillIds: [], excludeNativeSkillNames: [] } },
+      }, transports);
+      expect(optedOut.delivery?.items.map(item => item.skillId)).toEqual(['library']);
+      expect(featureReads).toBe(1); // Both guides and the next plan share the Home feature owner.
+      expect(input.accountSnapshot.promptLibraryCatalog).toEqual(f.input.accountSnapshot!.promptLibraryCatalog);
+    } finally {
+      featureHttp.mockRestore();
+      resetServerFeaturesClientForTests();
+    }
+  });
   it('uses the daemon copy path for Agents whose plugin scanner rejects links', async () => {
     const f = await fixture();
     const input = { ...f.input, contributes: { catalogEntriesById: { test: {
@@ -112,7 +144,7 @@ describe('runner skill resolution', () => {
     const nativeRoot = join(f.home, '.native');
     await mkdir(nativeRoot);
     const input = { ...f.input, accountSnapshot: { ...f.input.accountSnapshot!, promptLibraryCatalog: {
-      status: 'ready' as const, rows: [{ revision: 1, record: { key: 'skill-rules' as const, value: { v: 1 as const, rules: [] } } }],
+      status: 'ready' as const, rows: [{ revision: 1, record: { key: 'skill-rules' as const, value: { v: 1 as const, rules: [coreOff] } } }],
       tombstones: [], diagnostics: [],
     } }, contributes: { catalogEntriesById: { test: {
       skills: { ...f.input.contributes!.catalogEntriesById.test!.skills!, nativeRoots: { user: [['.native']] } },
@@ -385,8 +417,8 @@ describe('runner skill resolution', () => {
     };
     const input = { ...f.input, accountSnapshot: { ...f.input.accountSnapshot!, promptLibraryCatalog: { status: 'ready' as const,
       rows: [{ revision: 1, record: { key: 'skill-rules' as const, value: { v: 1 as const,
-        rules: ['older', 'newer', 'broken', 'off'].map(skillId => ({ id: `on-${skillId}`, skillId,
-          target: { t: 'allMachines' as const }, enabled: skillId !== 'off', createdAt: 1, updatedAt: 1 })),
+        rules: [coreOff, ...['older', 'newer', 'broken', 'off'].map(skillId => ({ id: `on-${skillId}`, skillId,
+          target: { t: 'allMachines' as const }, enabled: skillId !== 'off', createdAt: 1, updatedAt: 1 }))],
       } } }], tombstones: [], diagnostics: [] } } };
     const app = createDaemonControlApp({ getChildren: () => [], machineId: 'machine',
       stopSession: async () => ({ status: 'not_found' }), spawnSession: async () => ({ type: 'success', sessionId: 'unused' }),
@@ -437,9 +469,9 @@ describe('runner skill resolution', () => {
     const artifacts: SkillArtifactStore = { list: async () => ({ items: [retainedArtifact, healthy, legacyArtifact], coverage: 'complete' }),
       read: async id => id === 'library' ? retainedArtifact : id === 'legacy' ? legacyArtifact : healthy };
     const input = { ...f.input, accountSnapshot: { ...f.input.accountSnapshot!, promptLibraryCatalog: { status: 'ready' as const,
-      rows: [{ revision: 1, record: { key: 'skill-rules' as const, value: { v: 1 as const, rules: ['library', 'healthy', 'legacy'].map(skillId => ({
+      rows: [{ revision: 1, record: { key: 'skill-rules' as const, value: { v: 1 as const, rules: [coreOff, ...['library', 'healthy', 'legacy'].map(skillId => ({
         id: `everywhere-${skillId}`, skillId, target: { t: 'allMachines' as const }, enabled: true, createdAt: 1, updatedAt: 1,
-      })) } } }], tombstones: [], diagnostics: [] } } };
+      }))] } } }], tombstones: [], diagnostics: [] } } };
     const opened = readSkillBundleContentV1(retainedArtifact);
     expect(opened?.frontmatter.name).toBe('retained');
     expect(validatePromptBundleBodyV1AgainstSchemaId({ bundleSchemaId: 'skills.skill_md_v1', body: PromptBundleBodyV1Schema.parse(retained.body) }))
@@ -550,7 +582,7 @@ describe('runner skill resolution', () => {
     const skills = { items: [{ skillId: 'library', name: 'sample' }], rules: [{ id: 'folder', skillId: 'library',
       target: { t: 'workspace' as const, machineId: 'machine', workspaceRoot: linked }, enabled: true, createdAt: 1, updatedAt: 1 }] };
     const accountSnapshot = { ...input.accountSnapshot!, promptLibraryCatalog: { status: 'ready' as const,
-      rows: [{ revision: 2 as const, record: { key: 'skill-rules' as const, value: { v: 1 as const, rules: skills.rules } } }], tombstones: [], diagnostics: [] } };
+      rows: [{ revision: 2 as const, record: { key: 'skill-rules' as const, value: { v: 1 as const, rules: [coreOff, ...skills.rules] } } }], tombstones: [], diagnostics: [] } };
     const { resolveSessionCapabilitiesForDirectory } = await import('@/mcp/servers/resolveSessionCapabilitiesForDirectory');
     const mcp = { v: 1 as const, strictMode: false, servers: [{ id: 'server', name: 'server', transport: 'http' as const,
       remote: { url: 'https://example.test/mcp', headers: {} }, env: {}, createdAt: 1, updatedAt: 1 }],
@@ -571,7 +603,7 @@ describe('runner skill resolution', () => {
       v: 1, forceIncludeSkillIds: demand === 'session' ? ['library', 'excluded'] : ['excluded'],
       forceExcludeSkillIds: ['excluded'], excludeNativeSkillNames: [],
     } }, ...(demand === 'session' ? { accountSnapshot: { ...input.accountSnapshot!, promptLibraryCatalog: { status: 'ready' as const,
-      rows: [{ revision: 1, record: { key: 'skill-rules' as const, value: { v: 1 as const, rules: [] } } }],
+      rows: [{ revision: 1, record: { key: 'skill-rules' as const, value: { v: 1 as const, rules: [coreOff] } } }],
       tombstones: [], diagnostics: [] } } } : {}) };
     const result = await resolveRunnerSkills(selectedInput, { artifacts: { ...artifacts,
       list: async () => { throw new Error('Unrelated Account inventory unavailable'); } },

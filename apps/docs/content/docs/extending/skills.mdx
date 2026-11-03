@@ -15,6 +15,23 @@ Sign in to the same Happier Account on your clients and session machines. A reac
 
 Skills are Account library items. Their storage follows your [Account encryption mode](/security/encryption), rather than becoming a public registry copy. Review unfamiliar instructions and scripts before adding them. Adding a bundle does not run its scripts; an Agent may run them later under the Session's permissions.
 
+## Built-in Happier skills
+
+In 0.3 development, Happier supplies read-only guides for using its Actions:
+
+- **Happier** explains how to discover and use Actions.
+- **Deploy** walks through preparing a deployment, deploying, reading receipts,
+  checking health and logs, and diagnosing failures without exposing secrets.
+- **Workflows** covers reusable and one-off Workflows, triggers, schedules,
+  conditions, steps, placement, approvals, and recovering failed runs.
+
+Built-in guides are on Everywhere unless you choose otherwise. Deploy and
+Workflows are available only while their corresponding feature is enabled for
+your Home and Account. Turning a feature off excludes its guide from Sessions,
+including explicit Session includes. Turning it back on preserves your saved
+Where-it's-on choices, including Off. Newly supplied guides also follow these
+defaults in existing Accounts; reading the library does not save new rules.
+
 ## Add a skill to your library
 
 Open **Settings → Skills**, then use **+**. The add dialog offers **Browse**, **From a link**, **Upload** and **Write**.
@@ -72,7 +89,7 @@ Updates affect later delivery of the skill. The update receipt does not offer Un
 
 ## Existing library and Profile seeds
 
-An upgraded library offers **Choose what's on** for skills that have no defaults. Nothing turns on until you choose. Suggested selections come from recorded use; without recorded use, none are selected automatically.
+An upgraded library offers **Choose what's on** for your library skills that have no defaults. Those skills stay off until you choose; the built-in Happier guides follow the defaults above. Suggested selections come from recorded use; without recorded use, none are selected automatically.
 
 Legacy enabled skill attachments migrate once: Account context becomes Everywhere rules, Project context becomes Project rules, Profile context becomes Profile seeds, and Session context becomes Session includes. Retained disabled inherited entries become Session excludes. Legacy records stay readable but no longer paste skill instructions; voice skill attachments stop contributing while the skill stays in the library.
 

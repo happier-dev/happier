@@ -6740,6 +6740,8 @@ encryptedUnavailable: "Détails chiffrés indisponibles",
       "Afficher la barre latérale de navigation des réglages (web/tablette)",},
 
   settingsFeatures: {
+    deployments: "Déploiements",
+    featureOptOutSubtitle: "Afficher cette fonctionnalité et autoriser de nouvelles actions. Le travail déjà lancé continue.",
     // Features settings screen
     experiments: "Expérimentations",
     generalTitle: 'Général',

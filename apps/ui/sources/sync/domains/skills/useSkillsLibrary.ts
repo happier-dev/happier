@@ -1,3 +1,5 @@
+import { resolveSkillReachV1 } from '@happier-dev/protocol/prompts/library/skills/firstPartySkillsV1';
+import { useSkillFeatureEnabled } from './useSkillFeatureEnabled';
 import * as React from 'react';
 import { SKILL_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/prompts/library/skills/skillActionSchemasV1';
 import {
@@ -167,6 +169,7 @@ export function useSkillsLibrary(
 ): SkillsLibrary {
   const activeScope = useAccountSettingsScope();
   const scope = requestedScope === undefined ? activeScope : requestedScope;
+  const isFeatureEnabled = useSkillFeatureEnabled(scope?.serverId);
   const scopeKey = scope ? `${scope.serverId}:${scope.accountId}` : null;
   const { binding, ready } = useMountedActionExecution(scope);
   const skillRevisions = getStorage()(state => state.artifactSkillRevisions);
@@ -345,6 +348,9 @@ export function useSkillsLibrary(
       }),
     );
   }, [snapshot, rules, usage, folders]);
+  const availableItems = React.useMemo(() => displayedItems.filter(item => resolveSkillReachV1(item.skillId, [], {
+    machineId: '', machinePlatform: null, directory: null, projectKey: null, agentId: null }, isFeatureEnabled).available),
+  [displayedItems, isFeatureEnabled]);
   const status: SkillsLibraryStatus =
     rulesError !== null
       ? 'unavailable'
@@ -360,7 +366,7 @@ export function useSkillsLibrary(
     () => ({
       scope,
       status: status === 'loading' && snapshot ? 'ready' : status,
-      items: displayedItems,
+      items: availableItems,
       unavailableItems: snapshot?.unavailableItems ?? emptyUnavailableItems,
       stale:
         snapshot !== null && (status !== 'ready' || inventoryComplete
@@ -373,7 +379,7 @@ export function useSkillsLibrary(
       scope,
       status,
       snapshot,
-      displayedItems,
+      availableItems,
       sourceKey,
       pluginRevision,
       inventoryComplete,

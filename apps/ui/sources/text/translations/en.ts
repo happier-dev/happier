@@ -8150,6 +8150,8 @@ const enSettingsAppearance = {
 };
 
 const enSettingsFeatures = {
+  deployments: "Deployments",
+  featureOptOutSubtitle: "Show this feature and allow new work. Work already started continues.",
   // Features settings screen
   experiments: 'Experiments',
   generalTitle: 'General',

@@ -1142,6 +1142,17 @@ Agent-native plugin skill folders remain a separate Found input. Public
 authoring guidance lives in [Contributions](../apps/docs/content/docs/plugins/manifest/contributions.mdx#library-skills-in-development);
 generated SDK API and capability reports remain the availability authority.
 
+First-party skills in 0.3 development use the protocol's
+`resolveSkillReachV1` owner for Session selection and UI reach. With no matching
+rule, they are on by default; an explicit Off rule is preserved. An optional
+`requiresFeature` on `FirstPartySkillV1` admits a skill only when the canonical
+effective feature decision is enabled, including for Session includes.
+`happier:deploy` requires `deployments`, and `happier:workflows` requires
+`workflows`; `happier:happier` has no feature requirement. Reading these defaults
+or re-enabling a feature writes no reach rules, so later built-ins also work for
+existing Accounts. Existing seeded rules remain valid. This field does not
+extend the plugin skill descriptor ABI or change plugin-install seeding.
+
 In 0.3 development source, each MCP discovery source declares
 `loadedInHappierSessions`. Detection carries that fact into its server rows, and
 session previews omit sources that declare `false`. Discovery can therefore find

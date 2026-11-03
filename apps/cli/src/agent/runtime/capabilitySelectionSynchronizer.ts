@@ -8,6 +8,7 @@ import type { RunnerMcpRuleObservation } from '@/mcp/runtime/resolveRunnerMcpSer
 import { logger } from '@/ui/logger';
 import { resolveSessionCapabilitiesV1 } from '@happier-dev/protocol/reach/resolveSessionCapabilitiesV1';
 import { realpathReachRules } from '@/mcp/servers/createRealpathNormalizer';
+import { FIRST_PARTY_SKILLS_V1 } from '@happier-dev/protocol/prompts/library/skills/firstPartySkillsV1';
 import { areSessionCapabilitySelectionsEquivalentV1, type SessionCapabilitySelectionV1 } from '@happier-dev/protocol/reach/sessionCapabilitySelectionV1';
 import { readAppliedSessionCapabilitySelectionFromMetadataV1, readSessionCapabilitySelectionFromMetadataV1,
   resolveSelectionRestartMarkersForStartupV1, patchCapabilitySelectionApplyV1,
@@ -59,8 +60,10 @@ export function createCapabilitySelectionSynchronizer(input: CapabilitySelection
   const lifetime = new AbortController();
 
   const ruleSelection = (observation: SkillRuleObservation, selection: SessionCapabilitySelectionV1) => {
-    const ids = new Set([...observation.rules.map(rule => rule.skillId), ...(selection.skills?.forceIncludeSkillIds ?? [])]);
+    const ids = new Set([...observation.rules.map(rule => rule.skillId), ...(selection.skills?.forceIncludeSkillIds ?? []),
+      ...FIRST_PARTY_SKILLS_V1.map(skill => skill.skillId)]);
     const resolved = resolveSessionCapabilitiesV1({ context: observation.context, mcp: null,
+      isFeatureEnabled: featureId => observation.featureEnabled?.[featureId] === true,
       skills: { items: [...ids].map(skillId => ({ skillId, name: skillId })), rules: realpathReachRules(observation.rules) },
       selection, agentAcceptsUserMcp: false });
     return JSON.stringify(resolved.skills.items.filter(item => item.selected).map(item => item.id).sort());

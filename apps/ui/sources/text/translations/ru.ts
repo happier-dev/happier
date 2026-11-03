@@ -6676,6 +6676,8 @@ export const ru: TranslationStructure = {
       "Показывать боковую панель навигации по настройкам (web/tablet)",},
 
   settingsFeatures: {
+    deployments: "Развёртывания",
+    featureOptOutSubtitle: "Показывать функцию и разрешать новые задачи. Уже начатая работа продолжается.",
     // Features settings screen
     experiments: "Эксперименты",
     generalTitle: 'Общие',

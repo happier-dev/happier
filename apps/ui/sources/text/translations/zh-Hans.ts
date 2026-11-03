@@ -6643,6 +6643,8 @@ export const zhHans: TranslationStructure = {
     settingsNavSidebarDescription: "显示设置导航侧边栏（Web/平板）",},
 
   settingsFeatures: {
+    deployments: "部署",
+    featureOptOutSubtitle: "显示此功能并允许新任务。已经开始的工作会继续。",
     // Features settings screen
     experiments: "实验功能",
     generalTitle: '通用',

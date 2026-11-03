@@ -45,6 +45,12 @@ const FEATURE_CATALOG_DEFINITION = {
     dependencies: [],
     representation: 'server',
   },
+  deployments: {
+    description: 'Deployment preparation, publishing, and new deployment work.',
+    defaultFailMode: 'fail_closed',
+    dependencies: [],
+    representation: 'server',
+  },
   workflows: {
     description: 'Structured Workflow authoring, execution, inspection, and Action surfaces.',
     defaultFailMode: 'fail_closed',

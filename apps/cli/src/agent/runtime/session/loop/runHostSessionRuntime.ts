@@ -3964,7 +3964,7 @@ export async function runHostSessionRuntime(
           const read = readPromptLibraryCatalogRecordV1({ catalog: snapshot.promptLibraryCatalog, key: 'skill-rules',
             rawSettings: snapshot.source === 'none' ? undefined : snapshot.rawSettings });
           return read.status === 'ready' && read.record.key === 'skill-rules'
-            ? { context: runnerSkills.reach.context, rules: read.record.value.rules,
+            ? { context: runnerSkills.reach.context, rules: read.record.value.rules, featureEnabled: runnerSkills.reach.featureEnabled,
                 catalog: { revision: read.revision, authority: read.authority } } : null;
         },
         subscribeAccountSettings: listener => {

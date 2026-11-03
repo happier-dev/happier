@@ -131,12 +131,16 @@ export const whereItsOnControlLabels: HappierWhereItsOnControlLabels = {
     staysOff: (agents) => t('capabilities.control.staysOff', { agents }),
     change: () => t('capabilities.control.change'),
     changeFailed: () => t('capabilities.control.changeFailed'),
+    checking: () => t('capabilities.control.checking'),
     tryAgain: () => t('capabilities.status.fix.tryAgain'),
   },
 };
 
-export function sayWhereItsOn(rules: readonly ReachRuleV1[], names: WhereItsOnNames): WhereItsOnSentence {
-  return sayHappierWhereItsOn(rules, names, whereItsOnLabels, whereItsOnReach.group);
+export function sayWhereItsOn(rules: readonly ReachRuleV1[], names: WhereItsOnNames, defaultEnabled = false): WhereItsOnSentence {
+  // Presentation only: effects continue to receive the actual persisted rules.
+  const displayed = defaultEnabled && !rules.some(rule => rule.target.t === 'allMachines' && rule.agentId === undefined)
+    ? [{ id: 'implicit-default', target: { t: 'allMachines' as const }, enabled: true, createdAt: 0, updatedAt: 0 }, ...rules] : rules;
+  return sayHappierWhereItsOn(displayed, names, whereItsOnLabels, whereItsOnReach.group);
 }
 
 /** The sentence as one line; past `maxClauses` the rest folds into "· N more". */

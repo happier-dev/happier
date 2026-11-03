@@ -7227,6 +7227,8 @@ localTailscale: {
       "設定ナビゲーションのサイドバーを表示（Web/タブレット）",},
 
   settingsFeatures: {
+    deployments: "デプロイ",
+    featureOptOutSubtitle: "この機能を表示し、新しい作業を許可します。開始済みの作業は継続します。",
     // Features settings screen
     experiments: "実験的機能",
     generalTitle: '一般',

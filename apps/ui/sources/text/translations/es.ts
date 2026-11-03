@@ -6911,6 +6911,8 @@ encryptedUnavailable: "Detalles cifrados no disponibles",
       "Mostrar la barra lateral de navegación de ajustes (web/tablet)",},
 
   settingsFeatures: {
+    deployments: "Despliegues",
+    featureOptOutSubtitle: "Mostrar esta función y permitir nuevas tareas. El trabajo ya iniciado continúa.",
     // Features settings screen
     experiments: "Experimentos",
     generalTitle: 'General',

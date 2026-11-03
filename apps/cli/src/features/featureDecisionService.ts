@@ -1,6 +1,7 @@
 import { applyFeatureDependencies, evaluateFeatureDecisionBase } from '@happier-dev/protocol/features/featureDecisionEngine';
 import type { ProcessEnvInput } from '@/utils/processEnv/buildScopedProcessEnv';
 import { createFeatureDecision } from '@happier-dev/protocol/features/decision';
+import { resolveUiFeatureToggleEnabled } from '@happier-dev/protocol/actions/settings/featurePreferenceMutations';
 import { isFeatureServerRepresented } from '@happier-dev/protocol/features/catalog';
 import { isServerFeatureOperationReady } from '@happier-dev/protocol/features/payload/capabilities/teamCredentialCapabilities';
 import { readServerEnabledBit } from '@happier-dev/protocol/features/serverEnabledBit';
@@ -19,6 +20,7 @@ export type { CliServerFeaturesSnapshot } from './serverFeaturesClient';
 
 function resolveCliFeatureDecisionFromInputs(
   inputs: CliFeatureDecisionInputs,
+  settings?: Parameters<typeof resolveUiFeatureToggleEnabled>[0],
 ): FeatureDecision {
   const memo = new Map<FeatureId, FeatureDecision>();
 
@@ -40,7 +42,8 @@ function resolveCliFeatureDecisionFromInputs(
       scope: { scopeKind: 'runtime' },
       supportsClient: true,
       buildPolicy: featureInputs.buildPolicy,
-      localPolicyEnabled: featureInputs.localPolicyEnabled,
+      localPolicyEnabled: featureInputs.localPolicyEnabled
+        && (!settings || resolveUiFeatureToggleEnabled(settings, featureId)),
       serverSupported: true,
       serverEnabled: true,
     });
@@ -136,13 +139,14 @@ export function resolveCliFeatureDecision(params: {
   featureId: FeatureId;
   env: ProcessEnvInput;
   serverSnapshot?: CliServerFeaturesSnapshot;
+  settings?: Parameters<typeof resolveUiFeatureToggleEnabled>[0];
 }): FeatureDecision {
   const inputs = createCliFeatureDecisionInputs({
     featureId: params.featureId,
     env: params.env,
     serverSnapshot: params.serverSnapshot,
   });
-  return resolveCliFeatureDecisionFromInputs(inputs);
+  return resolveCliFeatureDecisionFromInputs(inputs, params.settings);
 }
 
 export async function resolveCliFeatureDecisionForServer(params: {

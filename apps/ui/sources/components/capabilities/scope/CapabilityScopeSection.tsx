@@ -69,8 +69,8 @@ const ScopeRow = React.memo(function ScopeRow(
   const { row, place, data } = props;
   const owner = useReachRules(row.kind, row.id);
   const read = React.useMemo(
-    () => readScope(owner.rules, place.place, data.machines),
-    [owner.rules, place.place, data.machines],
+    () => readScope(owner.rules, place.place, data.machines, owner.resolveReach),
+    [owner.rules, owner.resolveReach, place.place, data.machines],
   );
   const words = React.useMemo(
     () => describeScope(read, place.place, data.names),
@@ -79,7 +79,7 @@ const ScopeRow = React.memo(function ScopeRow(
   const { change, rules } = owner;
   const flip = React.useCallback(
     (requestedOn: boolean) => {
-      void change(scopeWrite(rules, place.place, data.machines, requestedOn), {
+      void change(scopeWrite(rules, place.place, data.machines, requestedOn, owner.resolveReach), {
         message: t(
           requestedOn
             ? 'capabilities.scopeSection.turnedOn'
@@ -96,7 +96,7 @@ const ScopeRow = React.memo(function ScopeRow(
         }
       });
     },
-    [change, data.machines, place.label, place.place, row.id, row.name, rules],
+    [change, data.machines, place.label, place.place, row.id, row.name, rules, owner.resolveReach],
   );
   const href =
     row.kind === 'skill' ? skillHref(row.id) : mcpServerRoute(row.id);

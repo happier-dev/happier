@@ -7022,6 +7022,8 @@ encryptedUnavailable: "Detalhes encriptados indisponíveis",
       "Mostrar a barra lateral de navegação das configurações (web/tablet)",},
 
   settingsFeatures: {
+    deployments: "Implantações",
+    featureOptOutSubtitle: "Mostrar este recurso e permitir novas tarefas. O trabalho já iniciado continua.",
     // Features settings screen
     experiments: "Experimentos",
     generalTitle: 'Geral',

@@ -19,6 +19,15 @@ type FeaturePreferenceDefinition = Readonly<{
 }>;
 
 export const UI_FEATURE_REGISTRY = {
+    deployments: {
+        settingsToggle: {
+            showInSettings: true,
+            isExperimental: false,
+            defaultEnabled: true,
+            titleKey: 'settingsFeatures.deployments',
+            subtitleKey: 'settingsFeatures.featureOptOutSubtitle',
+        },
+    },
     'artifacts.queryHints': {
         settingsToggle: undefined,
     },

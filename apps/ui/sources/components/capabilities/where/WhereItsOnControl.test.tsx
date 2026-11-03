@@ -83,6 +83,7 @@ async function renderControl(
     projection?: readonly Readonly<ReturnType<typeof projectionFor>[number] & { agentInventoryComplete?: boolean }>[];
     kind?: 'skill' | 'mcp_server';
     presentation?: 'section' | 'pick';
+    defaultEnabled?: boolean;
   }>,
 ) {
   const changes: Replace[] = [];
@@ -96,6 +97,7 @@ async function renderControl(
     <WhereItsOnControl
       kind={input.kind ?? 'skill'}
       rules={input.rules}
+      defaultEnabled={input.defaultEnabled}
       status="ready"
       projection={input.projection ?? projectionFor(input.rules, input.projectKey ?? null)}
       places={{ agentIds: AGENTS, machines: MACHINES, projects: PROJECTS }}
@@ -158,6 +160,15 @@ const ruleKey = (target: ReachRuleV1['target'], agentId?: string) =>
   `where:rule:${reachRuleKeyV1({ target, ...(agentId ? { agentId } : {}) })}`;
 
 describe('WhereItsOnControl', () => {
+  it('turns an implicit built-in Everywhere default off with one explicit rule and no write on read', async () => {
+    const control = await renderControl({ rules: [], defaultEnabled: true });
+    expect(control.changes).toEqual([]);
+    await control.open();
+    const toggle = control.screen.findAll(node => node.props?.testID === 'where:everywhere' && typeof node.props?.onChange === 'function')[0]!;
+    expect(toggle.props.value).toBe('on');
+    await act(async () => { await toggle.props.onChange('off'); });
+    expect(control.changes.map(drafts)).toEqual([[`${JSON.stringify({ t: 'allMachines' })}|*|off`]]);
+  });
   it('is a titled section in the compact add-flow form too, and leaves the description to the detail', async () => {
     const group = async (presentation: 'section' | 'pick') => {
       const { screen } = await renderControl({ rules: [], presentation });

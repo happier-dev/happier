@@ -333,6 +333,7 @@ function SavedSkill(props: Readonly<{ skillId: string }>) {
         kind="skill"
         presentation="section"
         rules={reach.rules}
+        defaultEnabled={reach.resolveReach([], { machineId: '', machinePlatform: null, directory: null, projectKey: null, agentId: null }).enabled}
         status={reach.status}
         projection={reach.status === 'ready' ? projection : null}
         places={{

@@ -13,6 +13,7 @@ function buildFeaturesResponse(): FeaturesResponse {
       automations: {
         enabled: true,
       },
+      workflows: { enabled: true },
       connectedServices: {
         enabled: true,
         quotas: { enabled: false },
@@ -23,6 +24,15 @@ function buildFeaturesResponse(): FeaturesResponse {
 }
 
 describe('resolveCliFeatureDecision', () => {
+  it('honors the Account preference at feature admission while preserving the Home denial', () => {
+    const params = { featureId: 'workflows' as const, env: {},
+      serverSnapshot: { status: 'ready' as const, features: buildFeaturesResponse() } };
+    expect(resolveCliFeatureDecision({ ...params, settings: { featureToggles: { automations: false } } }))
+      .toMatchObject({ state: 'disabled' });
+    expect(resolveCliFeatureDecision({ ...params, settings: { featureToggles: { automations: true } } }).state).toBe('enabled');
+    expect(resolveCliFeatureDecision({ ...params, settings: { featureToggles: { automations: true } },
+      serverSnapshot: { status: 'unsupported', reason: 'endpoint_missing' } }).state).not.toBe('enabled');
+  });
   it('enables bugReports when server and local policy enable the feature', () => {
     const snapshot: CliServerFeaturesSnapshot = {
       status: 'ready',

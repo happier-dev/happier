@@ -23,7 +23,10 @@ import { createRealpathNormalizer, realpathReachRules } from '@/mcp/servers/crea
 import { resolveSessionProjectPromptStack } from '@/agent/prompting/coding/sessionProjectPromptStack';
 import { prepareActivePromptLibraryRecord } from '@/settings/prompts/hydratePromptLibraryCatalog';
 import type { SavedSecretOperationContextV1 } from '@/settings/secrets/hydrateSavedSecretCatalog';
-import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { runWithServerHttpBaseUrl, resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { fetchServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
+import { resolveCliFeatureDecision } from '@/features/featureDecisionService';
+import type { FeatureId } from '@happier-dev/protocol/features/catalog';
 import { getActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshotLifetimeToken } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { projectPromptBundleActionEntriesV1 } from '@happier-dev/protocol/prompts/library/promptBundleSchemas';
@@ -46,6 +49,7 @@ export type ResolveRunnerSkillsInput = Readonly<{
 }>;
 export type RunnerSkillsResult = Readonly<{
   reach?: Readonly<{ context: ReachContextV1; rules: readonly SkillRuleV1[];
+    featureEnabled?: Readonly<Partial<Record<FeatureId, boolean>>>;
     catalog?: Readonly<{ revision: number | 'absent'; authority: 'active' | 'inactive' }> }>;
   delivery?: AgentSessionSkillDelivery; plan: SessionSkillPlanV1;
   indexItems: readonly SkillLibraryItemV1[]; unavailable?: true;
@@ -143,7 +147,17 @@ async function resolveRunnerSkillsForHome(input: ResolveRunnerSkillsInput, trans
     const candidates = [...new Set([...rules.map(rule => rule.skillId),
       ...(selection.skills?.forceIncludeSkillIds ?? []), ...(selection.skills?.forceExcludeSkillIds ?? []),
       ...FIRST_PARTY_SKILLS_V1.map(skill => skill.skillId)])];
+    // One shared Home observation feeds all first-party requirements. The feature
+    // engine owns dependencies, local opt-outs and Account preferences.
+    const serverSnapshot = await fetchServerFeaturesSnapshot({ serverUrl: resolveServerHttpBaseUrl() });
+    await current();
+    const featureEnabled: Partial<Record<FeatureId, boolean>> = {};
+    for (const skill of FIRST_PARTY_SKILLS_V1) if (skill.requiresFeature && featureEnabled[skill.requiresFeature] === undefined) {
+      featureEnabled[skill.requiresFeature] = resolveCliFeatureDecision({ featureId: skill.requiresFeature,
+        env: process.env, serverSnapshot, settings: snapshot.settings }).state === 'enabled';
+    }
     const selected = resolveSessionCapabilitiesV1({ context, mcp: null,
+      isFeatureEnabled: featureId => featureEnabled[featureId] === true,
       skills: { items: candidates.map(skillId => ({ skillId, name: skillId })), rules: normalizedRules },
       selection, agentAcceptsUserMcp: false }).skills;
     const requiredPluginIds = selected.items.filter(item => item.selected && isPluginSkillIdV1(item.id)).map(item => item.id);
@@ -152,7 +166,7 @@ async function resolveRunnerSkillsForHome(input: ResolveRunnerSkillsInput, trans
       settings, skillIds: requiredPluginIds, serverHttpBaseUrl: input.operationContext?.serverHttpBaseUrl,
       isCurrent: async () => { await current(); return true; } }));
     await current();
-    reach = { context, rules, catalog: { revision: rulesRead.revision, authority: rulesRead.authority } };
+    reach = { context, rules, featureEnabled, catalog: { revision: rulesRead.revision, authority: rulesRead.authority } };
     unavailableReason = 'skill_plan_unavailable';
     const additionalProjectDirectories = await resolveAgentNativeSkillDirectories(input.agentId, {
       catalog: input.contributes, sessionMetadata: input.sessionMetadata,

@@ -8,10 +8,16 @@ import { publishPresentationNotice } from '@/components/sessions/presentation/pr
 import type { ReachRulesChangeV1 } from '@happier-dev/protocol/reach/reachRulesChangeV1';
 import type { ReachRulesV1 } from '@happier-dev/protocol/reach/reachRuleV1';
 import { t } from '@/text';
+import { resolveSkillReachV1 } from '@happier-dev/protocol/prompts/library/skills/firstPartySkillsV1';
+import { resolveReachV1 } from '@happier-dev/protocol/reach/resolveReachV1';
+import { useSkillFeatureEnabled } from '@/sync/domains/skills/useSkillFeatureEnabled';
 
 export type { ReachRulesWriteResult } from './useReachRulesState';
 export function useReachRules(kind: 'skill' | 'mcp_server', itemId: string, requestedScope?: ServerAccountScope | null) {
     const catalog = useReachRulesCatalog(kind, itemId, requestedScope);
+    const isFeatureEnabled = useSkillFeatureEnabled(kind === 'skill' ? catalog.scope?.serverId : null);
+    const resolveReach = React.useCallback<typeof resolveReachV1>((rules, context) => kind === 'skill'
+        ? resolveSkillReachV1(itemId, rules, context, isFeatureEnabled) : resolveReachV1(rules, context), [kind, itemId, isFeatureEnabled]);
     const execution = useMountedActionExecution(catalog.scope);
     const execute = React.useCallback<ExecuteReachRules>((actionId, input) => execution.execute(actionId, input), [execution.execute]);
     const key = JSON.stringify([catalog.scope?.serverId, catalog.scope?.accountId, kind, itemId]);
@@ -35,5 +41,5 @@ export function useReachRules(kind: 'skill' | 'mcp_server', itemId: string, requ
         return pending;
     }, [state.change, state.undoLast, key]);
     const newerReceipt = state.revision !== 'absent' && (catalog.revision === 'absent' || state.revision > catalog.revision);
-    return { ...state, rules: kind === 'skill' && !newerReceipt ? catalog.rules : state.rules, change };
+    return { ...state, rules: kind === 'skill' && !newerReceipt ? catalog.rules : state.rules, change, resolveReach };
 }

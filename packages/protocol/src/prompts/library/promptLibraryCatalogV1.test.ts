@@ -83,13 +83,9 @@ describe('Prompt library destination authority', () => {
       normalizeHistory: async input => { retired = input.activeTransferredRoots; return { status: 'complete' }; },
     } });
     expect(await load()).toMatchObject({ status: 'ready', rows: expect.arrayContaining([
-      { record: { key: 'skill-rules', value: { v: 1, rules: expect.arrayContaining([
-        expect.objectContaining({ id: 'first-party:happier:happier', skillId: 'happier:happier', enabled: true }),
-      ]) } }, revision: 1 },
+      { record: { key: 'skill-rules', value: { v: 1, rules: [] } }, revision: 1 },
     ]) });
-    expect(initialized).toMatchObject([{ key: 'skill-rules', value: { v: 1, rules: [
-      { id: 'first-party:happier:happier', skillId: 'happier:happier', enabled: true },
-    ] } }]);
+    expect(initialized).toMatchObject([{ key: 'skill-rules', value: { v: 1, rules: [] } }]);
     expect(raw).toEqual({ undefined: 'keep', null: 'keep',
       promptStacksV1: { v: 1, surfaces: { profilesById: {} } } });
     expect(retired.every(root => typeof root === 'string' && root !== 'undefined' && root !== 'null')).toBe(true);

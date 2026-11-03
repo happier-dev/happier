@@ -7133,6 +7133,8 @@ encryptedUnavailable: "Dettagli crittografati non disponibili",
       "Mostra la barra laterale di navigazione delle impostazioni (web/tablet)",},
 
   settingsFeatures: {
+    deployments: "Distribuzioni",
+    featureOptOutSubtitle: "Mostra questa funzione e consenti nuove attività. Il lavoro già avviato continua.",
     // Features settings screen
     experiments: "Esperimenti",
     generalTitle: 'Generali',

@@ -87,7 +87,7 @@ export function skillReachesMachine(
   machine: ReachMachine,
 ): boolean {
   return (
-    projectReachOnMachines(item.rules, [machine])[0]?.agents.some(
+    projectReachOnMachines(item.rules, [machine], undefined, [], { skillId: item.skillId, isFeatureEnabled: () => true })[0]?.agents.some(
       (agent) => agent.enabled && skillPlanOnMachine(machine, agent.agentId) !== 'none',
     ) ?? false
   );
@@ -162,7 +162,7 @@ export function buildSkillsReach(
     const skillIds: string[] = [];
     const machineAgents = new Set<string>();
     for (const item of items) {
-      const row = projectReachOnMachines(item.rules, [machine])[0];
+      const row = projectReachOnMachines(item.rules, [machine], undefined, [], { skillId: item.skillId, isFeatureEnabled: () => true })[0];
       const enabled = row?.agents.filter((agent) => agent.enabled && skillPlanOnMachine(machine, agent.agentId) !== 'none') ?? [];
       if (enabled.length === 0) continue;
       skillIds.push(item.skillId);

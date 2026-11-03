@@ -11,6 +11,11 @@ const seed = buildFirstPartySkillSeedRuleV1('happier:happier', 1);
 const bundled = { ...item, skillId: seed.skillId, name: 'happier', provenance: { kind: 'first_party' as const }, rules: [seed] };
 
 describe('first-run current default reach', () => {
+  it('keeps an existing Account eligible when new built-ins have no persisted rules', () => {
+    const later = { ...bundled, skillId: 'happier:workflows', name: 'workflows', rules: [] };
+    expect(resolveSkillsFirstVisit([item, bundled, later], { rules: [seed], decidedAt: null })).toEqual({ on: 0, off: 1 });
+    expect(later.rules).toEqual([]);
+  });
   it('allows only migrated rules and the exact unmodified seed, and honors device dismissal', () => {
     expect(resolveSkillsFirstVisit([item, bundled], { rules: [seed], decidedAt: null })).toEqual({ on: 0, off: 1 });
     expect(resolveSkillsFirstVisit([item, bundled], { rules: [seed], decidedAt: 0 })).toBeNull();

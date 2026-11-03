@@ -6907,6 +6907,8 @@ encryptedUnavailable: "Verschlüsselte Details nicht verfügbar",
     },
 
     settingsFeatures: {
+        deployments: "Bereitstellungen",
+        featureOptOutSubtitle: "Diese Funktion anzeigen und neue Arbeit erlauben. Bereits gestartete Arbeit läuft weiter.",
         // Features settings screen
         experiments: 'Experimente',
         generalTitle: 'Allgemein',

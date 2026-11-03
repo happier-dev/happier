@@ -28,6 +28,7 @@ import {
   captureDaemonMergedProjectionReader,
   type DaemonMergedProjectionSummary,
 } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
+import { useSkillFeatureEnabled } from '@/sync/domains/skills/useSkillFeatureEnabled';
 
 export type ReachMachineProjection = Readonly<
   ReachProjectionV1[number] & { online: boolean | null; offline: boolean; projectKey?: string; agentInventoryComplete?: boolean }
@@ -183,8 +184,9 @@ export function projectReachOnMachines(
   machines: readonly ReachMachine[],
   projectKey?: string,
   workspaceRefs: readonly WorkspaceRefV1[] = [],
+  skill?: Parameters<typeof projectReachForMachinesV1>[1]['skill'],
 ): readonly ReachMachineProjection[] {
-  const projected: ReachMachineProjection[] = projectReachForMachinesV1(rules, { projectKey, machines }).map(
+  const projected: ReachMachineProjection[] = projectReachForMachinesV1(rules, { projectKey, machines, skill }).map(
     (row, index) => ({ ...row, online: machines[index]?.online ?? null, offline: machines[index]?.offline ?? false,
       agentInventoryComplete: machines[index]?.agentInventoryComplete }),
   );
@@ -193,7 +195,7 @@ export function projectReachOnMachines(
   for (const key of projectKeys) {
     const machineIds = new Set(workspaceRefs.filter(ref => (ref.projectKey ?? ref.id) === key).map(ref => ref.machineId));
     const members = machines.filter(machine => machineIds.has(machine.machineId));
-    projected.push(...projectReachForMachinesV1(rules, { projectKey: key, machines: members })
+    projected.push(...projectReachForMachinesV1(rules, { projectKey: key, machines: members, skill })
       .map((row, index) => ({ ...row, projectKey: key, online: members[index]?.online ?? null, offline: members[index]?.offline ?? false,
         agentInventoryComplete: members[index]?.agentInventoryComplete })));
   }
@@ -208,12 +210,14 @@ export function useReachProjection(
 ): readonly ReachMachineProjection[] {
   const catalog = useReachRulesCatalog(kind, itemId);
   const { scope, machines } = useReachMachines();
+  const isFeatureEnabled = useSkillFeatureEnabled(kind === 'skill' ? scope?.serverId : null);
   const { workspaceRefs } = useReachProjects(scope?.serverId);
   return React.useMemo(
     () =>
       !scope || !catalog.valueAvailable
         ? empty
-        : projectReachOnMachines(catalog.rules, machines, opts?.projectKey, workspaceRefs),
-    [scope, catalog.valueAvailable, catalog.rules, opts?.projectKey, machines, workspaceRefs],
+        : projectReachOnMachines(catalog.rules, machines, opts?.projectKey, workspaceRefs,
+          kind === 'skill' ? { skillId: itemId, isFeatureEnabled } : undefined),
+    [scope, catalog.valueAvailable, catalog.rules, opts?.projectKey, machines, workspaceRefs, kind, itemId, isFeatureEnabled],
   );
 }

@@ -6,7 +6,6 @@ import { createStoredReadSchema } from '../../json/storedReadSchema.js';
 import { PromptStackEntryV1StoredSchema, PromptLibraryStackUpdateInputV1Schema, PromptLibraryStackUpdateResultV1Schema, applyPromptStackIntentV1, type PromptStackEntryV1 } from './promptStacksV1.js';
 import type { ArtifactFolderActionPortV1 } from './promptFolderActionsV1.js';
 import type { RegistrySourcesMutationV1, RegistrySourcesMutationResultV1 } from '../../registries/registrySourcesMutationV1.js';
-import { FIRST_PARTY_SKILLS_V1, buildFirstPartySkillSeedRuleV1 } from './skills/firstPartySkillsV1.js';
 import { readStackSkillIdsV1, convertStackSkillEntriesV1, migrateStackSkillRulesV1, unconsumedStackSkillEntriesV1 } from './skills/convertStackSkillEntriesV1.js';
 import { isPromptStackSystemAppendPlacementV1 } from './promptPlacementV1.js';
 import { PromptLibraryCatalogKeyV1Schema, StoredPromptLibraryRecordV1Schema, openPromptLibraryContentV1,
@@ -323,8 +322,7 @@ export function emptyPromptLibraryRecordV1(key: PromptLibraryCatalogKeyV1, nowMs
     case 'contexts': return { key, value: { v: 1, selectionsByKey: {} } };
     case 'role-overrides': return { key, value: { v: 1, overrides: {} } };
     case 'skill-usage': return { key, value: { v: 1, lastUsedAt: {} } };
-    case 'skill-rules': return { key, value: { v: 1,
-      rules: FIRST_PARTY_SKILLS_V1.map(skill => buildFirstPartySkillSeedRuleV1(skill.skillId, nowMs)) } };
+    case 'skill-rules': return { key, value: { v: 1, rules: [] } };
   }
 }
 

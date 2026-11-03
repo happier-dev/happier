@@ -359,7 +359,9 @@ describe('capability selection settled-turn apply', () => {
             credentials: { token: 'test', encryption: null }, sessionMetadata: f.metadata, agentHasActionChannel: true,
             contributes: { catalogEntriesById: { fixture: { skills: { delivery: 'session_dir', nativeDisable: 'supported', liveReload: 'supported' } } } },
             accountSnapshot: { source: 'network', settings: accountSettingsParse({}), settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [],
-              promptLibraryCatalog: { status: 'ready', rows: [{ revision: 1, record: { key: 'skill-rules', value: { v: 1, rules: [] } } }], tombstones: [], diagnostics: [] } },
+              promptLibraryCatalog: { status: 'ready', rows: [{ revision: 1, record: { key: 'skill-rules', value: { v: 1, rules: [
+                { id: 'core-off', skillId: 'happier:happier', target: { t: 'allMachines' }, enabled: false, createdAt: 1, updatedAt: 1 },
+              ] } } }], tombstones: [], diagnostics: [] } },
           }),
           runtime: { refreshSkills: async ({ skills }) => {
             reloads++;

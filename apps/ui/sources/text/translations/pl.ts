@@ -6758,6 +6758,8 @@ encryptedUnavailable: "Zaszyfrowane dane niedostępne",
       "Pokaż pasek boczny nawigacji ustawień (web/tablet)",},
 
   settingsFeatures: {
+    deployments: "Wdrożenia",
+    featureOptOutSubtitle: "Pokazuj tę funkcję i zezwalaj na nowe zadania. Rozpoczęta praca jest kontynuowana.",
     // Features settings screen
     experiments: "Eksperymenty",
     generalTitle: 'Ogólne',
