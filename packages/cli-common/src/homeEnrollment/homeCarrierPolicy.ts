@@ -141,6 +141,16 @@ function resolveDescriptorApplicationOrigin(descriptor: HomeConnectionDescriptor
   return loopbackOrigin;
 }
 
+/** A possible guest route, not a probe of DNS, firewall, TLS or Iroh readiness. */
+export function hasRemoteHomeApplicationCarrier(
+  descriptor: HomeConnectionDescriptorV1,
+  applicationCarrierEligibility: HomeApplicationCarrierEligibility = 'automatic',
+): boolean {
+  if (applicationCarrierEligibility === 'automatic' && descriptor.endpoints.some(endpoint => endpoint.kind === 'iroh')) return true;
+  const origin = resolveDescriptorApplicationOrigin(descriptor);
+  return origin !== null && !isLoopbackHostname(new URL(origin).hostname);
+}
+
 /**
  * Platform-neutral carrier decision. Standard-only eligibility bypasses Iroh
  * and uses descriptor-declared HTTPS. Automatic eligibility attempts Iroh

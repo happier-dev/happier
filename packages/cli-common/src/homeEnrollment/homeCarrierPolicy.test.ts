@@ -4,6 +4,7 @@ import {
   acquireHomeCarrierByPolicy,
   drainRetainedHomeCarrierReleases,
   readHomeApplicationCarrierEligibilityFromEnv,
+  hasRemoteHomeApplicationCarrier,
 } from './homeCarrierPolicy';
 import { enrollmentPollingBackoffMs } from './index';
 
@@ -20,6 +21,17 @@ const descriptor = {
 };
 
 describe('client-local Home carrier selection', () => {
+  it.each(['http://localhost:3039', 'http://qa.localhost:3039', 'http://127.0.0.1:3039', 'https://[::1]:3039'])(
+    'distinguishes a local-only Home from routes usable by a separate guest (%s)', (url) => {
+      const local = { ...descriptor, endpoints: [{ kind: 'https' as const, url }] };
+      expect(hasRemoteHomeApplicationCarrier(local)).toBe(false);
+      expect(hasRemoteHomeApplicationCarrier({ ...local, endpoints: [...local.endpoints, descriptor.endpoints[0]!] })).toBe(true);
+      const peer = { ...local, endpoints: [...local.endpoints, descriptor.endpoints[1]!] };
+      expect(hasRemoteHomeApplicationCarrier(peer)).toBe(true);
+      expect(hasRemoteHomeApplicationCarrier(peer, 'standard_only')).toBe(false);
+    },
+  );
+
   it('selects Standard only from the operator environment and rejects unknown values', () => {
     expect(readHomeApplicationCarrierEligibilityFromEnv({})).toBe('automatic');
     expect(readHomeApplicationCarrierEligibilityFromEnv({ HAPPIER_HOME_CARRIER_POLICY: 'standard_only' })).toBe('standard_only');
