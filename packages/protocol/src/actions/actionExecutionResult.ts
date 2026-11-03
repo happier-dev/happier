@@ -238,6 +238,9 @@ export function readUnexpectedActionErrorDiagnosticV1(error: unknown): Readonly<
         'session_detail_invalid_response', 'session_detail_projection_unavailable', 'not_authenticated', 'client-upgrade-required',
         'database_transaction_conflict_exhausted', 'database_transaction_timeout', 'database_connection_unavailable',
       ].includes(code) || Object.values(RPC_ERROR_CODES).some(known => known === code))) errorCode = code;
+      // The managed controller throws only its own closed, code-only identifiers.
+      if (errorCode === null && name === 'ManagedMachineControllerError' && typeof code === 'string'
+        && code.length <= 200 && /^[a-z][a-z0-9_-]*$/iu.test(code)) errorCode = code;
       // JSON-RPC reserves these protocol/server codes. Preserve only that
       // bounded vocabulary, never native application data or message text.
       if (name === 'JsonRpcApplicationError' && typeof code === 'number' && Number.isInteger(code)
