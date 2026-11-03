@@ -16,7 +16,7 @@ import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixtu
 import { resolveManifestHostAccessRequests } from '@/plugins/runtime/hostAccess/manifestRequests';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { createTargetActionHostBindingResolver } from '@/plugins/runtime/hostAccess/resolve';
+import { createTargetActionHostBindingResolver, type ResolveTargetActionHostBinding } from '@/plugins/runtime/hostAccess/resolve';
 import { createManagedPluginSourceCustody } from '@/plugins/runtime/lifecycle/contributions/runtimeIdentity.testkit';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { createPluginRuntimeOccurrenceId } from '@/plugins/runtime/runtimeSlots';
@@ -25,7 +25,7 @@ import { createStablePluginConnectedAccountsHost, type StablePluginConnectedAcco
 import { createManagedServiceCredentialFileOwner } from '../services/managedServiceCredentialFileOwner';
 import { createPluginInvocationSecretRedactor, type PluginInvocationLogSink } from '../services/logger';
 import { createTargetActionInvocationRegistry, type TargetActionInvocationRegistration } from '../targetActionRegistry';
-import type { CreatePluginInvocationServiceBinding } from '../services/types';
+import type { CreatePluginInvocationServiceBinding, CreatePluginInvocationServices } from '../services/types';
 import type { PluginInvocationServicesFactoryParams } from '../services/unavailable';
 
 export const pluginId = 'acme.compute';
@@ -79,6 +79,10 @@ export function fixture(options: Readonly<{
     nativeCredentialService?: boolean;
     createHostServiceBinding?: CreatePluginInvocationServiceBinding;
     hostServiceAdapters?: Pick<PluginInvocationServicesFactoryParams, 'exec' | 'http' | 'connectedAccounts'>;
+    /** Authored module handlers and production service owners for composed native tests. */
+    actionHandlers?: ReadonlyMap<string, TargetActionInvocationRegistration['handler']>;
+    createServices?: CreatePluginInvocationServices;
+    resolveHostBinding?: ResolveTargetActionHostBinding;
     invocationLogSink?: PluginInvocationLogSink;
     reconciliation?: boolean;
     reconciliationResource?: boolean;
@@ -199,7 +203,11 @@ export function fixture(options: Readonly<{
     const actualRegistrations = registrations.map((registration): TargetActionInvocationRegistration => {
         const action = manifest.contributes.actions.find((candidate) => candidate.id === registration.localId);
         if (!action) throw new Error(`Missing fixture Action ${registration.localId}`);
-        return { ...registration, definition: { ...registration.definition,
+        const authoredHandler = options.actionHandlers?.get(registration.localId);
+        if (options.actionHandlers && !authoredHandler) throw new Error(`Missing authored Action ${registration.localId}`);
+        return { ...registration,
+            handler: authoredHandler ?? registration.handler,
+            definition: { ...registration.definition,
             dangerLevel: action.dangerLevel, scopes: action.scopes, surfaces: action.surfaces,
             inputSchema: action.inputSchema, resultSchema: action.resultSchema,
             ...(action.confirmation ? { confirmation: action.confirmation } : {}),
@@ -230,7 +238,7 @@ export function fixture(options: Readonly<{
             generation: { targetGeneration: action.occurrenceId, desiredGeneration: action.occurrenceId, appliedGeneration: action.occurrenceId },
             resourceSelections: [], scopedGrants: [], operatingSystemAuthorization: [],
         }),
-        resolveHostBinding: createTargetActionHostBindingResolver(options.credentialOwner || options.nativeCommandArgs || options.nativeCredentialService ? {
+        resolveHostBinding: options.resolveHostBinding ?? createTargetActionHostBindingResolver(options.credentialOwner || options.nativeCommandArgs || options.nativeCredentialService ? {
             createServiceBinding: options.createHostServiceBinding ?? ((occurrence, id, requests) => {
                 const binding = createLoggerAvailablePluginInvocationServiceBinding(occurrence, id);
                 const execBinding = options.nativeCommandArgs ? addExecServiceBinding(binding, requests ?? []) : binding;
@@ -238,6 +246,7 @@ export function fixture(options: Readonly<{
             }),
         } : undefined),
         createServices(seed, binding) {
+            if (options.createServices) return options.createServices(seed, binding);
             // The real production factory begins this qualified diagnostic
             // scope before constructing services; reproduce that host boundary.
             secretRedactor?.beginInvocation({ pluginId: seed.plugin.id, occurrenceId: seed.occurrenceId,
