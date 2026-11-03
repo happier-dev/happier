@@ -22,6 +22,7 @@ import { MachineRebootResultV1Schema } from '@happier-dev/protocol';
 
 import { parseActionOperationProgressUpdate } from './actionOperationProgress';
 import { createActionOperationSetupReview } from './actionOperationSetupReview';
+import { settleReviewedIsolationPredecessors } from './settleReviewedIsolationPredecessors';
 import type { RequesterWorkAttributionV1 } from '@/daemon/lifecycle/requesterWorkAttribution';
 import type { ActionOperationStore } from './actionOperationStore';
 import { timeWebLatencyPhase } from '@/daemon/externalActions/webLatencyTrace';
@@ -326,6 +327,8 @@ export function createActionOperationRunner(deps: Readonly<{
             deps.store.cancel(operationId);
           } else if (executionResult.ok) {
             deps.store.succeed(operationId, executionResult.result);
+            settleReviewedIsolationPredecessors({ store: deps.store, scope: request.scope, action, operationId,
+              requestInput: request.input, result: executionResult.result, isActive: heldId => active.has(heldId) });
             const completed = deps.store.get(request.scope, operationId)?.domainRef;
             const setupResult = action.actionId === 'projects.prepare'
               ? ProjectPrepareNoLaunchResultV1Schema.safeParse(executionResult.result) : null;
