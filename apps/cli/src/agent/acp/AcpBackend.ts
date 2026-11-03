@@ -395,7 +395,7 @@ export interface AcpBackendOptions {
   /** Observes the subprocess terminal fact without taking lifecycle ownership from the caller. */
   onProcessExit?: (exit: Readonly<{ code: number | null; signal: NodeJS.Signals | null }>) => void;
 
-  /** Observes an unintentional network connection loss after the connection is installed. */
+  /** Observes unintentional loss of the usable provider connection, including its mandatory journal source. */
   onConnectionLost?: (loss: Readonly<{ detail: string }>) => void;
 
   /** Observes only accumulator-owned terminal result publications. */
@@ -604,6 +604,8 @@ export class AcpBackend implements CatalogAcpBackend {
         fail: error => {
           this.failPendingResponseWait(error);
           this.emit({ type: 'status', status: 'error', detail: error.message });
+          // Fatal journal loss retires the runtime; an intentionally detached child's exit does not.
+          this.options.onConnectionLost?.({ detail: error.message });
           void this.cleanupInitializedProcessConnection({ graceMs: 250 });
         },
       });
@@ -718,8 +720,20 @@ export class AcpBackend implements CatalogAcpBackend {
     ));
   }
 
+  /** Revoke source ownership synchronously; observer cleanup cannot prevent native teardown. */
+  private async stopProviderTurnSource(): Promise<void> {
+    try {
+      const outcome = await withGracefulTeardownBound(this.providerTurns?.stop() ?? Promise.resolve());
+      if (outcome === 'timed_out') {
+        logger.debug('[AcpBackend] Provider source cleanup exceeded the graceful teardown bound');
+      }
+    } catch (error) {
+      logger.debug('[AcpBackend] Provider source cleanup failed (non-fatal)', error);
+    }
+  }
+
   private async cleanupInitializedProcessConnection(params: { graceMs: number }): Promise<void> {
-    await this.providerTurns?.stop();
+    const sourceStopped = this.stopProviderTurnSource();
     const proc = this.process;
     const connection = this.connection;
     const closeNetworkTransport = this.closeNetworkTransport;
@@ -756,6 +770,7 @@ export class AcpBackend implements CatalogAcpBackend {
     }
 
     await connection?.closed.catch(() => undefined);
+    await sourceStopped;
   }
 
   private async createConnectionAndInitialize(params: { operationId: string }): Promise<{ initTimeout: number }> {
@@ -801,14 +816,18 @@ export class AcpBackend implements CatalogAcpBackend {
 
       try {
         this.process = spawn(spec.command, spec.args, spec.options);
+        const spawnedProcess = this.process;
         // Install lifecycle observers before stderr artifact setup yields to I/O.
         // Failed spawns emit `error` on the next tick, even with valid stdio pipes.
         this.process.on('error', (err) => {
+          if (this.process !== spawnedProcess) return;
           logger.debug(`[AcpBackend] Process error:`, err);
           this.failPendingResponseWait(err instanceof Error ? err : new Error(String(err)));
           this.emit({ type: 'status', status: 'error', detail: err.message });
         });
         this.process.on('exit', (code, signal) => {
+          // Intentional cleanup detaches the child before killing it; that is not runtime failure.
+          if (this.process !== spawnedProcess) return;
           const hasSignal = typeof signal === 'string' && signal.trim().length > 0;
           const hasNonZeroCode = typeof code === 'number' && Number.isFinite(code) && code !== 0;
           const hasUnknownExit = code === null && !hasSignal;
@@ -1471,6 +1490,7 @@ export class AcpBackend implements CatalogAcpBackend {
         status: 'error',
         detail: error instanceof Error ? error.message : String(error),
       });
+      await this.cleanupInitializedProcessConnection({ graceMs: 250 });
       throw error;
     }
   }
@@ -3049,25 +3069,36 @@ export class AcpBackend implements CatalogAcpBackend {
     this.idleTimeout.unref?.();
   }
 
+  /** Stop native work independently of publication, then recover through the canonical startup deadline. */
   private async cancelProviderSession(sessionId: string): Promise<void> {
     const foregroundCancellation = this.rawPromptRequest && this.connection
       ? this.connection.peer.cancel({ sessionId }).catch(error => logger.debug('[AcpBackend] Foreground cancel before close failed', error))
       : undefined;
     this.failPendingResponseWait(makeAbortError('Cancelled by user'));
-    await this.providerTurns?.stop();
-    await foregroundCancellation;
+    const sourceStopped = this.stopProviderTurnSource();
     this.toolCalls.terminalizeTurn('cancelled');
-    if (!this.connection) return;
+    if (!this.connection) { await sourceStopped; return; }
     if (!this.negotiatedSessionCapabilities.closeSession) {
       await this.cleanupInitializedProcessConnection({ graceMs: 250 });
+      await sourceStopped;
       await this.loadSession(sessionId);
     } else {
       try {
-        await this.connection.peer.closeSession({ sessionId });
+        const outcome = await withGracefulTeardownBound(Promise.all([
+          this.connection.peer.closeSession({ sessionId }), foregroundCancellation,
+        ]));
+        if (outcome === 'timed_out') {
+          logger.debug('[AcpBackend] Provider session close exceeded the graceful teardown bound; restarting connection');
+          await this.cleanupInitializedProcessConnection({ graceMs: 250 });
+          await sourceStopped;
+          await this.loadSession(sessionId);
+          this.finalizeTurnOutcome({ kind: 'aborted', stopReason: 'cancelled' });
+          this.emit({ type: 'status', status: 'stopped', detail: 'Cancelled by user' });
+          return;
+        }
+        await sourceStopped;
         this.replayCapture = new AcpReplayCapture();
-        const response = await this.connection.peer.loadSession({
-          sessionId, cwd: this.options.cwd, mcpServers: this.buildAcpMcpServersForSessionRequest(),
-        });
+        const response = await this.loadSessionOnCurrentConnection(sessionId, this.transport.getInitTimeout());
         this.rawPromptRequest = null;
         this.rawPromptRequestTurnGeneration = null;
         this.lastSelectedPermissionOptionIdByToolCallId.clear();
@@ -3199,12 +3230,13 @@ export class AcpBackend implements CatalogAcpBackend {
     }
   }
 
+  /** Release native resources even when an observer rejects or cannot finish draining. */
   async dispose(options?: Readonly<{ preserveProviderSession: boolean }>): Promise<void> {
     if (this.disposed) return;
-    
+
     logger.debug('[AcpBackend] Disposing backend');
     this.disposed = true;
-    await this.providerTurns?.stop();
+    const sourceStopped = this.stopProviderTurnSource();
 
     if (this.waitingForResponse || this.responseCompletionTimeout) {
       this.failPendingResponseWait(makeAbortError('Backend disposed'));
@@ -3271,6 +3303,7 @@ export class AcpBackend implements CatalogAcpBackend {
       }
     }
     await connection?.closed.catch(() => undefined);
+    await sourceStopped;
 
     // Clear timeouts
     if (this.postPromptCompletionIdleTimeout) {

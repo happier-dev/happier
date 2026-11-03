@@ -47,16 +47,20 @@ export class AcpProviderTurns {
   isActive(): boolean { return this.active !== null; }
   isOpen(): boolean { return this.source !== null; }
 
+  /** Revoke admission first and attempt every observer cleanup even if another one throws. */
   async stop(): Promise<void> {
     const source = this.source;
     this.source = null;
     this.lifetime?.abort();
     this.lifetime = null;
     this.active = null;
-    this.lifecycle.dispose();
     const journal = this.journal;
     this.journal = null;
-    await Promise.all([source?.dispose(), journal?.close({ finalDrain: false })]);
+    await Promise.all([
+      Promise.resolve().then(() => this.lifecycle.dispose()),
+      Promise.resolve().then(() => source?.dispose()),
+      Promise.resolve().then(() => journal?.close({ finalDrain: false })),
+    ]);
   }
 
   async catchUp(permissionToolCallId?: string): Promise<void> {

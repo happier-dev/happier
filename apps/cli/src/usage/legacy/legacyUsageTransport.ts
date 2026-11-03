@@ -158,11 +158,12 @@ export function buildLegacyUsageReportFromUsageObservation(params: Readonly<{
     // servers replace the session key and cannot reconcile the two; retain
     // their unchanged cumulative report instead of letting a delta replace it.
     if (observation.source === 'codex-app-server-response-usage') return null;
-    const tokens = getCompatibleLegacyTokens(observation);
-    if (!tokens) return null;
+    // Context stays on transcript/runtime messages, never in consumed-token accounting.
+    const tokens = observation.tokens ? getCompatibleLegacyTokens(observation) : { total: 0 };
     const cost = createLegacyNumberMap();
     Object.assign(cost, observation.cost?.breakdown ?? {});
     cost.total = observation.cost?.reportedUsd || observation.cost?.estimatedUsd || observation.cost?.invoiceUsd || 0;
+    if (!tokens || (!observation.tokens && cost.total === 0)) return null;
     return {
         key: observation.key ?? `${observation.provider}-session`,
         sessionId: params.sessionId,

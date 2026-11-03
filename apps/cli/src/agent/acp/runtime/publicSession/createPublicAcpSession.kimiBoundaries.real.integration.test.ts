@@ -1,6 +1,7 @@
 import { access, readFile, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { z } from 'zod';
 import type {
   AgentAcpRuntimeOptions,
   AgentSessionOpenRequest,
@@ -12,6 +13,7 @@ import { createKimiAgentRuntime } from '../../../../../../../packages/plugins/ki
 import { createPublicAcpSession, type PublicAcpComposerDependencies } from './createPublicAcpSession';
 import {
   createKimiLoopbackModel,
+  createKimiLoopbackEnvironment,
   KIMI_FIXTURE_BACKGROUND,
   KIMI_FIXTURE_FOREGROUND,
   KIMI_FIXTURE_NESTED_BACKGROUND,
@@ -76,11 +78,7 @@ async function withOfficialSession(options: Options, run: (fixture: Fixture) => 
       runtime = await factory.sessions.open({
         kind: 'create', sessionId: 'public-boundary', cwd: model.workspace,
         ...(options.mcpServers ? { mcpServers: await options.mcpServers({ directory, model }) } : {}),
-        launchEnvironment: {
-          values: { KIMI_CODE_HOME: model.home, KIMI_DISABLE_TELEMETRY: '1' },
-          unset: Object.keys(process.env).filter(key => /^(KIMI_|OPENAI_|ANTHROPIC_)/u.test(key)
-            && key !== 'KIMI_CODE_HOME' && key !== 'KIMI_DISABLE_TELEMETRY'),
-        },
+        launchEnvironment: createKimiLoopbackEnvironment(model.home),
       }, context);
       const session = runtime;
       session.watch(event => { events.push(event); });
@@ -111,8 +109,9 @@ async function withOfficialSession(options: Options, run: (fixture: Fixture) => 
 describe.skipIf(!executable || process.platform === 'win32')('official Kimi public ACP boundaries', () => {
   let env: ReturnType<typeof createEnvKeyScope>;
   beforeEach(() => {
-    env = createEnvKeyScope(['HAPPIER_ACP_FS']);
-    env.patch({ HAPPIER_ACP_FS: '1' });
+    env = createEnvKeyScope(['HAPPIER_ACP_FS', 'KIMI_MODEL', 'OPENAI_BASE_URL', 'ANTHROPIC_API_KEY']);
+    env.patch({ HAPPIER_ACP_FS: '1', KIMI_MODEL: 'fixture-must-not-inherit',
+      OPENAI_BASE_URL: 'http://127.0.0.1:1', ANTHROPIC_API_KEY: 'fixture-must-not-inherit' });
   });
   afterEach(() => env.restore());
 
@@ -184,6 +183,8 @@ describe.skipIf(!executable || process.platform === 'win32')('official Kimi publ
           "import { spawn } from 'node:child_process';",
           "import { existsSync } from 'node:fs';",
           "import { createInterface } from 'node:readline';",
+          // Assert the real child environment without exposing inherited values.
+          "if (['KIMI_MODEL', 'OPENAI_BASE_URL', 'ANTHROPIC_API_KEY'].some(key => process.env[key] !== undefined)) throw new Error('Fixture process inherited a model override');",
           'const child = spawn(' + JSON.stringify(executable) + ", process.argv.slice(2), { stdio: ['pipe', 'pipe', 'pipe'] });",
           'const promptIds = new Set(); const pending = [];',
           "createInterface({ input: process.stdin }).on('line', line => {",
@@ -238,6 +239,27 @@ describe.skipIf(!executable || process.platform === 'win32')('official Kimi publ
           expect(events.indexOf(output[0]!)).toBeLessThan(events.findIndex(event =>
             event.kind === 'turn-complete' && event.turnId === starts[index]!.turnId));
         }
+        const stepSchema = z.object({ type: z.literal('context.append_loop_event'), agentId: z.literal('main'), event: z.object({
+          type: z.literal('step.end'), uuid: z.string(), turnId: z.coerce.string(),
+          usage: z.object({ inputOther: z.number(), inputCacheRead: z.number(), inputCacheCreation: z.number(), output: z.number() }),
+        }) });
+        const steps = (await model.readNativeEvents()).flatMap(record => {
+          const parsed = stepSchema.safeParse(record);
+          return parsed.success && parsed.data.event.turnId !== '0' ? [parsed.data.event] : [];
+        });
+        expect(steps.length).toBeGreaterThan(0);
+        const observations = events.filter((event): event is Extract<Event, { kind: 'usage-observed' }> => event.kind === 'usage-observed');
+        for (const { uuid, usage } of steps) {
+          expect(observations.filter(event => event.observationId === `kimi-step:${uuid}`)).toEqual([expect.objectContaining({
+            scope: 'turn_delta', tokens: expect.objectContaining({
+              total: usage.inputOther + usage.inputCacheRead + usage.inputCacheCreation + usage.output,
+              input: usage.inputOther + usage.inputCacheRead + usage.inputCacheCreation, output: usage.output,
+            }),
+          })]);
+        }
+        const contextOnly = observations.filter(event => event.context);
+        expect(contextOnly.length).toBeGreaterThan(0);
+        expect(contextOnly.every(event => event.tokens === undefined)).toBe(true);
         if (nestedBackground) expect(starts[1]).toMatchObject({ causedByTurnId: starts[0]!.turnId });
         if (continuationTool) {
           expect(approvals).toHaveLength(2);

@@ -1,9 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createAcpBackend } from '../createAcpBackend';
+import { createAcpTestTransportHandler } from '../testkit/subprocessHarness';
 import { writeProviderTurnAgent } from '../testkit/providerTurnAgent';
 import { withTempDir } from '@/testkit/fs/tempDir';
 import type { AgentMessage } from '@/agent/core';
-import type { AgentAcpProviderTurnSourceHost } from '@happier-dev/plugin-sdk/agents/runtime';
+import { createDeferred } from '@/testkit/async/deferred';
+import { isPidAlive } from '@/testkit/process/spawn';
+import type { AcpBackend } from '../AcpBackend';
+import type { AgentAcpProviderTurnSource, AgentAcpProviderTurnSourceHost } from '@happier-dev/plugin-sdk/agents/runtime';
 
 
 
@@ -161,4 +165,147 @@ it('does not admit an old filesystem request when its journal catch-up spans sou
       expect(await fs.readFile(path, 'utf8')).toBe('ORIGINAL');
     } finally { release(); await backend.dispose(); }
   });
+});
+
+
+async function lifecycleFixture(run: (input: {
+  backend: AcpBackend;
+  host(): AgentAcpProviderTurnSourceHost;
+  setDispose(handler: AgentAcpProviderTurnSource['dispose']): void;
+}) => Promise<void>, initTimeoutMs?: number): Promise<void> {
+  await withTempDir('provider-lifecycle-', async directory => {
+    let currentHost: AgentAcpProviderTurnSourceHost | undefined;
+    let dispose: AgentAcpProviderTurnSource['dispose'] = () => {};
+    const backend = createAcpBackend({
+      agentName: 'fixture', cwd: directory, command: process.execPath, args: [writeProviderTurnAgent(directory)],
+      ...(initTimeoutMs === undefined ? {} : { transportHandler: createAcpTestTransportHandler({ initTimeoutMs }) }),
+      providerTurnSource: async host => { currentHost = host; return { catchUp: async () => {}, dispose: () => dispose() }; },
+      providerTurnLifecycle: { registerContinuation: () => true, beginContinuation: () => true, releaseToolCalls() {}, dispose() {} },
+    });
+    let pid: number | undefined;
+    try {
+      await backend.startSession();
+      pid = (await backend.requestExtension<{ pid: number }>('test/status', {})).pid;
+      await run({ backend, host() { if (!currentHost) throw new Error('Source not open'); return currentHost; },
+        setDispose(value) { dispose = value; } });
+    } finally {
+      try { await backend.dispose(); }
+      finally { if (pid && isPidAlive(pid)) process.kill(pid, 'SIGKILL'); }
+    }
+  });
+}
+
+it('closes native work before waiting for a held provider observer', async () => {
+  await lifecycleFixture(async ({ backend, host, setDispose }) => {
+    const oldHost = host();
+    const gate = createDeferred();
+    setDispose(() => gate.promise);
+    const cancellation = backend.cancel('owned');
+    try {
+      await expect.poll(async () => (await backend.requestExtension<{ closes: number }>('test/status', {})).closes).toBe(1);
+      expect(oldHost.beginContinuation({ id: 'stale', turnId: '1' })).toBeNull();
+      await expect(backend.sendPrompt('owned', 'too soon')).rejects.toThrow();
+    } finally { gate.resolve(); await cancellation; }
+    await backend.sendPrompt('owned', 'successor');
+    await backend.waitForResponseComplete();
+  });
+});
+
+it('restarts an unresponsive native close within the graceful teardown bound', async () => {
+  await lifecycleFixture(async ({ backend }) => {
+    const before = await backend.requestExtension<{ pid: number }>('test/status', {});
+    await backend.requestExtension('test/hold-close', {});
+    const cancellation = backend.cancel('owned');
+    let cancelled = false;
+    void cancellation.then(() => { cancelled = true; });
+    try {
+      await expect.poll(() => cancelled, { timeout: 5_000 }).toBe(true);
+      expect(isPidAlive(before.pid)).toBe(false);
+      await backend.sendPrompt('owned', 'successor');
+      await backend.waitForResponseComplete();
+      expect((await backend.requestExtension<{ pid: number }>('test/status', {})).pid).not.toBe(before.pid);
+    } finally {
+      if (!cancelled) await backend.requestExtension('test/release-close', {});
+      await cancellation;
+    }
+  });
+}, 10_000);
+
+it.each(['cancel', 'dispose', 'source failure'] as const)('tears down native work when source disposal throws during %s', async operation => {
+  await lifecycleFixture(async ({ backend, host, setDispose }) => {
+    const before = await backend.requestExtension<{ pid: number }>('test/status', {});
+    setDispose(() => { throw new Error('Observer cleanup failed'); });
+    if (operation === 'cancel') {
+      await backend.cancel('owned');
+      expect(await backend.requestExtension('test/status', {})).toMatchObject({ closes: 1, loads: 1 });
+      await backend.sendPrompt('owned', 'successor');
+      await backend.waitForResponseComplete();
+    } else if (operation === 'dispose') {
+      await backend.dispose();
+      expect(isPidAlive(before.pid)).toBe(false);
+    } else {
+      host().fail(new Error('Journal unavailable'));
+      await expect.poll(() => isPidAlive(before.pid)).toBe(false);
+      await backend.loadSession('owned');
+      await backend.sendPrompt('owned', 'successor');
+      await backend.waitForResponseComplete();
+    }
+  });
+});
+
+it.each(['start', 'load', 'fork', 'extension fork'] as const)('cleans up a failed %s journal initialization and allows retry', async operation => {
+  await withTempDir('provider-init-failure-', async directory => {
+    let first = true;
+    let failedPid = 0;
+    const backend = createAcpBackend({
+      agentName: 'fixture', cwd: directory, command: process.execPath, args: [writeProviderTurnAgent(directory)],
+      providerTurnSource: async () => {
+        if (first) {
+          first = false;
+          failedPid = (await backend.requestExtension<{ pid: number }>('test/status', {})).pid;
+          throw new Error('Journal unavailable');
+        }
+        return { catchUp: async () => {}, dispose() {} };
+      },
+      providerTurnLifecycle: { registerContinuation: () => true, beginContinuation: () => true, releaseToolCalls() {}, dispose() {} },
+    });
+    const start = async () => {
+      if (operation === 'extension fork') {
+        await backend.requestExtension('test/status', {});
+        return backend.loadExtensionForkSession('owned', {});
+      }
+      return operation === 'start' ? backend.startSession()
+        : operation === 'load' ? backend.loadSession('owned') : backend.forkSession({ sessionId: 'owned' });
+    };
+    try {
+      await expect(start()).rejects.toThrow('Journal unavailable');
+      expect(failedPid).toBeGreaterThan(0);
+      expect(isPidAlive(failedPid)).toBe(false);
+      await start();
+      await backend.sendPrompt('owned', 'successor');
+      await backend.waitForResponseComplete();
+    } finally { await backend.dispose(); }
+  });
+});
+
+
+it('bounds a stalled cancellation reload with the existing session startup deadline', async () => {
+  await lifecycleFixture(async ({ backend }) => {
+    const before = await backend.requestExtension<{ pid: number }>('test/status', {});
+    await backend.requestExtension('test/hold-load', {});
+    let settled = false;
+    const cancellation = backend.cancel('owned').then(() => null, error => error as Error)
+      .finally(() => { settled = true; });
+    try {
+      await expect.poll(() => settled, { timeout: 2_000 }).toBe(true);
+      expect(await cancellation).toBeInstanceOf(Error);
+      expect(isPidAlive(before.pid)).toBe(false);
+      await backend.loadSession('owned');
+      await backend.sendPrompt('owned', 'successor');
+      await backend.waitForResponseComplete();
+    } finally {
+      if (!settled) await backend.requestExtension('test/release-load', {});
+      await cancellation;
+    }
+  }, 500);
 });

@@ -1689,25 +1689,19 @@ describe('createPublicAcpSession', () => {
           channel: 'reasoning',
           text: 'reasoning trace',
         }));
-        expect(events).toContainEqual(expect.objectContaining({
+        const usage = events.find((event) => event.kind === 'usage-observed');
+        expect(usage).toMatchObject({
           kind: 'usage-observed',
           turnId: 'turn-runtime-observations',
           source: 'acp-usage-update',
           scope: 'session_cumulative',
-          tokens: {
-            input: 0,
-            output: 0,
-            reasoning: 0,
-            cacheRead: 0,
-            cacheWrite: 0,
-            total: 21,
-          },
           context: expect.objectContaining({
             usedTokens: 21,
             windowTokens: 200_000,
             source: 'provider_turn',
           }),
-        }));
+        });
+        expect(usage).not.toHaveProperty('tokens');
       } finally {
         subscription.dispose();
         await session.dispose();

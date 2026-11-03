@@ -118,6 +118,16 @@ function normalizeTokensMap(raw: unknown): UsageNumberMap | null {
         asFiniteNonNegativeNumber(record.totalTokens) ??
         asFiniteNonNegativeNumber(record.total);
 
+    // Legacy ACP context mirrors carry total=used; they are not inference counters.
+    const contextUsed = asFiniteNonNegativeNumber(record.used);
+    if ((contextUsed != null || asFiniteNonNegativeNumber(record.size) != null)
+        && asFiniteNonNegativeNumber(record.totalTokens) == null
+        && asFiniteNonNegativeNumber(record.total_tokens) == null
+        && (totalExplicit == null || totalExplicit === (contextUsed ?? 0))
+        && input == null && output == null && cacheWrite == null && cacheRead == null && reasoning == null) {
+        return null;
+    }
+
     const anyPresent =
         totalExplicit != null ||
         input != null ||

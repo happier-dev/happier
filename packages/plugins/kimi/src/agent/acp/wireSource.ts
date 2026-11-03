@@ -17,6 +17,7 @@ function record(value: unknown): Record<string, unknown> | null {
         ? value as Record<string, unknown> : null;
 }
 
+/** Resolve only a usable active-session entry; corrupt unrelated index rows cannot own this session. */
 async function sessionWirePath(home: string, cwd: string, sessionId: string): Promise<string> {
     let directory: string | undefined;
     const input = createReadStream(join(home, 'session_index.jsonl'), { encoding: 'utf8' });
@@ -24,7 +25,13 @@ async function sessionWirePath(home: string, cwd: string, sessionId: string): Pr
     try {
         for await (const line of lines) {
             if (!line.trim()) continue;
-            const entry = record(JSON.parse(line));
+            let entry: Record<string, unknown> | null;
+            try {
+                entry = record(JSON.parse(line));
+            } catch {
+                // A usable selected entry and its ownership remain mandatory below.
+                continue;
+            }
             if (entry?.sessionId !== sessionId) continue;
             if (entry.deleted === true) { directory = undefined; continue; }
             if (typeof entry.sessionDir !== 'string' || typeof entry.workDir !== 'string'

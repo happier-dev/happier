@@ -9,6 +9,8 @@ export function writeProviderTurnAgent(directory: string): string {
             let closes = 0;
             let loads = 0;
             let holdClose = false;
+            let holdLoad = false;
+            let loadingRequest = null;
             let closingRequest = null;
             const awaiting = new Map();
             const send = value => process.stdout.write(JSON.stringify(value) + '\\n');
@@ -26,10 +28,10 @@ export function writeProviderTurnAgent(directory: string): string {
                     }
                     if (message.method === 'initialize') ok(message.id, {
                         protocolVersion: 1, authMethods: [],
-                        agentCapabilities: { loadSession: true, sessionCapabilities: { close: {} } },
+                        agentCapabilities: { loadSession: true, sessionCapabilities: { close: {}, fork: {} } },
                     });
-                    else if (message.method === 'session/new') ok(message.id, { sessionId: 'owned' });
-                    else if (message.method === 'session/load') { loads++; ok(message.id, {}); }
+                    else if (message.method === 'session/new' || message.method === 'session/fork') ok(message.id, { sessionId: 'owned' });
+                    else if (message.method === 'session/load') { loads++; if (holdLoad) loadingRequest = message.id; else ok(message.id, {}); }
                     else if (message.method === 'session/close') {
                         closes++;
                         if (holdClose) closingRequest = message.id;
@@ -38,6 +40,11 @@ export function writeProviderTurnAgent(directory: string): string {
                     else if (message.method === 'test/release-close') {
                         if (closingRequest !== null) ok(closingRequest, {});
                         closingRequest = null; holdClose = false; ok(message.id, {});
+                    }
+                    else if (message.method === 'test/hold-load') { holdLoad = true; ok(message.id, {}); }
+                    else if (message.method === 'test/release-load') {
+                        if (loadingRequest !== null) ok(loadingRequest, {});
+                        loadingRequest = null; holdLoad = false; ok(message.id, {});
                     }
                     else if (message.method === 'session/prompt') {
                         const id = turn++ + ':background';

@@ -1,6 +1,7 @@
-import { appendFile, mkdir, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
+import type { AgentAcpProviderTurnSourceHost } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { createAcpProviderJournalFollower } from '@/plugins/runtime/context/transcripts/acpProviderJournal';
 import { withTempDir } from '@/testkit/fs/tempDir';
@@ -147,3 +148,77 @@ it.each(['cwd', 'storage', 'version', 'replay', 'truncated', 'foreign'] as const
       } finally { lifetime.abort(); await source.dispose(); }
     });
   });
+
+
+describe('Kimi journal integrity', () => {
+  async function fixture(directory: string) {
+    const sessionId = 'integrity-fixture';
+    const sessionDir = join(directory, 'sessions', 'workspace-fixture', sessionId);
+    const agentDir = join(sessionDir, 'agents', 'main');
+    await mkdir(agentDir, { recursive: true });
+    const index = join(directory, 'session_index.jsonl');
+    const entry = { sessionId, sessionDir, workDir: directory };
+    await writeFile(index, JSON.stringify(entry) + '\n');
+    const journal = join(agentDir, 'wire.jsonl');
+    await writeFile(journal, JSON.stringify({ type: 'metadata', protocol_version: '1.5' }) + '\n');
+    const fail = vi.fn();
+    const lifetime = new AbortController();
+    const follow = createAcpProviderJournalFollower({ pluginId: 'fixture', runtimeId: 'runtime',
+      scope: { kind: 'session', sessionId: 'public' } });
+    const host = {
+      sessionId, cwd: directory, env: { KIMI_CODE_HOME: directory }, signal: lifetime.signal,
+      followJournal: input => follow({ providerSessionId: sessionId, signal: lifetime.signal }, input),
+      registerContinuation: vi.fn(() => true), beginContinuation: vi.fn(() => null), releaseToolCalls: vi.fn(), fail,
+    } satisfies AgentAcpProviderTurnSourceHost;
+    return { index, entry, journal, host, fail };
+  }
+
+  it.each(['truncated', 'replaced'] as const)('fails pending continuations when the journal is %s to an empty file', async reason => {
+    await withTempDir('happier-kimi-integrity-', async directory => {
+      const { journal, host, fail } = await fixture(directory);
+      const source = await createKimiWireSource()(host);
+      try {
+        const records = [
+          { type: 'turn.prompt', turnId: 0, origin: { kind: 'user' } },
+          { type: 'context.append_loop_event', event: { type: 'tool.call', turnId: '0', uuid: 'parent', toolCallId: 'tool', name: 'Bash', args: {} } },
+          { type: 'task.started', info: { taskId: 'pending-task', parentToolCallId: 'tool', detached: true } },
+          { type: 'turn.ended', turnId: 0, reason: 'completed' },
+        ];
+        await appendFile(journal, records.map(record => JSON.stringify({ agentId: 'main', ...record })).join('\n') + '\n');
+        await source.catchUp({ foregroundActive: false });
+        expect(host.registerContinuation).toHaveBeenCalledWith({ id: 'pending-task', parentToolCallId: '0:tool' });
+        if (reason === 'replaced') {
+          const replacement = join(directory, 'replacement.jsonl');
+          await writeFile(replacement, '');
+          await rename(replacement, journal);
+        } else {
+          await writeFile(journal, '');
+        }
+        await expect(source.catchUp()).rejects.toThrow(reason);
+        expect(fail).toHaveBeenCalledWith(expect.any(Error));
+        expect(host.beginContinuation).not.toHaveBeenCalled();
+      } finally { await source.dispose(); }
+    });
+  });
+
+  it('ignores malformed unrelated index rows while validating the selected session', async () => {
+    await withTempDir('happier-kimi-index-', async directory => {
+      const { index, entry, host, fail } = await fixture(directory);
+      await writeFile(index, '{"sessionId":"unrelated", broken}\n' + JSON.stringify(entry) + '\nnot-json\n');
+      const source = await createKimiWireSource()(host);
+      try {
+        await source.catchUp();
+        expect(fail).not.toHaveBeenCalled();
+      } finally { await source.dispose(); }
+    });
+  });
+
+  it.each(['missing', 'malformed'] as const)('rejects invalid selected-session %s evidence', async kind => {
+    await withTempDir('happier-kimi-invalid-', async directory => {
+      const { index, host } = await fixture(directory);
+      if (kind === 'missing') await writeFile(index, '{"sessionId":"unrelated"}\n');
+      if (kind === 'malformed') await writeFile(index, '{"sessionId":"integrity-fixture", broken}\n');
+      await expect(createKimiWireSource()(host)).rejects.toThrow();
+    });
+  });
+});

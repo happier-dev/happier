@@ -1,4 +1,5 @@
 import type { SessionNotification } from '@agentclientprotocol/sdk';
+import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
 
 import type { AgentMessage } from '@/agent/core/AgentMessage';
 import type { TransportHandler } from '@/agent/transport';
@@ -318,7 +319,9 @@ export async function handleAcpSessionNotification(params: Readonly<{
       });
       const telemetry = observation ? buildTokenCountAgentMessageFromUsageObservation(observation) : null;
       if (telemetry) {
-        params.emit(telemetry);
+        // Only explicit delta keys identify inferences; cumulative/default report keys identify streams.
+        const observationId = observation?.scope === 'turn_delta' ? readNonBlankOpaqueIdentifier(update.key) : null;
+        params.emit({ ...telemetry, ...(observationId ? { observationId } : {}) });
       }
       return;
     }

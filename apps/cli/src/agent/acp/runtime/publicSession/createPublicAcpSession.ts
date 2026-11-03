@@ -1109,7 +1109,7 @@ async function createPublicAcpConversationFromAwaitableAdapter(
         if (measurement) {
           publish({
             kind: 'usage-observed',
-            observationId: `acp-usage-${randomUUID()}`,
+            observationId: message.observationId ?? `acp-usage-${randomUUID()}`,
             turnId,
             ...measurement,
           });
@@ -1170,6 +1170,8 @@ async function createPublicAcpConversationFromAwaitableAdapter(
   function observeTurnCompletion(turn: ActiveTurn): void {
       void backend.waitForResponseComplete().then(async () => {
         await backendMessageProjectionTail;
+        // Prior plan/output publications own side effects that must settle before successor admission.
+        await publishTail;
         const outcome = backend.getLastTurnOutcome();
         const current = activeTurn;
         if (!current || current.turnId !== turn.turnId || disposed || runtimeEnded) return;
@@ -1218,6 +1220,8 @@ async function createPublicAcpConversationFromAwaitableAdapter(
         await backend.catchUpProviderTurns();
       }).catch(async (error) => {
         await backendMessageProjectionTail;
+        // Prior plan/output publications own side effects that must settle before successor admission.
+        await publishTail;
         const current = activeTurn;
         if (!current || current.turnId !== turn.turnId || disposed || runtimeEnded) return;
         publish({

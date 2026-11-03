@@ -3,19 +3,22 @@ import type { AgentSessionRuntime, AgentSessionRuntimeEvent, AgentAcpRuntimeOpti
   AgentSessionOpenRequest, AgentSessionRuntimeContext, AgentExecutionRunRuntimeContextV1, AgentExecutionRunOpenRequest, AgentExecutionRunEvent, AgentExecutionRunRuntime } from '@happier-dev/plugin-sdk/agents/runtime';
 import { createKimiAgentRuntime } from '../../../../../../../packages/plugins/kimi/src/agent/runtime/factory';
 import { createPublicAcpSession, createPublicAcpExecutionRun, type PublicAcpComposerDependencies } from './createPublicAcpSession';
-import { createKimiLoopbackModel, KIMI_FIXTURE_BACKGROUND, KIMI_FIXTURE_FOREGROUND,
+import { createKimiLoopbackEnvironment, createKimiLoopbackModel, KIMI_FIXTURE_BACKGROUND, KIMI_FIXTURE_FOREGROUND,
   type KimiLoopbackModelOptions } from '../../testkit/kimiLoopbackModel';
 import { withTempDir } from '@/testkit/fs/tempDir';
+import { createDeferred } from '@/testkit/async/deferred';
 
 const executable = process.env.HAPPIER_TEST_KIMI_PATH?.trim();
 type Event = AgentSessionRuntimeEvent;
 
-async function fixture(options: KimiLoopbackModelOptions, run: (input: {
+async function fixture(options: KimiLoopbackModelOptions & { holdPlanPublication?: boolean }, run: (input: {
   runtime: AgentSessionRuntime;
   model: Awaited<ReturnType<typeof createKimiLoopbackModel>>;
   events: Event[];
   permissions: unknown[];
   setApproval(value: boolean): void;
+  isPlanPublicationPending(): boolean;
+  releasePlanPublication(): void;
   start(): Promise<void>;
   continuation(): Promise<Extract<Event, { kind: 'turn-start' }>>;
 }) => Promise<void>) {
@@ -25,6 +28,9 @@ async function fixture(options: KimiLoopbackModelOptions, run: (input: {
     const events: Event[] = [];
     const permissions: unknown[] = [];
     let approval = true;
+    let planPublicationPending = false;
+    const planPublicationGate = createDeferred();
+    if (!options.holdPlanPublication) planPublicationGate.resolve();
     const dependencies: PublicAcpComposerDependencies = {
       pluginId: 'happier.agent.kimi', agentId: 'kimi', signal: lifetime.signal, isCurrent: () => !lifetime.signal.aborted,
       systemTools: { resolve: async () => ({ toolId: 'kimi-cli', launch: { kind: 'binary', executablePath: executable! } }) },
@@ -44,13 +50,19 @@ async function fixture(options: KimiLoopbackModelOptions, run: (input: {
     let runtime: AgentSessionRuntime | undefined;
     try {
       runtime = await factory.sessions.open({ kind: 'create', sessionId: 'public-kimi', cwd: model.workspace,
-        launchEnvironment: { values: { KIMI_CODE_HOME: model.home, KIMI_DISABLE_TELEMETRY: '1' },
-          unset: Object.keys(process.env).filter(key => /^(KIMI_|OPENAI_|ANTHROPIC_)/u.test(key)
-            && key !== 'KIMI_CODE_HOME' && key !== 'KIMI_DISABLE_TELEMETRY') },
+        launchEnvironment: createKimiLoopbackEnvironment(model.home),
       }, context);
       const session = runtime;
-      session.watch(event => { events.push(event); });
+      session.watch(async event => {
+        events.push(event);
+        if (event.kind === 'tool-call' && event.toolName === 'TodoWrite') {
+          planPublicationPending = true;
+          await planPublicationGate.promise;
+        }
+      });
       await run({ runtime: session, model, events, permissions, setApproval: value => { approval = value; },
+        isPlanPublicationPending: () => planPublicationPending,
+        releasePlanPublication: () => planPublicationGate.resolve(),
         async start() {
           await session.send({ inputIds: ['input-parent'], input: { text: 'Run the isolated background fixture.' },
             delivery: { kind: 'newTurn', turnId: 'parent' }, causalPermissionAuthority: {
@@ -68,6 +80,8 @@ async function fixture(options: KimiLoopbackModelOptions, run: (input: {
         },
       });
     } finally {
+      planPublicationGate.resolve();
+      model.releaseAfterPlan();
       model.releaseContinuation();
       await model.releaseBackground();
       await runtime?.dispose();
@@ -89,6 +103,41 @@ describe.skipIf(!executable || process.platform === 'win32')('official Kimi thro
       expect(output).toBeGreaterThan(-1);
       expect(output).toBeLessThan(events.findIndex(event => event.kind === 'turn-complete' && event.turnId === turn.turnId));
       if (continuationPlan) expect(events).toContainEqual(expect.objectContaining({ kind: 'tool-call', turnId: turn.turnId, toolName: 'TodoWrite' }));
+    });
+  }, 60_000);
+
+  it('stops native execution while plan publication is held and fences the successor until publication settles', async () => {
+    await fixture({ continuationPlan: true, holdAfterPlan: true, holdPlanPublication: true }, async ({
+      start, continuation, runtime, model, events, isPlanPublicationPending, releasePlanPublication,
+    }) => {
+      await start();
+      const turn = await continuation();
+      model.releaseContinuation();
+      await model.afterPlanRequested;
+      await expect.poll(isPlanPublicationPending, { timeout: 10_000 }).toBe(true);
+      const cancellation = runtime.cancel!({ turnId: turn.turnId, reason: 'user' });
+      try {
+        await expect.poll(async () => (await model.readNativeEvents()).some(event =>
+          event.type === 'turn.ended' && event.turnId === 1 && event.reason === 'cancelled',
+        ), { timeout: 15_000 }).toBe(true);
+        expect(events.some(event => event.kind === 'message-delta' && event.turnId === turn.turnId
+          && event.text === KIMI_FIXTURE_BACKGROUND)).toBe(false);
+        expect(events.some(event => event.kind === 'turn-cancelled' && event.turnId === turn.turnId)).toBe(false);
+        const requestsBeforeSave = model.getRequestCount();
+        expect(await runtime.send({ inputIds: ['before-save'], input: { text: 'Before publication settles.' },
+          delivery: { kind: 'newTurn', turnId: 'before-save' },
+        })).toMatchObject({ status: 'rejected', retryable: true });
+        expect(model.getRequestCount()).toBe(requestsBeforeSave);
+      } finally {
+        releasePlanPublication();
+        model.releaseAfterPlan();
+        await cancellation;
+      }
+      await expect.poll(() => events.some(event => event.kind === 'turn-cancelled' && event.turnId === turn.turnId), { timeout: 15_000 }).toBe(true);
+      expect(await runtime.send({ inputIds: ['next'], input: { text: 'Next foreground.' }, delivery: { kind: 'newTurn', turnId: 'next' },
+        causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'default' },
+      })).toEqual({ status: 'admitted' });
+      await expect.poll(() => events.some(event => event.kind === 'turn-complete' && event.turnId === 'next'), { timeout: 15_000 }).toBe(true);
     });
   }, 60_000);
 
@@ -151,9 +200,7 @@ it.skipIf(!executable || process.platform === 'win32')('opens the official Kimi 
     try {
       native = await factory.sessions!.executionRunContextV1!.open({ kind: 'create', runId: 'kimi-run', cwd: model.workspace,
         profile: { pluginId: 'happier.agent.kimi', localId: 'kimi' }, input: { text: 'Complete this isolated run.' },
-        localInputId: 'run-input', launchEnvironment: { values: { KIMI_CODE_HOME: model.home, KIMI_DISABLE_TELEMETRY: '1' },
-          unset: Object.keys(process.env).filter(key => /^(KIMI_|OPENAI_|ANTHROPIC_)/u.test(key)
-            && key !== 'KIMI_CODE_HOME' && key !== 'KIMI_DISABLE_TELEMETRY') },
+        localInputId: 'run-input', launchEnvironment: createKimiLoopbackEnvironment(model.home),
       }, context);
       native.watch(event => { events.push(event); });
       await expect.poll(() => events.some(event => event.kind === 'run-complete'), { timeout: 15_000 }).toBe(true);

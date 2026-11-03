@@ -212,7 +212,7 @@ it('observes a retired source catch-up rejection after a failed terminal', async
   });
 });
 
-it('publishes runtime termination after the failed turn when journal catch-up rejects', async () => {
+it.each(['process exit', 'source failure'] as const)('publishes runtime termination after the failed turn for %s', async failure => {
   await withPublicContinuation(async ({ runtime, host, events, setCatchUp }) => {
     const status = await runtime.requestExtension!('test/status', {});
     if (!status || typeof status !== 'object' || Array.isArray(status) || typeof status.pid !== 'number') {
@@ -221,10 +221,67 @@ it('publishes runtime termination after the failed turn when journal catch-up re
     setCatchUp(async () => { throw new Error('journal unavailable'); });
     expect(host.beginContinuation({ id: 'task', turnId: '1' })).not.toBeNull();
     await expect.poll(() => events.some(event => event.kind === 'turn-start' && event.startedBy === 'provider')).toBe(true);
-    process.kill(status.pid, 'SIGTERM');
+    if (failure === 'process exit') process.kill(status.pid, 'SIGTERM');
+    else host.fail(new Error('Journal unavailable'));
     await expect.poll(() => events.filter(event => event.kind === 'turn-failed')).toHaveLength(1);
     await expect.poll(() => events.filter(event => event.kind === 'runtime-ended')).toHaveLength(1);
     expect(events.findIndex(event => event.kind === 'turn-failed'))
       .toBeLessThan(events.findIndex(event => event.kind === 'runtime-ended'));
   });
+});
+
+
+it('keeps the public runtime usable after restarting a peer that never answers native close', async () => {
+  await withPublicContinuation(async ({ runtime, host, events }) => {
+    expect(host.beginContinuation({ id: 'task', turnId: '1' })).not.toBeNull();
+    await expect.poll(() => events.some(event => event.kind === 'turn-start' && event.startedBy === 'provider')).toBe(true);
+    const turn = events.find((event): event is Extract<AgentSessionRuntimeEvent, { kind: 'turn-start' }> =>
+      event.kind === 'turn-start' && event.startedBy === 'provider');
+    if (!turn) throw new Error('Missing continuation');
+    await runtime.requestExtension!('test/hold-close', {});
+    await expect(runtime.cancel!({ turnId: turn.turnId, reason: 'user' })).resolves.toMatchObject({ status: 'requested' });
+    await expect.poll(() => events.some(event => event.kind === 'turn-cancelled' && event.turnId === turn.turnId)).toBe(true);
+    expect(await runtime.send({ inputIds: ['next'], input: { text: 'Successor.' }, delivery: { kind: 'newTurn', turnId: 'next' },
+      causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'default' },
+    })).toEqual({ status: 'admitted' });
+    await expect.poll(() => events.some(event => event.kind === 'turn-complete' && event.turnId === 'next')).toBe(true);
+  });
+}, 10_000);
+
+it.each(['Connection aborted', 'Upstream cancelled the request'])(
+  'retains an ordinary provider failure containing cancellation words: %s', async message => {
+    await withPublicContinuation(async ({ host, events }) => {
+      const sink = host.beginContinuation({ id: 'task', turnId: '1' });
+      expect(sink).not.toBeNull();
+      await sink!.finish({ kind: 'failed', message });
+      await expect.poll(() => events.some(event => event.kind === 'turn-failed')).toBe(true);
+      expect(events.some(event => event.kind === 'turn-cancelled')).toBe(false);
+    });
+  });
+
+it('preserves independent step usage identities and totals across continuations and resumed publication', async () => {
+  const snapshots: Array<Array<{ observationId: string; total: number }>> = [];
+  for (let attachment = 0; attachment < 2; attachment += 1) {
+    await withPublicContinuation(async ({ host, events }) => {
+      for (let turn = 0; turn < 2; turn += 1) {
+        if (turn > 0) expect(host.registerContinuation({ id: 'next', parentToolCallId: '0:background' })).toBe(true);
+        const sink = host.beginContinuation({ id: turn === 0 ? 'task' : 'next', turnId: String(turn + 1) });
+        expect(sink).not.toBeNull();
+        for (const step of [0, 1, 0]) {
+          await sink!.update({ sessionUpdate: 'usage_update', key: `native-step-${turn}-${step}`, scope: 'turn_delta',
+            inputTokens: 150, outputTokens: 10, cacheReadTokens: 30, cacheWriteTokens: 20, totalTokens: 160 });
+        }
+        await sink!.finish({ kind: 'completed' });
+        await expect.poll(() => events.filter(event => event.kind === 'turn-complete')).toHaveLength(turn + 2);
+      }
+      const usage = events.filter((event): event is Extract<AgentSessionRuntimeEvent, { kind: 'usage-observed' }> => event.kind === 'usage-observed');
+      expect(usage.map(event => event.scope)).toEqual(Array(6).fill('turn_delta'));
+      expect(usage.map(event => event.tokens?.total)).toEqual(Array(6).fill(160));
+      expect(usage.map(event => event.observationId)).toEqual([
+        'native-step-0-0', 'native-step-0-1', 'native-step-0-0', 'native-step-1-0', 'native-step-1-1', 'native-step-1-0',
+      ]);
+      snapshots.push(usage.map(event => ({ observationId: event.observationId, total: event.tokens!.total })));
+    });
+  }
+  expect(snapshots[1]).toEqual(snapshots[0]);
 });

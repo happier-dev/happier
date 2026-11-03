@@ -48,9 +48,8 @@ export function buildAcpUsageUpdateObservation(params: Readonly<{
         body: {
             ...record,
             ...(record.cost !== undefined ? { cost: normalizeAcpUsageUpdateCost(record.cost) } : {}),
-            key: 'acp-usage-update',
+            key: record.key ?? 'acp-usage-update',
             source: 'acp-usage-update',
-            scope: 'session_cumulative',
         },
     });
 }

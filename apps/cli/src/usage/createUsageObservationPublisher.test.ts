@@ -6,6 +6,31 @@ import { createUsageObservationPublisher } from './createUsageObservationPublish
 import { logger } from '@/ui/logger';
 
 describe('createUsageObservationPublisher', () => {
+    it.each(['unadvertised', 'rejected'] as const)('preserves delta identity on %s legacy fallback without changing cumulative keys', async mode => {
+        const reports: Array<{ key: string; tokens: { total: number } }> = [];
+        const publisher = createUsageObservationPublisher({
+            token: 'token', apiServerUrl: 'https://api.example.test',
+            fetchServerFeaturesSnapshot: async () => mode === 'unadvertised'
+                ? { status: 'unsupported', reason: 'endpoint_missing' }
+                : { status: 'ready', features: FeaturesResponseSchema.parse({ features: {}, capabilities: { server: { usageAnalytics: {
+                    version: 1, eventsIngest: { path: '/v2/usage-events' }, query: { path: '/v2/usage/query' },
+                    legacy: { usageReportsPath: '/v2/usage-reports', usageQueryPath: '/v1/usage/query' },
+                } } } }) },
+            postJson: async () => { throw { response: { status: 404 } }; },
+            emitLegacyUsageReport: report => { reports.push(report); },
+        });
+        const observation = { provider: 'fixture', source: 'acp-usage-update', scope: 'turn_delta' as const,
+            key: null, modelId: null, tokens: { total: 110, input: 100, output: 10, reasoning: 0, cacheRead: 0, cacheWrite: 0 },
+            cost: null, contextUsedTokens: null, contextWindowTokens: null };
+        for (const externalKey of ['step-1', 'step-2', 'step-1']) {
+            await publisher.publish({ sessionId: 'session', externalKey, observation });
+        }
+        await publisher.publish({ sessionId: 'session', externalKey: 'cumulative-event', observation: { ...observation, scope: 'session_cumulative' } });
+        await publisher.publish({ sessionId: 'session', externalKey: 'event', observation: { ...observation, key: 'explicit-key' } });
+        expect(reports.map(report => report.key)).toEqual(['step-1', 'step-2', 'step-1', 'fixture-session', 'explicit-key']);
+        expect(reports.every(report => report.tokens.total === 110)).toBe(true);
+    });
+
     it('keeps exact Codex response supplements out of scalar fallback regardless of arrival order', async () => {
         const reports: Array<{ tokens: { total: number } }> = [];
         const publisher = createUsageObservationPublisher({

@@ -31,7 +31,7 @@ const contentSchema = z.object({
   ]),
 });
 const tokenCountSchema = z.number().finite().nonnegative();
-const stepUsageSchema = z.object({ turnId: turnIdSchema, usage: z.object({
+const stepUsageSchema = z.object({ uuid: identifier, turnId: turnIdSchema, usage: z.object({
   inputOther: tokenCountSchema, output: tokenCountSchema,
   inputCacheRead: tokenCountSchema, inputCacheCreation: tokenCountSchema,
 }) });
@@ -57,6 +57,7 @@ function textContent(value: unknown): ToolCallContent[] {
   return text ? [{ type: 'content', content: { type: 'text', text } }] : [];
 }
 
+/** Translate native records without admitting turns; stable step identity prevents replayed usage being counted twice. */
 function decodeLoopEvent(event: Record<string, unknown>): KimiWireEvent | null {
   if (event.type === 'content.part') {
     const parsed = contentSchema.safeParse(event);
@@ -72,8 +73,10 @@ function decodeLoopEvent(event: Record<string, unknown>): KimiWireEvent | null {
   if (event.type === 'step.end') {
     const parsed = stepUsageSchema.safeParse(event);
     if (!parsed.success) return null;
-    const { turnId, usage } = parsed.data;
-    return { kind: 'update', turnId, updates: [{ sessionUpdate: 'usage_update',
+    const { uuid, turnId, usage } = parsed.data;
+    // The native step is one inference across replay/resume; cache counts are included in input.
+    return { kind: 'update', turnId, updates: [{ sessionUpdate: 'usage_update', key: `kimi-step:${uuid}`, scope: 'turn_delta',
+      totalTokens: usage.inputOther + usage.inputCacheRead + usage.inputCacheCreation + usage.output,
       inputTokens: usage.inputOther + usage.inputCacheRead + usage.inputCacheCreation,
       outputTokens: usage.output, cacheReadTokens: usage.inputCacheRead, cacheWriteTokens: usage.inputCacheCreation,
     }] };
