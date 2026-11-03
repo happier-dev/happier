@@ -98,12 +98,20 @@ function seedOptionsDeclaration(row: MachineProvisionersListResultV1['provisione
     // Infrastructure role metadata may be CLI/plugin-only. Reading its public
     // schema for a managed options query does not make it a new UI Action.
     const projectedAction = PluginProjectedActionV2Schema.parse({ id: action.localId, pluginId: action.pluginId,
-        occurrenceId: 'options-occurrence', title: 'Read native options', scopes: ['machine'], surfaces: ['cli', 'plugin'],
+        occurrenceId: row.occurrenceId, title: 'Read native options', scopes: ['machine'], surfaces: ['cli', 'plugin'],
         execution: { target: 'daemon' }, available: true, dangerLevel: 'safe' });
     const projection = DaemonContributionRegistryProjectionDescribeResponseSchema.parse({ protocolVersion: 1, projection: {
         ...PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE, agentsById: {}, diagnostics: [],
         installedPackagesById: { [action.pluginId]: { ...PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE.installedPackagesById['acme.review'], id: action.pluginId,
             ...installed } },
+        familiesById: { ...PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE.familiesById,
+            machineProvisioners: { family: 'machineProvisioners', entriesById: {
+                [buildQualifiedPluginContributionKey(row.contribution)]: {
+                    id: buildQualifiedPluginContributionKey(row.contribution), pluginId: action.pluginId,
+                    pluginVersion: '1.0.0', occurrenceId: row.occurrenceId, definition: row.descriptor,
+                },
+            } },
+        },
         actionsById: { [actionKey]: projectedAction },
     } });
     boundary.rpc.mockImplementation(async (request: { machineId: string; method: string; payload: unknown }) => {
@@ -626,7 +634,7 @@ describe('reachable preset detail', () => {
         } });
         const screen = await renderSettingsView(<MachinePresetView serverId={serverId} presetId="preset" />);
         await waitForHomeGovernance(() => expect(screen.findByTestId('machine-preset.detail.machine.resource')).not.toBeNull());
-        await waitForHomeGovernance(() => expect(screen.findAll(node => node.props.children === 'Custom compute').length).toBeGreaterThan(0));
+        await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('Custom compute'));
         expect(screen.findRowByTitle('Original guest')).not.toBeNull();
         expect(screen.findRowByTitle('Original guest')?.props.subtitle).toContain('1');
         await act(async () => screen.pressByTestId('machine-preset.detail.machine.resource'));
