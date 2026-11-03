@@ -2,7 +2,7 @@ import type { CommandDispatchPolicy, CommandSurfaceDescriptorInput } from '@/age
 import type { CommandHandler } from './commandRegistry';
 import { FIRST_CLASS_SESSION_COMMANDS } from './firstClassSessionCommands';
 import { SESSION_RESUME_HELP_LABEL } from './commands/session/shared/sessionCommandLabels';
-import type { ResolvedCommandContribution } from '@/plugins/projection/registry/types';
+import type { PluginCommandActionMetadata } from './pluginCommandMetadata';
 import type { ContributionAvailabilityDecision } from '@happier-dev/protocol/plugins/contributions/public-types';
 import { findCliCommandPathConflicts, type CliCommandPathClaim } from './commandPathClaims';
 
@@ -275,7 +275,7 @@ export type AgentCommandMetadata = Readonly<{
 export type BundledPluginCommandMetadata = Readonly<{
   pluginId: string;
   agents: readonly AgentCommandMetadata[];
-  commands: readonly (ResolvedCommandContribution & Readonly<{ availability: ContributionAvailabilityDecision }>)[];
+  actions: readonly (PluginCommandActionMetadata & Readonly<{ availability: ContributionAvailabilityDecision }>)[];
 }>;
 
 /** The shared Agent-root admission for executable dispatch and cold help. */

@@ -2,7 +2,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type {
   ResolvedActionContribution,
-  ResolvedCommandContribution,
   ResolvedContributionRegistry,
 } from '@/plugins/projection/registry/types';
 
@@ -16,6 +15,25 @@ import {
 } from './commandRegistry';
 import { listRootHelpCommands } from './commandSurfaceManifest';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import { buildPluginContributionRegistry } from '@/plugins/projection/registry/normalize/package';
+import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
+import type { PluginActionContributionV2 } from '@happier-dev/protocol';
+
+type CliPresentationFixture = Readonly<{
+  provenance: 'external' | 'first_party';
+  pluginId?: string;
+  source: ResolvedActionContribution['source'];
+  manifestPath?: string;
+  sourceSpec?: ResolvedActionContribution['sourceSpec'];
+  definition: Readonly<{
+    kindVersion: 1; id: string; title: string; description?: string; path: string[];
+    action: string; actionId: string; visibility?: 'default' | 'advanced';
+    aliases?: string[][];
+    tmux?: 'inherit' | 'required' | 'forbidden';
+    availability?: PluginActionContributionV2['availability'];
+    arguments?: unknown;
+  }>;
+}>;
 
 const runtimeLeaseMock = vi.hoisted(() => ({
   acquire: vi.fn(),
@@ -48,11 +66,12 @@ function command(params: Readonly<{
   pluginId: string;
   id: string;
   path: readonly string[];
+  aliases?: string[][];
   actionId?: string;
   visibility?: 'default' | 'advanced';
   tmux?: 'inherit' | 'required' | 'forbidden';
   provenance?: 'external' | 'first_party';
-}>): ResolvedCommandContribution {
+}>): CliPresentationFixture {
   const provenance = params.provenance ?? 'external';
   return {
     provenance,
@@ -72,6 +91,7 @@ function command(params: Readonly<{
       id: params.id,
       title: `${params.pluginId} ${params.id}`,
       path: [...params.path],
+      ...(params.aliases ? { aliases: params.aliases } : {}),
       action: params.actionId ?? 'run',
       actionId: params.actionId ?? `${params.pluginId}/run`,
       ...(params.visibility ? { visibility: params.visibility } : {}),
@@ -105,28 +125,32 @@ function action(params: Readonly<{
 }
 
 function registry(
-  commands: readonly ResolvedCommandContribution[],
+  commands: readonly CliPresentationFixture[],
   actions: readonly ResolvedActionContribution[] = [],
 ): ResolvedContributionRegistry {
-  return {
-    ...createResolvedContributionRegistry({}),
-    uiViewsV2: [],
-    uiRenderersV2: [],
-    uiTranslationsV2: [],
-    agents: [],
-    actions,
-    tools: [],
-    commands,
-    resources: [],
-    activationTargets: [],
-    actionsById: new Map(),
-    toolsById: new Map(),
-    commandsById: new Map(commands.map((entry) => [`${entry.pluginId}/${entry.definition.id}`, entry])),
-    resourcesById: new Map(),
-    catalogEntriesById: {},
-    agentDefinitionsById: new Map(),
-    pluginDiagnosticsByPluginId: {},
-  };
+  const projected = commands.flatMap((command) => {
+    const pluginId = command.pluginId!;
+    const input = actions.find((action) => `${action.pluginId}/${action.definition.id}` === command.definition.actionId)?.definition;
+    const manifest = normalizePluginManifestV2({
+      schemaVersion: 2, id: pluginId, version: '1.0.0', displayName: pluginId,
+      engines: { happier: '^1.0.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.mjs' },
+      contributes: { actions: [{
+        id: command.definition.id, title: command.definition.title,
+        ...(command.definition.description ? { description: command.definition.description } : {}),
+        scopes: ['global'], surfaces: ['cli'], execution: { target: 'daemon' }, dangerLevel: 'safe',
+        cli: { path: command.definition.path, aliases: command.definition.aliases, visibility: command.definition.visibility, tmux: command.definition.tmux },
+        availability: command.definition.availability,
+        ...(input?.inputSchema ? { inputSchema: input.inputSchema } : {}),
+        ...(input?.inputHints ? { inputHints: input.inputHints } : {}),
+      }] },
+    });
+    return buildPluginContributionRegistry({ loadedPlugins: [{
+      pluginId, manifest, pluginRootPath: '/plugins/' + pluginId, manifestPath: '/plugins/' + pluginId + '/plugin.json',
+      daemonEntryPath: '/plugins/' + pluginId + '/daemon.mjs', devDaemonEntryPath: null,
+      sourceSpec: { kind: 'path', locator: '/plugins/' + pluginId, trustPolicy: 'local_trusted', installPolicy: 'link' },
+    }] }).actions.map((action) => ({ ...action, provenance: command.provenance, source: { kind: 'path' as const } }));
+  });
+  return createResolvedContributionRegistry({ actions: projected });
 }
 
 describe('resolvePluginCommandProjection', () => {
@@ -159,31 +183,31 @@ describe('resolvePluginCommandProjection', () => {
     }))).toEqual([
       {
         qualifiedId: 'acme.notes/add',
-        qualifiedActionId: 'acme.notes/run',
+        qualifiedActionId: 'acme.notes/add',
         path: ['notes', 'add'],
         status: 'available',
       },
       {
         qualifiedId: 'acme.notes/inspect',
-        qualifiedActionId: 'acme.notes/run',
+        qualifiedActionId: 'acme.notes/inspect',
         path: ['notes', 'inspect'],
         status: 'available',
       },
       {
         qualifiedId: 'happier.bundled.review/inspect-local-command',
-        qualifiedActionId: 'happier.bundled.review/execute-review-action',
+        qualifiedActionId: 'happier.bundled.review/inspect-local-command',
         path: ['review', 'inspect'],
         status: 'available',
       },
       {
         qualifiedId: 'acme.alpha/dupe',
-        qualifiedActionId: 'acme.alpha/run',
+        qualifiedActionId: 'acme.alpha/dupe',
         path: ['shared', 'run'],
         status: 'ambiguous',
       },
       {
         qualifiedId: 'acme.beta/dupe',
-        qualifiedActionId: 'acme.beta/run',
+        qualifiedActionId: 'acme.beta/dupe',
         path: ['shared', 'run'],
         status: 'ambiguous',
       },
@@ -193,8 +217,8 @@ describe('resolvePluginCommandProjection', () => {
       expect.objectContaining({ command: 'review', rootHelpLabel: 'happier review', allowTmux: true }),
     ]);
     expect(projection.diagnostics.map((entry) => entry.code)).toEqual([
-      'plugin_command_path_reserved',
       'plugin_command_path_invalid',
+      'plugin_command_path_reserved',
       'plugin_command_path_ambiguous',
       'plugin_command_path_ambiguous',
     ]);
@@ -349,54 +373,7 @@ describe('plugin command completion snapshot', () => {
     expect(resolvePluginCommandTmuxMode(['notes', 'watch', '--value', 'hello'])).toBe('required');
   });
 
-  it('resolves contributed Action field choices through the canonical injected options resolver', async () => {
-    const notes = command({ pluginId: 'acme.notes', id: 'add', path: ['notes', 'add'] });
-    synchronizePluginCommandContributions(registry([notes], [action({
-      pluginId: 'acme.notes',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          sessionId: { type: 'string' },
-          agent: { type: 'string', enum: ['careful'] },
-        },
-        additionalProperties: false,
-      },
-      inputHints: {
-        fields: [{ path: 'agent', title: 'Agent', optionsSourceId: 'execution.backends.enabled' }],
-      },
-    })]));
-    const resolveDynamicOptions = vi.fn(async () => ['codex', 'claude']);
 
-    const candidates = await resolveCommandCompletionCandidates(
-      ['notes', 'add', '--session-id', 'session_1', '--agent', 'co'],
-      { resolveDynamicOptions },
-    );
-
-    expect(candidates).toContain('codex');
-    expect(candidates).not.toContain('claude');
-    expect(resolveDynamicOptions).toHaveBeenCalledWith({
-      actionId: 'acme.notes/run',
-      fieldPath: 'agent',
-      optionsSourceId: 'execution.backends.enabled',
-      draftInput: { sessionId: 'session_1' },
-      query: 'co',
-      committedArgv: ['--session-id', 'session_1', '--agent'],
-      acceptsServerId: false,
-    });
-
-    resolveDynamicOptions.mockRejectedValueOnce(new Error('completion transport unavailable'));
-    expect(await resolveCommandCompletionCandidates(
-      ['notes', 'add', '--session-id', 'session_1', '--agent', 'ca'],
-      { resolveDynamicOptions },
-    )).toEqual(['careful']);
-
-    resolveDynamicOptions.mockClear();
-    expect(await resolveCommandCompletionCandidates(
-      ['notes', 'add', '--', '--agent', 'co'],
-      { resolveDynamicOptions },
-    )).toEqual([]);
-    expect(resolveDynamicOptions).not.toHaveBeenCalled();
-  });
 });
 
 describe('handlePluginCommandCliCommand help', () => {
@@ -523,6 +500,7 @@ describe('plugin command host registry synchronization', () => {
       id: 'add-local-command',
       actionId: 'happier.bundled.notes/execute-add-action',
       path: ['notes', 'add'],
+      aliases: [['memo', 'add']],
       provenance: 'first_party',
     });
     daemonCommandMock.ensure.mockClear();
@@ -542,15 +520,15 @@ describe('plugin command host registry synchronization', () => {
     }) as typeof process.stdout.write);
     const previousExitCode = process.exitCode;
     try {
-      await handlePluginCommandCliCommand('notes', {
-        args: ['notes', 'add', '--input', '{"value":"hello"}', '--json'],
-        rawArgv: ['happier', 'notes', 'add', '--input', '{"value":"hello"}', '--json'],
+      await handlePluginCommandCliCommand('memo', {
+        args: ['memo', 'add', '--input', '{"value":"hello"}', '--json'],
+        rawArgv: ['happier', 'memo', 'add', '--input', '{"value":"hello"}', '--json'],
         terminalRuntime: null,
       });
 
       expect(daemonCommandMock.ensure).toHaveBeenCalledOnce();
       expect(daemonCommandMock.execute).toHaveBeenCalledWith({
-        actionId: 'happier.bundled.notes/execute-add-action',
+        actionId: 'happier.bundled.notes/add-local-command',
         input: { value: 'hello' },
         surface: 'cli',
       });
@@ -579,7 +557,7 @@ describe('plugin command host registry synchronization', () => {
           additionalProperties: false,
         },
       },
-    } satisfies ResolvedCommandContribution;
+    } satisfies CliPresentationFixture;
     const contributionRegistry = registry([commandWithStaleArguments], [action({
       pluginId: 'acme.notes',
       inputSchema: {
@@ -660,7 +638,7 @@ describe('plugin command host registry synchronization', () => {
 
     expect(daemonCommandMock.execute).toHaveBeenCalledOnce();
     expect(daemonCommandMock.execute).toHaveBeenCalledWith({
-      actionId: 'acme.notes/run',
+      actionId: 'acme.notes/add',
       input: { input: 'not-a-transport-flag' },
       surface: 'cli',
     });

@@ -8,7 +8,7 @@ import type { CommandContext } from './commandRegistry';
 import { printJsonEnvelope } from './output/jsonEnvelope';
 import { resolveMergedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import type {
-  ResolvedCommandContribution,
+  ResolvedActionContribution,
   ResolvedContributionRegistry,
 } from '@/plugins/projection/registry/types';
 import { compilePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
@@ -106,15 +106,15 @@ function parseInvocationArgs(args: readonly string[]): Readonly<
 function findCommandContribution(
   registry: ResolvedContributionRegistry,
   qualifiedId: string,
-): ResolvedCommandContribution | null {
-  return (registry.commands ?? []).find((candidate) => (
+): ResolvedActionContribution | null {
+  return registry.actions.find((candidate) => (
     candidate.pluginId
     && `${candidate.pluginId}/${candidate.definition.id}` === qualifiedId
   )) ?? null;
 }
 
-function validateCommandArguments(command: ResolvedCommandContribution, input: unknown): boolean {
-  const schema = command.definition.arguments;
+function validateCommandArguments(command: ResolvedActionContribution, input: unknown): boolean {
+  const schema = command.admittedTarget?.declaration.inputSchema;
   if (!schema) return true;
   return validatePluginCommandInput(schema, input);
 }
@@ -191,9 +191,8 @@ function resolvePluginCommandInvocation(params: Readonly<{
   if (!contribution) {
     return { ok: false, code: 'plugin_command_generation_retired', message: 'Plugin command generation is no longer current' };
   }
-  // A contribution whose canonical Action definition is discoverable uses the
-  // one shared field parser; a predecessor shape without one keeps the bounded
-  // JSON-only adapter rather than weakening every command to its limits.
+  // Actions with an input schema use the shared field parser. An Action with
+  // no authored input contract keeps the whole-input JSON spelling.
   const actionInput = resolvePluginCommandActionInputContract({
     registry: params.registry,
     qualifiedActionId: matched.qualifiedActionId,

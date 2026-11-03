@@ -3,8 +3,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { PluginManifestV2Schema } from '@happier-dev/protocol/plugins/manifest/v2';
-import { evaluateContributionAvailability, resolveInvocationContributionPolicyFacts } from '@happier-dev/protocol/plugins/contributions/public-types';
-import { toCommandDefinition } from '@/plugins/projection/registry/normalize/commandDefinition';
+import { projectPluginCommandDeclarations } from './pluginCommandDeclarations';
 
 import { BUNDLED_FIRST_PARTY_PLUGIN_COMMAND_METADATA } from '@/plugins/projection/registry/sources/generatedBundledPluginManifests';
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
@@ -50,7 +49,7 @@ describe('root help declaration projection', () => {
         { id: 'duplicate-b', cliSubcommand: 'duplicated', title: 'Wrong duplicate B' },
         { id: 'codex', cliSubcommand: 'codex', title: 'Declared Codex title' },
       ],
-      commands: [],
+      actions: [],
     }]);
     expect(entries.find((entry) => entry.command === 'auth')?.rootHelpDescription).toBe('Manage authentication');
     expect(entries.find((entry) => entry.command === 'teams')?.rootHelpDescription).toBe('Manage Teams, members, and Team policy');
@@ -61,28 +60,15 @@ describe('root help declaration projection', () => {
   it('lists admitted bundled plugin commands and fences unavailable or conflicting paths', () => {
     const manifest = PluginManifestV2Schema.parse(createPluginManifestV2Fixture({
       id: 'acme.bundled-help',
-      contributes: {
-        actions: [{ id: 'read', title: 'Read', scopes: ['global'], surfaces: ['cli'], execution: { target: 'daemon' }, dangerLevel: 'safe', inputSchema: { type: 'object' } }],
-        commands: [
-          { id: 'read-command', title: 'Read', description: 'Read a bundled note', path: ['bundled-notes', 'read'], action: 'read' },
-          { id: 'reserved', title: 'Wrong auth', path: ['auth', 'replacement'], action: 'read' },
-          { id: 'unavailable', title: 'Unavailable', path: ['unknown-facts', 'read'], action: 'read', availability: {
+      contributes: { actions: [{ scopes: ['global'], surfaces: ['cli'], execution: { target: 'daemon' }, dangerLevel: 'safe', inputSchema: { type: 'object' }, id: 'read-command', title: 'Read', description: 'Read a bundled note', cli: { path: ['bundled-notes', 'read'] } },
+{ scopes: ['global'], surfaces: ['cli'], execution: { target: 'daemon' }, dangerLevel: 'safe', inputSchema: { type: 'object' }, id: 'reserved', title: 'Wrong auth', cli: { path: ['auth', 'replacement'] } },
+{ scopes: ['global'], surfaces: ['cli'], execution: { target: 'daemon' }, dangerLevel: 'safe', inputSchema: { type: 'object' }, id: 'unavailable', title: 'Unavailable', availability: {
             when: { fact: 'host.feature', operator: 'enabled', value: 'missing-default-fact' },
-          } },
-          { id: 'duplicate-a', title: 'Duplicate', path: ['conflicted', 'read'], action: 'read' },
-          { id: 'duplicate-b', title: 'Duplicate', path: ['conflicted', 'read'], action: 'read' },
-        ],
-      },
+          }, cli: { path: ['unknown-facts', 'read'] } },
+{ scopes: ['global'], surfaces: ['cli'], execution: { target: 'daemon' }, dangerLevel: 'safe', inputSchema: { type: 'object' }, id: 'duplicate-a', title: 'Duplicate', cli: { path: ['conflicted', 'read'] } },
+{ scopes: ['global'], surfaces: ['cli'], execution: { target: 'daemon' }, dangerLevel: 'safe', inputSchema: { type: 'object' }, id: 'duplicate-b', title: 'Duplicate', cli: { path: ['conflicted', 'read'] } } ] },
     }));
-    const entries = projectBundledRootHelpEntries([{
-      pluginId: manifest.id,
-      agents: [],
-      commands: manifest.contributes.commands!.map((command) => ({
-        pluginId: manifest.id, provenance: 'first_party', source: { kind: 'bundled' },
-        definition: toCommandDefinition(manifest.id, command),
-        availability: evaluateContributionAvailability({ availability: command.availability, facts: resolveInvocationContributionPolicyFacts() }),
-      })),
-    }]);
+    const entries = projectBundledRootHelpEntries([projectPluginCommandDeclarations({ manifest, provenance: 'first_party', source: { kind: 'bundled' } })]);
     expect(entries.find((entry) => entry.command === 'bundled-notes')).toMatchObject({ rootHelpDescription: 'Read a bundled note' });
     expect(entries.find((entry) => entry.command === 'auth')).toMatchObject({ rootHelpDescription: 'Manage authentication' });
     expect(entries.find((entry) => entry.command === 'unknown-facts')?.rootHelpLabel).toBeUndefined();
@@ -96,10 +82,7 @@ describe('root help declaration projection', () => {
     const manifestPath = join(pluginRoot, '.happier-plugin', 'plugin.json');
     const manifest = PluginManifestV2Schema.parse(createPluginManifestV2Fixture({
       id: pluginId,
-      contributes: {
-        actions: [{ id: 'read', title: 'Read note', scopes: ['global'], surfaces: ['cli'], execution: { target: 'daemon' }, dangerLevel: 'safe', inputSchema: { type: 'object', properties: { format: { type: 'string', enum: ['brief', 'full'] } } } }],
-        commands: [{ id: 'read-command', title: 'Read note', description: 'Read an installed note', path: ['installed-notes', 'read'], action: 'read' }],
-        agents: [{
+      contributes: { agents: [{
           id: 'scribe', title: 'Acme Scribe', runtime: { kind: 'custom' }, primary: 'sessions',
           capabilities: { surfaces: ['terminal'], sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } },
           cli: {
@@ -108,7 +91,7 @@ describe('root help declaration projection', () => {
             auth: { support: 'login_terminal', loginLaunches: [{ kind: 'primary', args: ['login'] }] },
           },
         }],
-      },
+actions: [{ scopes: ['global'], surfaces: ['cli'], execution: { target: 'daemon' }, dangerLevel: 'safe', inputSchema: { type: 'object', properties: { format: { type: 'string', enum: ['brief', 'full'] } } }, id: 'read-command', title: 'Read note', description: 'Read an installed note', cli: { path: ['installed-notes', 'read'] } } ] },
     }));
     await mkdir(dirname(manifestPath), { recursive: true });
     await writeFile(join(pluginRoot, 'daemon.mjs'), 'export function activate() {}\n');
@@ -137,8 +120,8 @@ describe('root help declaration projection', () => {
     })).sort((left, right) => left.id.localeCompare(right.id));
     expect(listingFields(admittedAgents.agents)).toEqual(listingFields(executableAgents.agents));
 
-    await writeFile(manifestPath, JSON.stringify({ ...manifest, contributes: { ...manifest.contributes, commands: [{
-      ...manifest.contributes.commands![0], title: 'Changed without approval', description: 'Read an accepted replacement note',
+    await writeFile(manifestPath, JSON.stringify({ ...manifest, contributes: { ...manifest.contributes, actions: [{
+      ...manifest.contributes.actions![0], title: 'Changed without approval', description: 'Read an accepted replacement note',
     }] } }));
     expect((await resolveRootHelpEntries(happyHomeDir)).find((entry) => entry.command === 'installed-notes'))
       .toMatchObject({ rootHelpDescription: 'Read an installed note' });
@@ -164,10 +147,7 @@ describe('root help declaration projection', () => {
     const manifestPath = join(pluginRoot, '.happier-plugin', 'plugin.json');
     const manifest = PluginManifestV2Schema.parse(createPluginManifestV2Fixture({
       id: pluginId,
-      contributes: {
-        actions: [{ id: 'read', title: 'Read', scopes: ['global'], surfaces: ['cli'], execution: { target: 'daemon' }, dangerLevel: 'safe', inputSchema: { type: 'object' } }],
-        commands: [{ id: 'read-command', title: 'Unaccepted live command', path: ['unaccepted-live', 'read'], action: 'read' }],
-      },
+      contributes: { actions: [{ scopes: ['global'], surfaces: ['cli'], execution: { target: 'daemon' }, dangerLevel: 'safe', inputSchema: { type: 'object' }, id: 'read-command', title: 'Unaccepted live command', cli: { path: ['unaccepted-live', 'read'] } } ] },
     }));
     await mkdir(dirname(manifestPath), { recursive: true });
     await writeFile(join(pluginRoot, 'daemon.mjs'), 'export function activate() {}\n');

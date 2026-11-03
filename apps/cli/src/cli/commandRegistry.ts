@@ -216,28 +216,22 @@ export function synchronizePluginCommandContributions(registry: ResolvedContribu
     // root is: one admitted owner per path, decided here rather than at dispatch.
     ...dynamicActionCommandKeys,
   ]);
-  for (const command of registry.commands ?? []) {
-    const root = command.definition.path[0];
-    if (root && isStaticCommandSurfaceReserved(root)) reservedRoots.add(root);
+  for (const action of registry.actions) {
+    const cli = action.admittedTarget?.declaration.cli;
+    for (const path of cli ? [cli.path, ...(cli.aliases ?? [])] : []) {
+      const root = path[0];
+      if (root && isStaticCommandSurfaceReserved(root)) reservedRoots.add(root);
+    }
   }
   const projection = resolvePluginCommandProjection({ registry, reservedRoots });
   dynamicPluginCompletionPaths = Object.freeze(projection.commands
     .filter((command) => command.status === 'available')
     .map((command) => Object.freeze([...command.path])));
-  dynamicPluginCommandTmuxEntries = Object.freeze((registry.commands ?? [])
-    .map((command) => {
-      const path = Object.freeze([...command.definition.path]);
-      const projected = projection.commands.find((candidate) => (
-        candidate.qualifiedId === `${command.pluginId}/${command.definition.id}`
-        && candidate.path.length === path.length
-        && candidate.path.every((segment, index) => segment === path[index])
-      ));
-      return Object.freeze({
-        path,
-        mode: command.definition.tmux ?? 'inherit',
-        available: projected?.status === 'available',
-      });
-    }));
+  dynamicPluginCommandTmuxEntries = Object.freeze(projection.commands.map((command) => Object.freeze({
+    path: command.path,
+    mode: command.tmux,
+    available: command.status === 'available',
+  })));
   dynamicPluginCommandSources = Object.freeze({ registry, projection });
   // Plugin roots changed, so the admitted Action set has to be recomputed
   // against the current reservations rather than reused.

@@ -502,6 +502,13 @@ export function normalizePluginActionSlashV2(
   return slash ? { tokens: [...slash.tokens] } : null;
 }
 
+const PluginActionCliV2Schema = lazyZodSchema(() => z.strictObject({
+  path: z.array(z.string().check(z.trim(), z.minLength(1))).check(z.minLength(1)),
+  aliases: z.optional(z.array(z.array(z.string().check(z.trim(), z.minLength(1))).check(z.minLength(1)))),
+  visibility: z.optional(z.enum(['default', 'advanced'])),
+  tmux: z.optional(z.enum(['inherit', 'required', 'forbidden'])),
+}));
+
 export const PluginActionContributionV2Schema = lazyZodSchema(() => z.strictObject({
 readOnly: z.optional(z.union([z.boolean(), InputPredicateSchema])),
 
@@ -518,6 +525,7 @@ readOnly: z.optional(z.union([z.boolean(), InputPredicateSchema])),
   sessionTarget: z.optional(ActionSessionTargetDeclarationV1Schema),
   placementBindings: z.optional(PluginActionPlacementBindingsV2Schema),
   slash: z.optional(PluginActionSlashV2Schema),
+  cli: z.optional(PluginActionCliV2Schema),
   inputSchema: z.optional(PluginJsonSchemaV2Schema),
   contextualDefaults: z.optional(ActionContextualDefaultsSchema),
   inputHints: z.optional(PluginActionInputHintsV2Schema),

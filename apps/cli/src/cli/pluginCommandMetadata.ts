@@ -1,5 +1,5 @@
 import type { CliCommandSurfaceEntry } from './commandSurfaceManifest';
-import type { ResolvedCommandContribution } from '@/plugins/projection/registry/types';
+import type { PluginActionContributionV2 } from '@happier-dev/protocol';
 import type { ContributionAvailabilityDecision } from '@happier-dev/protocol/plugins/contributions/public-types';
 import { findCliCommandPathConflicts } from './commandPathClaims';
 
@@ -58,7 +58,15 @@ function readLocalizedText(value: unknown): string | null {
   return typeof fallback === 'string' ? sanitizePluginCommandDisplayText(fallback) : null;
 }
 
-function qualifiedCommandId(command: ResolvedCommandContribution): string | null {
+export type PluginCommandActionMetadata = Readonly<{
+  pluginId?: string;
+  definition: Readonly<{ id: string }>;
+  admittedTarget?: Readonly<{
+    declaration: Pick<PluginActionContributionV2, 'id' | 'title' | 'description' | 'cli'> & Readonly<{ surfaces: readonly string[] }>;
+  }>;
+}>;
+
+function qualifiedCommandId(command: PluginCommandActionMetadata): string | null {
   const pluginId = command.pluginId?.trim();
   const localId = command.definition.id.trim();
   return pluginId && localId ? pluginId + '/' + localId : null;
@@ -72,56 +80,71 @@ function compareCommands(
   return pathComparison || left.qualifiedId.localeCompare(right.qualifiedId);
 }
 
-export function resolvePluginCommandMetadata<T extends ResolvedCommandContribution>(params: Readonly<{
-  registry: Readonly<{ commands?: readonly T[] }>;
+export function resolvePluginCommandMetadata<T extends PluginCommandActionMetadata>(params: Readonly<{
+  registry: Readonly<{ actions?: readonly T[] }>;
   resolveAvailability(command: T): ContributionAvailabilityDecision;
   reservedRoots: ReadonlySet<string>;
 }>): PluginCommandProjection {
   const diagnostics: PluginCommandProjectionDiagnostic[] = [];
   const admitted: PluginCommandProjectionEntry[] = [];
 
-  for (const command of params.registry.commands ?? []) {
+  for (const command of params.registry.actions ?? []) {
+    const declaration = command.admittedTarget?.declaration;
+    if (!declaration?.surfaces.includes('cli') || !declaration.cli) continue;
     const qualifiedId = qualifiedCommandId(command);
     if (!qualifiedId) continue;
-    const path = command.definition.path.map((segment) => segment.trim());
-    const root = path[0];
-    if (!root || path.some((segment) => !COMMAND_PATH_SEGMENT.test(segment))) {
-      diagnostics.push(Object.freeze({ code: 'plugin_command_path_invalid', qualifiedId }));
-      continue;
-    }
-    if (params.reservedRoots.has(root)) {
-      diagnostics.push(Object.freeze({ code: 'plugin_command_path_reserved', qualifiedId }));
-      continue;
-    }
-
     const availability = params.resolveAvailability(command);
-    admitted.push(Object.freeze({
-      qualifiedId,
-      qualifiedActionId: command.definition.actionId,
-      path: Object.freeze(path),
-      title: readLocalizedText(command.definition.title) ?? command.definition.id,
-      ...(readLocalizedText(command.definition.description)
-        ? { description: readLocalizedText(command.definition.description)! }
-        : {}),
-      visibility: command.definition.visibility ?? 'default',
-      tmux: command.definition.tmux ?? 'inherit',
-      status: availability.outcome === 'visible' ? 'available' : 'unavailable',
-      ...(availability.outcome !== 'visible'
-        ? { unavailableCode: availability.code }
-        : {}),
-    }));
+    const paths = [declaration.cli.path, ...(declaration.cli.aliases ?? [])];
+    const seenPaths = new Set<string>();
+    for (const declaredPath of paths) {
+      const path = declaredPath.map((segment) => segment.trim());
+      const pathKey = path.join('\u0000');
+      if (seenPaths.has(pathKey)) continue;
+      seenPaths.add(pathKey);
+      const root = path[0];
+      if (!root || path.some((segment) => !COMMAND_PATH_SEGMENT.test(segment))) {
+        diagnostics.push(Object.freeze({ code: 'plugin_command_path_invalid', qualifiedId }));
+        continue;
+      }
+      if (params.reservedRoots.has(root)) {
+        diagnostics.push(Object.freeze({ code: 'plugin_command_path_reserved', qualifiedId }));
+        continue;
+      }
+
+      admitted.push(Object.freeze({
+        qualifiedId,
+        qualifiedActionId: qualifiedId,
+        path: Object.freeze(path),
+        title: readLocalizedText(declaration.title) ?? declaration.id,
+        ...(readLocalizedText(declaration.description)
+          ? { description: readLocalizedText(declaration.description)! }
+          : {}),
+        visibility: declaration.cli.visibility ?? 'default',
+        tmux: declaration.cli.tmux ?? 'inherit',
+        status: availability.outcome === 'visible' ? 'available' : 'unavailable',
+        ...(availability.outcome !== 'visible'
+          ? { unavailableCode: availability.code }
+          : {}),
+      }));
+    }
   }
 
-  const ambiguousQualifiedIds = new Set(
+  const commandPathKey = (command: Readonly<{ qualifiedId: string; path: readonly string[] }>) => (
+    command.qualifiedId + '\u0000' + command.path.join('\u0000')
+  );
+  const ambiguousPaths = new Set(
     findCliCommandPathConflicts(admitted.map((command) => ({
       source: 'plugin' as const,
       ownerId: command.qualifiedId,
       path: command.path,
-    }))).flatMap((conflict) => [conflict.left.ownerId, conflict.right.ownerId]),
+    }))).filter((conflict) => conflict.left.ownerId !== conflict.right.ownerId)
+      .flatMap((conflict) => [conflict.left, conflict.right].map((claim) => commandPathKey({
+        qualifiedId: claim.ownerId, path: claim.path,
+      }))),
   );
 
   const commands = admitted.map((command) => {
-    if (!ambiguousQualifiedIds.has(command.qualifiedId)) return command;
+    if (!ambiguousPaths.has(commandPathKey(command))) return command;
     diagnostics.push(Object.freeze({
       code: 'plugin_command_path_ambiguous',
       qualifiedId: command.qualifiedId,

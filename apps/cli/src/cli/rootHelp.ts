@@ -45,18 +45,21 @@ function projectCommandDeclarations(
   const agents = resolveAdmittedAgentCommandMetadata(plugins.flatMap((plugin) => plugin.agents), actionRoots);
   for (const agent of agents) entries[agent.cliSubcommand] = projectAgentCommandSurface(agent);
 
-  const commands = plugins.flatMap((plugin) => plugin.commands);
+  const actions = plugins.flatMap((plugin) => plugin.actions);
   const reservedRoots = new Set([
     ...Object.entries(staticCommandDescriptors).filter(([, entry]) => entry.handler).map(([root]) => root),
     ...actionRoots,
     ...agents.map((agent) => agent.cliSubcommand),
   ]);
-  for (const command of commands) {
-    const root = command.definition.path[0];
-    if (root && isStaticCommandSurfaceReserved(root)) reservedRoots.add(root);
+  for (const action of actions) {
+    const cli = action.admittedTarget?.declaration.cli;
+    for (const path of cli ? [cli.path, ...(cli.aliases ?? [])] : []) {
+      const root = path[0];
+      if (root && isStaticCommandSurfaceReserved(root)) reservedRoots.add(root);
+    }
   }
   const projection = resolvePluginCommandMetadata({
-    registry: { commands },
+    registry: { actions },
     reservedRoots,
     resolveAvailability: (command) => command.availability,
   });

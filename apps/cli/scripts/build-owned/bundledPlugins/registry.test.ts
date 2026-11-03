@@ -24,8 +24,7 @@ describe('bundled manifest locator publication', () => {
       pluginId: 'happier.fixture', pluginPackageId: 'fixture', packageName: '@happier-dev/plugins-fixture',
       packageVersion: '0.0.0', manifest: { schemaVersion: 2, id: 'happier.fixture', version: '0.0.0',
         runtime: { apiVersion: 1 }, contributes: {
-          actions: [{ id: 'echo', title: 'Echo', scopes: ['global'], surfaces: ['cli'], execution: { target: 'daemon' }, dangerLevel: 'safe', inputSchema: { type: 'object' } }],
-          commands: [{ id: 'echo-command', title: 'Echo fixture', action: 'echo', path: ['fixture-notes', 'echo'] }],
+          actions: [{ id: 'echo', title: 'Echo fixture', scopes: ['global'], surfaces: ['cli'], execution: { target: 'daemon' }, dangerLevel: 'safe', inputSchema: { type: 'object' }, cli: { path: ['fixture-notes', 'echo'] } }],
         } },
     }] });
     const exports: Record<string, unknown> = {};
@@ -47,9 +46,10 @@ describe('bundled manifest locator publication', () => {
     expect(exports.BUNDLED_FIRST_PARTY_PLUGIN_COMMAND_METADATA).toEqual([{
       pluginId: 'happier.fixture',
       agents: [],
-      commands: [expect.objectContaining({
+      actions: [expect.objectContaining({
         pluginId: 'happier.fixture',
-        definition: expect.objectContaining({ id: 'echo-command', path: ['fixture-notes', 'echo'] }),
+        definition: expect.objectContaining({ id: 'echo' }),
+        admittedTarget: { declaration: expect.objectContaining({ cli: { path: ['fixture-notes', 'echo'] } }) },
         availability: { outcome: 'visible', code: 'plugin_contribution_available' },
       })],
     }]);
