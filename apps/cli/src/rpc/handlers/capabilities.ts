@@ -56,7 +56,7 @@ import { ManagedInstallationServerOriginV1Schema } from '@happier-dev/protocol/m
 import { RPC_ERROR_CODES, RpcError } from '@happier-dev/protocol/rpcErrors';
 import { createFilesystemEffectAdmission, type FilesystemEffectAdmission } from './fileSystem/accessPolicy/filesystemEffectAdmission';
 import { SavedSecretVaultInvocationV1Schema, type SavedSecretVaultInvocationResultV1 } from '@happier-dev/protocol/account/settings/personalSavedSecretActionsV1';
-import { observeCurrentAgentSessionFactory, type AgentSessionFactorySource } from '@/agent/catalog/runtimeEntry';
+import { observeCurrentAgentSessionFactory, type AgentSessionFactoryObservations, type AgentSessionFactorySource } from '@/agent/catalog/runtimeEntry';
 import { tryAcquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
 
 /** Installed inventory served to the Plugins UI; omit daemon-only catalog detail. */
@@ -638,27 +638,30 @@ export function registerCapabilitiesHandlers(
                 const names = [...new Set(detectRequest?.requests?.flatMap(request =>
                     request.id.startsWith('cli.') ? [request.id.slice(4)] : []) ?? [])];
                 const lease = names.length ? tryAcquireAuthoritativePluginRuntimeRegistryLease() : null;
+                let capabilitySessionFactories: AgentSessionFactoryObservations = {};
                 try {
                     // The same applied runtime decides factory readiness once.
                     // Its facts travel over the existing private requester pipe;
                     // CLI and dependency discovery still run as that requester.
-                    const observations = await Promise.allSettled(names.map(name =>
-                        observeCurrentAgentSessionFactory(name, lease ? { registry: lease.registry } : undefined)));
-                    const capabilitySessionFactories = Object.fromEntries(observations.flatMap((observation, index) => {
-                        if (observation.status === 'rejected' || observation.value && !observation.value.isCurrent()) return [];
-                        return [[names[index]!, observation.value ? {
-                            nativeAuthenticationRequired: observation.value.nativeAuthenticationRequired,
-                        } : null]];
-                    }));
-                    const result = await admission.executeRpc(method, detectRequest ?? data,
-                        context && names.length ? { ...context, capabilitySessionFactories } : context,
-                        () => execute(names.length ? { observations: capabilitySessionFactories,
-                            isCurrent: () => context?.signal?.aborted !== true } : undefined),
-                        failure => { throw new CapabilityError(failure.error, failure.errorCode); });
-                    // This private pipe returns the same installed capability
-                    // service's response; no external caller supplies this value.
-                    return result as T;
+                    if (lease) {
+                        const observations = await Promise.allSettled(names.map(name =>
+                            observeCurrentAgentSessionFactory(name, { registry: lease.registry })));
+                        capabilitySessionFactories = Object.fromEntries(observations.flatMap((observation, index) => {
+                            if (observation.status === 'rejected' || observation.value && !observation.value.isCurrent()) return [];
+                            return [[names[index]!, observation.value ? {
+                                nativeAuthenticationRequired: observation.value.nativeAuthenticationRequired,
+                            } : null]];
+                        }));
+                    }
                 } finally { await lease?.release(); }
+                const result = await admission.executeRpc(method, detectRequest ?? data,
+                    context && names.length ? { ...context, capabilitySessionFactories } : context,
+                    () => execute(names.length ? { observations: capabilitySessionFactories,
+                        isCurrent: () => context?.signal?.aborted !== true } : undefined),
+                    failure => { throw new CapabilityError(failure.error, failure.errorCode); });
+                // This private pipe returns the same installed capability
+                // service's response; no external caller supplies this value.
+                return result as T;
             }
             if (effects.includes('private_read') || effects.includes('file_write')) {
                 const failure = await admission.rpc(context);
