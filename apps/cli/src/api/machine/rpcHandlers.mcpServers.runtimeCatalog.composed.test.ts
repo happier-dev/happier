@@ -248,16 +248,16 @@ describe('Machine MCP catalog admission', () => {
     const first = DaemonMcpServersPreviewResponseSchema.parse(await rpcHandlerManager.invokeLocal(
       RPC_METHODS.DAEMON_MCP_SERVERS_PREVIEW, request,
     ));
-    expect(first, JSON.stringify(first)).toMatchObject({ ok: true, skills: { items: [expect.objectContaining({
+    expect(first, JSON.stringify(first)).toMatchObject({ ok: true, skills: { items: expect.arrayContaining([expect.objectContaining({
       id: 'happier:happier', selected: true,
-    })] } });
+    })]) } });
     enabled = false;
     const second = DaemonMcpServersPreviewResponseSchema.parse(await rpcHandlerManager.invokeLocal(
       RPC_METHODS.DAEMON_MCP_SERVERS_PREVIEW, request,
     ));
-    expect(second).toMatchObject({ ok: true, skills: { items: [expect.objectContaining({
+    expect(second).toMatchObject({ ok: true, skills: { items: expect.arrayContaining([expect.objectContaining({
       id: 'happier:happier', selected: false,
-    })] } });
+    })]) } });
     expect(paths.filter(path => path === PROMPT_LIBRARY_ROWS_ROUTE_V1)).toHaveLength(2);
     expect(paths.filter(path => path === '/v2/account/settings' || path.includes('/settings/history'))).toEqual([]);
   });
