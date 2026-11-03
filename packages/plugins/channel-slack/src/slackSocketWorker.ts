@@ -91,7 +91,8 @@ export function startSlackSocketWorker(input: SlackSocketWorkerInput): SlackSock
           if ('kind' in channel) return { kind: 'notReady', failure: channel,
             transportFact: { kind: 'historyGap', reason: 'applicationAdmissionLost' } };
           const observation = mapSlackEventToIngress({ payload, identity: input.connection.identity, channel });
-          if (observation) await input.admitObservation({ connectionId: input.connection.connectionId, entry: { observation, eventCandidate: null } }, { signal });
+          if (observation) await input.admitObservation({ connectionId: input.connection.connectionId,
+            authorityEpoch: input.connection.authorityEpoch, entry: { observation, eventCandidate: null } }, { signal });
           admissionPending = false;
         }
         signal.throwIfAborted();

@@ -161,6 +161,7 @@ type IngressExecutionSource =
     kind: 'providerObservation';
     caller: PluginCaller | undefined;
     directAction: boolean;
+    authorityEpoch: number | undefined;
   }>
   | Readonly<{
     kind: 'checkpointedPoll';
@@ -1263,6 +1264,11 @@ function assertCurrentConnection(input: Readonly<{
         'channels_ingress_checkpointed_pull_direct_unavailable',
         'Checkpointed-pull observations are admitted only by the checkpointed poll owner.',
       );
+    }
+    if ((payload.transport.kind === 'socket' || source.authorityEpoch !== undefined)
+      && source.authorityEpoch !== payload.authorityEpoch) {
+      throw pluginError('channels_ingress_stale_authority',
+        'The provider observation no longer holds its captured connection generation.');
     }
   } else if (
     !arePluginMachineExecutionRoutingsEqual(
@@ -5572,6 +5578,7 @@ export async function ingestConversationProviderObservationForInvocation(
     kind: 'providerObservation',
     caller: stampedPluginCaller(context),
     directAction: false,
+    authorityEpoch: input.authorityEpoch,
   }));
 }
 
@@ -6264,6 +6271,7 @@ export function createConversationProviderObservationIngestHandler(pairing: Conv
       kind: 'providerObservation',
       caller: stampedPluginCaller(context),
       directAction: true,
+      authorityEpoch: input.authorityEpoch,
     }, pairing));
   };
 }

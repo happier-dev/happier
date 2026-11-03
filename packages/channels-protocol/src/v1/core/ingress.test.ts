@@ -187,6 +187,8 @@ describe('Channels V1 normalized ingress', () => {
             entry,
         } as const;
         expect(ConversationProviderObservationIngestInputV1Schema.parse(input)).toEqual(input);
+        expect(ConversationProviderObservationIngestInputV1Schema.parse({ ...input, authorityEpoch: 7 }))
+            .toEqual({ ...input, authorityEpoch: 7 });
         expect(ConversationProviderObservationIngestInputV1Schema.jsonSchema).toMatchObject({
             type: 'object',
             additionalProperties: false,
@@ -196,7 +198,11 @@ describe('Channels V1 normalized ingress', () => {
         for (const invalid of [
             {
                 ...input,
-                authorityEpoch: 7,
+                authorityEpoch: 0,
+            },
+            {
+                ...input,
+                authorityEpoch: Number.MAX_SAFE_INTEGER + 1,
             },
             {
                 ...input,

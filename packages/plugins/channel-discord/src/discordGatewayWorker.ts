@@ -459,6 +459,7 @@ export function startDiscordGatewayWorker(input: DiscordGatewayWorkerInput): Dis
           if (!observation) return;
           await input.admitObservation({
             connectionId: input.connection.connectionId,
+            authorityEpoch: input.connection.authorityEpoch,
             entry: {
               observation,
               eventCandidate: createDiscordAutomationEventCandidate({

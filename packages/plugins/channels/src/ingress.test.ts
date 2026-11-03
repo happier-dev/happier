@@ -379,6 +379,7 @@ function observation(input: Readonly<{
   const now = input.occurredAt ?? Date.now();
   return {
     connectionId: 'connection-1',
+    ...(input.transport === 'socket' ? { authorityEpoch: 4 } : {}),
     entry: {
       observation: {
         kind: 'fullText',
@@ -1998,6 +1999,30 @@ function measurementFor(
 }
 
 describe('Conversation provider observation ingress', () => {
+  it('refuses a socket worker without its captured connection generation', async () => {
+    const harness = createIngressHarness({ connection: socketChannelConnection() });
+    const { authorityEpoch: _missing, ...input } = observation({ messageRevision: 'old-worker', transport: 'socket' });
+    await expect(ingestConversationProviderObservationForInvocation(
+      input, harness.context,
+    )).rejects.toMatchObject({ code: 'channels_ingress_stale_authority' });
+    expect(harness.send).not.toHaveBeenCalled();
+  });
+  it('admits the current socket generation but refuses the retired worker after a generation change', async () => {
+    const harness = createIngressHarness({ connection: socketChannelConnection() });
+    await ingestConversationProviderObservationForInvocation({
+      ...observation({ messageRevision: 'socket-current', transport: 'socket' }), authorityEpoch: 4,
+    }, harness.context);
+    expect(harness.send).toHaveBeenCalledOnce();
+    advanceConnectionAuthorityEpoch(harness.rows);
+    const replacement = observation({ messageRevision: 'socket-next', transport: 'socket',
+      occurrenceId: 'socket:next', messageId: 'socket:message:next' });
+    await expect(ingestConversationProviderObservationForInvocation({
+      ...replacement, authorityEpoch: 4,
+    }, harness.context)).rejects.toMatchObject({ code: 'channels_ingress_stale_authority' });
+    expect(harness.send).toHaveBeenCalledOnce();
+    await ingestConversationProviderObservationForInvocation({ ...replacement, authorityEpoch: 5 }, harness.context);
+    expect(harness.send).toHaveBeenCalledTimes(2);
+  });
   it.each([0, 59_999, 31 * 86_400_000])('admits a current observation with representable freshness %s', async maximumObservationAgeMs => {
     const now = 1_700_000_000_000;
     vi.useFakeTimers();

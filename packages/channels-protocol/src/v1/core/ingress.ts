@@ -301,14 +301,24 @@ export type ConversationIngressObservedEntryV1 = ReturnType<
 export const ConversationIngressObservedEntryV1JsonSchema: PluginJsonSchema =
     /* @__PURE__ */ (() => ConversationIngressObservedEntryV1Schema.jsonSchema)();
 
-/** @internal Relative-only input for composed Channels protocol schemas. */
-export const ConversationProviderObservationIngestInputV1ProtocolSchema = defineProtocolObject({
+const conversationProviderObservationIngestInputV1Shape = {
     connectionId: ConversationConnectionIdV1ProtocolSchema,
+    authorityEpoch: defineProtocolNumber({ integer: true, minimum: 1, maximum: Number.MAX_SAFE_INTEGER }).optional(),
     entry: ConversationIngressObservedEntryV1ProtocolSchema,
-}, { policy: 'closed' });
+} as const;
 
-/** Provider-to-core ingest input; host caller authority and checkpoints stay outside this value. */
-export const ConversationProviderObservationIngestInputV1Schema = ConversationProviderObservationIngestInputV1ProtocolSchema;
+/** Preserve the concrete schema identity through nested public declarations. */
+export interface ConversationProviderObservationIngestInputSchemaV1 extends ReturnType<
+    typeof defineProtocolObject<typeof conversationProviderObservationIngestInputV1Shape, { policy: 'closed' }>
+> {}
+
+/** @internal Relative-only input for composed Channels protocol schemas. */
+export const ConversationProviderObservationIngestInputV1ProtocolSchema: ConversationProviderObservationIngestInputSchemaV1 =
+    defineProtocolObject(conversationProviderObservationIngestInputV1Shape, { policy: 'closed' });
+
+/** Held socket workers carry their observed generation; request-scoped ingress may omit it. */
+export const ConversationProviderObservationIngestInputV1Schema: ConversationProviderObservationIngestInputSchemaV1 =
+    ConversationProviderObservationIngestInputV1ProtocolSchema;
 export type ConversationProviderObservationIngestInputV1 = ReturnType<
     typeof ConversationProviderObservationIngestInputV1Schema.parse
 >;
