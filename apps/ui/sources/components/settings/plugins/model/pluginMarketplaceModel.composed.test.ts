@@ -5,6 +5,7 @@ import type { MachineCapabilitiesCacheState } from '@/hooks/server/useMachineCap
 import { PluginInstallationReviewSchema } from '@happier-dev/protocol/marketplace/internal';
 import { BUNDLED_FIRST_PARTY_PLUGIN_PRESENTATION } from '@/agents/registry/generatedBundledPluginEntries';
 import { createPluginInstallationReviewFixture } from '@happier-dev/protocol/testing/pluginInstallationReviewFixture';
+import { resolvePluginDetailFacts } from '../detail/PluginDetailHeader';
 
 import {
   createPluginSettingsViews,
@@ -173,7 +174,7 @@ describe('selected plugin truth read lifecycle', () => {
 });
 
 describe('installed plugin lifecycle capabilities', () => {
-  it('shows every Account installation while lifecycle actions stay on the administered machine', () => {
+  it.each(['trusted', 'untrusted', 'revoked'] as const)('preserves %s Account installation trust while lifecycle actions stay on the administered machine', (trustState) => {
     const rows = projectAccountInstalledPlugins([installed], {
       kind: 'available',
       availabilityCursor: 1,
@@ -193,7 +194,7 @@ describe('installed plugin lifecycle capabilities', () => {
                 portableRelease: true,
                 uiArtifacts: [],
                 enabled: true,
-                trustState: 'trusted',
+                trustState,
                 observedAt: 10,
               },
               declaration: null,
@@ -214,6 +215,16 @@ describe('installed plugin lifecycle capabilities', () => {
       'elsewhere.plugin',
     ]);
     expect(rows[0]).toBe(installed);
+    const expectedTrust = trustState === 'trusted' ? 'trusted' : 'untrusted';
+    expect(resolvePluginDetailFacts(rows[1]!, null).find(fact => fact.key === 'trust')?.text)
+      .toBe(t(`settingsPlugins.trustPolicy.${expectedTrust}`));
+    const installation = rows[1]!.accountInstallations![0]!;
+    const mixed = projectAccountInstalledPlugins([], { kind: 'available', availabilityCursor: 1, completeness: 'complete',
+      plugins: [{ pluginId: 'elsewhere.plugin', installations: [installation, { ...installation,
+        materialization: { ...installation.materialization, machineId: 'machine-c',
+          trustState: trustState === 'trusted' ? 'revoked' : 'trusted' } }] }] });
+    expect(resolvePluginDetailFacts(mixed[0]!, null).find(fact => fact.key === 'trust')?.text)
+      .toBe(t('common.unavailable'));
     // Where it came from is known from its installation; the card and the detail name it like any other.
     expect(projectInstalledPluginPresentation(rows[1]!).sourceLabel).toBe(t('settingsPlugins.rowSource.npm'));
     expect(projectInstalledPluginLifecycleCapabilities(rows[1]!)).toEqual({

@@ -107,6 +107,10 @@ export function projectAccountInstalledPlugins(
         const declaration = plugin.installations.find((installation) => installation.declaration)?.declaration;
         const presentation = declaration ?? BUNDLED_FIRST_PARTY_PLUGIN_PRESENTATION[plugin.pluginId];
         const versions = [...new Set(plugin.installations.map((installation) => installation.materialization.version))];
+        const trustStates = new Set(plugin.installations.map((installation) => installation.materialization.trustState));
+        const trustPolicy = trustStates.size === 1
+            ? first.materialization.trustState === 'trusted' ? 'trusted' : 'untrusted'
+            : undefined;
         observed.push(Object.freeze({
             pluginId: plugin.pluginId,
             title: resolvePluginLocalizedText({ projection: null, pluginId: plugin.pluginId, value: presentation?.displayName })
@@ -114,7 +118,8 @@ export function projectAccountInstalledPlugins(
             description: resolvePluginLocalizedText({ projection: null, pluginId: plugin.pluginId, value: presentation?.description }) || null,
             version: versions.length === 1 ? versions[0]! : '',
             enabled: plugin.installations.some((installation) => installation.materialization.enabled),
-            source: { kind: ACCOUNT_INSTALLATION_SOURCE_KIND[first.materialization.sourceClass], locator: '' },
+            source: { kind: ACCOUNT_INSTALLATION_SOURCE_KIND[first.materialization.sourceClass], locator: '',
+                ...(trustPolicy ? { trustPolicy } : {}) },
             install: { mode: 'observed', manifestVersion: '' },
             compatibility: { status: 'unknown', diagnostics: [] },
             diagnostics: [],
