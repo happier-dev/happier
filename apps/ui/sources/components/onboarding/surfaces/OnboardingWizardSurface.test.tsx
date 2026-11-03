@@ -1,18 +1,24 @@
+import { parseRelayAccessConfig, readBuiltinRelayAccessProviderId, type RelayAccessConfig } from '@happier-dev/cli-common/relayAccess/catalog';
 import React from 'react';
 import { act, type ReactTestInstance } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // These scenarios exercise the Cloud distributor; an unconfigured build has no hosted defaults.
-vi.hoisted(() => vi.stubEnv('EXPO_PUBLIC_HAPPIER_BUILD_DEFAULT_PROFILE_JSON', JSON.stringify({
-    home: { url: 'https://api.happier.dev' },
-    accountService: { url: 'https://api.happier.dev' },
-})));
+vi.hoisted(() => {
+    // Global setup may preload cli-common before this build fixture exists. Reload once at
+    // collection so its captured Cloud URL and the runtime profile parser use the same build.
+    vi.resetModules();
+    vi.stubEnv('EXPO_PUBLIC_HAPPIER_BUILD_DEFAULT_PROFILE_JSON', JSON.stringify({
+        home: { url: 'https://api.happier.dev' },
+        accountService: { url: 'https://api.happier.dev' },
+    }));
+});
 
-import { createRootLayoutFeaturesResponse, flushHookEffects, renderHook, renderScreen as renderScreenWithProviders, standardCleanup } from '@/dev/testkit';
 import type { IModal } from '@/modal';
 import type { ServerProfile } from '@/sync/domains/server/serverProfiles';
 import type { AuthEntryOptions } from '@/components/account/auth/useAuthEntryOptions';
 import type { HomeAuthenticationAction } from '@/auth/capabilities/authMethodCapabilities';
+import { PersonalHomeBootstrapRequestContext } from '@/components/personalHome/bootstrap/personalHomeBootstrapRequest';
 
 import { installTokenStorageWebPlatformMocks } from '@/auth/storage/tokenStorage.testHelpers';
 import { installBrowserRuntimeForTests } from '@/dev/testkit/harness/browserRuntimeHarness';
@@ -75,10 +81,10 @@ const expoRouterSpies = vi.hoisted(() => ({
 const modalConfirmMock = vi.hoisted(() => vi.fn(async (_title?: string, _message?: string, _options?: unknown) => true));
 const runtimeFetchMock = vi.hoisted(() => vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>());
 const nativeTaskScene = vi.hoisted(() => ({
-    nextResult: null as import('@happier-dev/protocol').SystemTaskResult | null,
-    specs: [] as Array<import('@happier-dev/protocol').SystemTaskSpec & { taskId: string }>,
+    nextResult: null as import('@happier-dev/protocol/system/tasks/spec').SystemTaskResult | null,
+    specs: [] as Array<import('@happier-dev/protocol/system/tasks/spec').SystemTaskSpec & { taskId: string }>,
     /** The relay access provider the fixture's OS has been configured with (what a configure task persists). */
-    relayAccessProviderId: null as string | null,
+    relayAccessSelection: null as RelayAccessConfig | null,
 }));
 const nativeSecureStore = vi.hoisted(() => new Map<string, string>());
 
@@ -92,21 +98,23 @@ installTokenStorageWebPlatformMocks({
         setItemAsync: async (key: string, value: string) => { nativeSecureStore.set(key, value); },
         deleteItemAsync: async (key: string) => { nativeSecureStore.delete(key); },
     }),
-    reactNative: async () => {
-        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-        return createReactNativeWebMock({
-            useWindowDimensions: () => ({ width: 390, height: 844, scale: 1, fontScale: 1 }),
-            Platform: {
-                get OS() {
-                    return reactNativeMockState.os;
-                },
+});
+
+// Replace the cached setup boundary after resetModules, before loading the UI graph.
+vi.doMock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock({
+        useWindowDimensions: () => ({ width: 390, height: 844, scale: 1, fontScale: 1 }),
+        Platform: {
+            get OS() {
+                return reactNativeMockState.os;
             },
-            AppState: {
-                currentState: 'active',
-                addEventListener: vi.fn(() => ({ remove: vi.fn() })),
-            },
-        });
-    },
+        },
+        AppState: {
+            currentState: 'active',
+            addEventListener: vi.fn(() => ({ remove: vi.fn() })),
+        },
+    });
 });
 
 vi.mock('react-native-unistyles', async () => {
@@ -196,21 +204,22 @@ nativeTasks.bridge.start.mockImplementation(async (spec) => {
     nativeTaskScene.specs.push({ ...spec, taskId });
     return taskId;
 });
-const relayAccessSnapshot = (providerId: string | null): import('@happier-dev/protocol').SystemTaskJsonValue => providerId
-    ? { configured: true, providerId, status: { state: 'enabled', shareUrl: null } }
-    : { configured: false, providerId: null, status: { state: 'disabled', shareUrl: null } };
+const relayAccessSnapshot = (selection: RelayAccessConfig | null): import('@happier-dev/protocol/system/tasks/spec').SystemTaskJsonValue => selection
+    ? { configured: true, providerId: readBuiltinRelayAccessProviderId(selection.provider), selection,
+        status: { state: 'enabled', shareUrl: null, details: null } }
+    : { configured: false, providerId: null, selection: null, status: { state: 'disabled', shareUrl: null, details: null } };
 nativeTasks.bridge.subscribe.mockImplementation(async (taskId, listener) => {
     const dispose = await subscribeNativeTask(taskId, listener);
     const spec = nativeTaskScene.specs.find(entry => entry.taskId === taskId);
-    const data: import('@happier-dev/protocol').SystemTaskJsonValue = spec?.kind === 'relay.runtime.status.v1' ? {
+    const data: import('@happier-dev/protocol/system/tasks/spec').SystemTaskJsonValue = spec?.kind === 'relay.runtime.status.v1' ? {
         installed: true, dataPresent: true, healthy: true, relayUrl: 'http://localhost:31337',
         service: { active: true, enabled: true },
     } : spec?.kind === 'daemon.service.status.v1' ? {
         serviceInstalled: false, daemonRunning: false, needsAuth: false, machineId: null,
     } : spec?.kind === 'daemon.service.relay.disconnect.v1' ? { outcome: 'no_service' }
-        : spec?.kind === 'relay.access.configure.v1' && spec.params && typeof spec.params === 'object' && 'providerId' in spec.params && typeof spec.params.providerId === 'string'
-            ? relayAccessSnapshot(nativeTaskScene.relayAccessProviderId = spec.params.providerId)
-        : spec?.kind === 'relay.access.status.v1' ? relayAccessSnapshot(nativeTaskScene.relayAccessProviderId)
+        : spec?.kind === 'relay.access.configure.v1' && spec.params && typeof spec.params === 'object' && 'config' in spec.params
+            ? relayAccessSnapshot(nativeTaskScene.relayAccessSelection = parseRelayAccessConfig(spec.params.config))
+        : spec?.kind === 'relay.access.status.v1' ? relayAccessSnapshot(nativeTaskScene.relayAccessSelection)
         : spec?.kind === 'local.ssh.discoverConfiguredHosts.v1' ? { hosts: [] }
         : null;
     const result = spec?.kind === 'tailscale.ensureReady.v1' ? nativeTaskScene.nextResult : null;
@@ -221,6 +230,7 @@ nativeTasks.bridge.subscribe.mockImplementation(async (taskId, listener) => {
 });
 
 // Install transport/platform ports before evaluating the actual Home and UI graph.
+const { createRootLayoutFeaturesResponse, flushHookEffects, renderHook, renderScreen: renderScreenWithProviders, standardCleanup } = await import('@/dev/testkit');
 const { createHomeGovernanceHarness, installHomeGovernanceBoundaries } = await import('@/dev/testkit/harness/homeGovernanceHarness');
 const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
@@ -236,8 +246,7 @@ const { SecretKeyLoginEmbedded } = await import('@/components/onboarding/restore
 const { RelayHostLocalChecklistStep } = await import('../checklists/relayHostLocal/RelayHostLocalChecklistStep');
 const { RemoteSshChecklistStep } = await import('../checklists/remoteSsh/RemoteSshChecklistStep');
 const { LocalRelayAccessControlSection } = await import('@/components/settings/server/localControl/LocalRelayAccessControlSection');
-const { RelayAccessLanUrlStep } = await import('@/components/onboarding/steps/relayAccess/RelayAccessLanUrlStep');
-const { RelayAccessCloudflareNamedTunnelStep } = await import('@/components/onboarding/steps/relayAccess/RelayAccessCloudflareNamedTunnelStep');
+const { RelayAccessConfigFieldsStep } = await import('@/components/onboarding/steps/relayAccess/RelayAccessConfigFieldsStep');
 const { RelayAccessTailscalePrerequisitesStep } = await import('@/components/onboarding/steps/relayAccess/RelayAccessTailscalePrerequisitesStep');
 await import('./OnboardingWizardSurface');
 const initialStorageState = storage.getState();
@@ -305,6 +314,7 @@ const baseAuthOptions = {
     keyChallengeV2Available: true,
     authEntryUnavailable: false,
     homeTarget: baseHomeTarget,
+    requestedHomeTarget: baseHomeTarget,
     homeLabel: 'Relay Home',
     observedHomeServerIdentityId: 'relay-profile',
     serverAvailability: 'ready' as const,
@@ -340,7 +350,7 @@ describe('OnboardingWizardSurface', () => {
         await loadSyncSingletonForTests();
         clearPendingSetupIntent();
         nativeTaskScene.nextResult = null;
-        nativeTaskScene.relayAccessProviderId = null;
+        nativeTaskScene.relayAccessSelection = null;
         nativeTaskScene.specs.length = 0;
         nativeTasks.bridge.start.mockClear();
         nativeTasks.bridge.cancel.mockClear();
@@ -457,8 +467,8 @@ describe('OnboardingWizardSurface', () => {
         await hook.unmount();
     });
 
-    it('labels the welcome action as start without retaining a duplicate relay next action', async () => {
-        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+    it('keeps Start for the implicit Cloud default and selects another Home through the welcome row', async () => {
+        const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
         const screen = await renderScreen(
             React.createElement(OnboardingWizardSurface, {
                 layout: 'portrait',
@@ -469,7 +479,7 @@ describe('OnboardingWizardSurface', () => {
 
         expect(screen.findByType(WizardModalShell as never).props.skipLabel).toBe('common.start');
 
-        const startButton = screen.findByTestId('onboarding-wizard-primary')!;
+        const startButton = screen.findByTestId('welcome-use-different-home')!;
         await act(async () => {
             await startButton.props.onPress?.();
         });
@@ -480,7 +490,7 @@ describe('OnboardingWizardSurface', () => {
     });
 
     it('passes backward transition direction when returning to an earlier wizard step', async () => {
-        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
         const screen = await renderScreen(
             React.createElement(OnboardingWizardSurface, {
                 layout: 'portrait',
@@ -489,7 +499,7 @@ describe('OnboardingWizardSurface', () => {
             }),
         );
 
-        const startButton = screen.findByTestId('onboarding-wizard-primary')!;
+        const startButton = screen.findByTestId('welcome-use-different-home')!;
         await act(async () => {
             await startButton.props.onPress?.();
         });
@@ -507,7 +517,7 @@ describe('OnboardingWizardSurface', () => {
     });
 
     it('renders a shell chrome accessory when the pre-auth host provides one', async () => {
-        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
         const screen = await renderScreen(
             React.createElement(OnboardingWizardSurface as any, {
                 layout: 'portrait',
@@ -521,7 +531,7 @@ describe('OnboardingWizardSurface', () => {
     });
 
     it('renders the current body without WizardModalShell in bare chrome mode', async () => {
-        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
         const screen = await renderScreen(
             React.createElement(OnboardingWizardSurface, {
                 layout: 'portrait',
@@ -536,7 +546,7 @@ describe('OnboardingWizardSurface', () => {
     });
 
     it('keeps non-welcome bare steps inside the workflow pane with heading plus primary action', async () => {
-        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
         const screen = await renderScreen(
             React.createElement(OnboardingWizardSurface, {
                 layout: 'portrait',
@@ -554,7 +564,7 @@ describe('OnboardingWizardSurface', () => {
     });
 
     it('keeps the primary action as the only relay-selection advance affordance in bare mode', async () => {
-        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
         const screen = await renderScreen(
             React.createElement(OnboardingWizardSurface, {
                 layout: 'portrait',
@@ -579,7 +589,7 @@ describe('OnboardingWizardSurface', () => {
         Object.defineProperty(navigator, 'mediaDevices', { configurable: true, value: { getUserMedia: vi.fn() } });
         Object.defineProperty(navigator, 'userAgent', { configurable: true, value: 'iPhone' });
 
-        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
         const screen = await renderScreen(
             React.createElement(OnboardingWizardSurface, {
                 layout: 'portrait',
@@ -595,6 +605,23 @@ describe('OnboardingWizardSurface', () => {
         Object.defineProperty(globalThis, 'screen', { value: originalScreen, configurable: true });
     });
 
+    const enterRemoteRelayAccess = async (screen: Awaited<ReturnType<typeof renderScreen>>) => {
+        await pressOnboarding(screen, 'onboarding-wizard-relay:remoteComputer');
+        await pressOnboarding(screen, 'onboarding-wizard-primary');
+        const checklist = screen.findByType(RemoteSshChecklistStep as never);
+        const props = checklist.props as React.ComponentProps<typeof RemoteSshChecklistStep>;
+        await act(async () => {
+            await props.onCompleted?.({
+                machineId: 'remote-machine',
+                relayRuntimeUrl: 'https://remote-relay.example.test',
+                relayAccessTarget: { kind: 'ssh', ssh: { target: 'root@remote.example.test', auth: 'agent' } },
+                mode: 'remoteRelayHost',
+            });
+        });
+        await act(async () => { props.onRequestAdvance?.(); });
+        await flushHookEffects({ cycles: 2, turns: 2 });
+    };
+
     it('routes relay access LAN choice to the shared prereqs step', async () => {
 
 
@@ -602,7 +629,7 @@ describe('OnboardingWizardSurface', () => {
 
         await focusHomeAtAddress('http://127.0.0.1:3005');
         {
-            const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+            const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
             const screen = await renderScreen(
                 React.createElement(OnboardingWizardSurface, {
                     layout: 'portrait',
@@ -612,9 +639,7 @@ describe('OnboardingWizardSurface', () => {
                 }),
             );
 
-            await pressOnboarding(screen, 'onboarding-wizard-relay:thisComputer');
-            await pressOnboarding(screen, 'onboarding-wizard-primary');
-            await pressOnboarding(screen, 'onboarding-wizard-primary');
+            await enterRemoteRelayAccess(screen);
             expect(screen.findByType(WizardModalShell as never).props.title).toBe('setupOnboarding.relayAccessWizardTitle');
             expect(screen.findByType(LocalRelayAccessControlSection as never)?.props).toBeTruthy();
             expect(typeof (screen.findByType(LocalRelayAccessControlSection as never)?.props as any)?.onWizardRequestProviderDetails).toBe('function');
@@ -625,7 +650,7 @@ describe('OnboardingWizardSurface', () => {
             await flushHookEffects({ cycles: 2, turns: 2 });
 
             expect(screen.findByType(WizardModalShell as never).props.title).toBe('setupOnboarding.relayAccessWizardTitle');
-            expect(screen.findAllByType(RelayAccessLanUrlStep as never)).toHaveLength(1);
+            expect(screen.findAllByType(RelayAccessConfigFieldsStep as never).filter(node => node.props.definition.providerId === 'lan')).toHaveLength(1);
         }
     });
 
@@ -633,7 +658,7 @@ describe('OnboardingWizardSurface', () => {
         await focusHomeAtAddress('https://api.happier.dev');
         browser?.reconfigureUrl('http://localhost:53288');
 
-        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
         const screen = await renderScreen(
             React.createElement(OnboardingWizardSurface, {
                 layout: 'portrait',
@@ -642,11 +667,7 @@ describe('OnboardingWizardSurface', () => {
                 authEntryOptions: baseAuthOptions,
             }),
         );
-        await flushHookEffects({ cycles: 2, turns: 2 });
-
-        await pressOnboarding(screen, 'onboarding-wizard-relay:thisComputer');
-        await pressOnboarding(screen, 'onboarding-wizard-primary');
-        await pressOnboarding(screen, 'onboarding-wizard-primary');
+        await enterRemoteRelayAccess(screen);
 
         const firstProps = screen.findByType(LocalRelayAccessControlSection as never)?.props as {
             onWizardSelectedProviderIdChange: unknown;
@@ -673,7 +694,7 @@ describe('OnboardingWizardSurface', () => {
             props: React.ComponentProps<typeof LocalRelayAccessControlSection>;
         };
         expect(localRelayAccessSection).toBeTruthy();
-        expect(localRelayAccessSection.props.target).toEqual({ kind: 'local' });
+        expect(localRelayAccessSection.props.target).toMatchObject({ kind: 'ssh' });
     });
 
     it('settles after a single relay access provider sync effect', async () => {
@@ -682,7 +703,7 @@ describe('OnboardingWizardSurface', () => {
 
 
 
-        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
         const screen = await renderScreen(
             React.createElement(OnboardingWizardSurface, {
                 layout: 'portrait',
@@ -691,17 +712,13 @@ describe('OnboardingWizardSurface', () => {
                 authEntryOptions: baseAuthOptions,
             }),
         );
-        await flushHookEffects({ cycles: 2, turns: 2 });
-
-        await pressOnboarding(screen, 'onboarding-wizard-relay:thisComputer');
-        await pressOnboarding(screen, 'onboarding-wizard-primary');
-        await pressOnboarding(screen, 'onboarding-wizard-primary');
+        await enterRemoteRelayAccess(screen);
 
         const localRelayAccessSection = screen.findByType(LocalRelayAccessControlSection as never) as unknown as {
             props: React.ComponentProps<typeof LocalRelayAccessControlSection>;
         };
         expect(localRelayAccessSection).toBeTruthy();
-        expect(localRelayAccessSection.props.target).toEqual({ kind: 'local' });
+        expect(localRelayAccessSection.props.target).toMatchObject({ kind: 'ssh' });
         const selectedProvider = localRelayAccessSection.props.wizardSelectedProviderId;
         expect(selectedProvider).toBe('localOnly');
         await flushHookEffects({ cycles: 2, turns: 2 });
@@ -715,7 +732,7 @@ describe('OnboardingWizardSurface', () => {
 
         await focusHomeAtAddress('http://127.0.0.1:3005');
         {
-            const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+            const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
             const screen = await renderScreen(
                 React.createElement(OnboardingWizardSurface, {
                     layout: 'portrait',
@@ -724,10 +741,8 @@ describe('OnboardingWizardSurface', () => {
                     authEntryOptions: baseAuthOptions,
                 }),
             );
+            await enterRemoteRelayAccess(screen);
 
-            await pressOnboarding(screen, 'onboarding-wizard-relay:thisComputer');
-            await pressOnboarding(screen, 'onboarding-wizard-primary');
-            await pressOnboarding(screen, 'onboarding-wizard-primary');
             expect(screen.findByType(WizardModalShell as never).props.title).toBe('setupOnboarding.relayAccessWizardTitle');
             expect(screen.findByType(LocalRelayAccessControlSection as never)?.props).toBeTruthy();
             expect(typeof (screen.findByType(LocalRelayAccessControlSection as never)?.props as any)?.onWizardRequestProviderDetails).toBe('function');
@@ -738,7 +753,7 @@ describe('OnboardingWizardSurface', () => {
             await flushHookEffects({ cycles: 2, turns: 2 });
 
             expect(screen.findByType(WizardModalShell as never).props.title).toBe('setupOnboarding.relayAccessWizardTitle');
-            expect(screen.findAllByType(RelayAccessCloudflareNamedTunnelStep as never)).toHaveLength(1);
+            expect(screen.findAllByType(RelayAccessConfigFieldsStep as never).filter(node => node.props.definition.providerId === 'cloudflareNamed')).toHaveLength(1);
         }
     });
 
@@ -752,7 +767,7 @@ describe('OnboardingWizardSurface', () => {
 
         await focusHomeAtAddress('http://127.0.0.1:3005');
         {
-            const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+            const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
             const screen = await renderScreen(
                 React.createElement(OnboardingWizardSurface, {
                     layout: 'portrait',
@@ -761,10 +776,8 @@ describe('OnboardingWizardSurface', () => {
                     authEntryOptions: baseAuthOptions,
                 }),
             );
+            await enterRemoteRelayAccess(screen);
 
-            await pressOnboarding(screen, 'onboarding-wizard-relay:thisComputer');
-            await pressOnboarding(screen, 'onboarding-wizard-primary');
-            await pressOnboarding(screen, 'onboarding-wizard-primary');
             expect(screen.findByType(WizardModalShell as never).props.title).toBe('setupOnboarding.relayAccessWizardTitle');
             expect(screen.findByType(LocalRelayAccessControlSection as never)?.props).toBeTruthy();
             expect(typeof (screen.findByType(LocalRelayAccessControlSection as never)?.props as any)?.onWizardRequestProviderDetails).toBe('function');
@@ -780,7 +793,7 @@ describe('OnboardingWizardSurface', () => {
     });
 
     it('only marks Happier Cloud as recommended in the relay selection list', async () => {
-        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
         const screen = await renderScreen(
             React.createElement(OnboardingWizardSurface, {
                 layout: 'portrait',
@@ -789,7 +802,7 @@ describe('OnboardingWizardSurface', () => {
             }),
         );
 
-        const startButton = screen.findByTestId('onboarding-wizard-primary')!;
+        const startButton = screen.findByTestId('welcome-use-different-home')!;
         await act(async () => {
             await startButton.props.onPress?.();
         });
@@ -805,11 +818,11 @@ describe('OnboardingWizardSurface', () => {
     });
 
     it('hides Happier Cloud when setup surface policy denies it (no implicit profile creation)', async () => {
-        const profilesBeforeRender = profiles.listServerProfiles();
+        const storageBeforeRender = { ...browser!.storage };
         const previousDeny = process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY;
         process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY = 'setup.relay.allowHappierCloud';
         try {
-            const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+            const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
             const screen = await renderScreen(
                 React.createElement(OnboardingWizardSurface, {
                     layout: 'portrait',
@@ -819,7 +832,7 @@ describe('OnboardingWizardSurface', () => {
                 }),
             );
 
-            expect(profiles.listServerProfiles()).toEqual(profilesBeforeRender);
+            expect({ ...browser!.storage }).toEqual(storageBeforeRender);
             expect(screen.findByTestId('onboarding-wizard-relay:cloud')).toBeNull();
         } finally {
             if (previousDeny === undefined) delete process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY;
@@ -828,8 +841,8 @@ describe('OnboardingWizardSurface', () => {
     });
 
     it('shows Happier Cloud when allowed without creating a server profile during render', async () => {
-        const profilesBeforeRender = profiles.listServerProfiles();
-        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const storageBeforeRender = { ...browser!.storage };
+        const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
         const screen = await renderScreen(
             React.createElement(OnboardingWizardSurface, {
                 layout: 'portrait',
@@ -840,15 +853,15 @@ describe('OnboardingWizardSurface', () => {
         );
 
         expect(screen.findByTestId('onboarding-wizard-relay:cloud')).toBeTruthy();
-        expect(profiles.listServerProfiles()).toEqual(profilesBeforeRender);
+        expect({ ...browser!.storage }).toEqual(storageBeforeRender);
     });
 
-    it('creates the canonical cloud profile from welcome auth actions only after user intent', async () => {
-        const profilesBeforeRender = profiles.listServerProfiles();
+    it('reuses the configured cloud profile when opening restore without duplicates', async () => {
+        const storageBeforeRender = { ...browser!.storage };
         await saveHomeProfiles([]);
         await focusHomeAtAddress('');
 
-        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
         const screen = await renderScreen(
             React.createElement(OnboardingWizardSurface, {
                 layout: 'portrait',
@@ -857,10 +870,10 @@ describe('OnboardingWizardSurface', () => {
             }),
         );
 
-        expect(profiles.listServerProfiles()).toEqual(profilesBeforeRender);
+        expect({ ...browser!.storage }).toEqual(storageBeforeRender);
 
         await act(async () => {
-            await screen.findByTestId('onboarding-wizard-primary')!.props.onPress?.();
+            await screen.findByTestId('welcome-use-different-home')!.props.onPress?.();
         });
         await flushHookEffects({ cycles: 1, turns: 1 });
 
@@ -893,7 +906,7 @@ describe('OnboardingWizardSurface', () => {
         const previousDeny = process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY;
         process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY = 'setup.relay.allowCustomRelayUrl';
         try {
-            const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+            const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
             const screen = await renderScreen(
                 React.createElement(OnboardingWizardSurface, {
                     layout: 'portrait',
@@ -914,7 +927,7 @@ describe('OnboardingWizardSurface', () => {
         const previousDeny = process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY;
         process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY = 'setup.relay.allowLocalRelayHost';
         try {
-            const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+            const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
             const screen = await renderScreen(
                 React.createElement(OnboardingWizardSurface, {
                     layout: 'portrait',
@@ -942,7 +955,7 @@ describe('OnboardingWizardSurface', () => {
     });
 
     it('navigates back to the auth step from the restore step', async () => {
-        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
         const screen = await renderScreen(
             React.createElement(OnboardingWizardSurface, {
                 layout: 'portrait',
@@ -966,7 +979,7 @@ describe('OnboardingWizardSurface', () => {
     });
 
     it('disables every onboarding escape after the restore request crosses its authority boundary', async () => {
-        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
         const screen = await renderScreen(
             React.createElement(OnboardingWizardSurface, {
                 layout: 'portrait',
@@ -982,11 +995,25 @@ describe('OnboardingWizardSurface', () => {
         });
 
         expect(screen.findByTestId('onboarding-wizard-back')?.props.disabled).toBe(true);
-        expect(screen.findByTestId('onboarding-wizard-skip')?.props.disabled).toBe(true);
+        expect(screen.findByTestId('onboarding-wizard-skip')).toBeNull();
     });
 
-    it('treats skip on the restore QR step as an escape hatch back to auth', async () => {
-        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+    it('opens the restore step on link entry when this device cannot scan (the welcome promised "Enter URL manually")', async () => {
+        const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
+        const screen = await renderScreen(
+            React.createElement(OnboardingWizardSurface, {
+                layout: 'portrait',
+                isDesktopShell: true,
+                initialStepId: 'auth_restore',
+                authEntryOptions: baseAuthOptions,
+            }),
+        );
+
+        expect((screen.findByType(RestoreIndexEmbedded as never) as unknown as ReactTestInstance).props.initialView).toBe('paste');
+    });
+
+    it('leaves a recovery step by Back alone: another way in is not an optional step to skip', async () => {
+        const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
         const screen = await renderScreen(
             React.createElement(OnboardingWizardSurface, {
                 layout: 'portrait',
@@ -997,10 +1024,11 @@ describe('OnboardingWizardSurface', () => {
         );
 
         expect(screen.findAllByType(RestoreIndexEmbedded as never)).toHaveLength(1);
+        expect(screen.findByTestId('onboarding-wizard-skip')).toBeNull();
 
-        const skipButton = screen.findByTestId('onboarding-wizard-skip')!;
+        const backButton = screen.findByTestId('onboarding-wizard-back')!;
         await act(async () => {
-            await skipButton.props.onPress?.();
+            await backButton.props.onPress?.();
         });
         await flushHookEffects({ cycles: 1, turns: 1 });
 
@@ -1028,7 +1056,7 @@ describe('OnboardingWizardSurface', () => {
         const onContinueWithHomeAuthentication = vi.fn(async () => undefined);
 
         const focusBeforeAction = profiles.getActiveServerSnapshot();
-        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
         const screen = await renderScreen(
             React.createElement(OnboardingWizardSurface, {
                 layout: 'portrait',
@@ -1042,7 +1070,7 @@ describe('OnboardingWizardSurface', () => {
             }),
         );
 
-        const startButton = screen.findByTestId('onboarding-wizard-primary')!;
+        const startButton = screen.findByTestId('welcome-use-different-home')!;
         await act(async () => {
             await startButton.props.onPress?.();
         });
@@ -1087,7 +1115,7 @@ describe('OnboardingWizardSurface', () => {
 
         const onContinueWithHomeAuthentication = vi.fn(async () => undefined);
 
-        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
         const screen = await renderScreen(
             React.createElement(OnboardingWizardSurface, {
                 layout: 'portrait',
@@ -1121,7 +1149,7 @@ describe('OnboardingWizardSurface', () => {
     it('updates the active relay footer hint when the active server snapshot changes', async () => {
         await focusHomeAtAddress('https://relay.example.test', 'First Home');
 
-        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
         const screen = await renderScreen(
             React.createElement(OnboardingWizardSurface, {
                 layout: 'portrait',
@@ -1164,7 +1192,7 @@ describe('OnboardingWizardSurface', () => {
 
     it('updates the active relay row when the active server changes', async () => {
         await focusHomeAtAddress('https://relay.example.test');
-        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
         const screen = await renderScreen(
             React.createElement(OnboardingWizardSurface, {
                 layout: 'portrait',
@@ -1188,7 +1216,7 @@ describe('OnboardingWizardSurface', () => {
     });
 
     it('stores an awaiting-auth resume intent when continuing past relay selection', async () => {
-        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
         const screen = await renderScreen(
             React.createElement(OnboardingWizardSurface, {
                 layout: 'portrait',
@@ -1197,7 +1225,7 @@ describe('OnboardingWizardSurface', () => {
             }),
         );
 
-        const startButton = screen.findByTestId('onboarding-wizard-primary')!;
+        const startButton = screen.findByTestId('welcome-use-different-home')!;
 
         await act(async () => {
             await startButton.props.onPress?.();
@@ -1217,7 +1245,7 @@ describe('OnboardingWizardSurface', () => {
     });
 
     it('treats the header start action as an alias for the primary welcome action', async () => {
-        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
         const screen = await renderScreen(
             React.createElement(OnboardingWizardSurface, {
                 layout: 'portrait',
@@ -1239,7 +1267,7 @@ describe('OnboardingWizardSurface', () => {
     it('fast-paths from welcome to the restore login screen when a non-cloud relay is already selected', async () => {
         await focusHomeAtAddress('https://relay.example.test');
 
-        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
         const screen = await renderScreen(
             React.createElement(OnboardingWizardSurface, {
                 layout: 'portrait',
@@ -1278,7 +1306,7 @@ describe('OnboardingWizardSurface', () => {
     it('hides duplicate relay escape-hatch actions when the selected relay is unreachable on the welcome step', async () => {
         await focusHomeAtAddress('https://relay.example.test');
 
-        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
         const screen = await renderScreen(
             React.createElement(OnboardingWizardSurface, {
                 layout: 'portrait',
@@ -1298,7 +1326,7 @@ describe('OnboardingWizardSurface', () => {
     it('renders the welcome body block and selected server hint with clear back navigation', async () => {
         await focusHomeAtAddress('http://localhost:31337');
         browser?.reconfigureUrl('http://localhost:31337');
-        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
         const screen = await renderScreen(
             React.createElement(OnboardingWizardSurface, {
                 layout: 'portrait',
@@ -1337,7 +1365,7 @@ describe('OnboardingWizardSurface', () => {
         const onContinueWithHomeAuthentication = vi.fn((_request, context: { signal: AbortSignal }) => {
             return new Promise<void>(() => {});
         });
-        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
         const screen = await renderScreen(React.createElement(OnboardingWizardSurface, {
             layout: 'portrait',
             isDesktopShell: true,
@@ -1366,7 +1394,7 @@ describe('OnboardingWizardSurface', () => {
             execution: { kind: 'oauth', providerId: 'github', mode: 'keyed' },
         } satisfies HomeAuthenticationAction;
 
-        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
         const screen = await renderScreen(
             React.createElement(OnboardingWizardSurface, {
                 layout: 'portrait',
@@ -1404,7 +1432,7 @@ describe('OnboardingWizardSurface', () => {
             execution: { kind: 'mtls' },
         } satisfies HomeAuthenticationAction;
 
-        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
         const screen = await renderScreen(
             React.createElement(OnboardingWizardSurface, {
                 layout: 'portrait',
@@ -1440,7 +1468,7 @@ describe('OnboardingWizardSurface', () => {
     it('keeps restore navigation available while auth capability loading is unresolved', async () => {
         await focusHomeAtAddress('https://relay.example.test');
 
-        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
         const screen = await renderScreen(
             React.createElement(OnboardingWizardSurface, {
                 layout: 'portrait',
@@ -1472,7 +1500,7 @@ describe('OnboardingWizardSurface', () => {
             },
         ]);
 
-        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
         const screen = await renderScreen(
             React.createElement(OnboardingWizardSurface, {
                 layout: 'portrait',
@@ -1502,7 +1530,7 @@ describe('OnboardingWizardSurface', () => {
             },
         ]);
 
-        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
         const screen = await renderScreen(
             React.createElement(OnboardingWizardSurface, {
                 layout: 'portrait',
@@ -1552,7 +1580,7 @@ describe('OnboardingWizardSurface', () => {
         ]);
 
 
-        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
         const screen = await renderScreen(
             React.createElement(OnboardingWizardSurface, {
                 layout: 'portrait',
@@ -1627,7 +1655,7 @@ describe('OnboardingWizardSurface', () => {
         ]);
 
 
-        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
         const screen = await renderScreen(
             React.createElement(OnboardingWizardSurface, {
                 layout: 'portrait',
@@ -1655,7 +1683,7 @@ describe('OnboardingWizardSurface', () => {
     it('only advances to relay URL entry after pressing Continue when selecting the custom relay option', async () => {
         await focusHomeAtAddress('https://api.happier.dev');
 
-        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
         const screen = await renderScreen(
             React.createElement(OnboardingWizardSurface, {
                 layout: 'portrait',
@@ -1687,7 +1715,7 @@ describe('OnboardingWizardSurface', () => {
     it('prefills the relay URL entry input with the currently selected relay URL when available', async () => {
         await focusHomeAtAddress('https://prefilled.relay.test');
 
-        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
         const screen = await renderScreen(
             React.createElement(OnboardingWizardSurface, {
                 layout: 'portrait',
@@ -1722,7 +1750,7 @@ describe('OnboardingWizardSurface', () => {
     it('routes the auth view change-relay action back to the wizard relay selection step', async () => {
         await focusHomeAtAddress('https://relay.example.test');
 
-        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
         const screen = await renderScreen(
             React.createElement(OnboardingWizardSurface, {
                 layout: 'portrait',
@@ -1737,21 +1765,17 @@ describe('OnboardingWizardSurface', () => {
         expect(screen.findByTestId('onboarding-wizard-relay:cloud')).toBeTruthy();
     });
 
-    it('threads Tauri Personal Home hosting capability to auth without opening setup', async () => {
+    it('threads the mounted Personal Home admission to auth without opening setup', async () => {
         await focusHomeAtAddress('https://relay.example.test');
-
-        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const requestBootstrap = vi.fn();
+        const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
         const screen = await renderScreen(
-            React.createElement(OnboardingWizardSurface, {
-                layout: 'portrait',
-                isDesktopShell: true,
-                initialStepId: 'auth',
-                authEntryOptions: baseAuthOptions,
-            }),
+            <PersonalHomeBootstrapRequestContext.Provider value={requestBootstrap}>
+                <OnboardingWizardSurface layout="portrait" isDesktopShell initialStepId="auth" authEntryOptions={baseAuthOptions} />
+            </PersonalHomeBootstrapRequestContext.Provider>,
         );
-
-        expect(screen.findByTestId('welcome-create-personal-home')).toBeTruthy();
-
+        await pressOnboarding(screen, 'welcome-create-personal-home');
+        expect(requestBootstrap).toHaveBeenCalledTimes(1);
         expect(expoRouterSpies.push).not.toHaveBeenCalledWith('/setup');
     });
 
@@ -1759,7 +1783,7 @@ describe('OnboardingWizardSurface', () => {
         desktopHostMockState.kind = 'electron';
         await focusHomeAtAddress('https://relay.example.test');
 
-        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
         const screen = await renderScreen(
             React.createElement(OnboardingWizardSurface, {
                 layout: 'portrait',
@@ -1784,7 +1808,7 @@ describe('OnboardingWizardSurface', () => {
 
     const renderPreAuthRelayMatrix = async (platform: PreAuthMatrixPlatform) => {
         await setPreAuthMatrixPlatform(platform);
-        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
         return renderScreen(
             React.createElement(OnboardingWizardSurface, {
                 layout: 'portrait',
@@ -1796,11 +1820,6 @@ describe('OnboardingWizardSurface', () => {
     };
 
     const pressOnboarding = async (screen: RenderedOnboardingScreen, testID: string) => {
-        if (testID === 'onboarding-wizard-primary' && screen.findAllByType(RelayHostLocalChecklistStep as never).length > 0) {
-            // This fixture's OS status reply is healthy. Observe it before choosing Continue,
-            // rather than starting an installation from the initial not-yet-inspected checklist.
-            await vi.waitFor(() => expect(screen.getTextContent().match(/common\.done/g)?.length ?? 0).toBeGreaterThanOrEqual(2));
-        }
         await vi.waitFor(() => {
             const node = screen.findByTestId(testID);
             expect(node).toBeTruthy();
@@ -1885,7 +1904,7 @@ describe('OnboardingWizardSurface', () => {
         await pressOnboarding(screen, homeRowTestId(`saved-${platform}`));
         await pressOnboarding(screen, 'onboarding-wizard-primary');
 
-        expect(getOnboardingStepId(screen)).toBe('auth');
+        await vi.waitFor(() => expect(getOnboardingStepId(screen)).toBe('auth'));
         expectFocusedHome(`https://${platform}.saved-relay.example.test`);
     });
 
@@ -1907,7 +1926,7 @@ describe('OnboardingWizardSurface', () => {
         ]);
 
         const focusBeforeAction = profiles.getActiveServerSnapshot();
-        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
         const screen = await renderScreen(
             <OnboardingWizardSurface
                 layout="portrait"
@@ -1953,7 +1972,7 @@ describe('OnboardingWizardSurface', () => {
         await focusHomeAtAddress('https://api.happier.dev');
         browser?.reconfigureUrl('http://localhost:53288');
 
-        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
         const screen = await renderScreen(
             React.createElement(OnboardingWizardSurface, {
                 layout: 'portrait',
@@ -1987,7 +2006,7 @@ describe('OnboardingWizardSurface', () => {
         await focusHomeAtAddress('https://api.happier.dev');
         browser?.reconfigureUrl('https://app.happier.dev');
 
-        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
         const screen = await renderScreen(
             React.createElement(OnboardingWizardSurface, {
                 layout: 'portrait',
@@ -2024,7 +2043,7 @@ describe('OnboardingWizardSurface', () => {
         await focusHomeAtAddress('https://api.happier.dev');
         browser?.reconfigureUrl('https://app.happier.dev');
 
-        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
         const screen = await renderScreen(
             React.createElement(OnboardingWizardSurface, {
                 layout: 'portrait',
@@ -2090,7 +2109,7 @@ describe('OnboardingWizardSurface', () => {
     it('skips relay URL entry when a custom relay has already been resolved', async () => {
         await focusHomeAtAddress('https://api.happier.dev');
 
-        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
         const screen = await renderScreen(
             React.createElement(OnboardingWizardSurface, {
                 layout: 'portrait',
@@ -2149,67 +2168,26 @@ describe('OnboardingWizardSurface', () => {
         expect(screen.findByTestId('onboarding-wizard-lost-access')).not.toBeNull();
     });
 
-    it('requires explicit relay switch confirmation after hosting a local relay', async () => {
+    it('delegates local Home creation to the mounted Personal Home bootstrap without switching focus', async () => {
+        const requestBootstrap = vi.fn();
         const focusBeforeAction = profiles.getActiveServerSnapshot();
-        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
         const screen = await renderScreen(
-            React.createElement(OnboardingWizardSurface, {
-                layout: 'portrait',
-                isDesktopShell: true,
-                authEntryOptions: baseAuthOptions,
-            }),
+            <PersonalHomeBootstrapRequestContext.Provider value={requestBootstrap}>
+                <OnboardingWizardSurface layout="portrait" isDesktopShell initialStepId="relay_select" authEntryOptions={baseAuthOptions} />
+            </PersonalHomeBootstrapRequestContext.Provider>,
         );
-
-        const startButton = screen.findByTestId('onboarding-wizard-primary')!;
-        await act(async () => {
-            await startButton.props.onPress?.();
-        });
-        await flushHookEffects({ cycles: 1, turns: 1 });
-
-        const onThisComputerRow = screen.findByTestId('onboarding-wizard-relay:thisComputer')!;
-        await act(async () => {
-            await onThisComputerRow.props.onPress?.();
-        });
-        await flushHookEffects({ cycles: 1, turns: 1 });
-
-        const continueToHost = screen.findByTestId('onboarding-wizard-primary')!;
-        await act(async () => {
-            await continueToHost.props.onPress?.();
-        });
-        await flushHookEffects({ cycles: 1, turns: 1 });
-
+        await pressOnboarding(screen, 'onboarding-wizard-relay:thisComputer');
+        await pressOnboarding(screen, 'onboarding-wizard-primary');
         expect(screen.findByType(RelayHostLocalChecklistStep as never)).toBeTruthy();
-
         await pressOnboarding(screen, 'onboarding-wizard-primary');
-
-        // Saving the hosted relay as a Home is not a focus change: no Home is explicitly selected until the switch is confirmed.
-        expect(focusBeforeAction.isSelectionExplicit).toBe(false);
-        expect(profiles.getActiveServerSnapshot().isSelectionExplicit).toBe(false);
-        await vi.waitFor(() => expect(screen.findByType(LocalRelayAccessControlSection as never)).toBeTruthy());
+        expect(requestBootstrap).toHaveBeenCalledTimes(1);
+        expect(profiles.getActiveServerSnapshot()).toMatchObject(focusBeforeAction);
         expect(screen.findByTestId('onboarding-wizard-confirmSwitchRelay')).toBeNull();
-
-        await pressOnboarding(screen, 'onboarding-wizard-primary');
-
-        await vi.waitFor(() => expect(screen.findByTestId('onboarding-wizard-confirmSwitchRelay')).toBeTruthy());
-
-        const switchChoice = screen.findByTestId('onboarding-wizard-confirmSwitchRelay.choice:switch')!;
-        await act(async () => {
-            await switchChoice.props.onPress?.();
-        });
-        await flushHookEffects({ cycles: 1, turns: 1 });
-
-        const confirmButton = screen.findByTestId('onboarding-wizard-primary')!;
-        await act(async () => {
-            await confirmButton.props.onPress?.();
-        });
-        await flushHookEffects({ cycles: 1, turns: 1 });
-
-        expectFocusedHome('http://localhost:31337');
-        expect(screen.findByTestId('onboarding-wizard-lost-access')).not.toBeNull();
     });
 
     it('routes web users selecting "On this computer" to the desktop handoff guidance step', async () => {
-        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
         const screen = await renderScreen(
             React.createElement(OnboardingWizardSurface, {
                 layout: 'portrait',
@@ -2218,7 +2196,7 @@ describe('OnboardingWizardSurface', () => {
             }),
         );
 
-        const startButton = screen.findByTestId('onboarding-wizard-primary')!;
+        const startButton = screen.findByTestId('welcome-use-different-home')!;
         await act(async () => {
             await startButton.props.onPress?.();
         });
@@ -2242,7 +2220,7 @@ describe('OnboardingWizardSurface', () => {
     });
 
     it('lets the remote relay host step override the wizard primary CTA via the wizard chrome (no embedded buttons)', async () => {
-        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
         const screen = await renderScreen(
             React.createElement(OnboardingWizardSurface, {
                 layout: 'portrait',
@@ -2251,7 +2229,7 @@ describe('OnboardingWizardSurface', () => {
             }),
         );
 
-        const startButton = screen.findByTestId('onboarding-wizard-primary')!;
+        const startButton = screen.findByTestId('welcome-use-different-home')!;
         await act(async () => {
             await startButton.props.onPress?.();
         });
@@ -2279,7 +2257,7 @@ describe('OnboardingWizardSurface', () => {
     });
 
     it('routes remote relay hosting through relay access before prompting to switch', async () => {
-        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
         const screen = await renderScreen(
             React.createElement(OnboardingWizardSurface, {
                 layout: 'portrait',
@@ -2288,7 +2266,7 @@ describe('OnboardingWizardSurface', () => {
             }),
         );
 
-        const startButton = screen.findByTestId('onboarding-wizard-primary')!;
+        const startButton = screen.findByTestId('welcome-use-different-home')!;
         await act(async () => {
             await startButton.props.onPress?.();
         });
@@ -2362,7 +2340,7 @@ describe('OnboardingWizardSurface', () => {
     });
 
     it('switches remote relay hosting through the configured share URL once relay access provides one', async () => {
-        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
         const screen = await renderScreen(
             React.createElement(OnboardingWizardSurface, {
                 layout: 'portrait',
@@ -2371,7 +2349,7 @@ describe('OnboardingWizardSurface', () => {
             }),
         );
 
-        const startButton = screen.findByTestId('onboarding-wizard-primary')!;
+        const startButton = screen.findByTestId('welcome-use-different-home')!;
         await act(async () => {
             await startButton.props.onPress?.();
         });
@@ -2479,7 +2457,7 @@ describe('OnboardingWizardSurface', () => {
             },
         };
 
-        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
         const screen = await renderScreen(
             React.createElement(OnboardingWizardSurface, {
                 layout: 'portrait',
@@ -2488,7 +2466,7 @@ describe('OnboardingWizardSurface', () => {
             }),
         );
 
-        const startButton = screen.findByTestId('onboarding-wizard-primary')!;
+        const startButton = screen.findByTestId('welcome-use-different-home')!;
         await act(async () => {
             await startButton.props.onPress?.();
         });
@@ -2574,7 +2552,7 @@ describe('OnboardingWizardSurface', () => {
     });
 
     it('shows the relay footer hint when Happier Cloud is selected', async () => {
-        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
         const screen = await renderScreen(
             React.createElement(OnboardingWizardSurface, {
                 layout: 'portrait',
@@ -2583,16 +2561,13 @@ describe('OnboardingWizardSurface', () => {
             }),
         );
 
-        const startButton = screen.findByTestId('onboarding-wizard-primary')!;
+        const startButton = screen.findByTestId('welcome-use-different-home')!;
         await act(async () => {
             await startButton.props.onPress?.();
         });
         await flushHookEffects({ cycles: 1, turns: 1 });
 
-        const cloudRow = screen.findByTestId('onboarding-wizard-relay:cloud')!;
-        await act(async () => {
-            await cloudRow.props.onPress?.();
-        });
+        await screen.pressByTestIdAsync('onboarding-wizard-relay:cloud');
         await flushHookEffects({ cycles: 1, turns: 1 });
 
         const continueButton = screen.findByTestId('onboarding-wizard-primary')!;
@@ -2627,7 +2602,7 @@ describe('OnboardingWizardSurface', () => {
             },
         ]);
 
-        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
         const screen = await renderScreen(
             React.createElement(OnboardingWizardSurface, {
                 layout: 'portrait',
@@ -2663,7 +2638,7 @@ describe('OnboardingWizardSurface', () => {
         ]);
 
         const focusBeforeAction = profiles.getActiveServerSnapshot();
-        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
         const screen = await renderScreen(
             React.createElement(OnboardingWizardSurface, {
                 layout: 'portrait',
@@ -2698,7 +2673,7 @@ describe('OnboardingWizardSurface', () => {
             },
         ]);
 
-        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
         const screen = await renderScreen(
             React.createElement(OnboardingWizardSurface, {
                 layout: 'portrait',
@@ -2753,7 +2728,7 @@ describe('OnboardingWizardSurface', () => {
             },
         ]);
 
-        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
         const screen = await renderScreen(
             React.createElement(OnboardingWizardSurface, {
                 layout: 'portrait',
@@ -2809,7 +2784,7 @@ describe('OnboardingWizardSurface', () => {
             },
         })).toBe(true);
 
-        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
         const screen = await renderScreen(
             React.createElement(OnboardingWizardSurface, {
                 layout: 'portrait',
@@ -2862,7 +2837,7 @@ describe('OnboardingWizardSurface', () => {
         ];
         await saveHomeProfiles(profilesState);
 
-        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
         const screen = await renderScreen(
             React.createElement(OnboardingWizardSurface, {
                 layout: 'portrait',
@@ -2906,7 +2881,7 @@ describe('OnboardingWizardSurface', () => {
             },
         ]);
 
-        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
         const screen = await renderScreen(
             React.createElement(OnboardingWizardSurface, {
                 layout: 'portrait',
@@ -2943,7 +2918,7 @@ describe('OnboardingWizardSurface', () => {
             },
         ]);
 
-        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
         const screen = await renderScreen(
             React.createElement(OnboardingWizardSurface, {
                 layout: 'portrait',
@@ -2953,16 +2928,13 @@ describe('OnboardingWizardSurface', () => {
             }),
         );
 
-        const cloudRow = screen.findByTestId('onboarding-wizard-relay:cloud')!;
-        await act(async () => {
-            await cloudRow.props.onPress?.();
-        });
+        await screen.pressByTestIdAsync('onboarding-wizard-relay:cloud');
         await flushHookEffects({ cycles: 1, turns: 1 });
 
         expect(screen.findByTestId('onboarding-wizard-relay-hint')).toBeTruthy();
         expect(screen.findByTestId('onboarding-wizard-relay-hint-line')).toBeTruthy();
         expect(screen.findByTestId('onboarding-wizard-relay-hint-label')).toBeTruthy();
-        expect(screen.getTextContent()).toContain('setupOnboarding.selectedRelaySummaryTitle');
+        expect(screen.findAllHostsByTestId('onboarding-wizard-relay-hint-line')).toHaveLength(1);
     });
 
     it('keeps an unreachable preselected relay selected and disables continue until a reachable relay is selected', async () => {
@@ -2988,7 +2960,7 @@ describe('OnboardingWizardSurface', () => {
             },
         ]);
 
-        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
         const screen = await renderScreen(
             React.createElement(OnboardingWizardSurface, {
                 layout: 'portrait',
@@ -3040,7 +3012,7 @@ describe('OnboardingWizardSurface', () => {
         await saveHomeProfiles([]);
 
         const focusBeforeAction = profiles.getActiveServerSnapshot();
-        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
         const screen = await renderScreen(
             React.createElement(OnboardingWizardSurface, {
                 layout: 'portrait',
@@ -3097,7 +3069,7 @@ describe('OnboardingWizardSurface', () => {
                 : new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'content-type': 'application/json' } });
         });
 
-        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
         const screen = await renderScreen(
             React.createElement(OnboardingWizardSurface, {
                 layout: 'portrait',
@@ -3151,7 +3123,7 @@ describe('OnboardingWizardSurface', () => {
                 : new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'content-type': 'application/json' } });
         });
 
-        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
         const screen = await renderScreen(
             React.createElement(OnboardingWizardSurface, {
                 layout: 'portrait',
@@ -3206,7 +3178,7 @@ describe('OnboardingWizardSurface', () => {
                 : new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'content-type': 'application/json' } });
         });
 
-        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
         const screen = await renderScreen(
             React.createElement(OnboardingWizardSurface, {
                 layout: 'portrait',
@@ -3277,7 +3249,7 @@ describe('OnboardingWizardSurface', () => {
                 },
             ]);
 
-            const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+            const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
             const screen = await renderScreen(
                 React.createElement(OnboardingWizardSurface, {
                     layout: 'portrait',
@@ -3323,7 +3295,7 @@ describe('OnboardingWizardSurface', () => {
         });
         await saveHomeProfiles([]);
 
-        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
         const screen = await renderScreen(
             React.createElement(OnboardingWizardSurface, {
                 layout: 'portrait',
@@ -3369,7 +3341,7 @@ describe('OnboardingWizardSurface', () => {
             },
         ]);
 
-        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
         const screen = await renderScreen(
             React.createElement(OnboardingWizardSurface, {
                 layout: 'portrait',
@@ -3410,7 +3382,7 @@ describe('OnboardingWizardSurface', () => {
             },
         ]);
 
-        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
         const screen = await renderScreen(
             React.createElement(OnboardingWizardSurface, {
                 layout: 'portrait',
@@ -3446,10 +3418,12 @@ describe('OnboardingWizardSurface', () => {
                 : new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'content-type': 'application/json' } });
         });
 
-        await focusHomeAtAddress('');
+        await focusHomeAtAddress('https://api.happier.dev');
         await saveHomeProfiles([]);
 
-        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        // Earlier fixture setup can already have observed this endpoint as healthy.
+        await (await import('@/sync/runtime/connectivity/serverReachabilitySupervisorPool')).resetServerReachabilitySupervisors();
+        const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
         const screen = await renderScreen(
             React.createElement(OnboardingWizardSurface, {
                 layout: 'portrait',
@@ -3461,13 +3435,11 @@ describe('OnboardingWizardSurface', () => {
 
         await flushHookEffects({ cycles: 2, turns: 2 });
 
-        const cloudRow = screen.findByTestId('onboarding-wizard-relay:cloud')!;
-        await act(async () => {
-            await cloudRow.props.onPress?.();
-        });
+        await screen.pressByTestIdAsync('onboarding-wizard-relay:cloud');
+        expect(screen.findByProps({ testID: 'onboarding-wizard-relay:cloud' }).props.selected).toBe(true);
         await flushHookEffects({ cycles: 2, turns: 2 });
 
-        expect(screen.findByTestId('onboarding-wizard-primary')?.props.disabled).toBe(true);
+        await vi.waitFor(() => expect(screen.findByTestId('onboarding-wizard-primary')?.props.disabled).toBe(true));
         expect(screen.findByTestId('onboarding-wizard-skip')).toBeNull();
 
         const cloudChoice = screen.root.findAll((node) => {
@@ -3502,7 +3474,7 @@ describe('OnboardingWizardSurface', () => {
         await focusHomeAtAddress('http://localhost:59331');
         await saveHomeProfiles([]);
 
-        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
         const screen = await renderScreen(
             React.createElement(OnboardingWizardSurface, {
                 layout: 'portrait',
@@ -3527,7 +3499,7 @@ describe('OnboardingWizardSurface', () => {
     });
 
     it('switches to the canonical Happier Cloud profile before continuing to auth', async () => {
-        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
         const screen = await renderScreen(
             React.createElement(OnboardingWizardSurface, {
                 layout: 'portrait',
@@ -3536,18 +3508,14 @@ describe('OnboardingWizardSurface', () => {
             }),
         );
 
-        const startButton = screen.findByTestId('onboarding-wizard-primary')!;
+        const startButton = screen.findByTestId('welcome-use-different-home')!;
 
         await act(async () => {
             await startButton.props.onPress?.();
         });
         await flushHookEffects({ cycles: 1, turns: 1 });
 
-        const cloudRow = screen.findByTestId('onboarding-wizard-relay:cloud')!;
-
-        await act(async () => {
-            await cloudRow.props.onPress?.();
-        });
+        await screen.pressByTestIdAsync('onboarding-wizard-relay:cloud');
         await flushHookEffects({ cycles: 1, turns: 1 });
 
         const primaryButton = screen.findByTestId('onboarding-wizard-primary')!;
@@ -3568,7 +3536,7 @@ describe('OnboardingWizardSurface', () => {
     it('treats Happier Cloud as https://api.happier.dev even when the reset-to-default server differs', async () => {
         await focusHomeAtAddress('https://selfhosted.example.test');
 
-        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
         const screen = await renderScreen(
             React.createElement(OnboardingWizardSurface, {
                 layout: 'portrait',
@@ -3579,10 +3547,8 @@ describe('OnboardingWizardSurface', () => {
         );
         await flushHookEffects({ cycles: 1, turns: 1 });
 
-        const cloudRow = screen.findByTestId('onboarding-wizard-relay:cloud')!;
-        await act(async () => {
-            await cloudRow.props.onPress?.();
-        });
+        await screen.pressByTestIdAsync('onboarding-wizard-relay:cloud');
+        expect(screen.findByProps({ testID: 'onboarding-wizard-relay:cloud' }).props.selected).toBe(true);
         await flushHookEffects({ cycles: 1, turns: 1 });
 
         const nextButton = screen.findByTestId('onboarding-wizard-primary')!;
