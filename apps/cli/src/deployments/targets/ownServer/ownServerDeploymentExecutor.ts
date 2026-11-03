@@ -1,3 +1,4 @@
+import { readDeploymentSystemToolFailure } from '@/deployments/deploymentSystemToolFailure';
 import { isDeepStrictEqual } from 'node:util';
 import type { DeploymentChildExecutionProofV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { join } from 'node:path';
@@ -42,6 +43,8 @@ function refuse(reason: string | ActionExecuteFailure): never {
     throw Object.assign(new Error(code, typeof reason === 'string' ? undefined : { cause: reason }), { code });
 }
 const failure = (errorCode: string, error?: unknown): ActionExecuteFailure => {
+    const systemToolFailure = readDeploymentSystemToolFailure(errorCode, error);
+    if (systemToolFailure) return systemToolFailure;
     const refused = error instanceof Error ? ActionExecuteFailureSchema.safeParse(error.cause) : null;
     if (refused?.success && refused.data.errorCode === errorCode) return refused.data;
     return { ok: false, errorCode, error: errorCode,

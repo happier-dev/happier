@@ -19,6 +19,22 @@ afterEach(async () => {
 });
 
 describe('createPluginExecSystemToolResolver', () => {
+    it('names the missing declared tool and safe remedy without disclosing lookup paths', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-system-tool-missing-'));
+        temporaryRoots.add(root);
+        const resolver = createPluginExecSystemToolResolver({
+            definitions: [{ toolId: 'docker', displayName: 'Docker', lookupNames: ['docker'] }],
+            baseEnv: { PATH: root },
+            registerGrant() { throw new Error('Missing tool must not issue a grant'); },
+        });
+        const failure = await resolver.resolve({ toolId: 'docker', purpose: 'deployment-native-compose',
+            preferredPath: join(root, 'private-install', 'docker') }).catch((error: unknown) => error);
+        expect(isPluginError(failure)).toBe(true);
+        expect(failure).toMatchObject({ code: 'plugin_exec_system_tool_unavailable',
+            details: { kind: 'systemToolUnavailable', toolId: 'docker', remedy: 'install_on_machine_and_add_to_daemon_path' } });
+        expect(JSON.stringify(failure)).not.toContain(root);
+    });
+
     it.skipIf(process.platform === 'win32')('keeps the granted executable exact while descendants resolve commands through the host PATH', async () => {
         const root = await mkdtemp(join(tmpdir(), 'happier-system-tool-descendants-'));
         temporaryRoots.add(root);

@@ -1,3 +1,4 @@
+import { readDeploymentSystemToolFailure } from './deploymentSystemToolFailure';
 import { isDeepStrictEqual } from 'node:util';
 import { DeploymentChildRpcV1Schema, DeploymentReceiptGetResultV1Schema, DeploymentReceiptResultV1Schema,
     type DeploymentChildRpcV1, type ActionExecutorContext, type ActionExecutorDeps, type DeploymentPromoteInputV1 } from '@happier-dev/protocol';
@@ -15,7 +16,9 @@ import { projectDeploymentTransitionResultForHost } from './deploymentTransition
 import type { OwnServerDeploymentRequest, OwnServerDeploymentTargetHostInput,
     OwnServerDeploymentTargetForHost, OwnServerDeploymentResult, OwnServerDeploymentMemberRequest } from './targets/ownServer/ownServerDeploymentTarget';
 
-const failure = (errorCode: string): ActionExecuteFailure => ({ ok: false, errorCode, error: errorCode });
+const failure = (errorCode: string, error?: unknown): ActionExecuteFailure =>
+    readDeploymentSystemToolFailure(errorCode, error)
+        ?? { ok: false, errorCode, error: errorCode };
 const errorCode = (error: unknown) => error instanceof Error && 'code' in error && typeof error.code === 'string'
     ? error.code : 'deployment_content_unavailable';
 
@@ -150,6 +153,6 @@ export function createDaemonDeploymentChildExecutor(host: OwnServerDeploymentTar
                 activeDeploymentId: job.activeDeploymentId });
             return await target.executeMember({ request, admitted, machineId: job.machineId, installationId: job.installationId,
                 phase: job.phase, selectedDeploymentId: job.selectedDeploymentId });
-        } catch (error) { return failure(context.signal?.aborted ? 'cancelled' : errorCode(error)); }
+        } catch (error) { return failure(context.signal?.aborted ? 'cancelled' : errorCode(error), error); }
     }
 }

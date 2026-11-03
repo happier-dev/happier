@@ -1,3 +1,4 @@
+import { readDeploymentSystemToolFailure } from './deploymentSystemToolFailure';
 import { admitPreviewEnvironmentForHost } from './previewAdmissionForHost';
 import axios from '@/api/client/credentialAxios';
 import { z } from 'zod/mini';
@@ -73,8 +74,13 @@ export type DaemonDeploymentCandidateRequest = Readonly<{
     requestKey?: string; whenBusy?: 'refuse' | 'supersede';
 }>;
 export type DaemonDeploymentCandidateResult = Readonly<{ ok: true; input: DeploymentDeployInputV1; content: DeploymentContentV1 }> | ActionExecuteFailure;
-const refuse = (code: string): never => { throw Object.assign(new RpcError(code, code), { code }); };
-const failure = (errorCode: string): ActionExecuteFailure => ({ ok: false, errorCode, error: errorCode });
+const refuse = (reason: string | ActionExecuteFailure): never => {
+    const code = typeof reason === 'string' ? reason : reason.errorCode;
+    throw Object.assign(new RpcError(code, code), { code, ...(typeof reason === 'string' ? {} : { cause: reason }) });
+};
+const failure = (errorCode: string, error?: unknown): ActionExecuteFailure =>
+    readDeploymentSystemToolFailure(errorCode, error)
+        ?? { ok: false, errorCode, error: errorCode };
 const errorCode = (error: unknown) => {
     const code = readRpcErrorCode(error) ?? (error instanceof Error && 'code' in error && typeof error.code === 'string'
         ? error.code : 'deployment_content_unavailable');
@@ -356,7 +362,8 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
             const result = await sendChild(DeploymentChildRpcV1Schema.parse({ v: 1, kind: 'review', actionId: member.request.actionId,
                 input: member.request.input, machineId: member.machineId, installationId: member.installationId }), member.request.context);
             if (!result || typeof result !== 'object') return refuse('invalid_action_transport_output');
-            if ('errorCode' in result && typeof result.errorCode === 'string') return refuse(result.errorCode);
+            if ('errorCode' in result && typeof result.errorCode === 'string')
+                return refuse(readDeploymentSystemToolFailure(result.errorCode, result) ?? result.errorCode);
             if (!('inputBasis' in result) || !('reviewedEffect' in result) || !('runtimePlatform' in result)
                 || typeof result.runtimePlatform !== 'string' || !result.runtimePlatform) return refuse('invalid_action_transport_output');
             return { inputBasis: OwnServerDeploymentInputBasisV1Schema.parse(result.inputBasis),
@@ -424,7 +431,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                 if (!result) return projectDeploymentTransitionOutcomeUnknownForHost({ response });
                 if (result.ok) await atHome(() => prepared.afterCommit());
                 return result;
-            } catch (error) { return issued ? projectDeploymentTransitionOutcomeUnknownForHost(error) : failure(errorCode(error)); }
+            } catch (error) { return issued ? projectDeploymentTransitionOutcomeUnknownForHost(error) : failure(errorCode(error), error); }
         },
     };
     const target = createOwnServerDeploymentTargetForHost(targetHost);
@@ -438,7 +445,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
             if (!opened.ok) return failure(opened.error);
             await assertCurrent(request.context);
             return { ok: true as const, content: opened.content };
-        } catch (error) { return failure(request.context.signal?.aborted ? 'cancelled' : errorCode(error)); }
+        } catch (error) { return failure(request.context.signal?.aborted ? 'cancelled' : errorCode(error), error); }
     };
     const createReceiptCandidate = async ({ environment, content, context, assertCurrent: assertCandidateCurrent }: Readonly<{
         environment: DeploymentEnvironmentDetailV1; content: DeploymentContentV1; context: ActionExecutorContext;
@@ -538,7 +545,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
             return { input: prepared, preview: normalizeStrictJsonValue({ creationDefaults: {
                 values: defaults.values, sources: defaults.sources }, ...(defaults.reviewBasis ? { creationDefaultsBasis: defaults.reviewBasis } : {}),
                 ...(copy.review ? { copy: copy.review } : {}) }) };
-        } catch (error) { return failure(context.signal?.aborted ? 'cancelled' : errorCode(error)); }
+        } catch (error) { return failure(context.signal?.aborted ? 'cancelled' : errorCode(error), error); }
     };
     const storageDeps = createCliDeploymentActionDeps({ serverHttpBaseUrl: host.serverHttpBaseUrl,
         admitAccount: async (serverId, context) => {
@@ -726,7 +733,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                 requestKey: request.requestKey ?? randomUUID(), ...(request.whenBusy ? { whenBusy: request.whenBusy } : {}),
                 contentArtifactId: staged.artifactId,
                 contentHeaderVersion: updated.revision.headerVersion, contentBodyVersion: updated.revision.bodyVersion }) };
-        } catch (error) { return failure(errorCode(error)); }
+        } catch (error) { return failure(errorCode(error), error); }
     };
     const deps = {
         deploymentChild,
@@ -739,7 +746,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
             }
             if (request.actionId === 'deployments.domains.add' || request.actionId === 'deployments.domains.remove') {
                 try { return await prepareOwnServerDomainReviewedChildren(request, { storage, open }); }
-                catch (error) { return failure(request.context.signal?.aborted ? 'cancelled' : errorCode(error)); }
+                catch (error) { return failure(request.context.signal?.aborted ? 'cancelled' : errorCode(error), error); }
             }
             if (request.actionId === 'deployments.templates.instantiate') {
                 const template = DeploymentTemplateInstantiateInputV1Schema.safeParse(request.input);
@@ -765,7 +772,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                 return link.source.kind === 'plugin'
                     ? await contributedTarget.prepareTeardownChildren({ environmentId: input.environmentId,
                         targetLinkId: input.targetLinkId, context: request.context }, environment) : null;
-            } catch (error) { return failure(request.context.signal?.aborted ? 'cancelled' : errorCode(error)); }
+            } catch (error) { return failure(request.context.signal?.aborted ? 'cancelled' : errorCode(error), error); }
         },
         deploymentAction: (async (actionId, input, context, creationReview = undefined) => {
             if (actionId === 'deployments.restart') {
@@ -777,7 +784,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                 && ('contentArtifactId' in input || !('mode' in input) || input.mode !== 'preview'))) {
                 try { await requireDefinitionManage(context,
                     actionId === 'deployments.environments.create' ? 'deployment_access_denied' : 'action_forbidden'); }
-                catch (error) { return failure(errorCode(error)); }
+                catch (error) { return failure(errorCode(error), error); }
             }
             if (actionId === 'deployments.health.current') {
                 const selected = DeploymentActionInputSchemasV1[actionId].safeParse(input);
@@ -819,7 +826,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                     await assertCurrent(context);
                     return DeploymentActionOutputSchemasV1[actionId].parse({ ok: true,
                         environmentId: environment.id, targetLinkId: link.id, observation });
-                } catch (error) { return failure(context.signal?.aborted ? 'cancelled' : errorCode(error)); }
+                } catch (error) { return failure(context.signal?.aborted ? 'cancelled' : errorCode(error), error); }
                 finally { await lease?.release(); }
             }
             if (isDeploymentDomainChildActionIdV1(actionId)) {
@@ -948,16 +955,16 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                         return resumed.ok ? DeploymentReceiptResultV1Schema.parse(resumed.result) : resumed;
                     },
                 });
-            } catch (error) { return failure(context.signal?.aborted ? 'cancelled' : errorCode(error)); }
+            } catch (error) { return failure(context.signal?.aborted ? 'cancelled' : errorCode(error), error); }
         }) satisfies NonNullable<ActionExecutorDeps['deploymentAction']>,
         async deploymentTemplateInstantiate(...args: Parameters<typeof templates.instantiate>) {
             try { await requireDefinitionManage(args[1]); return await templates.instantiate(...args); }
-            catch (error) { return failure(errorCode(error)); }
+            catch (error) { return failure(errorCode(error), error); }
         },
         prepareDeploymentEnvironmentCreate: prepareEnvironmentCreate,
         async prepareDeploymentTemplateInstantiation({ input, context }: Readonly<{ input: Parameters<typeof templates.prepare>[0]; context: ActionExecutorContext }>) {
             try { await requireDefinitionManage(context); return await templates.prepare(input, context); }
-            catch (error) { return failure(errorCode(error)); }
+            catch (error) { return failure(errorCode(error), error); }
         },
         resolveEnvironmentApprovalScope: storageDeps.resolveEnvironmentApprovalScope,
         readDeploymentEnvironment: targetHostReaders.readEnvironment,
@@ -987,7 +994,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
             try {
                 await admitCandidateRequest(originalRequest);
                 return await prepareAdmittedDeployCandidate(originalRequest, observedEnvironment);
-            } catch (error) { return failure(errorCode(error)); }
+            } catch (error) { return failure(errorCode(error), error); }
         },
         async prepareDeploymentAction(originalRequest: DaemonDeploymentPreparationRequest): Promise<DaemonDeploymentPreparationResult> {
             try {
@@ -1055,7 +1062,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                         });
                         if (observe) return { observePendingOperation: async context => {
                             try { return await observe(context); }
-                            catch (error) { return failure(context.signal?.aborted ? 'cancelled' : errorCode(error)); }
+                            catch (error) { return failure(context.signal?.aborted ? 'cancelled' : errorCode(error), error); }
                         } };
                     }
                     // An approved compact replay may only observe an already
@@ -1193,7 +1200,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                 return { input: { ...effectInput, contentArtifactId: created.artifactId,
                     contentHeaderVersion: created.revision.headerVersion, contentBodyVersion: created.revision.bodyVersion },
                     preview };
-            } catch (error) { return failure(originalRequest.context.signal?.aborted ? 'cancelled' : errorCode(error)); }
+            } catch (error) { return failure(originalRequest.context.signal?.aborted ? 'cancelled' : errorCode(error), error); }
         },
     };
     return deps;

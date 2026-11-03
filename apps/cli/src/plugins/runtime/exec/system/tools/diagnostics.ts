@@ -4,6 +4,12 @@ import type { SystemToolDiagnosticV1 } from '../../privateContract';
 
 import { sanitizeExecDiagnosticText } from '@/plugins/runtime/exec/errors';
 
+/** Safe fields owned by missing-tool resolution and retained by public failure adapters. */
+export const MISSING_SYSTEM_TOOL_DETAILS = Object.freeze({
+    kind: 'systemToolUnavailable',
+    remedy: 'install_on_machine_and_add_to_daemon_path',
+} as const);
+
 const DIAGNOSTIC_DETAIL_MAX_BYTES = 240;
 
 function sanitizeValue(value: unknown): unknown {

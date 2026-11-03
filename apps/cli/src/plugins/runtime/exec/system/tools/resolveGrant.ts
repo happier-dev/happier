@@ -25,6 +25,7 @@ import {
 import {
     createLegacySystemToolDiagnostic,
     createMissingSystemToolDiagnostic,
+    MISSING_SYSTEM_TOOL_DETAILS,
     createSystemToolDiagnostic,
     createUnidentifiedSystemToolDiagnostic,
 } from './diagnostics';
@@ -517,7 +518,8 @@ export function createPluginExecSystemToolResolver(params: CreatePluginExecSyste
             });
             throw new PluginError({
                 code: 'plugin_exec_system_tool_unavailable',
-                message: `System tool '${definition.displayName}' is not available`,
+                message: `System tool '${definition.toolId}' is unavailable. Install it on this Machine and make it executable on the daemon PATH.`,
+                details: { ...MISSING_SYSTEM_TOOL_DETAILS, toolId: definition.toolId },
                 diagnostics: projectSystemToolDiagnostics([diagnostic]),
             });
         },
