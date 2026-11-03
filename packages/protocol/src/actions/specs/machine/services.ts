@@ -17,6 +17,7 @@ import { MachineServiceWatchV1Schema } from '../../../machines/machineServiceWat
 import { RPC_METHODS } from '../../../rpc/methods.js';
 import type { PreNormalizedActionSpec } from '../../actionSpecs.js';
 import { actionInputServerId } from '../definition.js';
+import { MachineServiceAdoptInputV1Schema, MachineServiceAdoptResultV1Schema } from '../../../local/services/adoptionV1.js';
 
 export { MACHINE_SERVICE_ACTION_IDS } from '../../../local/services/actionIdsV1.js';
 export type MachineServiceActionId = typeof MACHINE_SERVICE_FRONTDOOR_ACTION_IDS[number];
@@ -109,6 +110,7 @@ export const MACHINE_SERVICE_ACTION_INPUT_SCHEMAS = {
   'machines.services.detail': MachineServicesDetailInputV1Schema,
   'machines.services.watch': MachineServiceWatchInputV1Schema,
   'machines.services.unwatch': MachineServiceUnwatchInputV1Schema,
+  'machines.services.adopt': MachineServiceAdoptInputV1Schema,
 } as const;
 export const MACHINE_SERVICE_ACTION_OUTPUT_SCHEMAS = {
   'machines.services.list': MachineServicesListResultV1Schema,
@@ -116,6 +118,7 @@ export const MACHINE_SERVICE_ACTION_OUTPUT_SCHEMAS = {
   'machines.services.detail': MachineServicesDetailResultV1Schema,
   'machines.services.watch': MachineServiceWatchMutationResultV1Schema,
   'machines.services.unwatch': MachineServiceWatchMutationResultV1Schema,
+  'machines.services.adopt': MachineServiceAdoptResultV1Schema,
 } as const;
 export type MachineServiceActionInput = z.infer<(typeof MACHINE_SERVICE_ACTION_INPUT_SCHEMAS)[MachineServiceActionId]>;
 export type MachineServiceActionOutput = z.infer<(typeof MACHINE_SERVICE_ACTION_OUTPUT_SCHEMAS)[MachineServiceActionId]>;
@@ -125,6 +128,7 @@ const rpcMethods = {
   'machines.services.detail': RPC_METHODS.MACHINES_SERVICE_DETAIL,
   'machines.services.watch': RPC_METHODS.MACHINES_SERVICE_WATCH,
   'machines.services.unwatch': RPC_METHODS.MACHINES_SERVICE_UNWATCH,
+  'machines.services.adopt': RPC_METHODS.MACHINES_SERVICE_ADOPT,
 } as const;
 type ServiceActionSpec<Id extends MachineServiceActionId> = Omit<PreNormalizedActionSpec, 'id' | 'inputSchema' | 'outputSchema'> & {
   id: Id; inputSchema: (typeof MACHINE_SERVICE_ACTION_INPUT_SCHEMAS)[Id]; outputSchema: (typeof MACHINE_SERVICE_ACTION_OUTPUT_SCHEMAS)[Id];

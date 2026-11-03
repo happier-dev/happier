@@ -7539,3 +7539,14 @@ shares the existing ephemeral profile's Session-close, logout and explicit-purge
 lifetime. Source logout does not revoke a copied login. Partial/unknown native
 outcomes are visible and never automatically replayed. Real OS/browser and
 cross-Machine login validation remains with RU2's composed QA wave.
+
+### Watched Compose adoption (0.3 development source)
+
+The Machine Services adoption hook owns review, destination and binding drafts,
+then one apply of the reviewed generation and digest. The flow consumes the Store's
+shared Project choice and the Environment variable-bindings editor. Refusals
+preserve the review and entered choices; an identical retry retains its request
+key, while changed choices start a new request. Changing the service generation
+or Account retires the old review before another apply. UI dispatch uses the
+canonical Action front door; the receiving daemon's reviewed-child preparation
+owns adoption rather than the native observation runtime.

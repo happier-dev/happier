@@ -263,6 +263,8 @@ export function createMachineServicesRuntime(input: Readonly<{
         }
     }
     async function execute(request: Invocation): Promise<MachineServiceActionOutput | ActionExecuteFailure> {
+        // Adoption is prepared by the daemon's reviewed deployment owner, never this observation runtime.
+        if (request.actionId === 'machines.services.adopt') return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
         if (disposed) return unavailable();
         const parsed = MACHINE_SERVICE_ACTION_INPUT_SCHEMAS[request.actionId].safeParse(request.input);
         if (!parsed.success) return unavailable('denied');
