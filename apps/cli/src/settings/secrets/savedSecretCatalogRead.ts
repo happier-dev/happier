@@ -92,16 +92,17 @@ export async function hydrateSavedSecretCatalog(input: Readonly<{
   signal?: AbortSignal;
   operationContext?: SavedSecretOperationContextV1;
 }>): Promise<HydratedSavedSecretCatalog> {
+  input.signal?.throwIfAborted();
   const scopeKey = resolveAccountSettingsScopeKeyForToken(input.token);
   const context = input.operationContext;
-  if (context && (context.credentials.token !== input.token || !await context.isCurrent())) {
+  if (context && (context.credentials.token !== input.token || !await context.isCurrent(input.signal))) {
     throw new Error('saved_secret_account_lifetime_changed');
   }
   const snapshot = context ? context.readSnapshot() : getActiveAccountSettingsSnapshot();
   const lifetimeToken = context ? null : getActiveAccountSettingsSnapshotLifetimeToken();
   const commitCatalog = async (catalog: Readonly<{ resources: readonly SavedSecretCatalogResourceInputV1[]; state: SavedSecretCatalogState }>) => {
     if (input.signal?.aborted) return false;
-    if (context) return await context.isCurrent() && context.commitCatalog(catalog);
+    if (context) return await context.isCurrent(input.signal) && context.commitCatalog(catalog);
     return commitActiveSavedSecretCatalog({ scopeKey, lifetimeToken: lifetimeToken!, ...catalog });
   };
   // The Home's resource owner authorizes personal and granted material.
@@ -409,7 +410,7 @@ export async function captureSavedSecretReferencesForOperation(input: Readonly<{
   const context = input.operationContext;
   await readSavedSecretCatalogForOperation({ ...input, references: references.map(ref => ({ ref })) });
   input.signal?.throwIfAborted();
-  if (context && !await context.isCurrent()) throw new Error('saved_secret_account_lifetime_changed');
+  if (context && !await context.isCurrent(input.signal)) throw new Error('saved_secret_account_lifetime_changed');
   const snapshot = context ? context.readSnapshot() : getActiveAccountSettingsSnapshot();
   if (!snapshot || snapshot.scopeKey !== input.expectedScopeKey) throw new Error('saved_secret_account_snapshot_unavailable');
   const captured = readSavedSecretRevisionsFromSnapshotV1(snapshot, references, context

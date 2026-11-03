@@ -838,7 +838,7 @@ export async function readStoredCredentials(): Promise<StoredCredentials | null>
   // unsafe, or mismatched file must never become a custodian/global sign-in.
   const requesterCredentialFile = process.env.HAPPIER_SESSION_REQUESTER_CREDENTIAL_FILE;
   if (requesterCredentialFile !== undefined) {
-    const { readRequesterSessionCredentialsForChild } = await import('./daemon/sessionEncryption/requesterSessionCredentials');
+    const { readRequesterSessionCredentialsForChild } = await import('./daemon/sessionEncryption/requesterSessionCustody');
     return await readRequesterSessionCredentialsForChild(requesterCredentialFile);
   }
   const apiToken = resolveCliApiToken();

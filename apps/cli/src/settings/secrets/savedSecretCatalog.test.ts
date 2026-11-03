@@ -15,6 +15,22 @@ const randomBytes = (length: number) => new Uint8Array(length).fill(3);
 describe('Saved Secret catalog materializer', () => {
   afterEach(() => resetActiveAccountSettingsSnapshotForTests());
 
+  it('opens passkeys through the same resource owner and refuses flattening them into string consumers', () => {
+    const content = { v: 2 as const, name: 'Example passkey', kind: 'other' as const,
+      source: { kind: 'passkey' as const, rpId: 'example.com', credentialId: 'AQID', userHandle: 'BAUG', privateKey: 'BwgJ',
+        algorithm: -7 as const, signCount: 0, backupEligibility: true, backupState: true } };
+    const ref = 'happier:shared-secret:v1:passkey';
+    const row = { resourceId: 'passkey', ownerAccountId: 'owner', displayName: content.name, kind: content.kind,
+      encryptionMode: 'plain' as const, revision: 1, materialStatus: 'ready' as const,
+      storedContent: sealSavedSecretResourceStoredContentV1({ resourceId: 'passkey', mode: 'plain', content }) };
+    const materializer = createSavedSecretMaterializerV1({ accountSettings: {}, settingsSecretsReadKeys: [], resources: [row], resourceCatalogState: 'ready' });
+    expect(materializer.resolve(ref)).toEqual({ status: 'mode_incompatible' });
+    expect(materializer.resolveContent(ref)).toMatchObject({ status: 'ready', content });
+    const refused = createSavedSecretMaterializerV1({ accountSettings: {}, settingsSecretsReadKeys: [],
+      resources: [{ ...row, capabilities: { use: false } }], resourceCatalogState: 'ready' });
+    expect(refused.resolveContent(ref)).toEqual({ status: 'forbidden' });
+  });
+
   it('keeps an external locator out of scalar material until this operation supplies its acquisition', () => {
     const ref = 'happier:shared-secret:v1:vault-field';
     const source = { kind: 'external' as const,

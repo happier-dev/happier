@@ -36,9 +36,10 @@ import { DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1, ProviderConnectionsCatalogV1Sc
 import { sameProviderConnectionsCatalogAuthority } from '@/providers/lifecycle/currentAccountSettingsSnapshot';
 import { resolveLaunchProfileSavedSecretEnvironment } from '@/daemon/agentRuntime/resolveForegroundProfileSavedSecretEnvironment';
 
-vi.mock('axios', () => ({
-  default: { get: vi.fn(), post: vi.fn() },
-}));
+vi.mock('axios', async importOriginal => {
+  const actual = await importOriginal<typeof import('axios')>();
+  return { ...actual, default: Object.assign(actual.default.create(), { get: vi.fn(), post: vi.fn() }) };
+});
 
 const persistenceMocks = vi.hoisted(() => ({
   readStoredCredentials: vi.fn(),

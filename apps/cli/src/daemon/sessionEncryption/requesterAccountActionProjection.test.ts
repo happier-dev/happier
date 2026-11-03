@@ -518,11 +518,14 @@ describe('admitted requester Action projection', () => {
       throw new Error('Unexpected private requester read');
     });
     const context = await requesterAccountOwner.admitRequesterAccountActionContext({
-      authorization: { ...authorization, binding: { ...authorization.binding, accountEncryptionMode: 'plain' } },
+      authorization: { ...authorization, binding: { ...authorization.binding, accountEncryptionMode: 'plain', admittedMachineRole: 'use' } },
       credentials: { token: 'bob-settings', encryption: null }, serverId: 'home-profile', serverIdentityId: 'stable-home',
       serverHttpBaseUrl: 'https://requester-home.test', isCurrent: async () => true,
     });
     if (!context) throw new Error('Missing requester custody');
+    // Native-source acquisition consumes the signed Machine grant (SEC-BATCH-1101 S1).
+    expect(context.savedSecretOperationContext.machineAdmission)
+      .toEqual({ actorAccountId: 'bob', custodianAccountId: 'alice', role: 'use' });
     const release = context.retain();
     try {
       expect(await context.refreshAccountSettings()).toBe(true);

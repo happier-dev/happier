@@ -178,6 +178,20 @@ async function harness(options: Readonly<{ setup?: boolean; trusted?: boolean; b
     return authorized;
   };
   return { launch, launchWithOperation, spawned, cwd, admission, scope, invocation,
+    async launchWithUnboundMachineAdmission() {
+      const admitted = createRunnerAgentProjectLaunchInvocation({ cwd, signal, isCurrent: () => true,
+        ingress: { signal, machineAdmission: SocketRpcMachineAdmissionContextV1Schema.parse({
+          actorAccountId: 'requester', custodianAccountId: 'custodian', machineId: 'machine',
+          installationId: f.installation.installationId, role: 'use', encryptionMode: 'plain' }) },
+        resolveRuntime: context => factory({ operationRuntime, terminalSessions }, context),
+        resolveInstalledAccountRuntime: () => factory({ operationRuntime, terminalSessions }, { signal }) });
+      onTestFinished(() => admitted.disposeProjectAgentLaunch());
+      const exec = createStablePluginExecService({ signal, isOccurrenceCurrent: () => true,
+        resolveExecutable: async () => ({ command: '/installed/agent' }), resolvePath: async () => cwd,
+        prepareAgentNativeLaunch: admitted.prepareAgentNativeLaunch });
+      return await authorizePluginExecLaunchForHost(exec, { executable, cwd },
+        { nativeLaunch: issueAgentNativeLaunchQualifierForHost(exec) });
+    },
     projectLaunchContext: { requester: { bootstrap: f.bootstrap, isCurrent: f.bootstrap.isCurrent }, isCurrent: () => true,
       resolveRuntime: (context: Parameters<typeof factory>[1]) => factory({ operationRuntime, terminalSessions }, context) },
     operation: () => coldOperationId ? operationRuntime.store.get(scope, coldOperationId) : null,
@@ -237,6 +251,12 @@ it('retains a known host executable-resolution refusal before native input dispa
   const result = await host.send({ text: 'Start' }, { localInputId: 'input' });
   expect(executableDispatches).toBe(0);
   expect(result).toMatchObject({ status: 'rejected', diagnostic: { code: 'plugin_exec_system_tool_resolution_unavailable' } });
+});
+
+it('refuses shared Machine launch without requester custody before using the installed Account', async () => {
+  const h = await harness();
+  await expect(h.launchWithUnboundMachineAdmission()).rejects.toMatchObject({ code: 'project_requester_credentials_unavailable' });
+  expect(h.nativeEffects()).toBe(0);
 });
 
 it.each(['before_launch', 'after_dispatch'] as const)('preserves native input custody across a known host refusal: %s', async phase => {

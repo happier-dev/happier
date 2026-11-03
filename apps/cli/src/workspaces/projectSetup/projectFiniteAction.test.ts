@@ -920,6 +920,7 @@ describe('authenticated finite Project Action owner', () => {
     });
 
     it.each([
+        ['projects.inspect', 'factory custody'],
         ['projects.inspect', 'current'], ['projects.inspect', 'revoked'], ['projects.inspect', 'mode'], ['projects.inspect', 'disconnect'],
         ['projects.script.run', 'current'],
         ['projects.script.run', 'revoked'], ['projects.script.run', 'mode'], ['projects.script.run', 'disconnect'],
@@ -1007,7 +1008,6 @@ describe('authenticated finite Project Action owner', () => {
         h.get.mockClear(); h.post.mockClear();
         try {
             if (actionId === 'projects.inspect') {
-                const { ApiMachineClient } = await import('@/api/apiMachine');
                 // The installation filesystem adapter is the only substituted
                 // boundary in the installed finite factory; its custody is real.
                 vi.spyOn(installationStore, 'readInstallationIdentityIfExistsSync').mockReturnValue({
@@ -1025,6 +1025,16 @@ describe('authenticated finite Project Action owner', () => {
                     prepareBetween: async () => { throw new Error('Unexpected Sync transport'); },
                     resolveCurrentMachineExecutionOriginContext: async () => { throw new Error('Unexpected origin HTTP read'); },
                 });
+                if (change === 'factory custody') {
+                    const installedRuntime = await installed({
+                        operationRuntime: h.operationRuntime, terminalSessions: h.terminalSessions,
+                    }, ingress);
+                    expect(installedRuntime).not.toBeNull();
+                    expect(installedRuntime).not.toHaveProperty('credentials');
+                    expect(installedRuntime?.accountAuthorization).toBe(carrier);
+                    return;
+                }
+                const { ApiMachineClient } = await import('@/api/apiMachine');
                 const client: ApiMachineClient = Object.assign(Object.create(ApiMachineClient.prototype), {
                     machine: { id: 'machine' }, machineRpcWorkingDirectory: h.root,
                     filesystemAccessPolicy: { kind: 'restrictedRoots', roots: [h.root] },

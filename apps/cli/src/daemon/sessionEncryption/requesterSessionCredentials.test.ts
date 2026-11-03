@@ -1,3 +1,8 @@
+import { loadInstalledPlugins } from '@/plugins/discovery/load/installed';
+import { projectLoadedPluginContributes } from '@/plugins/projection/registry/fullProjection';
+import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import { definePlugin } from '@happier-dev/plugin-sdk';
+import { acquireSavedSecretMaterializerForOperation } from '@/settings/secrets/savedSecretCatalogRead';
 import { mkdtemp, rm, readFile, chmod, mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import axios from 'axios';
@@ -12,7 +17,7 @@ import { getAcpNpmRuntimeSpec } from '@/agent/acp/catalog/configured/resolveAcpL
 import { resolveAccountConfiguredAcpLaunch } from '@/agent/runtime/registry/engineRegistry/accountConfiguredAcp';
 import fastify, { type FastifyInstance, type FastifyRequest } from 'fastify';
 import tweetnacl from 'tweetnacl';
-import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { verifyMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import type { SocketRpcMachineAdmissionContextV1 } from '@happier-dev/protocol/machines/machineAccessV1';
 import { SessionCreationCorrespondenceV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
@@ -123,10 +128,12 @@ afterEach(async () => {
 });
 
 async function home(options: Readonly<{ sessionId?: string; creationMachineId?: string; bot?: boolean; custodianAccountId?: string; requesterReadsOnly?: boolean;
+  machineGrantCount?: number;
   sessionActive?: boolean; sessionSeq?: number; encryptionSecret?: Uint8Array; beforeProfileRead?: () => Promise<void>;
   beforeMachineAccessRead?: () => Promise<void> }> = {}) {
   const sessionId = options.sessionId ?? 'session';
   const custodianAccountId = options.custodianAccountId ?? 'alice';
+  const machineRole = options.machineGrantCount ? 'manage' : 'use';
   directory = await mkdtemp(join(tmpdir(), 'requester-custody-'));
   app = fastify();
   const keyPair = tweetnacl.sign.keyPair();
@@ -192,8 +199,13 @@ async function home(options: Readonly<{ sessionId?: string; creationMachineId?: 
     await options.beforeMachineAccessRead?.();
     return access ? {
     machineId: 'machine', custodian: { accountId: custodianAccountId, displayName: 'Custodian' },
-    access: { custodian: { accountId: custodianAccountId, displayName: 'Custodian' }, role: 'use', resourceMode: 'plain', accessState: 'ready' },
-    canManage: false, grants: [], ownDirectGrant: true, ownAccessSources: [],
+    access: { custodian: { accountId: custodianAccountId, displayName: 'Custodian' }, role: machineRole, resourceMode: 'plain', accessState: 'ready' },
+    canManage: machineRole === 'manage', grants: Array.from({ length: options.machineGrantCount ?? 0 }, (_, index) => ({
+      machineId: 'machine', principal: { kind: 'account', accountId: `recipient-${index}` }, level: 'view',
+      display: { name: `Recipient ${index}` }, readiness: 'ready',
+      audience: [{ accountId: `recipient-${index}`, displayName: `Recipient ${index}`, readiness: 'ready', reason: null, canPrepareKeys: false }],
+      removal: { losesAccessAccountIds: [`recipient-${index}`] },
+    })), ownDirectGrant: true, ownAccessSources: [],
   } : reply.code(403).send({ kind: 'refused', code: 'access_denied' });
   });
   app.post('/v1/machines/machine/admission/verify', async (request, reply) => {
@@ -1243,6 +1255,62 @@ describe('requester Session lifecycle custody', () => {
         await plugin.dispose(); await prepared.cleanupOnFailure();
       } finally { vi.unstubAllEnvs(); reloadConfiguration(); }
     }
+  });
+
+  it.each(['use', 'manage'] as const)('retains shared Machine %s admission when acquiring a native Saved Secret', async role => {
+    const host = await home({ custodianAccountId: 'alice', ...(role === 'manage' ? { machineGrantCount: 1 } : {}) });
+    const prepared = await admitRequesterSessionBootstrap({
+      bootstrap: { v: 1, disposition: 'ordinary_requester', credentials: encodeStoredCredentials(credentials) },
+      boundary: { serverId: attribution.serverId, serverHttpBaseUrl: origin, happyHomeDir: directory! },
+      context: { signal: new AbortController().signal,
+        machineAdmission: { actorAccountId: 'bob', custodianAccountId: 'alice', machineId: 'machine', installationId: 'installation', role, encryptionMode: 'plain' },
+        verifyMachineAdmissionCurrent: () => verifyRequesterSessionMachineAdmissionCurrent({ credentials, attribution,
+          sessionId: 'session', serverHttpBaseUrl: origin, boundary: host.boundary }) },
+    });
+    if (!prepared) throw new Error('Missing admitted requester custody');
+    onTestFinished(prepared.cleanupOnFailure);
+    let nativeVaultReads = 0;
+    const homeGet = axios.get.bind(axios);
+    const transport = vi.spyOn(axios, 'get').mockImplementation(async (url, config) => {
+      if (url === 'https://vault.test/session-field') {
+        nativeVaultReads++;
+        return { status: 200, data: { value: 'private-session-vault-value' } };
+      }
+      return await homeGet(url, config);
+    });
+    onTestFinished(() => transport.mockRestore());
+    const plugin = definePlugin({ id: 'acme.session-vault', version: '1.0.0', displayName: 'Session vault',
+      entrypoints: { daemon: './daemon.mjs' }, secretSources: { field: {
+        declaration: { title: 'Session credential' }, runtime: { async acquire() {
+          const response = await axios.get<{ value: string }>('https://vault.test/session-field');
+          return { ok: true, value: response.data.value };
+        } },
+      } } });
+    const source = await createAuthoredAdmittedPluginRuntimeFixture({
+      plugins: [{ manifest: plugin.manifest, files: { 'daemon.mjs': 'export function activate() {}' },
+        instantiateCommittedModule: () => ({ activate: plugin.activate }) }], coldStart: true,
+      async resolveContributes(happyHomeDir) {
+        return createResolvedContributionRegistry(projectLoadedPluginContributes({
+          loadResult: await loadInstalledPlugins({ happyHomeDir }), provenance: 'external' }));
+      },
+    });
+    onTestFinished(() => source.dispose());
+    const context = prepared.admitted.savedSecretOperationContext;
+    const resourceId = 'session-vault-field';
+    expect(context.commitCatalog({ state: 'ready', resources: [{ resourceId,
+      ownerAccountId: 'bob', relationship: 'owner', displayName: 'Session field', kind: 'token', encryptionMode: 'plain',
+      revision: 1, materialStatus: 'ready', storedContent: sealSavedSecretResourceStoredContentV1({ resourceId, mode: 'plain',
+        content: { v: 2, name: 'Session field', kind: 'token', source: { kind: 'external',
+          contribution: { pluginId: 'acme.session-vault', localId: 'field' }, account: 'bob', reference: 'selected-field' } } }) }] })).toBe(true);
+    const snapshot = context.readSnapshot();
+    if (!snapshot) throw new Error('Missing admitted Saved Secret catalog');
+    const ref = formatSavedSecretCatalogReferenceV1({ kind: 'shared_resource', id: resourceId });
+    const acquisition = acquireSavedSecretMaterializerForOperation({ snapshot, references: [{ ref }],
+      operationContext: context, secretSources: source.registry.secretSources });
+    if (role === 'use') await expect(acquisition).rejects.toMatchObject({ reason: 'reference_forbidden' });
+    else expect((await acquisition).resolve(ref)).toMatchObject({ status: 'ready', value: 'private-session-vault-value' });
+    expect(nativeVaultReads).toBe(role === 'manage' ? 1 : 0);
+    expect(JSON.stringify(snapshot)).not.toContain('private-session-vault-value');
   });
 
   it('retires only an unadopted bootstrap Saved Secret catalog on launch failure', async () => {
