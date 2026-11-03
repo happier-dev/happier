@@ -10,6 +10,8 @@ import {
 } from '@/app/machines/machineAccess';
 import { inReadSnapshot, inTx } from '@/storage/inTx';
 import type { Fastify } from '../../types';
+import { MachinePresenceReadResultV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
+import { readMachinePresenceForAccountInTx } from '@/app/presence/machinePresenceTransitions';
 
 const params = z.strictObject({ id: z.string().check(z.minLength(1)) });
 const setBody = omit(MachineAccessGrantSetInputV1Schema, { serverId: true, machineId: true });
@@ -20,6 +22,12 @@ const removeBody = z.union([
 
 /** Strict HTTP adapters; the Machine owner decides membership, readiness and mutation effects. */
 export function registerMachineAccessRoutes(app: Fastify) {
+    app.get('/v1/machines/:id/presence', {
+        preHandler: app.authenticate,
+        schema: { params, response: { 200: MachinePresenceReadResultV1Schema } },
+    }, async request => inReadSnapshot(tx => readMachinePresenceForAccountInTx(tx, {
+        actorAccountId: request.userId, machineId: request.params.id,
+    })));
     app.get('/v1/machines/:id/access', {
         preHandler: app.authenticate,
         schema: { params, response: { 200: MachineAccessGrantsListResultV1Schema } },

@@ -4,6 +4,7 @@ import { afterTx, inTx, type Tx } from '@/storage/inTx';
 import { lockMachinePresenceInTx, persistMachinePresence, type MachinePresenceRow } from './persistMachinePresence';
 import { resolvePresenceTimeoutConfig, renewLocalMachinePresenceDeadline } from './timeout';
 import { publishPresenceDeadline } from './presenceRedisQueue';
+import { retainMachinePresenceTransitionInTx } from './machinePresenceTransitions';
 import { db } from '@/storage/db';
 import { resolveCurrentMachineRecipientAccountIdsInTx } from '@/app/machines/machineAccess';
 
@@ -29,6 +30,10 @@ export async function recordMachineAliveInTx(
         || params.timestamp + resolvePresenceTimeoutConfig().machineTimeoutMs <= Date.now()
         || params.timestamp < current.lastActiveAt.getTime()
         || await persistMachinePresence(tx, params) !== 1) return null;
+    if (current.wasOffline) await retainMachinePresenceTransitionInTx(tx, {
+        machineId: params.machineId, active: true, occurredAt: params.timestamp,
+        recipientAccountIds: current.recipientAccountIds,
+    });
     afterTx(tx, () => {
         renewLocalMachinePresenceDeadline({ ...params, lastActiveAt: new Date(params.timestamp) });
         if (current.wasOffline) void publishPresenceDeadline({ kind: 'machine', accountId: params.accountId,

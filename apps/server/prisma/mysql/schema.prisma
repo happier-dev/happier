@@ -2584,6 +2584,8 @@ model Machine {
     replacementSource  String?
     replacementActorUserId String?
     seq                Int         @default(0)
+    /// Latest server-decided offline/online occurrences; absent before the first timeout.
+    presenceTransitions String? @db.Text
     active             Boolean     @default(true)
     lastActiveAt       DateTime    @default(now())
     revokedAt          DateTime?

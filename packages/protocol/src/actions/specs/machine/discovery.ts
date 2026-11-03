@@ -2,6 +2,7 @@ import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { z } from 'zod/mini';
 import { StrictJsonValueSchema } from '../../../json/strictJsonValue.js';
 import type { PreNormalizedActionSpec } from '../definition.js';
+import { MachinePresenceReadInputV1Schema, MachinePresenceReadResultV1Schema } from '../../../machines/machineAccessV1.js';
 
 
 export const MachinesListInputSchema = lazyZodSchema(() => z.strictObject({
@@ -22,6 +23,17 @@ export const MachinesListCliInputSchema = lazyZodSchema(() => z.strictObject({
 }));
 
 export const MACHINE_DISCOVERY_ACTION_SPECS = Object.freeze([
+  {
+    id: 'machines.presence.read', executionPlacement: 'account', approval: { result: 'required' },
+    title: 'Read Machine presence transitions', description: 'Read the latest committed offline and online occurrences through current Machine access.',
+    safety: 'safe', sideEffectClass: 'read', placements: [],
+    surfaces: { ui: true, cli: true, agent: true, mcp: true, voice: true, rpc: false },
+    bindings: { mcpToolName: 'machines_presence_read' },
+    serverTransport: { method: 'GET', path: '/v1/machines/:machineId/presence' },
+    inputSchema: MachinePresenceReadInputV1Schema, outputSchema: MachinePresenceReadResultV1Schema,
+    inputHints: { fields: [{ path: 'serverId', title: 'Home ID', widget: 'text', required: true },
+      { path: 'machineId', title: 'Machine ID', widget: 'text', required: true }] },
+  } satisfies PreNormalizedActionSpec,
   {
     id: 'machines.list', executionPlacement: 'account', approval: {result: 'required'},
     title: 'List machines',

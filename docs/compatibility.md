@@ -3804,6 +3804,20 @@ existing transport code without changing a daemon producer; the prior timeout
 and `RPC_OUTCOME_UNKNOWN` values remain accepted.
 
 ## Plugin Platform direct-cut frontier
+### Operations trigger Events (0.3 development source)
+
+Machine presence Events `machine-offline` / `machine-online` retain the existing
+timeout and recovery decisions in nullable `Machine.presenceTransitions`.
+The owner-approved append-only `20261102101034_add_machine_presence_transitions`
+migration adds the field for PostgreSQL, MySQL and SQLite without backfilling
+initial-state Events. The source stack database owner deploys pending migrations
+before producer/catalog reload; shared-DB consumers never migrate that database.
+Existing presence wire DTOs remain unchanged. `machines.presence.read` exposes
+only structural latest offline/online occurrences through existing Machine
+access. Enrollment starts at the current revision; stable occurrence identities
+use the committed revision rather than heartbeat clocks. The retained pair
+coalesces overwritten cycles rather than recording every transition.
+
 
 ### Project page author contract (0.3 development source)
 

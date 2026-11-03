@@ -594,6 +594,9 @@ describe('Machine presence through current C41 recipients (real SQLite)', () => 
                 expect(Array.isArray(pending) ? pending[0] : null).toBe(0);
             });
             expect((await db.machine.findUniqueOrThrow({ where: { id: machine.id } })).active).toBe(false);
+            const offlineChange = await db.accountChange.findUniqueOrThrow({ where: {
+                accountId_kind_entityId: { accountId: owner.id, kind: 'machine', entityId: machine.id },
+            } });
             // A fresh released observation recovers the same committed fact
             // and must wake an already-running Event observer, not only cold reads.
             const recoveredAt = Date.now();
@@ -601,6 +604,13 @@ describe('Machine presence through current C41 recipients (real SQLite)', () => 
             await vi.waitFor(async () => expect((await redisClient!.xpending('presence:alive:v1', 'presence-worker'))[0]).toBe(1));
             await vi.advanceTimersByTimeAsync(5_000);
             await vi.waitFor(async () => expect((await db.machine.findUniqueOrThrow({ where: { id: machine.id } })).active).toBe(true));
+            const recovered = await db.machine.findUniqueOrThrow({ where: { id: machine.id } });
+            expect(JSON.parse(recovered.presenceTransitions!)).toMatchObject({ revision: 2,
+                online: { revision: 2 } });
+            const recoveredChange = await db.accountChange.findUniqueOrThrow({ where: {
+                accountId_kind_entityId: { accountId: owner.id, kind: 'machine', entityId: machine.id },
+            } });
+            expect(recoveredChange.cursor).toBeGreaterThan(offlineChange.cursor);
         } finally {
             await worker.stop();
             workerRedis.disconnect();

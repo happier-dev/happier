@@ -25,6 +25,7 @@ import { lockMachinePresenceInTx, markMachinePresenceInactive } from './persistM
 import { inTx } from '@/storage/inTx';
 import { resolveCurrentMachineRecipientAccountIdsInTx } from '@/app/machines/machineAccess';
 import type { PresenceDeadlineNotification } from './presenceDeadlineNotification';
+import { retainMachinePresenceTransitionInTx } from './machinePresenceTransitions';
 import { withWebLatencyProducerTrace } from '@/utils/webLatencyTrace';
 
 export interface PresenceTimeoutConfig {
@@ -111,6 +112,8 @@ export function createMachinePresenceDeadlineOwner(timeoutMs = resolvePresenceTi
                     if (await markMachinePresenceInactive(tx, { accountId: machine.accountId, machineId: machine.id,
                         lastActiveAt: machine.lastActiveAt }) !== 1) return null;
                     const recipientAccountIds = await resolveCurrentMachineRecipientAccountIdsInTx(tx, machine.id);
+                    await retainMachinePresenceTransitionInTx(tx, { machineId: machine.id, active: false,
+                        occurredAt: Date.now(), recipientAccountIds });
                     return { kind: 'expired' as const, machine: { ...machine,
                         recipientAccountIds } };
                 });

@@ -302,6 +302,7 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
     'prompts.invocations.list',
     'prompts.invocation.resolve',
     'machines.list',
+  'machines.presence.read',
     'servers.list',
     'review.engines.list',
     'agents.backends.list',

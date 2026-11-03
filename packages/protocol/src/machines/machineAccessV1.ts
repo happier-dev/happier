@@ -1,4 +1,7 @@
 import { z } from 'zod/mini';
+import { MachinePresenceTransitionsV1Schema } from './machinePresenceTransitionsV1.js';
+export { MachinePresenceTransitionsV1Schema, MachinePresenceReadInputV1Schema,
+  type MachinePresenceTransitionsV1 } from './machinePresenceTransitionsV1.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { createStoredReadSchema } from '../json/storedReadSchema.js';
 import { PrincipalRefV1Schema } from '../teams/principal.js';
@@ -51,6 +54,11 @@ export type MachineAccessPrepareKeysInputV1 = MachineTargetV1;
 
 export const MachineAccessRefusalV1Schema = lazyZodSchema(() => z.strictObject({ kind: z.literal('refused'), code: MachineAccessRefusalCodeV1Schema }));
 export type MachineAccessRefusalV1 = z.infer<typeof MachineAccessRefusalV1Schema>;
+export const MachinePresenceReadResultV1Schema = lazyZodSchema(() => z.union([
+  z.strictObject({ kind: z.literal('present'), machineId: z.string().check(z.minLength(1)),
+    transitions: z.nullable(MachinePresenceTransitionsV1Schema) }),
+  MachineAccessRefusalV1Schema,
+]));
 export const MachineAccessGrantRowV1Schema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(MachineAccessGrantV1Schema, {
   display: z.strictObject({ name: z.nullable(z.string()) }),
   readiness: MachineAccessReadinessV1Schema,
