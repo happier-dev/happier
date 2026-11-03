@@ -309,7 +309,7 @@ import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTarget
 import { ensureAgentInstallablesBackground } from '@/capabilities/ensureAgentInstallablesBackground';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { readAgentScopedPluginSettingsSnapshot } from '@/agents/registry/agentScopedPluginSettings';
-import { readSessionSnapshotForAuthority, SessionSnapshotReadError } from '@/sync/runtime/orchestration/serverScopedRpc/readSessionSnapshotForAuthority';
+import { readSessionSnapshotForAuthority } from '@/sync/runtime/orchestration/serverScopedRpc/readSessionSnapshotForAuthority';
 import { getSessionRunnerRuntimeStatus, restartSessionRunnerOnCurrentRuntime } from '@/sync/ops/sessionRunnerRestart';
 import { runWithServerRequestAuthorityForServerAccountScope } from '@/sync/runtime/orchestration/serverScopedRpc/createServerRequestWithServerScope';
 import { resolveMachineControlTargetForSessionFromState } from '@/sync/domains/session/resolveMachineTargetForSessionFromState';
@@ -1520,15 +1520,19 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
           || context.runtimeAccountId && context.runtimeAccountId !== accountContext.accountId) return { kind: 'incomplete' };
         try {
           throwIfAborted(signal); accountContext.assertCurrent();
-          const { session } = await runWithServerRequestAuthorityForServerAccountScope({
+          const hydration = await runWithServerRequestAuthorityForServerAccountScope({
             scope: accountContext.accountLifetime.scope, activeRequest: accountContext.request,
-          }, authority => readSessionSnapshotForAuthority({ authority, sessionId: exact.sessionId,
-            isCurrent: () => !signal?.aborted && accountContext.accountLifetime.isCurrent() }));
+          }, authority => sync.ensureSessionVisibleForMessageRoute(exact.sessionId, {
+            serverId: exact.serverId, authority, hydrateMessages: false,
+            ...(signal ? { signal } : {}),
+            scopeCurrentness: () => !signal?.aborted && accountContext.accountLifetime.isCurrent(),
+          }));
           throwIfAborted(signal); accountContext.assertCurrent();
-          return session.id === exact.sessionId ? { kind: 'unique', address: exact } : { kind: 'incomplete' };
-        } catch (error) {
+          if (hydration.kind === 'available') return { kind: 'unique', address: exact };
+          return hydration.kind === 'missing' && hydration.cause === 'not_found' ? { kind: 'none' } : { kind: 'incomplete' };
+        } catch {
           throwIfAborted(signal);
-          return error instanceof SessionSnapshotReadError && error.httpStatus === 404 ? { kind: 'none' } : { kind: 'incomplete' };
+          return { kind: 'incomplete' };
         }
       }
       // Natural references use the one admitted corpus: mounted membership or

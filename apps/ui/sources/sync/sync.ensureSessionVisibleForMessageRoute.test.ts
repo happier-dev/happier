@@ -289,6 +289,13 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
             // inspect historical runs; neither creates new snapshot demand.
             await sessionExecutionRunList(sessionId, {}, { serverId });
             await sessionExecutionRunList(sessionId, {}, { serverId });
+            // Mounted Actions prepare their declared exact Session target;
+            // identity resolution consumes the same admitted hydration.
+            const { createFrontDoorActionExecute } = await import('@/sync/ops/actions/frontDoorRuntimeActionExecutor');
+            const prepared = await createFrontDoorActionExecute().prepare('session.open', {
+                sessionId: { selector: 'self', of: sessionId },
+            }, { serverId });
+            expect(prepared.kind).toBe('ready');
             await hook.rerender();
             return hook;
         };
