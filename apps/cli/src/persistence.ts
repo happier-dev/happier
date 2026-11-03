@@ -693,7 +693,9 @@ type CredentialProvenanceMarker = Readonly<{
     serverId: string;
     serverHttpBaseUrl: string;
     /** Accepted private child custody, not serialized credentials or caller input. */
-    requesterSession?: Readonly<{ sessionId: string; attribution: RequesterWorkAttributionV1 }>;
+    requesterSession?: Readonly<{ sessionId: string; attribution: RequesterWorkAttributionV1; homeServerIdentityId?: string;
+      /** The daemon's Machine admission for this requester, carried from private custody. */
+      machineAdmission?: Readonly<{ custodianAccountId: string; role?: 'use' | 'manage' }> }>;
   }>;
 }>;
 
@@ -725,6 +727,8 @@ export function bindRequesterSessionCredentialScope(credentials: StoredCredentia
   const requesterSession = scope.requesterSession ? Object.freeze({
     sessionId: scope.requesterSession.sessionId,
     attribution: Object.freeze(RequesterWorkAttributionV1Schema.parse(scope.requesterSession.attribution)),
+    ...(scope.requesterSession.homeServerIdentityId ? { homeServerIdentityId: scope.requesterSession.homeServerIdentityId } : {}),
+    ...(scope.requesterSession.machineAdmission ? { machineAdmission: Object.freeze({ ...scope.requesterSession.machineAdmission }) } : {}),
   }) : undefined;
   Object.defineProperty(credentials, 'requesterSessionCredentialScope', {
     value: Object.freeze({ ...scope, ...(requesterSession ? { requesterSession } : {}) }),

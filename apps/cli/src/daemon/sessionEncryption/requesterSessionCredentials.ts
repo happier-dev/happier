@@ -338,6 +338,7 @@ export async function prepareRequesterSessionBootstrap(input: Readonly<{
   const credentials = Object.defineProperties({ ...input.credentials }, Object.getOwnPropertyDescriptors(input.credentials));
   const machineAdmission = input.machineAdmission ? Object.freeze({
     actorAccountId: input.machineAdmission.actorAccountId, custodianAccountId: input.machineAdmission.custodianAccountId,
+    role: input.machineAdmission.role,
   }) : undefined;
   const verify = input.verifyMachineAdmissionCurrent;
   let bound: Readonly<{ sessionId: string; sessionCreationTag?: string }> | null = input.boundSessionId
@@ -455,6 +456,7 @@ export async function prepareRequesterSessionBootstrap(input: Readonly<{
       await bindRequesterSessionMachineControl(binding);
       if (!await verifyRequesterSessionCredentialBinding(binding)) return null;
       return await createRequesterSessionCredentialCustody({ ...binding, happyHomeDir: input.boundary.happyHomeDir,
+        ...(machineAdmission ? { machineAdmission } : {}),
         ...(input.homeServerIdentityId ? { homeServerIdentityId: input.homeServerIdentityId } : {}) });
     };
     const bindSession: AdmittedRequesterSessionBootstrap['bindSession'] = async (sessionId, sessionCreationTag) => {
@@ -843,11 +845,14 @@ export async function verifyRequesterSessionCredentialBinding(input: Readonly<{
 export async function createRequesterSessionCredentialCustody(input: RequesterSessionCredentialBinding & Readonly<{
   credentials: StoredCredentials;
   homeServerIdentityId?: string;
+  machineAdmission?: Readonly<{ custodianAccountId: string; role?: 'use' | 'manage' }>;
 }>): Promise<Readonly<{ path: string; created: boolean; cleanup(): Promise<void> }>> {
   const path = requesterSessionCredentialPath(input);
   const contents = JSON.stringify(CustodySchema.parse({ v: 1, sessionId: input.sessionId,
     attribution: input.attribution, credentials: encodeStoredCredentials(input.credentials),
-    ...(input.homeServerIdentityId ? { homeServerIdentityId: input.homeServerIdentityId } : {}) }));
+    ...(input.homeServerIdentityId ? { homeServerIdentityId: input.homeServerIdentityId } : {}),
+    ...(input.machineAdmission ? { machineAdmission: { custodianAccountId: input.machineAdmission.custodianAccountId,
+      ...(input.machineAdmission.role ? { role: input.machineAdmission.role } : {}) } } : {}) }));
   let created = true;
   try { await writePrivateOwnerFile({ path, contents }); }
   catch (error) {

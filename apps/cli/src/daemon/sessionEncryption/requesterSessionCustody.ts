@@ -19,6 +19,11 @@ export const CustodySchema = z.strictObject({
   sessionId: z.string().check(z.minLength(1)),
   attribution: RequesterWorkAttributionV1Schema,
   homeServerIdentityId: z.optional(z.string().check(z.minLength(1))),
+  /** The daemon's Machine admission for this requester; the actor is attribution.accountId. */
+  machineAdmission: z.optional(z.strictObject({
+    custodianAccountId: z.string().check(z.minLength(1)),
+    role: z.optional(z.enum(['use', 'manage'])),
+  })),
   credentials: SessionRequesterBootstrapCredentialsV1Schema,
 });
 
@@ -48,6 +53,8 @@ export async function readRequesterSessionCredentialsForChild(path: string): Pro
     const credentials = decodeStoredCredentials(value.credentials);
     return credentials ? bindRequesterSessionCredentialScope(credentials, { serverId: value.attribution.serverId,
       serverHttpBaseUrl: resolveServerHttpBaseUrl(),
-      requesterSession: { sessionId: value.sessionId, attribution: value.attribution } }) : null;
+      requesterSession: { sessionId: value.sessionId, attribution: value.attribution,
+        ...(value.homeServerIdentityId ? { homeServerIdentityId: value.homeServerIdentityId } : {}),
+        ...(value.machineAdmission ? { machineAdmission: value.machineAdmission } : {}) } }) : null;
   } catch { return null; }
 }
