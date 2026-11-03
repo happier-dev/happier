@@ -178,6 +178,7 @@ export type SessionMessageProvenanceV1 =
             | 'externalSessionHistory'
             | 'runtimeTranscript'
             | 'executionRunVoice'
+            | 'hostOnboarding'
             | 'agentRuntimeFirstInput';
     };
 /** Canonical runtime validator with an SDK-local author declaration. */

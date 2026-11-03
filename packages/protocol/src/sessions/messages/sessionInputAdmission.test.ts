@@ -16,6 +16,18 @@ import {
 const protocol = { ...sessionInputAdmission, SessionMessageMetaSchema };
 
 describe('session input admission metadata', () => {
+  it('settles onboarding as host input with the recipient permission mode and no person attribution', () => {
+    const request = protocol.SessionInputRequestV1Schema.parse({ v: 1, producer: 'hostOnboarding',
+      caller: { kind: 'host' }, permission: {} });
+    const inputAdmissionReceipt = { v: 1, issuer: 'authenticatedAccount', actorAccountId: 'recipient', sessionRelationship: 'owner' };
+    expect(protocol.settleSessionInputRequestV1({ request, currentSessionPermissionCeiling: 'read-only', inputAdmissionReceipt }))
+      .toMatchObject({ producer: 'hostOnboarding', permission: { admittedPermissionCeiling: 'read-only' } });
+    expect(protocol.settleSessionMessageProvenanceV1({ request, inputAdmissionReceipt,
+      requestedProvenance: { v: 1, kind: 'happierApp', actor: { kind: 'owner' } } }))
+      .toEqual({ v: 1, kind: 'host', producer: 'hostOnboarding' });
+    expect(protocol.SessionInputRequestV1Schema.safeParse({ ...request,
+      caller: { kind: 'plugin', pluginId: 'happier.test', contributionLocalId: 'test' } }).success).toBe(false);
+  });
   it('retains a Workflow-selected Discussion cutoff only with the exact Machine receipt', () => {
     const workflow = { purpose: 'invocation', runId: 'run', invocationRecordId: 'invocation' } as const;
     const discussionAddressing = { discussionId: 'discussion', messageId: 'question', throughSeq: 2, participantSessionId: 'receiver' };

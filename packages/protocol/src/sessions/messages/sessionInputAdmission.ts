@@ -325,19 +325,7 @@ const MessageProvenanceUnionSchema = lazyZodSchema(() => z.discriminatedUnion('k
   z.strictObject({
     v: z.literal(1),
     kind: z.literal('host'),
-    producer: z.enum([
-      'happierApp',
-      'cli',
-      'sessionAction',
-      'happierMcp',
-      'pluginSession',
-      'automation',
-      'voiceInput',
-      'externalSessionHistory',
-      'runtimeTranscript',
-      'executionRunVoice',
-      'agentRuntimeFirstInput',
-    ]),
+    producer: SessionRoleUserProducerKindV1Schema,
   }),
 ]));
 
@@ -387,6 +375,7 @@ export const SESSION_ROLE_USER_PRODUCER_KINDS_V1 = [
   'runtimeTranscript',
   'executionRunVoice',
   'agentRuntimeFirstInput',
+  'hostOnboarding',
 ] as const;
 
 export const SessionRoleUserProducerKindV1Schema = lazyZodSchema(() => z.enum(SESSION_ROLE_USER_PRODUCER_KINDS_V1));
@@ -404,6 +393,7 @@ export const SESSION_ROLE_USER_PRODUCER_ADMISSION_MODES_V1 = Object.freeze({
   runtimeTranscript: 'transcriptOnly',
   executionRunVoice: 'transcriptOnly',
   agentRuntimeFirstInput: 'pendingInput',
+  hostOnboarding: 'pendingInput',
 } as const satisfies Record<SessionRoleUserProducerKindV1, SessionRoleUserProducerAdmissionModeV1>);
 
 export type SessionRoleUserProducerAdmissionModeV1 =
