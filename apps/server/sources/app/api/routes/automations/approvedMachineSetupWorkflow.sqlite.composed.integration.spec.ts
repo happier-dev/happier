@@ -5,6 +5,7 @@ import {
     MachineSetupApplyInputV1Schema, computeActionInputApprovalDigestV1,
     createWorkflowAccountRunActionOwner, getActionSpec, ActionIdSchema,
     encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER,
+    createActionExecutor, ExternalActionExecutionAuthorizationV1Schema,
     type ActionExecutorContext,
 } from '@happier-dev/protocol';
 import { actionSpecToActionDefinitionV1, freezeWorkflowActionContractV1 } from '@happier-dev/protocol/actions/actionCatalog';
@@ -18,6 +19,13 @@ import { createCombinedMachineSetupActionDeps } from '../../../../../../cli/src/
 import { createWorkflowRunStorageClient } from '../../../../../../cli/src/daemon/workflows/workflowRunStorageClient';
 import { signPluginInstallationPublisherHeader } from '../../../../../../cli/src/plugins/installations/publisherProof';
 import { createUnavailableActionTransportDeps } from '../../../../../../cli/src/testkit/actionTransportDeps';
+import { RpcHandlerManager } from '../../../../../../cli/src/api/rpc/RpcHandlerManager';
+import { authorizeMachineRpcRequest, verifyMachineRpcAdmissionCurrent } from '../../../../../../cli/src/api/machine/machineRpcAuthorization';
+import { registerActionSpecRpcHandlers } from '../../../../../../cli/src/rpc/handlers/registerActionSpecRpcHandlers';
+import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
+import { resolveMachineAdmission } from '@/app/machines/machineAccess';
+import { registerMachineAdmissionRoutes } from '../machines/registerMachineAdmissionRoutes';
 import { registerWorkflowRunStorageRoutes } from './registerWorkflowRunStorageRoutes';
 
 let harness: LightSqliteHarness;
@@ -26,6 +34,71 @@ beforeAll(async () => {
         env: { HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: 'optional', AUTH_REQUIRED_LOGIN_PROVIDERS: '' } });
 }, 120_000);
 afterAll(async () => { if (harness) await harness.close(); });
+
+it('refuses a Use grantee Workflow Software Apply step at daemon ingress for missing Manage', async () => {
+    const owner = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: 'plain' } });
+    const actor = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: 'plain' } });
+    const keys = tweetnacl.sign.keyPair();
+    const machine = await db.machine.create({ data: { id: randomUUID(), accountId: owner.id, active: true,
+        installationId: randomUUID(), installationPublicKey: new Uint8Array(keys.publicKey),
+        operationProtocolCapabilities: { requesterExecutionIsolation: { protocolVersions: [1] } },
+        operationProtocolCapabilitiesRevision: 1,
+        metadata: encodePlainMachineStoredContent({ host: 'shared-setup', platform: 'linux', happyCliVersion: 'test',
+            homeDir: '/home/setup', happyHomeDir: '/home/setup/.happier' }),
+        dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64') } });
+    await db.machineAccountGrant.create({ data: { machineId: machine.id, accountId: actor.id,
+        accessLevel: 'view', createdByAccountId: owner.id } });
+    const admission = await resolveMachineAdmission({ actorAccountId: actor.id, machineId: machine.id, requiredRole: 'use' });
+    expect(admission).toMatchObject({ kind: 'admitted', role: 'use' });
+    if (admission.kind !== 'admitted') throw new Error('Shared Workflow actor must have Use');
+    const { kind: _kind, ...context } = admission;
+    const input = MachineSetupApplyInputV1Schema.parse({ homeId: 'home', machineId: machine.id, targets: [{
+        homeId: 'home', machineId: machine.id, desiredRevision: 0,
+        sources: [{ kind: 'direct', setup: {} }], exclusions: [], recipePlans: [],
+    }] });
+    const target = { kind: 'machine' as const, machineId: machine.id };
+    const requestId = randomUUID();
+    const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-admitted-workflow-step', binding: {
+        accountId: actor.id, custodianAccountId: owner.id, authentication: { kind: 'account', tokenEpoch: actor.tokenEpoch },
+        accountEncryptionMode: 'plain', serverIdentityId: 'home', machineId: machine.id,
+        installationId: context.installationId, admittedMachineRole: 'use', actionId: 'machines.setup.apply', requestId, target,
+        workflowActionOrigin: { runId: randomUUID(), requestId },
+        requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1({ v: 1, requestId, target, input }),
+    } });
+    const token = await auth.createToken(owner.id, undefined, { kind: 'terminal', authority: 'account_automation' });
+    await withAuthenticatedTestApp(app => registerMachineAdmissionRoutes(app), async app => {
+        // Only Home HTTP is adapted. Daemon RPC parsing, installation signatures,
+        // persisted grants and the named Action's Manage policy remain real.
+        const restore = installAxiosFastifyAdapter({ app, origin: 'http://shared-setup-home.test' });
+        const verify = (request: Omit<Parameters<typeof verifyMachineRpcAdmissionCurrent>[0],
+            'privateKey' | 'daemonToken' | 'serverHttpBaseUrl'>) => verifyMachineRpcAdmissionCurrent({
+            ...request, privateKey: keys.secretKey, daemonToken: token, serverHttpBaseUrl: 'http://shared-setup-home.test' });
+        const decisions: Awaited<ReturnType<typeof authorizeMachineRpcRequest>>[] = [];
+        const manager = new RpcHandlerManager({ scopePrefix: machine.id, localMachineId: machine.id, encryptionMode: 'plain',
+            authorizeRequest: async request => {
+                const result = await authorizeMachineRpcRequest(request, { machineId: machine.id,
+                    resolveCustodianAccountId: async () => owner.id, resolveInstallationId: () => context.installationId,
+                    verifyMachineAdmission: verify });
+                decisions.push(result);
+                return result;
+            },
+        });
+        registerActionSpecRpcHandlers({ rpcHandlerManager: manager, actionIds: ['machines.setup.apply'],
+            actionExecutor: createActionExecutor(createUnavailableActionTransportDeps()) });
+        const method = `${machine.id}:${getActionSpec('machines.setup.apply').bindings?.rpcMethod}`;
+        try {
+            expect(await manager.handleRequest({ method, params: input, requestId, callerAuthority: 'account_automation',
+                callerInputAuthorization: authorization, machineAdmission: context }))
+                .toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN, effectAttempted: false });
+            expect(decisions).toContainEqual(expect.objectContaining({ ok: false, admissionPredicate: 'machine_currentness' }));
+            expect(await verify({ context, method })).toBe(false);
+            // The same signer, Account and method work once Manage is granted.
+            await db.machineAccountGrant.update({ where: { machineId_accountId: { machineId: machine.id, accountId: actor.id } },
+                data: { accessLevel: 'admin' } });
+            expect(await verify({ context: { ...context, role: 'manage' }, method })).toBe(true);
+        } finally { restore(); }
+    }, { authentication: 'real' });
+});
 
 it('starts the approved Setup child Run before an assignment exists and reads it independently of worker assignment', async () => {
     const account = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: 'plain' } });
