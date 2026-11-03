@@ -37,7 +37,10 @@ export function registerConnectedServiceV1ShimRoutes(app: Fastify, params: Reado
       response: {
         200: z.object({ success: z.literal(true), credentialRevision: z.string() }),
         400: z.object({ error: z.literal("connect_credential_invalid") }),
-        409: z.object({ error: z.literal("connect_reconnect_provider_identity_mismatch") }),
+        409: z.union([
+          z.object({ error: z.literal("connect_reconnect_provider_identity_mismatch") }),
+          z.object({ error: z.literal("connect_credential_unsupported_format") }),
+        ]),
         413: z.object({ error: z.literal("connect_credential_invalid") }),
       },
     },
@@ -77,6 +80,7 @@ export function registerConnectedServiceV1ShimRoutes(app: Fastify, params: Reado
       return reply.code(400).send({ error: "connect_credential_invalid" });
     }
     if (result.status === "provider_identity_mismatch") return reply.code(409).send({ error: "connect_reconnect_provider_identity_mismatch" });
+    if (result.status === "unsupported_format") return reply.code(409).send({ error: "connect_credential_unsupported_format" });
     if (result.status !== "written") throw new Error(`Unexpected V1 credential mutation result: ${result.status}`);
 
     return reply.send({ success: true, credentialRevision: result.credentialRevision });

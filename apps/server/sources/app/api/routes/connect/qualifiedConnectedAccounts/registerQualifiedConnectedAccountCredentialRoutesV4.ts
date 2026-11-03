@@ -229,6 +229,9 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
                 error: "connect_authentication_mode_mismatch",
             });
         }
+        if (result.status === "saved_secret_held") {
+            return reply.code(409).send({ error: "connect_credential_saved_secret_held" });
+        }
         if (result.status === "superseded") {
             return reply.code(409).send({
                 error: "connect_credential_mutation_superseded",

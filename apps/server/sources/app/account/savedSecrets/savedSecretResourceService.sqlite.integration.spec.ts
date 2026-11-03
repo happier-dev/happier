@@ -1,3 +1,4 @@
+import { listQualifiedConnectedAccounts, mutateQualifiedConnectedServiceCredential, readQualifiedConnectedServiceCredential } from '@/app/api/routes/connect/qualifiedConnectedAccounts/credentialRepository';
 import {
     ARTIFACT_PLAIN_DATA_KEY_MARKER,
     encodePlainArtifactStoredContent,
@@ -465,6 +466,77 @@ describe("Saved Secret resource service (SQLite integration)", () => {
         expect(staleAccount.settingsVersion).toBe(8);
         expect(openPlainAccountSettingsDbValue({ accountId: stale.owner.id, dbValue: staleAccount.settings })).toEqual({ t: 'plain', v: raw });
         expect(await db.accountSettingsSnapshot.count()).toBe(2);
+    });
+
+    it('creates a Connected Account key resource and its referencing credential together, or neither, and keeps it in use', async () => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain', settingsVersion: 2 }, select: { id: true } });
+        const ref = { service: { pluginId: 'happier.agent.claude', localId: 'anthropic' }, accountId: 'one-record' };
+        const credentialFor = (accountId: string, resourceId: string) => ({ ref: { ...ref, accountId }, authenticationModeId: 'api-key',
+            expectedCredentialRevision: null, metadata: { scopes: [] }, savedSecretResourceIds: [resourceId],
+            content: { t: 'plain' as const, v: { v: 1, values: {}, secretRefs: { token: formatSharedSavedSecretRefV1(resourceId) } } } });
+        const promotion = (resourceId: string, accountId: string) => ({ accountId: owner.id, resourceId, displayName: 'Anthropic API key',
+            kind: 'apiKey' as const, encryptionMode: 'plain' as const,
+            storedContent: { t: 'plain' as const, v: { v: 1 as const, name: 'Anthropic API key', kind: 'apiKey' as const, value: 'sk-ant-one-record' } },
+            nextSettings: null, profileMutations: [], referenceCensus: { scope: 'catalogs' as const, accountMode: 'plain' as const, catalogs: {} },
+            connectedAccountCredentialMutation: credentialFor(accountId, resourceId) });
+
+        const promoted = await inTx(tx => promoteSavedSecretResourceInTx(tx, promotion('anthropic-key-1', 'one-record')));
+        expect(promoted).toMatchObject({ ok: true, value: { resourceId: 'anthropic-key-1',
+            connectedAccountCredential: { credentialRevision: expect.any(String), configurationRevision: null } } });
+        const committed = await readQualifiedConnectedServiceCredential({ accountId: owner.id, ref });
+        expect(committed).toMatchObject({ status: 'resolved', credential: {
+            credentialRevision: promoted.ok && promoted.value.connectedAccountCredential?.credentialRevision,
+        } });
+        const stored = await db.serviceAccountToken.findFirstOrThrow({ where: { accountId: owner.id }, select: { metadata: true, token: true } });
+        expect(stored.metadata).toMatchObject({ savedSecretResourceIds: ['anthropic-key-1'] });
+        // The Account's profile names the one record that holds this key (ids only, no material).
+        expect(await listQualifiedConnectedAccounts({ accountId: owner.id, service: ref.service }))
+            .toEqual([expect.objectContaining({ ref, savedSecretResourceIds: ['anthropic-key-1'] })]);
+        expect(Buffer.from(stored.token).toString('utf8')).not.toContain('sk-ant-one-record');
+        expect(await db.savedSecretResource.count({ where: { ownerAccountId: owner.id } })).toBe(1);
+
+        // The same Connected Account cannot be created twice: the resource rolls back with the refused credential.
+        await expect(inTx(tx => promoteSavedSecretResourceInTx(tx, promotion('anthropic-key-2', 'one-record')))).rejects.toMatchObject({ error: 'references_conflict' });
+        expect(await db.savedSecretResource.findUnique({ where: { id: 'anthropic-key-2' } })).toBeNull();
+        expect(await db.serviceAccountToken.count({ where: { accountId: owner.id } })).toBe(1);
+        // Every created resource must be referenced by the credential it was promoted with.
+        expect(await inTx(tx => promoteSavedSecretResourceInTx(tx, { ...promotion('anthropic-key-3', 'other'),
+            connectedAccountCredentialMutation: credentialFor('other', 'anthropic-key-1') }))).toEqual({ ok: false, error: 'references_invalid' });
+        expect(await db.savedSecretResource.findUnique({ where: { id: 'anthropic-key-3' } })).toBeNull();
+
+        // The credential keeps its key resource in use.
+        expect(await inTx(tx => deleteSavedSecretResourceInTx(tx, { accountId: owner.id, resourceId: 'anthropic-key-1', expectedRevision: 1,
+            expectedSettingsVersion: 2, referenceCensus: { accountMode: 'plain' as const, profiles: { referenceGuardRevision: 'absent' as const, rows: [] },
+                catalogs: { mcp: 'absent' as const, acp: 'absent' as const, providerConnections: 'absent' as const, connectedConfigurations: 'absent' as const,
+                    connectedPurposes: 'absent' as const, registrySources: 'absent' as const } } })))
+            .toEqual({ ok: false, error: 'resource_in_use' });
+        expect(await db.savedSecretResource.count({ where: { ownerAccountId: owner.id } })).toBe(1);
+    });
+
+    it('converts an existing raw Connected Account key on edit, and a stale edit leaves the raw source readable', async () => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain', settingsVersion: 2 }, select: { id: true } });
+        const ref = { service: { pluginId: 'happier.agent.claude', localId: 'anthropic' }, accountId: 'released-key' };
+        const raw = await mutateQualifiedConnectedServiceCredential({ accountId: owner.id, ref, expectedCredentialRevision: null,
+            authenticationModeId: 'api-key', metadata: { scopes: [] }, content: { t: 'plain', v: { v: 1, values: { token: 'sk-ant-raw' } } } });
+        if (raw.status !== 'written') throw new Error('expected raw credential');
+        const edit = (resourceId: string, expectedCredentialRevision: string) => ({ accountId: owner.id, resourceId, displayName: 'Anthropic API key',
+            kind: 'apiKey' as const, encryptionMode: 'plain' as const,
+            storedContent: { t: 'plain' as const, v: { v: 1 as const, name: 'Anthropic API key', kind: 'apiKey' as const, value: 'sk-ant-edited' } },
+            nextSettings: null, profileMutations: [], referenceCensus: { scope: 'catalogs' as const, accountMode: 'plain' as const, catalogs: {} },
+            connectedAccountCredentialMutation: { ref, authenticationModeId: 'api-key', expectedCredentialRevision, expectedConfigurationRevision: null,
+                metadata: { scopes: [] }, savedSecretResourceIds: [resourceId],
+                content: { t: 'plain' as const, v: { v: 1, values: {}, secretRefs: { token: formatSharedSavedSecretRefV1(resourceId) } } } } });
+        // A stale edit rolls back: no resource, and the raw source is unchanged and readable.
+        await expect(inTx(tx => promoteSavedSecretResourceInTx(tx, edit('edited-key-stale', 'csr_0000000000000000000000STAL')))).rejects.toMatchObject({ error: 'references_conflict' });
+        expect(await db.savedSecretResource.count({ where: { ownerAccountId: owner.id } })).toBe(0);
+        await expect(readQualifiedConnectedServiceCredential({ accountId: owner.id, ref })).resolves.toMatchObject({ status: 'resolved',
+            credential: { credentialRevision: raw.credentialRevision, content: { t: 'plain', v: { v: 1, values: { token: 'sk-ant-raw' } } } } });
+        // The current edit converts the row to its one record.
+        expect(await inTx(tx => promoteSavedSecretResourceInTx(tx, edit('edited-key', raw.credentialRevision)))).toMatchObject({ ok: true });
+        const converted = await readQualifiedConnectedServiceCredential({ accountId: owner.id, ref });
+        expect(converted).toMatchObject({ status: 'resolved', credential: { content: { t: 'plain', v: { v: 1, values: {},
+            secretRefs: { token: formatSharedSavedSecretRefV1('edited-key') } } } } });
+        expect(JSON.stringify(converted)).not.toContain('sk-ant');
     });
 
     it('commits a new SSH credential and its host catalog without rewriting Settings, and verifies a lost-response retry', async () => {

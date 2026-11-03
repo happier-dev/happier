@@ -41,6 +41,8 @@ import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSch
 import * as privacyKit from "privacy-kit";
 import { writeAccountSettingsInTx } from "@/app/accountSettings/writeAccountSettingsInTx";
 import { acquireAccountEncryptionTransitionFenceInTx } from '@/app/encryption/accountEncryptionTransition';
+import type { AccountAdmissionIntent } from '@/app/encryption/accountSessionOwnerMetadataFence';
+import { readAccountCredentialSourceTeamAdmissionAccountIdsInTx } from '@/app/teams/teamChanges';
 import { openPlainAccountSettingsDbValue } from '@/app/encryption/accountSettingsStorage';
 import { advanceProfileReferenceGuardInTx, mutateProfileRowsInTx, validateProfileReferenceCensusInTx } from '@/app/account/profiles/profileRows';
 import { readProfileTransferControlInTx } from '@/app/account/profiles/profileTransferControl';
@@ -51,6 +53,8 @@ import { readMcpServerCatalogRowInTx, mutateMcpServerCatalogRowInTx } from '@/ap
 import { readConfiguredAgentCatalogRowInTx, mutateConfiguredAgentCatalogRowInTx, transferConfiguredAgentCatalogSourceInTx } from '@/app/account/agents/configuredAgentRows';
 import { readProviderConnectionsRowInTx, mutateProviderConnectionsRowInTx } from '@/app/account/providers/connectionRows';
 import { readConnectedAccountCatalogRowInTx, mutateConnectedAccountCatalogRowInTx } from '@/app/account/connectedAccounts/configurationRows';
+import { listQualifiedConnectedAccountCredentialSavedSecretResourceIdsInTx, mutateQualifiedConnectedServiceCredentialInTx } from '@/app/api/routes/connect/qualifiedConnectedAccounts/credentialRepository';
+import type { SharedSavedSecretPromoteInputV1 as SharedSavedSecretPromoteWireInputV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
 import { readPromptLibraryRowInTx, mutatePromptLibraryRowInTx } from '@/app/account/prompts/promptLibraryRows';
 import { acquireAccountChangePublicationLocksInTx, beforeAccountChangePublication, markAccountsChanged } from "@/app/changes/markAccountChanged";
 import { deriveAccountRecipientEnvelopeReadinessFromRow, type AccountRecipientEnvelopeReadiness } from "@/app/encryption/accountRecipientEnvelopeReadiness";
@@ -551,15 +555,15 @@ async function resolveSavedSecretAudienceAccountIdsInTx(
 
 /** Resolve before any Account subset or resource lock; growth uses the existing transaction replay. */
 async function acquireSavedSecretPublicationAccountsInTx(tx: Tx, accountId: string,
-    read: () => Promise<readonly string[]>): Promise<() => Promise<void>> {
+    read: () => Promise<readonly string[]>, intent: AccountAdmissionIntent = 'content'): Promise<() => Promise<void>> {
     if (getDbProviderFromEnv(process.env, 'postgres') === 'sqlite') {
         // Reserve the single writer before mode/currentness reads. Only row
         // providers need this extra entry census to prevent Account-lock cycles.
-        await acquireAccountChangePublicationLocksInTx(tx, [accountId], { intent: 'content' });
+        await acquireAccountChangePublicationLocksInTx(tx, [accountId], { intent });
         return async () => {};
     }
     const accountIds = await read();
-    await acquireAccountChangePublicationLocksInTx(tx, accountIds, { includeSingleAccount: true, intent: 'content' });
+    await acquireAccountChangePublicationLocksInTx(tx, accountIds, { includeSingleAccount: true, intent });
     const admitted = new Set(accountIds);
     const recheck = async () => {
         if ((await read()).some(accountId => !admitted.has(accountId))) {
@@ -575,11 +579,13 @@ type SavedSecretCreationAudience = Pick<CreateSavedSecretResourceInput, 'account
     keyEnvelopes?: readonly Readonly<{ recipientAccountId: string }>[];
 }>;
 
-/** Promotion packets and direct creators share the exact grant/publication owner. */
+/** Promotion packets and direct creators share the exact grant/publication owner.
+ * Paired credential writes include their exclusive Team audience at entry. */
 export async function acquireSavedSecretCreationAccountsInTx(tx: Tx, input: Readonly<{
     accountId: string;
     resources: readonly SavedSecretCreationAudience[];
     promotedPersonalSecretIds?: readonly string[];
+    connectedAccountCredentialMutation?: PromoteSavedSecretResourceInput['connectedAccountCredentialMutation'];
 }>): Promise<() => Promise<void>> {
     return acquireSavedSecretPublicationAccountsInTx(tx, input.accountId, async () => {
         const audiences = await Promise.all(input.resources.map(resource => resolveSavedSecretAudienceAccountIdsInTx(tx, {
@@ -587,6 +593,9 @@ export async function acquireSavedSecretCreationAccountsInTx(tx: Tx, input: Read
             accountIds: [...resource.accountGrants ?? [], ...resource.keyEnvelopes?.map(envelope => envelope.recipientAccountId) ?? []],
             teamIds: resource.teamGrants ?? [], groupIds: resource.groupGrants ?? [],
         })));
+        if (input.connectedAccountCredentialMutation) {
+            audiences.push([...await readAccountCredentialSourceTeamAdmissionAccountIdsInTx(tx, input)]);
+        }
         const sources = input.promotedPersonalSecretIds ?? [];
         if (sources.length > 0) {
             const controllers = await tx.machine.findMany({ where: { accountId: input.accountId }, select: { id: true } });
@@ -605,7 +614,7 @@ export async function acquireSavedSecretCreationAccountsInTx(tx: Tx, input: Read
             }
         }
         return [...new Set([input.accountId, ...audiences.flat()])];
-    });
+    }, input.connectedAccountCredentialMutation ? 'exclusive' : 'content');
 }
 
 async function markResourceChangedForAccounts(
@@ -1343,6 +1352,8 @@ export type PromoteSavedSecretResourceInput = CreateSavedSecretResourceInput & R
     personalSecretPromotions?: SavedSecretPersonalPromotionsV1;
     remoteHostMutation?: RemoteHostCatalogRowMutationV1;
     notificationChannelMutation?: NotificationChannelCatalogMutationV1;
+    /** The Connected Account credential that references the created resources; same rollback boundary. */
+    connectedAccountCredentialMutation?: NonNullable<SharedSavedSecretPromoteWireInputV1['connectedAccountCredentialMutation']>;
 }>;
 
 export type SetSavedSecretResourceGrantsInput = Readonly<{
@@ -1947,6 +1958,10 @@ export async function deleteSavedSecretResourceInTx(
     const census = await readSavedSecretReferenceCensusInTx(tx, input);
     if (!census.ok) return census;
     const referenceCandidate = `${SHARED_SAVED_SECRET_REF_V1_PREFIX}${input.resourceId}`;
+    // A Connected Account credential holding this resource as its key keeps it in use.
+    if ((await listQualifiedConnectedAccountCredentialSavedSecretResourceIdsInTx(tx, input.accountId)).has(input.resourceId)) {
+        return { ok: false, error: 'resource_in_use' };
+    }
     if (census.value.notificationChannelResourceRefs.includes(referenceCandidate)) return { ok: false, error: 'resource_in_use' };
     const presets = await tx.managedMachinePreset.findMany({ select: { environment: true } });
     if (presets.some(preset => listSavedSecretReferenceCarrierPathsV1(preset.environment, { secretId: referenceCandidate }).length > 0)
@@ -2120,7 +2135,7 @@ async function proveSavedSecretPromotionResourcesInTx(tx: Tx, input: PromoteSave
 
 async function promoteCatalogOnlySavedSecretResourcesInTx(tx: Tx, input: PromoteSavedSecretResourceInput,
     census: Extract<SavedSecretPromoteReferenceCensusV1, { scope: 'catalogs' }>, mutations: SavedSecretCatalogMutationsV1,
-): Promise<SavedSecretResourceServiceResult<{ resourceId: string; settingsVersion: number; remoteHostRevision?: number; notificationChannelRevision?: number; catalogRevisions?: Partial<SavedSecretCatalogRevisionsV1> }>> {
+): Promise<SavedSecretResourceServiceResult<{ resourceId: string; settingsVersion: number; remoteHostRevision?: number; notificationChannelRevision?: number; catalogRevisions?: Partial<SavedSecretCatalogRevisionsV1>; connectedAccountCredential?: Readonly<{ credentialRevision: string; configurationRevision: string | null }> }>> {
     if (input.nextSettings !== null || input.profileMutations.length !== 0) return { ok: false, error: 'references_invalid' };
     let count = 0;
     const postCaptures: Partial<SavedSecretCatalogRevisionsV1> = {};
@@ -2152,6 +2167,12 @@ async function promoteCatalogOnlySavedSecretResourcesInTx(tx: Tx, input: Promote
         count += 1;
         notification.savedSecretRevisions.forEach(capture => declaredReferences.add(capture.resourceRef));
     } else if (census.notificationChannels !== undefined) return { ok: false, error: 'references_invalid' };
+    const credential = input.connectedAccountCredentialMutation;
+    let connectedAccountCredential: Readonly<{ credentialRevision: string; configurationRevision: string | null }> | undefined;
+    if (credential) {
+        count += 1;
+        (credential.savedSecretResourceIds ?? []).forEach(id => declaredReferences.add(formatSharedSavedSecretRefV1(id)));
+    }
     const receiptValue = (settingsVersion: number) => ({ resourceId: input.resourceId, settingsVersion,
         ...(Object.keys(postCaptures).length ? { catalogRevisions: postCaptures } : {}),
         ...(remote ? { remoteHostRevision: typeof remote.expectedRevision === 'number' ? remote.expectedRevision + 1 : 0 } : {}),
@@ -2210,7 +2231,15 @@ async function promoteCatalogOnlySavedSecretResourcesInTx(tx: Tx, input: Promote
     await mutateSavedSecretCatalogsInTx(tx, { accountId: input.accountId, authentication: input.authentication, mutations });
     if (remote) rejectSavedSecretCatalogMutation(await mutateRemoteHostCatalogRowInTx(tx, { accountId: input.accountId, authentication: input.authentication, ...remote }));
     if (notification) rejectSavedSecretCatalogMutation(await mutateNotificationChannelCatalogInTx(tx, { accountId: input.accountId, authentication: input.authentication, ...notification }));
-    return { ok: true, value: receiptValue(fence.account.settingsVersion) };
+    if (credential) {
+        const written = await mutateQualifiedConnectedServiceCredentialInTx(tx, { accountId: input.accountId, ...credential });
+        // `saved_secret_held`: the credential writer keeps one record per key; the edit rolls back with its new resource.
+        if (written.status !== 'written') throw new SavedSecretResourceTransactionAbort(written.status === 'superseded' || written.status === 'saved_secret_held'
+            ? 'references_conflict' : 'references_invalid');
+        connectedAccountCredential = { credentialRevision: written.credentialRevision, configurationRevision: written.configurationRevision };
+    }
+    return { ok: true, value: { ...receiptValue(fence.account.settingsVersion),
+        ...(connectedAccountCredential ? { connectedAccountCredential } : {}) } };
 }
 
 function isPromotedMachineEnvironmentRewritable(value: unknown, sourceIds: readonly string[]): boolean {
@@ -2265,11 +2294,11 @@ async function rewritePromotedMachineReferencesInTx(tx: Tx, accountId: string,
     }
 }
 
-/** Couples creation, private references and Settings in one rollback boundary. */
+/** Creates resources and any paired catalog, private-reference or Settings changes in one rollback boundary. */
 export async function promoteSavedSecretResourceInTx(
     tx: Tx,
     candidate: PromoteSavedSecretResourceInput,
-): Promise<SavedSecretResourceServiceResult<{ resourceId: string; settingsVersion: number; remoteHostRevision?: number; notificationChannelRevision?: number; catalogRevisions?: Partial<SavedSecretCatalogRevisionsV1> }>> {
+): Promise<SavedSecretResourceServiceResult<{ resourceId: string; settingsVersion: number; remoteHostRevision?: number; notificationChannelRevision?: number; catalogRevisions?: Partial<SavedSecretCatalogRevisionsV1>; connectedAccountCredential?: Readonly<{ credentialRevision: string; configurationRevision: string | null }> }>> {
     const parsedPromotionCensus = SavedSecretPromoteReferenceCensusV1Schema.safeParse(candidate.referenceCensus);
     const parsedCatalogMutations = SavedSecretCatalogMutationsV1Schema.safeParse(candidate.catalogMutations ?? {});
     const parsedSources = SavedSecretPersonalPromotionsV1Schema.safeParse(candidate.personalSecretPromotions ?? []);
@@ -2283,6 +2312,7 @@ export async function promoteSavedSecretResourceInTx(
     if (!Array.isArray(candidate.profileMutations)) return { ok: false, error: 'references_invalid' };
     await acquireSavedSecretCreationAccountsInTx(tx, { accountId: candidate.accountId,
         resources: savedSecretPromotionResources(candidate),
+        connectedAccountCredentialMutation: candidate.connectedAccountCredentialMutation,
         promotedPersonalSecretIds: parsedSources.data.map(source => source.personalSecretId) });
     if ('scope' in parsedPromotionCensus.data) {
         return promoteCatalogOnlySavedSecretResourcesInTx(tx, { ...candidate,

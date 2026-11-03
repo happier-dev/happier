@@ -646,6 +646,54 @@ export type SavedSecretFullReferenceResourceCreationParams = Readonly<{
         | Promise<SavedSecretFullReferenceResourceMutationCandidate | Readonly<{ ok: false; reason: 'changed' | 'unavailable' }>>;
 }> & SavedSecretApprovalHandlers<Extract<SavedSecretFullReferenceResourceCreationResult, { ok: true }>>;
 
+/**
+ * A Connected Account credential whose declared secret fields are held by new
+ * Saved Secret resources: the resources and the credential that references
+ * them commit in the resource owner's one transaction, or neither does.
+ */
+export async function createSavedSecretResourcesWithConnectedAccountCredentialInContext(
+    context: ProfileAccountContext,
+    params: Readonly<{
+        scope: ServerAccountScope;
+        secrets: readonly Readonly<{ resourceId: string; displayName: string; kind: SavedSecret['kind']; value: string }>[];
+        credential: NonNullable<ReturnType<typeof SharedSavedSecretPromoteInputV1Schema.parse>['connectedAccountCredentialMutation']>;
+    }>,
+): Promise<Readonly<{ status: 'applied'; credential?: { success: true; credentialRevision: string; configurationRevision: string | null } }>
+    | Readonly<{ status: 'conflict' | 'unavailable' | 'outcome_unknown' | 'invalid' }>> {
+    const prepared: Awaited<ReturnType<typeof prepareSavedSecretResourceCreateInContext>>[] = [];
+    try {
+        if (context.serverId !== params.scope.serverId || context.accountId !== params.scope.accountId || !params.secrets.length) return { status: 'unavailable' };
+        return await admitProfileAccount<Awaited<ReturnType<typeof createSavedSecretResourcesWithConnectedAccountCredentialInContext>>>(context, async (_context, accountMode) => {
+            for (const secret of params.secrets) {
+                prepared.push(await prepareSavedSecretResourceCreateInContext(context, accountMode, { ...secret,
+                    accountGrants: [], teamGrants: [], groupGrants: [] }));
+            }
+            const [first, ...additional] = prepared;
+            const input = SharedSavedSecretPromoteInputV1Schema.parse({ ...first!.input,
+                ...(additional.length ? { additionalSavedSecretResources: additional.map(resource => resource.input) } : {}),
+                nextSettings: null, profileMutations: [], referenceCensus: { scope: 'catalogs', accountMode, catalogs: {} },
+                connectedAccountCredentialMutation: params.credential });
+            // The Connected Account parent already owns admission and approval.
+            const outcome = await requestHomeDomain({ scope: params.scope,
+                path: SHARED_SAVED_SECRET_ACTION_PATHS_V1['secrets.shared.promote'], method: 'POST', effect: 'write',
+                input, schema: SharedSavedSecretPromoteOutputV1Schema,
+                signal: context.invocationSignal, requestAuthority: context });
+            context.assertResultCurrent('write');
+            if (outcome.ok) {
+                if (outcome.value.resourceId !== first!.input.resourceId) return { status: 'outcome_unknown' };
+                return { status: 'applied', ...(outcome.value.connectedAccountCredential
+                    ? { credential: { success: true, ...outcome.value.connectedAccountCredential } } : {}) };
+            }
+            if (outcome.failure.kind === 'outcome_unknown') return { status: 'outcome_unknown' };
+            return { status: outcome.failure.kind === 'conflict' ? 'conflict' : 'invalid' };
+        });
+    } catch {
+        return { status: 'unavailable' };
+    } finally {
+        for (const resource of prepared) resource.dispose();
+    }
+}
+
 /** New credentials and their existing destination bindings commit through one S2 transaction. */
 export function createSavedSecretResourcesWithCatalogMutation(params: SavedSecretFullReferenceResourceCreationParams): Promise<SavedSecretFullReferenceResourceCreationResult>;
 export function createSavedSecretResourcesWithCatalogMutation(params: SavedSecretCatalogResourceCreationParams): Promise<SavedSecretCatalogResourceCreationResult>;

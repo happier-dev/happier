@@ -4,6 +4,10 @@ import { db, getDbProviderFromEnv, initDbPostgres } from '@/storage/db';
 import { inTx, type Tx } from '@/storage/inTx';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { NotificationChannelCatalogRecordV1Schema } from '@happier-dev/protocol/account/settings/notificationChannelRecordV1';
+import { sealEncryptedDataKeyEnvelopeV1, sealQualifiedConnectedAccountContentEnvelope, sealSavedSecretResourceStoredContentV1, verifyAccountContentKeyBindingV1 } from '@happier-dev/protocol';
+import tweetnacl from 'tweetnacl';
+import { createSignedAccountContentBinding } from '@/testkit/accountEncryption';
+import { readQualifiedConnectedServiceCredential } from '@/app/api/routes/connect/qualifiedConnectedAccounts/credentialRepository';
 import { createSavedSecretResourceInTx, promoteSavedSecretResourceInTx, setSavedSecretResourceGrantsInTx } from './savedSecretResourceService';
 
 describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('SavedSecret complete early publication admission', () => {
@@ -16,6 +20,54 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('S
         await db.$connect();
     });
     afterAll(async () => { await db.$disconnect(); });
+
+    it.each([
+        { mode: 'plain', teamSource: false },
+        { mode: 'e2ee', teamSource: false },
+        { mode: 'plain', teamSource: true },
+    ] as const)('persists a $mode Connected Account and key with no Machines (Team source: $teamSource)', async ({ mode, teamSource }) => {
+        const keys = tweetnacl.box.keyPair();
+        const binding = createSignedAccountContentBinding(keys.publicKey);
+        const owner = await db.account.create({ data: { encryptionMode: mode, settingsVersion: 2,
+            ...(mode === 'e2ee' ? binding : {}) } });
+        const resourceId = randomUUID();
+        const ref = { service: { pluginId: 'happier.machine.vercel', localId: 'vercel' }, accountId: randomUUID() };
+        if (teamSource) {
+            const recipient = await db.account.create({ data: { encryptionMode: 'plain' } });
+            const team = await db.team.create({ data: { name: 'Credential recipients' } });
+            await db.teamMembership.create({ data: { teamId: team.id, accountId: recipient.id, role: 'owner' } });
+            await db.teamCredentialResource.create({ data: { teamId: team.id, custodianAccountId: owner.id,
+                displayName: 'Retained source', disclosureCeiling: 'brokered_only', sessionUsePolicy: 'personal_allowed',
+                sourceBindingJson: JSON.stringify({ v: 1, kind: 'connected_account',
+                    target: { kind: 'account', account: ref }, credentialIncarnation: randomUUID() }) } });
+        }
+        const content = { v: 1 as const, name: 'Vercel token', kind: 'token' as const, value: 'disposable-fixture' };
+        const credential = { v: 1, values: {}, secretRefs: { token: formatSharedSavedSecretRefV1(resourceId) } };
+        const verifiedBinding = verifyAccountContentKeyBindingV1({ accountSigningPublicKey: Buffer.from(binding.publicKey, 'hex'),
+            contentPublicKey: binding.contentPublicKey, signature: binding.contentPublicKeySig });
+        if (!verifiedBinding) throw new Error('Fixture binding must verify');
+        const dataKey = tweetnacl.randomBytes(32);
+        const promoted = await inTx(tx => promoteSavedSecretResourceInTx(tx, { accountId: owner.id, resourceId,
+            displayName: content.name, kind: content.kind, encryptionMode: mode,
+            storedContent: mode === 'plain' ? { t: 'plain', v: content }
+                : sealSavedSecretResourceStoredContentV1({ resourceId, mode, resourceDataKey: dataKey, content, randomBytes: tweetnacl.randomBytes }),
+            ...(mode === 'e2ee' ? { keyEnvelopes: [{ recipientAccountId: owner.id,
+                recipientContentPublicKeyFingerprint: verifiedBinding.contentPublicKeyFingerprint,
+                encryptedDataKey: sealEncryptedDataKeyEnvelopeV1({ dataKey, recipientPublicKey: keys.publicKey, randomBytes: tweetnacl.randomBytes }) }] } : {}),
+            nextSettings: null, profileMutations: [], referenceCensus: { scope: 'catalogs', accountMode: mode, catalogs: {} },
+            connectedAccountCredentialMutation: { ref, authenticationModeId: 'token', expectedCredentialRevision: null,
+                metadata: { scopes: [] }, savedSecretResourceIds: [resourceId],
+                content: mode === 'plain' ? { t: 'plain', v: credential }
+                    : sealQualifiedConnectedAccountContentEnvelope({ kind: 'credential', accountMode: mode,
+                        material: { type: 'dataKey', machineKey: keys.secretKey }, payload: credential, randomBytes: tweetnacl.randomBytes }) },
+        }));
+        expect(promoted).toMatchObject({ ok: true, value: { connectedAccountCredential: { credentialRevision: expect.any(String) } } });
+        expect(await readQualifiedConnectedServiceCredential({ accountId: owner.id, ref })).toMatchObject({ status: 'resolved' });
+        expect(await db.savedSecretResource.count({ where: { id: resourceId, ownerAccountId: owner.id } })).toBe(1);
+        expect(await db.machine.count({ where: { accountId: owner.id } })).toBe(0);
+        expect(await db.account.findUniqueOrThrow({ where: { id: owner.id }, select: { settings: true, settingsVersion: true } }))
+            .toEqual({ settings: null, settingsVersion: 2 });
+    });
 
     it.each(['create', 'grants', 'promotion'] as const)('admits every %s recipient together before Account or resource locking', async operation => {
         const owner = await db.account.create({ data: { id: `z-owner-${randomUUID()}`, encryptionMode: 'plain' } });

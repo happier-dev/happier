@@ -29,7 +29,9 @@ export type ConnectedServiceCredentialMutationResult =
     | Readonly<{ status: "superseded"; reason: "revision_mismatch" | "refresh_lease_lost"; credentialRevision: string | null }>
     | Readonly<{ status: "provider_identity_mismatch" }>
     | Readonly<{ status: "revision_required" }>
-    | Readonly<{ status: "storage_mode_mismatch" }>;
+    | Readonly<{ status: "storage_mode_mismatch" }>
+    /** The credential is held by Saved Secret resources; a released writer must not replace it with raw bytes. */
+    | Readonly<{ status: "unsupported_format" }>;
 
 export type ConnectedServiceCredentialHealthMutationResult =
     | Readonly<{ status: "written"; credentialRevision: string }>
@@ -161,6 +163,12 @@ async function mutateConnectedServiceCredentialForModeInTx(
     if (current?.credentialRevision === null) {
         return { status: "revision_required" };
     }
+    // Convert on edit: once 0.3 holds this credential's secret in a Saved
+    // Secret resource, a released writer gets its typed refusal instead of
+    // writing a second raw copy beside the resource.
+    if (!accountEncryptionTransitionMode && (current?.savedSecretResourceIds.length ?? 0) > 0) {
+        return { status: "unsupported_format" };
+    }
     const expectedCredentialRevision = params.expectedCredentialRevision;
     const mutationParams: QualifiedCredentialMutationParams =
         expectedCredentialRevision === null
@@ -223,6 +231,7 @@ async function mutateConnectedServiceCredentialForModeInTx(
     }
     if (result.status === "revision_required") return result;
     if (result.status === "provider_identity_mismatch") return result;
+    if (result.status === "saved_secret_held") return { status: "unsupported_format" };
     if (result.status === "storage_mode_mismatch"
         || result.status === "authentication_mode_mismatch") {
         return { status: "storage_mode_mismatch" };

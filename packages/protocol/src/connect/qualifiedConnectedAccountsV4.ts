@@ -226,6 +226,10 @@ export const QualifiedConnectedAccountCredentialErrorV4Schema = lazyZodSchema(()
   z.strictObject({
     error: z.literal('connect_credential_referenced_by_group'),
   }),
+  /** The credential's key is held by its Saved Secret record; rotate that record instead. */
+  z.strictObject({
+    error: z.literal('connect_credential_saved_secret_held'),
+  }),
   QualifiedConnectedAccountCredentialMutationSupersededV4Schema,
 ]));
 

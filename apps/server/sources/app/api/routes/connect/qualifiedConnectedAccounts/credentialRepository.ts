@@ -87,7 +87,9 @@ export type QualifiedConnectedServiceCredentialMutationResult =
     | Readonly<{ status: "provider_identity_mismatch" }>
     | Readonly<{ status: "authentication_mode_mismatch" }>
     | Readonly<{ status: "revision_required" }>
-    | Readonly<{ status: "storage_mode_mismatch" }>;
+    | Readonly<{ status: "storage_mode_mismatch" }>
+    /** The row's key is held by Saved Secret records; a write may not replace or inline beside them. */
+    | Readonly<{ status: "saved_secret_held" }>;
 
 export type QualifiedConnectedAccountConfigurationMutationResult =
     | Readonly<{
@@ -440,6 +442,8 @@ type QualifiedCredentialMutationCommonParams = Readonly<{
     metadata: QualifiedConnectedAccountCredentialMetadataV4;
     directExportContract?: typeof CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 | null;
     contributionContractVersion?: string;
+    /** Saved Secret resources the sealed content references; omission on an update retains the stored set. */
+    savedSecretResourceIds?: readonly string[];
     reconnect?: Readonly<{ allowProviderIdentityChange?: boolean }>;
     refreshLeaseOwnerId?: string;
     legacyIdentity?: Readonly<{ serviceId: string; profileId: string }>;
@@ -709,6 +713,25 @@ export async function readQualifiedConnectedAccountSourceIdentityInTx(
     return projectQualifiedConnectedAccountSourceIdentity(current);
 }
 
+/**
+ * Saved Secret resources held by this Account's Connected Account credentials.
+ * The server-visible custody fact lets the resource owner refuse deleting a
+ * resource a credential still references, in either Account mode.
+ */
+export async function listQualifiedConnectedAccountCredentialSavedSecretResourceIdsInTx(
+    tx: Tx,
+    accountId: string,
+): Promise<ReadonlySet<string>> {
+    const rows = await tx.serviceAccountToken.findMany({
+        where: { accountId },
+        select: { id: true, metadata: true },
+    });
+    return new Set(rows.flatMap(row => resolveQualifiedConnectedAccountStoredMetadata({
+        rowId: row.id,
+        metadata: row.metadata,
+    }).savedSecretResourceIds));
+}
+
 export async function readQualifiedConnectedServiceCredentialMutationBasisInTx(
     tx: Tx,
     params: Readonly<{
@@ -718,6 +741,8 @@ export async function readQualifiedConnectedServiceCredentialMutationBasisInTx(
 ): Promise<Readonly<{
     credentialRevision: string | null;
     configurationRevision: string | null;
+    /** Non-empty for a credential whose secrets are Saved Secret resources. */
+    savedSecretResourceIds: readonly string[];
 }> | null> {
     const ref = QualifiedConnectedAccountRefSchema.parse(params.ref);
     const current = await readCurrentByQualifiedRef(
@@ -741,6 +766,10 @@ export async function readQualifiedConnectedServiceCredentialMutationBasisInTx(
                 metadata: current.metadata,
             }),
         configurationRevision: current.configurationRevision,
+        savedSecretResourceIds: resolveQualifiedConnectedAccountStoredMetadata({
+            rowId: current.id,
+            metadata: current.metadata,
+        }).savedSecretResourceIds,
     };
 }
 
@@ -753,6 +782,7 @@ function prepareQualifiedConnectedAccountCredentialCreate(params: Readonly<{
     metadata: QualifiedConnectedAccountCredentialMetadataV4;
     directExportContract?: typeof CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 | null;
     contributionContractVersion?: string;
+    savedSecretResourceIds?: readonly string[];
     initialConfiguration?: Readonly<{
         replacementContentEnvelope: StoredJsonContentEnvelope;
     }>;
@@ -780,6 +810,9 @@ function prepareQualifiedConnectedAccountCredentialCreate(params: Readonly<{
                 : {}),
             ...(params.contributionContractVersion
                 ? { contributionContractVersion: params.contributionContractVersion }
+                : {}),
+            ...(params.savedSecretResourceIds?.length
+                ? { savedSecretResourceIds: [...params.savedSecretResourceIds] }
                 : {}),
             values: params.metadata,
         },
@@ -912,6 +945,16 @@ async function mutateQualifiedConnectedServiceCredentialWithPreparedInTx(
             metadata: current.metadata,
         })
         : null;
+    // One record per key (F2): once a credential's key is held by Saved Secret
+    // records, no writer (Action edit, daemon reconnect, promotion) may swap or
+    // drop that set; the new key rotates the held record. Omitting the set
+    // (re-seal, Account-mode migration) keeps it.
+    const heldSavedSecretResourceIds = currentProjection?.savedSecretResourceIds ?? [];
+    if (heldSavedSecretResourceIds.length > 0 && params.savedSecretResourceIds !== undefined
+        && (params.savedSecretResourceIds.length !== heldSavedSecretResourceIds.length
+            || params.savedSecretResourceIds.some(id => !heldSavedSecretResourceIds.includes(id)))) {
+        return { status: "saved_secret_held" };
+    }
     const metadataSettlement =
         settleQualifiedConnectedAccountCredentialMetadata({
             current: currentProjection?.presentation,
@@ -938,6 +981,9 @@ async function mutateQualifiedConnectedServiceCredentialWithPreparedInTx(
             ...(params.contributionContractVersion
                 ? { contributionContractVersion: params.contributionContractVersion }
                 : {}),
+            ...(params.savedSecretResourceIds
+                ? { savedSecretResourceIds: params.savedSecretResourceIds }
+                : {}),
             ...(params.initialConfiguration
                 ? { initialConfiguration: params.initialConfiguration }
                 : {}),
@@ -956,6 +1002,8 @@ async function mutateQualifiedConnectedServiceCredentialWithPreparedInTx(
         ?? (authenticationModeUnchanged
             ? currentProjection?.contributionContractVersion ?? null
             : null);
+    const retainedSavedSecretResourceIds = params.savedSecretResourceIds
+        ?? (authenticationModeUnchanged ? currentProjection?.savedSecretResourceIds ?? [] : []);
     const metadata: QualifiedConnectedServiceCredentialStoredMetadataV4 =
         effectivePreparedCreate?.metadata ?? {
             v: 4,
@@ -967,6 +1015,9 @@ async function mutateQualifiedConnectedServiceCredentialWithPreparedInTx(
                 : {}),
             ...(retainedContributionContractVersion
                 ? { contributionContractVersion: retainedContributionContractVersion }
+                : {}),
+            ...(retainedSavedSecretResourceIds.length
+                ? { savedSecretResourceIds: [...retainedSavedSecretResourceIds] }
                 : {}),
             ...(currentProjection?.health
                 ? { health: currentProjection.health }
@@ -1119,6 +1170,9 @@ function canonicalizeQualifiedCredentialMutation(
         ...(params.contributionContractVersion
             ? { contributionContractVersion: params.contributionContractVersion }
             : {}),
+        ...(params.savedSecretResourceIds
+            ? { savedSecretResourceIds: [...params.savedSecretResourceIds] }
+            : {}),
         ...(params.refreshLeaseOwnerId
             ? { refreshLeaseOwnerId: params.refreshLeaseOwnerId }
             : {}),
@@ -1229,6 +1283,9 @@ export async function prepareQualifiedConnectedServiceCredentialCreate(
                     : {}),
                 ...(canonicalParams.contributionContractVersion
                     ? { contributionContractVersion: canonicalParams.contributionContractVersion }
+                    : {}),
+                ...(canonicalParams.savedSecretResourceIds
+                    ? { savedSecretResourceIds: canonicalParams.savedSecretResourceIds }
                     : {}),
                 ...(canonicalParams.initialConfiguration
                     ? {
@@ -1892,6 +1949,9 @@ async function listQualifiedConnectedAccountEntriesByFilterInTx(
                 kind: metadata.kind,
                 expiresAt: qualifiedConnectedAccountListTimestamp(row.expiresAt),
                 lastUsedAt: qualifiedConnectedAccountListTimestamp(row.lastUsedAt),
+                ...(metadata.savedSecretResourceIds.length
+                    ? { savedSecretResourceIds: [...metadata.savedSecretResourceIds] }
+                    : {}),
                 ...metadata.presentation,
             }),
         };
@@ -2373,6 +2433,8 @@ async function readQualifiedConnectedServiceCredentialInTx(
     params: Readonly<{
         accountId: string;
         ref: QualifiedConnectedAccountRef;
+        /** Released readers cannot resolve Saved Secret references. */
+        legacyReader?: true;
     }>,
 ): Promise<QualifiedConnectedServiceCredentialLegacyReadResult> {
     const accountModeResult =
@@ -2402,6 +2464,11 @@ async function readQualifiedConnectedServiceCredentialInTx(
             rowId: row.id,
             metadata: row.metadata,
         });
+    // Convert on edit: a credential converted to Saved Secret custody gives a
+    // released reader its typed unsupported-format refusal, never partial bytes.
+    if (params.legacyReader && projection.savedSecretResourceIds.length > 0) {
+        return { status: "unsupported_format" };
+    }
     const isV4 = projection.format === "v4";
     const content = decodeQualifiedConnectedServiceCredentialRowContent({
         accountId: params.accountId,
@@ -2537,6 +2604,7 @@ export async function readQualifiedConnectedServiceCredentialForLegacyProjection
         await readQualifiedConnectedServiceCredentialInTx(tx, {
             accountId: params.accountId,
             ref,
+            legacyReader: true,
         }));
 }
 

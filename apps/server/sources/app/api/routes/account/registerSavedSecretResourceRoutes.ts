@@ -299,6 +299,7 @@ export function registerSavedSecretResourceRoutes(app: Fastify): void {
                 catalogMutations: body.catalogMutations,
                 remoteHostMutation: body.remoteHostMutation,
                 notificationChannelMutation: body.notificationChannelMutation,
+                ...(body.connectedAccountCredentialMutation ? { connectedAccountCredentialMutation: body.connectedAccountCredentialMutation } : {}),
                 additionalSavedSecretResources: additionalResources.filter((resource): resource is NonNullable<typeof resource> => resource !== null),
                 personalSecretPromotions: body.personalSecretPromotions,
             }), { /* Secret recipient keys, effective grants and cross-owner reference censuses must stay coherent. */ isolationLevel: "Serializable" });

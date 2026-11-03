@@ -63,6 +63,7 @@ export function registerConnectedServiceCredentialRoutesV3(app: Fastify): void {
                         reason: z.enum(["revision_mismatch", "refresh_lease_lost"]),
                         credentialRevision: z.nullable(z.string()),
                     }),
+                    z.object({ error: z.literal("connect_credential_unsupported_format") }),
                 ]),
             },
         },
@@ -122,6 +123,9 @@ export function registerConnectedServiceCredentialRoutesV3(app: Fastify): void {
         });
         if (result.status === "provider_identity_mismatch") {
             return reply.code(409).send({ error: CONNECTED_SERVICE_ERROR_CODES.reconnectProviderIdentityMismatch });
+        }
+        if (result.status === "unsupported_format") {
+            return reply.code(409).send({ error: "connect_credential_unsupported_format" });
         }
         if (
             result.status === "storage_mode_mismatch"

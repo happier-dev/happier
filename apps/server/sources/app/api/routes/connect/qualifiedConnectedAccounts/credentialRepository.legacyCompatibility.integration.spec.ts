@@ -1322,6 +1322,55 @@ describe("qualified Connected Account activated legacy compatibility", () => {
         })).toBe(1);
     });
 
+    it("gives released readers and writers their typed refusal for a credential converted to Saved Secret custody", async () => {
+        const account = await db.account.create({
+            data: { ...createSignedAccountContentBinding(), encryptionMode: "e2ee" },
+            select: { id: true },
+        });
+        const profileId = "converted-key";
+        const identity = resolveLegacyServiceAccountTokenIdentityFields({ serviceId: "anthropic", profileId, credentialKind: "token" });
+        const ref = { service: { pluginId: identity.servicePluginId, localId: identity.serviceLocalId }, accountId: identity.connectedAccountId };
+        // An untouched 0.2-shaped sibling stays readable by released clients.
+        const untouchedProfileId = "untouched-key";
+        const untouched = resolveLegacyServiceAccountTokenIdentityFields({ serviceId: "anthropic", profileId: untouchedProfileId, credentialKind: "token" });
+        const untouchedRef = { service: { pluginId: untouched.servicePluginId, localId: untouched.serviceLocalId }, accountId: untouched.connectedAccountId };
+        const converted = await mutateQualifiedConnectedServiceCredential({
+            accountId: account.id, ref, expectedCredentialRevision: null, authenticationModeId: identity.authenticationModeId,
+            content: { t: "encrypted", c: "opaque-ref-credential" }, metadata: { scopes: [] }, savedSecretResourceIds: ["cred-key-1"],
+        });
+        const plain = await mutateQualifiedConnectedServiceCredential({
+            accountId: account.id, ref: untouchedRef, expectedCredentialRevision: null, authenticationModeId: untouched.authenticationModeId,
+            content: { t: "encrypted", c: "opaque-raw-credential" }, metadata: { scopes: [] },
+        });
+        if (converted.status !== "written" || plain.status !== "written") throw new Error("Expected V4 creates");
+
+        await withAuthenticatedTestApp(
+            (app) => registerConnectedServiceCredentialRoutesV2(app, { credentialMaxLen: 220_000 }),
+            async (app) => {
+                const read = await app.inject({ method: "GET", url: `/v2/connect/anthropic/profiles/${profileId}/credential`,
+                    headers: { "x-test-user-id": account.id } });
+                expect(read.statusCode).toBe(409);
+                expect(read.json()).toEqual({ error: "connect_credential_unsupported_format" });
+                const write = await app.inject({ method: "POST", url: `/v2/connect/anthropic/profiles/${profileId}/credential`,
+                    headers: { "x-test-user-id": account.id }, payload: {
+                        sealed: { format: "account_scoped_v1", ciphertext: "raw-copy-from-old-client" },
+                        metadata: { kind: "token", providerEmail: null, providerAccountId: null, expiresAt: null },
+                        expectedCredentialRevision: converted.credentialRevision,
+                    } });
+                expect(write.statusCode).toBe(409);
+                expect(write.json()).toEqual({ error: "connect_credential_unsupported_format" });
+                const sibling = await app.inject({ method: "GET", url: `/v2/connect/anthropic/profiles/${untouchedProfileId}/credential`,
+                    headers: { "x-test-user-id": account.id } });
+                expect(sibling.statusCode).toBe(200);
+                expect(sibling.json()).toMatchObject({ sealed: { ciphertext: "opaque-raw-credential" } });
+            },
+        );
+        // The converted credential is unchanged and current readers still open it.
+        await expect(readQualifiedConnectedServiceCredential({ accountId: account.id, ref })).resolves.toMatchObject({
+            status: "resolved", credential: { credentialRevision: converted.credentialRevision, content: { t: "encrypted", c: "opaque-ref-credential" } },
+        });
+    });
+
     it("links a released usage source to the exact qualified credential identity", async () => {
         const account = await db.account.create({
             data: { publicKey: null, encryptionMode: "plain" },

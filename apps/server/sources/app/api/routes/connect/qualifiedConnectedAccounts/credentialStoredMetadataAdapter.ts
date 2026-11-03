@@ -52,6 +52,8 @@ export type QualifiedConnectedAccountStoredMetadataProjection =
         | typeof CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1
         | null;
     contributionContractVersion: string | null;
+    /** Non-empty when the credential's secrets are held by Saved Secret resources. */
+    savedSecretResourceIds: readonly string[];
 }>;
 
 function resolveStoredCredentialRevisionSemantics(
@@ -115,6 +117,7 @@ export function resolveQualifiedConnectedAccountStoredMetadata(
             status: deriveConnectedServiceCredentialStatus(stored),
             directExportContract: stored.directExportContract ?? null,
             contributionContractVersion: stored.contributionContractVersion ?? null,
+            savedSecretResourceIds: stored.savedSecretResourceIds ?? [],
         };
     }
     if (isConnectedServiceCredentialMetadataV2(params.metadata)) {
@@ -131,6 +134,7 @@ export function resolveQualifiedConnectedAccountStoredMetadata(
                 ? CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1
                 : null,
             contributionContractVersion: null,
+            savedSecretResourceIds: [],
         };
     }
     if (isConnectedServiceCredentialMetadataV3(params.metadata)) {
@@ -147,6 +151,7 @@ export function resolveQualifiedConnectedAccountStoredMetadata(
                 ? CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1
                 : null,
             contributionContractVersion: null,
+            savedSecretResourceIds: [],
         };
     }
     return {
@@ -158,6 +163,7 @@ export function resolveQualifiedConnectedAccountStoredMetadata(
         status: "needs_reauth",
         directExportContract: null,
         contributionContractVersion: null,
+        savedSecretResourceIds: [],
     };
 }
 

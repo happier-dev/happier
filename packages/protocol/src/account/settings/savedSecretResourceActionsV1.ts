@@ -1,3 +1,4 @@
+import { QualifiedConnectedAccountCredentialMutationV4Schema, QualifiedConnectedAccountCredentialMutationSuccessV4Schema } from '../../connect/qualifiedConnectedAccountsV4.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod/mini';
 import { ManagedResourceDependencyV1Schema, ManagedResourceDispositionV1Schema } from '../../machines/managed/managedDependencyV1.js';
@@ -184,6 +185,12 @@ export const SharedSavedSecretPromoteInputV1Schema = lazyZodSchema(() => (<T ext
     // The outer resource transaction remains the sole paired Settings writer.
     settingsMutation: z.optional(z.never()),
   })),
+  /**
+   * A Connected Account credential that references the created resources.
+   * Its own expected credential revision is its currentness fence; the
+   * resources and the referencing credential commit or roll back together.
+   */
+  connectedAccountCredentialMutation: z.optional(QualifiedConnectedAccountCredentialMutationV4Schema),
 })).check(z.superRefine((value, context) => {
   const catalogOnly = 'scope' in value.referenceCensus;
   if (catalogOnly) {
@@ -226,6 +233,12 @@ export const SharedSavedSecretPromoteInputV1Schema = lazyZodSchema(() => (<T ext
     }
   } else if (catalogOnly && value.referenceCensus.notificationChannels !== undefined) {
     context.addIssue({ code: 'custom', path: ['referenceCensus', 'notificationChannels'], message: 'Catalog-only census captures exactly the mutated catalogs' });
+  }
+  if (value.connectedAccountCredentialMutation) {
+    if (!catalogOnly) context.addIssue({ code: 'custom', path: ['connectedAccountCredentialMutation'], message: 'A credential reference commits through a catalog-only promotion' });
+    if (!value.connectedAccountCredentialMutation.savedSecretResourceIds?.length) {
+      context.addIssue({ code: 'custom', path: ['connectedAccountCredentialMutation', 'savedSecretResourceIds'], message: 'A promoted credential declares its referenced resources' });
+    }
   }
   const resourceIds = new Set([value.resourceId]);
   value.additionalSavedSecretResources?.forEach((resource, index) => {
@@ -296,6 +309,8 @@ export const SharedSavedSecretPromoteOutputV1Schema = lazyZodSchema(() => z.stri
   remoteHostRevision: z.optional(z.number().check(z.int(), z.nonnegative())),
   notificationChannelRevision: z.optional(z.number().check(z.int(), z.nonnegative())),
   catalogRevisions: z.optional(z.partial(SavedSecretCatalogRevisionsV1Schema)),
+  /** The same transaction's credential receipt; no readback after promotion. */
+  connectedAccountCredential: z.optional(z.omit(QualifiedConnectedAccountCredentialMutationSuccessV4Schema, { success: true })),
 }));
 export const SharedSavedSecretDeleteOutputV1Schema = lazyZodSchema(() => z.strictObject({ resourceId: z.string() }));
 

@@ -20,6 +20,8 @@ export const QualifiedConnectedServiceCredentialStoredMetadataV4Schema =
             CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1,
         )),
         contributionContractVersion: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(512))),
+        /** Saved Secret resources the sealed credential references (ids only). */
+        savedSecretResourceIds: z.optional(z.array(z.string().check(z.minLength(1), z.maxLength(128))).check(z.minLength(1), z.maxLength(64))),
         values: QualifiedConnectedAccountCredentialMetadataV4Schema,
         health: z.optional(ConnectedServiceCredentialHealthV1Schema),
     });

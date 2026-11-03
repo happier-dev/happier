@@ -1,3 +1,4 @@
+import { QualifiedConnectedAccountCredentialMutationV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import tweetnacl from 'tweetnacl';
 import React from 'react';
@@ -35,7 +36,7 @@ import { encryptDataKeyForRecipientV0 } from '@/sync/encryption/directShareEncry
 import { decodeBase64, encodeBase64 } from '@/encryption/base64';
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import { resetTeamActionClientForTests, TeamActionApprovalPendingError } from '@/sync/ops/teams/teamActionClient';
-import { createSavedSecretResource, promotePersonalSavedSecretResource, updateSavedSecretResource,
+import { createSavedSecretResource, createSavedSecretResourcesWithConnectedAccountCredentialInContext, promotePersonalSavedSecretResource, updateSavedSecretResource,
     deleteSavedSecretResource, setSavedSecretResourceGrants, repairCustodiedSavedSecretResourceEnvelopesBestEffort,
     captureSavedSecretReferenceStateInContext, importLegacySavedSecretsInContext } from './savedSecretResourceOperations';
 import { withProfileAccount } from '@/sync/api/account/apiProfileCatalog';
@@ -3019,6 +3020,34 @@ describe('Saved Secret operations through their real Account and Action owners',
         expect(failed).not.toHaveBeenCalled();
         expect(account.writes).toEqual([]);
     });
+    it('promotes an admitted Connected Account key through its captured Home without asking for a second approval', async () => {
+        const account = await openAccount('plain', { ask: true });
+        const resourceId = 'admitted-connected-key';
+        const credentialRevision = 'csr_0123456789ABCDEFGHJKMNPQRS';
+        account.setEffect((_path, body) => {
+            const input = SharedSavedSecretPromoteInputV1Schema.parse(body);
+            account.materialRow(input.resourceId, 'plain', input.storedContent, 1);
+            return Response.json({ resourceId: input.resourceId, settingsVersion: 7,
+                connectedAccountCredential: { credentialRevision, configurationRevision: null } });
+        });
+        const context = await captureLazyActionAccountContext(account.scope.serverId);
+        try {
+            const result = await createSavedSecretResourcesWithConnectedAccountCredentialInContext(context, {
+                scope: account.scope, secrets: [{ resourceId, displayName: 'Cloud key', kind: 'apiKey', value: 'entered-cloud-key' }],
+                credential: QualifiedConnectedAccountCredentialMutationV4Schema.parse({
+                    ref: { service: { pluginId: 'happier.fixture', localId: 'cloud' }, accountId: 'cloud-account' },
+                    authenticationModeId: 'api-key', expectedCredentialRevision: null, metadata: { scopes: [] },
+                    savedSecretResourceIds: [resourceId], content: { t: 'plain', v: { v: 1, values: {},
+                        secretRefs: { token: `happier:shared-secret:v1:${resourceId}` } } },
+                }),
+            });
+            expect(result).toEqual({ status: 'applied', credential: { success: true, credentialRevision, configurationRevision: null } });
+            expect(account.writes.filter(write => write.path.endsWith('/promote'))).toHaveLength(1);
+            context.assertCurrent();
+        } finally { context.dispose(); }
+    });
+
+
 });
 // Native filesystem classes are an OS boundary, not part of this source-driven UI journey.
 vi.mock('expo-file-system', async () =>
