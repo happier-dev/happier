@@ -13,6 +13,14 @@ import {
 } from './savedSecretResourceActionsV1.js';
 
 describe('shared Saved Secret complete audience inputs', () => {
+  it('admits a resource-only batch without inventing a Settings or catalog mutation', () => {
+    const resource = { resourceId: 'linked-one', displayName: 'Vault token', kind: 'token', encryptionMode: 'plain',
+      storedContent: { t: 'plain', v: { v: 2, name: 'Vault token', kind: 'token', source: { kind: 'external',
+        contribution: { pluginId: 'acme.vault', localId: 'vault' }, account: 'account', reference: 'op://vault/item/token' } } } };
+    expect(SharedSavedSecretPromoteInputV1Schema.safeParse({ ...resource,
+      additionalSavedSecretResources: [{ ...resource, resourceId: 'linked-two' }], nextSettings: null, profileMutations: [],
+      referenceCensus: { scope: 'catalogs', accountMode: 'plain', catalogs: {} } }).success).toBe(true);
+  });
   it('admits the actual Notification channel census and atomic signing-reference mutation with the full source capture', () => {
     const resource = { resourceId: 'notification-signing', displayName: 'Webhook signing', kind: 'token',
       encryptionMode: 'plain', storedContent: { t: 'plain', v: { v: 1, name: 'Webhook signing', kind: 'token', value: 'private' } } };

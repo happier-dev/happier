@@ -51,6 +51,8 @@ import type { SavedSecretCatalogRevisionsV1 } from '@happier-dev/protocol/accoun
 import { NOTIFICATION_CHANNELS_ACCOUNT_KV_KEY_V1, NotificationChannelCatalogRecordV1Schema } from '@happier-dev/protocol/account/settings/notificationChannelRecordV1';
 import { sealPromptLibraryContentV1 } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
 import { mutatePromptLibraryRowInTx, readPromptLibraryRowInTx } from '@/app/account/prompts/promptLibraryRows';
+import { decodeSensitiveContentFromAtRestStorage } from '@/app/encryption/sensitiveContentAtRestStorage';
+import { openSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
 
 const ACCEPTED_EMAIL_PASSWORD = { kind: "home_method" as const, methodId: "email_password" };
 const EMAIL_PASSWORD_EVIDENCE = [ACCEPTED_EMAIL_PASSWORD];
@@ -148,6 +150,48 @@ describe("Saved Secret resource service (SQLite integration)", () => {
             () => db.userRelationship.deleteMany(),
             () => db.account.deleteMany(),
         ]);
+    });
+
+    it.each(['plain', 'e2ee'] as const)('creates and retries a resource-only external-reference batch in a %s Account without changing Settings or catalogs', async mode => {
+        const material = createE2eeAccountMaterial();
+        const owner = await db.account.create({ data: mode === 'e2ee' ? material.account : { encryptionMode: mode } });
+        const resource = (field: string) => {
+            const resourceId = `vault-bulk-${mode}-${field}`;
+            const content = { v: 2 as const, name: field, kind: 'token' as const,
+                source: { kind: 'external' as const, contribution: { pluginId: 'acme.vault', localId: 'vault' },
+                    account: 'personal', reference: `vault://item/${field}` } };
+            return { resourceId, displayName: content.name, kind: content.kind, encryptionMode: mode,
+                storedContent: sealSavedSecretResourceStoredContentV1({ resourceId, mode, content,
+                    resourceDataKey: new Uint8Array(32).fill(7), randomBytes: length => new Uint8Array(length).fill(8) }),
+                ...(mode === 'e2ee' ? { keyEnvelopes: [{ recipientAccountId: owner.id,
+                    encryptedDataKey: sealTestDataKey(material.contentPublicKey),
+                    recipientContentPublicKeyFingerprint: material.fingerprint }] } : {}) };
+        };
+        const first = resource('username');
+        const second = resource('password');
+        const input = { accountId: owner.id, ...first, additionalSavedSecretResources: [second],
+            nextSettings: null, profileMutations: [],
+            referenceCensus: { scope: 'catalogs' as const, accountMode: mode, catalogs: {} } };
+        const expected = { ok: true, value: { resourceId: first.resourceId, settingsVersion: owner.settingsVersion } };
+        expect(await inTx(tx => promoteSavedSecretResourceInTx(tx, input))).toEqual(expected);
+        expect(await inTx(tx => promoteSavedSecretResourceInTx(tx, input))).toEqual(expected);
+        const entries = await inTx(tx => listSavedSecretResourcesForAccountInTx(tx, owner.id));
+        expect(entries).toHaveLength(2);
+        for (const created of [first, second]) {
+            expect(entries.find(entry => 'ref' in entry && entry.ref === formatSharedSavedSecretRefV1(created.resourceId)))
+                .toMatchObject({ revision: 1, relationship: 'owner', storage: { kind: 'external' } });
+            const row = await db.savedSecretResource.findUniqueOrThrow({ where: { id: created.resourceId } });
+            const storedContent = decodeSensitiveContentFromAtRestStorage({
+                keyPath: ['storage', 'saved_secret_resource', created.resourceId, 'v1'], value: row.storedContent });
+            const opened = openSavedSecretResourceStoredContentV1({ resourceId: created.resourceId, mode, storedContent,
+                resourceDataKey: new Uint8Array(32).fill(7) });
+            expect(opened).toMatchObject({ v: 2, source: { kind: 'external', reference: `vault://item/${created.displayName}` } });
+            expect(opened).not.toHaveProperty('value');
+        }
+        const after = await db.account.findUniqueOrThrow({ where: { id: owner.id } });
+        expect({ settings: after.settings, settingsVersion: after.settingsVersion })
+            .toEqual({ settings: owner.settings, settingsVersion: owner.settingsVersion });
+        expect(await db.userKVStore.count({ where: { accountId: owner.id } })).toBe(0);
     });
 
     it('retains registry token resources and fences deletion with the captured source revision', async () => {

@@ -193,12 +193,10 @@ export const SharedSavedSecretPromoteInputV1Schema = lazyZodSchema(() => (<T ext
   } else if (value.expectedSettingsVersion === undefined) {
     context.addIssue({ code: 'custom', path: ['expectedSettingsVersion'], message: 'Full reference census requires captured Settings currentness' });
   }
-  let mutationCount = 0;
   for (const key of ['mcp', 'acp', 'providerConnections', 'connectedConfigurations', 'connectedPurposes', 'registrySources'] as const) {
     const mutation = value.catalogMutations?.[key];
     const captured = value.referenceCensus.catalogs?.[key];
     if (mutation) {
-      mutationCount += 1;
       if (captured === undefined || captured !== mutation.expectedRevision) {
         context.addIssue({ code: 'custom', path: ['catalogMutations', key, 'expectedRevision'], message: 'Catalog mutation must match its captured revision' });
       }
@@ -211,7 +209,6 @@ export const SharedSavedSecretPromoteInputV1Schema = lazyZodSchema(() => (<T ext
     }
   }
   if (value.remoteHostMutation) {
-    mutationCount += 1;
     if (value.referenceCensus.remoteHosts?.revision !== value.remoteHostMutation.expectedRevision
       && !(value.referenceCensus.remoteHosts === undefined && !catalogOnly && value.remoteHostMutation.expectedRevision === 'absent')) {
       context.addIssue({ code: 'custom', path: ['remoteHostMutation', 'expectedRevision'], message: 'Remote Host mutation must match its captured revision' });
@@ -220,7 +217,6 @@ export const SharedSavedSecretPromoteInputV1Schema = lazyZodSchema(() => (<T ext
     context.addIssue({ code: 'custom', path: ['referenceCensus', 'remoteHosts'], message: 'Catalog-only census captures exactly the mutated catalogs' });
   }
   if (value.notificationChannelMutation) {
-    mutationCount += 1;
     if (value.referenceCensus.notificationChannels?.revision !== value.notificationChannelMutation.expectedRevision) {
       context.addIssue({ code: 'custom', path: ['notificationChannelMutation', 'expectedRevision'], message: 'Notification channel mutation must match its captured revision' });
     }
@@ -230,9 +226,6 @@ export const SharedSavedSecretPromoteInputV1Schema = lazyZodSchema(() => (<T ext
     }
   } else if (catalogOnly && value.referenceCensus.notificationChannels !== undefined) {
     context.addIssue({ code: 'custom', path: ['referenceCensus', 'notificationChannels'], message: 'Catalog-only census captures exactly the mutated catalogs' });
-  }
-  if (catalogOnly && mutationCount === 0) {
-    context.addIssue({ code: 'custom', path: ['catalogMutations'], message: 'Catalog-only promotion requires a catalog mutation' });
   }
   const resourceIds = new Set([value.resourceId]);
   value.additionalSavedSecretResources?.forEach((resource, index) => {

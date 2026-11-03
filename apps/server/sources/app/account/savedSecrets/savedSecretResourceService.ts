@@ -2152,7 +2152,6 @@ async function promoteCatalogOnlySavedSecretResourcesInTx(tx: Tx, input: Promote
         count += 1;
         notification.savedSecretRevisions.forEach(capture => declaredReferences.add(capture.resourceRef));
     } else if (census.notificationChannels !== undefined) return { ok: false, error: 'references_invalid' };
-    if (count === 0) return { ok: false, error: 'references_invalid' };
     const receiptValue = (settingsVersion: number) => ({ resourceId: input.resourceId, settingsVersion,
         ...(Object.keys(postCaptures).length ? { catalogRevisions: postCaptures } : {}),
         ...(remote ? { remoteHostRevision: typeof remote.expectedRevision === 'number' ? remote.expectedRevision + 1 : 0 } : {}),
@@ -2160,7 +2159,7 @@ async function promoteCatalogOnlySavedSecretResourcesInTx(tx: Tx, input: Promote
     const resources = savedSecretPromotionResources(input);
     if (new Set(resources.map(resource => resource.resourceId)).size !== resources.length) return { ok: false, error: 'references_invalid' };
     let resourcesBound: boolean;
-    try { resourcesBound = resources.every(resource => declaredReferences.has(formatSharedSavedSecretRefV1(resource.resourceId))); }
+    try { resourcesBound = count === 0 || resources.every(resource => declaredReferences.has(formatSharedSavedSecretRefV1(resource.resourceId))); }
     catch { return { ok: false, error: 'invalid_resource' }; }
     const fence = await acquireAccountEncryptionTransitionFenceInTx(tx, input.accountId, "content");
     if (fence.status !== 'ready') return { ok: false, error: 'settings_invalid' };
