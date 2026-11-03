@@ -242,9 +242,11 @@ function readConfigOptionsRecord(value: unknown): Record<string, SpawnConfigOpti
   return Object.fromEntries(entries) as Record<string, SpawnConfigOptionValue>;
 }
 
+export type CliActionDeps = ActionExecutorDeps & Required<Pick<ActionExecutorDeps, 'sessionSpawnNew'>>;
+
 export function createCliActionDeps(params: CliActionDepsParams,
   readEffectiveDeps?: () => ActionExecutorDeps,
-): ActionExecutorDeps {
+): CliActionDeps {
   const roleAccountScopeKey = params.serverHttpBaseUrl
     ? runWithServerHttpBaseUrl(params.serverHttpBaseUrl, () => resolveAccountSettingsScopeKeyForToken(params.token))
     : resolveAccountSettingsScopeKeyForToken(params.token);
@@ -824,7 +826,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
 
 
 
-  const actionDeps: ActionExecutorDeps = {
+  const actionDeps: CliActionDeps = {
     resolveEnvironmentApprovalScope: params.resolveEnvironmentApprovalScope ?? deploymentStorageDeps.resolveEnvironmentApprovalScope,
     ...(params.prepareDeploymentAction ? { prepareDeploymentAction: params.prepareDeploymentAction } : {}),
     ...(params.prepareDeploymentTemplateInstantiation ? { prepareDeploymentTemplateInstantiation: params.prepareDeploymentTemplateInstantiation } : {}),

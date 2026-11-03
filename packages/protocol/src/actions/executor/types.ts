@@ -1810,7 +1810,7 @@ export type ActionExecutorDeps = Readonly<{
     input: WorkspaceSyncConflictInspectActionInputV1;
     signal?: AbortSignal;
   }>) => Promise<WorkspaceSyncConflictInspectActionOutputV1>;
-  sessionSpawnNew: (args: SessionSpawnNewInputV2 & SessionCreateOriginFieldsV1 & Readonly<{
+  sessionSpawnNew?: (args: SessionSpawnNewInputV2 & SessionCreateOriginFieldsV1 & Readonly<{
     /** Exact admitted public intent for requester transport, before host launch expansion; never a wire field. */
     admittedInput?: SessionSpawnNewInputV2;
     /** Host-only invocation binding for post-commit private material preparation; never sent in the spawn payload. */

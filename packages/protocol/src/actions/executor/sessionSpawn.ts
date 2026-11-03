@@ -46,7 +46,7 @@ export function buildSessionSpawnNewArgs(
   ctx: ActionExecutorContext,
   legacyMetadataLabel?: string,
   discussionParticipantLaunch?: DiscussionModelParticipantLaunchV1,
-): Parameters<ActionExecutorDeps['sessionSpawnNew']>[0] | null {
+): Parameters<NonNullable<ActionExecutorDeps['sessionSpawnNew']>>[0] | null {
   const participant = SessionDiscussionParticipantV1Schema.safeParse(data.discussionParticipant);
   const discussionParticipant = participant.success ? participant.data : null;
   const creationKey = discussionParticipant?.participantSlotId ?? resolveSessionSpawnNewCreationKey(data, ctx);
@@ -150,7 +150,7 @@ export function buildSessionSpawnNewArgs(
   if (ctx.surface === 'agent') {
     assignIfDefined(args, 'sessionAgentSpawnPolicyV1', ctx.sessionAgentSpawnPolicyV1);
   }
-  return args as Parameters<ActionExecutorDeps['sessionSpawnNew']>[0];
+  return args as Parameters<NonNullable<ActionExecutorDeps['sessionSpawnNew']>>[0];
 }
 
 export function sameSessionCreationDirectoryApproval(

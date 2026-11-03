@@ -75,7 +75,8 @@ async function resolveSpawnConnectedServicesDefaultPayload(params: Readonly<{
       : {}),
   });
 }
-type SpawnActionDeps = Pick<ActionExecutorDeps, 'sessionSpawnNewDirectoryApprovalPreflight' | 'sessionSpawnNew'>;
+type SpawnActionDeps = Pick<ActionExecutorDeps, 'sessionSpawnNewDirectoryApprovalPreflight'>
+  & Required<Pick<ActionExecutorDeps, 'sessionSpawnNew'>>;
 
 export function createCliSpawnActionDeps(
   params: CliActionDepsParams,

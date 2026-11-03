@@ -5461,6 +5461,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
 
         if (actionId === 'session.spawn_new') {
           const admittedSpawnInput = admitSessionSpawnNewActionInputV2(SessionSpawnNewActionInputV2Schema.parse(parsed.data));
+          if (!deps.sessionSpawnNew) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
           const profileAdmission = await resolveProfileSkillSeedsAtAdmissionV1(admittedSpawnInput, deps, ctx);
           if (!profileAdmission.ok) return profileAdmission;
           const spawnInput = profileAdmission.input;

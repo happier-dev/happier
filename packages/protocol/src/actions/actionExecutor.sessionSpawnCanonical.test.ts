@@ -79,6 +79,16 @@ function createExternalSpawnApprovalContext(requestId: string) {
 }
 
 describe('session.spawn_new canonical execution', () => {
+
+  it('returns unsupported_action when this host has no Session spawn implementation', async () => {
+    // The missing native host implementation is the boundary; parsing and dispatch stay real.
+    const executor = createActionExecutor({} as ActionExecutorDeps);
+    await expect(executor.execute('session.spawn_new', canonicalInput, {
+      surface: 'cli', authority: 'present_user',
+    })).resolves.toEqual({
+      ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.spawn_new',
+    });
+  });
   const attestedContext = { externalPrincipalId: 'sales@batiplus.ch', sourceMessageId: '<lead@example.test>' };
 
   it.each(['agent', 'mcp', 'cli'] as const)('returns repairable directory validation facts on %s', async surface => {
