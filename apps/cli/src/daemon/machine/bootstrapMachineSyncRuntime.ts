@@ -38,8 +38,7 @@ import {
 } from '@happier-dev/protocol/plugins/events/hostReferencesV1';
 import { parseHostEventPayloadV1, type HostEventEnvelopeV1 } from '@happier-dev/protocol/plugins/events/hostV1';
 import { readServerEnabledBit } from '@happier-dev/protocol/features/serverEnabledBit';
-import { SessionExecutionRunBrokerAuthorityResponseV1Schema } from '@happier-dev/protocol/daemon/executionRuns';
-import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
 import { callSessionRpc } from '@/session/transport/rpc/sessionRpc';
 import { UpdateBodySchema } from '@happier-dev/protocol/updates';
@@ -700,6 +699,7 @@ export type BootstrapMachineSyncRuntimeParams = Readonly<{
     operations: ExternalSessionHostOperationSet,
   ) => Promise<ExternalSessionHostOperationInstallation>;
   readMaterializedStateObservationBinding?: MachineRpcHandlerDeps['readMaterializedStateObservationBinding'];
+  resolveExecutionRunLiveBrokerAuthority?: MachineRpcHandlerDeps['resolveExecutionRunLiveBrokerAuthority'];
   externalActionIngressOwner?: ExternalActionIngressOwner;
   prepareRunTeamCredentialProviderBinding?: ExecutionRunTeamCredentialProviderBindingPreparer;
   openAccountConnectionManagedConsumerSource?: import('@/agent/runtime/bridges/executionRun/runtime/managedProvider').ExecutionRunManagedProviderSourceOpener;
@@ -1360,38 +1360,8 @@ export async function bootstrapMachineSyncRuntime(
         ...(params.resolveManagedPurposeBindingIntent
           ? { resolveManagedPurposeBindingIntent: params.resolveManagedPurposeBindingIntent }
           : {}),
-        ...(storedCredentials
-          ? {
-              resolveExecutionRunLiveBrokerAuthority: async (input) => {
-                const snapshot = params.getServerFeaturesSnapshot?.();
-                const target = await resolveSessionTransportContext({
-                  credentials: storedCredentials,
-                  idOrPrefix: input.sessionId,
-                  ...(snapshot ? { serverFeaturesSnapshot: snapshot } : {}),
-                });
-                if (!target.ok || target.sessionId !== input.sessionId) {
-                  return { status: 'not_current' as const, reason: 'runtime_unavailable' as const };
-                }
-                const rpc = {
-                  token: storedCredentials.token,
-                  sessionId: target.sessionId,
-                  method: `${target.sessionId}:${SESSION_RPC_METHODS.EXECUTION_RUN_BROKER_AUTHORITY_RESOLVE_V1}`,
-                  request: {
-                    v: 1,
-                    executionRunId: input.executionRunId,
-                    ...(input.expectedIntent !== undefined ? { expectedIntent: input.expectedIntent } : {}),
-                    expectedOccurrenceId: input.expectedOccurrenceId,
-                    ...(input.expectedDirectMaterialUse
-                      ? { expectedDirectMaterialUse: input.expectedDirectMaterialUse }
-                      : {}),
-                  },
-                };
-                const response = target.mode === 'plain'
-                  ? await callSessionRpc({ ...rpc, mode: 'plain' })
-                  : await callSessionRpc({ ...rpc, mode: 'e2ee', ctx: target.ctx });
-                return SessionExecutionRunBrokerAuthorityResponseV1Schema.parse(response);
-              },
-            }
+        ...(params.resolveExecutionRunLiveBrokerAuthority
+          ? { resolveExecutionRunLiveBrokerAuthority: params.resolveExecutionRunLiveBrokerAuthority }
           : {}),
         ...(params.externalActionIngressOwner
           ? { externalActionIngressOwner: params.externalActionIngressOwner }

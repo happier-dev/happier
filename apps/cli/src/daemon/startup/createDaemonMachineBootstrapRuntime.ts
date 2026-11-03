@@ -282,6 +282,7 @@ export function createDaemonMachineBootstrapRuntime(
       operations: ExternalSessionHostOperationSet,
     ) => Promise<ExternalSessionHostOperationInstallation>;
     readMaterializedStateObservationBinding?: BootstrapRuntime['readMaterializedStateObservationBinding'];
+    resolveExecutionRunLiveBrokerAuthority?: BootstrapRuntime['resolveExecutionRunLiveBrokerAuthority'];
     externalActionIngressOwner?: ExternalActionIngressOwner;
     createWorkflowRunCoordinatorForMachine?: (input: Readonly<{
       machineId: string;
@@ -853,6 +854,9 @@ agentIsolation: params.agentIsolation,
       : {}),
     ...(params.readMaterializedStateObservationBinding
       ? { readMaterializedStateObservationBinding: params.readMaterializedStateObservationBinding }
+      : {}),
+    ...(params.resolveExecutionRunLiveBrokerAuthority
+      ? { resolveExecutionRunLiveBrokerAuthority: params.resolveExecutionRunLiveBrokerAuthority }
       : {}),
     ...(params.externalActionIngressOwner
       ? { externalActionIngressOwner: params.externalActionIngressOwner }

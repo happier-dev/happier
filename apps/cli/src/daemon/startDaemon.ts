@@ -2139,6 +2139,7 @@ const pluginRuntimeOwner = createDaemonPluginRuntimeOwner({
       awaitAgentSessionOpen,
       installExternalSessionHostOperations,
       readMaterializedStateObservationBinding,
+      resolveExecutionRunLiveBrokerAuthority,
       providerAccountUsageStore,
       flushProviderAccountUsagePersistence,
       connectedServiceRuntimeQuotaSnapshots,
@@ -3232,6 +3233,7 @@ agentIsolation,
         requesterServerId: requesterRuntimeServerId,
         resolveCurrentMachineExecutionOriginContext,
         resolveRequesterSessionRuntimeContext,
+        resolveExecutionRunLiveBrokerAuthority,
         onActivationRejected: async event => { await guardSessionRestoration?.onActivationRejected(event); },
         readRequesterSessionCredentialBindings: async () => {
           const installation = readInstallationIdentityIfExistsSync();
