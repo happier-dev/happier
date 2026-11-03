@@ -5513,6 +5513,7 @@ encryptedUnavailable: "Detalhes encriptados indisponíveis",
     unavailableSubtitle: 'Abra o app para desktop do Happier no seu computador para alterar essas configurações.',
 
     overlay: {
+      notchAllowOnce: "Permitir uma vez",
       title: 'Sobreposição de desktop',
       footer: 'Uma pequena janela flutuante que mostra a atividade das sessões neste computador.',
       enabledTitle: 'Ativar sobreposição de desktop',

@@ -4511,6 +4511,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
 		        unavailableTitle: '僅限桌面應用程式',
 		        unavailableSubtitle: '在電腦上開啟 Happier 桌面應用程式即可變更這些設定。',
 		        overlay: {
+		            notchAllowOnce: "允許一次",
 		            footer: '在此電腦上顯示工作階段活動的小型浮動視窗。',
 		            allowRepositioningSubtitle: '允許將懸浮層拖到自訂位置',
 		            allowRepositioningTitle: '允許調整位置',

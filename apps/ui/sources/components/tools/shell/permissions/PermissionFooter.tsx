@@ -1,5 +1,6 @@
 import { Typography } from '@/constants/Typography';
 import { McpAlwaysAllowDecision } from './McpAlwaysAllowDecision';
+import { resolveSessionPermissionChoices, isBroadShellGrantEligible } from '@/sync/ops/sessionPermissionChoices';
 import { PermissionAnswerUnconfirmedNotice } from './PermissionAnswerUnconfirmedNotice';
 import { extractShellCommand } from '@happier-dev/protocol/activity/shellCommand';
 import { formatPermissionRequestSummary } from '@happier-dev/protocol/activity/agentRequestSummary';
@@ -18,7 +19,6 @@ import {
     answerSessionPermission,
     resolveSessionPermissionAnswerPolicy,
     resolveSessionPermissionBehavior,
-    supportsSessionPermissionRule,
     supportsSessionPermissionPersistence,
     type SessionPermissionAnswer,
 } from '@/sync/ops/sessionPermissionAnswers';
@@ -384,6 +384,11 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
         permissionBehavior,
         suggestions: permission?.suggestions,
     });
+    const choices = resolveSessionPermissionChoices({ toolName, toolInput, source: requestSource,
+        suggestions: permission.suggestions, permissionBehavior,
+        mcpTool: executionRun === undefined ? permission.mcpTool : undefined,
+        canWriteCatalog: canApprovePermissions && catalogScope !== null });
+    const hasChoice = (id: typeof choices[number]['id']) => choices.some(choice => choice.id === id);
     const isCodexDecision = answerPolicy.protocol === 'codexDecision';
     const shouldUsePermissionUpdates = answerPolicy.usePermissionUpdates;
     const answerThroughSession = (answer: SessionPermissionAnswer) => answerSessionPermission({
@@ -396,8 +401,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
         respondToPermission: async (params) => { if (actions) await actions.respondToPermission(params); },
     });
     // MCP tools named by the catalog get the one choice that outlives the session (P8 U8.5, lab xa A).
-    const mcpIdentity = executionRun === undefined && !onceOnlyApproval && permission.mcpTool && permission.mcpTool.server !== 'happier'
-        ? permission.mcpTool : null;
+    const mcpIdentity = hasChoice('mcp_always_allow') ? permission.mcpTool : null;
     const alwaysAllowNode = mcpIdentity ? (
         <McpAlwaysAllowDecision
             requestId={permission.id}
@@ -434,7 +438,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
         }
         return [];
     })();
-    const canApproveExecPolicy = !onceOnlyApproval && permissionFooterBehavior?.supportsExecPolicyAmendment === true && execPolicyCommand.length > 0;
+    const canApproveExecPolicy = hasChoice('allow_execpolicy');
     const shouldHandleStopWithoutSessionAbort = permissionFooterBehavior?.stopHandling === 'denyOnly';
 
     if (disabledReason === 'inactive') {
@@ -719,12 +723,6 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
 
     const shellToolNames = new Set(['bash', 'execute', 'shell']);
 
-    const isBroadShellGrantEligible = (command: string): boolean => {
-        const trimmed = command.trim();
-        if (!trimmed) return false;
-        if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(trimmed) || /^unset(?:\s|$)/.test(trimmed)) return false;
-        return !/[;&|<>`\r\n]/.test(trimmed) && !trimmed.includes('$(');
-    };
 
     const matchesPrefix = (command: string, prefix: string): boolean => {
         if (!command || !prefix) return false;
@@ -1063,7 +1061,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
                     {alwaysAllowNode}
 
                     {/* Decision protocol: Yes, and don't ask for a session button */}
-                    {!onceOnlyApproval && (
+                    {hasChoice('always_allow') && (
                     <PermissionDecisionButton
                         testID="permission-footer.allow-for-session"
                         accessibilityRole="button"
@@ -1184,18 +1182,6 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
     }
 
     // Render rule-update buttons for the non-decision protocol.
-    const showAllowForSessionSubcommand = !onceOnlyApproval && isShellTool && typeof commandForShell === 'string' && (() => {
-        if (!isBroadShellGrantEligible(commandForShell)) return false;
-        const parts = commandForShell.trim().split(/\s+/).filter(Boolean);
-        const cmd = parts[0];
-        const sub = parts[1];
-        return Boolean(cmd) && Boolean(sub) && !String(sub).startsWith('-') && ['git', 'npm', 'yarn', 'pnpm', 'cargo', 'docker', 'kubectl', 'gh', 'brew'].includes(String(cmd));
-    })();
-    const showAllowForSessionCommandName =
-        !onceOnlyApproval && isShellTool
-        && typeof commandForShell === 'string'
-        && isBroadShellGrantEligible(commandForShell)
-        && Boolean(commandForShell.trim().split(/\s+/).filter(Boolean)[0]);
     const primaryActionsDisabled = !isPending || answerUnconfirmed || loadingButton !== null || loadingAllEdits || loadingForSession;
     const ruleActionsDisabled = primaryActionsDisabled || loadingForSessionPrefix || loadingForSessionCommandName;
     return (
@@ -1239,8 +1225,9 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
                 </PermissionDecisionButton>
 
                 {/* Allow All Edits button - only show for edit/write tools */}
-                {!onceOnlyApproval && (toolName === 'Edit' || toolName === 'MultiEdit' || toolName === 'Write' || toolName === 'NotebookEdit') && (
+                {hasChoice('allow_all_edits') && (
                     <PermissionDecisionButton
+                        testID="permission-footer.allow-all-edits"
                         accessibilityRole="button"
                         accessibilityState={{
                             disabled: primaryActionsDisabled,
@@ -1277,8 +1264,9 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
                 )}
 
                 {/* Allow for session button - only show for non-edit, non-exit-plan tools */}
-                {!onceOnlyApproval && supportsSessionPermissionRule(toolName) && (
+                {hasChoice('always_allow') && (
                     <PermissionDecisionButton
+                        testID="permission-footer.allow-for-session"
                         accessibilityRole="button"
                         accessibilityState={{
                             disabled: ruleActionsDisabled,
@@ -1317,7 +1305,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
                 {alwaysAllowNode}
 
                 {/* Allow subcommand for session (shell tools only) */}
-                {toolName && toolName !== 'Edit' && toolName !== 'MultiEdit' && toolName !== 'Write' && toolName !== 'NotebookEdit' && toolName !== 'exit_plan_mode' && toolName !== 'ExitPlanMode' && showAllowForSessionSubcommand && (
+                {hasChoice('allow_subcommand') && (
                     <PermissionDecisionButton
                         accessibilityRole="button"
                         accessibilityState={{
@@ -1360,7 +1348,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
                 )}
 
                 {/* Allow command name for session (shell tools only) */}
-                {toolName && toolName !== 'Edit' && toolName !== 'MultiEdit' && toolName !== 'Write' && toolName !== 'NotebookEdit' && toolName !== 'exit_plan_mode' && toolName !== 'ExitPlanMode' && showAllowForSessionCommandName && (
+                {hasChoice('allow_command') && (
                     <PermissionDecisionButton
                         accessibilityRole="button"
                         accessibilityState={{

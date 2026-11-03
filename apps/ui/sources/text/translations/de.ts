@@ -4986,6 +4986,7 @@ encryptedUnavailable: "Verschlüsselte Details nicht verfügbar",
         unavailableTitle: 'Nur in der Desktop-App',
         unavailableSubtitle: 'Öffne die Desktop-App von Happier auf deinem Computer, um diese Einstellungen zu ändern.',
         overlay: {
+            notchAllowOnce: "Einmal erlauben",
             title: 'Desktop-Overlay',
             footer: 'Ein kleines schwebendes Fenster, das Sitzungsaktivität auf diesem Computer zeigt.',
             enabledTitle: 'Desktop-Overlay aktivieren',

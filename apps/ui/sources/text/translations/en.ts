@@ -5901,6 +5901,7 @@ const enSettingsDesktop = {
   unavailableSubtitle:
     "Open Happier's desktop app on your computer to change these settings.",
   overlay: {
+    notchAllowOnce: "Allow once",
     title: 'Desktop overlay',
     footer:
       'A small floating window that shows session activity on this computer.',

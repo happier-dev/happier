@@ -5592,6 +5592,7 @@ encryptedUnavailable: "Dettagli crittografati non disponibili",
     unavailableSubtitle: 'Apri l\'app desktop di Happier sul tuo computer per modificare queste impostazioni.',
 
     overlay: {
+      notchAllowOnce: "Consenti una volta",
       title: 'Sovrapposizione desktop',
       footer: 'Una piccola finestra mobile che mostra l\'attività delle sessioni su questo computer.',
       enabledTitle: 'Attiva sovrapposizione desktop',

@@ -5249,6 +5249,7 @@ encryptedUnavailable: "Zaszyfrowane dane niedostępne",
     unavailableSubtitle: 'Otwórz aplikację desktopową Happier na komputerze, aby zmienić te ustawienia.',
 
     overlay: {
+      notchAllowOnce: "Zezwól raz",
       title: 'Nakładka pulpitu',
       footer: 'Małe pływające okno pokazujące aktywność sesji na tym komputerze.',
       enabledTitle: 'Włącz nakładkę pulpitu',

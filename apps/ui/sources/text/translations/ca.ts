@@ -5035,6 +5035,7 @@ encryptedUnavailable: "Detalls xifrats no disponibles",
 
     settingsDesktop: {
         overlay: {
+            notchAllowOnce: "Permet un cop",
             title: 'Superposició d’escriptori',
             footer: 'Una petita finestra flotant que mostra l’activitat de les sessions en aquest ordinador.',
             enabledTitle: 'Activa la superposició d’escriptori', enabledSubtitle: 'Mostra una superfície flotant d’activitat local en aquest dispositiu',

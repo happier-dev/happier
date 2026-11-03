@@ -5140,6 +5140,7 @@ export const ru: TranslationStructure = {
     unavailableSubtitle: 'Откройте настольное приложение Happier на компьютере, чтобы изменить эти настройки.',
 
     overlay: {
+      notchAllowOnce: "Разрешить один раз",
       title: 'Оверлей рабочего стола',
       footer: 'Небольшое плавающее окно с активностью сессий на этом компьютере.',
       enabledTitle: 'Включить оверлей рабочего стола',

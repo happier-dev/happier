@@ -1,7 +1,7 @@
 import * as React from 'react';
 import type { ResolvedMcpToolIdentityV1 } from '@happier-dev/protocol/mcp/servers/tools/mcpToolIdentityV1';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
-import { supportsSessionPermissionPersistence } from '@/sync/ops/sessionPermissionAnswers';
+import { canPersistSessionMcpPermission } from '@/sync/ops/sessionPermissionChoices';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { createRequestOwnedActionExecution } from '@/components/approvals/requestOwnedActionExecution';
 import { createRequestOwnedControllerStore } from '@/components/approvals/requestOwnedControllerStore';
@@ -44,11 +44,14 @@ export function useMcpAlwaysAllow(input: McpAlwaysAllowInput) {
     const subscribe = React.useCallback((listener: () => void) => sharedControllers.subscribe(key, latest, listener), [key]);
     const read = React.useCallback(() => sharedControllers.get(key)?.getSnapshot() ?? sharedControllers.getReceipt(key) ?? idle, [key]);
     const state = React.useSyncExternalStore(subscribe, read, read);
-    const available = input.canWriteCatalog && execution.ready && input.identity.server !== 'happier' && supportsSessionPermissionPersistence(input.source);
+    const available = canPersistSessionMcpPermission({ ...input, canWriteCatalog: input.canWriteCatalog && execution.ready });
     const allow = React.useCallback(async () => {
-        if (latest.current.key !== key || !latest.current.input.canWriteCatalog || !latest.current.execution.isCurrent()
-            || latest.current.input.identity.server === 'happier' || !supportsSessionPermissionPersistence(latest.current.input.source)) return;
-        await sharedControllers.run(key, controller => controller.allow());
+        if (latest.current.key !== key || !latest.current.execution.isCurrent()
+            || !canPersistSessionMcpPermission(latest.current.input)) return;
+        return await sharedControllers.run(key, async controller => {
+            await controller.allow();
+            return controller.getSnapshot();
+        });
     }, [key]);
     return { ...state, available, allow, retrySave: allow };
 }

@@ -5239,6 +5239,7 @@ encryptedUnavailable: "Détails chiffrés indisponibles",
     unavailableSubtitle: 'Ouvre l\'app de bureau Happier sur ton ordinateur pour modifier ces réglages.',
 
     overlay: {
+      notchAllowOnce: "Autoriser une fois",
       title: 'Overlay desktop',
       footer: 'Une petite fenêtre flottante qui affiche l\'activité des sessions sur cet ordinateur.',
       enabledTitle: 'Activer l’overlay desktop',

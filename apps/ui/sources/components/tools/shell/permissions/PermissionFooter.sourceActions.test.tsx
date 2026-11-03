@@ -37,8 +37,26 @@ installPermissionShellCommonModuleMocks({
 
 // Install the platform boundary before the actual owner captures its React Native imports.
 const { PermissionFooter } = await import('./PermissionFooter');
+const { resolveSessionPermissionBehavior } = await import('@/sync/ops/sessionPermissionAnswers');
+const { resolveSessionPermissionChoices } = await import('@/sync/ops/sessionPermissionChoices');
 
 describe('PermissionFooter source authority', () => {
+    it.each(['claude', 'codex'])('renders every canonical choice for a %s Edit request', async (flavor) => {
+        const source = createTestSessionTranscriptSource({ sessionId: 's1', agentState: null,
+            interaction: { canApprovePermissions: true, canSendMessages: true },
+            actions: { respondToPermission: vi.fn(), answerUserAction: vi.fn(), abort: vi.fn(), submitMessage: vi.fn() },
+        });
+        const metadata = { flavor };
+        const choices = resolveSessionPermissionChoices({ toolName: 'Edit',
+            permissionBehavior: resolveSessionPermissionBehavior({ agentId: flavor, metadata, accountScope: undefined }) });
+        const screen = await renderWithSessionTranscriptSource(<PermissionFooter sessionId="s1"
+            permission={{ id: 'edit', status: 'pending' }} toolName="Edit" metadata={metadata} canApprovePermissions />, source);
+        const testIDs = choices.map(choice => `permission-footer.${choice.id === 'always_allow' ? 'allow-for-session'
+            : choice.id === 'allow_all_edits' ? 'allow-all-edits' : choice.id}`);
+        const buttons = screen.findAll(node => typeof node.type === 'string' && node.props.accessibilityRole === 'button'
+            && typeof node.props.onPress === 'function');
+        expect(buttons.map(button => button.props.testID)).toEqual(testIDs);
+    });
     beforeEach(() => {
         nativeFocusBoundary.platform = 'web';
         nativeFocusBoundary.findNodeHandle.mockClear();

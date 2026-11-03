@@ -5136,6 +5136,7 @@ export const zhHans: TranslationStructure = {
     unavailableSubtitle: '在电脑上打开 Happier 桌面应用即可更改这些设置。',
 
     overlay: {
+      notchAllowOnce: "允许一次",
       title: '桌面悬浮层',
       footer: '在此电脑上显示会话活动的小型浮动窗口。',
       enabledTitle: '启用桌面悬浮层',

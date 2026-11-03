@@ -5403,6 +5403,7 @@ encryptedUnavailable: "Detalles cifrados no disponibles",
     unavailableSubtitle: 'Abre la app de escritorio de Happier en tu ordenador para cambiar estos ajustes.',
 
     overlay: {
+      notchAllowOnce: "Permitir una vez",
       title: 'Superposición de escritorio',
       footer: 'Una pequeña ventana flotante que muestra la actividad de las sesiones en este ordenador.',
       enabledTitle: 'Activar superposición de escritorio',

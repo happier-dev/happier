@@ -5725,6 +5725,7 @@ localTailscale: {
     unavailableSubtitle: 'これらの設定を変更するには、コンピューターで Happier のデスクトップアプリを開いてください。',
 
     overlay: {
+      notchAllowOnce: "今回のみ許可",
       title: 'デスクトップオーバーレイ',
       footer: 'このコンピューターでセッションのアクティビティを表示する小さなフローティングウィンドウです。',
       enabledTitle: 'デスクトップオーバーレイを有効化',
