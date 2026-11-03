@@ -4,8 +4,6 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FeaturesResponseSchema, type ActionExecutorContext, type ActionExecutorDeps } from '@happier-dev/protocol';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
-import { createBlockingApprovalCoordinator } from '@happier-dev/protocol/actions/blockingApprovalCoordinator';
-import { ApprovalRequestSchema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { decideApprovalRequestTransition } from '@happier-dev/protocol/approvals/approvalRequestTransition';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1 } from '@happier-dev/protocol/account/settings/sessionAgentSpawnPolicyV1';
@@ -116,27 +114,12 @@ describe('Voice run caller-turn admission', () => {
     const manager = createManager();
     let approval: Parameters<NonNullable<ActionExecutorDeps['approvalsCreate']>>[0]['request'] | null = null;
     let clientOpened = false;
-    const coordinator = createBlockingApprovalCoordinator();
-    let notifyWaiting!: () => void;
-    const waiting = new Promise<void>((resolve) => { notifyWaiting = resolve; });
-    const approvalsWaitForDecision: NonNullable<ActionExecutorDeps['approvalsWaitForDecision']> = async (args) => {
-      const pendingDecision = coordinator.waitForDecision(args);
-      notifyWaiting();
-      const decision = await pendingDecision;
-      // This Action fixture accepts Action approval requests, not the other
-      // request families supported by the shared blocking coordinator.
-      return { ...decision, request: ApprovalRequestSchema.parse(decision.request) };
-    };
     const executor = createActionExecutor({
       ...createDeps(manager),
       // Artifact persistence and client placement are external boundaries. All
       // approval decisions, replay authority and run ingress remain real.
       approvalsCreate: async ({ request }) => { approval = request; return { artifactId: 'voice-open-approval' }; },
       approvalsGet: async () => approval,
-      approvalsWaitForDecision,
-      approvalsResolveBlockingDecision: async (args) => {
-        return await coordinator.resolveBlockingDecision({ ...args, request: ApprovalRequestSchema.parse(args.request) });
-      },
       approvalsUpdate: async ({ request }) => {
         if (!approval) throw new Error('Approval was not persisted');
         const transition = decideApprovalRequestTransition(approval, request);
@@ -172,16 +155,17 @@ describe('Voice run caller-turn admission', () => {
     const input = actionId === 'ui.voice_global.start'
       ? { target: { kind: 'global' }, expectedAttempt: null }
       : { expectedAttempt: 'voice-attempt' };
-    const opening = executor.execute(actionId, input, agent);
-    await waiting;
-    expect(approval).toMatchObject({ status: 'open', actionId, approval: { flow: 'blocking' } });
+    // Durable Agent proposals return Artifact custody. The person's later
+    // decision replays the opening; it must not promote the original caller.
+    const opening = await executor.execute(actionId, input, agent);
+    expect(opening).toMatchObject({ ok: true, result: { kind: 'approval_request_created', artifactId: 'voice-open-approval', actionId } });
+    expect(approval).toMatchObject({ status: 'open', actionId, approval: { flow: 'deferred' } });
     expect(clientOpened).toBe(false);
     const decision = await executor.execute('approval.request.decide', { artifactId: 'voice-open-approval', decision: 'approve' }, {
       surface: 'ui', authority: 'present_user', serverId: 'home', actionCaller: { kind: 'host' },
     });
-    expect(decision, JSON.stringify(decision)).toMatchObject({ ok: true, result: { status: 'approved' } });
-    const opened = await opening;
-    expect(opened, JSON.stringify(opened)).toMatchObject({ ok: true, result: { status: 'completed' } });
+    expect(decision, JSON.stringify(decision)).toMatchObject({ ok: true, result: { status: 'executed' } });
+    expect(approval).toMatchObject({ status: 'executed', execution: { ok: true, result: { status: 'completed' } } });
     expect(clientOpened).toBe(true);
     await manager.recoverRetainedRuns();
     const before = structuredClone(manager.get('voice-run'));
