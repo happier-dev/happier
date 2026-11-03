@@ -6,7 +6,6 @@ vi.mock("@/utils/logging/log", () => ({ log: vi.fn() }));
 vi.mock("@/app/monitoring/metrics/index", () => ({
     sessionCacheCounter: { inc: vi.fn() },
     databaseUpdatesSkippedCounter: { inc: vi.fn() },
-    recordPresenceFlushRetry: vi.fn(),
 }));
 
 const dbMocks = createDbMocks({
@@ -18,6 +17,9 @@ const transactionMock = createDbTransactionMock(() => ({
     machine: dbMocks.db.machine,
 }));
 installDbModuleMock({ db: transactionMock.wrapDb(dbMocks.db) });
+
+// Resolve the real owner before fake timers control its behavioral deadlines.
+await import('./sessionCache');
 
 describe("ActivityCache session observations", () => {
     let activityCache: any | null = null;
@@ -39,17 +41,6 @@ describe("ActivityCache session observations", () => {
         await activityCache?.shutdown?.();
         activityCache = null;
         vi.useRealTimers();
-    });
-
-    it("has no local session flush that can persist positive reachability or thinking", async () => {
-        ({ activityCache } = await import("./sessionCache"));
-        activityCache.enableDbFlush();
-        await expect(activityCache.isSessionValid("s1", "u1")).resolves.toBe(true);
-
-        await (activityCache as any).flushPendingUpdates();
-
-        expect(dbMocks.db.session.updateMany).not.toHaveBeenCalled();
-        expect(transactionMock.transaction).not.toHaveBeenCalled();
     });
 
     it("uses the caller-provided clock when cleaning up session observations", async () => {

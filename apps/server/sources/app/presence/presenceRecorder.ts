@@ -1,9 +1,66 @@
-import { activityCache } from "./sessionCache";
-import { shouldPublishPresenceToRedis } from "./presenceMode";
-import { publishMachineAlive } from "./presenceRedisQueue";
-import { log } from "@/utils/logging/log";
 import { reassertSessionLatestTurnStatus } from "@/app/session/sessionWriteService";
 import { publishSessionTurnMutationUpdate } from "@/app/session/turns/publishSessionTurnMutationUpdate";
+import { afterTx, inTx, type Tx } from '@/storage/inTx';
+import { lockMachinePresenceInTx, persistMachinePresence, type MachinePresenceRow } from './persistMachinePresence';
+import { resolvePresenceTimeoutConfig, renewLocalMachinePresenceDeadline } from './timeout';
+import { publishPresenceDeadline } from './presenceRedisQueue';
+import { db } from '@/storage/db';
+import { resolveCurrentMachineRecipientAccountIdsInTx } from '@/app/machines/machineAccess';
+
+export interface MachineAliveAdmission {
+    recipientAccountIds: string[];
+    wasOffline: boolean;
+    lastActiveAt: Date;
+}
+
+/** The containing semantic writer may share the same admitted observation. */
+export async function recordMachineAliveInTx(
+    tx: Tx,
+    params: Readonly<{ accountId: string; machineId: string; timestamp: number }>,
+    admitInTx: (tx: Tx, machine: MachinePresenceRow) => Promise<MachineAliveAdmission | null>,
+    alreadyLockedRow?: MachinePresenceRow,
+): Promise<MachineAliveAdmission | null> {
+    const machine = await lockMachinePresenceInTx(tx, params.machineId, alreadyLockedRow);
+    if (!machine) return null;
+    const current = await admitInTx(tx, machine);
+    // Admission may wait for authority or a row lock. An expired beat cannot
+    // manufacture a recovery after that wait; future stored facts never regress.
+    if (!current || !Number.isFinite(params.timestamp)
+        || params.timestamp + resolvePresenceTimeoutConfig().machineTimeoutMs <= Date.now()
+        || params.timestamp < current.lastActiveAt.getTime()
+        || await persistMachinePresence(tx, params) !== 1) return null;
+    afterTx(tx, () => {
+        renewLocalMachinePresenceDeadline({ ...params, lastActiveAt: new Date(params.timestamp) });
+        if (current.wasOffline) void publishPresenceDeadline({ kind: 'machine', accountId: params.accountId,
+            id: params.machineId, activeAt: params.timestamp });
+    });
+    return current;
+}
+
+export async function recordMachineAlive(
+    params: Readonly<{ accountId: string; machineId: string; timestamp: number }>,
+    admitInTx: (tx: Tx, machine: MachinePresenceRow) => Promise<MachineAliveAdmission | null>,
+    currentPublisher?: Readonly<{ installationId: string | null; isCurrent: () => Promise<boolean> }>,
+): Promise<MachineAliveAdmission | null> {
+    if (currentPublisher) {
+        // Connect already admitted this publisher. The live ownership lookup
+        // withdraws superseded sockets; lifecycle and installation are fenced
+        // by the existing monotonic write itself, without a second admission.
+        if (!await currentPublisher.isCurrent()) return null;
+        if (Number.isFinite(params.timestamp)
+            && params.timestamp + resolvePresenceTimeoutConfig().machineTimeoutMs > Date.now()
+            && await persistMachinePresence(db, params, currentPublisher) === 1) {
+            renewLocalMachinePresenceDeadline({ ...params, lastActiveAt: new Date(params.timestamp) });
+            return {
+                recipientAccountIds: await resolveCurrentMachineRecipientAccountIdsInTx(db, params.machineId, params.accountId),
+                wasOffline: false, lastActiveAt: new Date(params.timestamp),
+            };
+        }
+        // Offline recovery still owns its locked transition and notification.
+        // A refused/future observation reaches that same owner without renewal.
+    }
+    return await inTx(tx => recordMachineAliveInTx(tx, params, admitInTx));
+}
 
 type SessionAliveRecord = Readonly<{
     accountId: string;
@@ -29,17 +86,5 @@ export async function recordSessionAlive(params: SessionAliveRecord): Promise<vo
                 result,
             });
         }
-    }
-}
-
-export async function recordMachineAlive(params: { accountId: string; machineId: string; timestamp: number }): Promise<void> {
-    const shouldPersist = activityCache.queueMachineUpdate(params.machineId, params.timestamp);
-    if (!shouldPersist) return;
-    if (!shouldPublishPresenceToRedis(process.env)) return;
-    try {
-        await publishMachineAlive({ accountId: params.accountId, machineId: params.machineId, timestamp: params.timestamp });
-        activityCache.markMachineUpdateSent(params.machineId, params.timestamp);
-    } catch (e) {
-        log({ module: "presence-recorder", level: "warn" }, `Failed to publish machine alive: ${e}`);
     }
 }

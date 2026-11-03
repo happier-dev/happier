@@ -1,3 +1,5 @@
+import { preparePresenceTimeouts } from './timeout';
+import type { ClientConnection } from '@/app/events/eventPayloadTypes';
 import { randomUUID } from "node:crypto";
 import type { Server, Socket } from "socket.io";
 import {
@@ -84,6 +86,55 @@ describe("session publisher presence on SQLite", () => {
             fence,
         };
     }
+
+    it('expires Session presence at 120 seconds after restart while renewals preserve content clocks', async () => {
+        const seeded = await seed();
+        const base = Date.now();
+        let clock = new Date(base);
+        const presence = createSessionPublisherPresence({ now: () => clock });
+        const socket = {};
+        await presence.registerPublisher({ socket, binding: seeded.binding,
+            completeActivitySnapshot: { state: 'idle', activeCount: 0 } });
+        const read = () => db.session.findUniqueOrThrow({ where: { id: seeded.binding.sessionId }, select: {
+            active: true, lastActiveAt: true, updatedAt: true, metadataVersion: true,
+            agentStateVersion: true, runtimeActivityRevision: true, seq: true,
+        } });
+        const registered = await read();
+        const reader = createFakeSocket({ data: { clientType: 'user-scoped' } });
+        const connection: ClientConnection = { userId: seeded.binding.accountId, connectionType: 'user-scoped',
+            socket: reader as unknown as Socket };
+        eventRouter.addConnection(connection.userId, connection);
+        const offline = () => reader.emit.mock.calls.filter(([event, value]) => event === 'ephemeral'
+            && value?.type === 'activity' && value.id === seeded.binding.sessionId);
+        vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+        vi.setSystemTime(base);
+        let deadlines = preparePresenceTimeouts();
+        try {
+            await deadlines.start();
+            await vi.advanceTimersByTimeAsync(60_000);
+            clock = new Date(Date.now());
+            expect(await presence.touchPublisher({ socket, observedAt: clock })).toMatchObject({ status: 'touched' });
+            expect.soft(await read()).toEqual({ ...registered, lastActiveAt: clock });
+            await vi.advanceTimersByTimeAsync(60_000);
+            expect((await read()).active).toBe(true);
+            await deadlines.stop();
+            deadlines = preparePresenceTimeouts();
+            await deadlines.start();
+            await vi.advanceTimersByTimeAsync(59_999);
+            expect((await read()).active).toBe(true);
+            await vi.advanceTimersByTimeAsync(1);
+            await vi.waitFor(async () => expect(await read()).toEqual({ ...registered, active: false, lastActiveAt: clock }));
+            await vi.waitFor(() => expect(offline().map(([, value]) => value)).toEqual([
+                expect.objectContaining({ id: seeded.binding.sessionId, active: false, activeAt: clock.getTime() }),
+            ]));
+            await vi.advanceTimersByTimeAsync(120_000);
+            expect(offline()).toHaveLength(1);
+        } finally {
+            eventRouter.removeConnection(connection.userId, connection);
+            await deadlines.stop();
+            vi.useRealTimers();
+        }
+    });
 
     it("observes publisher queue admission separately from the active operation for each request", async () => {
         const seeded = await seed();

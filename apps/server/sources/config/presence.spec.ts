@@ -59,4 +59,15 @@ describe("config/presence", () => {
             streamMaxLen: null,
         });
     });
+
+    it('keeps deferred work inside the Machine deadline after released 40-second enqueue spacing', () => {
+        const config = readPresenceRedisWorkerConfigFromEnv({ HAPPIER_PRESENCE_MACHINE_TIMEOUT_MS: '60000',
+            HAPPIER_PRESENCE_WORKER_FLUSH_INTERVAL_MS: '60000',
+            HAPPIER_PRESENCE_WORKER_RECLAIM_IDLE_MS: '60000',
+            HAPPIER_PRESENCE_WORKER_READ_BLOCK_MS: '60000' });
+        expect(config).toMatchObject({ flushIntervalMs: 5_000, reclaimIdleMs: 5_000, readBlockMs: 5_000 });
+        expect(readPresenceRedisWorkerConfigFromEnv({ HAPPIER_PRESENCE_MACHINE_TIMEOUT_MS: '80000' },
+            { flushIntervalMs: 60_000, reclaimIdleMs: 60_000, readBlockMs: 60_000 }))
+            .toMatchObject({ flushIntervalMs: 10_000, reclaimIdleMs: 10_000, readBlockMs: 10_000 });
+    });
 });

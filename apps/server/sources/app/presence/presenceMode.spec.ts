@@ -1,37 +1,26 @@
 import { describe, expect, it } from "vitest";
-import { shouldConsumePresenceFromRedis, shouldEnableLocalPresenceDbFlush, shouldPublishPresenceToRedis } from "./presenceMode";
+import { shouldConsumePresenceFromRedis, shouldPublishPresenceToRedis } from "./presenceMode";
 
 describe("presenceMode", () => {
-    it("enables local DB flush by default (single-process)", () => {
-        const env: any = { SERVER_ROLE: "api" };
-        expect(shouldEnableLocalPresenceDbFlush(env)).toBe(true);
-    });
-
-    it("publishes to redis only in api role with adapter enabled", () => {
-        const base: any = {
+    it("publishes deadline wakes from API and full replicas with Redis enabled", () => {
+        const base = {
             HAPPIER_SOCKET_ADAPTER: "redis-streams",
             REDIS_URL: "redis://localhost:6379",
         };
         expect(shouldPublishPresenceToRedis({ ...base, SERVER_ROLE: "api" })).toBe(true);
-        expect(shouldPublishPresenceToRedis({ ...base, SERVER_ROLE: "all" })).toBe(false);
+        expect(shouldPublishPresenceToRedis({ ...base, SERVER_ROLE: "all" })).toBe(true);
+        expect(shouldPublishPresenceToRedis({ ...base, HAPPIER_SOCKET_ADAPTER: 'memory' })).toBe(false);
         expect(shouldPublishPresenceToRedis({ ...base, SERVER_ROLE: "worker" })).toBe(false);
     });
 
-    it("consumes from redis only in worker role with adapter enabled", () => {
-        const base: any = {
+    it("consumes released observations in worker and full roles with Redis enabled", () => {
+        const base = {
             HAPPIER_SOCKET_ADAPTER: "redis-streams",
             REDIS_URL: "redis://localhost:6379",
         };
         expect(shouldConsumePresenceFromRedis({ ...base, SERVER_ROLE: "worker" })).toBe(true);
         expect(shouldConsumePresenceFromRedis({ ...base, SERVER_ROLE: "api" })).toBe(false);
+        expect(shouldConsumePresenceFromRedis({ ...base, SERVER_ROLE: "all" })).toBe(true);
     });
 
-    it("disables local DB flush when publishing to redis in api role", () => {
-        const env: any = {
-            SERVER_ROLE: "api",
-            HAPPIER_SOCKET_ADAPTER: "redis-streams",
-            REDIS_URL: "redis://localhost:6379",
-        };
-        expect(shouldEnableLocalPresenceDbFlush(env)).toBe(false);
-    });
 });

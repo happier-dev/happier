@@ -1,26 +1,63 @@
 import { randomUUID } from 'node:crypto';
+import { Redis } from 'ioredis';
 import type { Socket } from 'socket.io';
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { decodeBase64 } from 'privacy-kit';
-import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol';
+import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER,
+    buildAccountStoredContentCompatibilityHttpHeadersV1, CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION } from '@happier-dev/protocol';
 
 import { auth } from '@/app/auth/auth';
+import { setAccountStatusInTx } from '@/app/home/governance/accountLifecycle';
 import { eventRouter } from '@/app/events/connectionEventRouter';
 import type { ClientConnection } from '@/app/events/eventPayloadTypes';
-import { removeMachineAccessGrantInTx, setMachineAccessGrantInTx } from '@/app/machines/machineAccess';
+import { removeMachineAccessGrantInTx } from '@/app/machines/machineAccess';
+import { setEligibleMachineAccessGrantInTx as setMachineAccessGrantInTx } from '@/testkit/machineAccessGrant.testkit';
 import { activityCache } from '@/app/presence/sessionCache';
+import { markMachinePresenceInactive, persistMachinePresence } from '@/app/presence/persistMachinePresence';
+import { createMachinePresenceDeadlineOwner, createSessionPresenceDeadlineOwner, startLocalMachinePresenceTimeout, stopLocalMachinePresenceTimeout } from '@/app/presence/timeout';
+import { createSessionPublisherPresence } from '@/app/presence/sessionPublisherPresence';
 import { db } from '@/storage/db';
 import { inTx } from '@/storage/inTx';
+import { TransactionDeadlineExceededError } from '@/storage/transactionErrors';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
+import { observeSqliteRequests } from '@/testkit/observeSqliteRequests';
 import { createFakeSocket, getSocketHandler } from '../testkit/socketHarness';
 import { VERIFIED_MACHINE_INSTALLATION_ID_SOCKET_DATA_KEY } from './machineSocketInstallationProof';
-import { machineUpdateHandler } from './machineUpdateHandler';
+import { machineUpdateHandler, observeMachineAliveFromSocket } from './machineUpdateHandler';
+import { machinesRoutes } from '../routes/machines/machinesRoutes';
+import { withAuthenticatedTestApp } from '../testkit/sqliteFastify';
+import { evaluateAccountStoredContentSocketCompatibility, writeAccountStoredContentCompatibilityForSocket } from '@/app/clientCompatibility/accountStoredContentCompatibility';
+import * as logging from '@/utils/logging/log';
+import { resolveRedisAdapterValidationRedisUrl } from '../../../../scripts/resolveRedisAdapterValidationRedisUrl';
+import { publishMachineAlive, startPresenceRedisWorker } from '@/app/presence/presenceRedisQueue';
+
+const redisBoundary = vi.hoisted(() => ({ client: null as Redis | null }));
+vi.mock('@/storage/redis/redis', () => ({
+    // Separate test cases represent separate server processes, each with its
+    // own real isolated Redis transport rather than the module singleton.
+    getRedisClient: () => {
+        if (!redisBoundary.client) throw new Error('Redis test transport not initialized');
+        return redisBoundary.client;
+    },
+}));
 
 describe('Machine presence through current C41 recipients (real SQLite)', () => {
     let harness: LightSqliteHarness;
+    let redisMemory: Awaited<ReturnType<typeof resolveRedisAdapterValidationRedisUrl>>['redisMemory'] = null;
+    let redisClient: Redis | null = null;
+    beforeEach(() => harness.resetEnv());
+    afterEach(async () => {
+        await stopLocalMachinePresenceTimeout();
+        redisClient?.disconnect();
+        redisClient = null;
+        redisBoundary.client = null;
+        await redisMemory?.stop();
+        redisMemory = null;
+    });
     beforeAll(async () => {
         harness = await createLightSqliteHarness({ tempDirPrefix: 'happier-machine-presence-audience-', initAuth: true,
-            env: { HANDY_MASTER_SECRET: 'machine-presence-audience-secret', AUTH_REQUIRED_LOGIN_PROVIDERS: '', SERVER_ROLE: 'all' } });
+            env: { HANDY_MASTER_SECRET: 'machine-presence-audience-secret', AUTH_REQUIRED_LOGIN_PROVIDERS: '', SERVER_ROLE: 'all',
+                TZ: 'Europe/Amsterdam' } });
     }, 120_000);
     afterAll(async () => { if (harness) await harness.close(); });
 
@@ -34,38 +71,899 @@ describe('Machine presence through current C41 recipients (real SQLite)', () => 
         } });
     }
 
-    it('does not let a delayed presence flush overwrite newer published Machine liveness', async () => {
-        const owner = await db.account.create({ data: { publicKey: `presence-order-${randomUUID()}`, encryptionMode: 'plain' } });
+    it('expires one shared Machine once at its observation fence without editing content clocks', async () => {
+        const account = () => db.account.create({ data: { publicKey: `deadline-${randomUUID()}`, encryptionMode: 'plain' } });
+        const [owner, viewer] = await Promise.all([account(), account()]);
         const machine = await createMachine(owner.id);
-        const base = Date.now() - 100_000;
-        const pending = base + 40_000;
-        const published = base + 80_000;
-        await db.machine.update({ where: { id: machine.id }, data: { active: true, lastActiveAt: new Date(base) } });
-        activityCache.enableDbFlush();
+        const runner = await createMachine(owner.id);
+        await db.machine.update({ where: { id: runner.id }, data: { kind: 'ephemeral_session_runner' } });
+        await inTx(tx => setMachineAccessGrantInTx(tx, { actorAccountId: owner.id, machineId: machine.id,
+            principal: { kind: 'account', accountId: viewer.id }, level: 'view' }));
+        const observedAt = new Date(Date.now() - 60_000);
+        const contentAt = new Date('2025-01-01T00:00:00.000Z');
+        await db.machine.update({ where: { id: machine.id }, data: { active: true, lastActiveAt: observedAt, updatedAt: contentAt } });
+        await db.machine.update({ where: { id: runner.id }, data: { active: true, lastActiveAt: observedAt, updatedAt: contentAt } });
+        // A scanned fence cannot expire a newer admitted observation.
+        expect(await markMachinePresenceInactive(db, { accountId: owner.id, machineId: machine.id,
+            lastActiveAt: new Date(observedAt.getTime() - 1) })).toBe(0);
+        const beforeAccounts = await db.account.findMany({ where: { id: { in: [owner.id, viewer.id] } },
+            select: { id: true, seq: true }, orderBy: { id: 'asc' } });
+        const readers = [owner, viewer].map(account => {
+            const socket = createFakeSocket({ id: `deadline-reader-${account.id}`, data: { clientType: 'user-scoped' } });
+            const connection: ClientConnection = { userId: account.id, connectionType: 'user-scoped', socket: socket as unknown as Socket };
+            eventRouter.addConnection(account.id, connection);
+            return { socket, connection };
+        });
         try {
-            expect(await activityCache.isMachineValid(machine.id, owner.id)).toBe(true);
-            expect(activityCache.queueMachineUpdate(machine.id, pending)).toBe(true);
-            // The independent daemon-state publication commits while this presence batch waits.
-            await db.machine.update({ where: { id: machine.id }, data: { lastActiveAt: new Date(published) } });
-            await activityCache.shutdown();
-
-            expect(await db.machine.findUniqueOrThrow({ where: { id: machine.id }, select: { active: true, lastActiveAt: true } }))
-                .toEqual({ active: true, lastActiveAt: new Date(published) });
-
-            // Equal-time inactive recovery still writes: ignoring every batch is not a valid fix.
-            await db.machine.update({ where: { id: machine.id }, data: { active: false } });
-            activityCache.enableDbFlush();
-            expect(await activityCache.isMachineValid(machine.id, owner.id)).toBe(true);
-            expect(activityCache.queueMachineUpdate(machine.id, published)).toBe(true);
-            await activityCache.shutdown();
-            expect(await db.machine.findUniqueOrThrow({ where: { id: machine.id }, select: { active: true, lastActiveAt: true } }))
-                .toEqual({ active: true, lastActiveAt: new Date(published) });
+            const deadlines = createMachinePresenceDeadlineOwner();
+            try {
+                await deadlines.start();
+                await vi.waitFor(async () => expect((await db.machine.findUniqueOrThrow({ where: { id: runner.id } })).active).toBe(false));
+            } finally { await deadlines.stop(); }
+            expect(await db.machine.findUniqueOrThrow({ where: { id: machine.id }, select: { active: true, lastActiveAt: true, updatedAt: true } }))
+                .toEqual({ active: false, lastActiveAt: observedAt, updatedAt: contentAt });
+            for (const reader of readers) expect(reader.socket.emit.mock.calls.filter(([event, payload]) =>
+                event === 'ephemeral' && payload?.type === 'machine-activity').map(([, payload]) => payload))
+                .toEqual([{ type: 'machine-activity', id: machine.id, active: false, activeAt: observedAt.getTime() }]);
+            expect(await db.machine.findUniqueOrThrow({ where: { id: runner.id }, select: { active: true, updatedAt: true } }))
+                .toEqual({ active: false, updatedAt: contentAt });
+            expect(await db.machine.findUniqueOrThrow({ where: { id: machine.id },
+                select: { metadata: true, metadataVersion: true, daemonState: true, daemonStateVersion: true } }))
+                .toEqual({ metadata: machine.metadata, metadataVersion: machine.metadataVersion,
+                    daemonState: machine.daemonState, daemonStateVersion: machine.daemonStateVersion });
+            for (const account of beforeAccounts) {
+                const change = await db.accountChange.findUniqueOrThrow({ where: {
+                    accountId_kind_entityId: { accountId: account.id, kind: 'machine', entityId: machine.id },
+                } });
+                expect(change.cursor).toBeGreaterThan(account.seq);
+            }
         } finally {
-            activityCache.invalidateMachine(machine.id);
+            for (const reader of readers) eventRouter.removeConnection(reader.connection.userId, reader.connection);
         }
     });
 
-    it.each(['installation', 'credential', 'custodian', 'revoked', 'scope', 'private_payload'] as const)(
+    it('recovers committed inactive presence through the canonical current-state read after a lost publication', async () => {
+        const owner = await db.account.create({ data: { publicKey: `presence-reconnect-${randomUUID()}`, encryptionMode: 'plain' } });
+        const machine = await createMachine(owner.id);
+        const observedAt = new Date(Date.now() - 70_000);
+        await db.machine.update({ where: { id: machine.id }, data: { active: true, lastActiveAt: observedAt } });
+        const reader = createFakeSocket({ id: `lost-presence-reader-${owner.id}`, data: { clientType: 'user-scoped' } });
+        const connection: ClientConnection = { userId: owner.id, connectionType: 'user-scoped', socket: reader as unknown as Socket };
+        reader.emit.mockImplementationOnce(() => { throw new Error('simulated loss before transport delivery'); });
+        eventRouter.addConnection(owner.id, connection);
+        const deadlines = createMachinePresenceDeadlineOwner();
+        try {
+            await deadlines.start();
+            await vi.waitFor(async () => expect((await db.machine.findUniqueOrThrow({ where: { id: machine.id } })).active).toBe(false));
+        } finally {
+            await deadlines.stop();
+            eventRouter.removeConnection(owner.id, connection);
+        }
+        expect(reader.emit.mock.calls.filter(([event, payload]) => event === 'ephemeral'
+            && payload?.type === 'machine-activity')).toHaveLength(1);
+        // A fresh owner after the lost delivery bootstraps committed state;
+        // reconnect reads do not depend on the former process's timer memory.
+        await startLocalMachinePresenceTimeout();
+        const token = await auth.createToken(owner.id, undefined, { kind: 'account', authority: 'present_user' });
+        await withAuthenticatedTestApp(machinesRoutes, async app => {
+            const response = await app.inject({ method: 'GET', url: '/v1/machines', headers: {
+                authorization: `Bearer ${token}`,
+                ...buildAccountStoredContentCompatibilityHttpHeadersV1(CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION),
+            } });
+            expect(response.statusCode, response.body).toBe(200);
+            expect(response.json()).toMatchObject([{ id: machine.id, active: false, activeAt: observedAt.getTime() }]);
+        }, { authentication: 'real' });
+    });
+
+    it.each([50_000, 60_000, 120_000])('keeps current authenticated socket heartbeats online with %i ms daemon clock lag', async lag => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const machine = await createMachine(owner.id);
+        const token = await auth.createToken(owner.id, undefined, { kind: 'account', authority: 'present_user' });
+        const publisher = Object.assign(createFakeSocket({ data: {
+            clientType: 'machine-scoped', machineId: machine.id,
+            [VERIFIED_MACHINE_INSTALLATION_ID_SOCKET_DATA_KEY]: machine.installationId,
+        } }), { handshake: { auth: { token } }, disconnect: vi.fn() });
+        const reader = createFakeSocket({ data: { clientType: 'user-scoped' } });
+        const connection: ClientConnection = { userId: owner.id, connectionType: 'user-scoped', socket: reader as unknown as Socket };
+        eventRouter.addConnection(owner.id, connection);
+        machineUpdateHandler(owner.id, publisher as unknown as Socket, { operationSocketBatchLimits: {
+            ok: true, limits: { maxItems: 200, maxSerializedBytes: 524_288 },
+        } });
+        const base = Date.now();
+        vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+        vi.setSystemTime(base);
+        try {
+            // The real connect path observes the server clock before daemon beats.
+            await observeMachineAliveFromSocket({ userId: owner.id, socket: publisher as unknown as Socket,
+                timestamp: base, continuingBeat: false });
+            const verifications = vi.spyOn(auth, 'verifyTokenForRoute');
+            const content = await db.machine.findUniqueOrThrow({ where: { id: machine.id },
+                select: { updatedAt: true, metadataVersion: true, daemonStateVersion: true } });
+            const changes = await db.accountChange.count({ where: { accountId: owner.id } });
+            const alive = getSocketHandler(publisher, 'machine-alive');
+            for (let elapsed = 20_000; elapsed <= 180_000; elapsed += 20_000) {
+                await vi.advanceTimersByTimeAsync(20_000);
+                await alive({ machineId: machine.id, time: base + elapsed - lag });
+                expect.soft(await db.machine.findUniqueOrThrow({ where: { id: machine.id },
+                    select: { active: true, lastActiveAt: true } }))
+                    .toEqual({ active: true, lastActiveAt: new Date(base + elapsed) });
+            }
+            expect.soft(verifications.mock.calls.length).toBe(0);
+            const activity = () => reader.emit.mock.calls.filter(([event, value]) => event === 'ephemeral'
+                && value?.type === 'machine-activity').map(([, value]) => value);
+            expect.soft(activity()).toEqual([{ type: 'machine-activity', id: machine.id, active: true, activeAt: base, reconnected: true },
+                ...Array.from({ length: 9 }, (_, beat) => ({ type: 'machine-activity', id: machine.id,
+                    active: true, activeAt: base + (beat + 1) * 20_000 }))]);
+            expect(await db.machine.findUniqueOrThrow({ where: { id: machine.id },
+                select: { updatedAt: true, metadataVersion: true, daemonStateVersion: true } })).toEqual(content);
+            expect(await db.accountChange.count({ where: { accountId: owner.id } })).toBe(changes);
+            await alive({ machineId: machine.id, time: base + 180_000 - lag, workSummaryChanged: true });
+            expect(activity()).toHaveLength(11);
+            expect(activity()[10]).toMatchObject({ active: true, workSummaryChanged: true });
+            await observeMachineAliveFromSocket({ userId: owner.id, socket: publisher as unknown as Socket,
+                timestamp: base + 180_000, continuingBeat: false });
+            expect(activity()).toHaveLength(12);
+            expect(activity()[11]).toMatchObject({ active: true, reconnected: true });
+            expect(verifications.mock.calls.length).toBe(0);
+            expect(reader.emit.mock.calls.filter(([event, value]) => event === 'ephemeral'
+                && value?.type === 'machine-activity' && value.active === false)).toEqual([]);
+            await vi.advanceTimersByTimeAsync(59_999);
+            expect((await db.machine.findUniqueOrThrow({ where: { id: machine.id } })).active).toBe(true);
+            await vi.advanceTimersByTimeAsync(1);
+            await vi.waitFor(async () => expect((await db.machine.findUniqueOrThrow({ where: { id: machine.id } })).active).toBe(false));
+        } finally {
+            await stopLocalMachinePresenceTimeout();
+            eventRouter.removeConnection(owner.id, connection);
+            vi.restoreAllMocks();
+            vi.useRealTimers();
+        }
+    });
+
+    it('checks peer-renewed Machine deadlines with one read and expires once after beats stop', async () => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const machine = await createMachine(owner.id);
+        const base = Date.now();
+        await db.machine.update({ where: { id: machine.id }, data: { active: true, lastActiveAt: new Date(base) } });
+        const deadlines = createMachinePresenceDeadlineOwner();
+        const transaction = db.$transaction;
+        let transactions = 0;
+        db.$transaction = new Proxy(transaction, { apply(target, receiver, args: unknown[]) {
+            transactions++;
+            return Reflect.apply(target, receiver, args);
+        } });
+        const findUnique = db.machine.findUnique;
+        let reads = 0;
+        let settledReads = 0;
+        db.machine.findUnique = new Proxy(findUnique, { apply(target, receiver, args) {
+            reads++;
+            return Promise.resolve(Reflect.apply(target, receiver, args)).finally(() => { settledReads++; });
+        } });
+        vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+        vi.setSystemTime(base);
+        try {
+            // A peer starts with the committed observation but does not receive
+            // every subsequent beat; those writes renew only their local owner.
+            deadlines.schedule({ accountId: owner.id, machineId: machine.id, lastActiveAt: new Date(base) });
+            for (let elapsed = 20_000; elapsed <= 300_000; elapsed += 20_000) {
+                await vi.advanceTimersByTimeAsync(20_000);
+                // Native database IO can outlive a fake timer callback. Settle
+                // each due read before advancing another observation window.
+                if (elapsed >= 60_000) await vi.waitFor(() => expect(settledReads)
+                    .toBe(Math.floor((elapsed - 60_000) / 40_000) + 1));
+                await persistMachinePresence(db, { accountId: owner.id, machineId: machine.id, timestamp: base + elapsed });
+            }
+            expect(transactions).toBe(0);
+            expect(reads).toBe(7);
+            await vi.advanceTimersByTimeAsync(60_000);
+            await vi.waitFor(async () => expect(await db.machine.findUniqueOrThrow({ where: { id: machine.id },
+                select: { active: true, lastActiveAt: true } }))
+                .toEqual({ active: false, lastActiveAt: new Date(base + 300_000) }));
+            expect(transactions).toBe(1);
+        } finally {
+            db.$transaction = transaction;
+            db.machine.findUnique = findUnique;
+            await deadlines.stop();
+            vi.useRealTimers();
+        }
+    });
+
+    it('reuses semantic publication admission for presence without another Machine read', async () => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const machine = await createMachine(owner.id);
+        await db.machine.update({ where: { id: machine.id }, data: { active: true } });
+        const publisher = createFakeSocket({ data: { clientType: 'machine-scoped', machineId: machine.id,
+            [VERIFIED_MACHINE_INSTALLATION_ID_SOCKET_DATA_KEY]: machine.installationId } });
+        writeAccountStoredContentCompatibilityForSocket(publisher as unknown as Socket,
+            evaluateAccountStoredContentSocketCompatibility({ accountStoredContentCompatibility: { v: 1, protocolVersion: 4 } }));
+        machineUpdateHandler(owner.id, publisher as unknown as Socket, { operationSocketBatchLimits: {
+            ok: true, limits: { maxItems: 200, maxSerializedBytes: 524_288 },
+        } });
+        const transaction = db.$transaction;
+        let presenceReads = 0;
+        db.$transaction = new Proxy(transaction, { apply(target, receiver, args: unknown[]) {
+            const callback = args[0];
+            if (typeof callback !== 'function') return Reflect.apply(target, receiver, args);
+            return Reflect.apply(target, receiver, [async (tx: Parameters<Parameters<typeof inTx>[0]>[0]) => callback(
+                new Proxy(tx, { get(inner, property, innerReceiver) {
+                    if (property !== 'machine') return Reflect.get(inner, property, innerReceiver);
+                    return new Proxy(inner.machine, { get(delegate, method, delegateReceiver) {
+                        const operation = Reflect.get(delegate, method, delegateReceiver);
+                        if (method !== 'findUnique') return operation;
+                        return (...queryArgs: Parameters<typeof tx.machine.findUnique>) => {
+                            if (queryArgs[0]?.select?.lastActiveAt) presenceReads++;
+                            return Reflect.apply(operation, delegate, queryArgs);
+                        };
+                    } });
+                } }),
+            ), ...args.slice(1)]);
+        } });
+        const callback = vi.fn();
+        const daemonState = encodePlainMachineStoredContent({ status: 'offline' });
+        try {
+            await getSocketHandler(publisher, 'machine-update-state')({ machineId: machine.id, daemonState,
+                expectedVersion: machine.daemonStateVersion, expectedDataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER }, callback);
+            expect(callback).toHaveBeenCalledWith({ result: 'success', version: machine.daemonStateVersion + 1, daemonState });
+            expect(presenceReads).toBe(0);
+            expect(await db.machine.findUniqueOrThrow({ where: { id: machine.id }, select: { active: true, daemonState: true } }))
+                .toEqual({ active: true, daemonState });
+        } finally { db.$transaction = transaction; }
+    });
+
+    it('does not query expiry while locally committed Machine observations renew the deadline', async () => {
+        const owner = await db.account.create({ data: { publicKey: `presence-renewal-${randomUUID()}`, encryptionMode: 'plain' } });
+        const machine = await createMachine(owner.id);
+        const publisher = Object.assign(createFakeSocket({ data: { clientType: 'machine-scoped', machineId: machine.id,
+            [VERIFIED_MACHINE_INSTALLATION_ID_SOCKET_DATA_KEY]: machine.installationId } }), { connected: true });
+        const isCurrent = vi.fn(async () => true);
+        machineUpdateHandler(owner.id, publisher as unknown as Socket, { operationSocketBatchLimits: {
+            ok: true, limits: { maxItems: 200, maxSerializedBytes: 524_288 },
+        }, isMachineSocketCurrent: isCurrent });
+        const base = Date.now();
+        await db.machine.update({ where: { id: machine.id }, data: { active: true, lastActiveAt: new Date(base - 1_000) } });
+        const transaction = db.$transaction;
+        let transactions = 0;
+        let machineAcquisitions = 0;
+        let renewals = 0;
+        let audiences = 0;
+        const stopObserving = observeSqliteRequests({ before(request) {
+            if (request.action === 'executeRaw') renewals++;
+            if (request.action === 'queryRaw') audiences++;
+        } });
+        // Count all real transactions, including admitted beat writes, so async
+        // database work remains measured after a fake timer callback returns.
+        db.$transaction = new Proxy(transaction, { apply(target, receiver, args: unknown[]) {
+            transactions++;
+            const callback = args[0];
+            if (typeof callback !== 'function') return Reflect.apply(target, receiver, args);
+            return Reflect.apply(target, receiver, [async (tx: Parameters<Parameters<typeof inTx>[0]>[0]) => callback(
+                new Proxy(tx, { get(inner, property, innerReceiver) {
+                    if (property !== 'machine') return Reflect.get(inner, property, innerReceiver);
+                    return new Proxy(inner.machine, { get(delegate, method, delegateReceiver) {
+                        const operation = Reflect.get(delegate, method, delegateReceiver);
+                        if (method !== 'findUnique') return operation;
+                        return (...queryArgs: Parameters<typeof tx.machine.findUnique>) => {
+                            machineAcquisitions++;
+                            return Reflect.apply(operation, delegate, queryArgs);
+                        };
+                    } });
+                } }),
+            ), ...args.slice(1)]);
+        } });
+        vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+        vi.setSystemTime(base);
+        const advance = (elapsed: number) => vi.advanceTimersByTimeAsync(elapsed);
+        try {
+            const alive = getSocketHandler(publisher, 'machine-alive');
+            await alive({ time: base });
+            for (let elapsed = 20_000; elapsed <= 300_000; elapsed += 20_000) {
+                await advance(20_000);
+                await alive({ time: base + elapsed });
+            }
+            // Already-present beats only renew and acquire the live audience.
+            expect(transactions).toBe(0);
+            expect(machineAcquisitions).toBe(0);
+            expect(renewals).toBe(16);
+            expect(audiences).toBe(16);
+            isCurrent.mockResolvedValue(false);
+            const beforeRefused = renewals;
+            await advance(20_000);
+            await alive({ time: base + 320_000 });
+            expect(renewals).toBe(beforeRefused);
+            expect((await db.machine.findUniqueOrThrow({ where: { id: machine.id } })).lastActiveAt)
+                .toEqual(new Date(base + 300_000));
+            await advance(40_000);
+            await vi.waitFor(async () => expect(await db.machine.findUniqueOrThrow({ where: { id: machine.id },
+                select: { active: true, lastActiveAt: true } }))
+                .toEqual({ active: false, lastActiveAt: new Date(base + 300_000) }));
+            expect(transactions).toBe(1);
+        } finally {
+            stopObserving();
+            db.$transaction = transaction;
+            await stopLocalMachinePresenceTimeout();
+            activityCache.invalidateMachine(machine.id);
+            vi.useRealTimers();
+        }
+    });
+
+    it.each(['all', 'api-memory', 'api-redis', 'all-redis'] as const)('commits each admitted observation before returning and expires at its actual 60-second deadline (%s)', async mode => {
+        const redis = mode.endsWith('redis') ? await resolveRedisAdapterValidationRedisUrl({ env: {} }) : null;
+        redisMemory = redis?.redisMemory ?? null;
+        harness.resetEnv({ SERVER_ROLE: mode.startsWith('all') ? 'all' : 'api',
+            HAPPIER_SOCKET_ADAPTER: redis ? 'redis-streams' : 'memory', REDIS_URL: redis?.redisUrl ?? '' });
+        if (redis) { redisClient = redisBoundary.client = new Redis(redis.redisUrl); await redisClient.ping(); }
+        const owner = await db.account.create({ data: { publicKey: `presence-deadline-${randomUUID()}`, encryptionMode: 'plain' } });
+        const machine = await createMachine(owner.id);
+        const token = await auth.createToken(owner.id, undefined, { kind: 'account', authority: 'present_user' });
+        const base = Date.now();
+        const contentAt = new Date('2025-01-01T00:00:00.000Z');
+        await db.machine.update({ where: { id: machine.id }, data: {
+            active: false, lastActiveAt: new Date(base - 70_000), updatedAt: contentAt,
+        } });
+        const reader = createFakeSocket({ id: `deadline-viewer-${owner.id}`, data: { clientType: 'user-scoped' } });
+        const connection: ClientConnection = { userId: owner.id, connectionType: 'user-scoped', socket: reader as unknown as Socket };
+        eventRouter.addConnection(owner.id, connection);
+        const publisher = Object.assign(createFakeSocket({ id: `deadline-publisher-${machine.id}`, data: {
+            clientType: 'machine-scoped', machineId: machine.id,
+            [VERIFIED_MACHINE_INSTALLATION_ID_SOCKET_DATA_KEY]: machine.installationId,
+        } }), { handshake: { auth: { token } }, disconnect: vi.fn() });
+        machineUpdateHandler(owner.id, publisher as unknown as Socket, { operationSocketBatchLimits: {
+            ok: true, limits: { maxItems: 200, maxSerializedBytes: 524_288 },
+        } });
+        const activities = () => reader.emit.mock.calls.filter(([event, value]) =>
+            event === 'ephemeral' && value?.type === 'machine-activity').map(([, value]) => value);
+        const peerDeadlines = createMachinePresenceDeadlineOwner();
+        vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+        vi.setSystemTime(base);
+        try {
+            const alive = getSocketHandler(publisher, 'machine-alive');
+            await alive({ machineId: machine.id, time: base });
+            expect.soft(await db.machine.findUniqueOrThrow({ where: { id: machine.id },
+                select: { active: true, lastActiveAt: true, updatedAt: true } }))
+                .toEqual({ active: true, lastActiveAt: new Date(base), updatedAt: contentAt });
+            expect(activities()).toEqual([{ type: 'machine-activity', id: machine.id, active: true, activeAt: base }]);
+            await peerDeadlines.start();
+            reader.emit.mockClear();
+            for (const time of [Number.NaN, Number.POSITIVE_INFINITY]) await alive({ machineId: machine.id, time });
+            expect(activities()).toEqual([]);
+            await vi.advanceTimersByTimeAsync(20_000);
+            await alive({ machineId: machine.id, time: base + 20_000, workSummaryChanged: true });
+            expect(activities()).toEqual([{ type: 'machine-activity', id: machine.id, active: true,
+                activeAt: base + 20_000, workSummaryChanged: true }]);
+            expect(await db.machine.findUniqueOrThrow({ where: { id: machine.id },
+                select: { metadata: true, metadataVersion: true, daemonState: true, daemonStateVersion: true } }))
+                .toEqual({ metadata: machine.metadata, metadataVersion: machine.metadataVersion,
+                    daemonState: machine.daemonState, daemonStateVersion: machine.daemonStateVersion });
+            reader.emit.mockClear(); // Continuing heartbeat output is retained until D3/D4.
+            for (let elapsed = 40_000; elapsed <= 300_000; elapsed += 20_000) {
+                await vi.advanceTimersByTimeAsync(20_000);
+                await alive({ machineId: machine.id, time: base + elapsed });
+                expect(await db.machine.findUniqueOrThrow({ where: { id: machine.id }, select: { active: true } }))
+                    .toEqual({ active: true });
+                expect(activities().filter(value => value.active === false)).toEqual([]);
+            }
+            reader.emit.mockClear();
+            await vi.advanceTimersByTimeAsync(59_999);
+            expect(await db.machine.findUniqueOrThrow({ where: { id: machine.id }, select: { active: true } }))
+                .toEqual({ active: true });
+            expect(activities()).toEqual([]);
+            await vi.advanceTimersByTimeAsync(1);
+            await vi.waitFor(async () => expect(await db.machine.findUniqueOrThrow({ where: { id: machine.id },
+                select: { active: true, lastActiveAt: true, updatedAt: true } }))
+                .toEqual({ active: false, lastActiveAt: new Date(base + 300_000), updatedAt: contentAt }));
+            await vi.waitFor(() => expect(activities()).toEqual([
+                { type: 'machine-activity', id: machine.id, active: false, activeAt: base + 300_000 },
+            ]));
+        } finally {
+            eventRouter.removeConnection(owner.id, connection);
+            activityCache.invalidateMachine(machine.id);
+            await peerDeadlines.stop();
+            await stopLocalMachinePresenceTimeout();
+            vi.useRealTimers();
+        }
+    });
+
+    it('enrolls an already-running empty headless worker after the all producer consumes and ACKs recovery', async () => {
+        const redis = await resolveRedisAdapterValidationRedisUrl({ env: {} });
+        redisMemory = redis.redisMemory;
+        harness.resetEnv({ SERVER_ROLE: 'all', HAPPIER_SOCKET_ADAPTER: 'redis-streams', REDIS_URL: redis.redisUrl });
+        const producerRedis = redisClient = redisBoundary.client = new Redis(redis.redisUrl);
+        const producer = startPresenceRedisWorker({ consumerName: 'all-producer', readBlockMs: 1 });
+        const survivorRedis = new Redis(redis.redisUrl);
+        let releaseGroupRead!: () => void;
+        const groupGate = new Promise<void>(resolve => { releaseGroupRead = resolve; });
+        // Hold only this worker's group-read transport. Its broadcast reader
+        // must receive independently even when another consumer ACKs the wake.
+        const originalRead = survivorRedis.xreadgroup.bind(survivorRedis);
+        vi.spyOn(survivorRedis, 'xreadgroup').mockImplementation(async (...args) => {
+            await groupGate;
+            return originalRead(...args);
+        });
+        redisBoundary.client = survivorRedis;
+        const machines = createMachinePresenceDeadlineOwner();
+        const sessions = createSessionPresenceDeadlineOwner();
+        const enrolled: string[] = [];
+        const survivor = startPresenceRedisWorker({ consumerName: 'headless-survivor', readBlockMs: 1,
+            onDeadline: observation => {
+                enrolled.push(observation.id);
+                if (observation.kind === 'machine') machines.schedule({ accountId: observation.accountId,
+                    machineId: observation.id, lastActiveAt: new Date(observation.activeAt) });
+                else sessions.schedule(new Date(observation.activeAt));
+            } });
+        await survivor.ready;
+        await Promise.all([machines.start(), sessions.start()]); // Empty census before either activation.
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const machine = await createMachine(owner.id);
+        const session = await db.session.create({ data: { accountId: owner.id, tag: randomUUID(), metadata: '{}', active: false } });
+        await db.accessKey.create({ data: { accountId: owner.id, machineId: machine.id, sessionId: session.id, data: 'fixture' } });
+        const token = await auth.createToken(owner.id, undefined, { kind: 'account', authority: 'present_user' });
+        const publisher = Object.assign(createFakeSocket({ data: { clientType: 'machine-scoped', machineId: machine.id,
+            [VERIFIED_MACHINE_INSTALLATION_ID_SOCKET_DATA_KEY]: machine.installationId } }),
+            { handshake: { auth: { token } }, disconnect: vi.fn() });
+        const reader = createFakeSocket({ data: { clientType: 'user-scoped' } });
+        const connection: ClientConnection = { userId: owner.id, connectionType: 'user-scoped', socket: reader as unknown as Socket };
+        eventRouter.addConnection(owner.id, connection);
+        machineUpdateHandler(owner.id, publisher as unknown as Socket, { operationSocketBatchLimits: {
+            ok: true, limits: { maxItems: 200, maxSerializedBytes: 524_288 },
+        } });
+        const base = Date.now();
+        vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+        vi.setSystemTime(base);
+        try {
+            redisBoundary.client = producerRedis;
+            await getSocketHandler(publisher, 'machine-alive')({ time: base, machineId: machine.id });
+            expect(await createSessionPublisherPresence().registerPublisher({ socket: {},
+                binding: { accountId: owner.id, machineId: machine.id, sessionId: session.id },
+                completeActivitySnapshot: { state: 'idle', activeCount: 0 } })).toMatchObject({ status: 'registered' });
+            await vi.waitFor(async () => expect((await producerRedis.xpending('presence:alive:v1', 'presence-worker'))[0]).toBe(2));
+            await vi.advanceTimersByTimeAsync(5_000);
+            await vi.waitFor(async () => expect((await producerRedis.xpending('presence:alive:v1', 'presence-worker'))[0]).toBe(0));
+            await producer.stop();
+            await stopLocalMachinePresenceTimeout(); // Producer loss after consuming/ACKing both wakes.
+            await vi.advanceTimersByTimeAsync(55_000);
+            await vi.waitFor(async () => expect((await db.machine.findUniqueOrThrow({ where: { id: machine.id } })).active).toBe(false));
+            await vi.advanceTimersByTimeAsync(60_000);
+            await vi.waitFor(async () => expect((await db.session.findUniqueOrThrow({ where: { id: session.id } })).active).toBe(false));
+            expect(enrolled).toEqual(expect.arrayContaining([machine.id, session.id]));
+            const falsePackets = reader.emit.mock.calls.filter(([event, value]) => event === 'ephemeral'
+                && (value?.type === 'machine-activity' || value?.type === 'activity') && value.active === false);
+            expect(falsePackets.map(([, value]) => value.id).sort()).toEqual([machine.id, session.id].sort());
+        } finally {
+            releaseGroupRead();
+            await Promise.all([producer.stop(), survivor.stop(), machines.stop(), sessions.stop(), stopLocalMachinePresenceTimeout()]);
+            survivorRedis.disconnect();
+            eventRouter.removeConnection(owner.id, connection);
+            vi.useRealTimers();
+        }
+    });
+
+    it('expires a released Redis producer observation through the deadline owner without a scan', async () => {
+        const redis = await resolveRedisAdapterValidationRedisUrl({ env: {} });
+        redisMemory = redis.redisMemory;
+        harness.resetEnv({ SERVER_ROLE: 'worker', HAPPIER_SOCKET_ADAPTER: 'redis-streams', REDIS_URL: redis.redisUrl });
+        redisClient = redisBoundary.client = new Redis(redis.redisUrl);
+        await redisClient.ping();
+        const owner = await db.account.create({ data: { publicKey: `legacy-deadline-${randomUUID()}`, encryptionMode: 'plain' } });
+        const machine = await createMachine(owner.id);
+        const base = Date.now();
+        const contentAt = new Date('2025-01-01T00:00:00.000Z');
+        await db.machine.update({ where: { id: machine.id }, data: {
+            active: false, lastActiveAt: new Date(base - 70_000), updatedAt: contentAt,
+        } });
+        const reader = createFakeSocket({ data: { clientType: 'user-scoped' } });
+        const connection: ClientConnection = { userId: owner.id, connectionType: 'user-scoped', socket: reader as unknown as Socket };
+        eventRouter.addConnection(owner.id, connection);
+        vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+        vi.setSystemTime(base);
+        // Keep the real blocking Redis connection responsive to ACKs in this
+        // fake-clock probe; persistence still uses the canonical 5 s cadence.
+        const worker = startPresenceRedisWorker({ readBlockMs: 1 });
+        const workerRedis = redisClient;
+        // A blocking worker read and an API producer are separate processes.
+        redisClient = redisBoundary.client = new Redis(redis.redisUrl);
+        try {
+            // A released API producer writes the existing stream shape, not a
+            // current process-local scheduling hook. The worker must own it.
+            await vi.waitFor(async () => expect(await redisClient!.xinfo('GROUPS', 'presence:alive:v1')).not.toEqual([]));
+            await publishMachineAlive({ accountId: owner.id, machineId: machine.id, timestamp: base });
+            await vi.waitFor(async () => {
+                const pending = await redisClient!.xpending('presence:alive:v1', 'presence-worker');
+                expect(Array.isArray(pending) ? pending[0] : null).toBe(1);
+            });
+            await vi.advanceTimersByTimeAsync(5_000);
+            await vi.waitFor(async () => expect(await db.machine.findUniqueOrThrow({ where: { id: machine.id },
+                select: { active: true, lastActiveAt: true, updatedAt: true } }))
+                .toEqual({ active: true, lastActiveAt: new Date(base), updatedAt: contentAt }));
+            await vi.advanceTimersByTimeAsync(54_999);
+            expect((await db.machine.findUniqueOrThrow({ where: { id: machine.id } })).active).toBe(true);
+            await vi.advanceTimersByTimeAsync(1);
+            await vi.waitFor(async () => expect(await db.machine.findUniqueOrThrow({ where: { id: machine.id },
+                select: { active: true, lastActiveAt: true, updatedAt: true } }))
+                .toEqual({ active: false, lastActiveAt: new Date(base), updatedAt: contentAt }));
+            expect(reader.emit.mock.calls.filter(([event, value]) => event === 'ephemeral'
+                && value?.type === 'machine-activity' && value.id === machine.id).map(([, value]) => value))
+                .toEqual([{ type: 'machine-activity', id: machine.id, active: false, activeAt: base }]);
+            await publishMachineAlive({ accountId: owner.id, machineId: machine.id, timestamp: base });
+            await vi.waitFor(async () => {
+                const pending = await redisClient!.xpending('presence:alive:v1', 'presence-worker');
+                expect(Array.isArray(pending) ? pending[0] : null).toBe(1);
+            });
+            await vi.advanceTimersByTimeAsync(5_000);
+            // A delayed released-producer entry is consumed, never a recovery.
+            await vi.waitFor(async () => {
+                const pending = await redisClient!.xpending('presence:alive:v1', 'presence-worker');
+                expect(Array.isArray(pending) ? pending[0] : null).toBe(0);
+            });
+            expect((await db.machine.findUniqueOrThrow({ where: { id: machine.id } })).active).toBe(false);
+            // A fresh released observation recovers the same committed fact
+            // and must wake an already-running Event observer, not only cold reads.
+            const recoveredAt = Date.now();
+            await publishMachineAlive({ accountId: owner.id, machineId: machine.id, timestamp: recoveredAt });
+            await vi.waitFor(async () => expect((await redisClient!.xpending('presence:alive:v1', 'presence-worker'))[0]).toBe(1));
+            await vi.advanceTimersByTimeAsync(5_000);
+            await vi.waitFor(async () => expect((await db.machine.findUniqueOrThrow({ where: { id: machine.id } })).active).toBe(true));
+        } finally {
+            await worker.stop();
+            workerRedis.disconnect();
+            eventRouter.removeConnection(owner.id, connection);
+            await stopLocalMachinePresenceTimeout();
+            vi.useRealTimers();
+        }
+    });
+
+    it('keeps released 40-second enqueue traffic online after a consumer crashes before its five-second flush', async () => {
+        const redis = await resolveRedisAdapterValidationRedisUrl({ env: {} });
+        redisMemory = redis.redisMemory;
+        harness.resetEnv({ SERVER_ROLE: 'worker', HAPPIER_SOCKET_ADAPTER: 'redis-streams', REDIS_URL: redis.redisUrl });
+        const control = redisClient = redisBoundary.client = new Redis(redis.redisUrl);
+        await control.xgroup('CREATE', 'presence:alive:v1', 'presence-worker', '0', 'MKSTREAM');
+        const crashedConsumer = new Redis(redis.redisUrl);
+        const survivorRedis = new Redis(redis.redisUrl);
+        let releaseRead!: () => void;
+        const gate = new Promise<void>(resolve => { releaseRead = resolve; });
+        const originalRead = survivorRedis.xreadgroup.bind(survivorRedis);
+        vi.spyOn(survivorRedis, 'xreadgroup').mockImplementation(async (...args) => { await gate; return originalRead(...args); });
+        redisBoundary.client = survivorRedis;
+        const survivor = startPresenceRedisWorker({ consumerName: 'legacy-survivor', readBlockMs: 1 });
+        await survivor.ready;
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const machine = await createMachine(owner.id);
+        const base = Date.now();
+        await persistMachinePresence(db, { accountId: owner.id, machineId: machine.id, timestamp: base });
+        const reader = createFakeSocket({ data: { clientType: 'user-scoped' } });
+        const connection: ClientConnection = { userId: owner.id, connectionType: 'user-scoped', socket: reader as unknown as Socket };
+        eventRouter.addConnection(owner.id, connection);
+        vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+        vi.setSystemTime(base);
+        try {
+            await startLocalMachinePresenceTimeout();
+            await vi.advanceTimersByTimeAsync(40_000);
+            redisBoundary.client = control;
+            await publishMachineAlive({ accountId: owner.id, machineId: machine.id, timestamp: base + 40_000 });
+            // Exact Redis boundary state after the worker's XREADGROUP, before
+            // its first five-second SQL flush. Disconnect leaves real PEL custody.
+            const consumed = await crashedConsumer.xreadgroup('GROUP', 'presence-worker', 'crashed-before-flush',
+                'COUNT', 1, 'STREAMS', 'presence:alive:v1', '>') as [string, [string, string[]][]][];
+            const entryId = consumed[0][1][0][0];
+            crashedConsumer.disconnect();
+            releaseRead();
+            for (const elapsed of [45_000, 50_000, 55_000]) {
+                // Redis has a real clock while the deadline harness is virtual.
+                // Set only this disposable PEL entry's elapsed idle age to match.
+                await control.xclaim('presence:alive:v1', 'presence-worker', 'crashed-before-flush', 0,
+                    entryId, 'IDLE', elapsed - 40_000, 'JUSTID');
+                await vi.advanceTimersByTimeAsync(base + elapsed - Date.now());
+                await new Promise<void>(resolve => setImmediate(resolve));
+            }
+            // Let the real blocking Redis read settle inside the recovery
+            // window before advancing the virtual Machine deadline to 60 s.
+            await vi.waitFor(async () => expect((await db.machine.findUniqueOrThrow({ where: { id: machine.id } })).lastActiveAt)
+                .toEqual(new Date(base + 40_000)));
+            await vi.advanceTimersByTimeAsync(base + 60_000 - Date.now());
+            await vi.waitFor(async () => expect(await db.machine.findUniqueOrThrow({ where: { id: machine.id },
+                select: { active: true, lastActiveAt: true } }))
+                .toEqual({ active: true, lastActiveAt: new Date(base + 40_000) }));
+            expect(reader.emit.mock.calls.filter(([event, value]) => event === 'ephemeral'
+                && value?.type === 'machine-activity' && value.active === false)).toEqual([]);
+        } finally {
+            releaseRead();
+            await survivor.stop();
+            survivorRedis.disconnect();
+            crashedConsumer.disconnect();
+            await stopLocalMachinePresenceTimeout();
+            eventRouter.removeConnection(owner.id, connection);
+            vi.useRealTimers();
+        }
+    });
+
+    it('bootstraps a stored future observation without repair, then recovers only from a fresh admitted beat', async () => {
+        const owner = await db.account.create({ data: { publicKey: `presence-future-${randomUUID()}`, encryptionMode: 'plain' } });
+        const machine = await createMachine(owner.id);
+        const token = await auth.createToken(owner.id, undefined, { kind: 'account', authority: 'present_user' });
+        const base = Date.now();
+        const future = base + 3_600_000;
+        const contentAt = new Date('2025-01-01T00:00:00.000Z');
+        await db.machine.update({ where: { id: machine.id }, data: { active: true,
+            lastActiveAt: new Date(future), updatedAt: contentAt } });
+        const publisher = Object.assign(createFakeSocket({ data: { clientType: 'machine-scoped', machineId: machine.id,
+            [VERIFIED_MACHINE_INSTALLATION_ID_SOCKET_DATA_KEY]: machine.installationId } }),
+            { handshake: { auth: { token } }, disconnect: vi.fn() });
+        machineUpdateHandler(owner.id, publisher as unknown as Socket, { operationSocketBatchLimits: {
+            ok: true, limits: { maxItems: 200, maxSerializedBytes: 524_288 },
+        } });
+        const deadlines = createMachinePresenceDeadlineOwner();
+        vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+        vi.setSystemTime(base);
+        try {
+            await deadlines.start();
+            const alive = getSocketHandler(publisher, 'machine-alive');
+            await alive({ machineId: machine.id, time: base });
+            await vi.advanceTimersByTimeAsync(3_659_999);
+            expect(await db.machine.findUniqueOrThrow({ where: { id: machine.id },
+                select: { active: true, lastActiveAt: true, updatedAt: true } }))
+                .toEqual({ active: true, lastActiveAt: new Date(future), updatedAt: contentAt });
+            await vi.advanceTimersByTimeAsync(1);
+            await vi.waitFor(async () => expect(await db.machine.findUniqueOrThrow({ where: { id: machine.id },
+                select: { active: true, lastActiveAt: true, updatedAt: true } }))
+                .toEqual({ active: false, lastActiveAt: new Date(future), updatedAt: contentAt }));
+            await alive({ machineId: machine.id, time: Date.now() });
+            expect(await db.machine.findUniqueOrThrow({ where: { id: machine.id },
+                select: { active: true, lastActiveAt: true, updatedAt: true } }))
+                .toEqual({ active: true, lastActiveAt: new Date(Date.now()), updatedAt: contentAt });
+        } finally {
+            await deadlines.stop();
+            await stopLocalMachinePresenceTimeout();
+            activityCache.invalidateMachine(machine.id);
+            vi.useRealTimers();
+        }
+    });
+
+    it.each(['armed', 'late-bootstrap'] as const)('does not let a retired row future deadline hide a newly admitted Machine lifetime (%s)', async timing => {
+        const previousOwner = await db.account.create({ data: { publicKey: `presence-prior-${randomUUID()}`, encryptionMode: 'plain' } });
+        const machine = await createMachine(previousOwner.id);
+        const base = Date.now();
+        await db.machine.update({ where: { id: machine.id }, data: { active: true, lastActiveAt: new Date(base + 3_600_000) } });
+        vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+        vi.setSystemTime(base);
+        const findMany = db.machine.findMany;
+        let releaseBootstrap!: () => void;
+        let capturedBootstrap!: () => void;
+        const released = new Promise<void>(resolve => { releaseBootstrap = resolve; });
+        const captured = new Promise<void>(resolve => { capturedBootstrap = resolve; });
+        let bootstrap: ReturnType<typeof startLocalMachinePresenceTimeout> | undefined;
+        try {
+            if (timing === 'late-bootstrap') {
+                // Hold only the real DB census result after it captured the old
+                // row. The new public admission can commit before it is armed.
+                db.machine.findMany = new Proxy(findMany, { apply(target, receiver, args: unknown[]) {
+                    return Promise.resolve(Reflect.apply(target, receiver, args)).then(async rows => {
+                        capturedBootstrap();
+                        await released;
+                        return rows;
+                    });
+                } });
+                bootstrap = startLocalMachinePresenceTimeout();
+                await captured;
+                db.machine.findMany = findMany;
+            } else await startLocalMachinePresenceTimeout();
+            // A deleted row is not the installation identity of a subsequent
+            // registration, even when a caller reuses its public Machine id.
+            await db.machine.delete({ where: { id: machine.id } });
+            const owner = await db.account.create({ data: { publicKey: `presence-next-${randomUUID()}`, encryptionMode: 'plain' } });
+            await db.machine.create({ data: { id: machine.id, accountId: owner.id, installationId: 'next-installation',
+                metadata: machine.metadata, daemonState: machine.daemonState, dataEncryptionKey: machine.dataEncryptionKey,
+                active: false, lastActiveAt: new Date(base) } });
+            const token = await auth.createToken(owner.id, undefined, { kind: 'account', authority: 'present_user' });
+            const publisher = Object.assign(createFakeSocket({ data: { clientType: 'machine-scoped', machineId: machine.id,
+                [VERIFIED_MACHINE_INSTALLATION_ID_SOCKET_DATA_KEY]: 'next-installation' } }),
+                { handshake: { auth: { token } }, disconnect: vi.fn() });
+            machineUpdateHandler(owner.id, publisher as unknown as Socket, { operationSocketBatchLimits: {
+                ok: true, limits: { maxItems: 200, maxSerializedBytes: 524_288 },
+            } });
+            await getSocketHandler(publisher, 'machine-alive')({ time: base });
+            releaseBootstrap();
+            await bootstrap;
+            expect(await db.machine.findUniqueOrThrow({ where: { id: machine.id }, select: { active: true, lastActiveAt: true } }))
+                .toEqual({ active: true, lastActiveAt: new Date(base) });
+            await vi.advanceTimersByTimeAsync(60_000);
+            await vi.waitFor(async () => expect(await db.machine.findUniqueOrThrow({ where: { id: machine.id },
+                select: { active: true, lastActiveAt: true } })).toEqual({ active: false, lastActiveAt: new Date(base) }));
+        } finally {
+            db.machine.findMany = findMany;
+            releaseBootstrap();
+            await bootstrap;
+            await stopLocalMachinePresenceTimeout();
+            activityCache.invalidateMachine(machine.id);
+            vi.useRealTimers();
+        }
+    });
+
+    it('retains failed SQL deadline custody until the existing timeout cadence can settle it', async () => {
+        const owner = await db.account.create({ data: { publicKey: `presence-retry-${randomUUID()}`, encryptionMode: 'plain' } });
+        const machine = await createMachine(owner.id);
+        const base = Date.now();
+        await db.machine.update({ where: { id: machine.id }, data: { active: true, lastActiveAt: new Date(base) } });
+        const reader = createFakeSocket({ id: `retry-viewer-${owner.id}`, data: { clientType: 'user-scoped' } });
+        const connection: ClientConnection = { userId: owner.id, connectionType: 'user-scoped', socket: reader as unknown as Socket };
+        eventRouter.addConnection(owner.id, connection);
+        const deadlines = createMachinePresenceDeadlineOwner();
+        vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+        vi.setSystemTime(base);
+        const transaction = db.$transaction;
+        let transactionCalls = 0;
+        // The exported client is a routing Proxy, not a spy-able own method.
+        // Fail only its real database transaction boundary, then restore it.
+        db.$transaction = new Proxy(transaction, { apply(target, receiver, args: unknown[]) {
+            transactionCalls++;
+            if (transactionCalls === 1) return Promise.reject(new Error('transient database boundary unavailable'));
+            return Reflect.apply(target, receiver, args);
+        } });
+        try {
+            deadlines.schedule({ accountId: owner.id, machineId: machine.id, lastActiveAt: new Date(base) });
+            await vi.advanceTimersByTimeAsync(60_000);
+            await vi.waitFor(() => expect(transactionCalls).toBe(1));
+            expect(await db.machine.findUniqueOrThrow({ where: { id: machine.id }, select: { active: true } }))
+                .toEqual({ active: true });
+            await vi.advanceTimersByTimeAsync(60_000);
+            await vi.waitFor(async () => expect(await db.machine.findUniqueOrThrow({ where: { id: machine.id },
+                select: { active: true, lastActiveAt: true } })).toEqual({ active: false, lastActiveAt: new Date(base) }));
+            await vi.waitFor(() => expect(reader.emit.mock.calls.filter(([event, payload]) =>
+                event === 'ephemeral' && payload?.type === 'machine-activity')).toHaveLength(1));
+            const settled = transactionCalls;
+            await vi.advanceTimersByTimeAsync(120_000);
+            expect(transactionCalls).toBe(settled);
+        } finally {
+            db.$transaction = transaction;
+            await deadlines.stop();
+            eventRouter.removeConnection(owner.id, connection);
+            vi.useRealTimers();
+        }
+    });
+
+
+    it.each(['current', 'future'] as const)('admits a genuine daemon state publication through the same presence deadline (%s)', async observation => {
+        const owner = await db.account.create({ data: { publicKey: `presence-state-${randomUUID()}`, encryptionMode: 'plain' } });
+        const machine = await createMachine(owner.id);
+        const token = await auth.createToken(owner.id, undefined, { kind: 'account', authority: 'present_user' });
+        const base = Date.now();
+        const priorObservation = observation === 'future' ? base + 3_600_000 : base - 70_000;
+        await db.machine.update({ where: { id: machine.id }, data: { active: observation === 'future',
+            lastActiveAt: new Date(priorObservation), updatedAt: new Date('2025-01-01T00:00:00.000Z') } });
+        const publisher = Object.assign(createFakeSocket({ data: { clientType: 'machine-scoped', machineId: machine.id,
+            [VERIFIED_MACHINE_INSTALLATION_ID_SOCKET_DATA_KEY]: machine.installationId } }),
+            { handshake: { auth: { token } }, disconnect: vi.fn() });
+        machineUpdateHandler(owner.id, publisher as unknown as Socket, { operationSocketBatchLimits: {
+            ok: true, limits: { maxItems: 200, maxSerializedBytes: 524_288 },
+        } });
+        const daemonState = encodePlainMachineStoredContent({ status: 'running', pid: 42 });
+        writeAccountStoredContentCompatibilityForSocket(publisher as unknown as Socket,
+            evaluateAccountStoredContentSocketCompatibility({
+                accountStoredContentCompatibility: CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION,
+            }));
+        vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+        vi.setSystemTime(base);
+        try {
+            const reply = vi.fn();
+            await getSocketHandler(publisher, 'machine-update-state')({ machineId: machine.id, daemonState,
+                expectedVersion: machine.daemonStateVersion, expectedDataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER }, reply);
+            expect(reply).toHaveBeenCalledWith({ result: 'success', version: machine.daemonStateVersion + 1, daemonState });
+            const changed = await db.machine.findUniqueOrThrow({ where: { id: machine.id } });
+            expect(changed.daemonState).toBe(daemonState);
+            expect(changed.daemonStateVersion).toBe(machine.daemonStateVersion + 1);
+            expect(changed.lastActiveAt).toEqual(new Date(observation === 'future' ? priorObservation : base));
+            if (observation === 'future') return;
+            const changesAfterContent = await db.accountChange.count({ where: { accountId: owner.id } });
+            await vi.advanceTimersByTimeAsync(60_000);
+            await vi.waitFor(async () => expect(await db.machine.findUniqueOrThrow({ where: { id: machine.id },
+                select: { active: true, lastActiveAt: true, updatedAt: true, daemonState: true, daemonStateVersion: true } }))
+                .toEqual({ active: false, lastActiveAt: new Date(base), updatedAt: changed.updatedAt,
+                    daemonState, daemonStateVersion: machine.daemonStateVersion + 1 }));
+            expect(await db.accountChange.count({ where: { accountId: owner.id } })).toBe(changesAfterContent);
+        } finally {
+            await stopLocalMachinePresenceTimeout();
+            activityCache.invalidateMachine(machine.id);
+            vi.useRealTimers();
+        }
+    });
+
+    it.each([
+        { event: 'machine-update-metadata', deadline: false },
+        { event: 'machine-update-state', deadline: false },
+        { event: 'machine-update-state', deadline: true },
+    ] as const)('keeps $event storage failures structural (deadline: $deadline) after actual current-protocol admission', async ({ event, deadline }) => {
+        const owner = await db.account.create({ data: { publicKey: `presence-error-${randomUUID()}`, encryptionMode: 'plain' } });
+        const machine = await createMachine(owner.id);
+        const token = await auth.createToken(owner.id, undefined, { kind: 'account', authority: 'present_user' });
+        const publisher = Object.assign(createFakeSocket({ data: { clientType: 'machine-scoped', machineId: machine.id,
+            [VERIFIED_MACHINE_INSTALLATION_ID_SOCKET_DATA_KEY]: machine.installationId } }),
+            { handshake: { auth: { token } }, disconnect: vi.fn() });
+        writeAccountStoredContentCompatibilityForSocket(publisher as unknown as Socket,
+            evaluateAccountStoredContentSocketCompatibility({
+                accountStoredContentCompatibility: CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION,
+            }));
+        machineUpdateHandler(owner.id, publisher as unknown as Socket, { operationSocketBatchLimits: {
+            ok: true, limits: { maxItems: 200, maxSerializedBytes: 524_288 },
+        } });
+        const transaction = db.$transaction;
+        const sentinel = { message: 'database-secret-message', path: '/Users/alice/private/machine.db', token: 'TOKEN_SECRET' };
+        db.$transaction = new Proxy(transaction, { apply() { return Promise.reject(deadline
+            ? new TransactionDeadlineExceededError(sentinel, 'machine-daemon-state') : sentinel); } });
+        const logs = vi.spyOn(logging, 'log');
+        const callback = vi.fn();
+        try {
+            await getSocketHandler(publisher, event)({ machineId: machine.id,
+                expectedVersion: event === 'machine-update-state' ? machine.daemonStateVersion : machine.metadataVersion,
+                expectedDataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
+                ...(event === 'machine-update-state' ? { daemonState: machine.daemonState! } : { metadata: machine.metadata }),
+            }, callback);
+            const errorCode = deadline ? 'database_transaction_timeout' : 'internal_error';
+            expect(callback).toHaveBeenCalledWith({ result: 'error', message: deadline ? errorCode : 'Internal error' });
+            expect(logs).toHaveBeenCalledWith({ module: 'websocket', level: 'error', event, errorCode }, expect.any(String));
+            const outward = JSON.stringify({ logs: logs.mock.calls, responses: callback.mock.calls });
+            for (const secret of Object.values(sentinel)) expect(outward).not.toContain(secret);
+        } finally { db.$transaction = transaction; logs.mockRestore(); }
+    });
+
+    it('keeps 137 Machines renewing for 300 seconds out of content clocks and Account changes', async () => {
+        const owner = await db.account.create({ data: { publicKey: `presence-clocks-${randomUUID()}`, encryptionMode: 'plain' } });
+        const machines: Awaited<ReturnType<typeof createMachine>>[] = [];
+        for (let index = 0; index < 137; index++) machines.push(await createMachine(owner.id));
+        const contentAt = new Date('2025-01-01T00:00:00.000Z');
+        const base = Date.now() - 300_000;
+        await db.machine.updateMany({ where: { accountId: owner.id }, data: {
+            active: true, lastActiveAt: new Date(base), updatedAt: contentAt,
+        } });
+        const before = await db.account.findUniqueOrThrow({ where: { id: owner.id }, select: { seq: true } });
+        const changesBefore = await db.accountChange.count({ where: { accountId: owner.id } });
+
+        for (let elapsed = 20_000; elapsed <= 300_000; elapsed += 20_000) {
+            await inTx(async tx => {
+                for (const machine of machines) await persistMachinePresence(tx, {
+                    accountId: owner.id, machineId: machine.id, timestamp: base + elapsed,
+                });
+            }, { transactionClass: 'presence-clock-contract' });
+        }
+
+        expect(await db.machine.count({ where: { accountId: owner.id, updatedAt: { not: contentAt } } }))
+            .toBe(0);
+        expect(await db.machine.count({ where: { accountId: owner.id, active: true, lastActiveAt: new Date(base + 300_000) } }))
+            .toBe(137);
+        expect(await db.account.findUniqueOrThrow({ where: { id: owner.id }, select: { seq: true } })).toEqual(before);
+        expect(await db.accountChange.count({ where: { accountId: owner.id } })).toBe(changesBefore);
+
+        // A real content writer still advances its clock. A later presence write
+        // must retain that committed value, rather than restoring an old sample.
+        const changed = await db.machine.update({ where: { id: machines[0]!.id }, data: { metadata: 'changed-content' } });
+        expect(changed.updatedAt.getTime()).toBeGreaterThan(contentAt.getTime());
+        await persistMachinePresence(db, { accountId: owner.id, machineId: changed.id, timestamp: base + 320_000 });
+        expect(await db.machine.findUniqueOrThrow({ where: { id: changed.id }, select: { metadata: true, updatedAt: true, lastActiveAt: true } }))
+            .toEqual({ metadata: changed.metadata, updatedAt: changed.updatedAt, lastActiveAt: new Date(base + 320_000) });
+    });
+
+    it.each(['custodian', 'revoked', 'replaced', 'newer-observation'] as const)(
+        'does not revive a queued Machine after its %s fence changes', async loss => {
+            const owner = await db.account.create({ data: { publicKey: `presence-fence-${randomUUID()}`, encryptionMode: 'plain' } });
+            const machine = await createMachine(owner.id);
+            const base = Date.now() - 100_000;
+            await db.machine.update({ where: { id: machine.id }, data: { lastActiveAt: new Date(base) } });
+            if (loss === 'custodian') {
+                const nextOwner = await db.account.create({ data: { publicKey: `presence-next-${randomUUID()}`, encryptionMode: 'plain' } });
+                await db.machine.update({ where: { id: machine.id }, data: { accountId: nextOwner.id } });
+            } else if (loss === 'revoked') {
+                await db.machine.update({ where: { id: machine.id }, data: { revokedAt: new Date() } });
+            } else if (loss === 'replaced') {
+                const replacement = await createMachine(owner.id);
+                await db.machine.update({ where: { id: machine.id }, data: { replacedByMachineId: replacement.id } });
+            } else {
+                await db.machine.update({ where: { id: machine.id }, data: { lastActiveAt: new Date(base + 80_000) } });
+            }
+            const select = { active: true, lastActiveAt: true, updatedAt: true } as const;
+            const before = await db.machine.findUniqueOrThrow({ where: { id: machine.id }, select });
+            await persistMachinePresence(db, { accountId: owner.id, machineId: machine.id, timestamp: base + 40_000 });
+            expect(await db.machine.findUniqueOrThrow({ where: { id: machine.id }, select })).toEqual(before);
+        },
+    );
+
+    it.each(['installation', 'custodian', 'revoked', 'scope', 'private_payload'] as const)(
         'admits content-free usage source settlement only while publisher authority is current (%s)', async loss => {
             const owner = await db.account.create({ data: { publicKey: `usage-${randomUUID()}`, encryptionMode: 'plain' } });
             const machine = await createMachine(owner.id);
@@ -90,7 +988,6 @@ describe('Machine presence through current C41 recipients (real SQLite)', () => 
                 expect(wakes()).toEqual([payload]);
                 reader.emit.mockClear();
                 if (loss === 'installation') await db.machine.update({ where: { id: machine.id }, data: { installationId: 'replacement' } });
-                if (loss === 'credential') await db.account.update({ where: { id: owner.id }, data: { tokenEpoch: { increment: 1 } } });
                 if (loss === 'custodian') {
                     const next = await db.account.create({ data: { publicKey: `usage-next-${randomUUID()}`, encryptionMode: 'plain' } });
                     await db.machine.update({ where: { id: machine.id }, data: { accountId: next.id } });
@@ -102,60 +999,6 @@ describe('Machine presence through current C41 recipients (real SQLite)', () => 
             } finally { eventRouter.removeConnection(owner.id, connection); }
         },
     );
-
-    it('publishes a detached Run identity only to its Account while the exact Machine publisher remains current', async () => {
-        const owner = await db.account.create({ data: { publicKey: `run-owner-${randomUUID()}`, encryptionMode: 'plain' } });
-        const shared = await db.account.create({ data: { publicKey: `run-shared-${randomUUID()}`, encryptionMode: 'plain' } });
-        const machine = await createMachine(owner.id);
-        expect(await inTx(tx => setMachineAccessGrantInTx(tx, { actorAccountId: owner.id, machineId: machine.id,
-            principal: { kind: 'account', accountId: shared.id }, level: 'view' }))).toMatchObject({ kind: 'saved' });
-        const readers = [owner, shared].map(account => {
-            const socket = Object.assign(createFakeSocket({ id: `run-reader-${account.id}`, data: { clientType: 'user-scoped' } }),
-                { disconnect: vi.fn() });
-            const connection: ClientConnection = { userId: account.id, connectionType: 'user-scoped', socket: socket as unknown as Socket };
-            eventRouter.addConnection(account.id, connection);
-            return { accountId: account.id, socket, connection };
-        });
-        const token = await auth.createToken(owner.id, undefined, { kind: 'account', authority: 'present_user' });
-        const publisher = Object.assign(createFakeSocket({ data: {
-            clientType: 'machine-scoped', machineId: machine.id,
-            [VERIFIED_MACHINE_INSTALLATION_ID_SOCKET_DATA_KEY]: machine.installationId,
-        } }), { handshake: { auth: { token } }, disconnect: vi.fn() });
-        machineUpdateHandler(owner.id, publisher as unknown as Socket, { operationSocketBatchLimits: {
-            ok: true, limits: { maxItems: 200, maxSerializedBytes: 524_288 },
-        } });
-        const payload = { machineId: machine.id, installationId: machine.installationId, runId: 'detached-run' };
-        const updates = (index: number) => readers[index]!.socket.emit.mock.calls
-            .filter(([event, value]) => event === 'ephemeral' && value?.type === 'execution-run-updated')
-            .map(([, value]) => value);
-        try {
-            const publish = getSocketHandler(publisher, 'execution-run-updated');
-            await publish(payload);
-            expect(updates(0)).toEqual([{ type: 'execution-run-updated', machineId: machine.id, runId: payload.runId }]);
-            expect(updates(1)).toEqual([]);
-            readers[0]!.socket.emit.mockClear();
-            for (const invalid of [{ ...payload, machineId: 'another-machine' }, { ...payload, installationId: 'another-installation' },
-                { ...payload, privateContent: 'must-not-cross-this-boundary' }]) await publish(invalid);
-            expect(updates(0)).toEqual([]);
-            publisher.data!.clientType = 'user-scoped';
-            await publish(payload);
-            expect(updates(0)).toEqual([]);
-            publisher.data!.clientType = 'machine-scoped';
-            await db.machine.update({ where: { id: machine.id }, data: { installationId: 'replacement-installation' } });
-            await publish(payload);
-            expect(updates(0)).toEqual([]);
-            await db.machine.update({ where: { id: machine.id }, data: { installationId: machine.installationId } });
-            await publish(payload);
-            expect(updates(0)).toHaveLength(1);
-            readers[0]!.socket.emit.mockClear();
-            await db.account.update({ where: { id: owner.id }, data: { tokenEpoch: { increment: 1 } } });
-            await publish(payload);
-            expect(updates(0)).toEqual([]);
-            expect(updates(1)).toEqual([]);
-        } finally {
-            for (const reader of readers) eventRouter.removeConnection(reader.accountId, reader.connection);
-        }
-    });
 
     it('publishes only safe Machine liveness to owner, Manage and Use, excluding outsiders and retired grants', async () => {
         const account = () => db.account.create({ data: { publicKey: `presence-${randomUUID()}`, encryptionMode: 'plain' } });
@@ -192,8 +1035,9 @@ describe('Machine presence through current C41 recipients (real SQLite)', () => 
             ok: true, limits: { maxItems: 200, maxSerializedBytes: 524_288 },
         } });
         try {
+            vi.useFakeTimers({ toFake: ['Date'] });
             const timestamp = Date.now();
-            await getSocketHandler(publisher, 'machine-alive')({ machineId: machine.id, time: timestamp });
+            await getSocketHandler(publisher, 'machine-alive')({ time: timestamp });
             const expected = { type: 'machine-activity', id: machine.id, active: true, activeAt: timestamp };
             for (const recipient of recipients.slice(0, 3)) expect(recipient.activities()).toEqual([expected]);
             expect(recipients[3].activities()).toEqual([]);
@@ -206,17 +1050,19 @@ describe('Machine presence through current C41 recipients (real SQLite)', () => 
                 principal: { kind: 'account', accountId: manager.id } }))).toMatchObject({ kind: 'removed' });
             await db.account.update({ where: { id: user.id }, data: { status: 'suspended' } });
             for (const recipient of recipients) recipient.socket.emit.mockClear();
-            const nextTimestamp = Date.now();
+            const nextTimestamp = timestamp + 1;
+            vi.setSystemTime(nextTimestamp);
             await getSocketHandler(publisher, 'machine-alive')({ machineId: machine.id, time: nextTimestamp });
             expect(recipients[0].activities()).toEqual([{ ...expected, activeAt: nextTimestamp }]);
             for (const recipient of recipients.slice(1)) expect(recipient.activities()).toEqual([]);
         } finally {
             for (const connection of connections) eventRouter.removeConnection(connection.userId, connection);
             activityCache.invalidateMachine(machine.id);
+            vi.useRealTimers();
         }
     });
 
-    it.each(['epoch', 'installation'] as const)('does not publish online presence after the authenticated Machine publisher loses its %s', async loss => {
+    it.each(['installation', 'replacement'] as const)('keeps the stale installed publisher fence when the Machine loses its %s', async loss => {
         const owner = await db.account.create({ data: { publicKey: `publisher-${randomUUID()}`, encryptionMode: 'plain' } });
         const machine = await createMachine(owner.id);
         const token = await auth.createToken(owner.id, undefined, { kind: 'account', authority: 'present_user' });
@@ -236,17 +1082,21 @@ describe('Machine presence through current C41 recipients (real SQLite)', () => 
             expect(reader.emit.mock.calls.filter(([event, payload]) => event === 'ephemeral' && payload?.type === 'machine-activity'))
                 .toHaveLength(1);
             reader.emit.mockClear();
-            if (loss === 'epoch') {
-                await db.account.update({ where: { id: owner.id }, data: { tokenEpoch: { increment: 1 } } });
-            } else {
+            if (loss === 'installation') {
                 await db.machine.update({ where: { id: machine.id }, data: { installationId: 'replacement-installation' } });
+            } else {
+                const replacement = await createMachine(owner.id);
+                await db.machine.update({ where: { id: machine.id }, data: { replacedByMachineId: replacement.id } });
             }
-            // A surviving transport models missed eager eviction; authentication
-            // and installation are re-derived from the actual retained authorities.
+            // Installation/replacement remains a write fence, independent of credential admission.
             expect(publisher.connected).toBe(true);
+            const beforeDeniedBeat = await db.machine.findUniqueOrThrow({ where: { id: machine.id },
+                select: { active: true, lastActiveAt: true, updatedAt: true } });
             await getSocketHandler(publisher, 'machine-alive')({ machineId: machine.id, time: Date.now() });
             expect(reader.emit.mock.calls.filter(([event, payload]) => event === 'ephemeral' && payload?.type === 'machine-activity'))
                 .toEqual([]);
+            expect(await db.machine.findUniqueOrThrow({ where: { id: machine.id },
+                select: { active: true, lastActiveAt: true, updatedAt: true } })).toEqual(beforeDeniedBeat);
         } finally {
             eventRouter.removeConnection(owner.id, connection);
             activityCache.invalidateMachine(machine.id);
@@ -271,9 +1121,14 @@ describe('Machine presence through current C41 recipients (real SQLite)', () => 
         try {
             const timestamp = Date.now();
             await getSocketHandler(publisher, 'machine-alive')({ machineId: machine.id, time: timestamp });
+            const receivedAt = Date.now();
+            const stored = await db.machine.findUniqueOrThrow({ where: { id: machine.id }, select: { lastActiveAt: true } });
+            const serverTimestamp = stored.lastActiveAt.getTime();
             expect(reader.emit.mock.calls.filter(([event, payload]) => event === 'ephemeral' && payload?.type === 'machine-activity')
                 .map(([, payload]) => payload))
-                .toEqual([{ type: 'machine-activity', id: machine.id, active: true, activeAt: timestamp }]);
+                .toEqual([{ type: 'machine-activity', id: machine.id, active: true, activeAt: serverTimestamp }]);
+            expect(serverTimestamp).toBeGreaterThanOrEqual(timestamp);
+            expect(serverTimestamp).toBeLessThanOrEqual(receivedAt);
         } finally {
             eventRouter.removeConnection(owner.id, connection);
             activityCache.invalidateMachine(machine.id);

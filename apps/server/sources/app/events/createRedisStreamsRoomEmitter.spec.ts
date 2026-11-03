@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Redis } from "ioredis";
 import { RedisStreamsRoomEmitter } from "./createRedisStreamsRoomEmitter";
-import { parseCredentialQualifiedSessionDelivery } from "./socketRoomEmitter";
+import { CREDENTIAL_QUALIFIED_SESSION_DELIVERY_EVENT, parseCredentialQualifiedSessionDelivery } from "./socketRoomEmitter";
 
 describe("Redis Streams room emitter", () => {
     it("publishes the adapter disconnect contract for all selected rooms", () => {
@@ -32,7 +32,7 @@ describe("Redis Streams room emitter", () => {
         };
 
         emitter.to("session:destination-session:account").emit("session", payload);
-        await emitter.forwardCredentialQualifiedSessionDelivery({
+        await emitter.serverSideEmit(CREDENTIAL_QUALIFIED_SESSION_DELIVERY_EVENT, {
             v: 1,
             accountId: "account",
             sessionId: "destination-session",

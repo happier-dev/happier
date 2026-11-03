@@ -2,12 +2,20 @@ import { getRedisClient } from "@/storage/redis/redis";
 import { PresenceBatcher } from "./presenceBatcher";
 import { db } from "@/storage/db";
 import { forever } from "@/utils/runtime/forever";
+import { backoff } from '@/utils/runtime/backoff';
+import { AbortedExeption } from '@/utils/runtime/aborted';
 import { delay } from "@/utils/runtime/delay";
 import { shutdownSignal } from "@/utils/process/shutdown";
 import { log } from "@/utils/logging/log";
 import { randomUUID } from "node:crypto";
-import { persistMachinePresence } from './persistMachinePresence';
+import { recordMachineAliveInTx } from './presenceRecorder';
+import { afterTx, inTx } from '@/storage/inTx';
+import { schedulePresenceDeadline } from './timeout';
+import { shouldPublishPresenceToRedis } from './presenceMode';
+import { eventRouter } from '@/app/events/eventRouter';
+import { PresenceDeadlineNotificationSchema, type PresenceDeadlineNotification } from './presenceDeadlineNotification';
 import { readPresenceRedisWorkerConfigFromEnv, readPresenceStreamConfigFromEnv } from "@/config/presence";
+import { resolveCurrentMachineRecipientAccountIdsInTx } from '@/app/machines/machineAccess';
 import {
     observePresenceStreamFlush,
     recordPresenceStreamAck,
@@ -59,6 +67,10 @@ function getConsumerName(env: NodeJS.ProcessEnv): string {
 }
 
 export async function publishMachineAlive(params: { accountId: string; machineId: string; timestamp: number }): Promise<void> {
+    await publishAlive({ kind: 'machine', accountId: params.accountId, id: params.machineId, activeAt: params.timestamp });
+}
+
+async function publishAlive(observation: PresenceDeadlineNotification): Promise<void> {
     const redis = getRedisClient();
     const maxLen = getStreamMaxLen(process.env);
     const maxLenArgs = maxLen ? (["MAXLEN", "~", String(maxLen)] as const) : ([] as const);
@@ -67,21 +79,30 @@ export async function publishMachineAlive(params: { accountId: string; machineId
         ...maxLenArgs,
         "*",
         "kind",
-        "machine",
+        observation.kind,
         "id",
-        params.machineId,
+        observation.id,
         "ts",
-        params.timestamp.toString(),
+        observation.activeAt.toString(),
         "accountId",
-        params.accountId,
+        observation.accountId,
     );
+}
+
+/** A transition wake, not a second liveness write or heartbeat broadcaster. */
+export async function publishPresenceDeadline(observation: PresenceDeadlineNotification): Promise<void> {
+    try {
+        eventRouter.broadcastPresenceDeadline(observation);
+        if (shouldPublishPresenceToRedis(process.env)) await publishAlive(observation);
+    }
+    catch (error) { log({ module: 'presence-deadline', error }, 'Failed to publish presence deadline wake'); }
 }
 
 async function ensureGroupExists(): Promise<void> {
     const redis = getRedisClient();
     try {
         // MKSTREAM creates the stream if it does not exist.
-        await redis.xgroup("CREATE", STREAM_KEY, GROUP, "$", "MKSTREAM");
+        await redis.xgroup("CREATE", STREAM_KEY, GROUP, "0", "MKSTREAM");
     } catch (e: any) {
         const msg = typeof e?.message === "string" ? e.message : "";
         if (msg.includes("BUSYGROUP")) return;
@@ -101,6 +122,7 @@ async function flushBatch(batcher: PresenceBatcher, dbWriteConcurrency: number):
     const startedAt = Date.now();
     const snapshot = batcher.snapshot();
     const { sessions, machines } = snapshot;
+    const failures: unknown[] = [];
 
     if (machines.length > 0) {
         await runWithConcurrencyLimit(
@@ -108,8 +130,23 @@ async function flushBatch(batcher: PresenceBatcher, dbWriteConcurrency: number):
             dbWriteConcurrency,
             async (machinePresence) => {
                 try {
-                    await persistMachinePresence(db, machinePresence);
+                    // Released API nodes queue admitted observations here. New
+                    // API nodes already committed; neither path owns expiry.
+                    await inTx(tx => recordMachineAliveInTx(tx, machinePresence, async (_, machine) => {
+                        if (machine.accountId !== machinePresence.accountId
+                            || machine.revokedAt || machine.replacedByMachineId) return null;
+                        if (machine.active) {
+                            afterTx(tx, () => schedulePresenceDeadline({ kind: 'machine', accountId: machine.accountId,
+                                id: machinePresence.machineId, activeAt: machine.lastActiveAt.getTime() }));
+                        }
+                        return {
+                            recipientAccountIds: machine.active ? []
+                                : await resolveCurrentMachineRecipientAccountIdsInTx(tx, machinePresence.machineId),
+                            wasOffline: !machine.active, lastActiveAt: machine.lastActiveAt,
+                        };
+                    }));
                 } catch (error) {
+                    failures.push(error);
                     log(
                         { module: "presence-redis-worker", level: "warn" },
                         `Machine presence update failed: ${error}`,
@@ -119,6 +156,18 @@ async function flushBatch(batcher: PresenceBatcher, dbWriteConcurrency: number):
         );
     }
 
+    for (const presence of sessions) {
+        try {
+            const session = await db.session.findUnique({ where: { id: presence.sessionId },
+                select: { accountId: true, active: true, archivedAt: true, lastActiveAt: true } });
+            if (session?.active && session.archivedAt === null && session.accountId === presence.accountId) {
+                schedulePresenceDeadline({ kind: 'session', accountId: session.accountId,
+                    id: presence.sessionId, activeAt: session.lastActiveAt.getTime() });
+            }
+        } catch (error) { failures.push(error); }
+    }
+
+    if (failures.length > 0) throw failures[0];
     batcher.commit(snapshot);
     observePresenceStreamFlush({
         durationMs: Date.now() - startedAt,
@@ -144,13 +193,10 @@ export function startPresenceRedisWorker(params?: {
     readCount?: number;
     consumerName?: string;
     reclaimIdleMs?: number;
-}): { stop: () => Promise<void> } {
-    const defaults = readPresenceRedisWorkerConfigFromEnv(process.env);
-    const dbWriteConcurrency = params?.dbWriteConcurrency ?? defaults.dbWriteConcurrency;
-    const flushIntervalMs = params?.flushIntervalMs ?? defaults.flushIntervalMs;
-    const readBlockMs = params?.readBlockMs ?? defaults.readBlockMs;
-    const readCount = params?.readCount ?? defaults.readCount;
-    const reclaimIdleMs = params?.reclaimIdleMs ?? defaults.reclaimIdleMs;
+    onDeadline?: (observation: PresenceDeadlineNotification) => void;
+}): { ready: Promise<void>; stop: () => Promise<void> } {
+    const { dbWriteConcurrency, flushIntervalMs, readBlockMs, readCount, reclaimIdleMs } =
+        readPresenceRedisWorkerConfigFromEnv(process.env, params);
 
     const redis = getRedisClient();
     const batcher = new PresenceBatcher();
@@ -158,45 +204,112 @@ export function startPresenceRedisWorker(params?: {
     const consumerName = params?.consumerName ?? getConsumerName(process.env);
     const pendingAckIds: string[] = [];
     let lastReclaimAt = 0;
+    let stopped = false;
+    let flushInFlight = Promise.resolve();
+    // The consumer group distributes legacy SQL work; it cannot broadcast
+    // enrollment. Each deadline host follows the SAME stream independently,
+    // without a consumer group, socket server, peer identity, or extra key.
+    const enrollmentRedis = redis.duplicate();
+    const enrollmentAbort = new AbortController();
+    let enrollCursor: string | null = null;
+    let markReady!: () => void;
+    const ready = new Promise<void>(resolve => { markReady = resolve; });
+    const stopEnrollment = (): void => {
+        enrollmentAbort.abort();
+        enrollmentRedis.disconnect();
+        markReady();
+    };
+    shutdownSignal.addEventListener('abort', stopEnrollment, { once: true });
+    const enrollment = backoff(async () => {
+        if (enrollCursor === null) {
+            const tail = await enrollmentRedis.xrevrange(STREAM_KEY, '+', '-', 'COUNT', 1);
+            enrollCursor = tail[0]?.[0] ?? '0-0';
+            // Startup captures the stream cursor BEFORE its persisted census.
+            // Activations before the cursor are seeded; later ones are read.
+            markReady();
+        }
+        while (!enrollmentAbort.signal.aborted) {
+            const cursor: string = enrollCursor;
+            const reply = await enrollmentRedis.xread('COUNT', readCount, 'BLOCK', 0,
+                'STREAMS', STREAM_KEY, cursor);
+            for (const [, entries] of reply ?? []) {
+                for (const [id, fields] of entries) {
+                    const value = parseFields(fields);
+                    const parsed = PresenceDeadlineNotificationSchema.safeParse({ kind: value.kind,
+                        accountId: value.accountId, id: value.id, activeAt: Number(value.ts) });
+                    if (parsed.success && !enrollmentAbort.signal.aborted) {
+                        (params?.onDeadline ?? schedulePresenceDeadline)(parsed.data);
+                    }
+                    enrollCursor = id;
+                }
+            }
+        }
+    }, enrollmentAbort.signal).catch(error => {
+        if (!enrollmentAbort.signal.aborted) log({ module: 'presence-deadline', error }, 'Enrollment reader failed');
+    });
+
+    const clearTimer = () => {
+        if (flushTimer) {
+            clearTimeout(flushTimer);
+            flushTimer = null;
+        }
+    };
+
+    const flushPending = () => {
+        const flush = flushInFlight.catch(() => {}).then(async () => {
+            // Capture ACK custody with the batch, before persistence can yield to later arrivals.
+            const ids = pendingAckIds.slice();
+            if (ids.length === 0) return;
+            await flushBatch(batcher, dbWriteConcurrency);
+            await redis.xack(STREAM_KEY, GROUP, ...ids);
+            pendingAckIds.splice(0, ids.length);
+            recordPresenceStreamAck(ids.length);
+            setPresenceStreamPendingEntries(pendingAckIds.length);
+            await refreshRedisPendingEntries(redis);
+        });
+        flushInFlight = flush;
+        return flush;
+    };
 
     const startTimer = () => {
-        flushTimer = setInterval(() => {
-            flushBatch(batcher, dbWriteConcurrency)
-                .then(async () => {
-                    if (pendingAckIds.length === 0) return;
-                    const ids = pendingAckIds.splice(0, pendingAckIds.length);
-                    await redis.xack(STREAM_KEY, GROUP, ...ids);
-                    recordPresenceStreamAck(ids.length);
-                    setPresenceStreamPendingEntries(pendingAckIds.length);
-                    await refreshRedisPendingEntries(redis);
-                })
+        if (stopped || flushTimer || pendingAckIds.length === 0) return;
+        flushTimer = setTimeout(() => {
+            flushTimer = null;
+            void flushPending()
                 .catch((e) => {
-                log({ module: "presence-redis-worker", level: "error" }, `Error flushing presence batch: ${e}`);
-            });
+                    log({ module: "presence-redis-worker", level: "error" }, `Error flushing presence batch: ${e}`);
+                })
+                .finally(() => {
+                    if (pendingAckIds.length === 0) clearTimer();
+                    // Failed pending work keeps the existing flush cadence; an empty queue parks.
+                    startTimer();
+                });
         }, flushIntervalMs);
         flushTimer.unref?.();
     };
 
+    const recordPendingEntry = (id: string) => {
+        pendingAckIds.push(id);
+        setPresenceStreamPendingEntries(pendingAckIds.length);
+        startTimer();
+    };
+
     const stop = async () => {
-        if (flushTimer) {
-            clearInterval(flushTimer);
-            flushTimer = null;
-        }
-        await flushBatch(batcher, dbWriteConcurrency);
-        if (pendingAckIds.length > 0) {
-            const ids = pendingAckIds.splice(0, pendingAckIds.length);
-            await redis.xack(STREAM_KEY, GROUP, ...ids);
-            recordPresenceStreamAck(ids.length);
-        }
+        stopped = true;
+        stopEnrollment();
+        clearTimer();
+        await flushPending();
+        await enrollment;
+        shutdownSignal.removeEventListener('abort', stopEnrollment);
         setPresenceStreamPendingEntries(pendingAckIds.length);
         await refreshRedisPendingEntries(redis);
     };
 
     void forever("presence-redis-worker", async () => {
+        if (stopped) throw new AbortedExeption();
         await ensureGroupExists();
-        if (!flushTimer) startTimer();
 
-        while (!shutdownSignal.aborted) {
+        while (!shutdownSignal.aborted && !stopped) {
             // Reclaim stuck pending entries from crashed workers.
             const now = Date.now();
             if (now - lastReclaimAt > reclaimIdleMs) {
@@ -223,8 +336,7 @@ export function startPresenceRedisWorker(params?: {
 
                         if (!kind || !entityId || !Number.isFinite(ts)) {
                             recordPresenceStreamInvalidEntry();
-                            pendingAckIds.push(id);
-                            setPresenceStreamPendingEntries(pendingAckIds.length);
+                            recordPendingEntry(id);
                             continue;
                         }
 
@@ -234,8 +346,13 @@ export function startPresenceRedisWorker(params?: {
                             batcher.recordMachineAlive(accountId, entityId, ts);
                         }
 
-                        pendingAckIds.push(id);
-                        setPresenceStreamPendingEntries(pendingAckIds.length);
+                        recordPendingEntry(id);
+                    }
+                    // Reclaimed observations already spent their transport
+                    // grace in the PEL. Do not add another five-second batch.
+                    if (entries.length > 0) {
+                        await flushPending();
+                        if (pendingAckIds.length === 0) clearTimer();
                     }
                     await refreshRedisPendingEntries(redis);
                 } catch (e) {
@@ -274,8 +391,7 @@ export function startPresenceRedisWorker(params?: {
 
                     if (!kind || !entityId || !Number.isFinite(ts)) {
                         recordPresenceStreamInvalidEntry();
-                        pendingAckIds.push(id);
-                        setPresenceStreamPendingEntries(pendingAckIds.length);
+                        recordPendingEntry(id);
                         continue;
                     }
 
@@ -285,14 +401,14 @@ export function startPresenceRedisWorker(params?: {
                         batcher.recordMachineAlive(accountId, entityId, ts);
                     }
 
-                    pendingAckIds.push(id);
-                    setPresenceStreamPendingEntries(pendingAckIds.length);
+                    recordPendingEntry(id);
                 }
             }
             recordPresenceStreamRead("stream", readEntryCount);
             await refreshRedisPendingEntries(redis);
         }
+        throw new AbortedExeption();
     });
 
-    return { stop };
+    return { ready, stop };
 }

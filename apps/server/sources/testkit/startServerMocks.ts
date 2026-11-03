@@ -19,15 +19,15 @@ export function installStartServerCommonWiringMocks(): void {
     })),
   }))
   vi.mock('@/app/monitoring/metrics', () => ({ startMetricsServer: vi.fn(async () => true) }))
-  vi.mock('@/app/monitoring/metrics/index', () => ({
+  vi.mock('@/app/monitoring/metrics/index', async () => ({
+    ...await vi.importActual<typeof import('@/app/monitoring/metrics/index')>('@/app/monitoring/metrics/index'),
     startDatabaseMetricsUpdater: vi.fn(() => {}),
     setSocketAdapterModeInfo: vi.fn(() => {}),
   }))
   vi.mock('@/app/auth/auth', () => ({ auth: { init: vi.fn(async () => {}), verifyToken: vi.fn() } }))
   vi.mock('@/app/presence/sessionCache', () => ({
-    activityCache: { enableDbFlush: vi.fn(), shutdown: vi.fn() },
+    activityCache: { shutdown: vi.fn() },
   }))
-  vi.mock('@/app/presence/timeout', () => ({ startTimeout: vi.fn(() => {}) }))
   vi.mock('@/flavors/light/env', async () => {
     const actual = await vi.importActual<typeof import('@/flavors/light/env')>('@/flavors/light/env')
     return {
@@ -61,7 +61,6 @@ export function installStartServerCommonWiringMocks(): void {
   }))
   vi.mock('@/app/presence/presenceMode', () => ({
     shouldConsumePresenceFromRedis: vi.fn(() => false),
-    shouldEnableLocalPresenceDbFlush: vi.fn(() => false),
   }))
   vi.mock('@/app/presence/presenceRedisQueue', () => ({
     startPresenceRedisWorker: vi.fn(() => ({ stop: vi.fn(async () => {}) })),
@@ -160,6 +159,9 @@ export function createStartServerDbMocks(options: StartServerDbMockOptions = {})
         account: {
           count: (...args: any[]) => accountCount(...args),
         },
+        // Startup's real presence owners seed an empty persisted census.
+        machine: { findMany: vi.fn(async () => []) },
+        session: { findFirst: vi.fn(async () => null) },
         // Most startup fixtures describe an unconfigured Home; keep its real overlay path.
         homeSettings: { findUnique: vi.fn(async () => null) },
         homeGovernancePolicy: { findUnique: vi.fn(async () => null) },

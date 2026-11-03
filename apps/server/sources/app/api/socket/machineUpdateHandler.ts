@@ -1,13 +1,20 @@
+import { registerMachineDaemonStateHandler } from './machineDaemonStateHandler';
+import {
+    acquireMachinePublicationLocksInTx, readMarkedMachineSocketUpgradeRequired,
+    readSocketMachineIdentity, readAuthenticatedMachineId, hasCurrentMachineSocketInstallation,
+    encodedMachineEnvelope, isSafePlainMachinePublication, resolveMachineScopedPayloadMachineId,
+    resolveMachineMetadataTarget, publishMachineAliveObservation,
+} from './machinePublication';
 import { isDeepStrictEqual } from "node:util";
 import { machineAliveEventsCounter, websocketEventsCounter } from "@/app/monitoring/metrics/index";
 import { activityCache } from "@/app/presence/sessionCache";
-import { buildMachineActivityEphemeral, buildUpdateMachineUpdate, eventRouter } from "@/app/events/eventRouter";
+import { buildUpdateMachineUpdate, eventRouter } from "@/app/events/eventRouter";
 import { log } from "@/utils/logging/log";
 import { db } from "@/storage/db";
 import { Socket } from "socket.io";
 import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
-import { afterTx, inReadSnapshot, inTx, TransactionReplayRequiredError, type Tx } from "@/storage/inTx";
-import { acquireAccountChangePublicationLocksInTx, assertAccountChangePublicationAudienceInTx, beforeAccountChangePublication, markAccountChanged } from "@/app/changes/markAccountChanged";
+import { afterTx, inReadSnapshot, inTx, type Tx } from "@/storage/inTx";
+import { markAccountChanged } from "@/app/changes/markAccountChanged";
 import { recordMachineAlive } from "@/app/presence/presenceRecorder";
 import { submitMachineRemoteAlerts } from '@/app/activity/remoteAlerts/submitMachineRemoteAlerts';
 import { EXTERNAL_SESSION_OPERATION_SOCKET_EVENT_V1, type ExternalSessionOperationSocketBatchLimitResolutionV1 } from '@happier-dev/protocol/sessions/external/operationActionsV1';
@@ -19,8 +26,7 @@ import { SESSION_PENDING_ENQUEUE_BY_MACHINE_EVENT_V1, SessionPendingEnqueueByMac
 import { SESSION_PENDING_EXECUTION_RUN_ENQUEUE_BY_MACHINE_EVENT_V2, SessionPendingExecutionRunEnqueueByMachineRequestV2Schema } from '@happier-dev/protocol/sessions/messages/sessionPendingExecutionRunMachineAdmissionV2';
 import { SESSION_SERVER_START_INGRESS_EVENT_V1, type SessionServerStartIngressResponseV1 } from '@happier-dev/protocol/sessions/creation/sessionServerStartV1';
 import { MachineUpdateMetadataRequestSchema, type MachineUpdateMetadataResponse } from '@happier-dev/protocol/machines/metadataUpdate';
-import { isPlainMachineDataKeyMarker, machineStoredContentMatchesAccountMode, machineUpdateMatchesStoredMode, decodePlainMachineStoredContent } from '@happier-dev/protocol/machines/machineStoredContent';
-import { isMachinePublishedContentSafeV1 } from '@happier-dev/protocol/machines/machinePublishedContentV1';
+import { machineStoredContentMatchesAccountMode } from '@happier-dev/protocol/machines/machineStoredContent';
 import { projectActionOperationSnapshotPush } from './actionOperationSnapshotPush';
 import { resolveEffectiveAccountEncryptionModeFromAccountRow } from '@/app/encryption/accountEncryptionMode';
 import { enqueuePendingMessageByAuthenticatedMachine, updatePendingRequestedAction } from "@/app/session/pending/pendingMessageService";
@@ -38,26 +44,19 @@ import {
     classifyMachineAvailabilityState,
     readMachineAvailabilityState,
 } from "@/app/machines/machineStateGuards";
-import {
-    buildAccountStoredContentSocketUpgradeError,
-    readAccountStoredContentCompatibilityForSocket,
-} from "@/app/clientCompatibility/accountStoredContentCompatibility";
 import { hasCurrentSocketCredential } from "./socketCredentialCurrentness";
 import { readVerifiedMachineSocketInstallationIdFromSocketData } from "./machineSocketInstallationProof";
 import { TEAM_CREDENTIAL_EXTERNAL_PROVIDER_OPERATION_RETIRE_EVENT_V1, TeamCredentialExternalProviderOperationRetireV1Schema } from '@happier-dev/protocol/teams/credentials/externalProviderApiV1';
 import { retireExternalBrokerOperationInTx } from "@/app/teams/credentials/externalBrokerOperation";
 import { verifyExternalActionMachineRpcExecution } from "@/app/auth/externalActionExecutionAuthorization";
-import * as privacyKit from "privacy-kit";
 import { serializeMachineKeyBasis } from "@/app/machines/machineSerialization";
 import { readMachineDevcontainerChildInTx } from '@/app/machines/managed/managedRows';
-import { MachineUpdateStateRequestSchema, type MachineUpdateStateResponse } from "@happier-dev/protocol/machines/metadataUpdate";
 import { USAGE_SOURCES_INVALIDATION_EVENT_V1, UsageSourcesInvalidationV1Schema } from '@happier-dev/protocol/usage/usageSources';
 import {
     resolveMachineAdmissionInTx,
     resolveMachineAccessInTx,
     resolveCurrentMachineRecipientAccountIdsInTx,
 } from "@/app/machines/machineAccess";
-import { getDbProviderFromEnv } from "@/storage/prisma";
 import { SESSION_MESSAGE_REPLY_MUTATE_EVENT_V1, SessionMessageReplyMachineMutationV1Schema, type SessionMessageReplyMutationResultV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageReplyV1';
 import { mutateSessionMessageReplyForMachineInTx } from '@/app/session/messages/sessionMessageReply';
 import { createServerRpcForwarder } from './serverRpcForwarder';
@@ -66,26 +65,6 @@ import { postPreparedDiscussionMessageInTx, prepareDiscussionPostMutationAccount
 import { isSessionInputSourceCurrentInTx } from '@/app/session/messages/sessionMessageReply';
 import { isServerFeatureEnabledForHome } from '@/app/features/catalog/serverFeatureGate';
 import { ExecutionRunMachineActivityV1Schema } from '@happier-dev/protocol/execution/runs/activityV1';
-
-async function acquireMachinePublicationLocksInTx(tx: Tx, machineId: string): Promise<string[]> {
-    // SQLite already admits one writer. PostgreSQL/MySQL use the same ordered
-    // Account fence as the publication that follows the Machine CAS.
-    if (getDbProviderFromEnv(process.env, "postgres") === "sqlite") {
-        return resolveCurrentMachineRecipientAccountIdsInTx(tx, machineId);
-    }
-    const hintedAccountIds = await resolveCurrentMachineRecipientAccountIdsInTx(tx, machineId);
-    await acquireAccountChangePublicationLocksInTx(tx, hintedAccountIds, { includeSingleAccount: true });
-    const lockedAccountIds = new Set(hintedAccountIds);
-    const currentAccountIds = await resolveCurrentMachineRecipientAccountIdsInTx(tx, machineId);
-    if (currentAccountIds.some(accountId => !lockedAccountIds.has(accountId))) {
-        throw new TransactionReplayRequiredError("transaction-account-audience-changed");
-    }
-    beforeAccountChangePublication(tx, hintedAccountIds, async () => {
-        const recipients = await resolveCurrentMachineRecipientAccountIdsInTx(tx, machineId);
-        assertAccountChangePublicationAudienceInTx(tx, recipients);
-    });
-    return currentAccountIds;
-}
 
 async function readMachineCapabilitiesPublicationInTx(tx: Tx, input: Readonly<{
     accountId: string;
@@ -114,80 +93,45 @@ async function readMachineCapabilitiesPublicationInTx(tx: Tx, input: Readonly<{
     return { kind: 'change_required' as const, expectedRevision, installationId: admission.installationId };
 }
 
-function readMarkedMachineSocketUpgradeRequired(
-    socket: Socket,
-    dataEncryptionKey: Uint8Array | null | undefined,
-) {
-    if (!isPlainMachineDataKeyMarker(dataEncryptionKey)) {
-        return null;
-    }
-    const compatibility =
-        readAccountStoredContentCompatibilityForSocket(socket);
-    return compatibility.supportsCurrentProtocol
-        ? null
-        : buildAccountStoredContentSocketUpgradeError(compatibility).data;
-}
-
-function readSocketMachineIdentity(socket: Socket): {
-    clientType: unknown;
-    machineId: string | null;
-} {
-    const data = socket.data as { clientType?: unknown; machineId?: unknown } | undefined;
-    return {
-        clientType: data?.clientType,
-        machineId: typeof data?.machineId === 'string' && data.machineId
-            ? data.machineId
-            : null,
-    };
-}
-
-function readAuthenticatedMachineId(socket: Socket): string | null {
-    const { clientType, machineId } = readSocketMachineIdentity(socket);
-    return clientType === 'machine-scoped' ? machineId : null;
-}
-
-function hasCurrentMachineSocketInstallation(socket: Socket, installationId: string | null): boolean {
-    if (!readAuthenticatedMachineId(socket)) return true;
-    if (installationId === null) return false;
-    return readVerifiedMachineSocketInstallationIdFromSocketData(socket.data) === installationId;
-}
-
-function encodedMachineEnvelope(dataEncryptionKey: Uint8Array<ArrayBuffer> | null): string | null {
-    return dataEncryptionKey === null ? null : privacyKit.encodeBase64(dataEncryptionKey);
-}
-
-function isSafePlainMachinePublication(metadata: string, daemonState: string | null): boolean {
-    try {
-        return isMachinePublishedContentSafeV1({
-            metadata: decodePlainMachineStoredContent(metadata),
-            daemonState: daemonState === null ? null : decodePlainMachineStoredContent(daemonState),
-        });
-    } catch {
-        return false;
-    }
-}
-
-function resolveMachineScopedPayloadMachineId(socket: Socket, payloadMachineId: unknown): string | null {
-    const authenticatedMachineId = readAuthenticatedMachineId(socket);
-    if (!authenticatedMachineId) return null;
-    if (typeof payloadMachineId === 'string' && payloadMachineId && payloadMachineId !== authenticatedMachineId) {
-        return null;
-    }
-    return authenticatedMachineId;
-}
-
-function resolveMachineMetadataTarget(
-    socket: Socket,
-    payloadMachineId: string | undefined,
-): string | null {
-    const { clientType } = readSocketMachineIdentity(socket);
-    if (clientType === 'machine-scoped') {
-        return resolveMachineScopedPayloadMachineId(socket, payloadMachineId);
-    }
-    if (clientType === 'user-scoped' || clientType === undefined) {
-        return payloadMachineId ?? null;
-    }
-    return null;
+/** Connect and heartbeat share final publisher admission and one transition path. */
+export async function observeMachineAliveFromSocket(input: Readonly<{
+    userId: string;
+    socket: Socket;
+    timestamp: number;
+    machineId?: string;
+    continuingBeat: boolean;
+    workSummaryChanged?: true;
+    isCurrent?: () => Promise<boolean>;
+}>): Promise<void> {
+    const { userId, socket } = input;
+    if (!Number.isFinite(input.timestamp) || !socket.connected) return;
+    const machineId = resolveMachineScopedPayloadMachineId(socket, input.machineId);
+    if (!machineId) return;
+    // A current authenticated socket proves receipt now, not clock agreement
+    // with the daemon. Queued observations retain their original timestamp at
+    // the recorder boundary; only live socket ingress normalizes the clock.
+    const timestamp = Date.now();
+    const isCurrent = async () => socket.connected && (!input.isCurrent || await input.isCurrent());
+    const presence = await recordMachineAlive({ accountId: userId, machineId, timestamp }, async (tx, machine) => {
+        // Admit current socket ownership once, after any presence-lock wait.
+        if (!await isCurrent()) return null;
+        if (machine.installationId === null) {
+            // Released uninstalled custodian publishers have no installation proof.
+            if (machine.accountId !== userId || classifyMachineAvailabilityState(machine) !== 'available') return null;
+        } else {
+            if (machine.accountId !== userId || classifyMachineAvailabilityState(machine) !== 'available'
+                || !hasCurrentMachineSocketInstallation(socket, machine.installationId)) return null;
+        }
+        return { recipientAccountIds: await resolveCurrentMachineRecipientAccountIdsInTx(tx, machineId),
+            wasOffline: !machine.active, lastActiveAt: machine.lastActiveAt };
+    }, input.continuingBeat ? {
+        installationId: readVerifiedMachineSocketInstallationIdFromSocketData(socket.data), isCurrent,
+    } : undefined);
+    if (!presence) { activityCache.invalidateMachine(machineId); return; }
+    // Semantic beats renew the deadline and the released reader's content-free
+    // liveness fact. Reconnect/work hints do not turn that fact into content.
+    await publishMachineAliveObservation(userId, machineId, timestamp, presence, !input.continuingBeat,
+        input.workSummaryChanged === true);
 }
 
 async function isMachineAvailableForSocket(accountId: string, machineId: string): Promise<boolean> {
@@ -199,6 +143,7 @@ export function machineUpdateHandler(
     socket: Socket,
     options: Readonly<{
         operationSocketBatchLimits: ExternalSessionOperationSocketBatchLimitResolutionV1;
+        isMachineSocketCurrent?: () => Promise<boolean>;
         sessionPublisherPresence?: Pick<
             ReturnType<typeof createSessionPublisherPresence>,
             "captureMachineSessionTerminal" | "finalizeMachineSessionTerminal"
@@ -749,78 +694,18 @@ export function machineUpdateHandler(
     socket.on('machine-alive', async (data: {
         machineId?: string;
         time: number;
+        workSummaryChanged?: true;
     }) => {
         try {
             // Track metrics
             websocketEventsCounter.inc({ event_type: 'machine-alive' });
             machineAliveEventsCounter.inc();
 
-            // Basic validation
-            if (!data || typeof data.time !== 'number') {
-                return;
-            }
-            const machineId = resolveMachineScopedPayloadMachineId(socket, data.machineId);
-            if (!machineId) {
-                return;
-            }
-
-            let t = data.time;
-            if (t > Date.now()) {
-                t = Date.now();
-            }
-            if (t < Date.now() - 1000 * 60 * 10) {
-                return;
-            }
-
-            if (!(await hasCurrentSocketCredential(userId, socket))) {
-                return;
-            }
-
-            // Check machine validity using cache
-            const isValid = await activityCache.isMachineValid(machineId, userId);
-            if (!isValid) {
-                return;
-            }
-            const presence = await inTx(async tx => {
-                const machine = await tx.machine.findUnique({
-                    where: { id: machineId },
-                    select: { accountId: true, installationId: true, revokedAt: true, replacedByMachineId: true, active: true },
-                });
-                if (!machine) return null;
-                if (machine.installationId === null) {
-                    // Released uninstalled custodian daemons have no installation
-                    // proof. This adapter retains only their owned heartbeat;
-                    // installed publishers always consume C41 admission below.
-                    if (machine.accountId !== userId || classifyMachineAvailabilityState(machine) !== 'available') return null;
-                } else {
-                    const admission = await resolveMachineAdmissionInTx(tx, { actorAccountId: userId, machineId });
-                    if (admission.kind !== 'admitted' || admission.custodianAccountId !== userId
-                        || !hasCurrentMachineSocketInstallation(socket, admission.installationId)) return null;
-                }
-                return { recipientAccountIds: await resolveCurrentMachineRecipientAccountIdsInTx(tx, machineId),
-                    wasOffline: !machine.active };
-            });
-            if (!presence) {
-                activityCache.invalidateMachine(machineId);
-                return;
-            }
-
-            // Queue database update (will only update if time difference is significant)
-            await recordMachineAlive({ accountId: userId, machineId, timestamp: t });
-
-            const machineActivity = buildMachineActivityEphemeral(machineId, true, t);
-            for (const accountId of presence.recipientAccountIds) {
-                eventRouter.emitEphemeral({
-                    userId: accountId,
-                    payload: machineActivity,
-                    recipientFilter: { type: 'user-scoped-only' },
-                });
-            }
-            if (presence.wasOffline) {
-                // Presence writes remain batched. Repeated admitted alive may
-                // repeat this content-free, idempotent dismissal until flush.
-                await submitMachineRemoteAlerts({ machines: [{ machineId, accountId: userId }], phase: 'recovered' });
-            }
+            if (!data || typeof data.time !== 'number') return;
+            await observeMachineAliveFromSocket({ userId, socket, timestamp: data.time,
+                machineId: data.machineId, continuingBeat: true,
+                ...(data.workSummaryChanged === true ? { workSummaryChanged: true as const } : {}),
+                isCurrent: options.isMachineSocketCurrent });
         } catch {
             log(
                 {
@@ -1263,177 +1148,5 @@ export function machineUpdateHandler(
         }
     });
 
-    // Machine daemon state update with optimistic concurrency control
-    socket.on('machine-update-state', async (data: unknown, callback: (response: MachineUpdateStateResponse) => void) => {
-        try {
-            const parsed = MachineUpdateStateRequestSchema.safeParse(data);
-            const machineId = parsed.success ? resolveMachineScopedPayloadMachineId(socket, parsed.data.machineId) : null;
-
-            // Validate input
-            if (!parsed.success || !machineId) {
-                if (callback) {
-                    callback({ result: 'error', message: 'Invalid parameters' });
-                }
-                return;
-            }
-            const { daemonState, expectedVersion, expectedDataEncryptionKey } = parsed.data;
-
-            if (!await hasCurrentSocketCredential(userId, socket)) {
-                callback?.({ result: 'error', message: 'Forbidden' });
-                socket.disconnect(true);
-                return;
-            }
-            await inTx(async (tx) => {
-                const recipientAccountIds = await acquireMachinePublicationLocksInTx(tx, machineId);
-                const admission = await resolveMachineAdmissionInTx(tx, { actorAccountId: userId, machineId });
-                if (admission.kind !== 'admitted'
-                    || admission.custodianAccountId !== userId
-                    || !hasCurrentMachineSocketInstallation(socket, admission.installationId)) {
-                    afterTx(tx, () => callback?.({ result: 'error', message: 'Forbidden' }));
-                    return null;
-                }
-                const machine = await tx.machine.findFirst({
-                    where: { accountId: admission.custodianAccountId, id: machineId, installationId: admission.installationId },
-                    select: {
-                        daemonStateVersion: true,
-                        metadataVersion: true,
-                        daemonState: true,
-                        metadata: true,
-                        dataEncryptionKey: true,
-                        installationId: true,
-                        revokedAt: true,
-                        replacedByMachineId: true,
-                    },
-                });
-                if (!machine) {
-                    afterTx(tx, () => callback?.({ result: 'error', message: 'Machine not found' }));
-                    return null;
-                }
-                const machineState = classifyMachineAvailabilityState(machine);
-                if (machineState === "revoked") {
-                    afterTx(tx, () => callback?.({ result: 'error', message: 'Machine revoked' }));
-                    return null;
-                }
-                if (machineState === "replaced") {
-                    afterTx(tx, () => callback?.({ result: 'error', message: 'Machine replaced' }));
-                    return null;
-                }
-                if (!hasCurrentMachineSocketInstallation(socket, machine.installationId)) {
-                    afterTx(tx, () => callback?.({ result: 'error', message: 'Machine installation changed' }));
-                    return null;
-                }
-                if (encodedMachineEnvelope(machine.dataEncryptionKey) !== expectedDataEncryptionKey) {
-                    afterTx(tx, () => callback?.({ result: 'key-mismatch' }));
-                    return null;
-                }
-                const upgradeRequired =
-                    readMarkedMachineSocketUpgradeRequired(
-                        socket,
-                        machine.dataEncryptionKey,
-                    );
-                if (upgradeRequired) {
-                    afterTx(tx, () => callback?.(upgradeRequired));
-                    return null;
-                }
-                if (!machineUpdateMatchesStoredMode({ dataEncryptionKey: machine.dataEncryptionKey, daemonState })
-                    || !machineStoredContentMatchesAccountMode({
-                    mode: admission.encryptionMode,
-                    metadata: machine.metadata,
-                    daemonState,
-                    dataEncryptionKey: machine.dataEncryptionKey,
-                    storedRead: true,
-                }) || (admission.encryptionMode === 'plain' && !isSafePlainMachinePublication(machine.metadata, daemonState))) {
-                    afterTx(tx, () => callback?.({ result: 'error', message: 'Invalid parameters' }));
-                    return null;
-                }
-
-                if (machine.daemonStateVersion !== expectedVersion) {
-                    afterTx(tx, () => callback?.({ result: 'version-mismatch', version: machine.daemonStateVersion, daemonState: machine.daemonState }));
-                    return null;
-                }
-
-                const activeAt = Date.now();
-                const { count } = await tx.machine.updateMany({
-                    where: {
-                        accountId: userId, id: machineId, daemonStateVersion: expectedVersion,
-                        dataEncryptionKey: machine.dataEncryptionKey, installationId: machine.installationId,
-                        revokedAt: null, replacedByMachineId: null,
-                    },
-                    data: {
-                        daemonState,
-                        daemonStateVersion: expectedVersion + 1,
-                        active: true,
-                        lastActiveAt: new Date(activeAt),
-                    },
-                });
-
-                if (count === 0) {
-                    const fresh = await tx.machine.findFirst({
-                        where: { accountId: userId, id: machineId },
-                        select: { daemonStateVersion: true, daemonState: true, dataEncryptionKey: true, installationId: true, revokedAt: true, replacedByMachineId: true },
-                    });
-                    const freshState = classifyMachineAvailabilityState(fresh);
-                    if (freshState === "revoked") {
-                        afterTx(tx, () => callback?.({ result: 'error', message: 'Machine revoked' }));
-                        return null;
-                    }
-                    if (freshState === "replaced") {
-                        afterTx(tx, () => callback?.({ result: 'error', message: 'Machine replaced' }));
-                        return null;
-                    }
-                    if (!fresh) {
-                        afterTx(tx, () => callback?.({ result: 'error', message: 'Machine not found' }));
-                        return null;
-                    }
-                    if (!hasCurrentMachineSocketInstallation(socket, fresh.installationId)) {
-                        afterTx(tx, () => callback?.({ result: 'error', message: 'Machine installation changed' }));
-                        return null;
-                    }
-                    if (encodedMachineEnvelope(fresh.dataEncryptionKey) !== expectedDataEncryptionKey) {
-                        afterTx(tx, () => callback?.({ result: 'key-mismatch' }));
-                        return null;
-                    }
-                    afterTx(tx, () => callback?.({ result: 'version-mismatch', version: fresh.daemonStateVersion, daemonState: fresh.daemonState }));
-                    return null;
-                }
-
-                const daemonStateUpdate = { value: daemonState, version: expectedVersion + 1 };
-                const child = await readMachineDevcontainerChildInTx(tx, machineId);
-                for (const accountId of recipientAccountIds) {
-                    const access = await resolveMachineAccessInTx(tx, { actorAccountId: accountId, machineId });
-                    const devcontainerChild = access?.accessState === 'ready' ? child : null;
-                    const cursor = await markAccountChanged(tx, { accountId, kind: 'machine', entityId: machineId });
-                    afterTx(tx, () => {
-                        const updatePayload = buildUpdateMachineUpdate(
-                            machineId, cursor.resolveCursor(), randomKeyNaked(12), undefined, daemonStateUpdate,
-                            { active: true, activeAt, keyBasis: serializeMachineKeyBasis({ ...machine, daemonStateVersion: expectedVersion + 1 }), devcontainerChild },
-                        );
-                        eventRouter.emitUpdate({
-                            userId: accountId,
-                            payload: updatePayload,
-                            recipientFilter: { type: 'machine-scoped-only', machineId },
-                        });
-                    });
-                }
-                afterTx(tx, () => callback?.({ result: 'success', version: expectedVersion + 1, daemonState }));
-                return null;
-            }, {
-                isolationLevel: "ReadCommitted",
-                transactionClass: "machine-daemon-state",
-            });
-        } catch {
-            log(
-                {
-                    module: 'websocket',
-                    level: 'error',
-                    event: 'machine-update-state',
-                    errorCode: 'internal_error',
-                },
-                'Machine state update failed.',
-            );
-            if (callback) {
-                callback({ result: 'error', message: 'Internal error' });
-            }
-        }
-    });
+    registerMachineDaemonStateHandler(userId, socket);
 }

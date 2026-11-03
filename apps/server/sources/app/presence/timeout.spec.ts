@@ -85,8 +85,8 @@ describe("presence timeout config", () => {
         const { resolvePresenceTimeoutConfig } = await importTimeoutModule();
         const config = resolvePresenceTimeoutConfig({});
         expect(config).toEqual({
-            sessionTimeoutMs: 10 * 60 * 1000,
-            machineTimeoutMs: 10 * 60 * 1000,
+            sessionTimeoutMs: 120_000,
+            machineTimeoutMs: 60_000,
             tickMs: 60 * 1000,
         });
     });
@@ -109,8 +109,8 @@ describe("presence timeout config", () => {
             HAPPIER_PRESENCE_TIMEOUT_TICK_MS: "-1",
         });
         expect(config).toEqual({
-            sessionTimeoutMs: 10 * 60 * 1000,
-            machineTimeoutMs: 10 * 60 * 1000,
+            sessionTimeoutMs: 120_000,
+            machineTimeoutMs: 60_000,
             tickMs: 60 * 1000,
         });
     });
@@ -206,51 +206,6 @@ describe("runPresenceTimeoutTick", () => {
         });
     });
 
-    it("marks timed-out machines inactive only through their exact scanned fences", async () => {
-        const { runPresenceTimeoutTick } = await importTimeoutModule();
-        const oldActiveAt = new Date("2026-01-01T00:00:00.000Z");
-        dbMocks.db.machine.findMany.mockResolvedValue([
-            { id: "m1", accountId: "u1", lastActiveAt: oldActiveAt, kind: "persistent" },
-            { id: "m2", accountId: "u2", lastActiveAt: oldActiveAt, kind: "persistent" },
-        ]);
-        dbMocks.db.machine.updateMany.mockResolvedValue({ count: 1 });
-
-        await runPresenceTimeoutTick(config);
-
-        expect(dbMocks.db.machine.updateMany).toHaveBeenCalledTimes(2);
-        expect(dbMocks.db.machine.updateMany).toHaveBeenNthCalledWith(1, {
-            where: { id: "m1", active: true, lastActiveAt: oldActiveAt },
-            data: { active: false },
-        });
-        expect(emitEphemeral).toHaveBeenCalledTimes(2);
-        expect(emitEphemeral).toHaveBeenNthCalledWith(
-            1,
-            expect.objectContaining({
-                userId: "u1",
-                payload: expect.objectContaining({ type: "machine-activity", id: "m1", active: false }),
-            }),
-        );
-    });
-
-    it("keeps a timed-out temporary Runner Machine out of broad Machine activity fanout", async () => {
-        const { runPresenceTimeoutTick } = await importTimeoutModule();
-        const oldActiveAt = new Date("2026-01-01T00:00:00.000Z");
-        dbMocks.db.machine.findMany.mockResolvedValue([
-            { id: "m1", accountId: "u1", lastActiveAt: oldActiveAt, kind: "persistent" },
-            { id: "runner-m2", accountId: "u1", lastActiveAt: oldActiveAt, kind: "ephemeral_session_runner" },
-        ]);
-        dbMocks.db.machine.updateMany.mockResolvedValue({ count: 1 });
-
-        await runPresenceTimeoutTick(config);
-
-        expect(dbMocks.db.machine.updateMany).toHaveBeenCalledTimes(2);
-        expect(emitEphemeral).toHaveBeenCalledTimes(1);
-        expect(emitEphemeral).toHaveBeenCalledWith(expect.objectContaining({
-            userId: "u1",
-            payload: expect.objectContaining({ type: "machine-activity", id: "m1", active: false }),
-        }));
-    });
-
     it("lets the next tick retry after a transient P2024 failure", async () => {
         const { runPresenceTimeoutTick } = await importTimeoutModule();
         const oldActiveAt = new Date("2026-01-01T00:00:00.000Z");
@@ -265,7 +220,7 @@ describe("runPresenceTimeoutTick", () => {
                 badgeAttentionChanged: false,
             }]);
 
-        await runPresenceTimeoutTick(config);
+        await expect(runPresenceTimeoutTick(config)).rejects.toMatchObject({ code: 'P2024' });
         await runPresenceTimeoutTick(config);
 
         expect(expireSessionPublisherCandidates).toHaveBeenCalledTimes(2);

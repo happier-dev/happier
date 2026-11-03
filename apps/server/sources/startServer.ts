@@ -5,7 +5,7 @@ import { startMetricsServer } from '@/app/monitoring/metrics';
 import { startDatabaseMetricsUpdater, setSocketAdapterModeInfo } from '@/app/monitoring/metrics/index';
 import { auth } from '@/app/auth/auth';
 import { activityCache } from '@/app/presence/sessionCache';
-import { startTimeout } from '@/app/presence/timeout';
+import { preparePresenceTimeouts } from '@/app/presence/timeout';
 import { initEncrypt } from '@/modules/encrypt';
 import { loadFiles, initFilesLocalFromEnv, initFilesS3FromEnv } from '@/storage/blob/files';
 import {
@@ -47,6 +47,7 @@ import {
 import { applySqliteMigrationsIfNeeded, resolveSqliteDatabaseFilePath } from '@/flavors/light/sqliteMigrations';
 import {
     getFilesBackendFromEnv,
+    getServerRoleFromEnv,
     resolveDefaultFilesBackend,
     resolveDefaultSocketAdapter,
     shouldApplyLightDefaultEnv,
@@ -57,7 +58,7 @@ import { createRedisStreamsRoomEmitter } from '@/app/events/createRedisStreamsRo
 import { registerSessionHumanPresenceAccessChangePublisher } from '@/app/session/humanPresence/sessionHumanPresenceService';
 import { eventRouter } from '@/app/events/eventRouter';
 import { getRedisClient } from '@/storage/redis/redis';
-import { shouldConsumePresenceFromRedis, shouldEnableLocalPresenceDbFlush } from '@/app/presence/presenceMode';
+import { shouldConsumePresenceFromRedis } from '@/app/presence/presenceMode';
 import { startPresenceRedisWorker } from '@/app/presence/presenceRedisQueue';
 import { initializeServerSentry } from '@/app/monitoring/sentry';
 import { resolveInferredPublicServerAccess } from '@/app/integrations/publicUrl/publicServerUrlInference';
@@ -91,20 +92,14 @@ import { createHomeConnectionDescriptorContinuityStoreForServer } from '@/app/fe
 import { readHomeConnectionDescriptor } from '@/app/features/homeConnectionDescriptorPublication';
 
 export type ServerFlavor = 'full' | 'light';
-export type ServerRole = 'all' | 'api' | 'worker';
+export { getServerRoleFromEnv } from '@/config/backends';
+export type { ServerRole } from '@/config/backends';
 
 function resolveServerLightDataDir(env: NodeJS.ProcessEnv): string {
     return expandHomeDirPath(
         (env.HAPPIER_SERVER_LIGHT_DATA_DIR ?? env.HAPPY_SERVER_LIGHT_DATA_DIR ?? '').trim(),
         env,
     );
-}
-
-export function getServerRoleFromEnv(env: NodeJS.ProcessEnv): ServerRole {
-    const raw = env.SERVER_ROLE?.trim();
-    if (!raw) return 'all';
-    if (raw === 'api' || raw === 'worker') return raw;
-    return 'all';
 }
 
 function shouldEnableRedisAdapterFromEnv(env: NodeJS.ProcessEnv, flavor: ServerFlavor): boolean {
@@ -412,9 +407,14 @@ export async function startServer(flavor: ServerFlavor, options?: StartServerOpt
         onShutdown('keepAlive:activity-cache', async () => {
             await activityCache.shutdown();
         });
-        if (shouldEnableLocalPresenceDbFlush(process.env)) {
-            activityCache.enableDbFlush();
-        }
+        const presenceTimeouts = preparePresenceTimeouts();
+        onShutdown('keepAlive:presence-timeouts', () => presenceTimeouts.stop());
+        const startPresenceConsumer = async (): Promise<void> => {
+            if (!shouldConsumePresenceFromRedis(process.env)) return;
+            const presenceWorker = startPresenceRedisWorker(readPresenceRedisWorkerConfigFromEnv(process.env));
+            onShutdown('presence-redis-worker', () => presenceWorker.stop());
+            await presenceWorker.ready;
+        };
         await initializeServerIdentityCache(process.env);
 
         // Redis should not be a hard dependency unless explicitly enabled for scale features.
@@ -424,7 +424,7 @@ export async function startServer(flavor: ServerFlavor, options?: StartServerOpt
         if (shouldEnableRedisAdapter && role === 'api') {
             log(
                 { module: 'presence' },
-                'Redis adapter is enabled: durable presence writes are consumed by a worker process. Ensure at least one replica runs with SERVER_ROLE=worker.',
+                'Redis adapter is enabled: API presence is committed synchronously; workers consume released API observations and deadline wakes.',
             );
         }
 
@@ -458,12 +458,8 @@ export async function startServer(flavor: ServerFlavor, options?: StartServerOpt
             // must still reach the API nodes that own human presence rooms.
             registerSessionHumanPresenceAccessChangePublisher(workerRoomEmitter);
 
-            if (shouldConsumePresenceFromRedis(process.env)) {
-                const presenceWorker = startPresenceRedisWorker(readPresenceRedisWorkerConfigFromEnv(process.env));
-                onShutdown('presence-redis-worker', async () => {
-                    await presenceWorker.stop();
-                });
-            }
+            await startPresenceConsumer();
+            await presenceTimeouts.start();
         }
 
         // Expose health + metrics in all roles (metrics server can be disabled via METRICS_ENABLED=false).
@@ -492,6 +488,8 @@ export async function startServer(flavor: ServerFlavor, options?: StartServerOpt
                 homeConnectionDescriptorContinuityStore,
             });
             apiListenerOwner = api;
+            await startPresenceConsumer();
+            await presenceTimeouts.start();
             const listener = resolveBoundServerListener(api);
 
             // Managed Personal Home / server-light composition: expose the
@@ -575,7 +573,6 @@ export async function startServer(flavor: ServerFlavor, options?: StartServerOpt
             if (metricsServerStarted && dbProvider !== 'sqlite') {
                 startDatabaseMetricsUpdater();
             }
-            startTimeout();
         }
 
         //

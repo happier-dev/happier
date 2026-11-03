@@ -4,8 +4,6 @@ import { getRedisClient } from "@/storage/redis/redis";
 import { log } from "@/utils/logging/log";
 
 import {
-    CREDENTIAL_QUALIFIED_SESSION_DELIVERY_EVENT,
-    type CredentialQualifiedSessionDeliveryV1,
     type SocketRoomBroadcastOperator,
     type SocketRoomEmitter,
     type SocketRoomEventName,
@@ -60,18 +58,12 @@ export class RedisStreamsRoomEmitter implements SocketRoomEmitter {
         return this.createBroadcastOperator(rooms, new Set());
     }
 
-    public async forwardCredentialQualifiedSessionDelivery(
-        delivery: CredentialQualifiedSessionDeliveryV1,
-    ): Promise<void> {
-        await this.writeServerSideEvent(CREDENTIAL_QUALIFIED_SESSION_DELIVERY_EVENT, delivery);
-    }
-
     /**
      * The worker's counterpart of `Server#serverSideEmit`: reaches the API nodes'
      * server-side handlers without joining the cluster as a peer.
      */
-    public serverSideEmit(eventName: string, payload: unknown): void {
-        void this.writeServerSideEvent(eventName, payload);
+    public serverSideEmit(eventName: string, payload: unknown): Promise<void> {
+        return this.writeServerSideEvent(eventName, payload);
     }
 
     private async writeServerSideEvent(eventName: string, payload: unknown): Promise<void> {

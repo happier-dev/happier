@@ -1,259 +1,58 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { createDbMocks, createDbTransactionMock, inTxPostgresControlStatementMock, installDbModuleMock } from "../api/testkit/dbMocks";
+import { createDbMocks, installDbModuleMock } from "../api/testkit/dbMocks";
 
 vi.mock("@/utils/logging/log", () => ({ log: vi.fn() }));
 
-const recordPresenceFlushRetry = vi.fn();
-
-vi.mock("@/app/monitoring/metrics/index", () => ({
-    sessionCacheCounter: { inc: vi.fn() },
-    databaseUpdatesSkippedCounter: { inc: vi.fn() },
-    recordPresenceFlushRetry,
-}));
-
-
-let machineLastActiveAtMs = 0;
 let machineRevokedAt: Date | null = null;
 let machineReplacedByMachineId: string | null = null;
-const dbMocks = createDbMocks({
-    session: ["update"],
-    machine: ["findUnique", "updateMany"],
-} as const);
-const transactionMock = createDbTransactionMock(() => ({
-    ...inTxPostgresControlStatementMock,
-    session: {
-        update: dbMocks.db.session.update,
-    },
-    machine: {
-        findUnique: dbMocks.db.machine.findUnique,
-        updateMany: dbMocks.db.machine.updateMany,
-    },
-}));
-installDbModuleMock({
-    db: transactionMock.wrapDb(dbMocks.db),
-});
+const dbMocks = createDbMocks({ machine: ["findUnique"] } as const);
+installDbModuleMock({ db: dbMocks.db });
 
-// Load the real owner after its DB boundary, outside behavioral deadlines and fake timers.
-await import("./sessionCache");
+// Resolve the real cache owner before its validity clock is controlled.
+const { activityCache } = await import('./sessionCache');
 
 describe("ActivityCache machine presence", () => {
-    let activityCache: any | null = null;
-
     beforeEach(() => {
         vi.clearAllMocks();
         vi.useFakeTimers();
         vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
-        machineLastActiveAtMs = Date.now();
         machineRevokedAt = null;
         machineReplacedByMachineId = null;
         dbMocks.reset();
-        transactionMock.transaction.mockClear();
         dbMocks.db.machine.findUnique.mockImplementation(async () => ({
-            id: "m1",
-            accountId: "u1",
-            lastActiveAt: new Date(machineLastActiveAtMs),
-            active: false,
-            revokedAt: machineRevokedAt,
-            replacedByMachineId: machineReplacedByMachineId,
+            id: "m1", accountId: "u1", lastActiveAt: new Date(), active: false,
+            revokedAt: machineRevokedAt, replacedByMachineId: machineReplacedByMachineId,
         }));
-        dbMocks.db.machine.updateMany.mockImplementation(async () => ({ count: 1 }));
     });
 
     afterEach(async () => {
-        await activityCache?.shutdown?.();
-        activityCache = null;
+        await activityCache.shutdown();
         vi.useRealTimers();
     });
 
-    it("forces a DB write to set machine.active=true even when lastActiveAt is already recent", async () => {
-        ({ activityCache } = await import("./sessionCache"));
-        activityCache.enableDbFlush();
-
-        const ok = await activityCache.isMachineValid("m1", "u1");
-        expect(ok).toBe(true);
-
-        const queued = activityCache.queueMachineUpdate("m1", Date.now());
-        expect(queued).toBe(true);
-
-        await (activityCache as any).flushPendingUpdates();
-
-        expect(dbMocks.db.machine.updateMany).toHaveBeenCalledTimes(1);
-        expect(dbMocks.db.machine.updateMany).toHaveBeenCalledWith(
-            expect.objectContaining({
-                where: expect.objectContaining({ accountId: "u1", id: "m1", revokedAt: null, replacedByMachineId: null }),
-                data: expect.objectContaining({ active: true, lastActiveAt: expect.any(Date) }),
-            }),
-        );
-
-        const queuedAgain = activityCache.queueMachineUpdate("m1", Date.now());
-        expect(queuedAgain).toBe(false);
-    });
-
     it("treats revoked machines as invalid", async () => {
-        machineRevokedAt = new Date("2026-01-01T00:00:00.000Z");
-
-        ({ activityCache } = await import("./sessionCache"));
-
-        const ok = await activityCache.isMachineValid("m1", "u1");
-        expect(ok).toBe(false);
-    });
-
-    it.each(['delayed heartbeat', 'older publication acknowledgement'] as const)(
-        'flushes the newest pending heartbeat despite a %s', async (ordering) => {
-            const { activityCache: cache } = await import('./sessionCache');
-            activityCache = cache;
-            cache.enableDbFlush();
-            const base = Date.now();
-            cache.seedMachineValidity({ machineId: 'm1', userId: 'u1', active: true, lastActiveAt: new Date(base) });
-            const newest = base + 80_000;
-            expect(cache.queueMachineUpdate('m1', newest)).toBe(true);
-            if (ordering === 'delayed heartbeat') cache.queueMachineUpdate('m1', base + 40_000);
-            else cache.markMachineUpdateSent('m1', base + 40_000);
-
-            await cache.shutdown();
-
-            expect(dbMocks.db.machine.updateMany.mock.calls.map(([args]) => args.data.lastActiveAt))
-                .toEqual([new Date(newest)]);
-        },
-    );
-
-    it('does not queue a heartbeat older than the committed presence', async () => {
-        const { activityCache: cache } = await import('./sessionCache');
-        activityCache = cache;
-        cache.enableDbFlush();
-        cache.seedMachineValidity({ machineId: 'm1', userId: 'u1', active: true, lastActiveAt: new Date() });
-
-        expect(cache.queueMachineUpdate('m1', Date.now() - 40_000)).toBe(false);
-        await cache.shutdown();
-        expect(dbMocks.db.machine.updateMany).not.toHaveBeenCalled();
+        machineRevokedAt = new Date();
+        expect(await activityCache.isMachineValid("m1", "u1")).toBe(false);
     });
 
     it("treats replaced machines as invalid", async () => {
         machineReplacedByMachineId = "m2";
-
-        ({ activityCache } = await import("./sessionCache"));
-
-        const ok = await activityCache.isMachineValid("m1", "u1");
-        expect(ok).toBe(false);
+        expect(await activityCache.isMachineValid("m1", "u1")).toBe(false);
     });
 
     it("reuses a seeded machine validation without issuing any machine lookup", async () => {
-        ({ activityCache } = await import("./sessionCache"));
+        activityCache.seedMachineValidity({ machineId: "m1", userId: "u1", active: true, lastActiveAt: new Date() });
 
-        activityCache.seedMachineValidity({
-            machineId: "m1",
-            userId: "u1",
-            active: true,
-            lastActiveAt: new Date("2026-01-01T00:00:00.000Z"),
-        });
-
-        dbMocks.db.machine.findUnique.mockClear();
-
-        const ok = await activityCache.isMachineValid("m1", "u1");
-
-        expect(ok).toBe(true);
+        expect(await activityCache.isMachineValid("m1", "u1")).toBe(true);
         expect(dbMocks.db.machine.findUnique).not.toHaveBeenCalled();
     });
 
-    it("flushes multiple pending machines in one transaction batch", async () => {
-        ({ activityCache } = await import("./sessionCache"));
-        activityCache.enableDbFlush();
+    it('clears cached validity on shutdown', async () => {
+        activityCache.seedMachineValidity({ machineId: 'm1', userId: 'u1', active: true, lastActiveAt: new Date() });
+        await activityCache.shutdown();
 
-        await activityCache.isMachineValid("m1", "u1");
-        await activityCache.isMachineValid("m2", "u1");
-
-        expect(activityCache.queueMachineUpdate("m1", Date.now())).toBe(true);
-        expect(activityCache.queueMachineUpdate("m2", Date.now())).toBe(true);
-
-        await (activityCache as any).flushPendingUpdates();
-
-        // One interactive transaction owned by inTx carries both machine writes.
-        expect(transactionMock.transaction).toHaveBeenCalledTimes(1);
-        expect(typeof transactionMock.transaction.mock.calls[0]?.[0]).toBe("function");
-        expect(dbMocks.db.machine.updateMany).toHaveBeenCalledTimes(2);
-    });
-
-    it("keeps all pending machine updates when the batch fails and retries them on the next flush", async () => {
-        const { log } = await import("@/utils/logging/log");
-
-        let sawFailure = false;
-        dbMocks.db.machine.updateMany.mockImplementation(async (args: any) => {
-            if (args?.where?.id === "m1" && !sawFailure) {
-                sawFailure = true;
-                throw new Error("write_failed");
-            }
-            return { count: 1 };
-        });
-
-        ({ activityCache } = await import("./sessionCache"));
-        activityCache.enableDbFlush();
-
-        await activityCache.isMachineValid("m1", "u1");
-        await activityCache.isMachineValid("m2", "u1");
-
-        expect(activityCache.queueMachineUpdate("m1", Date.now())).toBe(true);
-        expect(activityCache.queueMachineUpdate("m2", Date.now())).toBe(true);
-
-        await (activityCache as any).flushPendingUpdates();
-
-        // The batch runs in order and stops at the failing write; no cached entry is marked flushed when the transaction rejects.
-        expect(dbMocks.db.machine.updateMany).toHaveBeenCalledTimes(1);
-        expect((activityCache as any).machineCache.get("m1")?.pendingUpdate).not.toBeNull();
-        expect((activityCache as any).machineCache.get("m2")?.pendingUpdate).not.toBeNull();
-
-        expect(log).toHaveBeenCalledWith(
-            expect.objectContaining({ level: "error" }),
-            expect.stringContaining("Error updating machines"),
-        );
-        expect(recordPresenceFlushRetry).toHaveBeenCalledWith({
-            entityType: "machine",
-            reason: "db-error",
-        });
-
-        // Second flush retries the full batch.
-        await (activityCache as any).flushPendingUpdates();
-        expect(dbMocks.db.machine.updateMany).toHaveBeenCalledTimes(3);
-        expect((activityCache as any).machineCache.get("m1")?.pendingUpdate).toBeNull();
-        expect((activityCache as any).machineCache.get("m2")?.pendingUpdate).toBeNull();
-    });
-
-    it("does not drop a newer queued machine update that arrives while a flush is awaiting the DB", async () => {
-        let resolveFirstWrite: () => void = () => {
-            throw new Error("resolveFirstWrite not initialized");
-        };
-        const firstWriteBarrier = new Promise<void>((resolve) => {
-            resolveFirstWrite = () => resolve();
-        });
-
-        let callCount = 0;
-        dbMocks.db.machine.updateMany.mockImplementation(async () => {
-            callCount += 1;
-            if (callCount === 1) {
-                await firstWriteBarrier;
-            }
-            return { count: 1 };
-        });
-
-        ({ activityCache } = await import("./sessionCache"));
-        activityCache.enableDbFlush();
-
-        await activityCache.isMachineValid("m1", "u1");
-        const t1 = Date.now();
-        expect(activityCache.queueMachineUpdate("m1", t1)).toBe(true);
-
-        const flush = (activityCache as any).flushPendingUpdates();
-        await Promise.resolve();
-
-        // Queue a newer update while the DB write is in-flight.
-        const t2 = t1 + 60_000;
-        expect(activityCache.queueMachineUpdate("m1", t2)).toBe(true);
-
-        resolveFirstWrite();
-        await flush;
-
-        await (activityCache as any).flushPendingUpdates();
-        expect(dbMocks.db.machine.updateMany).toHaveBeenCalledTimes(2);
-        expect(dbMocks.db.machine.updateMany.mock.calls[1]?.[0]?.data?.lastActiveAt).toEqual(new Date(t2));
+        expect(await activityCache.isMachineValid('m1', 'u1')).toBe(true);
+        expect(dbMocks.db.machine.findUnique).toHaveBeenCalledOnce();
     });
 });

@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { randomUUID } from 'node:crypto';
 import { log, logger } from '@/utils/logging/log';
 
 const context = new AsyncLocalStorage<Readonly<{
@@ -90,6 +91,20 @@ export function annotateWebLatencyQuery(sql: string): string {
     const current = context.getStore();
     return process.env.HAPPIER_WEB_LATENCY_TRACE === '1' && current?.requestId && current.spanId !== undefined
         ? `${sql}\n/* happier-web-latency:${current.requestId}:${current.spanId} */` : sql;
+}
+
+/** Identify dispatch and its asynchronous descendants; duration covers dispatch only. */
+export function withWebLatencyProducerTrace<T>(producer: string, operation: () => T): T {
+    if (process.env.HAPPIER_WEB_LATENCY_TRACE !== '1') return operation();
+    // Timers inherit their arming context; a later pass is a new producer.
+    return context.run({ requestId: randomUUID(), sequence: { next: 0 } }, () => {
+        const started = performance.now();
+        try {
+            return operation();
+        } finally {
+            recordWebLatencyPhase(producer, performance.now() - started);
+        }
+    });
 }
 
 export async function timeWebLatencyPhase<T>(phase: string, operation: () => T | Promise<T>, transactionClass?: string,

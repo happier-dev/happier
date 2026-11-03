@@ -8,6 +8,8 @@ import { inTx } from '@/storage/inTx';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
 import { createSignedAccountContentBinding } from '@/testkit/accountEncryption';
 import * as access from './machineAccess';
+import { makeShareEligibleForTest } from '@/testkit/shareEligibility.testkit';
+import { observePrismaReads } from '@/testkit/observePrismaReads';
 
 const provider = getDbProviderFromEnv(process.env, 'postgres');
 describe.skipIf(provider === 'mysql')('Machine recipient work (real provider)', () => {
@@ -35,8 +37,38 @@ describe.skipIf(provider === 'mysql')('Machine recipient work (real provider)', 
             dataEncryptionKey: sealEncryptedDataKeyEnvelopeV1({ dataKey: key, recipientPublicKey: owner.keys.publicKey, randomBytes: tweetnacl.randomBytes }) } });
         return { owner, machine, key };
     }
-    const grant = (actorAccountId: string, machineId: string, accountId: string) => inTx(tx => access.setMachineAccessGrantInTx(tx, {
-        actorAccountId, machineId, principal: { kind: 'account', accountId }, level: 'view' }));
+    const grant = async (actorAccountId: string, machineId: string, accountId: string) => {
+        await makeShareEligibleForTest(actorAccountId, accountId);
+        return inTx(tx => access.setMachineAccessGrantInTx(tx, {
+            actorAccountId, machineId, principal: { kind: 'account', accountId }, level: 'view' }));
+    };
+
+    it('acquires structural audience through the shared membership read without opening content or keys', async () => {
+        const f = await fixture();
+        const recipient = await account();
+        const suspended = await account();
+        await db.machineAccountGrant.createMany({ data: [recipient, suspended, f.owner].map(account => ({
+            machineId: f.machine.id, accountId: account.id, accessLevel: 'view', createdByAccountId: f.owner.id,
+        })) });
+        await db.account.update({ where: { id: suspended.id }, data: { status: 'suspended' } });
+        await inTx(async tx => {
+            const observed = observePrismaReads(tx, ['machine', 'account', 'machineKeyEnvelope']);
+            const statements: unknown[] = [];
+            const traced = new Proxy(observed.tx, { get(target, property, receiver) {
+                const value = Reflect.get(target, property, receiver);
+                if (property !== '$queryRawUnsafe') return typeof value === 'function' ? value.bind(target) : value;
+                return (...args: unknown[]) => {
+                    statements.push(args[0]);
+                    return Reflect.apply(value, target, args);
+                };
+            } });
+            expect(await access.resolveCurrentMachineRecipientAccountIdsInTx(traced, f.machine.id))
+                .toEqual([f.owner.id, recipient.id].sort());
+            expect(observed.reads).toEqual([]);
+            expect(statements).toHaveLength(1);
+            expect(statements[0]).not.toMatch(/MachineKeyEnvelope|contentPublicKey|encryptedDataKey|dataEncryptionKey|metadata|daemonState/u);
+        });
+    });
 
     it('projects recipient work for a fleet in one set query and clears only a conditionally delivered key', async () => {
         const f = await fixture();
@@ -99,9 +131,20 @@ describe.skipIf(provider === 'mysql')('Machine recipient work (real provider)', 
         await db.machineTeamGrant.create({ data: { machineId, teamId: team.id, accessLevel: 'view', createdByAccountId: f.owner.id } });
         const workForChangedMachine = async () => {
             const work = (await read()).get(machineId)!;
-            const page = await inTx(tx => access.readMachineRecipientCensusInTx(tx, { actorAccountId: f.owner.id, machineId }));
+            const page = await inTx(async tx => {
+                const observed = observePrismaReads(tx, ['account', 'machineKeyEnvelope']);
+                const page = await access.readMachineRecipientCensusInTx(observed.tx, { actorAccountId: f.owner.id, machineId });
+                // The same relational audience/envelope acquisition serves summary and page;
+                // a page must not reacquire recipients through per-model follow-up reads.
+                expect(observed.reads).toEqual([]);
+                return page;
+            });
             if ('kind' in page) throw new Error(page.code);
             expect(work.recipientWorkPending).toBe(page.recipients.length > 0);
+            // Structural notifications retain custody and delivered recipients;
+            // only undelivered recipients appear in action_required key work.
+            expect(await inTx(tx => access.resolveCurrentMachineRecipientAccountIdsInTx(tx, machineId)))
+                .toEqual([f.owner.id, recipient.id, ...page.recipients.map(row => row.recipientAccountId)].sort());
             return page.recipients.map(row => row.recipientAccountId).sort();
         };
         // The Group overlap is one recipient; each lifecycle transition must

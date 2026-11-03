@@ -24,7 +24,7 @@ import { resolveAccountDisplayLabelV1, ACCOUNT_DISPLAY_PROFILE_SELECT } from '@/
 import { acquireAccountChangePublicationLocksInTx, assertAccountChangePublicationAudienceInTx, beforeAccountChangePublication, markAccountsChanged } from '@/app/changes/markAccountChanged';
 import { resolveEffectiveAccountEncryptionModeFromAccountRow } from '@/app/encryption/accountEncryptionMode';
 import { captureMachineAccessImpactsInTx, applyMachineAccessImpactsInTx } from './machineAccessEffects';
-import { isMachineRecipientWorkPending, projectMachineRecipientWork, readMachineRecipientWorkInTx } from './machineRecipientWork';
+import { isMachineRecipientWorkPending, projectMachineRecipientWork, readMachineRecipientWorkInTx, readMachineAudienceAccountIdsInTx } from './machineRecipientWork';
 
 type MachineActor = Readonly<{ actorAccountId: string; machineId: string }>;
 export interface MachineAccessFacts {
@@ -58,6 +58,24 @@ const MACHINE_ACCESS_FACTS_SELECT = {
         } } } },
     } as const;
 
+/** Same current Machine graph for exact Session binding and Machine admission. */
+export function buildMachineAdmissionFactsSelect(actorAccountId: string) {
+    const foreignGrant = { machine: { accountId: { not: actorAccountId } } };
+    const { accountGrants, teamGrants, groupGrants } = MACHINE_ACCESS_FACTS_SELECT;
+    return {
+        ...MACHINE_ACCESS_FACTS_SELECT,
+        accountGrants: { ...accountGrants, where: { ...foreignGrant, accountId: actorAccountId } },
+        teamGrants: { where: foreignGrant, select: { ...teamGrants.select, team: { select: {
+            ...teamGrants.select.team.select,
+            memberships: { ...teamGrants.select.team.select.memberships, where: { accountId: actorAccountId } },
+        } } } },
+        groupGrants: { where: foreignGrant, select: { ...groupGrants.select, teamGroup: { select: {
+            ...groupGrants.select.teamGroup.select,
+            memberships: { ...groupGrants.select.teamGroup.select.memberships, where: { teamMembership: { accountId: actorAccountId } } },
+        } } } },
+    } as const;
+}
+
 const MACHINE_OPENING_INCLUDE = {
     account: MACHINE_RESOURCE_FACTS_SELECT.account,
     accountGrants: MACHINE_ACCESS_FACTS_SELECT.accountGrants,
@@ -81,8 +99,9 @@ const MACHINE_PERMISSION_FACTS_SELECT = {
 } as const;
 type MachinePermissionFacts = Prisma.MachineGetPayload<{ select: typeof MACHINE_PERMISSION_FACTS_SELECT }>;
 
-async function readFactsInTx(tx: Tx, machineId: string) {
-    return tx.machine.findUnique({ where: { id: machineId }, select: MACHINE_ACCESS_FACTS_SELECT });
+async function readFactsInTx(tx: Tx, machineId: string, actorAccountId?: string) {
+    return tx.machine.findUnique({ where: { id: machineId },
+        select: actorAccountId === undefined ? MACHINE_ACCESS_FACTS_SELECT : buildMachineAdmissionFactsSelect(actorAccountId) });
 }
 type MachineFacts = NonNullable<Awaited<ReturnType<typeof readFactsInTx>>>;
 type Contribution = Readonly<{ principal: PrincipalRefV1; level: 'view' | 'admin'; displayName: string | null; accountIds: readonly string[] }>;
@@ -136,10 +155,8 @@ export async function resolveEffectiveMachineAccessForMachinesInTx(tx: Tx, input
     return result;
 }
 /** The current structural audience includes the original custodian, irrespective of key delivery. */
-export async function resolveCurrentMachineRecipientAccountIdsInTx(tx: Tx, machineId: string): Promise<string[]> {
-    const row = await readFactsInTx(tx, machineId);
-    if (!row) return [];
-    return [...new Set([row.accountId, ...contributions(row).flatMap(source => source.accountIds)])].sort();
+export async function resolveCurrentMachineRecipientAccountIdsInTx(tx: Tx, machineId: string, custodianAccountId?: string): Promise<string[]> {
+    return readMachineAudienceAccountIdsInTx(tx, machineId, custodianAccountId);
 }
 export async function listMachineCandidatesInTx(
     tx: Tx,
@@ -191,8 +208,9 @@ async function readRecipientAccessMaterialInTx(tx: Tx, actorAccountId: string, m
 }
 
 async function accessFromFactsInTx(tx: Tx, row: MachineFacts, actorAccountId: string,
-    material?: Awaited<ReturnType<typeof readRecipientAccessMaterialInTx>>): Promise<MachineAccessFacts | null> {
-    const role = effectiveRole(row, actorAccountId);
+    material?: Awaited<ReturnType<typeof readRecipientAccessMaterialInTx>>,
+    sources?: readonly Contribution[], admittedRole?: MachineAccessRoleV1): Promise<MachineAccessFacts | null> {
+    const role = admittedRole ?? effectiveRole(row, actorAccountId, sources);
     if (!role) return null;
     const owned = row.accountId === actorAccountId;
     if (!owned && (row.revokedAt || row.replacedByMachineId)) return null;
@@ -229,9 +247,23 @@ function grantReadiness(states: readonly (MachineAccessFacts | null)[]) {
         : states.some(state => state?.accessState === 'key_pending') ? 'key_pending' as const : 'ready' as const,
         canPrepareKeys: states.some(state => state?.canPrepareKeys === true) };
 }
+/** Share one current Machine/grant graph while keeping recipient readiness actor-specific. */
+export async function resolveMachineAccessForActorsInTx(tx: Tx, input: Readonly<{
+    machineId: string; actorAccountIds: readonly string[];
+}>): Promise<Map<string, MachineAccessFacts | null>> {
+    const result = new Map<string, MachineAccessFacts | null>();
+    const actorAccountIds = [...new Set(input.actorAccountIds)];
+    if (actorAccountIds.length === 0) return result;
+    const row = await readFactsInTx(tx, input.machineId, actorAccountIds.length === 1 ? actorAccountIds[0] : undefined);
+    const sources = row ? contributions(row) : [];
+    for (const actorAccountId of actorAccountIds) {
+        result.set(actorAccountId, row ? await accessFromFactsInTx(tx, row, actorAccountId, undefined, sources) : null);
+    }
+    return result;
+}
 export async function resolveMachineAccessInTx(tx: Tx, input: MachineActor): Promise<MachineAccessFacts | null> {
-    const row = await readFactsInTx(tx, input.machineId);
-    return row ? accessFromFactsInTx(tx, row, input.actorAccountId) : null;
+    const access = await resolveMachineAccessForActorsInTx(tx, { machineId: input.machineId, actorAccountIds: [input.actorAccountId] });
+    return access.get(input.actorAccountId) ?? null;
 }
 export async function resolveMachineAccess(input: MachineActor) { return inTx(tx => resolveMachineAccessInTx(tx, input)); }
 export async function readAccessibleMachineAccessInTx(tx: Tx, input: MachineActor): Promise<AccessibleMachineAccessV1 | null> {
@@ -424,6 +456,15 @@ async function mutationImpactInTx(tx: Tx, machineId: string, accountIds: readonl
 async function publishMutationInTx(tx: Tx, impacts: Awaited<ReturnType<typeof mutationImpactInTx>>, changedAccountId?: string) {
     await applyMachineAccessImpactsInTx(tx, { impacts: impacts.values(), grantRosterChanged: true, ...(changedAccountId ? { directGrantChangedAccountId: changedAccountId } : {}) });
 }
+/** Stabilize Machine content after Account admission and before reading its CAS basis. */
+export async function lockMachinePublicationInTx(tx: Tx, machineId: string): Promise<void> {
+    // Content Account admission permits peer PostgreSQL Machine writes. MySQL's
+    // exclusive Account admission and SQLite's single writer already exclude peers.
+    if (getDbProviderFromEnv(process.env, 'postgres') === 'postgres') {
+        await tx.$queryRawUnsafe('SELECT "id" FROM "Machine" WHERE "id" = $1 FOR NO KEY UPDATE', machineId);
+    }
+}
+
 /** Fence existing and prospective recipients before authority, key or grant reads. */
 export async function acquireMachineAccessPublicationLocksInTx(tx: Tx, machineId: string, principal?: PrincipalRefV1): Promise<void> {
     const provider = getDbProviderFromEnv(process.env, 'postgres');
@@ -444,12 +485,7 @@ export async function acquireMachineAccessPublicationLocksInTx(tx: Tx, machineId
     };
     const captured = new Set(await readAudience());
     await acquireAccountChangePublicationLocksInTx(tx, [...captured], { includeSingleAccount: true });
-    if (provider === 'postgres') {
-        // Content Account admission permits peer Machine writes. Stabilize the
-        // expected content/key basis before grant and recipient-tuple work;
-        // MySQL's existing exclusive Account admission already excludes peers.
-        await tx.$queryRawUnsafe('SELECT "id" FROM "Machine" WHERE "id" = $1 FOR NO KEY UPDATE', machineId);
-    }
+    await lockMachinePublicationInTx(tx, machineId);
     // ReadCommitted can observe audience growth during the wait. Replay through
     // inTx rather than extending a sorted lock set with a lower-id recipient.
     if ((await readAudience()).some(accountId => !captured.has(accountId))) {

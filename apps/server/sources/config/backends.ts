@@ -2,6 +2,12 @@ export type ServerFlavor = "full" | "light";
 
 export type FilesBackend = "local" | "s3";
 export type SocketAdapter = "memory" | "redis-streams";
+export type ServerRole = 'all' | 'api' | 'worker';
+
+export function getServerRoleFromEnv(env: NodeJS.ProcessEnv): ServerRole {
+    const raw = env.SERVER_ROLE?.trim();
+    return raw === 'api' || raw === 'worker' ? raw : 'all';
+}
 
 import { readServerConfig, readServerConfigRaw } from '@happier-dev/protocol/serverConfig/serverConfigCodec';
 import { SERVER_CONFIG } from '@happier-dev/protocol/serverConfig/registry';

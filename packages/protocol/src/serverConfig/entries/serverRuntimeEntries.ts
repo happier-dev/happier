@@ -685,7 +685,7 @@ export const SERVER_RUNTIME_SERVER_CONFIG = defineServerConfigRegistry({
         section: 'server',
         group: 'presence',
         aliases: ['HAPPY_PRESENCE_WORKER_FLUSH_INTERVAL_MS'],
-        description: 'Time between presence worker flushes, in milliseconds.',
+        description: 'Presence worker flush interval; capped by the Machine deadline recovery budget, in milliseconds.',
         docs: 'self-hosting/env#core-runtime',
     },
     HAPPIER_PRESENCE_WORKER_READ_BLOCK_MS: {
@@ -716,7 +716,7 @@ export const SERVER_RUNTIME_SERVER_CONFIG = defineServerConfigRegistry({
     },
     HAPPIER_PRESENCE_WORKER_RECLAIM_IDLE_MS: {
         type: 'int',
-        default: 60_000,
+        default: 5_000,
         bounds: { min: 1 },
         sensitivity: 'plain',
         apply: 'restart',
@@ -724,12 +724,12 @@ export const SERVER_RUNTIME_SERVER_CONFIG = defineServerConfigRegistry({
         section: 'server',
         group: 'presence',
         aliases: ['HAPPY_PRESENCE_WORKER_RECLAIM_IDLE_MS'],
-        description: 'Idle time after which unacknowledged presence entries are reclaimed, in milliseconds.',
+        description: 'Idle time before unacknowledged presence entries are reclaimed; capped by the Machine deadline recovery budget, in milliseconds.',
         docs: 'self-hosting/env#core-runtime',
     },
     HAPPIER_PRESENCE_SESSION_TIMEOUT_MS: {
         type: 'int',
-        default: 600_000,
+        default: 120_000,
         bounds: { min: 1 },
         sensitivity: 'plain',
         apply: 'restart',
@@ -740,7 +740,7 @@ export const SERVER_RUNTIME_SERVER_CONFIG = defineServerConfigRegistry({
     },
     HAPPIER_PRESENCE_MACHINE_TIMEOUT_MS: {
         type: 'int',
-        default: 600_000,
+        default: 60_000,
         bounds: { min: 1 },
         sensitivity: 'plain',
         apply: 'restart',
@@ -758,7 +758,7 @@ export const SERVER_RUNTIME_SERVER_CONFIG = defineServerConfigRegistry({
         editable: 'home',
         section: 'server',
         group: 'presence',
-        description: 'Time between presence timeout checks, in milliseconds.',
+        description: 'Retry delay after a presence deadline database failure, in milliseconds.',
     },
     HAPPIER_PRESENCE_SHUTDOWN_FLUSH_TIMEOUT_MS: {
         type: 'float',

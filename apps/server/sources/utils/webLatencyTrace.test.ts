@@ -4,7 +4,7 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { symbols, type DestinationStream } from 'pino';
 
 import { logger, resolveServerLogLevelFromEnv } from './logging/log';
-import { annotateWebLatencyQuery, readWebLatencyRequestId, timeWebLatencyPhase, withWebLatencyTrace } from './webLatencyTrace';
+import { annotateWebLatencyQuery, readWebLatencyRequestId, timeWebLatencyPhase, withWebLatencyTrace, withWebLatencyProducerTrace } from './webLatencyTrace';
 import { enableMonitoring } from '@/app/api/utils/enableMonitoring';
 import type { Fastify as HappierFastify } from '@/app/api/types';
 
@@ -21,6 +21,27 @@ afterEach(() => {
 });
 
 describe('web latency request correlation', () => {
+    it('gives overlapping background producers distinct async roots only when detailed tracing is enabled', async () => {
+        vi.stubEnv('HAPPIER_WEB_LATENCY_TRACE', '0');
+        expect(withWebLatencyProducerTrace('background.probe', readWebLatencyRequestId)).toBeUndefined();
+        vi.stubEnv('HAPPIER_WEB_LATENCY_TRACE', '1');
+        const observe = () => withWebLatencyProducerTrace('background.probe', async () => {
+            await Promise.resolve();
+            return readWebLatencyRequestId();
+        });
+        // A timer may inherit the request that originally armed it. Each later
+        // producer pass must still have its own root, without retaining that id.
+        const ids = await withWebLatencyTrace('req-timerorigin', async () => {
+            const observed = await Promise.all([observe(), observe()]);
+            expect(readWebLatencyRequestId()).toBe('req-timerorigin');
+            return observed;
+        });
+        expect(ids[0]).toMatch(/^[0-9a-f-]{36}$/);
+        expect(ids[1]).toMatch(/^[0-9a-f-]{36}$/);
+        expect(ids[0]).not.toBe(ids[1]);
+        expect(readWebLatencyRequestId()).toBeUndefined();
+    });
+
     it('runs operations without phase clocks or submissions when detailed tracing is disabled', async () => {
         vi.stubEnv('HAPPIER_WEB_LATENCY_TRACE', '0');
         const clock = vi.spyOn(performance, 'now');

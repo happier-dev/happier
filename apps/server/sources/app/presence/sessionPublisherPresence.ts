@@ -39,6 +39,8 @@ import type { InTxOptions, ResolvedTransactionResult, Tx } from "@/storage/inTx"
 import { AsyncLock } from "@/utils/runtime/lock";
 import { publishSessionProviderBrokerConsumersChangedInTx, readSessionProviderBrokerCustodianAccountIdsInTx } from '@/app/providers/brokerConsumerChanges';
 import { recordWebLatencyPhase, timeWebLatencyPhase } from '@/utils/webLatencyTrace';
+import { schedulePresenceDeadline } from './timeout';
+import { publishPresenceDeadline } from './presenceRedisQueue';
 import {
     mapPendingActivationAuthorization,
     type PendingActivationTarget,
@@ -280,7 +282,7 @@ export async function expireSessionPublisherCandidates(params: Readonly<{
         for (const candidate of params.candidates) {
             const session = await tx.session.findUnique({
                 where: { id: candidate.sessionId },
-                select: { ...sessionActivityBadgeSelect, lastActiveAt: true, latestTurnId: true },
+                select: { ...sessionActivityBadgeSelect, lastActiveAt: true, latestTurnId: true, updatedAt: true },
             });
             if (
                 !session
@@ -299,7 +301,7 @@ export async function expireSessionPublisherCandidates(params: Readonly<{
                     archivedAt: null,
                     lastActiveAt: candidate.observedFence,
                 },
-                data: { active: false },
+                data: { active: false, updatedAt: session.updatedAt },
             });
             if (updated.count !== 1) {
                 results.push({ status: "stale", sessionId: candidate.sessionId });
@@ -484,6 +486,12 @@ export function createSessionPublisherPresence(options: Readonly<{ now?: () => D
             },
         });
         if (updated.count !== 1) throw new RegistrationContentionError();
+        afterTx(tx, () => {
+            const observation = { kind: 'session' as const, accountId: binding.accountId,
+                id: binding.sessionId, activeAt: committedFence.getTime() };
+            schedulePresenceDeadline(observation);
+            void publishPresenceDeadline(observation);
+        });
         const recipientCursors = await markSessionProjectionRecipientsChanged({ tx, sessionId: binding.sessionId });
         return sessionRecipientPublicationResult({
             status: "registered",
@@ -558,6 +566,7 @@ export function createSessionPublisherPresence(options: Readonly<{ now?: () => D
                         lastActiveAt: true,
                         publisherGeneration: true,
                         publisherGenerationLastActiveAt: true,
+                        updatedAt: true,
                     },
                 });
                 if (!session) return { status: "rejected", reason: "not_found" };
@@ -586,9 +595,16 @@ export function createSessionPublisherPresence(options: Readonly<{ now?: () => D
                         active: true,
                         lastActiveAt: committedFence,
                         publisherGenerationLastActiveAt: committedFence,
+                        updatedAt: session.updatedAt,
                     },
                 });
                 if (updated.count !== 1) return { status: "superseded" };
+                afterTx(tx, () => {
+                    const observation = { kind: 'session' as const, accountId: registration.binding.accountId,
+                        id: registration.binding.sessionId, activeAt: committedFence.getTime() };
+                    schedulePresenceDeadline(observation);
+                    if (!session.active) void publishPresenceDeadline(observation);
+                });
                 const recipientCursors = await markSessionProjectionRecipientsChanged({
                     tx,
                     sessionId: registration.binding.sessionId,

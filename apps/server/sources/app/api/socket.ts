@@ -3,7 +3,7 @@ import { registerUiFocusSocketEvent } from '@/app/api/socket/registerUiFocusSock
 import { registerSessionConsumptionSocketEvent } from '@/app/api/socket/sessionConsumption';
 import { registerSocketRoomDiscovery } from '@/app/api/socket/socketRoomDiscovery';
 import { Fastify } from "./types";
-import { buildMachineActivityEphemeral, buildSessionActivityEphemeral, buildUpdateSessionUpdate, ClientConnection, eventRouter } from "@/app/events/eventRouter";
+import { buildSessionActivityEphemeral, buildUpdateSessionUpdate, ClientConnection, eventRouter } from "@/app/events/eventRouter";
 import { CREDENTIAL_QUALIFIED_SESSION_DELIVERY_EVENT } from "@/app/events/socketRoomEmitter";
 import { buildMachineOwnerConflictSocketPayload, readMachineDaemonOwnershipMetadataFromSocketAuth } from '@happier-dev/protocol/machines/ownership/daemonOwnership';
 import { Server, Socket } from "socket.io";
@@ -34,7 +34,9 @@ import { sessionUpdateHandler } from "./socket/sessionUpdateHandler";
 import { registerReleasedUiV021SessionEndSocketEvent } from "@/app/session/compatibility/registerReleasedUiV021SessionEndSocketEvent";
 import { createSessionHumanPresenceService } from "@/app/session/humanPresence/sessionHumanPresenceService";
 import { registerSessionHumanPresenceSocketHandlers, releaseSessionHumanPresenceHoldAfterFinalCurrentness } from "@/app/session/humanPresence/registerSessionHumanPresenceSocketHandlers";
-import { machineUpdateHandler } from "./socket/machineUpdateHandler";
+import { machineUpdateHandler, observeMachineAliveFromSocket } from "./socket/machineUpdateHandler";
+import { schedulePresenceDeadline } from '@/app/presence/timeout';
+import { registerPresenceDeadlineNotifications } from '@/app/presence/presenceDeadlineNotification';
 import { machineTransferHandler } from "./socket/machineTransferHandler";
 import { machineLiveStreamRelayHandler } from "./socket/machineLiveStreamRelayHandler";
 import { externalSessionStatusDemandHandler } from "./socket/externalSessionStatusDemandHandler";
@@ -364,15 +366,16 @@ export function startSocket(app: Fastify) {
     app.verifyPeerMediationViewerSocketOwnership = verifyPeerMediationViewerSocketOwnership;
     eventRouter.setIo(io, {
         forwardRpc: (request) => forwardRpcCall({ io, ...request }),
-        broadcastSessionDelivery: delivery => {
+        broadcastServerSideEvent: (event, payload) => {
             if (shouldEnableRedisAdapter) {
-                io.serverSideEmit(CREDENTIAL_QUALIFIED_SESSION_DELIVERY_EVENT, delivery);
+                io.serverSideEmit(event, payload);
             }
         },
     });
     io.on(CREDENTIAL_QUALIFIED_SESSION_DELIVERY_EVENT, (delivery: unknown) => {
         void eventRouter.receiveCredentialQualifiedSessionDelivery(io.local, delivery);
     });
+    const releasePresenceDeadlineNotifications = registerPresenceDeadlineNotifications(io, schedulePresenceDeadline);
     const tunnelRelayBridge = createPeerTcpTunnelRelayBridge(io);
     const peerMediationObservabilityStore = createPeerMediationObservabilityStore();
     const peerMediationObservabilityEmitter = createPeerMediationObservabilityEmitter(peerMediationObservabilityStore);
@@ -770,6 +773,9 @@ export function startSocket(app: Fastify) {
             socket.data.sessionScopedBinding?.sessionId
             ?? socket.data.sessionId;
         const machineId = socket.data.machineId;
+        const isMachineSocketCurrent = async (): Promise<boolean> => socket.connected
+            && typeof machineId === 'string'
+            && (await machineOwnershipRegistry.readOwner({ accountId: userId, machineId }))?.socketId === socket.id;
         const token = socket.handshake.auth.token as string;
         let connectConvergenceFinished = false;
         let connectReady = false;
@@ -1073,16 +1079,6 @@ export function startSocket(app: Fastify) {
                     : `User disconnected: ${userId} (reason=${String(reason)}, durationMs=${durationMs}, socketId=${socket.id}, clientType=${metadata.clientType}, purpose=${metadata.clientPurpose})`,
             );
 
-            // Broadcast daemon offline status. A temporary Runner Machine stays out
-            // of this Account-wide inventory fanout; its Session owns its presence.
-            if (connection.connectionType === 'machine-scoped' && ephemeralRunnerAdmission?.kind !== "machine-runtime") {
-                const machineActivity = buildMachineActivityEphemeral(connection.machineId, false, Date.now());
-                eventRouter.emitEphemeral({
-                    userId,
-                    payload: machineActivity,
-                    recipientFilter: { type: 'user-scoped-only' }
-                });
-            }
         });
 
         if (transport === "polling") {
@@ -1106,20 +1102,6 @@ export function startSocket(app: Fastify) {
             sessionPublisherPresence,
             ephemeralRunnerAdmission,
         });
-
-        // Broadcast daemon online status
-        if (connection.connectionType === 'machine-scoped' && ephemeralRunnerAdmission?.kind !== "machine-runtime") {
-            // Broadcast daemon online
-            const machineActivity = {
-                ...buildMachineActivityEphemeral(machineId!, true, Date.now()),
-                reconnected: true as const,
-            };
-            eventRouter.emitEphemeral({
-                userId,
-                payload: machineActivity,
-                recipientFilter: { type: 'user-scoped-only' }
-                });
-        }
 
         // Handlers
         if (ephemeralRunnerAdmission?.kind !== "machine-runtime" && ephemeralRunnerAdmission?.kind !== "api-token-session-viewer") {
@@ -1174,6 +1156,7 @@ export function startSocket(app: Fastify) {
         if (!ephemeralRunnerAdmission) {
             machineUpdateHandler(userId, socket, {
                 operationSocketBatchLimits: externalSessionOperationSocketBatchLimits,
+                isMachineSocketCurrent,
                 sessionPublisherPresence,
                 resolveCurrentSessionMachine,
                 sessionServerStartIngress: sessionServerStartAutomationIngress,
@@ -1228,6 +1211,18 @@ export function startSocket(app: Fastify) {
             });
         }
 
+        // A connect becomes an observation only after final currentness and all
+        // handlers are installed. Disconnect does not invent a new last-seen;
+        // the observation's existing deadline remains its owner.
+        if (connection.connectionType === 'machine-scoped' && !ephemeralRunnerAdmission) {
+            try {
+                await observeMachineAliveFromSocket({ userId, socket, timestamp: Date.now(),
+                    machineId: connection.machineId, continuingBeat: false, isCurrent: isMachineSocketCurrent });
+            } catch (error) {
+                log({ module: 'presence', error }, 'Connect observation failed');
+            }
+        }
+
         // Ready
         connectReady = true;
         finalizeConnectConvergence("ready");
@@ -1249,6 +1244,7 @@ export function startSocket(app: Fastify) {
     });
 
     onShutdown('api:socket', async () => {
+        releasePresenceDeadlineNotifications();
         try {
             emitSocketPlannedRestart(io, plannedRestartRetryAfterMs);
         } catch (error) {

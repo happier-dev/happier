@@ -1,9 +1,8 @@
 import { isPersistentMachine, type MachineKind } from '@happier-dev/protocol/machines/machineKind';
+import { readServerConfig } from '@happier-dev/protocol/serverConfig/serverConfigCodec';
+import { SERVER_CONFIG } from '@happier-dev/protocol/serverConfig/registry';
 
 import { db } from "@/storage/db";
-import { parseIntEnv } from "@/config/env";
-import { delay } from "@/utils/runtime/delay";
-import { forever } from "@/utils/runtime/forever";
 import { shutdownSignal } from "@/utils/process/shutdown";
 import {
     buildMachineActivityEphemeral,
@@ -22,6 +21,11 @@ import {
 import { expireSessionPublisherCandidates } from "./sessionPublisherPresence";
 import { emitPendingActivationHint } from "@/app/session/pending/publishPendingMutation";
 import { submitMachineRemoteAlerts } from '@/app/activity/remoteAlerts/submitMachineRemoteAlerts';
+import { lockMachinePresenceInTx, markMachinePresenceInactive } from './persistMachinePresence';
+import { inTx } from '@/storage/inTx';
+import { resolveCurrentMachineRecipientAccountIdsInTx } from '@/app/machines/machineAccess';
+import type { PresenceDeadlineNotification } from './presenceDeadlineNotification';
+import { withWebLatencyProducerTrace } from '@/utils/webLatencyTrace';
 
 export interface PresenceTimeoutConfig {
     sessionTimeoutMs: number;
@@ -29,15 +33,11 @@ export interface PresenceTimeoutConfig {
     tickMs: number;
 }
 
-const DEFAULT_PRESENCE_SESSION_TIMEOUT_MS = 10 * 60 * 1000;
-const DEFAULT_PRESENCE_MACHINE_TIMEOUT_MS = 10 * 60 * 1000;
-const DEFAULT_PRESENCE_TIMEOUT_TICK_MS = 60 * 1000;
-
 export function resolvePresenceTimeoutConfig(env: NodeJS.ProcessEnv = process.env): PresenceTimeoutConfig {
     return {
-        sessionTimeoutMs: parseIntEnv(env.HAPPIER_PRESENCE_SESSION_TIMEOUT_MS, DEFAULT_PRESENCE_SESSION_TIMEOUT_MS, { min: 1 }),
-        machineTimeoutMs: parseIntEnv(env.HAPPIER_PRESENCE_MACHINE_TIMEOUT_MS, DEFAULT_PRESENCE_MACHINE_TIMEOUT_MS, { min: 1 }),
-        tickMs: parseIntEnv(env.HAPPIER_PRESENCE_TIMEOUT_TICK_MS, DEFAULT_PRESENCE_TIMEOUT_TICK_MS, { min: 1 }),
+        sessionTimeoutMs: readServerConfig(env, SERVER_CONFIG.HAPPIER_PRESENCE_SESSION_TIMEOUT_MS),
+        machineTimeoutMs: readServerConfig(env, SERVER_CONFIG.HAPPIER_PRESENCE_MACHINE_TIMEOUT_MS),
+        tickMs: readServerConfig(env, SERVER_CONFIG.HAPPIER_PRESENCE_TIMEOUT_TICK_MS),
     };
 }
 
@@ -60,38 +60,128 @@ type TimedOutPresenceCandidate = {
     lastActiveAt: Date;
     kind?: MachineKind;
 };
+type MachinePresenceObservation = Readonly<{ accountId: string; machineId: string; lastActiveAt: Date }>;
 
-type ExactFenceUpdateDelegate = {
-    updateMany: (args: {
-        where: {
-            id: string;
-            active: true;
-            lastActiveAt: Date;
-        };
-        data: { active: false };
-    }) => Promise<{ count: number }>;
-};
-
-async function markTimedOutMachinesInactive(
-    delegate: ExactFenceUpdateDelegate,
-    candidates: TimedOutPresenceCandidate[],
-): Promise<TimedOutPresenceCandidate[]> {
-    const changed: TimedOutPresenceCandidate[] = [];
-    for (const candidate of candidates) {
-        const result = await delegate.updateMany({
-            where: { id: candidate.id, active: true, lastActiveAt: candidate.lastActiveAt },
-            data: { active: false },
+async function publishInactiveMachines(machines: Array<TimedOutPresenceCandidate & { recipientAccountIds: string[] }>): Promise<void> {
+    for (const machine of machines) {
+        // Runner presence belongs to its Session, not broad Machine inventory.
+        if (!isPersistentMachine(machine)) continue;
+        for (const accountId of machine.recipientAccountIds) eventRouter.emitEphemeral({
+            userId: accountId,
+            payload: buildMachineActivityEphemeral(machine.id, false, machine.lastActiveAt.getTime()),
+            recipientFilter: { type: 'user-scoped-only' },
         });
-        if (result.count === 1) changed.push(candidate);
     }
-    return changed;
+    await submitMachineRemoteAlerts({ machines: machines.map(machine => ({ machineId: machine.id, accountId: machine.accountId })), phase: 'offline' });
 }
 
+/** One real deadline per observed Machine; peer renewals are read at expiry. */
+export function createMachinePresenceDeadlineOwner(timeoutMs = resolvePresenceTimeoutConfig().machineTimeoutMs) {
+    const timers = new Map<string, { deadline: number; timer: NodeJS.Timeout }>();
+    const inFlight = new Set<Promise<void>>();
+    let stopped = false;
+    const schedule = (observation: MachinePresenceObservation, retryAtMs?: number, committed = false): void => {
+        if (stopped) return;
+        const timestamp = observation.lastActiveAt.getTime();
+        const deadline = retryAtMs ?? timestamp + timeoutMs;
+        const current = timers.get(observation.machineId);
+        // A local committed observation supplies its next real deadline.
+        // Bootstrap and peer enrollment may describe a retired row, so those
+        // hints can only bring validation forward, never postpone it.
+        if (current && (committed ? current.deadline === deadline : current.deadline <= deadline)) return;
+        if (current) clearTimeout(current.timer);
+        const timer = setTimeout(() => {
+            timers.delete(observation.machineId);
+            let databaseSettled = false;
+            const expiry = withWebLatencyProducerTrace('producer.machine-presence-deadline', async () => {
+                // Bootstrap and peer timers do not receive every committed beat.
+                // A renewed observation needs one read, without taking a writer
+                // lock or opening an expiry transaction. Actual expiry still
+                // reads under the same row lock as the canonical presence writer.
+                const observed = await db.machine.findUnique({ where: { id: observation.machineId },
+                    select: { id: true, accountId: true, active: true, lastActiveAt: true,
+                        revokedAt: true, replacedByMachineId: true } });
+                if (!observed || !observed.active || observed.revokedAt || observed.replacedByMachineId) return null;
+                if (observed.lastActiveAt.getTime() + timeoutMs > Date.now()) return { kind: 'renewed' as const, machine: observed };
+                return inTx(async tx => {
+                    const machine = await lockMachinePresenceInTx(tx, observation.machineId);
+                    if (!machine || !machine.active
+                        || machine.revokedAt || machine.replacedByMachineId) return null;
+                    if (machine.lastActiveAt.getTime() + timeoutMs > Date.now()) return { kind: 'renewed' as const, machine };
+                    if (await markMachinePresenceInactive(tx, { accountId: machine.accountId, machineId: machine.id,
+                        lastActiveAt: machine.lastActiveAt }) !== 1) return null;
+                    const recipientAccountIds = await resolveCurrentMachineRecipientAccountIdsInTx(tx, machine.id);
+                    return { kind: 'expired' as const, machine: { ...machine,
+                        recipientAccountIds } };
+                });
+            }).then(async result => {
+                // A publication failure after commit is deliberately not
+                // replayed. Only an uncommitted SQL deadline retains custody.
+                databaseSettled = true;
+                if (result?.kind === 'renewed') schedule({ accountId: result.machine.accountId,
+                    machineId: result.machine.id, lastActiveAt: result.machine.lastActiveAt });
+                else if (result?.kind === 'expired') await publishInactiveMachines([result.machine]);
+            });
+            inFlight.add(expiry);
+            void expiry.catch(error => {
+                warn({ module: 'presence-timeout', error }, 'Machine deadline failed');
+                if (!databaseSettled) schedule(observation, Date.now() + resolvePresenceTimeoutConfig().tickMs);
+            })
+                .finally(() => { inFlight.delete(expiry); });
+            return expiry;
+        // Node's native timer range; a longer stored future observation is re-read at the next wake.
+        }, Math.max(0, Math.min(2_147_483_647, deadline - Date.now())));
+        timer.unref?.();
+        timers.set(observation.machineId, { deadline, timer });
+    };
+    return {
+        schedule(observation: MachinePresenceObservation): void { schedule(observation); },
+        renew(observation: MachinePresenceObservation): void { schedule(observation, undefined, true); },
+        async start(): Promise<void> {
+            const machines = await db.machine.findMany({ where: { active: true, revokedAt: null, replacedByMachineId: null },
+                select: { id: true, accountId: true, lastActiveAt: true } });
+            for (const machine of machines) schedule({ ...machine, machineId: machine.id });
+        },
+        async stop(): Promise<void> {
+            stopped = true;
+            for (const { timer } of timers.values()) clearTimeout(timer);
+            timers.clear();
+            await Promise.allSettled([...inFlight]);
+        },
+    };
+}
+
+let localMachineDeadlineOwner: ReturnType<typeof createMachinePresenceDeadlineOwner> | null = null;
+export function scheduleLocalMachinePresenceDeadline(observation: MachinePresenceObservation): void {
+    if (shutdownSignal.aborted) return;
+    localMachineDeadlineOwner ??= createMachinePresenceDeadlineOwner();
+    localMachineDeadlineOwner.schedule(observation);
+}
+/** Only the canonical presence writer calls this after its observation commits. */
+export function renewLocalMachinePresenceDeadline(observation: MachinePresenceObservation): void {
+    if (shutdownSignal.aborted) return;
+    localMachineDeadlineOwner ??= createMachinePresenceDeadlineOwner();
+    localMachineDeadlineOwner.renew(observation);
+}
+export async function startLocalMachinePresenceTimeout(): Promise<{ stop(): Promise<void> }> {
+    const owner = localMachineDeadlineOwner ??= createMachinePresenceDeadlineOwner();
+    await owner.start();
+    return { stop: stopLocalMachinePresenceTimeout };
+}
+export async function stopLocalMachinePresenceTimeout(): Promise<void> {
+    const owner = localMachineDeadlineOwner;
+    if (!owner) return;
+    await owner.stop();
+    if (localMachineDeadlineOwner === owner) localMachineDeadlineOwner = null;
+}
+
+/** Session batching retains the publisher's lifecycle effects; Machines never scan. */
 export async function runPresenceTimeoutTick(timeoutConfig: PresenceTimeoutConfig): Promise<void> {
     try {
         const sessions = await db.session.findMany({
             where: {
                 active: true,
+                archivedAt: null,
                 lastActiveAt: {
                     lte: new Date(Date.now() - timeoutConfig.sessionTimeoutMs)
                 }
@@ -156,46 +246,72 @@ export async function runPresenceTimeoutTick(timeoutConfig: PresenceTimeoutConfi
     } catch (error) {
         if (!isRetryableSqliteWriteError(error)) throw error;
         warn({ module: "presence-timeout", error }, "Transient DB error while timing out sessions");
-        return;
+        throw error;
     }
 
-    try {
-        const machines = await db.machine.findMany({
-            where: {
-                active: true,
-                lastActiveAt: {
-                    lte: new Date(Date.now() - timeoutConfig.machineTimeoutMs)
-                }
-            },
-            select: { id: true, accountId: true, lastActiveAt: true, kind: true },
-        });
-        const changedMachines = await markTimedOutMachinesInactive(db.machine, machines);
-        for (const machine of changedMachines) {
-            // Temporary Runner Machines are absent from ordinary Machine inventory,
-            // so their reachability never enters the broad Account-wide fanout.
-            if (!isPersistentMachine(machine)) continue;
-            eventRouter.emitEphemeral({
-                userId: machine.accountId,
-                payload: buildMachineActivityEphemeral(machine.id, false, machine.lastActiveAt.getTime()),
-                recipientFilter: { type: 'user-scoped-only' }
-            });
-        }
-        await submitMachineRemoteAlerts({
-            machines: changedMachines.map(machine => ({ machineId: machine.id, accountId: machine.accountId })),
-            phase: 'offline',
-        });
-    } catch (error) {
-        if (!isRetryableSqliteWriteError(error)) throw error;
-        warn({ module: "presence-timeout", error }, "Transient DB error while timing out machines");
-    }
 }
 
-export function startTimeout() {
-    const timeoutConfig = resolvePresenceTimeoutConfig(process.env);
-    forever('session-timeout', async () => {
-        while (true) {
-            await runPresenceTimeoutTick(timeoutConfig);
-            await delay(timeoutConfig.tickMs, shutdownSignal);
-        }
+/** One next-due Session wake, parked when empty, not a periodic census. */
+export function createSessionPresenceDeadlineOwner(config = resolvePresenceTimeoutConfig()) {
+    let timer: NodeJS.Timeout | null = null;
+    let deadline = Number.POSITIVE_INFINITY;
+    let stopped = false;
+    const inFlight = new Set<Promise<void>>();
+    const scheduleAt = (next: number): void => {
+        if (stopped || timer && deadline <= next) return;
+        if (timer) clearTimeout(timer);
+        deadline = next;
+        timer = setTimeout(() => {
+            timer = null;
+            deadline = Number.POSITIVE_INFINITY;
+            const expiry = runPresenceTimeoutTick(config).then(seed).catch(error => {
+                warn({ module: 'presence-timeout', error }, 'Session deadline failed');
+                scheduleAt(Date.now() + config.tickMs);
+            }).finally(() => { inFlight.delete(expiry); });
+            inFlight.add(expiry);
+            return expiry;
+        }, Math.max(0, Math.min(2_147_483_647, next - Date.now())));
+        timer.unref?.();
+    };
+    const seed = async (): Promise<void> => {
+        if (stopped) return;
+        const next = await db.session.findFirst({ where: { active: true, archivedAt: null },
+            orderBy: { lastActiveAt: 'asc' }, select: { lastActiveAt: true } });
+        if (next) scheduleAt(next.lastActiveAt.getTime() + config.sessionTimeoutMs);
+    };
+    return {
+        schedule(lastActiveAt: Date): void { scheduleAt(lastActiveAt.getTime() + config.sessionTimeoutMs); },
+        start: seed,
+        async stop(): Promise<void> {
+            stopped = true;
+            if (timer) clearTimeout(timer);
+            timer = null;
+            await Promise.allSettled([...inFlight]);
+        },
+    };
+}
+
+let sessionDeadlineOwner: ReturnType<typeof createSessionPresenceDeadlineOwner> | null = null;
+
+/** Notifications enroll deadlines only; locked persisted rows decide expiry. */
+export function schedulePresenceDeadline(observation: PresenceDeadlineNotification): void {
+    if (shutdownSignal.aborted) return;
+    const lastActiveAt = new Date(observation.activeAt);
+    if (observation.kind === 'machine') scheduleLocalMachinePresenceDeadline({
+        accountId: observation.accountId, machineId: observation.id, lastActiveAt,
     });
+    else sessionDeadlineOwner?.schedule(lastActiveAt);
+}
+
+/** Prepare before listening; seed only after the realtime transport is ready. */
+export function preparePresenceTimeouts(): { start(): Promise<void>; stop(): Promise<void> } {
+    const machines = localMachineDeadlineOwner ??= createMachinePresenceDeadlineOwner();
+    const sessions = sessionDeadlineOwner ??= createSessionPresenceDeadlineOwner();
+    return {
+        async start() { await Promise.all([machines.start(), sessions.start()]); },
+        async stop() {
+            await Promise.all([stopLocalMachinePresenceTimeout(), sessions.stop()]);
+            if (sessionDeadlineOwner === sessions) sessionDeadlineOwner = null;
+        },
+    };
 }

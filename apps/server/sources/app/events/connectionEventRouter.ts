@@ -1,3 +1,4 @@
+import { PRESENCE_DEADLINE_EVENT, type PresenceDeadlineNotification } from '@/app/presence/presenceDeadlineNotification';
 import { log } from "@/utils/logging/log";
 import { recordEventFanoutDrop, recordEventFanoutEmit } from "@/app/monitoring/metrics/index";
 import { readAccountStoredContentCompatibilityForSocket } from "@/app/clientCompatibility/accountStoredContentCompatibility";
@@ -10,6 +11,7 @@ import {
     type EphemeralPayload,
 } from "./eventPayloadTypes";
 import {
+    CREDENTIAL_QUALIFIED_SESSION_DELIVERY_EVENT,
     parseCredentialQualifiedSessionDelivery,
     type CredentialQualifiedSessionDeliveryV1,
     type LocalSocketRoomEmitter,
@@ -114,7 +116,7 @@ class EventRouter {
     private userConnections = new Map<string, Set<ClientConnection>>();
     private io: SocketRoomEmitter | null = null;
     private serverOwnedRpcForwarder: ServerOwnedRpcForwarder | null = null;
-    private broadcastSessionDelivery: ((delivery: CredentialQualifiedSessionDeliveryV1) => void) | null = null;
+    private broadcastServerSideEvent: NonNullable<SocketRoomEmitter['serverSideEmit']> | null = null;
     private machineAccessLossListeners = new Set<(input: Readonly<{ accountId: string; machineId: string }>) => void>();
     private warnedNoIo = false;
 
@@ -172,17 +174,22 @@ class EventRouter {
 
     setIo(io: SocketRoomEmitter, options: Readonly<{
         forwardRpc?: ServerOwnedRpcForwarder;
-        broadcastSessionDelivery?: (delivery: CredentialQualifiedSessionDeliveryV1) => void;
+        broadcastServerSideEvent?: NonNullable<SocketRoomEmitter['serverSideEmit']>;
     }> = {}): void {
         this.io = io;
         this.serverOwnedRpcForwarder = options.forwardRpc ?? null;
-        this.broadcastSessionDelivery = options.broadcastSessionDelivery ?? null;
+        this.broadcastServerSideEvent = options.broadcastServerSideEvent ?? io.serverSideEmit?.bind(io) ?? null;
     }
 
     clearIo(): void {
         this.io = null;
         this.serverOwnedRpcForwarder = null;
-        this.broadcastSessionDelivery = null;
+        this.broadcastServerSideEvent = null;
+    }
+
+    /** Recovery enrolls peer deadlines without replaying content or heartbeat fanout. */
+    broadcastPresenceDeadline(observation: PresenceDeadlineNotification): void {
+        this.broadcastServerSideEvent?.(PRESENCE_DEADLINE_EVENT, observation);
     }
 
     /** The live Socket.IO adapter only; domain owners supply their currentness guard. */
@@ -491,10 +498,10 @@ class EventRouter {
                     where: { id: params.sessionId }, select: { id: true },
                 }), { readOnly: true });
                 if (!exists) return;
-                if (!this.io.forwardCredentialQualifiedSessionDelivery) {
+                if (!this.broadcastServerSideEvent) {
                     throw new Error("Protected Session forwarding is unavailable");
                 }
-                await this.io.forwardCredentialQualifiedSessionDelivery({
+                await this.broadcastServerSideEvent(CREDENTIAL_QUALIFIED_SESSION_DELIVERY_EVENT, {
                     v: 1,
                     accountId: params.userId,
                     sessionId: params.sessionId,
@@ -520,7 +527,7 @@ class EventRouter {
                     to: this.io.to.bind(this.io),
                 };
                 try {
-                    this.broadcastSessionDelivery?.(delivery);
+                    this.broadcastServerSideEvent?.(CREDENTIAL_QUALIFIED_SESSION_DELIVERY_EVENT, delivery);
                 } finally {
                     await this.receiveCredentialQualifiedSessionDelivery(localIo, delivery);
                 }

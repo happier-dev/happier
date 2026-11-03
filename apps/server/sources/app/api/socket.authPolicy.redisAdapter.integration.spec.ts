@@ -445,7 +445,7 @@ describe("startSocket account revocation with the configured Redis adapter", () 
             await db.teamMembership.update({ where: { id: membership.id }, data: { status: "active" } });
         }
 
-        await workerEmitter.forwardCredentialQualifiedSessionDelivery({
+        await workerEmitter.serverSideEmit(CREDENTIAL_QUALIFIED_SESSION_DELIVERY_EVENT, {
             v: 1,
             accountId: actor.id,
             sessionId: session.id,

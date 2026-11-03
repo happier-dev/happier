@@ -67,16 +67,5 @@ describe("presenceRecorder", () => {
         }));
     });
 
-    it("publishes machine alive only when queue returns true and redis mode enabled", async () => {
-        queueMachineUpdate.mockReturnValueOnce(true);
-
-        const { recordMachineAlive } = await import("./presenceRecorder");
-        await recordMachineAlive({ accountId: "u1", machineId: "m1", timestamp: 10 });
-
-        expect(publishMachineAlive).toHaveBeenCalledTimes(1);
-        expect(publishMachineAlive).toHaveBeenCalledWith({ accountId: "u1", machineId: "m1", timestamp: 10 });
-        expect(markMachineUpdateSent).toHaveBeenCalledTimes(1);
-        expect(markMachineUpdateSent).toHaveBeenCalledWith("m1", 10);
-    });
 
 });

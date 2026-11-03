@@ -104,6 +104,8 @@ describe("machineUpdateHandler authenticated machine identity binding", () => {
     beforeEach(() => {
         vi.clearAllMocks();
         isMachineValid.mockResolvedValue(true);
+        // Call clearing does not discard unconsumed per-test database results.
+        machineFindFirst.mockReset();
         machineFindFirst.mockResolvedValue({ revokedAt: null, replacedByMachineId: null });
     });
 
@@ -136,30 +138,6 @@ describe("machineUpdateHandler authenticated machine identity binding", () => {
         expect(recordMachineAlive).not.toHaveBeenCalled();
         expect(emitEphemeral).not.toHaveBeenCalled();
         expect(isMachineValid).not.toHaveBeenCalled();
-    });
-
-    it("records alive state for the authenticated socket machine when the payload omits machineId", async () => {
-        const { machineUpdateHandler } = await import("./machineUpdateHandler");
-        const now = Date.now();
-
-        const socket = createFakeSocket({
-            data: {
-                clientType: "machine-scoped",
-                machineId: "m1",
-            },
-        });
-        machineUpdateHandler("u1", socket as any, defaultMachineUpdateHandlerOptions);
-
-        await getSocketHandler(socket, "machine-alive")({ time: now });
-
-        expect(isMachineValid).toHaveBeenCalledWith("m1", "u1");
-        expect(recordMachineAlive).toHaveBeenCalledWith({ accountId: "u1", machineId: "m1", timestamp: now });
-        expect(buildMachineActivityEphemeral).toHaveBeenCalledWith("m1", true, now);
-        expect(emitEphemeral).toHaveBeenCalledWith(expect.objectContaining({
-            userId: "u1",
-            payload: expect.objectContaining({ id: "m1" }),
-            recipientFilter: { type: "user-scoped-only" },
-        }));
     });
 
     it("captures and finalizes only the authenticated machine session terminal authority", async () => {
@@ -398,29 +376,6 @@ describe("machineUpdateHandler authenticated machine identity binding", () => {
         expect(JSON.stringify(log.mock.calls)).not.toContain(sentinel);
     });
 
-    it("does not record alive when the authenticated machine has been replaced", async () => {
-        const { machineUpdateHandler } = await import("./machineUpdateHandler");
-        const now = Date.now();
-        machineFindFirst.mockResolvedValueOnce({ revokedAt: null, replacedByMachineId: "m2" });
-
-        const socket = createFakeSocket({
-            data: {
-                clientType: "machine-scoped",
-                machineId: "m1",
-            },
-        });
-        machineUpdateHandler("u1", socket as any, defaultMachineUpdateHandlerOptions);
-
-        await getSocketHandler(socket, "machine-alive")({ time: now });
-
-        expect(machineFindFirst).toHaveBeenCalledWith(expect.objectContaining({
-            where: { accountId: "u1", id: "m1" },
-            select: { revokedAt: true, replacedByMachineId: true },
-        }));
-        expect(recordMachineAlive).not.toHaveBeenCalled();
-        expect(emitEphemeral).not.toHaveBeenCalled();
-    });
-
     it("rejects metadata updates from session-scoped sockets", async () => {
         const { machineUpdateHandler } = await import("./machineUpdateHandler");
 
@@ -455,54 +410,6 @@ describe("machineUpdateHandler authenticated machine identity binding", () => {
         );
 
         expect(callback).toHaveBeenCalledWith(expect.objectContaining({ result: "error" }));
-    });
-
-    it.each([
-        {
-            event: "machine-update-metadata",
-            data: { metadata: "new-meta", expectedVersion: 1 },
-            message: "Machine metadata update failed.",
-        },
-        {
-            event: "machine-update-state",
-            data: { daemonState: "new-state", expectedVersion: 1 },
-            message: "Machine state update failed.",
-        },
-    ])("keeps $event database failures structural in logs and responses", async ({ event, data, message }) => {
-        const { machineUpdateHandler } = await import("./machineUpdateHandler");
-        const sentinel = {
-            message: "database-secret-message",
-            cause: { path: "/Users/alice/private/machine.db" },
-            request: { token: "TOKEN_SECRET" },
-            source: { transcript: "transcript-secret" },
-        };
-        machineFindFirst.mockRejectedValueOnce(sentinel);
-        const socket = createFakeSocket({
-            data: {
-                clientType: "machine-scoped",
-                machineId: "m1",
-            },
-        });
-        machineUpdateHandler("u1", socket as any, defaultMachineUpdateHandlerOptions);
-        const callback = vi.fn();
-
-        await getSocketHandler(socket, event)({ machineId: "m1", ...data }, callback);
-
-        expect(log).toHaveBeenCalledWith(
-            {
-                module: "websocket",
-                level: "error",
-                event,
-                errorCode: "internal_error",
-            },
-            message,
-        );
-        expect(callback).toHaveBeenCalledWith({ result: "error", message: "Internal error" });
-        const outward = JSON.stringify({ logs: log.mock.calls, responses: callback.mock.calls });
-        expect(outward).not.toContain("database-secret-message");
-        expect(outward).not.toContain("/Users/alice");
-        expect(outward).not.toContain("TOKEN_SECRET");
-        expect(outward).not.toContain("transcript-secret");
     });
 
     it("binds historical import commands to the authenticated machine socket", async () => {

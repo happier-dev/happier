@@ -1,3 +1,4 @@
+import { stopLocalMachinePresenceTimeout } from '@/app/presence/timeout';
 import Fastify from "fastify";
 import { Server } from "socket.io";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -241,11 +242,69 @@ describe("startSocket (auth policy enforcement)", () => {
     });
 
     afterEach(async () => {
+        await stopLocalMachinePresenceTimeout();
         await db.accessKey.deleteMany();
         await db.session.deleteMany();
         await db.machine.deleteMany();
         await db.account.deleteMany();
     });
+
+    it('admits connect only when ready and keeps superseded and ordinary disconnects out of presence transitions', async () => {
+        const account = await db.account.create({ data: { publicKey: `presence-socket-${Date.now()}` } });
+        const lastSeen = new Date(Date.now() - 70_000);
+        const contentAt = new Date('2025-01-01T00:00:00.000Z');
+        const machine = await db.machine.create({ data: { id: `presence-socket-${account.id}`, accountId: account.id,
+            metadata: 'metadata', active: false, lastActiveAt: lastSeen, updatedAt: contentAt } });
+        const token = await auth.createToken(account.id, undefined, { kind: 'account', authority: 'present_user' });
+        const app = Fastify({ logger: false }) as unknown as AppFastify;
+        startSocket(app);
+        await app.listen({ port: 0, host: '127.0.0.1' });
+        const address = app.server.address();
+        if (!address || typeof address === 'string') throw new Error('Missing socket listener');
+        const url = `http://127.0.0.1:${address.port}`;
+        const connect = (extra: Record<string, unknown>) => ioClient(url, { path: '/v1/updates', transports: ['websocket'],
+            reconnection: false, autoConnect: false, auth: { token, ...extra } });
+        const viewer = connect({ clientType: 'user-scoped' });
+        const publisher = () => connect({ clientType: 'machine-scoped', machineId: machine.id,
+            runtimeId: 'same-runtime-reconnect', startupSource: 'manual', serviceManaged: false });
+        const first = publisher();
+        const replacement = publisher();
+        const activities: unknown[] = [];
+        viewer.on('ephemeral', payload => { if (payload?.type === 'machine-activity') activities.push(payload); });
+        try {
+            let connected = waitForConnectionSuccess(viewer); viewer.connect(); await connected;
+            await viewer.timeout(10_000).emitWithAck('ping');
+            connected = waitForConnectionSuccess(first); first.connect(); await connected;
+            await first.timeout(10_000).emitWithAck('ping');
+            const admitted = await db.machine.findUniqueOrThrow({ where: { id: machine.id } });
+            expect.soft(admitted.active).toBe(true);
+            expect.soft(admitted.lastActiveAt.getTime()).toBeGreaterThan(lastSeen.getTime());
+            expect(admitted.updatedAt).toEqual(contentAt);
+            await viewer.timeout(10_000).emitWithAck('ping');
+            expect(activities).toHaveLength(1);
+            activities.length = 0;
+            const disconnected = new Promise<void>(resolve => { first.once('disconnect', () => resolve()); });
+            connected = waitForConnectionSuccess(replacement); replacement.connect(); await connected;
+            await disconnected;
+            await replacement.timeout(10_000).emitWithAck('ping');
+            await viewer.timeout(10_000).emitWithAck('ping');
+            // Explicit incumbent reconnect recovery remains until D4; it must
+            // not overlap a stale old socket's invented false transition.
+            expect.soft(activities).toMatchObject([{ type: 'machine-activity', id: machine.id,
+                active: true, reconnected: true }]);
+            expect.soft(activities).toHaveLength(1);
+            activities.length = 0;
+            const beforeDisconnect = await db.machine.findUniqueOrThrow({ where: { id: machine.id },
+                select: { active: true, lastActiveAt: true, updatedAt: true } });
+            replacement.close();
+            await viewer.timeout(10_000).emitWithAck('ping');
+            expect(activities).toEqual([]);
+            expect(await db.machine.findUniqueOrThrow({ where: { id: machine.id },
+                select: { active: true, lastActiveAt: true, updatedAt: true } })).toEqual(beforeDisconnect);
+        } finally {
+            first.close(); replacement.close(); viewer.close(); await app.close();
+        }
+    }, 60_000);
 
     it("disconnects a user-scoped socket when GitHub is required but the account has no GitHub identity", async () => {
         harness.resetEnv({ AUTH_REQUIRED_LOGIN_PROVIDERS: "github" });

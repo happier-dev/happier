@@ -1,3 +1,4 @@
+import { lockMachinePresenceInTx, markMachinePresenceInactive, persistMachinePresence } from "@/app/presence/persistMachinePresence";
 import { randomUUID } from "node:crypto";
 
 import type { Socket } from "socket.io";
@@ -17,7 +18,7 @@ import {
 } from "@/app/clientCompatibility/accountStoredContentCompatibility";
 import { markAccountChanged } from "@/app/changes/markAccountChanged";
 import { db, getDbProviderFromEnv, initDbPostgres } from "@/storage/db";
-import { inTx, type Tx } from "@/storage/inTx";
+import { inTx, type ResolvedTransactionResult, type Tx } from "@/storage/inTx";
 import * as privacyKit from "privacy-kit";
 
 import { createFakeSocket, getSocketHandler } from "../testkit/socketHarness";
@@ -136,6 +137,15 @@ async function publishUnderContention(event: string, payload: unknown) {
     return { ...fixture, callback, advanced };
 }
 
+async function withNonUtcPresenceTx<T>(run: (tx: Tx) => Promise<T>): Promise<ResolvedTransactionResult<T>> {
+    return inTx(async tx => {
+        await tx.$executeRaw`SET LOCAL TIME ZONE 'Asia/Kolkata'`;
+        expect(await tx.$queryRaw<Array<{ timeZone: string }>>`SELECT current_setting('TimeZone') AS "timeZone"`)
+            .toEqual([{ timeZone: 'Asia/Kolkata' }]);
+        return run(tx);
+    }, { isolationLevel: 'ReadCommitted', transactionClass: 'presence-clock-contract' });
+}
+
 describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")(
     "Machine writes under PostgreSQL publication contention",
     () => {
@@ -156,6 +166,145 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")(
         afterAll(async () => {
             if (connected) await db.$disconnect();
             vi.unstubAllEnvs();
+        });
+
+        it('expires only the exact current observation without changing UTC last-seen or content clocks in a non-UTC session', async () => {
+            const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+            const stranger = await db.account.create({ data: { encryptionMode: 'plain' } });
+            const lastActiveAt = new Date('2026-10-25T00:59:59.123Z');
+            const contentAt = new Date('2025-01-01T00:00:00.456Z');
+            const [current, stale, revoked, replaced, wrongAccount] = await Promise.all(
+                Array.from({ length: 5 }, () => db.machine.create({ data: {
+                    id: randomUUID(), accountId: owner.id, active: true, lastActiveAt, updatedAt: contentAt, metadata: 'presence-content',
+                } })),
+            );
+            await db.machine.update({ where: { id: revoked!.id }, data: { revokedAt: new Date(), updatedAt: contentAt } });
+            await db.machine.update({ where: { id: replaced!.id }, data: { replacedByMachineId: current!.id, updatedAt: contentAt } });
+            await withNonUtcPresenceTx(async tx => {
+                expect(await markMachinePresenceInactive(tx, { accountId: owner.id, machineId: current!.id, lastActiveAt })).toBe(1);
+                expect(await markMachinePresenceInactive(tx, { accountId: owner.id, machineId: current!.id, lastActiveAt })).toBe(0);
+                expect(await markMachinePresenceInactive(tx, { accountId: owner.id, machineId: stale!.id,
+                    lastActiveAt: new Date(lastActiveAt.getTime() - 1) })).toBe(0);
+                for (const machine of [revoked!, replaced!]) {
+                    expect(await markMachinePresenceInactive(tx, { accountId: owner.id, machineId: machine.id, lastActiveAt })).toBe(0);
+                }
+                expect(await markMachinePresenceInactive(tx, { accountId: stranger.id, machineId: wrongAccount!.id, lastActiveAt })).toBe(0);
+            });
+            const rows = await db.machine.findMany({ where: { accountId: owner.id },
+                select: { id: true, active: true, lastActiveAt: true, updatedAt: true, metadata: true } });
+            expect(rows).toHaveLength(5);
+            for (const row of rows) expect(row).toEqual({ id: row.id, active: row.id !== current!.id,
+                lastActiveAt, updatedAt: contentAt, metadata: 'presence-content' });
+            expect(await db.account.findUniqueOrThrow({ where: { id: owner.id }, select: { seq: true } })).toEqual({ seq: 0 });
+            expect(await db.accountChange.count({ where: { accountId: owner.id } })).toBe(0);
+        });
+
+        it('allows exactly one concurrent inactive CAS winner in non-UTC sessions', async () => {
+            const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+            const lastActiveAt = new Date('2026-10-25T01:00:00.789Z');
+            const contentAt = new Date('2025-01-01T00:00:00.456Z');
+            const machine = await db.machine.create({ data: {
+                id: randomUUID(), accountId: owner.id, active: true, lastActiveAt, updatedAt: contentAt, metadata: 'presence-content',
+            } });
+            let release!: () => void;
+            const ready = new Promise<void>(resolve => { release = resolve; });
+            let entrants = 0;
+            const results = await Promise.all(Array.from({ length: 2 }, () => withNonUtcPresenceTx(async tx => {
+                if (++entrants === 2) release();
+                await ready;
+                return markMachinePresenceInactive(tx, { accountId: owner.id, machineId: machine.id, lastActiveAt });
+            })));
+            expect(results.sort()).toEqual([0, 1]);
+            expect(await db.machine.findUniqueOrThrow({ where: { id: machine.id },
+                select: { active: true, lastActiveAt: true, updatedAt: true } }))
+                .toEqual({ active: false, lastActiveAt, updatedAt: contentAt });
+        });
+
+        it('waits for an admitted renewal row lock before rejecting an old deadline observation', async () => {
+            const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+            const scannedAt = new Date(Date.now() - 60_000);
+            const renewedAt = new Date(scannedAt.getTime() + 59_999);
+            const contentAt = new Date('2025-01-01T00:00:00.456Z');
+            const machine = await db.machine.create({ data: {
+                id: randomUUID(), accountId: owner.id, active: true, lastActiveAt: scannedAt, updatedAt: contentAt, metadata: 'presence-content',
+            } });
+            let pending: Promise<number> | undefined;
+            await withNonUtcPresenceTx(async tx => {
+                const [{ pid }] = await tx.$queryRaw<Array<{ pid: number }>>`SELECT pg_backend_pid() AS pid`;
+                await tx.$queryRaw`SELECT "id" FROM "Machine" WHERE "id" = ${machine.id} FOR UPDATE`;
+                expect(await persistMachinePresence(tx, { accountId: owner.id, machineId: machine.id, timestamp: renewedAt.getTime() })).toBe(1);
+                let settled = false;
+                pending = withNonUtcPresenceTx(async peer => {
+                    const observed = await lockMachinePresenceInTx(peer, machine.id);
+                    expect(observed?.lastActiveAt).toEqual(renewedAt);
+                    expect(await persistMachinePresence(peer, { accountId: owner.id, machineId: machine.id,
+                        timestamp: scannedAt.getTime() })).toBe(0);
+                    return markMachinePresenceInactive(peer, { accountId: owner.id, machineId: machine.id, lastActiveAt: scannedAt });
+                }).finally(() => { settled = true; });
+                void pending.catch(() => undefined);
+                while (!settled) {
+                    const [state] = await db.$queryRaw<Array<{ blocked: boolean }>>`
+                        SELECT EXISTS (SELECT 1 FROM pg_stat_activity
+                            WHERE datname = current_database() AND ${pid} = ANY(pg_blocking_pids(pid))) AS blocked
+                    `;
+                    if (state.blocked) break;
+                }
+                expect(settled).toBe(false);
+            });
+            expect(await pending).toBe(0);
+            expect(await db.machine.findUniqueOrThrow({ where: { id: machine.id },
+                select: { active: true, lastActiveAt: true, updatedAt: true } }))
+                .toEqual({ active: true, lastActiveAt: renewedAt, updatedAt: contentAt });
+        });
+
+        it('keeps 137 Machines renewing for 300 seconds out of content clocks and Account changes', async () => {
+            const fixture = await createMachineFixture();
+            const machineIds = [fixture.machineId, ...Array.from({ length: 136 }, () => randomUUID())];
+            await db.machine.createMany({ data: machineIds.slice(1).map(id => ({
+                id, accountId: fixture.accountId, metadata: encodePlainMachineStoredContent(PUBLISHED_METADATA),
+            })) });
+            const contentAt = new Date('2025-01-01T00:00:00.000Z');
+            const base = Date.now() - 300_000;
+            await db.machine.updateMany({ where: { accountId: fixture.accountId }, data: {
+                active: true, lastActiveAt: new Date(base), updatedAt: contentAt,
+            } });
+            const before = await db.account.findUniqueOrThrow({ where: { id: fixture.accountId }, select: { seq: true } });
+            const changesBefore = await db.accountChange.count({ where: { accountId: fixture.accountId } });
+            for (let elapsed = 20_000; elapsed <= 300_000; elapsed += 20_000) {
+                await inTx(async tx => {
+                    // Production may use a non-UTC database session; Prisma DateTime remains UTC.
+                    await tx.$executeRaw`SET LOCAL TIME ZONE 'Europe/Amsterdam'`;
+                    for (const machineId of machineIds) await persistMachinePresence(tx, {
+                        accountId: fixture.accountId, machineId, timestamp: base + elapsed,
+                    });
+                }, { transactionClass: 'presence-clock-contract' });
+            }
+            expect(await db.machine.count({ where: { accountId: fixture.accountId, updatedAt: { not: contentAt } } })).toBe(0);
+            expect(await db.machine.count({ where: { accountId: fixture.accountId, active: true, lastActiveAt: new Date(base + 300_000) } })).toBe(137);
+            expect(await db.account.findUniqueOrThrow({ where: { id: fixture.accountId }, select: { seq: true } })).toEqual(before);
+            expect(await db.accountChange.count({ where: { accountId: fixture.accountId } })).toBe(changesBefore);
+
+            let pending: Promise<number> | undefined;
+            const semantic = await db.$transaction(async peer => {
+                const [{ pid }] = await peer.$queryRaw<Array<{ pid: number }>>`SELECT pg_backend_pid() AS pid`;
+                const changed = await peer.machine.update({ where: { id: fixture.machineId }, data: { metadata: 'concurrent-content' } });
+                let settled = false;
+                pending = persistMachinePresence(db, { accountId: fixture.accountId, machineId: fixture.machineId, timestamp: base + 320_000 })
+                    .finally(() => { settled = true; });
+                void pending.catch(() => undefined);
+                while (!settled) {
+                    const [state] = await db.$queryRaw<Array<{ blocked: boolean }>>`
+                        SELECT EXISTS (SELECT 1 FROM pg_stat_activity
+                            WHERE datname = current_database() AND ${pid} = ANY(pg_blocking_pids(pid))) AS blocked
+                    `;
+                    if (state.blocked) break;
+                }
+                expect(settled).toBe(false);
+                return changed;
+            });
+            await pending;
+            expect(await db.machine.findUniqueOrThrow({ where: { id: fixture.machineId }, select: { metadata: true, updatedAt: true, lastActiveAt: true } }))
+                .toEqual({ metadata: semantic.metadata, updatedAt: semantic.updatedAt, lastActiveAt: new Date(base + 320_000) });
         });
 
         it("commits operation capabilities while another writer publishes the Account", async () => {
