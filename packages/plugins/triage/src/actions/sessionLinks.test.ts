@@ -85,6 +85,17 @@ function createContext(collections: CorpusCollectionsV1, snapshot = testkitReadO
     } as unknown as PluginInvocationContext;
 }
 
+it('preserves a whole-read Collection refusal instead of returning an undiagnosable failed result', async () => {
+    const { collections } = createTestkitCorpusCollections();
+    const refused = new PluginError({ code: 'plugin_collection_unavailable', retryable: false,
+        details: { requestId: 'collection-read-request-1' } });
+    // Persistent Collection transport is the only replaced boundary.
+    const context = createContext({ ...collections, sourceInstances: { ...collections.sourceInstances,
+        query: async () => { throw refused; } } });
+    await expect(registeredLinkHandler(TRIAGE_READ_SOURCE_SESSION_LINKS_ACTION_LOCAL_ID_V1)(
+        { v: 1, sessionId: 'session-a' }, { ...context, surface: 'ui' })).rejects.toBe(refused);
+});
+
 async function readLinkRows(
     collections: CorpusCollectionsV1,
     sessionId: string,

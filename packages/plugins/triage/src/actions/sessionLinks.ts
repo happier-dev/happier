@@ -38,13 +38,8 @@ export function createTriageReadSourceSessionLinksActionHandler(): TriageDataAct
 > {
     return async (input, context) => {
         if (!isTriageAccountCaller(context)) return { kind: 'failed', links: [] };
-        try {
-            const relations = createTriageSourceSessionRelations(context, bindCorpusCollections(requireTriageAccountStorage(context)));
-            if ('entries' in input) {
-                return { kind: 'entries', entries: await relations.readEntries(input.entries) };
-            }
-            const result = await relations.read(input);
-            return result;
-        } catch { return { kind: 'failed', links: [] }; }
+        const relations = createTriageSourceSessionRelations(context, bindCorpusCollections(requireTriageAccountStorage(context)));
+        if ('entries' in input) return { kind: 'entries', entries: await relations.readEntries(input.entries) };
+        return await relations.read(input);
     };
 }
