@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { readCurrentPluginUiRendererProjection, resolveBundledPluginUiRendererArtifact } from '@/sync/domains/plugins/availability/bundledPluginUiRendererArtifact';
 import { cloneStrictPluginJsonValue } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import { ActionApprovalPendingNotice } from '@/components/approvals/ActionApprovalPendingNotice';
 import { useActionApprovalContinuation } from '@/components/approvals/useActionApprovalContinuation';
@@ -4014,11 +4015,13 @@ function PluginSurfaceHostMount(props: Readonly<(
 
     const renderHostedWebPane = (
         contributionId: string,
-        contribution: Readonly<Record<string, unknown>> | null,
+        projectedContribution: Readonly<Record<string, unknown>> | null,
         inlineDocument?: PluginHostedHtmlSourceV1,
         inlineDocumentNetworkOrigins?: readonly string[],
         inlineDocumentNetwork?: 'none' | 'open',
     ) => {
+        const contribution = resolveBundledPluginUiRendererArtifact(projectedContribution,
+            accountLifetime ? readCurrentPluginUiRendererProjection(accountLifetime.scope) : null);
         if (!accountEncryptionMode) {
             return renderAccountEncryptionModeReadiness();
         }
@@ -4267,11 +4270,13 @@ function PluginSurfaceHostMount(props: Readonly<(
                 contributionId: renderer.contributionId,
                 entriesById: props.pluginUiProjection?.reactNativeBundlesById ?? {},
             });
-        const contribution = selectedEmbeddedRenderer
+        const projectedContribution = selectedEmbeddedRenderer
             ? mountedRendererArtifact
             : contributionId
                 ? props.pluginUiProjection?.reactNativeBundlesById[contributionId] ?? null
                 : null;
+        const contribution = resolveBundledPluginUiRendererArtifact(projectedContribution,
+            accountLifetime ? readCurrentPluginUiRendererProjection(accountLifetime.scope) : null);
         const runtime = readReactNativeRuntimeState(
             contribution ?? null,
             props.platform === 'ios' || props.platform === 'android' ? props.platform : 'web',

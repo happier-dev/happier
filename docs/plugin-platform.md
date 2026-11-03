@@ -7004,3 +7004,17 @@ and headers and may rewrite either, including bound credential headers and the
 request method. Their declarations select which requests invoke them; they do
 not constrain the rewritten destination. The SDK interceptor request remains
 bodyless, and transcript/diagnostic redaction stays with its existing owner.
+
+In 0.3 development source, mounted renderers supplied by the app inventory
+use the app's current Plugin UI inventory, including direct Session and embedded
+mounts. Machine execution custody does not select a separate bundled renderer
+generation. Physical mounts and cache lifecycle reconciliation consume
+the current Account projection before admitting its graph and digest, including
+retained selections without a source-custody stamp. AppShell's installed merge
+owns explicit development overrides; an automatically selected Machine's
+execution origin does not override the current app renderer. Before AppShell
+publishes, Availability supplies the current app declarations. The existing
+app-exact and persistent byte sources remain digest-addressed. Explicit
+development selections and installed Account releases retain their selected
+artifacts through that same projection. Loading a new app inventory requires an app
+reload; updating these bundled renderer bytes does not require a daemon restart.

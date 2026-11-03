@@ -14,6 +14,7 @@ import {
 } from '@/sync/domains/plugins/ui/artifactAdoption';
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { PluginUiArtifactsManifestEntryV2Schema } from '@happier-dev/protocol/plugins/ui';
+import { readCurrentPluginUiRendererProjection, resolveBundledPluginUiRendererArtifact } from '@/sync/domains/plugins/availability/bundledPluginUiRendererArtifact';
 
 export type PluginUiReactNativeRuntimeProjectionReconcilerTargets = Readonly<{
     cache: Pick<PluginReactNativeBundleCache, 'reconcileActiveProjectionIdentities'>;
@@ -74,11 +75,14 @@ export function createPluginUiReactNativeRuntimeProjectionReconciler(
 
     // Normalized bundle maps are immutable. Derive each source's identities on
     // publication; a neighboring source update does not revalidate its graphs.
-    const readIdentities = (projection: PluginUiProjectionModel | null): readonly PluginReactNativeBundleCacheIdentity[] => {
+    const readIdentities = (input: PluginUiReactNativeRuntimeProjectionSourceInput): readonly PluginReactNativeBundleCacheIdentity[] => {
+        const { projection, accountLifetime } = input;
+        const currentProjection = accountLifetime
+            ? readCurrentPluginUiRendererProjection(accountLifetime.scope) : null;
         const identities: PluginReactNativeBundleCacheIdentity[] = [];
         if (projection) {
             for (const bundle of Object.values(projection.reactNativeBundlesById)) {
-                const entry = readRecord(bundle);
+                const entry = resolveBundledPluginUiRendererArtifact(readRecord(bundle), currentProjection);
                 const runtime = readRecord(entry?.runtime);
                 const decision = readRecord(runtime?.decision);
                 const loadPolicy = readRecord(runtime?.loadPolicy);
@@ -153,7 +157,7 @@ export function createPluginUiReactNativeRuntimeProjectionReconciler(
                 }
                 const previous = sources.get(sourceId);
                 const identities = previous && previous.projection?.reactNativeBundlesById === input.projection?.reactNativeBundlesById
-                    ? previous.identities : readIdentities(input.projection);
+                    ? previous.identities : readIdentities(input);
                 sources.set(sourceId, { ...input, identities });
                 reconcile();
             };

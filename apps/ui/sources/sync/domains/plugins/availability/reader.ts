@@ -1960,7 +1960,9 @@ function deriveAccountUiProjection(input: Readonly<{
         }
     }
     const projection = normalizePluginInstalledUiDeclarations(entries);
-    const model = Object.keys(entries).length > 0 || Object.keys(actions).length > 0 || Object.keys(resources).length > 0
+    // An empty current declaration census still withdraws retained Machine
+    // renderers. Keep its package rows when an update removes the last view.
+    const model = bundles.length > 0 || Object.keys(entries).length > 0 || Object.keys(actions).length > 0 || Object.keys(resources).length > 0
         || Object.keys(connectedAccountDescriptors).length > 0 ? Object.freeze({ ...projection,
         actionsById: Object.freeze(actions),
         connectedAccountDescriptorsById: Object.freeze(connectedAccountDescriptors),

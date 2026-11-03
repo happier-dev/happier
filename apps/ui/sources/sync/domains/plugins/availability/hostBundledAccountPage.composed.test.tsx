@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { PluginMachineExecutionOriginV1Schema } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 import { act } from 'react-test-renderer';
 import { afterEach, expect, it, onTestFinished, vi } from 'vitest';
 import * as canonicalDigest from '@happier-dev/protocol/crypto/canonicalDigest';
@@ -748,6 +749,54 @@ it('admits a direct RN surface from its target Home while the active Account Hom
         await waitForHomeGovernance(async () => {
             await flushHookEffects();
             expect(screen.tree.root.findAllByProps({ testID: 'host-bundled-account-page' })).toHaveLength(0);
+        });
+    } finally { await screen.unmount(); source.dispose(); }
+});
+
+it.each(['bundledSource', 'materialization', 'retainedMetadata', 'automaticDevelopment'] as const)('mounts current app bytes from a retained bundled Machine renderer graph (%s)', async (shape) => {
+    const machineId = 'bundled-renderer-machine';
+    await account.restore({ machines: [createMachineFixture({ id: machineId })], features: enabledPluginFeatures,
+        serverIdentityId: 'srv_bundled_renderer' });
+    const lifetime = captureActiveServerAccountScopeLifetime()!;
+    replacePluginAccountAvailabilityProjection({ scope: lifetime.scope, snapshot: {
+        availabilityCursor: 1, intentReads: [], materializations: [], snapshots: [],
+    } });
+    const origin = PluginMachineExecutionOriginV1Schema.parse(shape === 'materialization'
+        ? { serverIdentityId: 'srv_bundled_renderer', materializationRef: {
+            machineId, pluginId: 'happier.pointless-fixture', materializationId: 'retained-install' } }
+        : { serverIdentityId: 'srv_bundled_renderer', sourceRef: {
+        machineId, pluginId: 'happier.pointless-fixture', sourceCustody: shape === 'automaticDevelopment'
+            ? { kind: 'development', registeredRootId: 'retained-source-root' }
+            : { kind: 'bundled_first_party', packagedRuntime: { kind: 'cli_version_root', versionRootId: 'retained-daemon-build' } },
+    } });
+    const current = normalizePluginInstalledUiDeclarations(BUNDLED_PLUGIN_UI_APP_DECLARATIONS[1]!.entriesById);
+    const retainedDigest = `sha256:${'f'.repeat(64)}`;
+    const projection = { ...current, generation: 2, installedPackagesById: {
+        'happier.pointless-fixture': { id: 'happier.pointless-fixture', displayName: 'Fixture', version: '1.0.0', enabled: true,
+            source: { kind: 'bundled' as const }, declaresContributionPoints: false,
+            sourceCustody: 'sourceRef' in origin ? origin.sourceRef.sourceCustody
+                : { kind: 'bundled_first_party' as const, packagedRuntime: { kind: 'cli_version_root' as const, versionRootId: 'retained-daemon-build' } },
+            occurrenceId: 'retained-machine-occurrence', executionOrigin: origin },
+    }, reactNativeBundlesById: Object.fromEntries(
+        Object.entries(current.reactNativeBundlesById).map(([id, entry]) => [id, { ...entry,
+            artifactSelectionOwner: shape === 'retainedMetadata' ? undefined : 'daemonProjection',
+            generatedOwnerKind: shape === 'retainedMetadata' ? undefined : entry.generatedOwnerKind,
+            occurrenceId: 'retained-machine-occurrence', executionOrigin: origin,
+            artifactGraph: { ...PluginUiArtifactsManifestEntryV2Schema.parse(entry.artifactGraph), digest: retainedDigest },
+            runtime: { state: 'loadable', decision: { state: 'load', reason: 'compatible', diagnostics: [] },
+                loadPolicy: { source: 'installedArtifact' }, cacheKey: retainedDigest, cacheIdentity: { artifactDigest: retainedDigest } },
+        }])) };
+    const placement = { ...current.surfacePlacementsById['surfacePlacement:happier.pointless-fixture:machine-page']!,
+        occurrenceId: 'retained-machine-occurrence', executionOrigin: origin };
+    const source = createInstalledPluginUiReactNativeRuntimeProjectionSource();
+    source.update({ projection, accountLifetime: lifetime, isCurrent: lifetime.isCurrent });
+    const screen = await renderWithAppProviders(<PluginSurfacePlacementHost placement={placement}
+        pluginUiProjection={projection} machineId={machineId} serverId={lifetime.scope.serverId} platform="web"
+        projectionInteractionEnabled />);
+    try {
+        await waitForHomeGovernance(async () => {
+            await flushHookEffects();
+            expect(screen.tree.root.findAllByProps({ testID: 'host-bundled-account-page' }), JSON.stringify(screen.tree.toJSON())).toHaveLength(1);
         });
     } finally { await screen.unmount(); source.dispose(); }
 });
