@@ -90,7 +90,7 @@ import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider
 import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { resolveFilesystemTransferCustodyFailure } from './filesystemTransferCustody';
 import { ensureCliActionPolicySettings } from './ensureCliActionPolicySettings';
-import { readMachineSelectorIds, reconcileExternalActionTarget, resolveExternalActionMachineTarget } from '@/daemon/externalActions/reconcileExternalActionTarget';
+import { requiresManagedMachineDaemonIngress, resolveManagedControlControllerTarget, readMachineSelectorIds, reconcileExternalActionTarget, resolveExternalActionMachineTarget } from '@/daemon/externalActions/reconcileExternalActionTarget';
 import { dispatchOriginalAccountAction, readExternalActionInstalledMachine, requiresOriginalAccountMachineActionProof, type ExternalActionMachineRequestSigningKey } from '@/api/externalActionExecutionAuthorization';
 import { MachineEnvironmentApplyInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import {
@@ -1509,16 +1509,21 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
         liveResultCustody = resolveActionApprovalRouting({ actionId: spec.id, spec, input: admittedInput,
           settings: policy.getActionsSettings(), context: { ...context, surface: 'cli', authority } }).required;
       }
+      const executionPlacement = resolveActionExecutionPlacementForInput(spec, admittedInput);
+      const controlControllerTarget = originalCliCaller
+        ? await resolveManagedControlControllerTarget({ actionId, rawInput: admittedInput, credentials,
+          serverHttpBaseUrl: resolveActionServerApiUrl(), ...(context.signal ? { signal: context.signal } : {}) }) : null;
+      const managedMachineDaemonIngress = requiresManagedMachineDaemonIngress(spec.id, executionPlacement, controlControllerTarget);
       const clientAction = spec.cli !== undefined && (!settingsAction || settingsInput?.success)
         && resolveActionExecutionPlacementForInput(spec, admittedInput) === 'client';
-      const originalMachineAction = ((requireDaemonIngress || isPluginDevLoopActionIdV1(actionId))
-        && resolveActionExecutionPlacementForInput(spec, admittedInput) === 'machine' || isMachineTerminalActionId(actionId)) && originalCliCaller
+      const originalMachineAction = ((requireDaemonIngress || managedMachineDaemonIngress || isPluginDevLoopActionIdV1(actionId))
+        && (executionPlacement === 'machine' || controlControllerTarget !== null) || isMachineTerminalActionId(actionId)) && originalCliCaller
         ? spec.inputSchema.safeParse(admittedInput) : null;
       const selectedOriginalMachine = originalMachineAction?.success
         && (readMachineSelectorIds(spec.id, readRecord(originalMachineAction.data) ?? {}).length > 0
-          || params.machineId || context.externalActionTarget)
+          || params.machineId || context.externalActionTarget || controlControllerTarget)
         ? resolveExternalActionMachineTarget({ actionId: spec.id, rawInput: originalMachineAction.data,
-          target: context.externalActionTarget, fallbackMachineId: params.machineId }) : null;
+          target: context.externalActionTarget ?? controlControllerTarget ?? undefined, fallbackMachineId: params.machineId }) : null;
       if (selectedOriginalMachine && (selectedOriginalMachine.kind === 'rejected'
         || params.machineId && params.machineId !== selectedOriginalMachine.machineId)) return { context,
           invocation: createOneShotPatInvocation(async () => routingFailure(actionId, actionFailure('target_unavailable'))) };
@@ -1584,7 +1589,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
       }
       // A semantic Machine selector needs the same admitted delivery as an
       // outer CLI selector, even for Machine-placed friendly commands.
-      const usesDaemonIngress = params.externalActionClient || requiresSessionDaemonAdmission
+      const usesDaemonIngress = params.externalActionClient || managedMachineDaemonIngress || requiresSessionDaemonAdmission
         || selectedOriginalMachine?.kind === 'ready' || liveResultCustody || requireDaemonIngress;
       const originalDaemonTarget = usesDaemonIngress && originalCliCaller
         ? await (await import('@/daemon/multiDaemon')).resolveLiveDaemonControlTargetForServer(

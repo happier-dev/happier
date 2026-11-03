@@ -45,7 +45,8 @@ export const MANAGED_MACHINE_ACTION_SPECS = MANAGED_MACHINE_ACTION_IDS_V1.map((a
     || ['machines.managed.power.set', 'machines.managed.rebuild', 'machines.managed.retention.update', 'machines.managed.delete', 'machines.managed.controller.update', 'machines.managed.retire'].includes(actionId);
   const account = actionId === 'machines.provisioners.list'
     || actionId === 'machines.managed.list' || actionId === 'machines.managed.get'
-    || actionId === 'machines.managed.cancel' || actionId === 'machines.managed.references.get' || actionId === 'machines.managed.setup.skip';
+    || actionId === 'machines.managed.cancel' || actionId === 'machines.managed.references.get' || actionId === 'machines.managed.setup.skip'
+    || actionId === 'machines.managed.delete';
   return {
     id: actionId, approval: { result: 'required' }, originalExecution: { terminalRoot: 'allowed' },
     ...(actionId === 'machines.managed.acquire' || actionId === 'machines.managed.bootstrap.retry'
@@ -81,6 +82,7 @@ export const MANAGED_MACHINE_ACTION_SPECS = MANAGED_MACHINE_ACTION_IDS_V1.map((a
     safety: effect ? 'danger' : 'safe',
     sideEffectClass: effect ? 'danger' : 'read',
     executionPlacement: account ? 'account' : 'machine',
+    ...(actionId === 'machines.managed.delete' ? { executionPlacements: ['account', 'machine'] as const } : {}),
     placements: [],
     surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: true },
     bindings: { mcpToolName: actionId.replaceAll('.', '_'), voiceClientToolName: actionId.replaceAll('.', '_'), rpcMethod: actionId },

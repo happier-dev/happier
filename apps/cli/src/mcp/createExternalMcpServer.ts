@@ -35,7 +35,7 @@ import {
 import type { ProjectedPluginToolCatalogEntry } from '@/plugins/runtime/toolCatalog';
 import { createAccountServerActionDeps } from '@/api/accountServerActionDeps';
 import { createSessionFollowActionDeps } from '@/api/sessionFollowActionDeps';
-import { reconcileExternalActionTarget } from '@/daemon/externalActions/reconcileExternalActionTarget';
+import { reconcileExternalActionTarget, requiresManagedMachineDaemonIngress, resolveManagedControlControllerTarget } from '@/daemon/externalActions/reconcileExternalActionTarget';
 import { createDiscussionActionDeps } from '@/discussions/discussionActionDeps';
 import {
   resolveServerHttpBaseUrl,
@@ -222,7 +222,14 @@ export function createExternalMcpServer(params: Readonly<{
           execute: async (...args: Parameters<typeof baseExecutor.execute>) => {
             const [actionId, input, context] = args;
             const builtInActionId = ActionIdSchema.safeParse(actionId);
-            if (!builtInActionId.success || resolveActionExecutionPlacementForInput(getActionSpec(builtInActionId.data), input) !== 'client') {
+            const executionPlacement = builtInActionId.success
+              ? resolveActionExecutionPlacementForInput(getActionSpec(builtInActionId.data), input) : null;
+            const controlControllerTarget = await resolveManagedControlControllerTarget({ actionId, rawInput: input,
+              credentials: params.credentials, serverHttpBaseUrl, ...(context?.signal ? { signal: context.signal } : {}) });
+            if (!builtInActionId.success || (
+              executionPlacement !== 'client'
+              && !requiresManagedMachineDaemonIngress(builtInActionId.data, executionPlacement, controlControllerTarget)
+            )) {
               return await pluginExecutor.execute(...args);
             }
             // Delegate before local admission: this exact Home's daemon owns
@@ -236,13 +243,14 @@ export function createExternalMcpServer(params: Readonly<{
               actionId: admittedActionId.data,
               rawInput: input,
               target: context?.externalActionTarget
+                ?? controlControllerTarget
                 ?? (params.machineId ? { kind: 'machine', machineId: params.machineId } : undefined),
               currentMachineId: params.machineId ?? '',
             });
             if (reconciliation.kind === 'rejected') return reconciliation.execution;
             // The same ingress owner selects explicit parsed Session targets.
             // A primary-target clear addresses the client, not the old cursor.
-            const target = reconciliation.target?.kind === 'session' || context?.externalActionTarget
+            const target = executionPlacement !== 'client' || reconciliation.target?.kind === 'session' || context?.externalActionTarget
               || actionId === 'session.target.primary.set' || !sessionId
               ? reconciliation.target : { kind: 'session' as const, sessionId };
             const result = await requestDaemonSignedRootActionExecution({

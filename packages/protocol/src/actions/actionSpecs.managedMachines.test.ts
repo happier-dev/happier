@@ -11,6 +11,15 @@ const effects = ['machines.managed.acquire', 'machines.managed.bootstrap.retry',
   'machines.managed.controller.update', 'machines.managed.retire'] as const;
 
 describe('managed Machine host Action contracts', () => {
+  it('preserves native Delete admission alongside Account-owned deletion', () => {
+    const spec = getActionSpec('machines.managed.delete');
+    const input = spec.inputSchema.parse({ homeId: 'home', managedId: 'managed', expectedRevision: 1,
+      when: 'now', intent: 'delete', reviewedDependencies: true });
+    expect(resolveActionExecutionPlacementForInput(spec, input)).toBe('account');
+    expect(spec.executionPlacements).toEqual(expect.arrayContaining(['account', 'machine']));
+  });
+
+
   it('reviews exact update scope without setup operands and exposes dangerous target-native apply', () => {
     const plan = getActionSpec('machines.setup.plan');
     expect(plan.inputSchema.safeParse({ homeId: 'home', machineId: 'machine', updates: { scope: 'security' } }).success).toBe(true);
@@ -86,7 +95,7 @@ describe('managed Machine host Action contracts', () => {
       expect(getActionSpec(actionId)).toMatchObject({
         surfaces: { ui: true, cli: true, agent: true, mcp: true, voice: true, rpc: true },
         bindings: { rpcMethod: actionId },
-        executionPlacement: ['machines.provisioners.list', 'machines.managed.list', 'machines.managed.get', 'machines.managed.cancel'].includes(actionId)
+        executionPlacement: ['machines.provisioners.list', 'machines.managed.list', 'machines.managed.get', 'machines.managed.cancel', 'machines.managed.delete'].includes(actionId)
           ? 'account' : 'machine',
       });
       expect(commands.get(actionId)).toEqual(actionId.split('.'));

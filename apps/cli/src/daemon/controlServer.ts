@@ -1,3 +1,6 @@
+import type { ActionExecuteResult } from '@happier-dev/protocol/actions';
+import { requiresOriginalAccountMachineActionProof } from '@/api/externalActionExecutionAuthorization';
+import { requiresManagedMachineDaemonIngress } from './externalActions/reconcileExternalActionTarget';
 /**
  * HTTP control server for daemon management
  * Provides endpoints for listing sessions, stopping sessions, and daemon shutdown
@@ -16,7 +19,7 @@ import { createDaemonAdmissionDrain, DaemonAdmissionRefusalCodeSchema, EXECUTION
 import { AUTHORITY_CEILING_HEADER_V1, resolveInvocationAuthority } from '@happier-dev/protocol/actions/invocationAuthority';
 import { waitForTerminalPresentUserPolicyRefresh, type TerminalPresentUserPolicyScope } from '@/settings/accountSettings/resolveEffectiveTerminalPresentUserPolicy';
 import { logger } from '@/ui/logger';
-import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { getActionSpec, resolveActionExecutionPlacementForInput } from '@happier-dev/protocol/actions/actionSpecs';
 import { projectActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { resolveRuntimeActionExecutionFamily } from '@happier-dev/protocol/actions/executor/dispatch';
 import { classifyActionTransportFailure } from '@/api/client/classifyServerEndpointError';
@@ -264,6 +267,7 @@ import {
 import {
   SIGNED_ROOT_ACTION_EXECUTE_PATH,
   SignedRootActionExecuteRequestSchema,
+  type SignedRootActionExecuteRequest,
 } from './externalActions/signedRootActionControl';
 
 const DEFAULT_DAEMON_CONTROL_BODY_LIMIT_BYTES = 8 * 1024 * 1024;
@@ -279,6 +283,11 @@ type DaemonSelfRestartRequest = Readonly<{
   }>;
 }>;
 type DaemonExternalActionApi = Readonly<{
+  executeOriginalAccountAction?: (request: SignedRootActionExecuteRequest & Readonly<{
+    authority: 'present_user' | 'account_automation'; signal: AbortSignal;
+  }>) => Promise<ActionExecuteResult>;
+  resolveManagedControlControllerTarget?: (actionId: string, input: unknown, signal: AbortSignal) => Promise<Readonly<{ kind: 'machine'; machineId: string }> | null>;
+
   currentServerId: string;
   currentAccountId?: string;
   currentServerHttpBaseUrl?: string;
@@ -1228,6 +1237,21 @@ export function createDaemonControlApp({
             ? 'disallowed'
             : await waitForTerminalPresentUserPolicyRefresh(externalActionApi.terminalPolicyScope);
           progress.phase = 'execution';
+          const authority = resolveInvocationAuthority({
+            credential: surface === 'mcp' ? 'account' : 'terminal', surface, terminalPolicy,
+          });
+          const controlControllerTarget = await externalActionApi.resolveManagedControlControllerTarget?.(
+            parsed.data.actionId, parsed.data.input, lifetime.signal) ?? null;
+          if (requiresManagedMachineDaemonIngress(parsed.data.actionId,
+            resolveActionExecutionPlacementForInput(getActionSpec(parsed.data.actionId), parsed.data.input), controlControllerTarget)
+            && requiresOriginalAccountMachineActionProof(parsed.data.actionId, parsed.data.input)) {
+            if (!externalActionApi.executeOriginalAccountAction)
+              return { ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' };
+            return await externalActionApi.executeOriginalAccountAction({
+              ...parsed.data, ...(parsed.data.target ? {} : controlControllerTarget ? { target: controlControllerTarget } : {}),
+              surface, authority, signal: lifetime.signal,
+            });
+          }
           const execution = await executeExternalAction({
             actionId: parsed.data.actionId,
             envelope: {
@@ -1237,10 +1261,7 @@ export function createDaemonControlApp({
               ...(parsed.data.actionRequestId ? { requestId: parsed.data.actionRequestId } : {}),
             },
             principal: {
-              authority: resolveInvocationAuthority({
-                credential: surface === 'mcp' ? 'account' : 'terminal', surface,
-                terminalPolicy,
-              }),
+              authority,
             },
             surface,
             currentMachineId: machineId,

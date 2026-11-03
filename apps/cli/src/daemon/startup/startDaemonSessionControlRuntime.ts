@@ -1,3 +1,4 @@
+import { dispatchOriginalAccountAction } from '@/api/externalActionExecutionAuthorization';
 import { refreshTrackedSessionsRuntimeSnapshot, resolveRespawnSessionOptionsWithRuntimeSnapshot } from '@/daemon/sessions/runtimeSnapshot/respawn';
 import { snapshotTrackedSessionForTemporaryThrottleResume, buildTrackedExistingSessionResumeSeed } from '@/daemon/connectedServices/usageLimitRecovery/resumeSource';
 import { persistExplicitSessionStopUsageLimitRecoveryCancellation } from '@/daemon/connectedServices/usageLimitRecovery/explicitStop';
@@ -88,7 +89,7 @@ import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue'
 import { MANAGED_MACHINE_ACTION_IDS_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { getActionSpec, resolveActionExecutionPlacementForInput } from '@happier-dev/protocol/actions/actionSpecs';
 
-import { resolveExternalActionMachineTarget } from '../externalActions/reconcileExternalActionTarget';
+import { resolveExternalActionMachineTarget, resolveManagedControlControllerTarget } from '../externalActions/reconcileExternalActionTarget';
 import { readManagedMachine } from '@/machines/managed/readManagedMachine';
 
 
@@ -12265,6 +12266,26 @@ daemonWorkSignal: AbortSignal;
     | undefined = externalActionIngressOwner
     ? {
         currentAccountId: externalActionAccountId,
+        resolveManagedControlControllerTarget: async (actionId, input, signal) => await resolveManagedControlControllerTarget({
+          actionId, rawInput: input, credentials: params.credentials,
+          serverHttpBaseUrl: params.serverBaseUrl, signal,
+        }),
+        executeOriginalAccountAction: async request => {
+          const origin = await params.resolveCurrentMachineExecutionOriginContext?.(request.signal);
+          if (!origin || origin.machineId !== params.machineId)
+            return { ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' };
+          return await dispatchOriginalAccountAction({
+            credentials: params.credentials,
+            serverHttpBaseUrl: params.serverBaseUrl,
+            serverIdentityId: origin.serverIdentityId,
+            actionId: request.actionId, input: request.input,
+            requestId: request.actionRequestId ?? randomUUID(),
+            target: request.target ?? { kind: 'machine', machineId: params.machineId },
+            invocation: { caller: { kind: 'host' }, surface: request.surface ?? 'cli', authority: request.authority },
+            authority: request.authority, signal: request.signal,
+          });
+        },
+
         terminalPolicyScope: {
           token: params.credentials.token,
           serverHttpBaseUrl: params.serverBaseUrl,

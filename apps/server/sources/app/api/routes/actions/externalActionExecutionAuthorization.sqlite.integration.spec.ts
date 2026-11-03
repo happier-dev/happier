@@ -1,3 +1,4 @@
+import { setEligibleMachineAccessGrantInTx } from '@/testkit/machineAccessGrant.testkit';
 import { createProjectSourceInTx } from '@/app/projects/sources/projectSourceService';
 import { actionSpecToActionDefinitionV1, freezeWorkflowActionContractV1 } from '@happier-dev/protocol/actions/actionCatalog';
 import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
@@ -434,6 +435,64 @@ describe("external Action execution authorization", () => {
     afterAll(async () => {
         resetSessionSystemRecordsProtocolV1ActivationForTests();
         if (harness) await harness.close();
+    });
+
+    it.each(['owner', 'foreign', 'use'] as const)('keeps native Delete controller reads under real Home authority (%s)', async relationship => {
+        const { fixture, homeId, controller, input } = await createManagedNativeAuthFixture();
+        await db.machine.update({ where: { id: controller.machineId }, data: { active: true } });
+        const requestId = crypto.randomUUID();
+        const created = await admitManagedAcquire({ requesterAccountId: fixture.account.id, custodianAccountId: fixture.account.id,
+            requestEnvelopeDigest: 'native-delete-creation', input: { input, requestId, continuationPresent: false } });
+        const creation = { homeId, managedId: created.machine.id, expectedIntentRevision: 0, requestId, controller };
+        await submitManagedAcquire(creation);
+        await reportManagedAcquire({ ...creation, result: { kind: 'bound', resource: {
+            contributionRef: input.selection.launch.provider, schemaVersion: 1, value: { id: 'lima-leaf' },
+        } } });
+        const actor = relationship === 'owner' ? fixture : await createFixture({ qualifiedPat: false });
+        if (relationship === 'use') {
+            await inTx(tx => setEligibleMachineAccessGrantInTx(tx, { actorAccountId: fixture.account.id, machineId: controller.machineId,
+                principal: { kind: 'account', accountId: actor.account.id }, level: 'view' }));
+            expect(await resolveMachineAccess({ actorAccountId: actor.account.id, machineId: controller.machineId }))
+                .toMatchObject({ role: 'use' });
+        }
+        const token = await auth.createToken(actor.account.id, undefined, { kind: 'account', authority: 'present_user' });
+        const actionId = 'machines.managed.delete';
+        const envelope = ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId: crypto.randomUUID(),
+            target: { kind: 'machine', machineId: controller.machineId }, input: { homeId, managedId: created.machine.id,
+                expectedRevision: 0, when: 'now', intent: 'delete', reviewedDependencies: true } });
+        const receipt = { kind: 'accepted', managedId: created.machine.id, intentRevision: 1,
+            operation: { operationId: 'native-delete-operation' } };
+        // The daemon transport is external; Home authentication, retained access
+        // and signed native-purpose admission remain real.
+        const { app, dispatchedPrincipals } = await createApp(fixture.team.id, false, undefined, async request => ({
+            kind: 'response', prepared: prepareExternalActionResponseEnvelopeV1({ v: 1, actionId,
+                requestId: request.envelope.requestId, execution: { ok: true, result: receipt } }),
+        }), false, undefined, true);
+        try {
+            const issued = await app.inject({ method: 'POST', url: bindExternalActionExecutionAuthorizationHttpPathV1(actionId),
+                headers: { authorization: `Bearer ${token}` }, payload: { v: 1, machineId: controller.machineId, envelope } });
+            if (relationship !== 'owner') {
+                expect(issued.statusCode, issued.body).toBe(409);
+                expect(issued.json()).toMatchObject({ code: 'target_unavailable' });
+                expect(dispatchedPrincipals).toHaveLength(0);
+                return;
+            }
+            expect(issued.statusCode, issued.body).toBe(200);
+            const authorization = ExternalActionExecutionAuthorizationV1Schema.parse(issued.json());
+            authorizationRequests.set(authorization.token, { target: authorization.binding.target,
+                installationId: controller.installationId, requestId: envelope.requestId! });
+            const path = `/v1/machines/${controller.machineId}`;
+            const read = await app.inject({ method: 'GET', url: path, headers: machineHeaders({ authorizationToken: authorization.token,
+                effectActionId: actionId, method: 'GET', path, body: undefined, privateKey: fixture.keyPair.secretKey }) });
+            expect(read.statusCode, read.body).toBe(200);
+            expect(read.json()).toMatchObject({ machine: { id: controller.machineId, installationId: controller.installationId } });
+            const executed = await app.inject({ method: 'POST', url: `/v1/actions/${actionId}`,
+                headers: { authorization: `Bearer ${token}` }, payload: { v: 1, machineId: controller.machineId,
+                    envelope, executionAuthorization: authorization } });
+            expect(executed.statusCode, executed.body).toBe(200);
+            expect(executed.json()).toMatchObject({ execution: { ok: true, result: receipt } });
+            expect(dispatchedPrincipals).toHaveLength(1);
+        } finally { await app.close(); }
     });
 
     async function createFixture(input: Readonly<{ qualifiedPat: boolean }>) {
