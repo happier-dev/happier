@@ -106,6 +106,20 @@ function snapshotWith(events: readonly BrowserDiagnosticEventV1[]): BrowserDiagn
     };
 }
 
+it('keeps CDP console and exception values for the owner and strips them at other destinations', () => {
+    const consoleEvent = { ...injectedConsoleEvent(), fidelity: 'cdp' as const, trusted: true,
+        data: { level: 'log', text: 'owner secret text', args: [false, 0, null] } };
+    const errorEvent = { ...consoleEvent, eventId: 'error', family: 'pageError' as const, kind: 'pageError.thrown' as const,
+        data: { messageAvailable: true, message: 'owner secret exception', stack: 'owner secret stack',
+            stackFrames: [{ url: 'https://example.test/app.js', functionName: 'run', lineNumber: 1, columnNumber: 0 }] } };
+    const owner = redactBrowserDiagnosticsSnapshotForViewer(snapshotWith([consoleEvent, errorEvent]), 'owner');
+    expect(owner.events[0]?.data.text).toBe('owner secret text');
+    expect(owner.events[1]?.data.message).toBe('owner secret exception');
+    const agent = redactBrowserDiagnosticsSnapshotForViewer(snapshotWith([consoleEvent, errorEvent]), 'agent');
+    expect(JSON.stringify(agent)).not.toContain('owner secret');
+    expect(agent.events[1]?.data.messageAvailable).toBe(true);
+});
+
 describe('browser diagnostics snapshot egress (X1 viewer-identity-gated fidelity)', () => {
     it('maps the viewer party onto the egress destination', () => {
         expect(browserDiagnosticsEgressDestinationForViewer('owner')).toBe('localOwner');

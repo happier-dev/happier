@@ -1,12 +1,11 @@
-import type { BrowserDiagnosticEventKindV1 } from '../v1.js';
-import type { BrowserDiagnosticRedactionLevelV1 } from '../v1.js';
+import type { BrowserDiagnosticEventKindV1, BrowserDiagnosticEventV1, BrowserDiagnosticRedactionLevelV1 } from '../v1.js';
 
 /**
  * Canonical browser-diagnostics egress field classifier.
  *
  * Root cause B: redaction was reimplemented at 4+ capture sites and the per-eventKind allowlists
  * were inlined in `v1.ts`. This module UNIONS those scattered allowlists into one place so every
- * layer (protocol refine, sidecar map, host re-sanitizer, agent-context summarize) classifies the
+ * boundary (protocol refine, sidecar map, injected ingress, agent-context summarize) classifies the
  * same field the same way. The injected-page schema refinement in `v1.ts` defers to
  * `INJECTED_EVENT_ALLOWED_FIELDS` here.
  *
@@ -18,9 +17,8 @@ export type BrowserDiagnosticFieldDisposition = 'keep' | 'drop' | 'always-strip'
 
 /**
  * Maximum length (in UTF-16 code units) of the length-capped console `text`/`args` rendering the
- * injected collector may surface to the local owner. Mirrors the existing 4 KiB `expressionPreview`
- * cap so the producer (in-page script), the protocol schema, and the host re-sanitizer all agree on
- * one ceiling. A console entry whose `text` exceeds this is rejected (fail-closed) rather than
+ * injected collector may surface to the local owner. The producer and Protocol ingress schema
+ * share this console-value contract. A console entry whose `text` exceeds this is rejected (fail-closed) rather than
  * silently truncated downstream.
  */
 export const INJECTED_CONSOLE_TEXT_MAX_LENGTH = 4096;
@@ -150,14 +148,15 @@ export const INJECTED_EVENT_ALLOWED_FIELDS: Readonly<
  * the plan's destination-based egress model: capture full → render full to the local owner → redact
  * the value-bearing fields at every agent/remote chokepoint.
  *
- * `console.entry.text` is the length-capped console rendering. Adding a field here keeps the
+ * This field policy also applies to CDP capture. Adding a field here keeps the
  * destination-agnostic `classifyBrowserDiagnosticField` fail-closed (it reads owner-only fields as
  * `drop`), so any egress path that has not opted into a destination strips them.
  */
 export const INJECTED_OWNER_ONLY_FIELDS: Readonly<
   Partial<Record<BrowserDiagnosticEventKindV1, ReadonlySet<string>>>
 > = {
-  'console.entry': new Set(['text']),
+  'console.entry': new Set(['text', 'args', 'stackFrames', 'source']),
+  'pageError.thrown': new Set(['message', 'stack', 'stackFrames', 'source']),
   'network.response': new Set([
     'requestHeaders',
     'responseHeaders',
@@ -214,6 +213,18 @@ export function classifyBrowserDiagnosticFieldForDestination(
   const allowed = INJECTED_EVENT_ALLOWED_FIELDS[eventKind];
   if (!allowed) return 'drop';
   return allowed.has(fieldName) ? 'keep' : 'drop';
+}
+
+/** Apply the canonical field policy once when diagnostics cross a destination boundary. */
+export function redactBrowserDiagnosticDataForDestination(
+  event: Pick<BrowserDiagnosticEventV1, 'kind' | 'fidelity' | 'data'>,
+  destination: BrowserDiagnosticEgressDestination,
+): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(event.data).filter(([name]) =>
+    !ALWAYS_STRIP_FIELD_NAMES.has(normalizeFieldName(name))
+    && (!isOwnerOnlyField(event.kind, name) || destination === 'localOwner')
+    && (event.fidelity !== 'injectedPage'
+      || classifyBrowserDiagnosticFieldForDestination(event.kind, name, destination) === 'keep')));
 }
 
 /**
