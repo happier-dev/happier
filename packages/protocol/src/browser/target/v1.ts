@@ -41,7 +41,14 @@ export type BrowserExternalUrlTargetV1 = z.infer<typeof BrowserExternalUrlTarget
 
 export const BrowserStreamedTargetV1Schema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(BrowserTargetBaseV1Schema, {
   kind: z.literal('streamedBrowser'),
-  streamId: z.string().check(z.trim(), z.minLength(1), z.maxLength(256)),
+  targetId: z.string().check(z.trim(), z.minLength(1)),
+  streamId: z.string().check(z.trim(), z.minLength(1)),
+  // Existing saved targets predate daemon identity. New discovery preserves the
+  // whole tuple so workspace presentation never invents the semantic view owner.
+  daemonView: z.optional(z.strictObject({
+    browserSessionId: z.string().check(z.trim(), z.minLength(1), z.maxLength(256)),
+    viewId: z.string().check(z.trim(), z.minLength(1), z.maxLength(256)),
+  })),
 })));
 export type BrowserStreamedTargetV1 = z.infer<typeof BrowserStreamedTargetV1Schema>;
 

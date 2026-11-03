@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { LocalServiceLaunchTargetV1Schema } from '../../local/services/launcher/v1.js';
+import { browserViewKey } from '../view/key.js';
 
 type BrowserTargetModule = typeof import('./v1.js');
 
@@ -8,6 +9,20 @@ async function loadBrowserTargetModule(): Promise<BrowserTargetModule | null> {
 }
 
 describe('browser view target v1 protocol', () => {
+  it('preserves the daemon view tuple in streamed targets and reads existing tupleless saved targets', async () => {
+    const { BrowserViewTargetV1Schema } = await import('./v1.js');
+    const savedTarget = { kind: 'streamedBrowser', targetId: 'source', streamId: 'source' };
+    const target = { ...savedTarget, daemonView: { browserSessionId: 'session', viewId: 'view' } };
+    expect(BrowserViewTargetV1Schema.parse(target)).toEqual(target);
+    const daemonView = { browserSessionId: 's'.repeat(256), viewId: 'v'.repeat(256) };
+    const sourceId = browserViewKey(daemonView);
+    const derivedTarget = { ...target, targetId: sourceId, streamId: sourceId, daemonView };
+    expect(BrowserViewTargetV1Schema.parse(derivedTarget)).toEqual(derivedTarget);
+    expect(BrowserViewTargetV1Schema.parse(savedTarget)).toEqual(savedTarget);
+    expect(BrowserViewTargetV1Schema.safeParse({ ...target, daemonView: { viewId: 'view' } }).success).toBe(false);
+    expect(BrowserViewTargetV1Schema.safeParse({ ...target, daemonView: { browserSessionId: 'session' } }).success).toBe(false);
+  });
+
   it('preserves a sessionless managed preview binding through the launcher and refuses mismatched authority', async () => {
     const { BrowserViewTargetV1Schema } = await import('./v1.js');
     const target = {
