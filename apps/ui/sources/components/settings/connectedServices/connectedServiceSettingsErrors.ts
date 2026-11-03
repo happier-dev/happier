@@ -1,4 +1,5 @@
 import { t } from '@/text';
+import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 
 type ErrorLike = Readonly<{
     code?: unknown;
@@ -17,10 +18,17 @@ export function readConnectedServiceSettingsErrorCode(error: unknown): string | 
     if (typeof errorLike.code === 'string' && errorLike.code.trim().length > 0) {
         return errorLike.code;
     }
-    if (typeof errorLike.message === 'string' && /^connect[_a-z0-9]+$/i.test(errorLike.message)) {
+    const rpcCode = readRpcErrorCode(error);
+    if (rpcCode) return rpcCode;
+    if (typeof errorLike.message === 'string' && (/^connect[_a-z0-9]+$/i.test(errorLike.message)
+        || errorLike.message === 'saved-secret-unavailable')) {
         return errorLike.message;
     }
     return null;
+}
+
+export function resolveConnectedServiceSettingsErrorRecovery(error: unknown): 'edit' | 'retry' {
+    return asErrorLike(error).status === 'rejected' ? 'edit' : 'retry';
 }
 
 export function isConnectedServiceRuntimeCooldownError(error: unknown): boolean {
@@ -41,9 +49,18 @@ function formatResetAt(error: unknown): string {
     return resetAtMs === null ? t('connectedServices.errors.unknownResetTime') : new Date(resetAtMs).toLocaleString();
 }
 
-export function resolveConnectedServiceSettingsErrorMessage(error: unknown): string {
+/**
+ * What the failing step was doing. `load`: reading a sign-in (its description, its form, a waiting
+ * attempt) — nothing was changed, so an unexplained failure there says the sign-in couldn't load.
+ */
+export type ConnectedServiceSettingsErrorContext = Readonly<{ phase: 'load'; serviceName: string }>;
+
+export function resolveConnectedServiceSettingsErrorMessage(error: unknown, context?: ConnectedServiceSettingsErrorContext): string {
     const errorLike = asErrorLike(error);
     const code = readConnectedServiceSettingsErrorCode(error);
+    const unexplained = context?.phase === 'load'
+        ? t('connectedServices.errors.signInLoadFailed', { service: context.serviceName })
+        : t('connectedServices.errors.generic');
 
     switch (code) {
         case 'plugin_account_execution_unavailable':
@@ -98,6 +115,7 @@ export function resolveConnectedServiceSettingsErrorMessage(error: unknown): str
             return t('connectedServices.errors.accountOperationUnsupported');
         case 'connected_account_configuration_required':
         case 'connected_account_configured_origins_unavailable':
+        case 'saved-secret-unavailable':
             return t('connectedServices.errors.accountConfigurationRequired');
         case 'connected_account_configuration_changed':
         case 'connected_account_configuration_stale':
@@ -223,6 +241,10 @@ export function resolveConnectedServiceSettingsErrorMessage(error: unknown): str
         case 'connected_account_managed_provider_operation_binding_identity_required':
         case 'connected_account_managed_provider_operation_binding_operation_id_required':
             return t('connectedServices.errors.accountAccessUnavailable');
+        case 'connected_account_configuration_unavailable':
+            return errorLike.status === 'unavailable'
+                ? t('connectedServices.errors.accountServiceUnavailable')
+                : context?.phase === 'load' ? unexplained : t('connectedServices.errors.accountSaveUnavailable');
         case 'connect_credential_seal_unavailable':
         case 'connected_account_configuration_atomic_persistence_unavailable':
         case 'connected_account_configuration_persistence_unavailable':
@@ -231,7 +253,6 @@ export function resolveConnectedServiceSettingsErrorMessage(error: unknown): str
         case 'connected_account_oauth_settlement_persistence_unavailable':
         case 'connected_account_oauth_transaction_persistence_unavailable':
         case 'connected_account_configuration_settings_unavailable':
-        case 'connected_account_configuration_unavailable':
         case 'connected_account_attempt_transaction_storage_mode_mismatch':
         case 'connected_account_attempt_transaction_unreadable':
         case 'connected_account_revoke_unavailable':
@@ -283,13 +304,17 @@ export function resolveConnectedServiceSettingsErrorMessage(error: unknown): str
         case 'connected_service_request_failed':
             break;
         default:
-            if (code) return t('connectedServices.errors.generic');
+            // Leaf diagnostics carry plugin-specific codes. The admitted host outcome
+            // still establishes rejection; diagnostic prose is not a display contract.
+            if (errorLike.status === 'rejected') return t('connectedServices.errors.accountAuthenticationRejected');
+            if (errorLike.status === 'unavailable') return t('connectedServices.errors.accountServiceUnavailable');
+            if (code) return unexplained;
     }
 
     if (typeof errorLike.status === 'number') {
         return t('connectedServices.errors.requestFailedWithStatus', { status: errorLike.status });
     }
-    return t('connectedServices.errors.generic');
+    return unexplained;
 }
 
 export function resolveConnectedServiceRuntimeCooldownOverrideBody(error: unknown): string {

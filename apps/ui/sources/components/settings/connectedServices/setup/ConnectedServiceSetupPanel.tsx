@@ -1,3 +1,4 @@
+import type { MachineAdministrationTargetV1 } from '@happier-dev/protocol/account/settings/machineAdministrationSelectionsV1';
 import * as React from 'react';
 import { Pressable, View } from 'react-native';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
@@ -26,7 +27,7 @@ import { ConnectedServiceMark, formatAgentNames } from '../ConnectedServiceMark'
 import type { ConnectedServicesIndexSection } from '../model/buildConnectedServicesIndexModel';
 import type { ConnectedServiceRegistryEntry, ConnectedServiceRegistrySnapshot } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 import { ConnectedServiceCatalogBlock } from './ConnectedServiceCatalogBlock';
-import { signsInWithAnAccount } from './connectMoreBlocks';
+import { namedByWhatYouPaste, presentNewConnectedAccountDraftTitle, signsInWithAnAccount } from './connectMoreBlocks';
 
 /** One service the catalog offers: what it is, who would use it, and how many you already have. */
 export type ConnectedServiceSetupCatalogEntry = Readonly<{
@@ -63,14 +64,17 @@ export type ConnectedServiceSetupPanelProps = Readonly<{
     renderServiceFlow?: (entry: ConnectedServiceSetupCatalogEntry, target: ConnectedServiceSetupTarget) => React.ReactNode;
     /** A host's canonical selection input (dev frames supply a non-executable presentation fixture). */
     targetSelection?: MachineAdministrationTargetSelectionV1;
+    initialMachineTarget?: MachineAdministrationTargetV1 | null;
     registry?: ConnectedServiceRegistrySnapshot;
+    /** The enclosing page consumes this selected method's demand; the controller owns the choice. */
+    onMachineRequirementChange?: (required: boolean) => void;
     /** Consumer-scoped setup must finish on its captured controller. */
     targetLocked?: boolean;
     /**
      * `frame` (default): the set-up block's frame is the paper (Connected services, Home).
      * `card`: the panel brings its own (the modal, where there is no block to grow from).
      */
-    chrome?: 'frame' | 'card' | 'page';
+    chrome?: 'frame' | 'card' | 'page' | 'sheet';
     /**
      * `all`: every service, the "Signed in on a machine?" explainer, code hosts and tools, and the
      * Providers pointer (Connected services). `home`: only the services the host passes, with Home's
@@ -79,6 +83,39 @@ export type ConnectedServiceSetupPanelProps = Readonly<{
     scope?: 'all' | 'home';
     testID?: string;
 }>;
+
+/**
+ * The one heading of a setup surface: its title and one line of purpose, for the panel's own head, a
+ * page header, or the Connect sheet's band.
+ */
+export function presentConnectedServiceSetupHeading(input: Readonly<{
+    selected: ConnectedServiceSetupCatalogEntry | null;
+    targetKind: ConnectedServiceSetupTarget['kind'];
+    scope: 'all' | 'home';
+    chrome?: ConnectedServiceSetupPanelProps['chrome'];
+}>): Readonly<{ title: string; purpose: string }> {
+    const { selected, scope } = input;
+    const title = !selected
+        ? scope === 'home' ? t('connectedServicesSetup.homeCatalogTitle') : t('connectedServicesSettings.setupCatalogTitle')
+        : input.targetKind === 'reconnect'
+            ? t('connectedServicesSettings.setupReconnectTitle', { service: selected.label })
+            // On its page an added account is a draft in the collection: the page is named like its row.
+            : input.chrome === 'page'
+                ? presentNewConnectedAccountDraftTitle(selected)
+                : t('connectedServicesSettings.setupServiceTitle', { service: selected.label });
+    const purpose = !selected
+        ? scope === 'home' ? t('connectedServicesSetup.homeCatalogPurpose') : t('connectedServicesSettings.setupCatalogPurpose')
+        : selected.usedBy.length > 0 && namedByWhatYouPaste(selected)
+            // A key is not "your account": who can use it, as its Connect card says.
+            ? t('connectedServicesSetup.serviceCanUse', { agents: formatAgentNames(selected.usedBy) })
+        : selected.usedBy.length > 0
+            ? t('connectedServicesSettings.setupServicePurpose', {
+                agents: formatAgentNames(selected.usedBy),
+                service: selected.label,
+            })
+            : t('connectedServicesSettings.setupServicePurposeNoAgents');
+    return { title, purpose };
+}
 
 const OWN_LOGIN_BLOCK_ID = '__own-login';
 
@@ -94,15 +131,24 @@ export const ConnectedServiceSetupPanel = React.memo(function ConnectedServiceSe
     const { theme } = useUnistyles();
     const router = useRouter();
     const phone = useDeviceType() === 'phone';
+    const accountScope = useActiveServerAccountScope();
+    const selectionKey = JSON.stringify([accountScope ? serverAccountScopeKeySuffix(accountScope) : null, props.target]);
+    const [method, setMethod] = React.useState<Readonly<{ key: string; id: string | null }>>({ key: selectionKey, id: null });
+    const selectedModeId = method.key === selectionKey ? method.id : null;
+    const [machineDemand, setMachineDemand] = React.useState<Readonly<{ key: string; required: boolean }> | null>(null);
+    const machineRequired = machineDemand?.key === selectionKey ? machineDemand.required : false;
+    const reportMachineRequirement = React.useCallback((required: boolean) => setMachineDemand(current =>
+        current?.key === selectionKey && current.required === required ? current : { key: selectionKey, required }), [selectionKey]);
+    const selectMode = React.useCallback((id: string) => setMethod({ key: selectionKey, id }), [selectionKey]);
+    React.useLayoutEffect(() => props.onMachineRequirementChange?.(machineRequired), [machineRequired, props.onMachineRequirementChange]);
     const defaultTargetSelection = useMachineAdministrationTargetSelection(
         MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.connectedAccounts,
-        { enabled: props.targetSelection === undefined },
+        { enabled: props.targetSelection === undefined && machineRequired,
+            ...(props.initialMachineTarget !== undefined ? { initialTarget: props.initialMachineTarget } : {}) },
     );
     const targetSelection = props.targetSelection ?? defaultTargetSelection;
     const { target, catalog: liveCatalog, onClose, onTargetChange, onConnected } = props;
     const scope = props.scope ?? 'all';
-    const accountScope = useActiveServerAccountScope();
-    const selectionKey = JSON.stringify([accountScope ? serverAccountScopeKeySuffix(accountScope) : null, target]);
     const liveSelected = target.kind === 'catalog'
         ? null
         : liveCatalog.find((candidate) => candidate.serviceKey === target.serviceKey) ?? null;
@@ -138,7 +184,7 @@ export const ConnectedServiceSetupPanel = React.memo(function ConnectedServiceSe
     const agentSelected = selected !== null && blocks.some((candidate) => candidate.serviceKey === selected.serviceKey);
     // A service outside the catalog's blocks (signing an account in again where no machine publishes
     // the service to add another) shows its flow directly.
-    const direct = selected !== null && (props.chrome === 'page' || (!agentSelected && !selectedIsTool));
+    const direct = selected !== null && (props.chrome === 'page' || props.chrome === 'sheet' || (!agentSelected && !selectedIsTool));
     const showBack = selected !== null && (blocks.length + tools.length) > 1;
     const back = React.useCallback(() => {
         if (showBack) onTargetChange({ kind: 'catalog' });
@@ -166,9 +212,12 @@ export const ConnectedServiceSetupPanel = React.memo(function ConnectedServiceSe
     const controllerPanel = React.useMemo(() => ({
         intent: reconnectAccountId ? { kind: 'reconnect' as const, accountId: reconnectAccountId } : { kind: 'add' as const },
         onConnected: handleConnected,
+        modeId: selectedModeId,
+        onModeChange: selectMode,
+        onMachineRequirementChange: reportMachineRequirement,
         // Cancel leaves the sign-in where it stands: back to the services, or closed.
         onCancel: back,
-    }), [back, handleConnected, reconnectAccountId]);
+    }), [back, handleConnected, reconnectAccountId, reportMachineRequirement, selectMode, selectedModeId]);
 
     const renderFlow = (entry: ConnectedServiceSetupCatalogEntry) => (
         <View style={styles.flow} testID="connected-service-setup:service-flow">
@@ -240,12 +289,14 @@ export const ConnectedServiceSetupPanel = React.memo(function ConnectedServiceSe
                 <Text style={styles.purpose}>{purpose}</Text>
             </View>
             <View style={styles.headActions}>
-                <MachineAdministrationTargetSelector
-                    selection={targetSelection}
-                    disabled={props.targetLocked}
-                    presentation="chip"
-                    testIDPrefix="connected-service-setup-target"
-                />
+                {machineRequired ? (
+                    <MachineAdministrationTargetSelector
+                        selection={targetSelection}
+                        disabled={props.targetLocked}
+                        presentation="chip"
+                        testIDPrefix="connected-service-setup-target"
+                    />
+                ) : null}
                 <IconButton
                     testID="connected-service-setup:close"
                     iconName="x"
@@ -308,6 +359,7 @@ export const ConnectedServiceSetupPanel = React.memo(function ConnectedServiceSe
         </>
     );
 
+    const onSheet = props.chrome === 'sheet';
     const content = (
         <View
             testID={props.testID ?? 'connected-service-setup'}
@@ -317,8 +369,8 @@ export const ConnectedServiceSetupPanel = React.memo(function ConnectedServiceSe
             {props.chrome === 'page' ? <PageHeader title={title} description={purpose} alwaysShowTitle
                 cancelAction={props.targetLocked ? { title: t('common.cancel'), onPress: onClose, testID: 'connected-service-setup:close' } : undefined}
                 leading={selected ? <ConnectedServiceMark legacyServiceId={selected.legacyServiceId} size="row" /> : <Icon name="plug" size={24} />}
-                actions={<MachineAdministrationTargetSelector selection={targetSelection} disabled={props.targetLocked} presentation="chip" testIDPrefix="connected-service-setup-target" />} /> : head}
-            <View style={styles.body}>
+                actions={<MachineAdministrationTargetSelector selection={targetSelection} disabled={props.targetLocked} presentation="chip" testIDPrefix="connected-service-setup-target" />} /> : onSheet ? null : head}
+            <View style={onSheet ? styles.sheetBody : styles.body}>
                 {body}
                 {!selected && scope === 'home' ? (
                     <Text style={styles.note}>{t('connectedServicesSettings.firstRunMeanwhile')}</Text>
@@ -386,6 +438,9 @@ const styles = StyleSheet.create((theme) => ({
         paddingHorizontal: 18,
         paddingBottom: 18,
         gap: theme.space.s10,
+    },
+    sheetBody: {
+        gap: theme.space.s12,
     },
     flow: {
         gap: 14,

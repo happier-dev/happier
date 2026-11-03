@@ -1,3 +1,4 @@
+import type { MachineAdministrationTargetSelectionV1 } from '@/sync/domains/machines/administration/useTargetSelection';
 import * as React from 'react';
 
 import { AGENT_IDS } from '@/agents/catalog/catalog';
@@ -54,7 +55,8 @@ export type ConnectedServicesGatewayRow = ProviderGatewayCollectionRow & Readonl
 const ADD_GATEWAY_KEY = 'gateway:add';
 const NO_MACHINE_TARGET = () => null;
 
-export function useConnectedServicesIndex(options: Readonly<{ agents: 'load' | 'cached'; gateways?: boolean; registry?: ConnectedServiceRegistrySnapshot }>) {
+export function useConnectedServicesIndex(options: Readonly<{ agents: 'load' | 'cached'; gateways?: boolean; registry?: ConnectedServiceRegistrySnapshot;
+    targetSelection?: MachineAdministrationTargetSelectionV1 }>) {
     const profile = useProfile();
     const scope = useActiveServerAccountScope();
     // The Account catalog is the saved payload authority, independent of Machine admission.

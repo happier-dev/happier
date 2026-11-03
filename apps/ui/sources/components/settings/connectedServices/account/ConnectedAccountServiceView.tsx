@@ -2,14 +2,16 @@ import * as React from 'react';
 import { Redirect, useLocalSearchParams, useNavigation } from '@/components/appShell/workspace/destinationRoute';
 
 import type {
-    BuiltInLegacyConnectedAccountOperation,
-    ConnectedAccountPeerOperationTransport,
-    PluginConnectedAccountAuthenticationModeV2,
+    BuiltInLegacyConnectedAccountOperation} from '@happier-dev/protocol/connect/generatedBuiltInLegacyConnectedAccountCompatibility';
+import type {
+    ConnectedAccountPeerOperationTransport} from '@happier-dev/protocol/connect/connectedAccountDaemonRpcV1';
+import type {
+    PluginConnectedAccountAuthenticationModeV2} from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
+import type {
     QualifiedConnectedAccountRef,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
 import { BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID } from '@happier-dev/protocol/connect/generatedBuiltInLegacyConnectedAccountCompatibility';
 import { ConnectedServiceIdSchema } from '@happier-dev/protocol/connect/connected-service-bindings';
-import { ConnectedAccountRevokeResponseV1Schema } from '@happier-dev/protocol/connect/connectedAccountDaemonRpcV1';
 import { CONNECTED_SERVICE_CONFIGURATION_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/connect/configurationActionsV1';
 import type { ManagedResourceDispositionV1 } from '@happier-dev/protocol/machines/managed/managedDependencyV1';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
@@ -41,7 +43,6 @@ import { ConnectedAccountFormSection } from './ConnectedAccountFormSection';
 import { MACHINE_ADMINISTRATION_SELECTION_KEYS_V1 } from '@/sync/domains/machines/administration/selectionPreferences';
 import {
     useMachineAdministrationTargetSelection,
-    type FreshMachineAdministrationExecutionTargetV1,
     type MachineAdministrationTargetSelectionV1,
 } from '@/sync/domains/machines/administration/useTargetSelection';
 import {
@@ -73,11 +74,14 @@ import {
     isConnectedServiceCredentialReferencedByGroupError,
     readConnectedServiceSettingsErrorCode,
     resolveConnectedServiceSettingsErrorMessage,
+    resolveConnectedServiceSettingsErrorRecovery,
 } from '../connectedServiceSettingsErrors';
 import { ConnectedAccountConfigurationForm } from './ConnectedAccountConfigurationForm';
 import { ConnectedAccountDeviceForm } from './ConnectedAccountDeviceForm';
 import { ConnectedAccountManualForm } from './ConnectedAccountManualForm';
 import { ConnectedAccountOAuthForm } from './ConnectedAccountOAuthForm';
+import { useConnectedAccountSetupCompletion } from './useConnectedAccountSetupCompletion';
+import { useConnectedAccountServiceDescription } from './useConnectedAccountServiceDescription';
 import {
     ConnectedAccountServiceContent,
     type ConnectedAccountServiceProfile,
@@ -86,8 +90,12 @@ import { resolveProjectedLocalizedText } from '@/components/plugins/surfaces/res
 import { SettingsPageHeader } from '@/components/settings/shell/SettingsPageHeader';
 import { resolveConnectedServiceRegistryEntryDisplayName } from '../model/resolveConnectedServiceDisplayName';
 import { ConnectedServiceMark } from '../ConnectedServiceMark';
-import { getConnectedServiceSetupPresentation, type ConnectedServiceRegistrySnapshot } from '@/sync/domains/connectedServices/connectedServiceRegistry';
-import { rankConnectedAccountSetupModes } from '../setup/rankConnectedAccountSetupModes';
+import { getConnectedAccountAuthentication, getConnectedServiceSetupPresentation, type ConnectedServiceRegistrySnapshot } from '@/sync/domains/connectedServices/connectedServiceRegistry';
+import { isAccountDirectConnectedAccountModeV1, listAccountDirectSecretCredentialKeysV1 } from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
+import { PERSONAL_SAVED_SECRET_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/account/settings/personalSavedSecretActionsV1';
+import { resolveAccountDirectSaveTarget } from './accountDirectSaveTarget';
+import { randomUUID } from '@/platform/randomUUID';
+import { rankConnectedAccountSetupModes, resolveConnectedAccountSetupMode } from '../setup/rankConnectedAccountSetupModes';
 import { ConnectedServiceSetupFlowActions, ConnectedServiceSetupFlowBody } from '../setup/ConnectedServiceSetupFlowBody';
 import {
     type PluginLocalizedTextResolver,
@@ -183,13 +191,13 @@ type ConnectedAccountServiceControllerProps = Readonly<{
         ReturnType<typeof useProjectedConnectedServicesRegistry>;
     activeServer: ReturnType<typeof useActiveServerSnapshot>;
     targetSelection: MachineAdministrationTargetSelectionV1;
-    executionTarget: FreshMachineAdministrationExecutionTargetV1 | null;
+    onMachineRequirementChange?: (required: boolean) => void;
     localizePluginText: PluginLocalizedTextResolver;
     navigation: unknown;
     /**
      * Host the sign-in in a setup panel (the in-place Connect panel, its modal twin) instead of the
-     * service page: the panel shows only the way to sign in and the running flow, starts the
-     * recommended way by itself, and reports the connected account.
+     * service page: the panel shows only the selected way and its Ready action or running flow,
+     * and reports the connected account. Device codes require explicit intent.
      */
     panel?: ConnectedAccountSetupPanelIntent;
 }>;
@@ -198,6 +206,10 @@ type ConnectedAccountServiceControllerProps = Readonly<{
 export type ConnectedAccountSetupPanelIntent = Readonly<{
     intent: Readonly<{ kind: 'add' }> | Readonly<{ kind: 'reconnect'; accountId: string }>;
     onConnected: (account: QualifiedConnectedAccountRef) => void;
+    modeId?: string | null;
+    onModeChange?: (modeId: string) => void;
+    /** The registered selected mode, not its display kind, decides Machine demand. */
+    onMachineRequirementChange?: (required: boolean) => void;
     /** Cancel was pressed: the sign-in has already left; the panel steps back or closes. */
     onCancel?: () => void;
 }>;
@@ -211,13 +223,13 @@ const ConnectedAccountServiceController = React.memo(
         connectedServicesRegistry,
         activeServer,
         targetSelection,
-        executionTarget,
         navigation,
     } = controllerProps;
     const locale = getPreferredLanguage();
     const profile = useProfile();
     const activeServerId = asStringParam(activeServer.serverId);
     const activeServerGeneration = activeServer.generation;
+    const nativeSetup = controllerProps.panel !== undefined;
     const route = React.useMemo(
         () => resolveQualifiedConnectedAccountSettingsRoute(
             {
@@ -231,9 +243,11 @@ const ConnectedAccountServiceController = React.memo(
                 machineId: params.machineId,
             },
             connectedServicesRegistry.entries,
+            nativeSetup ? 'nativeSetup' : undefined,
         ),
         [
             connectedServicesRegistry.entries,
+            nativeSetup,
             params.localId,
             params.pluginId,
             params.serviceId,
@@ -249,10 +263,6 @@ const ConnectedAccountServiceController = React.memo(
         scopeKind: 'spawn',
         serverId,
     });
-    const machineId = targetSelection.selectedTargetServerMatchesActiveAccount
-        && executionTarget?.target.serverIdentityId === targetSelection.selectedTarget?.serverIdentityId
-        && executionTarget?.target.machineId === targetSelection.selectedTarget?.machineId
-        ? executionTarget?.machine.id ?? '' : '';
     const expectedActiveServer = React.useMemo(
         () => serverId === activeServerId
             ? {
@@ -289,15 +299,9 @@ const ConnectedAccountServiceController = React.memo(
         : null;
     const exactRoute = route !== null;
 
-    // Availability can disappear while the selected sign-in is still the same draft.
-    // Retire its native work only when that selection changes; fresh resolution still gates effects.
-    const operationAbortController = React.useMemo(() => new AbortController(),
-        [targetSelection.selectedTarget?.machineId, targetSelection.selectedTarget?.serverIdentityId, serverId]);
-    const lifecycleSignal = operationAbortController.signal;
     const [describedOperation, setDescribedOperation] = React.useState<Readonly<{
         description: ServiceDescription; signal: AbortSignal;
     }> | null>(null);
-    const description = describedOperation?.signal === lifecycleSignal ? describedOperation.description : null;
     const [
         serviceConfigurationStatusByModeId,
         setServiceConfigurationStatusByModeId,
@@ -313,9 +317,33 @@ const ConnectedAccountServiceController = React.memo(
         setConfigurationContinuationAttemptId,
     ] = React.useState<string | null>(null);
     const [pendingIntent, setPendingIntent] = React.useState<PendingIntent | null>(null);
-    const [activeModeId, setActiveModeId] = React.useState<string | null>(null);
+    const [activeModeId, setActiveModeId] = React.useState<string | null>(controllerProps.panel?.modeId ?? null);
+    const declaredAuthentication = service ? getConnectedAccountAuthentication(service, connectedServicesRegistry) : null;
+    const selectedSetupMode = resolveConnectedAccountSetupMode(declaredAuthentication?.modes ?? [], activeModeId);
+    const panelIntent = controllerProps.panel?.intent ?? null;
+    // Re-entering an Account-direct key edits it through the same Account-direct owner (convert on edit), never the daemon.
+    const reconnectedAccount = panelIntent?.kind === 'reconnect' && service
+        ? profile.connectedAccountsV4.find(account => account.ref.accountId === panelIntent.accountId
+            && account.ref.service.pluginId === service.pluginId && account.ref.service.localId === service.localId) ?? null
+        : null;
+    const reconnectDirectMode = declaredAuthentication?.modes.find(mode => mode.id === reconnectedAccount?.authenticationModeId
+        && isAccountDirectConnectedAccountModeV1(mode)) ?? null;
+    const hasAccountDirectSetup = panelIntent?.kind === 'add'
+        ? declaredAuthentication?.modes.some(isAccountDirectConnectedAccountModeV1) === true
+        : reconnectDirectMode !== null;
+    const accountDirectMode = panelIntent?.kind === 'add'
+        ? hasAccountDirectSetup && isAccountDirectConnectedAccountModeV1(selectedSetupMode) ? selectedSetupMode : null
+        : reconnectDirectMode;
+    const accountDirectIdRef = React.useRef<string | null>(null);
     const [busy, setBusy] = React.useState(false);
-    const [errorCode, setErrorCode] = React.useState<string | null>(null);
+    // Whether the failure came from loading the sign-in (nothing changed) or from a change: one copy owner reads it.
+    const [{ code: errorCode, phase: errorPhase }, setError] = React.useState<{
+        code: string | null; phase: 'load' | 'change';
+    }>({ code: null, phase: 'change' });
+    const setErrorCode = React.useCallback((code: string | null, phase: 'load' | 'change' = 'change') => {
+        setError(previous => phase === 'load' && code !== null && previous.code !== null && previous.phase === 'change'
+            ? previous : { code, phase });
+    }, []);
     const panelRef = React.useRef(controllerProps.panel);
     panelRef.current = controllerProps.panel;
     // A panel starts its sign-in only once it knows no earlier attempt is waiting to be resumed.
@@ -334,32 +362,112 @@ const ConnectedAccountServiceController = React.memo(
         () => captureActiveServerAccountScopeCurrentness(),
         [],
     );
-    const accountAbortControllerRef = React.useRef<AbortController | null>(null);
-    if (accountAbortControllerRef.current === null) {
-        accountAbortControllerRef.current = new AbortController();
-    }
-    const accountSignal = accountAbortControllerRef.current.signal;
-    const operationAbortControllerRef = React.useRef(operationAbortController);
-    operationAbortControllerRef.current = operationAbortController;
+    const accountAbortLifetime = React.useMemo(() => ({ controller: new AbortController() }), []);
+    const getAccountSignal = React.useCallback(() => accountAbortLifetime.controller.signal, [accountAbortLifetime]);
+    const operationAbortControllerRef = React.useRef<AbortController | null>(null);
     const isAccountControllerCurrent = React.useCallback(() => (
         'scope' in accountLifetime
         && activeControllerRef.current
-        && !accountSignal.aborted
+        && !getAccountSignal().aborted
         && accountLifetime.isCurrent()
-    ), [accountLifetime, accountSignal]);
-    const isControllerCurrent = React.useCallback(() => (
-        isAccountControllerCurrent() && !lifecycleSignal.aborted
-    ), [isAccountControllerCurrent, lifecycleSignal]);
+    ), [accountLifetime, getAccountSignal]);
     const assertCapturedAccountCurrent = React.useCallback(() => {
         if (!accountLifetime.isCurrent()) throw Object.assign(new Error('scope-retired'), { code: 'scope-retired' });
     }, [accountLifetime]);
+    React.useEffect(() => {
+        // A replay renews this mounted view's interest, never a retired Account.
+        if (accountAbortLifetime.controller.signal.aborted) accountAbortLifetime.controller = new AbortController();
+        const controller = accountAbortLifetime.controller;
+        activeControllerRef.current = true;
+        const registration = accountLifetime.onRetire(() => {
+            activeControllerRef.current = false;
+            controller.abort();
+            operationAbortControllerRef.current?.abort();
+        });
+        return () => {
+            activeControllerRef.current = false;
+            registration.dispose();
+            controller.abort();
+            operationAbortControllerRef.current?.abort();
+        };
+    }, [accountAbortLifetime, accountLifetime]);
+    const onDescriptionError = React.useCallback((error: unknown) => {
+        setErrorCode(readConnectedServiceSettingsErrorCode(error) ?? 'connected_account_service_description_unavailable', 'load');
+    }, [setErrorCode]);
+    const hasExplicitAuthenticationIntent = activeModeId !== null || panelIntent?.kind === 'reconnect' || Boolean(route?.focus);
+    const selectedDescriptionMachineId = hasExplicitAuthenticationIntent
+        && targetSelection.selectedTargetServerMatchesActiveAccount
+        ? targetSelection.selectedTarget?.machineId : undefined;
+    const accountServiceDescription = useConnectedAccountServiceDescription({
+        serverId, expectedAccountId: 'scope' in accountLifetime ? accountLifetime.scope.accountId : null,
+        service, selectedMachineId: selectedDescriptionMachineId, modeId: activeModeId,
+        ...(expectedActiveServer ? { expectedActiveServer } : {}),
+        getSignal: getAccountSignal, assertCurrent: assertCapturedAccountCurrent,
+        isCurrent: isAccountControllerCurrent, onError: onDescriptionError,
+        enabled: exactRoute && accountDirectMode === null,
+    });
+    const accountDescriptionResponse = accountServiceDescription.current?.result.description;
+    const accountDescription = accountDescriptionResponse?.status === 'described' ? accountDescriptionResponse : null;
+    const accountAuthenticationModes = accountServiceDescription.current?.result.accountAuthenticationModes;
+    const accountModeIds = accountAuthenticationModes?.status === 'available' ? accountAuthenticationModes.modeIds : null;
+    const describedAccountId = route?.focus?.kind === 'account' ? route.focus.accountId : null;
+    const focusedSavedAccount = describedAccountId === null ? null : accountDescription?.accounts.find(account => account.ref.accountId === describedAccountId
+        && account.ref.service.pluginId === servicePluginId && account.ref.service.localId === serviceLocalId)
+        ?? profile.connectedAccountsV4.find(account => account.ref.accountId === describedAccountId
+            && account.ref.service.pluginId === servicePluginId && account.ref.service.localId === serviceLocalId);
+    const focusedModeId = describedAccountId !== null
+        ? focusedSavedAccount?.authenticationModeId
+        : reconnectedAccount?.authenticationModeId;
+    const selectedAuthenticationModeId = configuration?.mode.id ?? activeModeId ?? focusedModeId
+        ?? (controllerProps.panel ? null : selectedSetupMode?.id ?? null);
+    const machineRequired = accountDirectMode === null && accountModeIds !== null
+        && selectedAuthenticationModeId !== null && !accountModeIds.includes(selectedAuthenticationModeId);
+    const hasPortableAuthenticationModes = accountModeIds !== null && accountModeIds.length > 0;
+    const selectedModeIsPortable = selectedAuthenticationModeId !== null && accountModeIds?.includes(selectedAuthenticationModeId) === true;
+    const executionTarget = machineRequired ? targetSelection.resolveExecutionTarget() : null;
+    const machineId = targetSelection.selectedTargetServerMatchesActiveAccount
+        && executionTarget?.target.serverIdentityId === targetSelection.selectedTarget?.serverIdentityId
+        && executionTarget?.target.machineId === targetSelection.selectedTarget?.machineId
+        ? executionTarget?.machine.id ?? '' : '';
+    // A Machine change retires native work, but cannot retire a portable Account attempt.
+    const nativeMachineId = machineRequired ? targetSelection.selectedTarget?.machineId : undefined;
+    const nativeServerIdentityId = machineRequired ? targetSelection.selectedTarget?.serverIdentityId : undefined;
+    const operationAbortLifetime = React.useMemo(() => ({ controller: new AbortController() }),
+        [nativeMachineId, nativeServerIdentityId, serverId]);
+    const getLifecycleSignal = React.useCallback(() => operationAbortLifetime.controller.signal, [operationAbortLifetime]);
+    const description = machineRequired
+        ? describedOperation?.signal === getLifecycleSignal() ? describedOperation.description
+            : machineId && accountDescription?.operationTransport
+                && accountServiceDescription.current?.machineId === machineId ? accountDescription : null
+        : accountDescription;
+    React.useEffect(() => {
+        controllerProps.onMachineRequirementChange?.(machineRequired);
+        controllerProps.panel?.onMachineRequirementChange?.(machineRequired);
+    }, [controllerProps.onMachineRequirementChange, controllerProps.panel?.onMachineRequirementChange, machineRequired]);
+    React.useEffect(() => {
+        if (accountDirectMode || !accountServiceDescription.current) return;
+        if (accountAuthenticationModes?.status === 'unavailable') {
+            setErrorCode(accountAuthenticationModes.code, 'load');
+        } else if (accountDescriptionResponse && accountDescriptionResponse.status !== 'described') {
+            setErrorCode(readControlFailureCode(accountDescriptionResponse, 'connected_account_service_description_unavailable'), 'load');
+        } else {
+            setErrorCode(null);
+        }
+    }, [accountAuthenticationModes, accountDescriptionResponse, accountDirectMode, accountServiceDescription.current, setErrorCode]);
+    const isControllerCurrent = React.useCallback(() => (
+        isAccountControllerCurrent() && !getLifecycleSignal().aborted
+    ), [isAccountControllerCurrent, getLifecycleSignal]);
+    const { completed: setupCompleted, complete: completeSetup, reset: resetSetupCompletion } = useConnectedAccountSetupCompletion({
+        isCurrent: isControllerCurrent,
+        onConnected: account => panelRef.current?.onConnected(account),
+    });
     const actionExecution = useMountedActionExecution('scope' in accountLifetime ? accountLifetime.scope : null);
     const executeAction = actionExecution.execute;
     const labelsByKey = useConnectedMetadataCatalog('scope' in accountLifetime ? accountLifetime.scope : null, selectConnectedMetadataLabels);
     const renameAccount = React.useCallback(async (account: QualifiedConnectedAccountRef, label: string): Promise<boolean> => {
         if (!isAccountControllerCurrent() || !('scope' in accountLifetime)) return false;
         try {
-            const result = await executeAction('connectedServices.accounts.rename', { account, label }, { signal: accountSignal });
+            const result = await executeAction('connectedServices.accounts.rename', { account, label }, { signal: getAccountSignal() });
             if (!isAccountControllerCurrent()) return false;
             if (!result.ok) throw Object.assign(new Error(result.error), { code: result.errorCode });
             return CONNECTED_SERVICE_CONFIGURATION_ACTION_OUTPUT_SCHEMAS_V1['connectedServices.accounts.rename'].safeParse(result.result).success;
@@ -367,24 +475,72 @@ const ConnectedAccountServiceController = React.memo(
             if (isAccountControllerCurrent()) await Modal.alert(t('common.error'), resolveConnectedServiceSettingsErrorMessage(error));
             return false;
         }
-    }, [accountLifetime, executeAction, isAccountControllerCurrent, accountSignal]);
+    }, [accountLifetime, executeAction, isAccountControllerCurrent, getAccountSignal]);
+    const accountDirectContext = JSON.stringify([servicePluginId, serviceLocalId, accountDirectMode?.id ?? null]);
     React.useEffect(() => {
-        const controller = accountAbortControllerRef.current;
-        if (!controller) return;
-        activeControllerRef.current = true;
-        const registration = accountLifetime.onRetire(() => {
-            activeControllerRef.current = false;
-            controller.abort();
-            operationAbortControllerRef.current.abort();
-        });
-        return () => {
-            activeControllerRef.current = false;
-            registration.dispose();
-            controller.abort();
-            operationAbortControllerRef.current.abort();
-        };
-    }, [accountLifetime]);
+        accountDirectIdRef.current = null;
+    }, [accountDirectContext]);
+    const saveAccountCredential = React.useCallback(async (input: Readonly<{ fields: Readonly<Record<string, string>>; displayName?: string }>): Promise<boolean> => {
+        if (!accountDirectMode || !service || !panelIntent || !isAccountControllerCurrent()) return false;
+        const draftEpoch = setupAttemptEpochRef.current;
+        const target = resolveAccountDirectSaveTarget({ intent: panelIntent, service, modeId: accountDirectMode.id,
+            accounts: profile.connectedAccountsV4, newAccountId: () => accountDirectIdRef.current ??= randomUUID() });
+        if (target.kind === 'rotate') {
+            // A converted account keeps its one Saved Secret record: the new key
+            // rotates that record in place through the private-resource writer.
+            const secretFieldIds = new Set(listAccountDirectSecretCredentialKeysV1(accountDirectMode).values());
+            const entered = Object.entries(input.fields);
+            const secret = entered.length === 1 && secretFieldIds.has(entered[0]![0]) ? entered[0]![1] : null;
+            if (secret === null || panelIntent.kind !== 'reconnect') { setErrorCode('connected_account_credential_changed'); return false; }
+            const account = { service, accountId: panelIntent.accountId };
+            setBusy(true);
+            try {
+                const listed = await executeAction('secrets.list', {}, { signal: getAccountSignal() });
+                if (!isAccountControllerCurrent() || draftEpoch !== setupAttemptEpochRef.current) return false;
+                if (!listed.ok) throw Object.assign(new Error(listed.error), { code: listed.errorCode });
+                const record = PERSONAL_SAVED_SECRET_ACTION_OUTPUT_SCHEMAS_V1['secrets.list'].parse(listed.result).secrets
+                    .find(candidate => candidate.secretId === target.resourceId);
+                if (!record) throw Object.assign(new Error('connected_account_credential_secret_unavailable'), { code: 'connected_account_credential_secret_unavailable' });
+                const rotated = await executeAction('secrets.update', { secretId: record.secretId, value: secret, expectedUpdatedAt: record.updatedAt },
+                    { signal: getAccountSignal() });
+                if (!isAccountControllerCurrent() || draftEpoch !== setupAttemptEpochRef.current) return false;
+                if (!rotated.ok) throw Object.assign(new Error(rotated.error), { code: rotated.errorCode });
+                if (input.displayName) await renameAccount(account, input.displayName);
+                if (!isAccountControllerCurrent() || draftEpoch !== setupAttemptEpochRef.current) return false;
+                setErrorCode(null);
+                completeSetup(account);
+                return true;
+            } catch (error) {
+                if (isAccountControllerCurrent() && draftEpoch === setupAttemptEpochRef.current) setErrorCode(readConnectedServiceSettingsErrorCode(error) ?? 'connected_service_request_failed');
+                return false;
+            } finally { if (isAccountControllerCurrent() && draftEpoch === setupAttemptEpochRef.current) setBusy(false); }
+        }
+        if (target.kind !== 'save') { setErrorCode('connected_account_credential_changed'); return false; }
+        setBusy(true);
+        try {
+            const result = await executeAction('connectedServices.accounts.credentials.save', {
+                account: target.account, modeId: accountDirectMode.id, fields: input.fields,
+                ...(target.expectedCredentialRevision ? { expectedCredentialRevision: target.expectedCredentialRevision } : {}),
+            }, { signal: getAccountSignal() });
+            if (!isAccountControllerCurrent() || draftEpoch !== setupAttemptEpochRef.current) return false;
+            if (!result.ok) throw Object.assign(new Error(result.error), { code: result.errorCode });
+            const saved = CONNECTED_SERVICE_CONFIGURATION_ACTION_OUTPUT_SCHEMAS_V1['connectedServices.accounts.credentials.save'].parse(result.result).account;
+            // A personal label is a secondary presentation write. Its existing
+            // visible error must not erase an acknowledged credential creation.
+            if (input.displayName) await renameAccount(saved, input.displayName);
+            if (!isAccountControllerCurrent() || draftEpoch !== setupAttemptEpochRef.current) return false;
+            setErrorCode(null);
+            completeSetup(saved);
+            return true;
+        } catch (error) {
+            if (isAccountControllerCurrent() && draftEpoch === setupAttemptEpochRef.current) setErrorCode(readConnectedServiceSettingsErrorCode(error) ?? 'connected_service_request_failed');
+            return false;
+        } finally { if (isAccountControllerCurrent() && draftEpoch === setupAttemptEpochRef.current) setBusy(false); }
+    }, [accountDirectMode, getAccountSignal, completeSetup, executeAction, isAccountControllerCurrent, panelIntent, profile.connectedAccountsV4, renameAccount, service]);
     React.useLayoutEffect(() => {
+        if (operationAbortLifetime.controller.signal.aborted) operationAbortLifetime.controller = new AbortController();
+        const controller = operationAbortLifetime.controller;
+        operationAbortControllerRef.current = controller;
         // Account presentation stays mounted; only the exact machine's native work retires.
         setupAttemptEpochRef.current += 1;
         flowGenerationRef.current += 1;
@@ -395,16 +551,16 @@ const ConnectedAccountServiceController = React.memo(
         setDescribedOperation(null);
         setServiceConfigurationStatusByModeId({});
         setAttempt(null);
+        resetSetupCompletion();
         setConfiguration(null);
         setConfigurationContinuationAttemptId(null);
         setPendingIntent(null);
-        setActiveModeId(null);
         setBusy(false);
         setErrorCode(null);
         setNoPendingAttempt(false);
         setRetryingDescription(false);
-        return () => operationAbortController.abort();
-    }, [operationAbortController]);
+        return () => controller.abort();
+    }, [operationAbortLifetime, resetSetupCompletion]);
     const accountPeer = React.useMemo(() => {
         if (description?.operationTransport) {
             return {
@@ -441,7 +597,8 @@ const ConnectedAccountServiceController = React.memo(
         readonly ConnectedAccountServiceProfile[]
     >(() => {
         const transport = description?.operationTransport;
-        if (!description || !transport) return [];
+        if (!description) return [];
+        if (!transport) return description.accounts;
         if (transport.kind === 'v4') return description.accounts;
         const compatibility =
             BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID[
@@ -496,7 +653,7 @@ const ConnectedAccountServiceController = React.memo(
     }, [description, profile.connectedServicesV2]);
     const visibleAccounts = React.useMemo<readonly ConnectedAccountServiceProfile[]>(() => {
         if (!('scope' in accountLifetime) || profile.id !== accountLifetime.scope.accountId) return machineAccounts;
-        // The machine owns operational revisions; Account records supply saved display facts only.
+        // Keep native augmentation when available; the Account profile supplies stored detail without a Machine.
         const savedAccounts = profile.connectedAccountsV4.filter(account => (focusedPool || account.ref.accountId === focusedAccountId)
             && account.ref.service.pluginId === servicePluginId && account.ref.service.localId === serviceLocalId
             && !machineAccounts.some(candidate => candidate.ref.accountId === account.ref.accountId));
@@ -511,7 +668,8 @@ const ConnectedAccountServiceController = React.memo(
             && account.ref.service.pluginId === servicePluginId
             && account.ref.service.localId === serviceLocalId));
 
-    const refreshDescription = React.useCallback(async (signal: AbortSignal = lifecycleSignal) => {
+    const refreshDescription = React.useCallback(async (signal: AbortSignal = getLifecycleSignal()) => {
+        if (!machineRequired) return accountServiceDescription.refresh();
         if (
             !isControllerCurrent()
             || signal.aborted
@@ -520,6 +678,7 @@ const ConnectedAccountServiceController = React.memo(
             || !serverId
             || !machineId
             || !exactRoute
+            || accountDirectMode !== null
         ) return;
         const result = await runConnectedAccountControlCommand({
             serverId,
@@ -543,10 +702,35 @@ const ConnectedAccountServiceController = React.memo(
             setErrorCode(readControlFailureCode(
                 result,
                 'connected_account_service_description_unavailable',
-            ));
+            ), 'load');
             return;
         }
-        const serviceConfigurationStatusEntries = await Promise.all(
+        setDescribedOperation({ description: result, signal: getLifecycleSignal() });
+        setErrorCode(null);
+        return result;
+    }, [
+        exactRoute, accountDirectMode, machineId, machineRequired, accountServiceDescription.refresh,
+        expectedActiveServer, isControllerCurrent, getLifecycleSignal, serverId, serviceLocalId, servicePluginId,
+    ]);
+
+    React.useEffect(() => {
+        if (!machineRequired || description || !machineId
+            || accountServiceDescription.current?.machineId !== selectedDescriptionMachineId) return;
+        const request = createLinkedAbortController(getLifecycleSignal());
+        void refreshDescription(request.signal).catch(error => {
+            if (isControllerCurrent() && !request.signal.aborted) {
+                setErrorCode(readConnectedServiceSettingsErrorCode(error) ?? 'connected_account_daemon_unavailable', 'load');
+            }
+        });
+        return () => request.dispose();
+    }, [accountServiceDescription.current, description, isControllerCurrent, getLifecycleSignal, machineId, machineRequired, refreshDescription, selectedDescriptionMachineId]);
+
+    React.useEffect(() => {
+        if (!description) return;
+        const result = description;
+        const request = createLinkedAbortController(getLifecycleSignal());
+        const signal = request.signal;
+        void Promise.all(
             result.descriptor.authentication.modes
                 .filter((mode) => mode.configuration?.scope === 'service')
                 .map(async (mode) => {
@@ -577,43 +761,21 @@ const ConnectedAccountServiceController = React.memo(
                         ] as const;
                     }
                 }),
-        );
-        if (!isControllerCurrent() || signal.aborted) return;
-        setServiceConfigurationStatusByModeId(Object.freeze(
-            Object.fromEntries(serviceConfigurationStatusEntries),
-        ));
-        setDescribedOperation({ description: result, signal: lifecycleSignal });
-        setErrorCode(null);
-        return result;
-    }, [
-        exactRoute,
-        machineId,
-        executeAction,
-        expectedActiveServer,
-        isControllerCurrent,
-        lifecycleSignal,
-        serverId,
-        serviceLocalId,
-        servicePluginId,
-    ]);
-
-    React.useEffect(() => {
-        const request = createLinkedAbortController(lifecycleSignal);
-        void refreshDescription(request.signal).catch(() => {
-            if (isControllerCurrent() && !request.signal.aborted) {
-                setErrorCode('connected_account_daemon_unavailable');
-            }
+        ).then(entries => {
+            if (!isControllerCurrent() || signal.aborted) return;
+            setServiceConfigurationStatusByModeId(Object.freeze(Object.fromEntries(entries)));
+        }).catch(error => {
+            if (isControllerCurrent() && !signal.aborted) onDescriptionError(error);
         });
         return () => request.dispose();
-    }, [isControllerCurrent, lifecycleSignal, refreshDescription]);
+    }, [description, executeAction, isControllerCurrent, getLifecycleSignal, onDescriptionError]);
 
 
     /** Cancels an abandoned attempt without showing its reply: its setup flow is gone. */
     const cancelDiscardedAttempt = React.useCallback((attemptIdToCancel: string) => {
-        if (!serverId || !machineId || !('scope' in accountLifetime)) return;
+        if (!serverId || !('scope' in accountLifetime)) return;
         void runConnectedAccountAuthenticationAction({
             serverId,
-            machineId,
             expectedAccountId: accountLifetime.scope.accountId,
             assertCurrent: assertCapturedAccountCurrent,
             ...(expectedActiveServer ? { expectedActiveServer } : {}),
@@ -622,7 +784,7 @@ const ConnectedAccountServiceController = React.memo(
             // The captured Home/machine transport still owns authentication.
             // This release outlives the setup view that just closed.
         });
-    }, [accountLifetime, assertCapturedAccountCurrent, expectedActiveServer, machineId, serverId]);
+    }, [accountLifetime, assertCapturedAccountCurrent, expectedActiveServer, serverId]);
 
     const readConfiguration = React.useCallback(async (
         target: ConnectedAccountConfigurationTarget,
@@ -630,16 +792,17 @@ const ConnectedAccountServiceController = React.memo(
         requestEpoch: number = setupAttemptEpochRef.current,
     ): Promise<boolean> => {
         if (!isControllerCurrent() || !serverId || !('scope' in accountLifetime)
-            || (target.kind !== 'service' && !machineId)) return false;
+            || (target.kind === 'account' && machineRequired && !machineId)) return false;
         const execution = await executeAction('connectedServices.configuration.get', target.kind === 'service'
             ? { service: target.service, modeId: target.modeId }
-            : { machineId, target: target.kind === 'account' ? { kind: 'account', account: target.account }
-                : { kind: 'attempt', attemptId: target.attemptId } }, { signal: lifecycleSignal });
+            : target.kind === 'attempt' ? { target: { kind: 'attempt', attemptId: target.attemptId } }
+                : { ...(machineRequired && machineId ? { machineId } : {}), target: { kind: 'account', account: target.account } },
+        { signal: getLifecycleSignal() });
         if (!isControllerCurrent()) return false;
         // A form for a setup flow cancelled while it loaded is never shown.
         if (requestEpoch !== setupAttemptEpochRef.current) return false;
         if (!execution.ok) {
-            setErrorCode(execution.errorCode ?? 'connected_account_configuration_unavailable');
+            setErrorCode(execution.errorCode ?? 'connected_account_configuration_unavailable', 'load');
             return false;
         }
         const result = CONNECTED_SERVICE_CONFIGURATION_ACTION_OUTPUT_SCHEMAS_V1['connectedServices.configuration.get'].parse(execution.result);
@@ -647,7 +810,7 @@ const ConnectedAccountServiceController = React.memo(
         setActiveModeId(result.mode.id);
         setErrorCode(null);
         return true;
-    }, [executeAction, isControllerCurrent, lifecycleSignal, machineId, serverId]);
+    }, [executeAction, isControllerCurrent, getLifecycleSignal, machineId, machineRequired, serverId]);
 
     /**
      * The one place an authentication reply is applied. `requestEpoch` is the setup epoch captured
@@ -693,16 +856,13 @@ const ConnectedAccountServiceController = React.memo(
         if (response.status === 'connected') {
             cancelDiscardedAttempt(response.attemptId);
             if (draftDisplayNameRef.current) {
-                if (!await renameAccount(response.account, draftDisplayNameRef.current)) {
-                    if (isControllerCurrent()) setErrorCode('connected_service_request_failed');
-                    return;
-                }
+                await renameAccount(response.account, draftDisplayNameRef.current);
             }
             if (!isControllerCurrent()) return;
             draftDisplayNameRef.current = null;
-            panelRef.current?.onConnected(response.account);
             setAttempt(null);
             setConfiguration(null);
+            completeSetup(response.account);
             // The new account joins the Collection; the setup flow closes.
             await refreshDescription();
             return;
@@ -718,22 +878,23 @@ const ConnectedAccountServiceController = React.memo(
         } else if (!options?.retainUnresolvedError) {
             setErrorCode(null);
         }
-    }, [cancelDiscardedAttempt, isControllerCurrent, readConfiguration, refreshDescription, renameAccount]);
+    }, [cancelDiscardedAttempt, completeSetup, isControllerCurrent, readConfiguration, refreshDescription, renameAccount]);
 
     React.useEffect(() => {
-        if (!description || !service || !serverId || !machineId || attempt || busy) return;
-        const scopeKey = JSON.stringify([serverId, machineId, service.pluginId, service.localId]);
+        if (panelIntent?.kind === 'add' && !hasExplicitAuthenticationIntent) return;
+        if (!description || !service || !serverId || machineRequired && !machineId || attempt || busy) return;
+        const scopeKey = JSON.stringify([serverId, machineRequired ? machineId : null, service.pluginId, service.localId]);
         if (discoveredScopeRef.current === scopeKey) return;
         discoveredScopeRef.current = scopeKey;
         const generation = flowGenerationRef.current;
         const requestEpoch = setupAttemptEpochRef.current;
-        const request = createLinkedAbortController(lifecycleSignal);
+        const request = createLinkedAbortController(getLifecycleSignal());
         let completed = false;
         void (async () => {
             if (!('scope' in accountLifetime)) return;
             const listed = await listPendingConnectedAccountAuthenticationActions({
                 serverId,
-                machineId,
+                ...(machineRequired && machineId ? { machineId } : {}),
                 expectedAccountId: accountLifetime.scope.accountId,
                 executeAction,
                 assertCurrent: assertCapturedAccountCurrent,
@@ -744,7 +905,7 @@ const ConnectedAccountServiceController = React.memo(
             if (!isControllerCurrent() || request.signal.aborted || generation !== flowGenerationRef.current) return;
             if (listed.status !== 'pendingAttempts') {
                 discoveredScopeRef.current = null;
-                setErrorCode(readControlFailureCode(listed, 'connected_account_attempt_discovery_unavailable'));
+                setErrorCode(readControlFailureCode(listed, 'connected_account_attempt_discovery_unavailable'), 'load');
                 return;
             }
             const pending = listed.attempts[0];
@@ -753,10 +914,8 @@ const ConnectedAccountServiceController = React.memo(
                 setNoPendingAttempt(true);
                 return;
             }
-            setActiveModeId(pending.modeId);
             const response = await runConnectedAccountAuthenticationAction({
                 serverId,
-                machineId,
                 expectedAccountId: accountLifetime.scope.accountId,
                 executeAction,
                 assertCurrent: assertCapturedAccountCurrent,
@@ -767,12 +926,25 @@ const ConnectedAccountServiceController = React.memo(
                 signal: request.signal,
             });
             if (!isControllerCurrent() || request.signal.aborted || generation !== flowGenerationRef.current) return;
+            // Manual forms are host-local. If their owner is gone, the explicit Add
+            // intent opens a fresh form; beginning it never submits old credentials.
+            if (panelIntent?.kind === 'add' && pending.intent === 'connect' && pending.kind === 'manual'
+                && response.status === 'unavailable' && response.code === 'connected_account_attempt_not_found') {
+                completed = true;
+                setNoPendingAttempt(true);
+                return;
+            }
+            setActiveModeId(pending.modeId);
+            // Restored connects retain the same intent as a fresh begin, including after expiry.
+            if (pending.intent === 'connect') {
+                setPendingIntent({ kind: 'connect', service, modeId: pending.modeId });
+            }
             await acceptAttemptResponse(response, requestEpoch);
             completed = true;
         })().catch((error) => {
             if (isControllerCurrent() && !request.signal.aborted && generation === flowGenerationRef.current) {
                 discoveredScopeRef.current = null;
-                setErrorCode(readConnectedServiceSettingsErrorCode(error) ?? 'connected_account_attempt_discovery_unavailable');
+                setErrorCode(readConnectedServiceSettingsErrorCode(error) ?? 'connected_account_attempt_discovery_unavailable', 'load');
             }
         });
         return () => {
@@ -781,31 +953,39 @@ const ConnectedAccountServiceController = React.memo(
                 discoveredScopeRef.current = null;
             }
         };
-    }, [acceptAttemptResponse, accountLifetime, assertCapturedAccountCurrent, attempt, busy, description, executeAction, expectedActiveServer, isControllerCurrent, lifecycleSignal, machineId, serverId, service]);
+    }, [acceptAttemptResponse, accountLifetime, assertCapturedAccountCurrent, attempt, busy, description, executeAction, expectedActiveServer, hasExplicitAuthenticationIntent, isControllerCurrent, getLifecycleSignal, machineId, machineRequired, panelIntent?.kind, serverId, service]);
 
     const runAuthentication = React.useCallback(async (
         command: Parameters<typeof runConnectedAccountAuthenticationAction>[0]['command'],
     ): Promise<boolean> => {
-        if (!('scope' in accountLifetime) || !isControllerCurrent() || !serverId || !machineId) return false;
+        if (!('scope' in accountLifetime) || !isControllerCurrent() || !serverId) return false;
+        const beginModeId = command.operation === 'beginConnect' ? command.modeId
+            : command.operation === 'beginReconnect' ? visibleAccounts.find(account => account.ref.accountId === command.account.accountId
+                && account.ref.service.pluginId === command.account.service.pluginId
+                && account.ref.service.localId === command.account.service.localId)?.authenticationModeId : null;
+        const nativeBegin = beginModeId !== null && beginModeId !== undefined && accountModeIds !== null
+            && !accountModeIds.includes(beginModeId);
+        if (nativeBegin && !machineId) return false;
         const draftEpoch = setupAttemptEpochRef.current;
         setBusy(true);
         try {
             const response = await runConnectedAccountAuthenticationAction({
                 serverId,
-                machineId,
+                ...(nativeBegin && machineId ? { machineId } : {}),
                 expectedAccountId: accountLifetime.scope.accountId,
                 executeAction,
                 assertCurrent: assertCapturedAccountCurrent,
                 ...(expectedActiveServer ? { expectedActiveServer } : {}),
                 command,
-                signal: lifecycleSignal,
+                signal: getLifecycleSignal(),
             });
             if (!isControllerCurrent()) return false;
             await acceptAttemptResponse(response, draftEpoch);
             return isControllerCurrent() && draftEpoch === setupAttemptEpochRef.current;
-        } catch {
+        } catch (error) {
             if (!isControllerCurrent()) return false;
-            setErrorCode('connected_account_daemon_unavailable');
+            setErrorCode(readConnectedServiceSettingsErrorCode(error) ?? 'connected_account_daemon_unavailable',
+                command.operation === 'beginConnect' || command.operation === 'beginReconnect' ? 'load' : 'change');
             return false;
         } finally {
             if (isControllerCurrent()) setBusy(false);
@@ -817,8 +997,10 @@ const ConnectedAccountServiceController = React.memo(
         executeAction,
         expectedActiveServer,
         isControllerCurrent,
-        lifecycleSignal,
+        getLifecycleSignal,
         machineId,
+        accountModeIds,
+        visibleAccounts,
         serverId,
     ]);
 
@@ -829,6 +1011,7 @@ const ConnectedAccountServiceController = React.memo(
         if (!isControllerCurrent()) return;
         flowGenerationRef.current += 1;
         setPendingIntent(intent);
+        // A fresh begin starts the flow over; the begin that follows a saved settings step keeps it.
         if (intent.kind === 'connect') {
             setActiveModeId(intent.modeId);
             await runAuthentication({
@@ -872,17 +1055,16 @@ const ConnectedAccountServiceController = React.memo(
             const recoverableAttemptId = attempt && 'attemptId' in attempt
                 ? attempt.attemptId
                 : null;
-            if (recoverableAttemptId && serverId && machineId) {
+            if (recoverableAttemptId && serverId) {
                 const requestEpoch = setupAttemptEpochRef.current;
                 const response = await runConnectedAccountAuthenticationAction({
                     serverId,
-                    machineId,
                     expectedAccountId: accountLifetime.scope.accountId,
                     executeAction,
                     assertCurrent: assertCapturedAccountCurrent,
                     ...(expectedActiveServer ? { expectedActiveServer } : {}),
                     command: { operation: 'read', attemptId: recoverableAttemptId },
-                    signal: lifecycleSignal,
+                    signal: getLifecycleSignal(),
                 });
                 if (!isControllerCurrent()) return;
                 // An unchanged non-terminal read does not resolve a lost effectful reply.
@@ -892,18 +1074,18 @@ const ConnectedAccountServiceController = React.memo(
                 return;
             }
             await refreshDescription();
-        } catch {
-            if (isControllerCurrent()) setErrorCode('connected_account_daemon_unavailable');
+        } catch (error) {
+            if (isControllerCurrent()) setErrorCode(readConnectedServiceSettingsErrorCode(error) ?? 'connected_account_daemon_unavailable', errorPhase);
         } finally {
             if (isControllerCurrent()) setRetryingDescription(false);
         }
-    }, [acceptAttemptResponse, accountLifetime, assertCapturedAccountCurrent, attempt, beginIntent, cancelDiscardedAttempt, executeAction, expectedActiveServer, isControllerCurrent, lifecycleSignal,
-        machineId, pendingIntent, refreshDescription, retryingDescription, serverId]);
+    }, [acceptAttemptResponse, accountLifetime, assertCapturedAccountCurrent, attempt, beginIntent, cancelDiscardedAttempt, errorPhase, executeAction, expectedActiveServer, isControllerCurrent, getLifecycleSignal,
+        pendingIntent, refreshDescription, retryingDescription, serverId]);
 
     const activeMode: PluginConnectedAccountAuthenticationModeV2 | null =
         configuration?.mode ?? description?.descriptor.authentication.modes.find(
             (candidate) => candidate.id === activeModeId,
-        ) ?? null;
+        ) ?? accountDirectMode;
     const activeModeKind = activeMode?.kind ?? null;
 
     React.useEffect(() => {
@@ -934,21 +1116,28 @@ const ConnectedAccountServiceController = React.memo(
         return () => clearTimeout(timeout);
     }, [activeModeKind, attempt, busy, runAuthentication]);
 
-    // A setup panel opens on the sign-in itself: adding starts the recommended way, signing in
-    // again starts the account's own way. Once per panel; switching ways is the person's choice.
+    // Opening a device-code draft selects its recommended method, but issuing a code requires
+    // explicit intent (R8-9). Other forms and an explicitly requested reconnect retain their owner.
     React.useEffect(() => {
         const panel = panelRef.current;
-        if (!panel || panelStartedRef.current || !service || !description || !machineId || attempt || busy || !noPendingAttempt) return;
+        if (!panel || accountDirectMode || panelStartedRef.current || !service || !description || machineRequired && !machineId || attempt || busy || !noPendingAttempt) return;
         const modes = description.descriptor.authentication.modes;
-        panelStartedRef.current = true;
         if (panel.intent.kind === 'reconnect') {
+            panelStartedRef.current = true;
             void beginIntent({ kind: 'reconnect', account: { service, accountId: panel.intent.accountId } });
             return;
         }
-        const recommended = rankConnectedAccountSetupModes(modes)[0]?.mode;
+        const recommended = modes.find(mode => mode.id === activeModeId) ?? rankConnectedAccountSetupModes(modes)[0]?.mode;
         if (!recommended) return;
+        // Ranking is presentation; starting or restoring requires a method choice.
+        if (!hasExplicitAuthenticationIntent) return;
+        panelStartedRef.current = true;
+        if (recommended.kind === 'oauthDeviceCode') {
+            setActiveModeId(recommended.id);
+            return;
+        }
         void beginIntent({ kind: 'connect', service, modeId: recommended.id });
-    }, [attempt, beginIntent, busy, description, machineId, noPendingAttempt, service]);
+    }, [accountDirectMode, activeModeId, attempt, beginIntent, busy, description, hasExplicitAuthenticationIntent, machineId, machineRequired, noPendingAttempt, service]);
 
     /** Shared Action approval owns revocation; a deferred review retains this account. */
     const revokeAccount = React.useCallback(async (
@@ -961,12 +1150,12 @@ const ConnectedAccountServiceController = React.memo(
         const revoke = async (cleanupGroupReferences: boolean, managedResourceDispositions?: ManagedResourceDispositionV1[]) => {
             try {
                 const result = await executeAction('connectedServices.accounts.revoke', {
-                    machineId, account, expectedCredentialRevision, cleanupGroupReferences,
+                    ...(machineId && focusedAccountHasMachineAugmentation ? { machineId } : {}), account, expectedCredentialRevision, cleanupGroupReferences,
                     ...(managedResourceDispositions ? { managedResourceDispositions } : {}),
-                }, { signal: lifecycleSignal });
+                }, { signal: getLifecycleSignal() });
                 if (!isControllerCurrent()) return null;
                 if (!result.ok) throw Object.assign(new Error(result.error), { code: result.errorCode });
-                const reply = ConnectedAccountRevokeResponseV1Schema.safeParse(result.result);
+                const reply = CONNECTED_SERVICE_CONFIGURATION_ACTION_OUTPUT_SCHEMAS_V1['connectedServices.accounts.revoke'].safeParse(result.result);
                 // Approval receipts are not native settlement and must not remove the detail.
                 return reply.success ? reply.data : null;
             } catch (error) {
@@ -1013,7 +1202,9 @@ const ConnectedAccountServiceController = React.memo(
                 if (!result || !isControllerCurrent()) return false;
             }
             if (result.status === 'revoked') {
-                await refreshDescription();
+                if (result.remoteStatus === 'remoteNotAttempted') {
+                    Modal.alert(t('connectedServicesSettings.detailRemoveAccount'), t('connectedServicesSettings.detailRemoteSignOutUnconfirmed'));
+                }
                 return true;
             }
             setErrorCode(
@@ -1039,14 +1230,14 @@ const ConnectedAccountServiceController = React.memo(
         accountLifetime,
         executeAction,
         isControllerCurrent,
-        lifecycleSignal,
+        getLifecycleSignal,
         machineId,
-        refreshDescription,
+        focusedAccountHasMachineAugmentation,
         serverId,
     ]);
 
     if (controllerProps.panel && (!exactRoute || !service)) {
-        return <ConnectedServiceSetupFlowBody state="unknownService" />;
+        return <ConnectedServiceSetupFlowBody state={connectedServicesRegistry.status === 'loading' ? 'preparing' : 'unknownService'} />;
     }
     if (!exactRoute || !service) {
         return (
@@ -1082,10 +1273,11 @@ const ConnectedAccountServiceController = React.memo(
         />
     );
 
-    if (controllerProps.panel && (!serverId || !machineId) && !description) {
+    if (controllerProps.panel && !hasAccountDirectSetup && !hasPortableAuthenticationModes
+        && machineRequired && (!serverId || !machineId) && !description && !errorCode) {
         return <ConnectedServiceSetupFlowBody state="chooseMachine" />;
     }
-    if ((!serverId || !machineId) && !accountDetailAvailable && !description) {
+    if (!hasAccountDirectSetup && machineRequired && (!serverId || !machineId) && !accountDetailAvailable && !description && !errorCode) {
         const pendingTitle = registryEntry
             ? resolveConnectedServiceRegistryEntryDisplayName(registryEntry, t, controllerProps.localizePluginText)
             : t('connectedServices.fallbackName');
@@ -1134,8 +1326,8 @@ const ConnectedAccountServiceController = React.memo(
     };
     const transport = description?.operationTransport;
     const descriptorModes =
-        description?.descriptor.authentication.modes ?? registryEntry?.authenticationModes ?? [];
-    const mutationModes = transport?.kind === 'v4'
+        description?.descriptor.authentication.modes ?? declaredAuthentication?.modes ?? registryEntry?.authenticationModes ?? [];
+    const mutationModes = hasAccountDirectSetup || hasPortableAuthenticationModes || transport?.kind === 'v4'
         ? descriptorModes
         : transport?.kind === 'legacy'
             && transport.peerClass === 'revisioned_v2_v3'
@@ -1157,20 +1349,11 @@ const ConnectedAccountServiceController = React.memo(
     const legacyMutationModeIds = new Set(
         mutationModes.map((mode) => mode.id),
     );
-    const credentialWriteAllowed = supportsOperation('credential_write')
+    const credentialWriteAllowed = hasAccountDirectSetup || selectedModeIsPortable || supportsOperation('credential_write')
         && focusedAccountHasMachineAugmentation
         && (
             transport?.kind === 'v4'
             || legacyMutationModeIds.size === 1
-        );
-    const credentialDeleteAllowed = supportsOperation('credential_delete')
-        && focusedAccountHasMachineAugmentation
-        && (
-            transport?.kind === 'v4'
-            || (
-                transport?.kind === 'legacy'
-                && transport.peerClass === 'revisioned_v2_v3'
-            )
         );
     const attemptId = attempt && 'attemptId' in attempt ? attempt.attemptId : null;
     const accountLabels = Object.fromEntries(visibleAccounts.filter((account) => (
@@ -1187,18 +1370,22 @@ const ConnectedAccountServiceController = React.memo(
 
     /**
      * A focused detail screen (account or pool) renders its OWN scroll
-     * container, so this route must not nest it inside another list. While an
-     * authentication or configuration flow is in flight, that flow takes the
-     * focused screen's place and the route supplies the list — one scroll
-     * container either way.
+     * container, so this route must not nest it inside another list. An account
+     * retains its identity and facts while signing in; its Sign-in slot hosts
+     * the same controller's flow. Other focused routes retain their existing flow owner.
      */
     const authenticationFlowActive = Boolean(attempt || configuration || (errorCode && !accountDetailAvailable));
     const focusedScreenOwnsScroll = (description !== null || accountDetailAvailable)
         && route.focus !== null
-        && !authenticationFlowActive;
+        && (route.focus.kind === 'account' || !authenticationFlowActive);
 
     /** Changing the setup method abandons and cancels the current sign-in. */
     const cancelSetupAttempt = () => {
+        resetSetupCompletion();
+        // Explicit abandonment also retires a discovered attempt. Keep the panel's automatic
+        // initialization retired, while allowing a later explicit device-code request.
+        panelStartedRef.current = true;
+        setNoPendingAttempt(true);
         flowGenerationRef.current += 1;
         // Every reply still on its way now belongs to the abandoned sign-in (see `runAuthentication`).
         setupAttemptEpochRef.current += 1;
@@ -1209,6 +1396,7 @@ const ConnectedAccountServiceController = React.memo(
         setAttempt(null);
         deviceCodeRef.current = null;
         draftDisplayNameRef.current = null;
+        accountDirectIdRef.current = null;
         setBusy(false);
         if (attemptId && attempt) {
             cancelDiscardedAttempt(attemptId);
@@ -1224,7 +1412,7 @@ const ConnectedAccountServiceController = React.memo(
         cancelSetupAttempt();
         panelRef.current?.onCancel?.();
     };
-    const panelCancel = controllerProps.panel ? cancelPanelFlow : undefined;
+    const panelCancel = controllerProps.panel || route.focus?.kind === 'account' ? cancelPanelFlow : undefined;
 
     /**
      * The running sign-in or configuration flow (forms, progress, recovery). A new account's flow
@@ -1235,12 +1423,16 @@ const ConnectedAccountServiceController = React.memo(
         : attempt?.status === 'pending' && activeModeKind === 'oauthDeviceCode' && deviceCodeRef.current?.attemptId === attempt.attemptId ? deviceCodeRef.current : null;
     const setupPresentation = service ? getConnectedServiceSetupPresentation(service) : null;
     const manualGuide = setupPresentation && 'manual' in setupPresentation ? setupPresentation.manual : null;
+    const setupError = errorCode ? {
+        code: errorCode,
+        status: attempt && 'code' in attempt && attempt.code === errorCode ? attempt.status : undefined,
+    } : null;
     const renderFlow = (embedded: boolean) => (
         <>
-            {attempt?.status === 'awaitingManual' && activeMode?.kind === 'manual' ? (
+            {(attempt?.status === 'awaitingManual' || accountDirectMode && !setupCompleted) && activeMode?.kind === 'manual' ? (
                 <ConnectedAccountManualForm
                     embedded={embedded}
-                    key={attempt.attemptId}
+                    key={attempt && 'attemptId' in attempt ? attempt.attemptId : `account-direct:${activeMode.id}`}
                     title={resolveProjectedLocalizedText(activeMode.title, localizeServiceText) || title}
                     localize={localizeServiceText}
                     fields={activeMode.fields}
@@ -1250,6 +1442,8 @@ const ConnectedAccountServiceController = React.memo(
                     navigation={navigation}
                     onCancel={panelCancel}
                     onSubmit={({ fields, displayName }) => {
+                        if (accountDirectMode) return saveAccountCredential({ fields, ...(displayName ? { displayName } : {}) });
+                        if (attempt?.status !== 'awaitingManual') return false;
                         draftDisplayNameRef.current = displayName ?? null;
                         return runAuthentication({ operation: 'submitManual', attemptId: attempt.attemptId, fields });
                     }}
@@ -1316,7 +1510,7 @@ const ConnectedAccountServiceController = React.memo(
                     navigation={navigation}
                     onSubmit={async ({ values, secretValues }) => {
                         if (!isControllerCurrent() || !('scope' in accountLifetime)) return false;
-                        if (configuration.target.kind !== 'service' && !machineId) return false;
+                        if (configuration.target.kind === 'account' && machineRequired && !machineId) return false;
                         // Replies to this submit belong to the draft as it is now (see `acceptAttemptResponse`).
                         const requestEpoch = setupAttemptEpochRef.current;
                         setBusy(true);
@@ -1324,13 +1518,14 @@ const ConnectedAccountServiceController = React.memo(
                             const replacement = await executeAction('connectedServices.configuration.replace', {
                                     ...(configuration.target.kind === 'service'
                                         ? { service: configuration.target.service, modeId: configuration.target.modeId }
-                                        : { machineId, target: configuration.target.kind === 'account'
-                                            ? { kind: 'account', account: configuration.target.account }
-                                            : { kind: 'attempt', attemptId: configuration.target.attemptId } }),
+                                        : configuration.target.kind === 'attempt'
+                                            ? { target: { kind: 'attempt', attemptId: configuration.target.attemptId } }
+                                            : { ...(machineRequired && machineId ? { machineId } : {}),
+                                                target: { kind: 'account', account: configuration.target.account } }),
                                     expectedRevision: configuration.configuration.revision,
                                     values,
                                     secretValues,
-                                }, { signal: lifecycleSignal });
+                                }, { signal: getLifecycleSignal() });
                             if (!isControllerCurrent()) return false;
                             // Discarded while saving: the abandoned attempt is not continued.
                             if (requestEpoch !== setupAttemptEpochRef.current) return false;
@@ -1347,7 +1542,6 @@ const ConnectedAccountServiceController = React.memo(
                                 await acceptAttemptResponse(
                                     await runConnectedAccountAuthenticationAction({
                                         serverId,
-                                        machineId,
                                         expectedAccountId: accountLifetime.scope.accountId,
                                         executeAction,
                                         assertCurrent: assertCapturedAccountCurrent,
@@ -1360,7 +1554,7 @@ const ConnectedAccountServiceController = React.memo(
                                                 ? { expectedConfigurationRevision: revision }
                                                 : {}),
                                         },
-                                        signal: lifecycleSignal,
+                                        signal: getLifecycleSignal(),
                                     }),
                                     requestEpoch,
                                 );
@@ -1425,15 +1619,13 @@ const ConnectedAccountServiceController = React.memo(
                         kind="error"
                         // ONE owner turns a daemon error code into copy, so this
                         // screen never re-decides which failures are explainable.
-                        title={resolveConnectedServiceSettingsErrorMessage({
-                            code: errorCode,
-                        })}
+                        title={resolveConnectedServiceSettingsErrorMessage(setupError, errorPhase === 'load' ? { phase: 'load', serviceName: title } : undefined)}
                         action={{
-                            label: t('common.retry'),
+                            label: resolveConnectedServiceSettingsErrorRecovery(setupError) === 'edit' ? t('common.edit') : t('common.retry'),
                             testID: 'connected-account:error:retry',
                             busy: retryingDescription,
                             disabled: busy || retryingDescription,
-                            onPress: () => void retryDescription(),
+                            onPress: () => { if (accountDirectMode) setErrorCode(null); else void retryDescription(); },
                         }}
                     />
                 </ConnectedAccountFormSection>
@@ -1457,30 +1649,49 @@ const ConnectedAccountServiceController = React.memo(
 
     if (controllerProps.panel) {
         const panelIntent = controllerProps.panel.intent;
-        const ranked = panelIntent.kind === 'add' && credentialWriteAllowed
-            ? rankConnectedAccountSetupModes(mutationModes)
+        const ranked = panelIntent.kind === 'add'
+            ? rankConnectedAccountSetupModes(description?.descriptor.authentication.modes ?? declaredAuthentication?.modes ?? [])
             : [];
-        const flowActive = Boolean(attempt || configuration || errorCode);
+        // Declared methods can be chosen before an execution host is requested.
+        // The initial Account-only description is not a native sign-in failure.
+        const choosingMethod = panelIntent.kind === 'add' && !hasExplicitAuthenticationIntent
+            && ranked.length > 0
+            && !accountDirectMode && !attempt && !configuration;
+        const flowActive = Boolean(accountDirectMode || attempt || configuration || errorCode);
         return (
             <>
             <ConnectedAccountActionApprovalNotice execution={actionExecution} testID="connected-account-approval-pending" />
             <ConnectedServiceSetupFlowBody
-                state={description === null && !errorCode ? 'preparing' : 'ready'}
-                methods={ranked.length > 1 ? ranked.map((entry) => ({
+                state={choosingMethod || accountDirectMode || hasAccountDirectSetup && !machineId ? 'ready' : description === null && !errorCode ? 'preparing' : 'ready'}
+                methods={ranked.map((entry) => ({
                     id: entry.mode.id,
                     title: entry.mode.kind === 'oauthAuthorizationCode' ? t('connectedServicesSettings.methodBrowser')
                         : entry.mode.kind === 'oauthDeviceCode' ? t('connectedServicesSettings.methodCode')
                             : resolveConnectedAccountModeTitle(entry.mode, localizeServiceText),
                     recommended: entry.recommended,
-                })) : []}
-                activeMethodId={activeModeId}
+                }))}
+                activeMethodId={activeModeId ?? accountDirectMode?.id}
                 methodsDisabled={busy}
                 onSelectMethod={(modeId) => {
                     if (modeId === activeModeId && flowActive) return;
                     cancelSetupAttempt();
-                    void beginIntent({ kind: 'connect', service, modeId });
+                    discoveredScopeRef.current = null;
+                    setNoPendingAttempt(false);
+                    panelStartedRef.current = false;
+                    setActiveModeId(modeId);
+                    panelRef.current?.onModeChange?.(modeId);
                 }}
-                flow={flowActive ? renderFlow(true) : null}
+                flow={choosingMethod ? null : (hasAccountDirectSetup || hasPortableAuthenticationModes) && machineRequired && !machineId ? <ConnectedServiceSetupFlowBody state="chooseMachine" /> : flowActive ? renderFlow(true) : activeMode?.kind === 'oauthDeviceCode' ? (
+                    <ConnectedServiceSetupFlowActions
+                        onCancel={panelCancel}
+                        primary={{
+                            testID: 'connected-account-device:start',
+                            label: t('connectedServicesSettings.modeDeviceCode'),
+                            disabled: busy || !noPendingAttempt || !credentialWriteAllowed,
+                            onPress: () => void beginIntent({ kind: 'connect', service, modeId: activeMode.id }),
+                        }}
+                    />
+                ) : null}
             />
             </>
         );
@@ -1490,22 +1701,25 @@ const ConnectedAccountServiceController = React.memo(
         <>
             <ConnectedAccountActionApprovalNotice execution={actionExecution} testID="connected-account-approval-pending" />
             {(description !== null || accountDetailAvailable)
-                && !(route.focus !== null && authenticationFlowActive) ? (
+                && !(route.focus !== null && route.focus.kind !== 'account' && authenticationFlowActive) ? (
                 <ConnectedAccountServiceContent
                     machineId={focusedAccountHasMachineAugmentation ? machineId || null : null}
-                    machineSetupSection={(
-                        <>
-                            {/* The account itself is Account data; only signing in again and removing it run on
-                                a machine. One quiet line says so, with its own chooser, and nothing shows while a
-                                usable machine is chosen (lab csvc nomachine). */}
-                            <MachineScopedSection
-                                selection={targetSelection}
-                                unselectedInvitation={t('connectedServicesSettings.accountMachineInvitation')}
-                                testIDPrefix="connected-account-target"
-                            />
-                            {focusedScreenOwnsScroll ? renderFlow(false) : null}
-                        </>
+                    signInFlow={focusedScreenOwnsScroll && route.focus?.kind === 'account' && (attempt || configuration || errorCode)
+                        ? accountDetailAvailable && errorCode && errorPhase === 'load' && !attempt && !configuration
+                            ? <SurfaceStateCard testID="qualified-account-detail:live-unavailable" size="line" kind="unavailable" title={t('common.unavailable')} />
+                            : renderFlow(true) : undefined}
+                    // Stored identity and removal belong to the Account. A native sign-in needs a
+                    // machine. One quiet line in the Sign-in group says so, with its own chooser, and nothing
+                    // shows while a usable machine is chosen (lab csvc nomachine).
+                    machineScopeLine={!machineRequired || targetSelection.state.kind === 'online' ? undefined : (
+                        <MachineScopedSection
+                            embedded
+                            selection={targetSelection}
+                            unselectedInvitation={t('connectedServicesSettings.accountMachineInvitation')}
+                            testIDPrefix="connected-account-target"
+                        />
                     )}
+                    machineSetupSection={focusedScreenOwnsScroll && route.focus?.kind !== 'account' ? renderFlow(false) : undefined}
                     serverId={serverId}
                     teamCredentialResourcesEnabled={teamCredentialResourcesEnabled}
                     localize={localizeServiceText}
@@ -1570,7 +1784,8 @@ const ConnectedAccountServiceController = React.memo(
                         void beginIntent({ kind: 'reconnect', account });
                     } : undefined}
                     canReconnectAccount={(account) => (
-                        transport?.kind === 'v4'
+                        account.authenticationModeId !== null && accountModeIds?.includes(account.authenticationModeId) === true
+                        || transport?.kind === 'v4'
                         || (
                             account.authenticationModeId !== null
                             && legacyMutationModeIds.has(
@@ -1578,7 +1793,7 @@ const ConnectedAccountServiceController = React.memo(
                             )
                         )
                     )}
-                    onDisconnectAccount={credentialDeleteAllowed ? revokeAccount : undefined}
+                    onDisconnectAccount={'scope' in accountLifetime && profile.id === accountLifetime.scope.accountId ? revokeAccount : undefined}
                 />
             ) : null}
             {description === null && !accountDetailAvailable && !errorCode ? (
@@ -1600,7 +1815,7 @@ const ConnectedAccountServiceController = React.memo(
             keyboardAware={authenticationFlowActive}
             keyboardShouldPersistTaps={authenticationFlowActive ? 'handled' : undefined}
         >
-            {route.focus === null ? serviceHeader(title) : null}
+            {route.focus === null ? serviceHeader(title, machineRequired) : null}
             {routeBody}
         </ItemList>
     );
@@ -1613,10 +1828,11 @@ export function ConnectedAccountServiceView() {
         useProjectedConnectedServicesRegistry();
     const activeServer = useActiveServerSnapshot();
     const activeAccountScope = useActiveServerAccountScope();
+    const [machineRequired, setMachineRequired] = React.useState(false);
     const targetSelection = useMachineAdministrationTargetSelection(
         MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.connectedAccounts,
+        { enabled: machineRequired },
     );
-    const executionTarget = targetSelection.resolveExecutionTarget();
     const controllerKey = [
         activeAccountScope
             ? serverAccountScopeKeySuffix(activeAccountScope)
@@ -1646,7 +1862,6 @@ export function ConnectedAccountServiceView() {
         return <Redirect href={buildConnectedAccountSettingsRoute(
             focusedRoute.service,
             null,
-            { add: readConnectedAccountAddRequest(params) },
         )} />;
     }
 
@@ -1657,7 +1872,7 @@ export function ConnectedAccountServiceView() {
             connectedServicesRegistry={connectedServicesRegistry}
             activeServer={activeServer}
             targetSelection={targetSelection}
-            executionTarget={executionTarget}
+            onMachineRequirementChange={setMachineRequired}
             localizePluginText={localizePluginText}
             navigation={navigation}
         />
@@ -1682,18 +1897,15 @@ export function ConnectedAccountSetupController(props: Readonly<{
     const activeServer = useActiveServerSnapshot();
     const activeAccountScope = useActiveServerAccountScope();
     const navigation = useNavigation();
-    const executionTarget = props.targetSelection.resolveExecutionTarget();
     const params = React.useMemo(
         () => ({ pluginId: props.service.pluginId, localId: props.service.localId }),
         [props.service.localId, props.service.pluginId],
     );
     const intentKey = props.panel.intent.kind === 'reconnect' ? `reconnect:${props.panel.intent.accountId}` : 'add';
-    // A new machine, account scope or intent is a new sign-in: the controller starts over.
+    // Account scope and intent own the draft. The inner native lifetime owns Machine changes.
     const controllerKey = [
         activeAccountScope ? serverAccountScopeKeySuffix(activeAccountScope) : 'no-active-account',
         String(activeServer.generation ?? ''),
-        props.targetSelection.selectedTarget?.serverIdentityId ?? '',
-        props.targetSelection.selectedTarget?.machineId ?? '',
         props.service.pluginId,
         props.service.localId,
         intentKey,
@@ -1705,7 +1917,6 @@ export function ConnectedAccountSetupController(props: Readonly<{
             connectedServicesRegistry={connectedServicesRegistry}
             activeServer={activeServer}
             targetSelection={props.targetSelection}
-            executionTarget={executionTarget}
             localizePluginText={localizePluginText}
             navigation={navigation}
             panel={props.panel}

@@ -16,7 +16,7 @@ import {
     restoreServerAccountForTest,
 } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { InjectedAuthProvider } from '@/auth/context/AuthContext';
-import { Modal } from '@/modal';
+import { Modal, ModalProvider } from '@/modal';
 import { storage } from '@/sync/domains/state/storageStore';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { adoptHomeProfile } from '@/sync/domains/server/serverProfiles';
@@ -77,6 +77,7 @@ import { ANTHROPIC_API_KEY_INPUT_SCHEMA } from '../../../../../../../packages/pl
 import { BUNDLED_ACCOUNT_CONNECTED_SERVICE_DECLARATIONS } from '@/agents/registry/generatedBundledPluginEntries';
 import { ConnectedServiceSetupPanel, type ConnectedServiceSetupCatalogEntry, type ConnectedServiceSetupTarget } from '../setup/ConnectedServiceSetupPanel';
 import { ConnectedServicesConnectMore } from '../setup/ConnectedServicesConnectMore';
+import { presentConnectSheet } from '../setup/ConnectedServiceSetupModal';
 import { buildConnectedServicesIndexModel } from '../model/buildConnectedServicesIndexModel';
 
 const platform = vi.hoisted(() => ({
@@ -100,7 +101,7 @@ vi.mock('expo-router', async () => {
 });
 vi.mock('@react-navigation/native', async () => (await import('@/dev/testkit/mocks/reactNavigation')).createReactNavigationNativeMock());
 vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock());
-vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({ spies: { confirm: platform.confirm } }).module);
+vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({ spies: { confirm: platform.confirm }, renderCustomModals: true }).module);
 // No Markdown is rendered in this controller journey. Fail if this absent third-party export is used.
 vi.mock('react-native-enriched-markdown/lib/module/web/streamingReveal.js', () => ({
     splitStreamingRevealTextParts: () => { throw new Error('Unexpected streaming Markdown in account setup'); },
@@ -513,6 +514,87 @@ describe('ConnectedAccountSetupController real ownership', () => {
             { operation: 'cancel', attemptId: 'attempt-1' },
         ]);
         expect(platform.confirm).not.toHaveBeenCalled();
+    });
+
+    it('P8 account draft checklist · Add account keeps the existing account and returns a second connected ref to the collection', async () => {
+        // The new draft must retain the existing qualified preference even when election cannot choose a sole Machine.
+        const savedTarget = selection.selectedTarget;
+        if (!savedTarget) throw new Error('missing_selected_machine');
+        const [{ captureLazyActionAccountContext }, { createNativeAttemptAddressBoundary, answerAttemptTransaction }] = await Promise.all([
+            import('@/sync/ops/actions/actionAccountContext'),
+            import('@/dev/testkit/fixtures/connectedAccountAuthentication'),
+        ]);
+        const other = createMachineFixture({ id: 'draft-other-machine', activeAt: Date.now() });
+        machineRows.push(createPlainMachineRowFixture({ id: other.id, accountId: 'account-a' }));
+        storage.getState().applyMachines([...Object.values(storage.getState().machines), other], true,
+            { sourceServerId: getActiveServerSnapshot().serverId });
+        resetServerFeaturesClientForTests();
+        primeServerFeaturesSnapshot({ snapshot: { status: 'ready', features: createRootLayoutFeaturesResponse({
+            features: { connectedServices: { enabled: true } },
+            capabilities: { connectedServices: { credentialDelete: { revisionGuard: true }, qualifiedAccounts: { protocolVersion: 4 } } },
+        }) } });
+        const saved = QualifiedConnectedAccountProfileV4Schema.parse({ ref: { service, accountId: 'new-account' },
+            status: 'connected', authenticationModeId: 'manual', revisionSemantics: 'revisioned', credentialRevision,
+            configurationReady: true, configurationRevision: null });
+        const existing = QualifiedConnectedAccountProfileV4Schema.parse({ ...saved, ref: { service, accountId: 'existing-account' } });
+        installDescription({ ...described, accounts: [existing] });
+        storage.getState().applyProfile({ ...profileDefaults, id: 'account-a', connectedAccountsV4: [existing] });
+        let connected = false;
+        const transactions: Parameters<typeof answerAttemptTransaction>[2] = new Map();
+        handleHttp = async (input, init) => {
+            const request = new URL(String(input));
+            const transaction = await answerAttemptTransaction(request, init, transactions);
+            if (transaction) return transaction;
+            if (request.pathname === '/v1/account/profile') return Response.json({ ...profileDefaults, id: 'account-a',
+                timestamp: Date.now(), connectedAccountsV4: connected ? [existing, saved] : [existing] });
+            if (request.pathname === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
+            if (request.pathname === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+            return new Response('{}', { status: 404 });
+        };
+        const captured = await captureLazyActionAccountContext(account.home.id);
+        const address = await createNativeAttemptAddressBoundary(captured, savedTarget.machineId);
+        let cleanupScreen: Awaited<ReturnType<typeof renderScreen>> | undefined;
+        try {
+            handleAuthentication = async command => {
+                if (command.operation === 'submitManual') {
+                    connected = true;
+                    installDescription({ ...described, accounts: [existing, saved] });
+                    await address.clear('attempt-1');
+                    return { status: 'connected', attemptId: 'attempt-1', account: saved.ref };
+                }
+                if (command.operation === 'cancel') {
+                    await address.clear(command.attemptId);
+                    return { status: 'cancelled', attemptId: command.attemptId };
+                }
+                if (command.operation === 'beginConnect') {
+                    await address.acknowledge({ attemptId: 'attempt-1', kind: 'manual', phase: 'awaitingManual',
+                        createdAtMs: Date.now(), intent: 'connect', service: command.service, modeId: command.modeId });
+                }
+                return { status: 'awaitingManual', attemptId: 'attempt-1' };
+            };
+            const screen = await renderScreen(<InjectedAuthProvider credentials={account.credentials}><ModalProvider>{null}</ModalProvider></InjectedAuthProvider>);
+            cleanupScreen = screen;
+            let result: ReturnType<typeof presentConnectSheet> | undefined;
+            await act(async () => { result = presentConnectSheet({ service, intent: 'add' }); });
+            await vi.waitFor(() => expect(screen.findHostByTestId('connected-service-setup:method-continue')).not.toBeNull());
+            expect(authenticationCommands.filter(command => command.operation === 'beginConnect')).toEqual([]);
+            await screen.pressByTestIdAsync('connected-service-setup:method-continue');
+            await vi.waitFor(() => expect(screen.findHostByTestId('connected-account-manual:token')).not.toBeNull());
+            const draftSelection = screen.findByType(ConnectedAccountSetupController).props.targetSelection as MachineAdministrationTargetSelectionV1;
+            expect(draftSelection.selectedTarget).toEqual(savedTarget);
+            expect(draftSelection.resolveExecutionTarget()?.target).toEqual(savedTarget);
+            await act(async () => screen.changeTextByTestId('connected-account-manual:token', 'secret-token'));
+            await screen.pressByTestIdAsync('connected-account-manual:submit');
+            expect(await result).toEqual({ kind: 'connected', account: saved.ref });
+            expect(authenticationCommands.filter(command => command.operation === 'beginConnect')).toHaveLength(1);
+            expect(authenticationCommands.filter(command => command.operation === 'beginReconnect')).toEqual([]);
+            expect(authenticationCommands.filter(command => command.operation === 'submitManual')).toHaveLength(1);
+            // The Home publishes the new profile separately; completing Add must not discard the retained account.
+            expect(storage.getState().profile.connectedAccountsV4).toContainEqual(existing);
+        } finally {
+            await cleanupScreen?.unmount();
+            captured.dispose();
+        }
     });
 
     it('keeps one explicit Ask for credentials pending without repeating the connect intent, then cancels on close', async () => {

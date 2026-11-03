@@ -1,11 +1,15 @@
 import type {
-  PluginConnectedAccountAuthenticationV2,
-  PluginContributionIdentityV1,
+  PluginConnectedAccountAuthenticationV2} from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
+import type {
+  PluginContributionIdentityV1} from '@happier-dev/protocol/plugins/contribution-identity';
+import type {
   QualifiedConnectedAccountGroupV4,
-  QualifiedConnectedAccountProfileV4,
-  QualifiedConnectedAccountPurposeBindingTargetV1,
+  QualifiedConnectedAccountProfileV4} from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
+import type {
+  QualifiedConnectedAccountPurposeBindingTargetV1} from '@happier-dev/protocol/connect/connectedAccountPurposeBindings';
+import type {
   AgentConnectedAccountPurposeTeamResourceDefault,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/account/settings/connected-services';
 import type { TeamCredentialResourceCatalogEntryV1 } from '@happier-dev/protocol/teams';
 
 import { t } from '@/text';
@@ -72,6 +76,21 @@ function sameTeamResource(
   if (!left || !right) return left === right;
   return left.teamId === right.teamId
     && areTeamResourceConnectedServiceSelectionsEqual(left.selection, right.selection);
+}
+
+/**
+ * The accounts and groups of one service: everything a person can choose for a purpose that draws on
+ * it. Empty for a brand-new account, when there is nothing to choose.
+ */
+export function connectedAccountPurposeServiceTargets(
+  accounts: readonly QualifiedConnectedAccountProfileV4[],
+  groups: readonly QualifiedConnectedAccountGroupV4[],
+  service: PluginContributionIdentityV1,
+): Readonly<{ accounts: readonly QualifiedConnectedAccountProfileV4[]; groups: readonly QualifiedConnectedAccountGroupV4[] }> {
+  return {
+    accounts: accounts.filter((candidate) => sameService(candidate.ref.service, service)),
+    groups: groups.filter((candidate) => sameService(candidate.ref.service, service)),
+  };
 }
 
 export function connectedAccountPurposeTargetChoiceId(
@@ -181,8 +200,8 @@ export function buildConnectedAccountPurposeTargetChoices(input: Readonly<{
   }
 
   const declaredServices = [input.declaration.service];
-  const accountCandidates = input.accounts
-    .filter((candidate) => sameService(candidate.ref.service, input.declaration.service))
+  const declaredTargets = connectedAccountPurposeServiceTargets(input.accounts, input.groups, input.declaration.service);
+  const accountCandidates = declaredTargets.accounts
     .map((account) => {
     const target: QualifiedConnectedAccountPurposeBindingTargetV1 = {
       kind: 'account',
@@ -216,8 +235,7 @@ export function buildConnectedAccountPurposeTargetChoices(input: Readonly<{
     .sort((left, right) => left.presentation.primaryLabel.localeCompare(right.presentation.primaryLabel));
   candidates.push(...accountCandidates);
 
-  const groupCandidates = input.groups
-    .filter((candidate) => sameService(candidate.ref.service, input.declaration.service))
+  const groupCandidates = declaredTargets.groups
     .map((group) => {
     const target: QualifiedConnectedAccountPurposeBindingTargetV1 = {
       kind: 'group',

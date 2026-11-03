@@ -483,6 +483,25 @@ export function getGeneratedLegacyConnectedServiceRegistryFallback(
 }
 
 /**
+ * Saved Account/pool identities outlive their Machine's descriptor projection.
+ * This entry permits read-only navigation; it declares no authentication modes,
+ * installation, availability or native execution authority. Released scalar
+ * presentation still belongs to the exact generated compatibility adapter.
+ */
+export function getConnectedServiceRegistryIdentityFallback(
+  service: PluginContributionIdentityV1,
+): ConnectedServiceRegistryEntry {
+  return getGeneratedLegacyConnectedServiceRegistryFallback(service) ?? {
+    serviceId: service.localId,
+    service,
+    connectCommand: '',
+    supportsOauth: false,
+    supportsToken: false,
+    executable: false,
+  };
+}
+
+/**
  * Released V2/V3 compatibility ingress for scalar built-in callers. A scalar
  * id never selects a novel or foreign plugin descriptor with the same local id.
  */
@@ -513,7 +532,7 @@ export function getConnectedAccountAuthenticationMode(
  */
 export function getConnectedAccountAuthentication(
   service: Readonly<{ pluginId: string; localId: string }>,
-  snapshot?: ConnectedServiceRegistrySnapshot,
+  snapshot?: Pick<ConnectedServiceRegistrySnapshot, 'entries'>,
 ): PluginConnectedAccountAuthenticationV2 | null {
   const entry = snapshot ? snapshot.entries.find(candidate => candidate.service && sameService(candidate.service, service))
     : getQualifiedConnectedServiceRegistryEntry(service);

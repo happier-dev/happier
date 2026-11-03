@@ -1,3 +1,4 @@
+import { t } from '@/text';
 import { homeConnectServiceStepId } from '../home/selectHomeConnectInvitations';
 import type { ConnectedServiceSetupCatalogEntry, ConnectedServiceSetupTarget } from './ConnectedServiceSetupPanel';
 import { getConnectedServiceSetupPresentation } from '@/sync/domains/connectedServices/connectedServiceRegistry';
@@ -59,4 +60,20 @@ export function resolveConnectMoreBlockForRequest(input: Readonly<{
     const { request } = input;
     if (request.kind === 'service' && input.offered.some((entry) => entry.serviceKey === request.serviceKey)) return request.serviceKey;
     return input.browse ? CONNECT_MORE_BROWSE_ID : input.offered[0]?.serviceKey ?? null;
+}
+
+/**
+ * The title of a new draft, shared by its collection row and its page: an account you sign in to is
+ * "New ChatGPT account"; a service named by what you paste (an API key, a bot token) is "New Anthropic API key".
+ */
+export function presentNewConnectedAccountDraftTitle(entry: Pick<ConnectedServiceSetupCatalogEntry, 'entry' | 'label'>): string {
+    return namedByWhatYouPaste(entry)
+        ? t('connectedServicesCollection.newServiceDraft', { service: entry.label })
+        : t('connectedServicesCollection.newAccountDraft', { service: entry.label });
+}
+
+/** Known to take only pasted credentials (no account sign-in). Unknown modes keep the account wording. */
+export function namedByWhatYouPaste(entry: Pick<ConnectedServiceSetupCatalogEntry, 'entry'>): boolean {
+    const modes = entry.entry?.authenticationModes ?? entry.entry?.projectedDescriptor?.authentication.modes ?? [];
+    return modes.length > 0 && !signsInWithAnAccount(entry);
 }

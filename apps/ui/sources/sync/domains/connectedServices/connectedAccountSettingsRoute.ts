@@ -6,6 +6,7 @@ import type { PluginUiOpenConnectedAccountsRequestV1 } from '@happier-dev/protoc
 import { buildConnectedAccountPurposeSetupRoute, type ConnectedAccountPurposeSetupRequest } from './connectedAccountPurposeSetup';
 
 import {
+    getConnectedServiceRegistryIdentityFallback,
     getGeneratedLegacyConnectedServiceRegistryFallback,
     type ConnectedServiceRegistryEntry,
 } from './connectedServiceRegistry';
@@ -66,10 +67,18 @@ function findExactEntry(
 function resolvePublishedServiceEntry(
     entries: readonly ConnectedServiceRegistryEntry[],
     service: PluginContributionIdentityV1,
+    focus: ConnectedAccountSettingsRouteFocus | null,
+    intent?: 'nativeSetup',
 ): ConnectedServiceRegistryEntry | null {
     const projectedEntry = findExactEntry(entries, service);
     if (projectedEntry) {
         return projectedEntry;
+    }
+    // A native setup describes this exact qualified identity on its selected
+    // Machine. Passive UI renderer coverage is not admission for that read;
+    // identity metadata does not admit native execution or supply its form.
+    if (focus?.kind === 'account' || focus?.kind === 'group' || intent === 'nativeSetup' && focus === null) {
+        return getConnectedServiceRegistryIdentityFallback(service);
     }
     return getGeneratedLegacyConnectedServiceRegistryFallback(service);
 }
@@ -224,6 +233,7 @@ export function resolveQualifiedConnectedAccountSettingsRoute(
         machineId?: unknown;
     }>,
     entries: readonly ConnectedServiceRegistryEntry[],
+    intent?: 'nativeSetup',
 ): ConnectedAccountSettingsRouteResolution | null {
     const pluginId = readSingleRouteParam(params.pluginId);
     const localId = readSingleRouteParam(params.localId);
@@ -248,7 +258,7 @@ export function resolveQualifiedConnectedAccountSettingsRoute(
         localId,
     });
     if (!parsed.success) return null;
-    const entry = resolvePublishedServiceEntry(entries, parsed.data);
+    const entry = resolvePublishedServiceEntry(entries, parsed.data, focus.focus, intent);
     if (!entry) return null;
     return {
         service: parsed.data,
@@ -325,7 +335,7 @@ export function resolveConnectedAccountSettingsRoute(
         compatibility.service,
     );
     if (!service.success) return null;
-    const entry = resolvePublishedServiceEntry(entries, service.data);
+    const entry = resolvePublishedServiceEntry(entries, service.data, focus.focus);
     if (
         !entry
         || entry.legacyServiceId !== legacyServiceId.data

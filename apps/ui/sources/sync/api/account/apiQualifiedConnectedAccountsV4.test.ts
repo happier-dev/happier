@@ -81,6 +81,24 @@ afterEach(async () => {
 });
 
 describe('apiQualifiedConnectedAccountsV4', () => {
+    it('lists the qualified service through its captured Home with cancellation and no Machine read', async () => {
+        const api = await import('./apiQualifiedConnectedAccountsV4');
+        const controller = new AbortController();
+        const requests: string[] = [];
+        const request = async (path: string, init?: RequestInit) => {
+            const url = new URL(path, 'https://captured-home.test');
+            requests.push(url.pathname);
+            expect(init?.signal).toBe(controller.signal);
+            expect(parseQualifiedConnectedAccountV4StructuredQueryValue(QualifiedConnectedAccountServiceRefSchema,
+                url.searchParams.get('service')!)).toEqual(service);
+            expect(new Headers(init?.headers).get('X-Happier-Request-Purpose')).toBe('connected-accounts:persistence');
+            return Response.json({ service, accounts: [] });
+        };
+        await expect(api.listQualifiedConnectedAccountsV4(credentials, { service, request, signal: controller.signal,
+            requestPurpose: 'connected-accounts:persistence', retry: 'none' })).resolves.toEqual({ service, accounts: [] });
+        expect(requests).toEqual(['/v4/connect/qualified/accounts']);
+    });
+
     it.each(['credential', 'configuration'] as const)('keeps a captured %s read on its cancellation and persistence purpose', async kind => {
         const { getQualifiedConnectedAccountCredentialV4, getQualifiedConnectedAccountConfigurationV4 } = await import('./apiQualifiedConnectedAccountsV4');
         const ref = { service, accountId: 'work' };

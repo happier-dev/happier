@@ -26,6 +26,7 @@ import {
 } from '@/sync/domains/server/serverRuntime';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { UiConnectedAccountAuthenticationModes } from './connectedAccountAuthenticationHost';
 
 type MountedActionExecute = (actionId: ActionId, input: unknown,
     operation?: Readonly<{ signal?: AbortSignal }>) => Promise<ActionExecuteResult>;
@@ -72,6 +73,43 @@ function createExpectedActiveServerAssertion(
             );
         }
     };
+}
+
+/** The captured Account owns description and the registered portable-mode subset together. */
+export async function describeConnectedAccountAuthenticationService(input: Readonly<{
+    serverId: string;
+    expectedAccountId: string;
+    service: Extract<ConnectedAccountDaemonControlCommand, { operation: 'describeService' }>['service'];
+    machineId?: string;
+    expectedActiveServer?: ExpectedActiveServer;
+    assertCurrent?: () => void;
+    signal?: AbortSignal;
+}>): Promise<Readonly<{
+    description: ConnectedAccountDaemonControlResponse;
+    accountAuthenticationModes: UiConnectedAccountAuthenticationModes;
+}>> {
+    const assertExpected = createExpectedActiveServerAssertion(input.expectedActiveServer, input.serverId);
+    const assertCallerCurrent = () => {
+        input.signal?.throwIfAborted();
+        assertExpected?.();
+        input.assertCurrent?.();
+    };
+    assertCallerCurrent();
+    const [{ captureLazyActionAccountContext }, { createUiConnectedAccountAuthenticationHost }] = await Promise.all([
+        import('@/sync/ops/actions/actionAccountContext'), import('./connectedAccountAuthenticationHost'),
+    ]);
+    assertCallerCurrent();
+    const account = await captureLazyActionAccountContext(input.serverId, input.signal);
+    try {
+        if (account.accountId !== input.expectedAccountId) throw Object.assign(
+            new Error('action_account_scope_changed'), { code: 'action_account_scope_changed' });
+        const assertCurrent = () => { assertCallerCurrent(); account.assertCurrent(); };
+        assertCurrent();
+        const result = await createUiConnectedAccountAuthenticationHost({ ...account, assertCurrent }, input.signal)
+            .describeService(input.service, input.machineId);
+        assertCurrent();
+        return result;
+    } finally { account.dispose(); }
 }
 
 export async function runConnectedAccountAuthenticationCommand(
@@ -128,8 +166,8 @@ export async function runConnectedAccountAuthenticationCommand(
 
 /** UI ingress shares the admitted Actions; the transport above remains daemon-owned delivery. */
 export async function runConnectedAccountAuthenticationAction(
-    input: Omit<Parameters<typeof runConnectedAccountAuthenticationCommand>[0], 'serverId' | 'accountId'>
-        & Readonly<{ serverId: string; expectedAccountId: string; executeAction?: MountedActionExecute }>,
+    input: Omit<Parameters<typeof runConnectedAccountAuthenticationCommand>[0], 'serverId' | 'accountId' | 'machineId'>
+        & Readonly<{ serverId: string; expectedAccountId: string; machineId?: string; executeAction?: MountedActionExecute }>,
 ): Promise<ConnectedAccountAttemptResponse> {
     const assertExpected = createExpectedActiveServerAssertion(input.expectedActiveServer, input.serverId);
     input.signal?.throwIfAborted();
@@ -144,7 +182,8 @@ export async function runConnectedAccountAuthenticationAction(
     input.assertCurrent?.();
     const { operation, ...operands } = ConnectedAccountDaemonCommandSchema.parse(input.command);
     const actionId = CONNECTED_ACCOUNT_AUTHENTICATION_ACTION_ID_BY_OPERATION[operation];
-    const actionInput = { machineId: input.machineId, ...operands };
+    const actionInput = { ...operands,
+        ...((operation === 'beginConnect' || operation === 'beginReconnect') && input.machineId ? { machineId: input.machineId } : {}) };
     const result = input.executeAction
         ? await input.executeAction(actionId, actionInput, { signal: input.signal })
         : await createDefaultActionExecutor().execute(actionId, actionInput, { surface: 'ui', authority: 'present_user', serverId: input.serverId,
@@ -157,7 +196,7 @@ export async function runConnectedAccountAuthenticationAction(
 }
 
 export async function listPendingConnectedAccountAuthenticationActions(
-    input: Readonly<{ serverId: string; machineId: string; expectedAccountId: string;
+    input: Readonly<{ serverId: string; machineId?: string; expectedAccountId: string;
         expectedActiveServer?: ExpectedActiveServer; assertCurrent?: () => void;
         service: Extract<ConnectedAccountDaemonControlCommand, { operation: 'listPendingAttempts' }>['service']; signal?: AbortSignal;
         executeAction?: MountedActionExecute }>,
@@ -170,7 +209,7 @@ export async function listPendingConnectedAccountAuthenticationActions(
     input.signal?.throwIfAborted();
     assertExpected?.();
     input.assertCurrent?.();
-    const actionInput = { machineId: input.machineId, service: input.service };
+    const actionInput = { service: input.service, ...(input.machineId ? { machineId: input.machineId } : {}) };
     const result = input.executeAction
         ? await input.executeAction('connectedServices.authentication.pending.list', actionInput, { signal: input.signal })
         : await createDefaultActionExecutor().execute('connectedServices.authentication.pending.list', actionInput, { surface: 'ui', authority: 'present_user', serverId: input.serverId,
