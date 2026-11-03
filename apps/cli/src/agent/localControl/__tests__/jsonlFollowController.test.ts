@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { appendFile, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { appendFile, mkdtemp, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -29,6 +29,44 @@ async function waitFor(assertion: () => void, opts?: { timeoutMs?: number; inter
 }
 
 describe('JsonlFollowController', () => {
+    it.each(['truncated', 'replaced'] as const)('notifies an empty %s reset and continues following the new file', async reason => {
+        const root = await mkdtemp(join(tmpdir(), 'jsonl-controller-reset-'));
+        const filePath = join(root, 'rollout.jsonl');
+        const replacement = join(root, 'replacement.jsonl');
+        await writeFile(filePath, '{"old":true}\n');
+        const events: unknown[] = [];
+        const controller = createJsonlFollowController({
+            filePath,
+            pollIntervalMs: 60_000,
+            watchFile: () => () => {},
+            onJson: value => { events.push(value); },
+            onReset: resetReason => { events.push(resetReason); },
+        });
+        try {
+            await controller.start();
+            // An absent path alone must preserve the original file's cursor.
+            await rename(filePath, replacement);
+            await controller.drainNow();
+            await rename(replacement, filePath);
+            await controller.drainNow();
+            expect(events).toEqual([{ old: true }]);
+            if (reason === 'replaced') {
+                await writeFile(replacement, '');
+                await rename(replacement, filePath);
+            } else {
+                await writeFile(filePath, '');
+            }
+            await controller.drainNow();
+            expect(events).toEqual([{ old: true }, reason]);
+            await appendFile(filePath, '{"new":true}\n');
+            await controller.drainNow();
+            expect(events).toEqual([{ old: true }, reason, { new: true }]);
+        } finally {
+            await controller.stop();
+            await rm(root, { recursive: true, force: true });
+        }
+    });
+
     it('drains immediately when the watcher reports a file change', async () => {
         const root = await mkdtemp(join(tmpdir(), 'jsonl-follow-controller-watch-'));
         const filePath = join(root, 'rollout.jsonl');

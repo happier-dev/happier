@@ -103,8 +103,8 @@ describe('decodeKimiWireRecord', () => {
 
   it('maps committed step usage without inventing context size or counting cache details twice', () => {
     expect(decodeKimiWireRecord({ type: 'context.append_loop_event', agentId: 'main', event: {
-      type: 'step.end', turnId: '1', step: 2, usage: { inputOther: 100, output: 10, inputCacheRead: 30, inputCacheCreation: 20 },
-    } })).toEqual({ kind: 'update', turnId: '1', updates: [{ sessionUpdate: 'usage_update',
+      type: 'step.end', uuid: 'step-uuid-2', turnId: '1', step: 2, usage: { inputOther: 100, output: 10, inputCacheRead: 30, inputCacheCreation: 20 },
+    } })).toEqual({ kind: 'update', turnId: '1', updates: [{ sessionUpdate: 'usage_update', key: 'kimi-step:step-uuid-2',
       inputTokens: 150, outputTokens: 10, cacheReadTokens: 30, cacheWriteTokens: 20,
     }] });
   });

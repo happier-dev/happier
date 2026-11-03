@@ -2,7 +2,7 @@ import { startFileWatcher } from '@/integrations/watcher/startFileWatcher';
 
 import { JsonlFollower } from './jsonlFollower';
 import { DEFAULT_JSONL_FOLLOW_POLICY, normalizeJsonlFollowPolicy, type JsonlFollowPolicyInput, type JsonlFollowPolicyV1 } from './jsonlFollowPolicy';
-import type { JsonlFollowerMetrics } from './jsonlFollowMetrics';
+import type { JsonlFollowerMetrics, JsonlFollowerResetReason } from './jsonlFollowMetrics';
 import type { JsonlLineSource } from './jsonlLineFollower';
 
 export type JsonlFollowControllerState = 'idle' | 'active' | 'completed' | 'closed';
@@ -21,6 +21,7 @@ export type JsonlFollowControllerOptions = Readonly<{
     metrics?: JsonlFollowerMetrics;
     watchFile?: JsonlFollowControllerWatchFile;
     onJson: (value: unknown, source?: JsonlLineSource) => void | Promise<void>;
+    onReset?: (reason: JsonlFollowerResetReason) => void;
     onError?: (error: unknown) => void;
     onClosed?: () => void;
 }>;
@@ -52,6 +53,7 @@ export class JsonlFollowController {
             metrics: opts.metrics,
             onJson: opts.onJson,
             onError: opts.onError,
+            onReset: opts.onReset,
         });
     }
 

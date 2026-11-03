@@ -195,6 +195,60 @@ describe('createAcpRuntime (provider-initiated turns)', () => {
     await runtime.reset();
   });
 
+  it.each([
+    { path: 'prompt', message: 'Connection aborted' },
+    { path: 'prompt', message: 'Upstream cancelled the request' },
+    { path: 'completion', message: 'Connection aborted' },
+    { path: 'completion', message: 'Upstream cancelled the request' },
+    { path: 'status', message: 'Connection aborted' },
+    { path: 'status', message: 'Upstream cancelled the request' },
+  ] as const)('surfaces an ordinary $path failure containing cancellation words: $message', async ({ path, message }) => {
+    const failure = new Error(message);
+    const published: string[] = [];
+    const mutations: SessionTurnMutationV1[] = [];
+    const backend = createFakeAcpRuntimeBackend({
+      sendPrompt: async () => { if (path === 'prompt') throw failure; },
+      waitForResponseComplete: async () => { if (path === 'completion') throw failure; },
+    });
+    const lifecycle = createSessionTurnLifecycle({
+      sessionId: 'provider-failure-session',
+      enqueueSessionTurn: async (mutation) => { mutations.push(mutation); },
+    });
+    const runtime = createAcpRuntime({
+      provider: 'pi', directory: '/tmp', messageBuffer: new MessageBuffer(),
+      mcpServers: {}, permissionHandler: createApprovedPermissionHandler(),
+      session: createBasicSessionClientWithOverrides({
+        sessionTurnLifecycle: lifecycle,
+        sendAgentMessage: (provider, body) => {
+          void lifecycle.observeAcpLifecycleMarker({ provider, body }).pendingWrite;
+          published.push(body.type);
+        },
+      }),
+      onThinkingChange: () => {}, ensureBackend: async () => backend,
+    });
+    try {
+      await runtime.startOrLoad({});
+      if (path === 'prompt') runtime.beginTurn();
+      backend.emit({ type: 'status', status: 'running' });
+      if (path === 'prompt') {
+        await expect(runtime.sendPrompt('fixture')).rejects.toBe(failure);
+        await runtime.failTurn(failure);
+      } else if (path === 'completion') {
+        backend.emit({ type: 'status', status: 'idle', turnFinished: true });
+      } else {
+        backend.emit({ type: 'status', status: 'error', error: failure });
+      }
+      await runtime.flushTurn();
+      expect(mutations.map(mutation => mutation.action)).toEqual(['begin', 'fail']);
+      expect(published).toContain('turn_failed');
+      expect(published).not.toContain('turn_cancelled');
+      expect(published).not.toContain('task_complete');
+      expect(lifecycle.hasActiveTurn()).toBe(false);
+    } finally {
+      await runtime.reset();
+    }
+  });
+
   it('initiates cancellation before pending transcript settlement and retains trailing provider output', async () => {
     const transcriptCommit = createDeferred();
     const abortAcknowledged = createDeferred();

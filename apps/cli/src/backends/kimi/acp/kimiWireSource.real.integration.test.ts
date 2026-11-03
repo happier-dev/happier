@@ -1,15 +1,27 @@
 import { chmod, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import type { AgentMessage } from '@/agent/core';
 import { createKimiBackend } from '@/backends/kimi/acp/backend';
-import { createKimiLoopbackModel, KIMI_FIXTURE_BACKGROUND, KIMI_FIXTURE_FOREGROUND, KIMI_FIXTURE_NESTED_BACKGROUND } from './kimiLoopbackModel.testkit';
+import { createKimiLoopbackEnvironment, createKimiLoopbackModel, KIMI_FIXTURE_BACKGROUND, KIMI_FIXTURE_FOREGROUND, KIMI_FIXTURE_NESTED_BACKGROUND } from './kimiLoopbackModel.testkit';
 import { withTempDir } from '@/testkit/fs/tempDir';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
 
 const executable = process.env.HAPPIER_TEST_KIMI_PATH?.trim();
 
 describe.skipIf(!executable || process.platform === 'win32')('Kimi journal and ACP delivery ordering', () => {
+  let inheritedEnv: ReturnType<typeof createEnvKeyScope>;
+  beforeEach(() => {
+    inheritedEnv = createEnvKeyScope(['KIMI_MODEL', 'OPENAI_BASE_URL', 'ANTHROPIC_API_KEY']);
+    inheritedEnv.patch({
+      KIMI_MODEL: 'fixture-must-not-inherit',
+      OPENAI_BASE_URL: 'http://127.0.0.1:1',
+      ANTHROPIC_API_KEY: 'fixture-must-not-inherit',
+    });
+  });
+  afterEach(() => inheritedEnv.restore());
+
   it.each([
     { name: 'delivers a complete background turn before the foreground ACP response settles', continuationTool: false, nestedBackground: false },
     { name: 'defers a background approval until its foreground ACP response settles', continuationTool: true, nestedBackground: false },
@@ -29,6 +41,10 @@ const promptIds = new Set();
 const pending = [];
 createInterface({ input: process.stdin }).on('line', line => {
   const message = JSON.parse(line);
+  // The initialize-only discovery probe does not use the backend launch policy.
+  if (message.method === 'session/new' && ['KIMI_MODEL', 'OPENAI_BASE_URL', 'ANTHROPIC_API_KEY'].some(key => process.env[key] !== undefined)) {
+    throw new Error('Fixture process inherited a model override');
+  }
   if (message.method === 'session/prompt') promptIds.add(message.id);
   child.stdin.write(line + '\\n');
 });
@@ -50,7 +66,7 @@ process.on('SIGTERM', () => child.kill('SIGTERM'));
       await chmod(relay, 0o700);
       const backend = createKimiBackend({
         cwd: model.workspace,
-        env: { HAPPIER_KIMI_PATH: relay, KIMI_CODE_HOME: model.home, KIMI_DISABLE_TELEMETRY: '1' },
+        ...createKimiLoopbackEnvironment(model.home, relay),
         permissionMode: 'default',
         permissionHandler: { handleToolCall: async (toolCallId) => {
           permissions.push(toolCallId);

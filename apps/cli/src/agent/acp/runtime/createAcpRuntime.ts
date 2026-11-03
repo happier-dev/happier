@@ -36,7 +36,6 @@ import { abortPendingAcpPermissionRequests } from '@/agent/acp/backend/permissio
 import { createCatalogAcpBackend } from '@/agent/acp/createCatalogAcpBackend';
 import { extractAcpMediaContentBlocks } from '@/agent/acp/media/extractAcpMediaContentBlocks';
 import type { AcpRuntimeSessionClient } from '@/agent/acp/sessionClient';
-import { isAbortLikeError } from '@/agent/executionRuns/runtime/turnDelivery';
 import type { ACPMessageData } from '@/api/session/sessionMessageTypes';
 import type { AgentState, Metadata } from '@/api/types';
 import { getAgentModelConfig, getAgentSessionModeDescriptor, readNewestSessionModelsMetadataStateV1, type AgentId } from '@happier-dev/agents';
@@ -928,9 +927,12 @@ export function createAcpRuntime(params: {
     return error;
   };
 
+  // Transport/provider error prose is not evidence of a user cancellation.
+  const isTurnCancellationError = (error: unknown): boolean => error instanceof Error && error.name === 'AbortError';
+
   const rethrowPromptError = (error: unknown, turn: RuntimeTurnState = turnState): never => {
-    if (isAbortLikeError(error)) rememberTurnOutcome({ kind: 'aborted', stopReason: 'cancelled' }, turn);
-    if (turn.turnAborted && !isAbortLikeError(error)) {
+    if (isTurnCancellationError(error)) rememberTurnOutcome({ kind: 'aborted', stopReason: 'cancelled' }, turn);
+    if (turn.turnAborted && !isTurnCancellationError(error)) {
       throw createRuntimeHandledTurnAbortError(error);
     }
     throw error;
@@ -1227,7 +1229,7 @@ export function createAcpRuntime(params: {
     turn: TerminalTurnSnapshot = captureTerminalTurn(),
     cause: 'status_error' | 'session_error' = 'status_error',
   ): Promise<Extract<ACPMessageData, { type: 'turn_failed' }> | null> | null => {
-    if (isAbortLikeError(detailRaw)) return null;
+    if (isTurnCancellationError(detailRaw)) return null;
     const compatibilityMarkerId = beginCapturedLifecycleTurn(turn);
     let failureTurnId: string | null = null;
     const issuePromise = surfacePrimarySessionRuntimeIssue({
@@ -1356,7 +1358,7 @@ export function createAcpRuntime(params: {
   };
 
   const surfacePromptFailure = async (detailRaw: unknown, turn = hostCallerTurn ?? turnState): Promise<boolean> => {
-    if (isAbortLikeError(detailRaw)) return false;
+    if (isTurnCancellationError(detailRaw)) return false;
     if (turn.turnAborted) return true;
     turn.turnAborted = true;
     if (turn === turnState) {
@@ -1395,7 +1397,7 @@ export function createAcpRuntime(params: {
         try {
           rememberTurnOutcome(await completion, turn);
         } catch (error) {
-          if (isAbortLikeError(error)) {
+          if (isTurnCancellationError(error)) {
             rememberTurnOutcome({ kind: 'aborted', stopReason: 'cancelled' }, turn);
           } else if (!turn.turnAborted) {
             turn.pendingTurnOutcome = { kind: 'failed', error: error instanceof Error ? error : new Error(String(error)) };
@@ -1613,7 +1615,7 @@ export function createAcpRuntime(params: {
           const statusErrorTurn = captureTerminalTurn();
           const turn = turnState;
           const failureError = msg.error ?? msg.detail;
-          const shouldSurfaceFailure = !turn.turnAborted && !isAbortLikeError(failureError);
+          const shouldSurfaceFailure = !turn.turnAborted && !isTurnCancellationError(failureError);
           turn.turnAborted = true;
           if (!turn.turnInFlight) retireCurrentTurn();
           void enqueueTurnSettlement(async () => {

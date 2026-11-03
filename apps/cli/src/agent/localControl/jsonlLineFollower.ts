@@ -29,6 +29,8 @@ export type JsonlLineFollowerOptions = Readonly<{
     startAtEnd?: boolean;
     startOffsetBytes?: number;
     onLine: (line: string, source: JsonlLineSource) => void | Promise<void>;
+    /** Report proven discontinuity before replacement rows, even when the file is empty. */
+    onReset?: (reason: JsonlFollowerResetReason) => void;
     onError?: (error: unknown) => void;
     metrics?: JsonlFollowerMetrics;
 }>;
@@ -53,6 +55,7 @@ export class JsonlLineFollower {
     private readonly startAtEnd: boolean;
     private readonly startOffsetBytes: number | null;
     private readonly onLine: (line: string, source: JsonlLineSource) => void | Promise<void>;
+    private readonly onReset?: (reason: JsonlFollowerResetReason) => void;
     private readonly onError?: (error: unknown) => void;
     private readonly metrics?: JsonlFollowerMetrics;
 
@@ -79,6 +82,7 @@ export class JsonlLineFollower {
         this.startOffsetBytes = normalizeStartOffsetBytes(opts.startOffsetBytes);
         this.onLine = opts.onLine;
         this.onError = opts.onError;
+        this.onReset = opts.onReset;
         this.metrics = opts.metrics;
     }
 
@@ -357,6 +361,11 @@ export class JsonlLineFollower {
         this.bufferFileIdentity = null;
         this.decoder = new StringDecoder('utf8');
         this.emitMetric({ type: 'file_reset', reason });
+        try {
+            this.onReset?.(reason);
+        } catch (error) {
+            this.onError?.(error);
+        }
     }
 
     private scheduleNextPoll(outcome: JsonlFollowerDrainOutcome): void {

@@ -15,6 +15,7 @@ function record(value: unknown): Record<string, unknown> | null {
         ? value as Record<string, unknown> : null;
 }
 
+/** Resolve only a usable active-session entry; corrupt unrelated index rows cannot own this session. */
 async function sessionWirePath(home: string, cwd: string, sessionId: string): Promise<string> {
     let directory: string | undefined;
     const input = createReadStream(join(home, 'session_index.jsonl'), { encoding: 'utf8' });
@@ -22,7 +23,13 @@ async function sessionWirePath(home: string, cwd: string, sessionId: string): Pr
     try {
         for await (const line of lines) {
             if (!line.trim()) continue;
-            const entry = record(JSON.parse(line));
+            let entry: Record<string, unknown> | null;
+            try {
+                entry = record(JSON.parse(line));
+            } catch {
+                // A usable selected entry and its ownership remain mandatory below.
+                continue;
+            }
             if (entry?.sessionId !== sessionId) continue;
             if (entry.deleted === true) { directory = undefined; continue; }
             if (typeof entry.sessionDir !== 'string' || typeof entry.workDir !== 'string'
@@ -43,6 +50,7 @@ async function sessionWirePath(home: string, cwd: string, sessionId: string): Pr
     return join(actual, 'agents', 'main', 'wire.jsonl');
 }
 
+/** Read version metadata, allowing an absent or empty journal but rejecting malformed records. */
 async function journalVersion(path: string): Promise<string | null> {
     const input = createReadStream(path, { encoding: 'utf8' });
     const lines = createInterface({ input, crlfDelay: Infinity });
@@ -73,8 +81,7 @@ export function createKimiWireSource(): AcpProviderTurnSourceFactory {
             if (error.code === 'ENOENT') return null;
             throw error;
         });
-        let identity = initial ? { dev: initial.dev, ino: initial.ino } : null;
-        let previousOffset = initial?.size ?? 0;
+        let pendingInitialSnapshot = initial;
         let failure: Error | null = null;
         let disposed = false;
         let currentTurn: string | null = null;
@@ -163,16 +170,20 @@ export function createKimiWireSource(): AcpProviderTurnSourceFactory {
             filePath: path,
             startOffsetBytes: initial?.size ?? 0,
             onError: fail,
+            onReset: reason => fail(new Error(`Kimi journal was ${reason} while the session was active`)),
             onJson: async (raw, source) => {
                 if (disposed || failure || host.signal.aborted) return;
                 try {
                     if (!source) throw new Error('Kimi journal record has no file identity');
-                    if (identity && (source.fileIdentity.dev !== identity.dev || source.fileIdentity.ino !== identity.ino)) {
-                        throw new Error('Kimi journal was replaced while the session was active');
+                    // The initial protocol/offset snapshot predates follower startup.
+                    // Once confirmed, the follower's onReset owns continuity checks.
+                    if (pendingInitialSnapshot) {
+                        if (source.fileIdentity.dev !== pendingInitialSnapshot.dev || source.fileIdentity.ino !== pendingInitialSnapshot.ino) {
+                            throw new Error('Kimi journal was replaced before observation started');
+                        }
+                        if (source.lineStartOffsetBytes < pendingInitialSnapshot.size) throw new Error('Kimi journal was truncated before observation started');
+                        pendingInitialSnapshot = null;
                     }
-                    if (source.lineStartOffsetBytes < previousOffset) throw new Error('Kimi journal was truncated while the session was active');
-                    identity = { dev: Number(source.fileIdentity.dev), ino: Number(source.fileIdentity.ino) };
-                    previousOffset = source.lineStartOffsetBytes;
                     const event = decodeKimiWireRecord(raw);
                     if (!event) return;
                     if (event.kind === 'metadata') {

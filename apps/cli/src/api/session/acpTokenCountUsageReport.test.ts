@@ -3,6 +3,26 @@ import { describe, expect, it } from 'vitest';
 import { buildUsageReportFromAcpTokenCount } from './acpTokenCountUsageReport';
 
 describe('acp token_count -> usage-report', () => {
+  it('keeps context snapshots out of accounting reports while preserving independently reported cost', () => {
+    const body = { type: 'token_count', key: 'acp-usage-update', tokens: { total: 123, used: 123, size: 1000 } };
+    expect(buildUsageReportFromAcpTokenCount({ provider: 'kimi', sessionId: 'sess-context', body })).toBeNull();
+    expect(buildUsageReportFromAcpTokenCount({ provider: 'kimi', sessionId: 'sess-context', body: {
+      ...body, cost: { total: 0.25 },
+    } })).toEqual({ key: 'acp-usage-update', sessionId: 'sess-context', tokens: { total: 0 }, cost: { total: 0.25 } });
+  });
+
+  it('preserves explicit billed categories alongside context counters', () => {
+    expect(buildUsageReportFromAcpTokenCount({ provider: 'kimi', sessionId: 'sess-context', body: {
+      type: 'token_count', key: 'step', tokens: { total: 110, input: 100, output: 10, used: 123, size: 1000 },
+    } })).toEqual({ key: 'step', sessionId: 'sess-context', tokens: { total: 110, input: 100, output: 10 }, cost: { total: 0 } });
+  });
+
+  it('preserves an explicit total that differs from current context usage', () => {
+    expect(buildUsageReportFromAcpTokenCount({ provider: 'kimi', sessionId: 'sess-context', body: {
+      type: 'token_count', key: 'step', tokens: { total: 999, used: 123, size: 1000 },
+    } })?.tokens).toEqual({ total: 999 });
+  });
+
   it('uses provided key when present and sets cost.total=0', () => {
     const report = buildUsageReportFromAcpTokenCount({
       provider: 'qwen',

@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { createKimiBackend } from './backend';
-import { createKimiLoopbackModel } from './kimiLoopbackModel.testkit';
+import { createKimiLoopbackEnvironment, createKimiLoopbackModel } from './kimiLoopbackModel.testkit';
 import { withTempDir } from '@/testkit/fs/tempDir';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 
@@ -30,7 +30,7 @@ describe.skipIf(!executable || process.platform === 'win32')('Kimi ACP filesyste
             else if (location === 'inside') await writeFile(inside, readMarker);
             const backend = createKimiBackend({
                 cwd: model.workspace,
-                env: { HAPPIER_KIMI_PATH: executable!, KIMI_CODE_HOME: model.home, KIMI_DISABLE_TELEMETRY: '1' },
+                ...createKimiLoopbackEnvironment(model.home, executable!),
                 permissionMode: 'default',
                 permissionHandler: { handleToolCall: async () => ({ decision: 'approved' }) },
             });
@@ -61,7 +61,7 @@ describe.skipIf(!executable || process.platform === 'win32')('Kimi ACP filesyste
             const permissions: string[] = [];
             const backend = createKimiBackend({
                 cwd: model.workspace,
-                env: { HAPPIER_KIMI_PATH: executable!, KIMI_CODE_HOME: model.home, KIMI_DISABLE_TELEMETRY: '1' },
+                ...createKimiLoopbackEnvironment(model.home, executable!),
                 permissionMode: 'default',
                 permissionHandler: {
                     handleToolCall: async (_id, name) => {

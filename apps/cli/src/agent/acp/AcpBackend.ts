@@ -209,6 +209,26 @@ function resolveAcpPlanTurnId(turnGeneration: unknown): string {
 const DEFAULT_POST_PROMPT_NO_UPDATES_TIMEOUT_MS: number | null = null;
 const DEFAULT_PROMPT_LIVENESS_TIMEOUT_MS: number | null = null;
 const PROMPT_CANCEL_SETTLEMENT_TIMEOUT_MS = 5_000;
+
+// Reuse the established disposal budget for every graceful native teardown.
+const GRACEFUL_TEARDOWN_BOUND_MS = 2_000;
+
+/** Bound best-effort cleanup and clear the losing timer without swallowing operation failures. */
+/** Apply the native teardown budget without leaving a deadline timer after settlement. */
+async function withGracefulTeardownBound(call: Promise<unknown>): Promise<'settled' | 'timed_out'> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      call.then(() => 'settled' as const),
+      new Promise<'timed_out'>(resolve => {
+        timer = setTimeout(() => resolve('timed_out'), GRACEFUL_TEARDOWN_BOUND_MS);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
 const DEFAULT_POST_TOOL_CALL_IDLE_TIMEOUT_MS = 1_000;
 const DEFAULT_IDLE_WITHOUT_ASSISTANT_MESSAGE_TIMEOUT_MS = 0;
 
@@ -1065,6 +1085,8 @@ export class AcpBackend implements AgentBackend {
     });
   }
 
+  /** Revoke admission synchronously; failed or stalled observers cannot prevent native teardown. */
+  /** Revoke source authority before bounded observer cleanup, so native Stop can proceed independently. */
   private async stopProviderTurnSource(): Promise<void> {
     const source = this.providerSource;
     this.providerSource = null;
@@ -1074,9 +1096,17 @@ export class AcpBackend implements AgentBackend {
     this.activePermissionContext = undefined;
     this.providerToolContexts.clear();
     this.providerContinuations.clear();
-    await source?.dispose();
+    try {
+      const outcome = await withGracefulTeardownBound(Promise.resolve().then(() => source?.dispose()));
+      if (outcome === 'timed_out') {
+        logger.debug('[AcpBackend] Provider source cleanup exceeded the graceful teardown bound');
+      }
+    } catch (error) {
+      logger.debug('[AcpBackend] Provider source cleanup failed (non-fatal)', error);
+    }
   }
 
+  /** Admit only evidence read under the same source lifetime that initiated the catch-up. */
   private async catchUpProviderTurns(permissionToolCallId?: string): Promise<void> {
     const source = this.providerSource;
     const lifetime = this.providerSourceLifetime;
@@ -1103,6 +1133,7 @@ export class AcpBackend implements AgentBackend {
     }
   }
 
+  /** Recheck originating turn authority after filesystem awaits, including cancellation and successor turns. */
   private captureClientFsRequestOwnership(sessionId: string): (() => void) | undefined {
     if (!this.options.providerTurnSource) return;
     this.assertClientFsRequestOwnership(sessionId);
@@ -1346,7 +1377,7 @@ export class AcpBackend implements AgentBackend {
   }
 
   private async cleanupInitializedProcessConnection(params: { graceMs: number }): Promise<void> {
-    await this.stopProviderTurnSource();
+    const sourceStopped = this.stopProviderTurnSource();
     const proc = this.process;
     const connection = this.connection;
     this.process = null;
@@ -1375,6 +1406,7 @@ export class AcpBackend implements AgentBackend {
 
     await connection?.closed.catch(() => undefined);
     await this.cleanupPreparedProcessLaunch();
+    await sourceStopped;
   }
 
   private async cleanupPreparedProcessLaunch(): Promise<void> {
@@ -2288,30 +2320,7 @@ export class AcpBackend implements AgentBackend {
       logger.debug(`[AcpBackend] Loading session: ${normalized}`);
 
       const sessionResponse = await this.requestSessionWithMcpRecovery(loadSessionRequest, (request, maxAttempts) => withRetry(
-        async () => {
-          let timeoutHandle: NodeJS.Timeout | null = null;
-          try {
-            const result = await Promise.race([
-              this.connection!.peer.loadSession(request).then((res) => {
-                if (timeoutHandle) {
-                  clearTimeout(timeoutHandle);
-                  timeoutHandle = null;
-                }
-                return res;
-              }),
-              new Promise<never>((_, reject) => {
-                timeoutHandle = setTimeout(() => {
-                  reject(this.createStartupTimeoutError('Load session', initTimeout));
-                }, initTimeout);
-              }),
-            ]);
-            return result;
-          } finally {
-            if (timeoutHandle) {
-              clearTimeout(timeoutHandle);
-            }
-          }
-        },
+        () => this.loadSessionOnCurrentConnection(request, initTimeout),
         {
           operationName: 'LoadSession',
           maxAttempts,
@@ -2345,6 +2354,23 @@ export class AcpBackend implements AgentBackend {
       });
       await this.cleanupInitializedProcessConnection({ graceMs: 250 });
       throw error;
+    }
+  }
+
+  /** Reuse the provider's startup deadline for both initial load and post-cancellation reload. */
+  private async loadSessionOnCurrentConnection(request: LoadSessionRequest, timeoutMs: number) {
+    const connection = this.connection;
+    if (!connection) throw new Error('ACP session/load requires an initialized provider connection');
+    let timeoutHandle: NodeJS.Timeout | undefined;
+    try {
+      return await Promise.race([
+        connection.peer.loadSession(request),
+        new Promise<never>((_, reject) => {
+          timeoutHandle = setTimeout(() => reject(this.createStartupTimeoutError('Load session', timeoutMs)), timeoutMs);
+        }),
+      ]);
+    } finally {
+      if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
     }
   }
 
@@ -2423,6 +2449,7 @@ export class AcpBackend implements AgentBackend {
         detail: error instanceof Error ? error.message : String(error),
         error,
       });
+      await this.cleanupInitializedProcessConnection({ graceMs: 250 });
       throw error;
     }
   }
@@ -2813,6 +2840,8 @@ export class AcpBackend implements AgentBackend {
       }
 
       if (sessionUpdateType === 'usage_update') {
+        // Explicit keys identify independent usage snapshots; unkeyed providers retain their session snapshot.
+        const usageKey = readNonBlankOpaqueIdentifier(update.key) ?? 'acp-usage-update';
         const usedRaw = (update as any).used;
         const sizeRaw = (update as any).size;
         const usageCost = readAcpUsageCost(update as Record<string, unknown>);
@@ -2824,7 +2853,7 @@ export class AcpBackend implements AgentBackend {
           if (size != null) tokens.size = size;
           this.emit({
             type: 'token-count',
-            key: 'acp-usage-update',
+            key: usageKey,
             tokens,
             source: 'acp-usage-update',
             ...(usageCost ? { cost: usageCost } : {}),
@@ -2837,7 +2866,7 @@ export class AcpBackend implements AgentBackend {
           if (tokens) {
             this.emit({
               type: 'token-count',
-              key: 'acp-usage-update',
+              key: usageKey,
               tokens,
               source: 'acp-usage-update',
               ...(usageCost ? { cost: usageCost } : {}),
@@ -4218,26 +4247,44 @@ export class AcpBackend implements AgentBackend {
     return true;
   }
 
+  /**
+   * Stop native work before draining revoked observers. Successor readiness still waits for
+   * the plan publication barrier because an in-flight metadata write cannot be undone.
+   */
+  /** Stop native work before publication draining; reload and successor admission retain their existing barriers. */
   private async cancelProviderSession(sessionId: string): Promise<void> {
     const foregroundCancellation = this.activePromptRpc && this.connection
       ? this.connection.peer.cancel({ sessionId })
         .catch((error) => logger.debug('[AcpBackend] Error cancelling foreground before session close:', error))
       : undefined;
     this.failPendingResponseWait(makeAbortError('Cancelled by user'));
-    await this.stopProviderTurnSource();
-    await foregroundCancellation;
+    // Revoke observation immediately, but never put native Stop behind its pending publications.
+    const sourceStopped = this.stopProviderTurnSource();
     this.toolCalls.cancelAll();
-    if (!this.connection) return;
+    if (!this.connection) { await sourceStopped; return; }
     if (!this.negotiatedSessionCapabilities.close) {
       await this.cleanupInitializedProcessConnection({ graceMs: 250 });
+      await sourceStopped;
       await this.loadSession(sessionId);
     } else {
       try {
-        await this.connection.peer.closeSession({ sessionId });
+        const outcome = await withGracefulTeardownBound(Promise.all([
+          this.connection.peer.closeSession({ sessionId }), foregroundCancellation,
+        ]));
+        if (outcome === 'timed_out') {
+          logger.debug('[AcpBackend] Provider session close exceeded the graceful teardown bound; restarting connection');
+          await this.cleanupInitializedProcessConnection({ graceMs: 250 });
+          await sourceStopped;
+          await this.loadSession(sessionId);
+          this.finalizeTurnOutcome({ kind: 'aborted', stopReason: 'cancelled' });
+          this.emit({ type: 'status', status: 'stopped', detail: 'Cancelled by user' });
+          return;
+        }
+        await sourceStopped;
         this.replayCapture = new AcpReplayCapture();
-        const response = await this.connection.peer.loadSession({
+        const response = await this.loadSessionOnCurrentConnection({
           sessionId, cwd: this.options.cwd, mcpServers: this.buildAcpMcpServersForSessionRequest(),
-        });
+        }, this.transport.getInitTimeout());
         this.lastSelectedPermissionOptionIdByToolCallId.clear();
         await this.plans.reset();
         this.toolCalls.reset();
@@ -4358,7 +4405,7 @@ export class AcpBackend implements AgentBackend {
 
   private async disposeResources(preserveProviderSession: boolean): Promise<void> {
     logger.debug('[AcpBackend] Disposing backend');
-    await this.stopProviderTurnSource();
+    const sourceStopped = this.stopProviderTurnSource();
 
     if (this.waitingForResponse || this.responseCompletionTimeout) {
       this.failPendingResponseWait(makeAbortError('Backend disposed'));
@@ -4379,10 +4426,7 @@ export class AcpBackend implements AgentBackend {
     if (!preserveProviderSession && this.connection && this.acpSessionId) {
       try {
         // Send cancel to stop any ongoing work
-        await Promise.race([
-          this.connection.peer.cancel({ sessionId: this.acpSessionId }),
-          new Promise((resolve) => setTimeout(resolve, 2000)), // 2s timeout for graceful shutdown
-        ]);
+        await withGracefulTeardownBound(this.connection.peer.cancel({ sessionId: this.acpSessionId }));
       } catch (error) {
         logger.debug('[AcpBackend] Error during graceful shutdown:', error);
       }
@@ -4391,10 +4435,7 @@ export class AcpBackend implements AgentBackend {
       // shared worker), so release them explicitly before the transport goes away.
       if (this.negotiatedSessionCapabilities.close) {
         try {
-          await Promise.race([
-            this.connection.peer.closeSession({ sessionId: this.acpSessionId }),
-            new Promise((resolve) => setTimeout(resolve, 2000)),
-          ]);
+          await withGracefulTeardownBound(this.connection.peer.closeSession({ sessionId: this.acpSessionId }));
         } catch (error) {
           logger.debug('[AcpBackend] Error closing ACP session during shutdown:', error);
         }
@@ -4416,6 +4457,7 @@ export class AcpBackend implements AgentBackend {
     }
     await connection?.closed.catch(() => undefined);
     await this.cleanupPreparedProcessLaunch();
+    await sourceStopped;
 
     // Clear timeouts
     if (this.postPromptCompletionIdleTimeout) {

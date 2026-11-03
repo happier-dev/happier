@@ -14,9 +14,11 @@ import type { AcpRuntime } from '@/agent/acp/runtime/createAcpRuntime';
 import type { Metadata, PermissionMode } from '@/api/types';
 import type { SessionTurnMutationV1 } from '@/api/session/mutations/sessionMutationTypes';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
+import { buildUsageReportFromAcpTokenCount, type UsageReportV1 } from '@/api/session/acpTokenCountUsageReport';
 
 import {
     createKimiLoopbackModel,
+    createKimiLoopbackEnvironment,
     KIMI_FIXTURE_BACKGROUND,
     KIMI_FIXTURE_FOREGROUND,
     KIMI_FIXTURE_SECOND_FOREGROUND,
@@ -33,6 +35,7 @@ type RuntimeFixture = Readonly<{
     mutations: SessionTurnMutationV1[];
     published: string[];
     thinking: boolean[];
+    usageReports: UsageReportV1[];
     getMetadata(): Metadata & { sessionWorkStateV1?: unknown };
     isPlanPublicationPending(): boolean;
     releasePlanPublication(): void;
@@ -58,6 +61,7 @@ async function withKimiRuntime(
         const mutations: SessionTurnMutationV1[] = [];
         const published: string[] = [];
         const thinking: boolean[] = [];
+        const usageReports: UsageReportV1[] = [];
         let metadata: Metadata & { sessionWorkStateV1?: unknown } = createTestMetadata({ flavor: 'kimi', path: model.workspace });
         let planPublicationPending = false;
         const planPublicationGate = createDeferred();
@@ -68,13 +72,7 @@ async function withKimiRuntime(
         });
         const createBackend = () => createKimiBackend({
             cwd: model.workspace,
-            env: {
-                HAPPIER_KIMI_PATH: executable!,
-                KIMI_CODE_HOME: model.home,
-                KIMI_DISABLE_TELEMETRY: '1',
-            },
-            unsetEnv: Object.keys(process.env).filter((key) => /^(KIMI_|OPENAI_|ANTHROPIC_)/.test(key)
-                && key !== 'KIMI_CODE_HOME' && key !== 'KIMI_DISABLE_TELEMETRY'),
+            ...createKimiLoopbackEnvironment(model.home, executable!),
             permissionMode: 'default',
             getPermissionMode: () => permissionMode,
             permissionHandler,
@@ -103,6 +101,10 @@ async function withKimiRuntime(
                 sendAgentMessage: (provider, body) => {
                     void lifecycle.observeAcpLifecycleMarker({ provider, body }).pendingWrite;
                     published.push(body.type);
+                    if (body.type === 'token_count') {
+                        const report = buildUsageReportFromAcpTokenCount({ provider, sessionId: 'kimi-background-fixture', body });
+                        if (report) usageReports.push(report);
+                    }
                 },
                 sendAgentMessageCommitted: async (_provider, body) => {
                     published.push(body.type === 'message' ? body.message : body.type);
@@ -124,7 +126,7 @@ async function withKimiRuntime(
             await runtime.startOrLoad({});
             await runtime.setSessionModel('fixture');
             await run({
-                model, runtime, permissionSession, lifecycle, mutations, published, thinking,
+                model, runtime, permissionSession, lifecycle, mutations, published, thinking, usageReports,
                 getMetadata: () => metadata,
                 isPlanPublicationPending: () => planPublicationPending,
                 releasePlanPublication: () => planPublicationGate.resolve(),
@@ -171,6 +173,7 @@ async function withKimiRuntime(
             });
         } finally {
             planPublicationGate.resolve();
+            model.releaseAfterPlan();
             model.releaseContinuation();
             await model.releaseBackground();
             await runtime.reset();
@@ -186,6 +189,24 @@ async function expectBackgroundCompletion(fixture: RuntimeFixture, nativeTurnId:
     await fixture.runtime.flushTurn();
     expect(fixture.published.indexOf(KIMI_FIXTURE_BACKGROUND)).toBeLessThan(fixture.published.lastIndexOf('task_complete'));
     expect(fixture.lifecycle.hasActiveTurn()).toBe(false);
+    const stepSchema = z.object({ type: z.literal('context.append_loop_event'), agentId: z.literal('main'), event: z.object({
+        type: z.literal('step.end'), uuid: z.string(), turnId: z.coerce.string(),
+        usage: z.object({ inputOther: z.number(), inputCacheRead: z.number(), inputCacheCreation: z.number(), output: z.number() }),
+    }) });
+    const steps = (await fixture.model.readNativeEvents()).flatMap(record => {
+        const parsed = stepSchema.safeParse(record);
+        return parsed.success && parsed.data.event.turnId === String(nativeTurnId) ? [parsed.data.event] : [];
+    });
+    expect(steps.length).toBeGreaterThan(0);
+    expect(fixture.usageReports.every(report => report.tokens.used === undefined && report.tokens.size === undefined)).toBe(true);
+    const reports = new Map(fixture.usageReports.map(report => [report.key, report]));
+    for (const { uuid, usage } of steps) {
+        expect(reports.get(`kimi-step:${uuid}`)).toMatchObject({
+            sessionId: 'kimi-background-fixture',
+            tokens: { total: usage.inputOther + usage.inputCacheRead + usage.inputCacheCreation + usage.output,
+                input: usage.inputOther + usage.inputCacheRead + usage.inputCacheCreation, output: usage.output },
+        });
+    }
 }
 
 async function expectBackgroundCancellation(fixture: RuntimeFixture, nativeTurnId: number): Promise<void> {
@@ -265,6 +286,36 @@ describe.skipIf(!executable || process.platform === 'win32')('Kimi background tu
                 expect(fixture.published.indexOf('plan-persisted')).toBeLessThan(fixture.published.lastIndexOf('task_complete'));
                 expect(fixture.model.getRequestCount()).toBe(4);
             } finally { fixture.releasePlanPublication(); }
+        });
+    }, 60_000);
+
+    it('stops native execution while a plan save is held, then safely admits a successor after the save', async () => {
+        await withKimiRuntime({ continuationPlan: true, holdAfterPlan: true, holdPlanPublication: true }, async fixture => {
+            await fixture.startBackground();
+            await fixture.releaseBackground();
+            fixture.model.releaseContinuation();
+            await fixture.model.afterPlanRequested;
+            await expect.poll(() => fixture.isPlanPublicationPending(), { timeout: 10_000 }).toBe(true);
+            const cancellation = fixture.runtime.cancel();
+            let settled = false;
+            void cancellation.then(() => { settled = true; });
+            try {
+                // Native termination is independent of the metadata barrier guarding successor readiness.
+                await fixture.waitForNativeTurn(1, 'cancelled');
+                expect(fixture.published).not.toContain('plan-persisted');
+                expect(settled).toBe(false);
+                expect(fixture.published).not.toContain(KIMI_FIXTURE_BACKGROUND);
+            } finally {
+                fixture.releasePlanPublication();
+                fixture.model.releaseAfterPlan();
+                await cancellation;
+            }
+            await fixture.runtime.flushTurn();
+            fixture.runtime.beginTurn();
+            await fixture.runtime.sendPrompt('Continue after native cancellation and plan settlement.');
+            await fixture.runtime.flushTurn();
+            expect(fixture.mutations.map(mutation => mutation.action)).toEqual(['begin', 'complete', 'begin', 'cancel', 'begin', 'complete']);
+            expect(fixture.lifecycle.hasActiveTurn()).toBe(false);
         });
     }, 60_000);
 

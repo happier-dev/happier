@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { createKimiBackend } from './backend';
 import {
     createKimiLoopbackModel,
+    createKimiLoopbackEnvironment,
     KIMI_FIXTURE_FOREGROUND,
     KIMI_FIXTURE_SECOND_FOREGROUND,
 } from './kimiLoopbackModel.testkit';
@@ -18,7 +19,7 @@ describe.skipIf(!executable || process.platform === 'win32')('Kimi cancellation 
             const events: AgentMessage[] = [];
             const backend = createKimiBackend({
                 cwd: model.workspace,
-                env: { HAPPIER_KIMI_PATH: executable!, KIMI_CODE_HOME: model.home, KIMI_DISABLE_TELEMETRY: '1' },
+                ...createKimiLoopbackEnvironment(model.home, executable!),
                 permissionMode: 'default',
                 permissionHandler: { handleToolCall: async () => ({ decision: 'approved' }) },
             });

@@ -9,8 +9,22 @@ export const KIMI_FIXTURE_BACKGROUND = 'KIMI_FIXTURE_BACKGROUND_COMPLETE';
 export const KIMI_FIXTURE_NESTED_BACKGROUND = 'KIMI_FIXTURE_NESTED_BACKGROUND_COMPLETE';
 export const KIMI_FIXTURE_SECOND_FOREGROUND = 'KIMI_FIXTURE_SECOND_FOREGROUND_COMPLETE';
 
+/** Keep every official fixture process on its loopback config, regardless of the invoking shell. */
+export function createKimiLoopbackEnvironment(home: string, executable: string): {
+    env: Record<string, string>;
+    unsetEnv: string[];
+} {
+    const env = { HAPPIER_KIMI_PATH: executable, KIMI_CODE_HOME: home, KIMI_DISABLE_TELEMETRY: '1' };
+    return {
+        env,
+        unsetEnv: Object.keys(process.env).filter(key => /^(KIMI_|OPENAI_|ANTHROPIC_)/i.test(key)
+            && !Object.keys(env).some(owned => owned.toLowerCase() === key.toLowerCase())),
+    };
+}
+
 export type KimiLoopbackModelOptions = Readonly<{
     continuationPlan?: boolean;
+    holdAfterPlan?: boolean;
     filesystem?: Readonly<{ tool: 'Read' | 'Write'; path: string; content?: string }>;
     plain?: boolean;
     subagent?: boolean;
@@ -28,6 +42,8 @@ export async function createKimiLoopbackModel(directory: string, options: KimiLo
     await mkdir(workspace);
     const continuationRequested = createDeferred();
     const continuationResponse = createDeferred();
+    const afterPlanRequested = createDeferred();
+    const afterPlanResponse = createDeferred();
     let requests = 0;
     let toolResponses: string[] = [];
     let userContents: unknown[] = [];
@@ -45,6 +61,10 @@ export async function createKimiLoopbackModel(directory: string, options: KimiLo
         const mcpToolName = body.tools?.map((tool) => tool.function?.name)
             .find((name) => name?.endsWith('fixture_probe'));
         const index = ++requests;
+        if (options.continuationPlan && options.holdAfterPlan && index === (options.interveningForeground ? 5 : 4)) {
+            afterPlanRequested.resolve();
+            await afterPlanResponse.promise;
+        }
         let delta: Record<string, unknown>;
         let finishReason = 'stop';
         if (options.filesystem) {
@@ -158,6 +178,8 @@ maxContextSize = 262144
         home,
         workspace,
         continuationRequested: continuationRequested.promise,
+        afterPlanRequested: afterPlanRequested.promise,
+        releaseAfterPlan: () => afterPlanResponse.resolve(),
         releaseContinuation: () => continuationResponse.resolve(),
         releaseBackground: () => writeFile(join(workspace, 'release-background'), 'ready'),
         getRequestCount: () => requests,
@@ -183,6 +205,7 @@ maxContextSize = 262144
         },
         async close() {
             continuationResponse.resolve();
+            afterPlanResponse.resolve();
             await writeFile(join(workspace, 'release-background'), 'ready');
             server.closeAllConnections();
             await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));

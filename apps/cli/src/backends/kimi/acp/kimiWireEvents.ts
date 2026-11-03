@@ -30,7 +30,7 @@ const contentSchema = z.object({
   ]),
 });
 const tokenCountSchema = z.number().finite().nonnegative();
-const stepUsageSchema = z.object({ turnId: turnIdSchema, usage: z.object({
+const stepUsageSchema = z.object({ uuid: identifier, turnId: turnIdSchema, usage: z.object({
   inputOther: tokenCountSchema, output: tokenCountSchema,
   inputCacheRead: tokenCountSchema, inputCacheCreation: tokenCountSchema,
 }) });
@@ -56,6 +56,7 @@ function textContent(value: unknown): ToolCallContent[] {
   return text ? [{ type: 'content', content: { type: 'text', text } }] : [];
 }
 
+/** Translate native loop records; turn admission stays with the source and step UUIDs identify usage reports. */
 function decodeLoopEvent(event: Record<string, unknown>): KimiWireEvent | null {
   if (event.type === 'content.part') {
     const parsed = contentSchema.safeParse(event);
@@ -71,8 +72,9 @@ function decodeLoopEvent(event: Record<string, unknown>): KimiWireEvent | null {
   if (event.type === 'step.end') {
     const parsed = stepUsageSchema.safeParse(event);
     if (!parsed.success) return null;
-    const { turnId, usage } = parsed.data;
-    return { kind: 'update', turnId, updates: [{ sessionUpdate: 'usage_update',
+    const { uuid, turnId, usage } = parsed.data;
+    // Usage reports replace by key: the persisted native step identity survives replay and resume.
+    return { kind: 'update', turnId, updates: [{ sessionUpdate: 'usage_update', key: `kimi-step:${uuid}`,
       inputTokens: usage.inputOther + usage.inputCacheRead + usage.inputCacheCreation,
       outputTokens: usage.output, cacheReadTokens: usage.inputCacheRead, cacheWriteTokens: usage.inputCacheCreation,
     }] };
