@@ -9,6 +9,12 @@ import { createBrowserContextDiagnosticsSummarySource } from './summary';
 
 const VIEW = { browserSessionId: 'browser_session_1', viewId: 'view_1', navigationGeneration: 3 } as const;
 
+it('includes completed correlated requests in value-free context', () => {
+    const harness = summaryHarness();
+    harness.record({ ...networkEvent({ ordinal: 1, capturedAtMs: 100, status: 200, url: '/a' }), kind: 'network.finished' });
+    expect(harness.summarize({ ...VIEW, kind: 'browserNetworkSummary' })?.summary).toContain('200 https://api.test/a');
+});
+
 /**
  * SB-G: the summary source no longer retains anything, so a test drives it by publishing into the
  * daemon diagnostics store — the single retainer — and reading the summary back out. `clearView`

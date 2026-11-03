@@ -61,7 +61,8 @@ function serializeNetworkEvent(event: BrowserDiagnosticEventV1): string | null {
                 : 'REQUEST';
             return `${method} ${url}`.trim();
         }
-        case 'network.response': {
+        case 'network.response':
+        case 'network.finished': {
             const status = typeof (data as Record<string, unknown>).statusCode === 'number'
                 ? (data as Record<string, unknown>).statusCode as number
                 : typeof (data as Record<string, unknown>).status === 'number'
