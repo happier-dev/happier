@@ -22,7 +22,9 @@ import { computeContentPublicKeyFingerprint } from '@happier-dev/protocol/machin
 import { openEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
 import { installApprovalCommonModuleMocks } from '@/components/approvals/approvalsTestHelpers';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
-import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture, createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { createArtifactStoreBoundary } from '@/dev/testkit/harness/artifactStoreBoundary';
@@ -122,9 +124,17 @@ vi.mock('socket.io-client', async importOriginal =>
 installApprovalCommonModuleMocks({
     reactNavigation: async () => (await import('@/dev/testkit/mocks/reactNavigation')).createReactNavigationNativeMock(),
 });
-installDisconnectedServerSocketBoundary();
+let vaultSocket: Parameters<typeof configureConnectedServerSocketBoundary>[0] | undefined;
+let vaultRpc: ((event: string, raw: unknown) => Promise<unknown>) | undefined;
+function configureVaultRpc(socket: Parameters<typeof configureConnectedServerSocketBoundary>[0]) {
+    if (!vaultRpc) return;
+    configureConnectedServerSocketBoundary(socket);
+    vi.spyOn(socket, 'timeout').mockReturnValue(socket);
+    vi.spyOn(socket, 'emitWithAck').mockImplementation(vaultRpc);
+}
+installDisconnectedServerSocketBoundary(socket => { vaultSocket = socket; configureVaultRpc(socket); });
 beforeAll(loadSyncSingletonForTests);
-beforeEach(() => { resetSavedSecretCatalogEngineForTests(); resetSavedSecretCatalogSnapshotsForTests(); resetServerFeaturesClientForTests(); });
+beforeEach(() => { vaultRpc = undefined; resetSavedSecretCatalogEngineForTests(); resetSavedSecretCatalogSnapshotsForTests(); resetServerFeaturesClientForTests(); });
 let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | null = null;
 afterEach(async () => { await standardCleanup(); clearActiveUnsavedChangesGuard(); await connection?.dispose(); connection = null; resetTeamActionClientForTests(); });
 let accountFixtureSequence = 0;
@@ -198,6 +208,11 @@ async function openAccount(mode: 'plain' | 'e2ee' = 'plain', options: { ask?: bo
         serverIdentityId: `srv_secret_operations_${mode}${home}`, accountId, credentials,
         request: async (rawUrl, init) => {
             const path = new URL(String(rawUrl)).pathname;
+            if (path === '/v1/machines/read-batch') {
+                const machine = createMachineFixture({ id: 'vault-machine', activeAt: Date.now() });
+                const row = createPlainMachineRowFixture({ id: machine.id, accountId, machine });
+                return createMachineReadBatchResponseFixture(init?.body, id => id === machine.id ? row : null);
+            }
             if (path === '/v1/account/encryption' || path === '/v1/account/encryption/currentness') observeTrustRead?.(path);
             if (path === '/health') return Response.json({});
             if (path === '/v1/account/profile') return Response.json(AccountProfileSchema.parse({ id: accountId }));
@@ -350,6 +365,54 @@ async function openAccount(mode: 'plain' | 'e2ee' = 'plain', options: { ask?: bo
 }
 
 describe('Saved Secret operations through their real Account and Action owners', () => {
+    it('vault picker loads only while open and distinguishes pending, empty, repair and populated metadata', async () => {
+        const account = await openAccount();
+        if (!vaultSocket) throw new Error('Expected socket boundary');
+        let pending = createDeferred<unknown>();
+        let reads = 0;
+        vaultRpc = async (event, raw: unknown) => {
+            if (event !== SOCKET_RPC_EVENTS.CALL) return { v: 1, ok: true, admittedSessionIds: [] };
+            expect(raw).toMatchObject({ method: 'vault-machine:daemon.secrets.source.invoke.v1', params: { operation: 'list' } });
+            reads += 1;
+            return { ok: true, result: await pending.promise };
+        };
+        configureVaultRpc(vaultSocket);
+        const { useSavedSecretVaultPicker } = await import('@/components/secrets/useSavedSecretVaultPicker');
+        const source = { contribution: { pluginId: 'happier.secret-source.onepassword', localId: 'onepassword' },
+            account: 'vault-account', machineId: 'vault-machine' };
+        const hook = await renderHook((active: boolean) => useSavedSecretVaultPicker({ scope: account.scope, source, active }),
+            { initialProps: false });
+        expect(hook.getCurrent().state.status).toBe('idle');
+        expect(reads).toBe(0);
+        await hook.rerender(true);
+        await vi.waitFor(() => expect(reads).toBe(1));
+        expect(hook.getCurrent().state.status).toBe('loading');
+        await act(async () => { pending.resolve({ ok: true, fields: [] }); });
+        await vi.waitFor(() => expect(hook.getCurrent().state.status).toBe('empty'));
+        pending = createDeferred<unknown>();
+        await act(async () => { hook.getCurrent().reload(); });
+        await vi.waitFor(() => expect(reads).toBe(2));
+        await act(async () => { pending.resolve({ ok: false, code: 'authentication_required', repair: 'unlock' }); });
+        await vi.waitFor(() => expect(hook.getCurrent().state).toMatchObject({ status: 'unavailable', code: 'authentication_required', repair: 'unlock' }));
+        pending = createDeferred<unknown>();
+        await act(async () => { hook.getCurrent().reload(); });
+        await vi.waitFor(() => expect(reads).toBe(3));
+        const field = { account: 'vault-account', reference: 'op://vault/item/password', vault: { id: 'vault', name: 'Private' },
+            item: { id: 'item', title: 'Example' }, field: { id: 'password', title: 'Password', kind: 'password' } };
+        await act(async () => { pending.resolve({ ok: true, fields: [field] }); });
+        await vi.waitFor(() => expect(hook.getCurrent().state).toMatchObject({ status: 'ready', fields: [field], vaults: [field.vault] }));
+        pending = createDeferred<unknown>();
+        await act(async () => { hook.getCurrent().reload(); });
+        await vi.waitFor(() => expect(reads).toBe(4));
+        expect(hook.getCurrent().state).toMatchObject({ status: 'loading', fields: [field], vaults: [field.vault] });
+        await hook.rerender(false);
+        expect(hook.getCurrent().state.status).toBe('idle');
+        await act(async () => { pending.resolve({ ok: true, fields: [field] }); });
+        expect(hook.getCurrent().state.status).toBe('idle');
+        expect(reads).toBe(4);
+        await hook.unmount();
+    });
+
     it.each([{}, { secrets: [] }])('does not turn a current material refresh with no legacy candidates into history maintenance (%j)', async raw => {
         const account = await openAccount('plain', { raw, historySnapshot: { preferredLanguage: 'de' } });
         const baselineHistory = account.historyReadPaths.length;
