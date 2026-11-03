@@ -273,6 +273,11 @@ export function projectResourceRecipientCensus(input: Readonly<{
     } } as const;
 }
 
+/** Shared structural framing owner for both first-share and subsequent key commits. */
+export function validateResourceRecipientKeyEnvelopes(envelopes: readonly ResourceRecipientKeyEnvelopeInputV1[]): boolean {
+    return envelopes.every(envelope => parseEncryptedDataKeyEnvelopeV1(privacyKit.decodeBase64(envelope.encryptedDataKey)) !== null);
+}
+
 /** Owner-key fence and structural envelope validation precede every resource commit. */
 export function validateResourceRecipientEnvelopeCommit(input: Readonly<{
     ownerDataEncryptionKey: Uint8Array;
@@ -280,8 +285,7 @@ export function validateResourceRecipientEnvelopeCommit(input: Readonly<{
     recipientKeyEnvelopes: readonly ResourceRecipientKeyEnvelopeInputV1[];
 }>): 'data_key_changed' | 'invalid_recipient_envelope' | null {
     if (!isDeepStrictEqual(new Uint8Array(input.ownerDataEncryptionKey), privacyKit.decodeBase64(input.expectedDataEncryptionKey))) return 'data_key_changed';
-    return input.recipientKeyEnvelopes.some(envelope => !parseEncryptedDataKeyEnvelopeV1(privacyKit.decodeBase64(envelope.encryptedDataKey)))
-        ? 'invalid_recipient_envelope' : null;
+    return validateResourceRecipientKeyEnvelopes(input.recipientKeyEnvelopes) ? null : 'invalid_recipient_envelope';
 }
 
 export interface ResourceRecipientEnvelopeStorageAdapter<Envelope extends ResourceRecipientKeyEnvelopeInputV1> extends ResourceGrantStorageAdapter {
