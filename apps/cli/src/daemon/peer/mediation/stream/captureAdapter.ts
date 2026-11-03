@@ -83,6 +83,7 @@ export type MachineLiveStreamCaptureStartInput = Readonly<{
   startedAtMs: number;
   expiresAtMs: number;
   nowMs: () => number;
+  getFramePayloadByteLimit?: (frame: MachineLiveStreamFrameV1) => number | undefined;
   offerFrame: (frame: MachineLiveStreamFrameV1) => MachineLiveStreamFrameOfferResult;
   applyControl: (control: MachineLiveStreamControlV1) => MachineLiveStreamControlApplyResult;
   emitReceipt: (receipt: MachineLiveStreamReceiptV1) => void;

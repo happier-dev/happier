@@ -117,6 +117,7 @@ export function createMachineLiveStreamRelayTerminator(input: Readonly<{
     captureAdapter?: MachineLiveStreamCaptureAdapter;
     nowMs: () => number;
     emitEnvelope: (envelope: MachineLiveStreamRelayEnvelopeV1) => void;
+    getFramePayloadByteLimit?: (envelope: MachineLiveStreamRelayEnvelopeV1, maxFrameBytes: number) => number;
     readActiveControlLease?: (leaseInput: Readonly<{
         streamId: string;
         sourceId: string;
@@ -353,6 +354,12 @@ export function createMachineLiveStreamRelayTerminator(input: Readonly<{
                     startedAtMs: session.session.startedAtMs,
                     expiresAtMs: session.session.expiresAtMs,
                     nowMs: input.nowMs,
+                    ...(input.getFramePayloadByteLimit && startRequest.maxFrameBytes !== undefined ? {
+                        getFramePayloadByteLimit: (frame: MachineLiveStreamFrameV1) => input.getFramePayloadByteLimit?.(frameEnvelope({
+                            sourceMachineId: startRequest.sourceMachineId, targetMachineId: startRequest.targetMachineId,
+                            ...viewerSocketIdEcho(startRequest), frame,
+                        }), startRequest.maxFrameBytes!),
+                    } : {}),
                     offerFrame: (frame) => {
                         if (active.closedReason !== null || expireStream(active)) {
                             return { ok: false, reasonCode: 'stream_closed' };
