@@ -1,3 +1,4 @@
+import type { PublicActionInputById } from '../actions/actionSpecs.js';
 import { z } from 'zod/mini';
 import { compilePluginJsonSchema, isValidPluginJsonSchemaValue } from '../plugins/actions/jsonSchemaValidation.js';
 import { pluginJsonValuesEqual } from '../plugins/contributions/jsonSchemaValues.js';
@@ -47,6 +48,10 @@ export function validateHostInputTypeValue(reference: HostInputTypeReferenceV1, 
   return parsed.success ? { status: 'valid', value: projectNativeJsonValueForTransport(parsed.data) }
     : { status: 'invalid', reasonCode: 'input_type_value_invalid' };
 }
+
+/** The existing options request is also the finite Resource query carrier. */
+export type InputTypeOptionsQueryV1 = Readonly<Pick<PublicActionInputById['action.options.resolve'],
+  'draftInput' | 'fieldPath' | 'query' | 'cursor'>>;
 
 export type ResolvedInputTypeV1 = Readonly<{
   identity: PluginContributionIdentityV1;

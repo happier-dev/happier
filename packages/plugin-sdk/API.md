@@ -1927,6 +1927,7 @@
 | `./providers` | `normalizeProviderCredentialHeaderName` | value | any |
 | `./providers` | `resolveProviderBindingCompatibilityWithFingerprintV1` | value | any |
 | `./providers` | `resolveSessionModelSelectionIntentV1` | value | any |
+| `./resources` | `InputTypeOptionsQueryV1` | type | any |
 | `./resources` | `MAX_PLUGIN_TRANSCRIPT_ACTIVITIES_PER_RESOURCE_V1` | value | any |
 | `./resources` | `MAX_PLUGIN_TRANSCRIPT_ACTIVITY_RESOURCE_BYTES_V1` | value | any |
 | `./resources` | `PLUGIN_TRANSCRIPT_ACTIVITY_CONTENT_TYPE_V1` | value | any |

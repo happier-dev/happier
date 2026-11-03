@@ -1,4 +1,5 @@
 /** @moduleRealm daemon */
+import type { InputTypeOptionsQueryV1 } from '../actions/dtos/pluginActionDtoSupport.generated.js';
 import type {
     PluginResourceContextV1,
     PluginResourceKind,
@@ -54,6 +55,8 @@ export type PluginDynamicResourceInvocationOptionsV1 = Readonly<{
     signal: AbortSignal;
     /** Host-stamped scope and exact admitted physical target/SCM facts; never caller-provided metadata. */
     context: PluginResourceContextV1;
+    /** Finite input-options operands; these never establish Resource authority or a mounted surface. */
+    query?: InputTypeOptionsQueryV1;
     /** Own-plugin Resources in this exact host context. Reads share live demanded snapshots. */
     resources: ResourcesService;
     /** Present only when this dynamic Resource declares an admitted storage.account request. */

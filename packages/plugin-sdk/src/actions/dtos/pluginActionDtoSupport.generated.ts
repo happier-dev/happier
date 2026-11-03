@@ -5686,6 +5686,12 @@ export type EffectiveActionInputField = {
     required: boolean;
     disabled: boolean;
 }>;
+export type InputTypeOptionsQueryV1 = {
+    readonly cursor?: string | undefined;
+    readonly query?: string | undefined;
+    readonly fieldPath?: string | undefined;
+    readonly draftInput?: Record<string, unknown> | undefined;
+};
 export type ActionApprovalRequestCreatedResult = {
     readonly kind: 'approval_request_created';
     readonly artifactId: string;

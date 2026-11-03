@@ -19,7 +19,7 @@ export type { PluginPackagedResourceContributionV2 } from '../services/resources
 export type { PluginPromptAssetDefinition } from '../definePlugin.js';
 export type { PluginResourceContextV1 } from '../services/resources.js';
 export type { PluginResourceDefinition } from '../definePlugin.js';
-export type { PluginResourceKind } from '../resources.js';
+export type { InputTypeOptionsQueryV1, PluginResourceKind } from '../resources.js';
 export type { PromptAssetContribution } from '../resources.js';
 export type { ResourceContribution } from '../resources.js';
 export type { ResourceDescriptor } from '../resources.js';

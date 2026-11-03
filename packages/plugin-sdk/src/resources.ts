@@ -1,4 +1,5 @@
 /** @moduleRealm any */
+export type { InputTypeOptionsQueryV1 } from './actions/dtos/pluginActionDtoSupport.generated.js';
 
 /** @realm any */
 export type {

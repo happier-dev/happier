@@ -28,6 +28,7 @@ const supportBindings = [
   ...['SessionUsageLimitCheckNowRequestV1Input', 'SessionUsageLimitConsumeResetCreditRequestV1Input', 'SessionGoalControlFailureV1'].map(name => ['sessions/work/state/sessionWorkStateRpc.ts', name]),
   ...['SessionTranscriptGetExternalShareableInputV1', 'SessionTranscriptGetExternalShareableResultV1'].map(name => ['actions/actionSpecs.ts', name]),
   ...['ActionInputFieldHint', 'ActionInputHints', 'ActionInputOption', 'ActionInputOptionValue', 'ActionInputPredicate', 'EffectiveActionInputField'].map(name => ['actions/actionInputHintsRuntime.ts', name]),
+  ['inputs/inputTypeRuntime.ts', 'InputTypeOptionsQueryV1'],
   ...['ActionApprovalRequestCreatedResult', 'ActionExecuteResult'].map(name => ['actions/actionExecutionResult.ts', name]),
   ...['ExecutionRunChildChoiceV1', 'ExecutionRunStartFailureDetailsV1'].map(name => ['execution/runs/responseSchemas.ts', name]),
   ['machines/administration/pluginMachineExecutionOriginV1.ts', 'PluginMachineExecutionOriginV1'],
