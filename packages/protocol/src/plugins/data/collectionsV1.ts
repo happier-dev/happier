@@ -24,7 +24,6 @@ import {
 } from '../contributions/strictJsonValue.js';
 import {
   PluginAccountCollectionContributionV1Schema,
-  PluginCollectionFiniteNumberV1Schema,
   PluginCollectionIndexPrefixQuotaV1Schema,
   PluginCollectionIndexV1Schema,
   PluginCollectionMigrationArtifactReferenceV1Schema,
@@ -90,6 +89,10 @@ import type {
   PluginDataCollectionsCapabilities,
 } from '../../features/payload/capabilities/pluginDataCollectionsCapabilities.js';
 import { asProtocolZod } from "../actions/internalProtocolZodAdapter.js";
+import { PluginCollectionIndexScalarValueV1Schema, isPluginCollectionQuerySelectionV1,
+  pluginCollectionQueryShapeV1, type PluginCollectionIndexScalarValueV1 } from './collectionQueryWireV1.js';
+export { PluginCollectionIndexScalarValueV1Schema, PluginCollectionQueryRangeV1Schema,
+  type PluginCollectionIndexScalarValueV1, type PluginCollectionQueryRangeV1 } from './collectionQueryWireV1.js';
 
 export {
   PluginAccountCollectionContributionV1Schema,
@@ -155,7 +158,6 @@ export {
   type PluginCollectionContractRefV1,
 } from './collectionContractRefV1.js';
 
-const FiniteNumberSchema = PluginCollectionFiniteNumberV1Schema;
 const MAX_COLLECTION_INDEXED_STRING_UTF8_BYTES = 256;
 const MAX_COLLECTION_INDEX_TUPLE_PREFIX_BYTES = 2_060;
 export const PLUGIN_COLLECTION_INDEX_SORT_KEY_MAX_BYTES_V1 = 2_318;
@@ -720,15 +722,6 @@ export type PluginCollectionUiQueryTransportResultV1 = z.infer<
   typeof PluginCollectionUiQueryTransportResultV1Schema
 >;
 
-/** Scalar inputs are validated against the selected admitted index by the canonical query owner. */
-export const PluginCollectionIndexScalarValueV1Schema = lazyZodSchema(() => z.union([
-  z.null(),
-  z.boolean(),
-  z.string(),
-  FiniteNumberSchema,
-]));
-export type PluginCollectionIndexScalarValueV1 = z.infer<typeof PluginCollectionIndexScalarValueV1Schema>;
-
 /**
  * The authenticated Collection transport is one shared contract for daemon
  * and native clients. The SDK host stamps qualified identity and writer
@@ -968,12 +961,6 @@ export const PluginCollectionGetResultV1Schema = lazyZodSchema(() => z.strictObj
 }));
 export type PluginCollectionGetResultV1 = z.infer<typeof PluginCollectionGetResultV1Schema>;
 
-export const PluginCollectionQueryRangeV1Schema = lazyZodSchema(() => z.strictObject({
-  lower: z.optional(PluginCollectionIndexScalarValueV1Schema),
-  upper: z.optional(PluginCollectionIndexScalarValueV1Schema),
-}).check(z.refine((value) => value.lower !== undefined || value.upper !== undefined, 'A collection query range needs a lower or upper bound.')));
-export type PluginCollectionQueryRangeV1 = z.infer<typeof PluginCollectionQueryRangeV1Schema>;
-
 /**
  * The host stamps the qualified collection identity; plugin authors can only
  * supply bounded logical index values, order, cursor, and page size. Contract
@@ -984,12 +971,9 @@ export const PluginCollectionQueryRequestV1Schema = lazyZodSchema(() => z.strict
   collectionId: asProtocolZod(PluginContributionLocalIdSchema),
   readerContext: PluginCollectionContractRefV1Schema,
   indexId: PluginCollectionMemberNameV1Schema,
-  prefix: z._default(z.array(PluginCollectionIndexScalarValueV1Schema).check(z.maxLength(4)), []),
-  range: z.optional(PluginCollectionQueryRangeV1Schema),
-  order: z.enum(['asc', 'desc']),
-  cursor: zMini.optional(OpaqueCollectionCursorSchema),
-  limit: z._default(z.number().check(z.int(), z.minimum(1), z.maximum(PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1)), 50),
-}));
+  ...pluginCollectionQueryShapeV1(),
+}).check(z.refine(isPluginCollectionQuerySelectionV1,
+  'A collection query supplies either prefix or prefixes.')));
 export type PluginCollectionQueryRequestV1 = z.infer<typeof PluginCollectionQueryRequestV1Schema>;
 
 export const PluginCollectionQueryResultV1Schema = lazyZodSchema(() => z.strictObject({

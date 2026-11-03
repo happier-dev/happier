@@ -16,8 +16,9 @@ import { getPluginCollection, queryPluginCollection, queryPluginCollectionUiQuer
 import { createDbMaintenanceClient, db, initDbMysql, initDbPostgres } from "@/storage/db";
 import { inTx, type Tx } from "@/storage/inTx";
 import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
+import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 
-type ContractProvider = "postgres" | "mysql";
+type ContractProvider = "postgres" | "mysql" | "sqlite";
 
 const BINARY_INDEX_COLLECTION_MANIFEST = {
     schemaVersion: 2,
@@ -68,6 +69,7 @@ function resolveContractProvider(): ContractProvider {
         .toLowerCase();
     if (raw === "postgres" || raw === "postgresql") return "postgres";
     if (raw === "mysql") return "mysql";
+    if (raw === "sqlite") return "sqlite";
     throw new Error(`Unsupported collection binary-index contract provider: ${raw}`);
 }
 
@@ -281,8 +283,13 @@ async function seedBinaryIndexCollectionAccount(accountId: string): Promise<Read
 describe("PluginCollectionIndexEntry binary compound-key DB contract", () => {
     const provider = resolveContractProvider();
     let connected = false;
+    let sqlite: LightSqliteHarness | undefined;
 
     beforeAll(async () => {
+        if (provider === "sqlite") {
+            sqlite = await createLightSqliteHarness({ tempDirPrefix: "happier-collection-prefix-set-" });
+            return;
+        }
         if (!process.env.DATABASE_URL) throw new Error("Missing DATABASE_URL for DB contract test");
         if (provider === "mysql") await initDbMysql();
         else initDbPostgres();
@@ -291,11 +298,56 @@ describe("PluginCollectionIndexEntry binary compound-key DB contract", () => {
     });
 
     afterAll(async () => {
+        if (sqlite) await sqlite.close();
         if (connected) await db.$disconnect();
     });
 
-    it("uses the exact native binary column definition", async () => {
+    it.skipIf(provider === "sqlite")("uses the exact native binary column definition", async () => {
         await assertPhysicalColumnContract(provider);
+    });
+
+    it("reads a prefix set in one indexed storage selection with set-bound paging", async () => {
+        const accountId = `collection-prefix-set-${randomUUID()}`;
+        const { readerContext, firstRowId, secondRowId } = await seedBinaryIndexCollectionAccount(accountId);
+        const allNul = "\u0000".repeat(256);
+        const prefixes = Array.from({ length: 1_000 }, (_, index) => [`missing-${index}`]);
+        prefixes.push([allNul, allNul, allNul, allNul]);
+        // Duplicate/overlapping predicates must not duplicate a stored row.
+        prefixes.push([allNul, allNul, allNul, allNul]);
+        let selections = 0;
+        const transaction = db.$transaction;
+        db.$transaction = new Proxy(transaction, { apply(target, receiver, args: unknown[]) {
+            const callback = args[0];
+            if (typeof callback !== "function") return Reflect.apply(target, receiver, args);
+            return Reflect.apply(target, receiver, [async (tx: Tx) => callback(new Proxy(tx, { get(inner, property, innerReceiver) {
+                if (property !== "$queryRaw") return Reflect.get(inner, property, innerReceiver);
+                return (...queryArgs: unknown[]) => {
+                    const statement = queryArgs[0];
+                    if (typeof statement === "object" && statement !== null && "sql" in statement
+                        && typeof statement.sql === "string" && statement.sql.includes("PluginCollectionIndexEntry")) selections++;
+                    return Reflect.apply(inner.$queryRaw, inner, queryArgs);
+                };
+            } })), ...args.slice(1)]);
+        } });
+        try {
+            const request = { indexId: "by-four-strings", prefix: [], prefixes, order: "asc" as const, limit: 1 };
+            const first = await queryPluginCollection({ accountId, request: binaryIndexQueryRequest(readerContext, request) });
+            expect(first.rows.map(row => row.rowId)).toEqual([firstRowId]);
+            // SQLite's native snapshot connection bypasses Prisma's transaction
+            // callback; the SQL count is measured on the pooled providers.
+            if (provider !== "sqlite") expect(selections).toBe(1);
+            const next = await queryPluginCollection({ accountId, request: binaryIndexQueryRequest(readerContext, {
+                ...request, cursor: first.nextCursor,
+            }) });
+            expect(next.rows.map(row => row.rowId)).toEqual([secondRowId]);
+            expect(next.nextCursor).toBeUndefined();
+            await expect(queryPluginCollection({ accountId, request: binaryIndexQueryRequest(readerContext, {
+                ...request, prefixes: [["different"]], cursor: first.nextCursor,
+            }) })).rejects.toMatchObject({ code: "collection_cursor_invalid" });
+        } finally {
+            db.$transaction = transaction;
+            await db.account.deleteMany({ where: { id: accountId } });
+        }
     });
 
     it.skipIf(provider !== "postgres").each(["get", "query", "ui"] as const)(

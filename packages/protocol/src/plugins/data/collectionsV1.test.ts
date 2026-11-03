@@ -1198,6 +1198,14 @@ describe('Plugin Account Collection contracts', () => {
       order: 'asc',
       contractDigest: 'forged-authority',
     }).success).toBe(false);
+    expect(PluginCollectionQueryRequestV1Schema.parse({
+      pluginId: 'example.tasks', collectionId: 'tasks', readerContext,
+      indexId: 'by-status', prefixes: [['open'], ['closed']], order: 'asc',
+    })).toMatchObject({ prefixes: [['open'], ['closed']] });
+    expect(PluginCollectionQueryRequestV1Schema.safeParse({
+      pluginId: 'example.tasks', collectionId: 'tasks', readerContext,
+      indexId: 'by-status', prefix: ['open'], prefixes: [['closed']], order: 'asc',
+    }).success).toBe(false);
     expect(PluginCollectionQueryRequestV1Schema.safeParse({
       pluginId: 'example.tasks',
       collectionId: 'tasks',

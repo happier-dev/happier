@@ -73,6 +73,7 @@ export async function readPluginCollectionIndexEntriesByRawOrdinalKey(input: Rea
     tx: RawOrdinalIndexReadClient;
     indexStateId: string;
     bounds: Readonly<{ lower?: Uint8Array; upper?: Uint8Array; after?: Uint8Array }>;
+    intervals?: readonly Readonly<{ lower?: Uint8Array; upper?: Uint8Array }>[];
     order: "asc" | "desc";
     take: number;
 }>): Promise<readonly PluginCollectionRawOrdinalIndexEntry[] | null> {
@@ -84,9 +85,34 @@ export async function readPluginCollectionIndexEntriesByRawOrdinalKey(input: Rea
         value: { indexStateId: input.indexStateId, ...input.bounds },
     });
     const direction = sql.prisma.raw(input.order === "asc" ? "ASC" : "DESC");
+    // One parameter carries the entire interval set: bind count stays constant
+    // below PostgreSQL's 32,767-parameter boundary, independently of demand.
+    // Decode the parameter's bounds, never the indexed key, retaining native
+    // binary range comparisons on all supported database providers.
+    let selection = sql.prisma.empty;
+    if (input.intervals !== undefined) {
+        const intervals = JSON.stringify(input.intervals.map(interval => ({
+            lo: interval.lower === undefined ? null : Buffer.from(interval.lower).toString("hex"),
+            hi: interval.upper === undefined ? null : Buffer.from(interval.upper).toString("hex"),
+        })));
+        const provider = getDbProviderFromEnv(process.env, "postgres");
+        const values = provider === "mysql"
+            ? sql.prisma.sql`(SELECT UNHEX(lo) AS lo, UNHEX(hi) AS hi FROM JSON_TABLE(${intervals}, '$[*]' COLUMNS (lo TEXT PATH '$.lo', hi TEXT PATH '$.hi')) AS decoded_prefixes)`
+            : provider === "sqlite"
+                ? sql.prisma.sql`(SELECT unhex(json_extract(value, '$.lo')) AS lo, unhex(json_extract(value, '$.hi')) AS hi FROM json_each(${intervals}))`
+                : sql.prisma.sql`(SELECT decode(lo, 'hex') AS lo, decode(hi, 'hex') AS hi FROM jsonb_to_recordset(${intervals}::jsonb) AS decoded_prefixes(lo text, hi text))`;
+        const lower = input.intervals.every(interval => interval.lower !== undefined)
+            ? sql.prisma.sql`${sql.encodedSortKey} >= prefix_set.lo`
+            : sql.prisma.sql`(prefix_set.lo IS NULL OR ${sql.encodedSortKey} >= prefix_set.lo)`;
+        const upper = input.intervals.every(interval => interval.upper !== undefined)
+            ? sql.prisma.sql`${sql.encodedSortKey} < prefix_set.hi`
+            : sql.prisma.sql`(prefix_set.hi IS NULL OR ${sql.encodedSortKey} < prefix_set.hi)`;
+        selection = sql.prisma.sql`JOIN ${values} AS prefix_set ON ${lower} AND ${upper}`;
+    }
     const rows = await input.tx.$queryRaw<unknown[]>(sql.prisma.sql`
         SELECT ${sql.encodedSortKey} AS ${sql.encodedSortKey}, ${sql.rowId} AS ${sql.rowId}, ${sql.rowRevision} AS ${sql.rowRevision}
         FROM ${sql.table}
+        ${selection}
         WHERE ${sql.prisma.join(conditions, " AND ")}
         ORDER BY ${sql.encodedSortKey} ${direction}
         LIMIT ${input.take}

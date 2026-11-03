@@ -112,6 +112,8 @@ export type PluginCollectionRow<TValue extends Readonly<Record<string, JsonValue
 export type PluginCollectionQuery<TIndexId extends string = string> = Readonly<{
     index: TIndexId;
     prefix?: readonly PluginCollectionIndexScalarValueV1[];
+    /** Union of exact index prefixes in one authorized paged read; cannot accompany a nonempty prefix. */
+    prefixes?: readonly (readonly PluginCollectionIndexScalarValueV1[])[];
     range?: Readonly<{
         lower?: PluginCollectionIndexScalarValueV1;
         upper?: PluginCollectionIndexScalarValueV1;

@@ -20,6 +20,7 @@ const COLLECTION_CURSOR_HEADER_BYTES = 1 + COLLECTION_CURSOR_FINGERPRINT_BYTES +
 type QueryBounds = Readonly<{
     lower?: Uint8Array;
     upper?: Uint8Array;
+    intervals?: readonly Readonly<{ lower?: Uint8Array; upper?: Uint8Array }>[];
     queryFingerprint: string;
     empty: boolean;
 }>;
@@ -398,6 +399,7 @@ async function readCollectionIndexPageInTx(input: Readonly<{
             tx: input.tx,
             indexStateId: indexState.id,
             bounds: entryBounds,
+            intervals: input.bounds.intervals,
             order: input.order,
             take: input.limit + 1,
         });
@@ -691,6 +693,31 @@ function buildDirectQueryBounds(input: Readonly<{
     const index = input.contract.indexes.find((candidate) => candidate.id === input.request.indexId);
     if (!index || input.request.prefix.length > index.fields.length) {
         throw new PluginCollectionReadOperationError("collection_query_invalid");
+    }
+    if (input.request.prefixes !== undefined) {
+        if (input.request.prefix.length > 0) throw new PluginCollectionReadOperationError("collection_query_invalid");
+        const intervals = input.request.prefixes.map(prefix => buildDirectQueryBounds({
+            ...input, request: { ...input.request, prefix, prefixes: undefined },
+        })).filter(bounds => !bounds.empty).sort((left, right) => left.lower === undefined ? -1
+            : right.lower === undefined ? 1 : comparePluginCollectionIndexSortKeysV1(left.lower, right.lower));
+        const merged: Array<{ lower?: Uint8Array; upper?: Uint8Array }> = [];
+        for (const interval of intervals) {
+            const previous = merged[merged.length - 1];
+            if (previous !== undefined && (previous.upper === undefined || interval.lower === undefined
+                || comparePluginCollectionIndexSortKeysV1(interval.lower, previous.upper) <= 0)) {
+                if (interval.upper === undefined || (previous.upper !== undefined
+                    && comparePluginCollectionIndexSortKeysV1(interval.upper, previous.upper) > 0)) previous.upper = interval.upper;
+            } else merged.push({ lower: interval.lower, upper: interval.upper });
+        }
+        return {
+            intervals: merged,
+            empty: merged.length === 0,
+            queryFingerprint: computeCanonicalDomainSeparatedDigest("happier.plugin.collection-query-set.cursor.v1", [
+                input.accountId, input.contract.pluginId, input.contract.collectionId, input.contract.contractDigest,
+                input.request.indexId, input.request.order,
+                ...merged.flatMap(interval => [interval.lower ?? new Uint8Array(), interval.upper ?? new Uint8Array()]),
+            ]),
+        };
     }
     const prefix = input.request.prefix.map((value, position) => {
         const field = index.fields[position];

@@ -7,6 +7,7 @@ import { compilePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/j
 import {
     FeaturesResponseSchema,
     PLUGIN_COLLECTION_DEFAULT_DEPLOYMENT_LIMITS_V1,
+    PLUGIN_COLLECTION_QUERY_HTTP_PATH_V1,
     PluginCollectionMutationRequestV1Schema,
     convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1,
     createAccountScopedCryptoMaterialSnapshotV1,
@@ -658,13 +659,14 @@ describe('Account plugin Data storage host', () => {
             rowId: `task-${index}`, revision: 1, projection: { status: 'open' },
             content: { t: 'plain', v: { privateNote: 'retained', retired: true } },
         }));
+        const requests: unknown[] = [];
         const host = createAccountPluginDataStorageHost({
             contracts: [contract], readCredentials: async () => plainCredentials,
             isCurrentAccount: () => true, resolveAccountScopeKey: () => ACCOUNT_SCOPE_KEY,
             resolveBaseUrl: () => 'https://data.example.test',
             resolveAccountEncryptionCurrentness: async () => currentnessFor(plainCredentials),
             http: { get: async () => ({ status: 200, data: {} }),
-                post: async () => ({ status: 200, data: { rows, changeCursor: 1 } }) },
+                post: async (_url, body) => { requests.push(body); return { status: 200, data: { rows, changeCursor: 1 } }; } },
         });
         const account = host.bind({ pluginId: PLUGIN_ID, occurrenceId: '1',
             signal: new AbortController().signal, isOccurrenceCurrent: () => true });
@@ -679,7 +681,10 @@ describe('Account plugin Data storage host', () => {
         Object.defineProperty(validate, 'errors', { configurable: true,
             get: () => errors, set: (value: unknown) => { errors = value; admissions++; } });
         try {
-            const page = await collection.query({ index: 'by-status', prefix: ['open'], order: 'asc', limit: 50 });
+            const prefixes = [['open'], ['closed']];
+            const page = await collection.query({ index: 'by-status', prefixes, order: 'asc', limit: 50 });
+            expect(requests.map(body => typeof body === 'string' ? JSON.parse(body) : body))
+                .toEqual([expect.objectContaining({ indexId: 'by-status', prefixes })]);
             expect(page.rows).toHaveLength(rows.length);
             for (const row of page.rows) expect(row.value).toEqual({
                 id: row.rowId, status: 'open', privateNote: 'retained',
@@ -689,6 +694,59 @@ describe('Account plugin Data storage host', () => {
             if (descriptor) Object.defineProperty(validate, 'errors', descriptor);
             else Reflect.deleteProperty(validate, 'errors');
         }
+    });
+
+    it.each([plainCredentials, encryptedCredentials])('keeps 1000-prefix Collection pages demand-exact and rejects retired authority on $token', async (credentials) => {
+        const prefixes = [['open'], ...Array.from({ length: 999 }, (_, index) => [`unmatched-${index}`])];
+        const content = credentials.encryption === null
+            ? { t: 'plain' as const, v: { privateNote: 'selected page' } }
+            : { t: 'encrypted' as const, c: sealPluginCollectionPrivatePayloadV1({
+                payload: { privateNote: 'selected page' },
+                material: { type: 'dataKey', machineKey: encryptedMachineKey },
+                randomBytes: length => new Uint8Array(length).fill(3),
+            }) };
+        let current = true;
+        let gets = 0;
+        const requests: unknown[] = [];
+        const collection = bindHost({ credentials, isCurrentAccount: () => current,
+            get: async () => { gets++; throw new Error('Query must not open row bodies individually'); },
+            post: async (url, body) => {
+                expect(url).toBe(`https://data.example.test${PLUGIN_COLLECTION_QUERY_HTTP_PATH_V1}`);
+                requests.push(JSON.parse(body));
+                return { status: 200, data: {
+                    rows: Array.from({ length: 200 }, (_, index) => ({
+                        rowId: `task-${(requests.length - 1) * 200 + index}`, revision: 1,
+                        projection: { status: 'open' }, content,
+                    })),
+                    ...(requests.length < 5 ? { nextCursor: `page-${requests.length}` } : {}),
+                    changeCursor: 10,
+                } };
+            },
+        }).collection(collectionDefinition);
+        let cursor: string | undefined;
+        const rowIds = new Set<string>();
+        for (let pageNumber = 0; pageNumber < 5; pageNumber++) {
+            const page = await collection.query({ index: 'by-status', prefixes, order: 'asc', limit: 200,
+                ...(cursor ? { cursor } : {}) });
+            expect(requests).toHaveLength(pageNumber + 1);
+            expect(requests[pageNumber]).toMatchObject({ indexId: 'by-status', prefixes, order: 'asc', limit: 200,
+                ...(cursor ? { cursor } : {}) });
+            expect(page.rows).toHaveLength(200);
+            for (const row of page.rows) {
+                expect(row.value).toEqual({ id: row.rowId, status: 'open', privateNote: 'selected page' });
+                rowIds.add(row.rowId);
+            }
+            expect(page.changeCursor).toBe(10);
+            cursor = page.nextCursor;
+        }
+        expect(cursor).toBeUndefined();
+        expect(rowIds.size).toBe(1000);
+        expect(gets).toBe(0);
+        current = false;
+        await expect(collection.query({ index: 'by-status', prefixes, order: 'asc', limit: 200 }))
+            .rejects.toMatchObject({ code: 'plugin_account_storage_unavailable' });
+        expect(requests).toHaveLength(5);
+        expect(gets).toBe(0);
     });
 
     it.each([plainCredentials, encryptedCredentials])('validates stored Collection rows once per revision across invocation reads on $token', async (credentials) => {

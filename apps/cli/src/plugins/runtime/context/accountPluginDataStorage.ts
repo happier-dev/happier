@@ -2218,6 +2218,7 @@ export function createAccountPluginDataStorageHost(params: Readonly<{
                                 },
                                 indexId: requestInput.index,
                                 prefix: requestInput.prefix ?? [],
+                                ...(requestInput.prefixes === undefined ? {} : { prefixes: requestInput.prefixes }),
                                 ...(requestInput.range ? { range: requestInput.range } : {}),
                                 order: requestInput.order,
                                 ...(requestInput.cursor ? { cursor: requestInput.cursor } : {}),
