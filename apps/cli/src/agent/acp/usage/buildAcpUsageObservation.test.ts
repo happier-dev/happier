@@ -71,8 +71,7 @@ it('keeps context-only updates out of billed token measurements through the lega
     expect(measurement).not.toHaveProperty('tokens');
     if (cost) expect(measurement?.cost).toMatchObject({ reportedUsd: 0.25 });
     const report = buildLegacyUsageReportFromUsageObservation({ sessionId: 'session', observation: observation! });
-    if (!cost) expect(report).toBeNull();
-    else expect(report).toMatchObject({ tokens: { total: 0 }, cost: { total: 0.25 } });
+    expect(report).toBeNull();
   }
 });
 

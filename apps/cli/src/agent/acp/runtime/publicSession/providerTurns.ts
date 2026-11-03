@@ -16,6 +16,7 @@ export function createPublicProviderTurns<Parent extends Readonly<{ turnId: stri
 }>): Readonly<{ capture(toolCallId: string, parent: Parent): void; lifecycle: AcpProviderTurnLifecycle }> {
   const parents = new Map<string, Parent | null>();
   const tasks = new Map<string, Parent | null>();
+  /** Release captured parents by turn so the host can retire matching tool witnesses without affecting other admitted turns. */
   const releaseToolCalls = (ids: readonly string[]) => {
     const grouped = new Map<string, string[]>();
     for (const id of ids) {
@@ -31,6 +32,7 @@ export function createPublicProviderTurns<Parent extends Readonly<{ turnId: stri
     }
   };
   return {
+    /** Retain the admitted parent snapshot; ambiguous tool identifiers cannot supply continuation authority. */
     capture(toolCallId, parent) {
       const previous = parents.get(toolCallId);
       // Observer identifiers must remain unambiguous across live source turns.
@@ -47,6 +49,7 @@ export function createPublicProviderTurns<Parent extends Readonly<{ turnId: stri
     lifecycle: {
       foregroundActive: () => !params.canBegin(),
       flush: params.flush,
+      /** Register each native task once against an unambiguous parent captured by the public composer. */
       registerContinuation({ id, parentToolCallId }) {
         const parent = parents.get(parentToolCallId);
         if (!params.isCurrent() || !readNonBlankOpaqueIdentifier(id) || !parent || tasks.has(id)) return false;
@@ -54,6 +57,7 @@ export function createPublicProviderTurns<Parent extends Readonly<{ turnId: stri
         params.publish({ kind: 'provider-continuation-registered', continuationId: id, parentTurnId: parent.turnId, parentToolCallId });
         return true;
       },
+      /** Consume registered parent metadata only when the composer is idle, preserving its admitted policy for the descendant. */
       beginContinuation({ id, turnId }) {
         const parent = tasks.get(id);
         if (!params.isCurrent() || !params.canBegin() || !parent || !readNonBlankOpaqueIdentifier(turnId)) return false;
@@ -62,6 +66,7 @@ export function createPublicProviderTurns<Parent extends Readonly<{ turnId: stri
         return true;
       },
       releaseToolCalls,
+      /** Revoke outstanding continuation and parent witnesses before discarding this source's captured metadata. */
       dispose() {
         for (const [continuationId, parent] of tasks) {
           if (parent) params.publish({ kind: 'provider-continuation-released', continuationId });

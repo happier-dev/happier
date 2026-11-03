@@ -1167,6 +1167,7 @@ async function createPublicAcpConversationFromAwaitableAdapter(
     observeTransportTermination({ kind: 'connectionLost', detail: loss.detail });
   };
 
+  /** Settle the captured turn only after its projected output and publications drain, preserving the barrier before successor admission. */
   function observeTurnCompletion(turn: ActiveTurn): void {
       void backend.waitForResponseComplete().then(async () => {
         await backendMessageProjectionTail;

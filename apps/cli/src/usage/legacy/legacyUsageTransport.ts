@@ -148,6 +148,7 @@ export function buildTokenCountSessionMessageFromUsageObservation(
     };
 }
 
+/** Adapt observations to scalar replacement reports without promoting partial context updates to full snapshots. */
 export function buildLegacyUsageReportFromUsageObservation(params: Readonly<{
     sessionId: string;
     observation: UsageObservationBoundaryInput;
@@ -158,6 +159,8 @@ export function buildLegacyUsageReportFromUsageObservation(params: Readonly<{
     // servers replace the session key and cannot reconcile the two; retain
     // their unchanged cumulative report instead of letting a delta replace it.
     if (observation.source === 'codex-app-server-response-usage') return null;
+    // Scalar upserts replace tokens and cost together; partial context costs stay in v2 accounting and telemetry.
+    if (!observation.tokens && (observation.contextUsedTokens != null || observation.contextWindowTokens != null)) return null;
     // Context stays on transcript/runtime messages, never in consumed-token accounting.
     const tokens = observation.tokens ? getCompatibleLegacyTokens(observation) : { total: 0 };
     const cost = createLegacyNumberMap();

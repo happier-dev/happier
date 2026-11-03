@@ -732,6 +732,7 @@ export class AcpBackend implements CatalogAcpBackend {
     }
   }
 
+  /** Detach native resources before killing the child, while revoked observer cleanup proceeds independently. */
   private async cleanupInitializedProcessConnection(params: { graceMs: number }): Promise<void> {
     const sourceStopped = this.stopProviderTurnSource();
     const proc = this.process;
@@ -773,6 +774,7 @@ export class AcpBackend implements CatalogAcpBackend {
     await sourceStopped;
   }
 
+  /** Capture the native launch environment for the journal source and release partial transport setup on initialization failure. */
   private async createConnectionAndInitialize(params: { operationId: string }): Promise<{ initTimeout: number }> {
     logger.debug(`[AcpBackend] Starting transport + initializing connection (op=${params.operationId})`);
 
@@ -1284,6 +1286,7 @@ export class AcpBackend implements CatalogAcpBackend {
   }
 }
 
+  /** Return a native session only after required mode and journal ownership are established; tear down partial startup on failure. */
   async startSession(): Promise<StartSessionResult> {
     if (this.disposed) {
       throw new Error('Backend has been disposed');
@@ -1361,6 +1364,7 @@ export class AcpBackend implements CatalogAcpBackend {
     }
   }
 
+  /** Resume the requested native session with required mode and source ownership; never substitute a new session. */
   async loadSession(sessionId: SessionId): Promise<StartSessionResult> {
     if (this.disposed) {
       throw new Error('Backend has been disposed');
@@ -1720,6 +1724,7 @@ export class AcpBackend implements CatalogAcpBackend {
     return new Set(this.toolCalls.activeCalls().map((call) => call.toolCallId));
   }
 
+  /** Normalize updates through shared publishers, excluding competing ACP prompt output while a journal continuation owns the turn. */
   private async handleSessionUpdate(params: SessionNotification, providerTurn = false): Promise<void> {
     if (this.providerTurns?.isActive() && !providerTurn && isPromptTurnSessionUpdate(params.update)) return;
     const raw = asRecord(params) ?? {};
@@ -1885,6 +1890,7 @@ export class AcpBackend implements CatalogAcpBackend {
 
   async catchUpProviderTurns(): Promise<void> { await this.providerTurns?.catchUp(); }
 
+  /** Require the declared native safety mode even when mode UI is disabled, and reject providers that do not advertise it. */
   private async applyInitialSessionMode(response: unknown): Promise<void> {
     const modeId = this.options.initialSessionModeId;
     if (!modeId) return;
@@ -2167,6 +2173,7 @@ export class AcpBackend implements CatalogAcpBackend {
     });
   }
 
+  /** Close the current generation and its pending permissions before resolving the public composer's completion waiter. */
   private finalizeTurnOutcome(outcome: AcpTurnOutcome): void {
     this.clearTurnTimers();
     this.clearResponseCompletionTimeout();
@@ -2323,6 +2330,7 @@ export class AcpBackend implements CatalogAcpBackend {
     this.idleRejecter = null;
   }
 
+  /** Reject overlapping prompt, continuation or cancellation ownership before dispatch, then preserve evidence of provider acceptance. */
   async sendPrompt(
     sessionId: SessionId,
     prompt: string | readonly ContentBlock[],
@@ -3005,6 +3013,7 @@ export class AcpBackend implements CatalogAcpBackend {
     }
   }
 
+  /** Apply foreground idle heuristics only when no provider continuation owns completion and its prompt response has settled. */
   private emitIdleStatus(): void {
     if (this.providerTurns?.isActive()) return;
     if (this.waitingForResponse && this.pendingPromptResponseTurnGeneration === this.turnGeneration) {
@@ -3042,6 +3051,7 @@ export class AcpBackend implements CatalogAcpBackend {
     this.finalizeIdleStatus();
   }
 
+  /** Schedule foreground quiet-period completion without allowing tool inactivity to end a journal-owned continuation. */
   private scheduleIdleStatusAfterToolCompletion(): void {
     if (this.providerTurns?.isActive()) return;
     if (this.toolCalls.activeCalls().length > 0) return;
@@ -3119,6 +3129,7 @@ export class AcpBackend implements CatalogAcpBackend {
     this.emit({ type: 'status', status: 'stopped', detail: 'Cancelled by user' });
   }
 
+  /** Serialize whole-session cancellation for provider continuations; ordinary prompt cancellation retains its existing settlement path. */
   async cancel(sessionId: SessionId): Promise<void> {
     if (this.acpSessionId === sessionId) {
       if (this.providerCancellation) { await this.providerCancellation; return; }

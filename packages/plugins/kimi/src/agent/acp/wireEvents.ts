@@ -50,6 +50,7 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
 }
 
+/** Omit native hidden-output markers before projecting tool content into the shared transcript representation. */
 function textContent(value: unknown): ToolCallContent[] {
   if (value === null || value === undefined || value === '') return [];
   if (Array.isArray(value) && value.some(part => asRecord(part)?.__kind === 'acp-hide-output')) return [];

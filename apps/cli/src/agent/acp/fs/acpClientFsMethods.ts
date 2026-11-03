@@ -56,6 +56,7 @@ export function buildInitializeRequest(params: {
   };
 }
 
+/** Apply workspace and permission policy to client filesystem calls, rechecking captured turn authority after I/O. */
 export function createAcpClientFsMethods(params: {
   cwd: string;
   permissionHandler?: AcpPermissionHandler;

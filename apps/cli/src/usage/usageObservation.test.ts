@@ -345,7 +345,7 @@ describe('usageObservation', () => {
         expect(message?.contextSnapshot).toEqual(contextSnapshot);
     });
 
-    it('preserves cost without billing context tokens in a legacy usage report', () => {
+    it.each([true, false])('omits partial context costs (%s) while retaining standalone cost reports', withContext => {
         const report = buildLegacyUsageReportFromUsageObservation({
             sessionId: 'sess-1',
             observation: {
@@ -358,11 +358,15 @@ describe('usageObservation', () => {
                 cost: {
                     total: 0.42,
                 },
-                contextUsedTokens: 123,
-                contextWindowTokens: 1000,
+                contextUsedTokens: withContext ? 123 : null,
+                contextWindowTokens: withContext ? 1000 : null,
             },
         });
 
+        if (withContext) {
+            expect(report).toBeNull();
+            return;
+        }
         expect(report).toEqual({
             key: 'opencode-session',
             sessionId: 'sess-1',

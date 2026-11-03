@@ -63,6 +63,7 @@ export class AcpProviderTurns {
     ]);
   }
 
+  /** Flush native evidence and composer publication before admission, rejecting if the captured source retires during either wait. */
   async catchUp(permissionToolCallId?: string): Promise<void> {
     const source = this.source;
     const lifetime = this.lifetime;
@@ -82,6 +83,7 @@ export class AcpProviderTurns {
     assertCurrent();
   }
 
+  /** Attach one source to the current native session; all callbacks and serialized updates lose authority when its lifetime ends. */
   async start(): Promise<void> {
     await this.stop();
     const sessionId = this.driver.sessionId();
