@@ -3,7 +3,7 @@ import type { StoreApi } from 'zustand/vanilla';
 import { voiceSessionBindingStore } from './voiceConversationBindingStore';
 import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString';
 import type { VoiceConversationTargeting } from '@/voice/session/types';
-import type { VoiceConversationBindingResolution, VoiceSessionBinding } from './voiceConversationBindingTypes';
+import type { VoiceConversationBindingResolution, VoiceSessionBinding, VoiceConversationSelection } from './voiceConversationBindingTypes';
 import { resolveVoiceConversationNavigationAddress } from './resolveVoiceConversationNavigationAddress';
 import {
     areSessionAddressesEqual,
@@ -52,6 +52,8 @@ export function createVoiceSessionBindingManager(deps: Readonly<{
     resolveBinding: (params: Readonly<{
         adapterId: string;
         controlSessionId: string;
+        conversationSelection?: VoiceConversationSelection;
+        onConversationSelection?: (selection: VoiceConversationSelection) => void;
         requestedTargetSessionId?: string | null;
         requestedTargetServerId?: string | null;
         signal?: AbortSignal;
@@ -81,6 +83,8 @@ export function createVoiceSessionBindingManager(deps: Readonly<{
     const ensureBound = async (params: Readonly<{
         adapterId: string;
         controlSessionId: string;
+        conversationSelection?: VoiceConversationSelection;
+        onConversationSelection?: (selection: VoiceConversationSelection) => void;
         requestedTargetSessionId?: string | null;
         requestedTargetServerId?: string | null;
         signal?: AbortSignal;
@@ -97,6 +101,8 @@ export function createVoiceSessionBindingManager(deps: Readonly<{
             requestedTargetSessionId,
             requestedTargetServerId: params.requestedTargetServerId,
             signal: params.signal,
+            conversationSelection: params.conversationSelection,
+            onConversationSelection: params.onConversationSelection,
         });
         params.signal?.throwIfAborted();
         if (!resolution) return null;
@@ -104,6 +110,7 @@ export function createVoiceSessionBindingManager(deps: Readonly<{
             // An exact synced binding is discovery, not local admission, until this
             // explicit Start binds it on this client. Later remote writes cannot steal it.
             store.getState().bind(existing);
+            params.onConversationSelection?.({ kind: 'continue', conversationSessionAddress: existing.conversationSessionAddress });
             return existing;
         }
 
@@ -121,6 +128,7 @@ export function createVoiceSessionBindingManager(deps: Readonly<{
         await Promise.resolve(persistBinding(nextBinding));
         params.signal?.throwIfAborted();
         store.getState().bind(nextBinding);
+        params.onConversationSelection?.({ kind: 'continue', conversationSessionAddress: nextBinding.conversationSessionAddress });
 
         if (
             previous

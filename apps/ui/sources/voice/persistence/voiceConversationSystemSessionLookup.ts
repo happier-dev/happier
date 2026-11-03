@@ -1,10 +1,6 @@
 import { readSystemSessionMetadataFromMetadata } from '@happier-dev/protocol/sessions/control/contract';
 import {
     isVoiceConversationCustodySessionMetadata as isFullVoiceConversationCustodySessionMetadata,
-    isVoiceConversationSystemSessionMetadata,
-    VOICE_CONVERSATION_SYSTEM_SESSION_KEY,
-    VOICE_CONVERSATION_RETIRED_SYSTEM_SESSION_KEY,
-    VOICE_CONVERSATION_LEGACY_SYSTEM_SESSION_KEY,
 } from '@happier-dev/protocol/voice/sessionBinding';
 
 import { readExternalSessionLink } from '@/sync/domains/session/external/readExternalSessionLink';
@@ -16,16 +12,6 @@ export {
     VOICE_CONVERSATION_RETIRED_SYSTEM_SESSION_KEY,
     VOICE_CONVERSATION_LEGACY_SYSTEM_SESSION_KEY,
 } from '@happier-dev/protocol/voice/sessionBinding';
-
-export type VoiceConversationSystemSessionCandidate = Readonly<{
-    session: any;
-    sessionId: string;
-    metadata: unknown;
-    updatedAt: number;
-    legacyLinked: boolean;
-    legacySystemKey: boolean;
-    reusable: boolean;
-}>;
 
 /**
  * Activity custody includes retired Voice sessions while they still carry
@@ -40,12 +26,6 @@ export function isVoiceConversationCustodySessionMetadata(metadata: unknown): bo
         && 'systemSessionKind' in metadata && metadata.systemSessionKind === 'voice_custody';
 }
 
-function hasLegacyVoiceConversationSystemSessionKey(metadata: unknown): boolean {
-    const systemSession = readSystemSessionMetadataFromMetadata({ metadata });
-    return systemSession?.hidden === true
-        && String(systemSession.key ?? '').trim() === VOICE_CONVERSATION_LEGACY_SYSTEM_SESSION_KEY;
-}
-
 export function resolveVoiceConversationSessionMetadataFromState(state: any, sessionId: string): unknown {
     return readVoiceSessionOwnerMetadataFromState(state, sessionId);
 }
@@ -54,77 +34,4 @@ export function shouldRetireLegacyVoiceConversationSession(session: any): boolea
     if (!session || typeof session !== 'object') return false;
     const metadata = 'metadata' in session ? session.metadata ?? null : session;
     return readExternalSessionLink(metadata) !== null;
-}
-
-export function isReusableVoiceConversationRuntimeSession(session: any): boolean {
-    if (!session || typeof session !== 'object') return false;
-    return session.active === true;
-}
-
-function buildVoiceConversationSystemSessionCandidate(
-    state: any,
-    session: any,
-): VoiceConversationSystemSessionCandidate | null {
-    if (!session || typeof session.id !== 'string') return null;
-    const metadata = resolveVoiceConversationSessionMetadataFromState(state, session.id);
-    if (!isVoiceConversationSystemSessionMetadata(metadata)) return null;
-
-    return {
-        session,
-        sessionId: session.id,
-        metadata,
-        updatedAt: typeof session.updatedAt === 'number' && Number.isFinite(session.updatedAt) ? session.updatedAt : 0,
-        legacyLinked: shouldRetireLegacyVoiceConversationSession({ metadata }),
-        legacySystemKey: hasLegacyVoiceConversationSystemSessionKey(metadata),
-        reusable: isReusableVoiceConversationRuntimeSession(session),
-    };
-}
-
-export function listVoiceConversationSystemSessions(
-    state: any,
-): ReadonlyArray<VoiceConversationSystemSessionCandidate> {
-    const sessionsObj = state?.sessions ?? {};
-    const candidates: VoiceConversationSystemSessionCandidate[] = [];
-
-    for (const session of Object.values(sessionsObj) as any[]) {
-        const candidate = buildVoiceConversationSystemSessionCandidate(state, session);
-        if (!candidate) continue;
-        candidates.push(candidate);
-    }
-
-    return candidates;
-}
-
-export function findPreferredVoiceConversationSystemSession(
-    state: any,
-    predicate?: (candidate: VoiceConversationSystemSessionCandidate) => boolean,
-): VoiceConversationSystemSessionCandidate | null {
-    let best: VoiceConversationSystemSessionCandidate | null = null;
-
-    for (const candidate of listVoiceConversationSystemSessions(state)) {
-        if (predicate && !predicate(candidate)) continue;
-        if (
-            !best
-            || candidate.updatedAt > best.updatedAt
-            || (candidate.updatedAt === best.updatedAt && candidate.sessionId < best.sessionId)
-        ) {
-            best = candidate;
-        }
-    }
-
-    return best;
-}
-
-export function findReusableVoiceConversationRuntimeSessionId(state: any): string | null {
-    return findPreferredVoiceConversationSystemSession(
-        state,
-        (candidate) => !candidate.legacyLinked && candidate.reusable,
-    )?.sessionId ?? null;
-}
-
-export function findVoiceConversationSessionId(state: any): string | null {
-    return findPreferredVoiceConversationSystemSession(
-        state,
-        (candidate) => !candidate.legacyLinked,
-    )?.sessionId ?? null;
 }

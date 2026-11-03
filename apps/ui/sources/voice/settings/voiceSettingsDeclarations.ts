@@ -123,15 +123,14 @@ export const VOICE_CONVERSATIONS_SETTINGS = defineSettingsPage({
                 commitModelSource: { storage: voiceLocalConversationBinding('agent.commitModelSource') },
                 commitModelId: { storage: voiceLocalConversationBinding('agent.commitModelId') },
                 verbosity: { storage: voiceLocalConversationBinding('agent.verbosity') },
+                rootSessionPolicy: { storage: voiceLocalConversationBinding('agent.rootSessionPolicy') },
             },
         },
         agentLifecycle: {
-            titleKey: 'settingsVoice.local.conversation.rootSessionPolicy.title',
+            titleKey: 'settingsVoice.pages.conversations.advancedAgentTitle',
             settings: {
                 stayInVoiceHome: { storage: voiceLocalConversationBinding('agent.stayInVoiceHome') },
                 teleportEnabled: { storage: voiceLocalConversationBinding('agent.teleportEnabled') },
-                rootSessionPolicy: { storage: voiceLocalConversationBinding('agent.rootSessionPolicy') },
-                maxWarmRoots: { storage: voiceLocalConversationBinding('agent.maxWarmRoots') },
                 idleTtlSeconds: { storage: voiceLocalConversationBinding('agent.idleTtlSeconds') },
                 prewarmOnConnect: { storage: voiceLocalConversationBinding('agent.prewarmOnConnect') },
                 commitIsolation: { storage: voiceLocalConversationBinding('agent.commitIsolation') },

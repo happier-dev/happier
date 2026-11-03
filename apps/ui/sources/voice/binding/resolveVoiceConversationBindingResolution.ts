@@ -10,7 +10,7 @@ import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString'
 import { getVoiceAdapterRegistry } from '@/voice/session/voiceAdapterRegistry';
 import type { VoiceAdapterTranscriptMode } from '@/voice/session/types';
 
-import type { VoiceConversationBindingResolution } from './voiceConversationBindingTypes';
+import type { VoiceConversationBindingResolution, VoiceConversationSelection } from './voiceConversationBindingTypes';
 import { readLocalConversationVoiceSettings, voiceSettingsParse } from '@/sync/domains/settings/voiceSettings';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { areSessionAddressesEqual, normalizeSessionAddress, type SessionAddress } from '@/sync/domains/session/sessionAddress';
@@ -21,6 +21,7 @@ import { readVoiceConversationScopeMetadata } from '@/voice/persistence/voiceCon
 import { readPreferredVoiceConversationBindingMetadata } from './voiceConversationBindingMetadata';
 import { sync } from '@/sync/sync';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
+import { resolveVoiceConversationSelection } from './resolveVoiceConversationSelection';
 
 /**
  * Read the provider-owned transcript-mode decision for a voice adapter from the
@@ -46,10 +47,12 @@ async function ensureVoiceHomeConversationSessionIdWithRecovery(params: Readonly
     controlSessionId: string;
     settings: any;
     signal?: AbortSignal;
+    conversationSelection?: VoiceConversationSelection;
 }>): Promise<string> {
     try {
-        return await ensureVoiceConversationSessionForVoiceHome(null, params.signal);
+        return await ensureVoiceConversationSessionForVoiceHome(null, params.signal, params.conversationSelection);
     } catch (error) {
+        if (params.conversationSelection?.kind === 'continue') throw error;
         const isGlobalNativeSessionVoiceAgent =
             params.controlSessionId === VOICE_AGENT_GLOBAL_SESSION_ID
             && params.transcriptMode === 'native_session';
@@ -58,7 +61,7 @@ async function ensureVoiceHomeConversationSessionIdWithRecovery(params: Readonly
         const recoveryDecision = await recoverUnavailableGlobalVoiceAutoMachine();
         if (recoveryDecision.kind !== 'retry' && recoveryDecision.kind !== 'switch') throw error;
         applyRecoveredGlobalVoiceMachineDecision(recoveryDecision);
-        return await ensureVoiceConversationSessionForVoiceHome(null, params.signal);
+        return await ensureVoiceConversationSessionForVoiceHome(null, params.signal, params.conversationSelection);
     }
 }
 
@@ -91,6 +94,8 @@ export async function ensureVoiceConversationBindingResolution(params: Readonly<
     requestedTargetServerId?: string | null;
     settings: any;
     signal?: AbortSignal;
+    conversationSelection?: VoiceConversationSelection;
+    onConversationSelection?: (selection: VoiceConversationSelection) => void;
 }>): Promise<VoiceConversationBindingResolution | null> {
     const providerId = normalizeNonEmptyString(params.providerId);
     if (!providerId) return null;
@@ -100,12 +105,15 @@ export async function ensureVoiceConversationBindingResolution(params: Readonly<
     const targetServerId = normalizeNonEmptyString(params.requestedTargetServerId)
         ?? normalizeNonEmptyString(getActiveServerSnapshot().serverId);
     const targetSessionAddress = normalizeSessionAddress(targetServerId, targetSessionId);
-
+    // Direct-native binding owns its exact Session/thread. It must run before
+    // ordinary idle policy could select a new executable conversation.
     const providerOwnedResolution = await getVoiceAdapterRegistry().get(providerId)?.resolveConversationBinding?.({
         controlSessionId,
         requestedTargetSessionAddress: targetSessionAddress,
         settings: params.settings,
         signal: params.signal,
+        conversationSelection: params.conversationSelection,
+        onConversationSelection: params.onConversationSelection,
     });
     const providerConversationSessionAddress = providerOwnedResolution
         ? normalizeSessionAddress(
@@ -129,41 +137,63 @@ export async function ensureVoiceConversationBindingResolution(params: Readonly<
     const requestedCarrierAddress = targetSessionAddress && isVoiceConversationSystemSessionMetadata(requestedMetadata)
         && !shouldRetireLegacyVoiceConversationSession({ metadata: requestedMetadata }) ? targetSessionAddress : null;
     if (providerOwnedResolution && providerConversationSessionAddress) {
+        const providerMetadata = readVoiceSessionOwnerMetadataFromState(storage.getState(), providerConversationSessionAddress);
+        const isProviderCarrier = isVoiceConversationSystemSessionMetadata(providerMetadata)
+            && !shouldRetireLegacyVoiceConversationSession({ metadata: providerMetadata });
         return {
             controlSessionId,
             conversationSessionId: providerConversationSessionAddress.sessionId,
             conversationSessionAddress: providerConversationSessionAddress,
             transcriptMode,
-            targetSessionAddress: requestedCarrierAddress
-                && areSessionAddressesEqual(requestedCarrierAddress, providerConversationSessionAddress)
-                ? resolveHiddenCarrierLogicalTarget(requestedCarrierAddress, requestedMetadata)
+            targetSessionAddress: isProviderCarrier && (!targetSessionAddress
+                || areSessionAddressesEqual(targetSessionAddress, providerConversationSessionAddress))
+                ? resolveHiddenCarrierLogicalTarget(providerConversationSessionAddress, providerMetadata)
                 : providerOwnedResolution.targetSessionAddress,
         };
     }
-    if (requestedCarrierAddress) {
-        const logicalTargetSessionAddress = resolveHiddenCarrierLogicalTarget(requestedCarrierAddress, requestedMetadata);
-        const conversationSessionId = await ensureVoiceConversationSessionForSessionRoot({ sessionRootAddress: requestedCarrierAddress, signal: params.signal });
+    const conversationSelection = resolveVoiceConversationSelection({
+        settings: params.settings ?? {},
+        conversationSelection: params.conversationSelection,
+        requestedConversationSessionAddress: requestedCarrierAddress,
+    });
+    params.onConversationSelection?.(conversationSelection);
+    if (conversationSelection.kind === 'continue') {
+        const address = conversationSelection.conversationSessionAddress;
+        let metadata = readVoiceSessionOwnerMetadataFromState(storage.getState(), address);
+        if (!metadata && areServerProfileIdentifiersEquivalent(address.serverId, getActiveServerSnapshot().serverId)) {
+            await sync.ensureSessionVisibleForMessageRoute(address.sessionId, { serverId: address.serverId, hydrateMessages: false });
+            params.signal?.throwIfAborted();
+            metadata = readVoiceSessionOwnerMetadataFromState(storage.getState(), address);
+        }
+        const logicalTargetSessionAddress = targetSessionAddress && !requestedCarrierAddress
+            ? targetSessionAddress : resolveHiddenCarrierLogicalTarget(address, metadata);
+        const conversationSessionId = await ensureVoiceConversationSessionForSessionRoot({
+            sessionRootAddress: address, signal: params.signal, conversationSelection,
+        });
         return { controlSessionId, conversationSessionId,
-            conversationSessionAddress: { serverId: requestedCarrierAddress.serverId, sessionId: conversationSessionId }, transcriptMode,
+            conversationSessionAddress: { serverId: address.serverId, sessionId: conversationSessionId }, transcriptMode,
             targetSessionAddress: logicalTargetSessionAddress };
     }
 
     // The hidden conversation Session belongs to the same Home as its root Session: for the
     // global voice agent that is the resolved target address, and for a Session-attached
     // control session it is that Session in the Home the request was scoped to.
-    const rootSessionAddress =
-        controlSessionId === VOICE_AGENT_GLOBAL_SESSION_ID
+    const rootSessionAddress = requestedCarrierAddress
+        ? resolveHiddenCarrierLogicalTarget(requestedCarrierAddress, requestedMetadata)
+        : controlSessionId === VOICE_AGENT_GLOBAL_SESSION_ID
             ? targetSessionAddress
             : normalizeSessionAddress(targetServerId, controlSessionId);
 
     const conversationSessionId =
         rootSessionAddress && !shouldForceVoiceHomeForLocalConversation(params.settings)
-            ? await ensureVoiceConversationSessionForSessionRoot({ sessionRootAddress: rootSessionAddress, signal: params.signal })
+            ? await ensureVoiceConversationSessionForSessionRoot({ sessionRootAddress: rootSessionAddress, signal: params.signal,
+                conversationSelection })
             : await ensureVoiceHomeConversationSessionIdWithRecovery({
                   transcriptMode,
                   controlSessionId,
                   settings: params.settings,
                   signal: params.signal,
+                  conversationSelection,
               });
     const conversationSessionAddress = normalizeSessionAddress(
         rootSessionAddress?.serverId ?? targetServerId,
@@ -176,6 +206,6 @@ export async function ensureVoiceConversationBindingResolution(params: Readonly<
         conversationSessionId,
         conversationSessionAddress,
         transcriptMode,
-        targetSessionAddress,
+        targetSessionAddress: requestedCarrierAddress ? resolveHiddenCarrierLogicalTarget(requestedCarrierAddress, requestedMetadata) : targetSessionAddress,
     };
 }

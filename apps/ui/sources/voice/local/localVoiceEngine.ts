@@ -509,6 +509,8 @@ async function ensureLocalConversationBindingForSession(
   settings: any,
   sessionId: string,
   requestedTargetSessionAddress?: SessionAddress | null,
+  conversationSelection?: import('@/voice/binding/voiceConversationBindingTypes').VoiceConversationSelection,
+  onConversationSelection?: (selection: import('@/voice/binding/voiceConversationBindingTypes').VoiceConversationSelection) => void,
 ): Promise<boolean> {
   const { adapterId, config } = resolveLocalVoiceAdapterSettings(settings);
   if (adapterId !== 'local_conversation' || (config?.conversationMode ?? 'direct_session') !== 'agent') {
@@ -552,6 +554,8 @@ async function ensureLocalConversationBindingForSession(
       controlSessionId,
       requestedTargetSessionId,
       requestedTargetServerId: requestedTargetSessionAddress?.serverId,
+      conversationSelection,
+      onConversationSelection,
       signal: preparationController.signal,
     });
     await voiceAgentSessions.prepareAgentSelection(controlSessionId, preparationController.signal);
@@ -1250,6 +1254,8 @@ export async function toggleLocalVoiceTurn(
   sessionId: string,
   currentUiContext?: VoiceCurrentUiToolPort,
   requestedTargetSessionAddress?: SessionAddress | null,
+  conversationSelection?: import('@/voice/binding/voiceConversationBindingTypes').VoiceConversationSelection,
+  onConversationSelection?: (selection: import('@/voice/binding/voiceConversationBindingTypes').VoiceConversationSelection) => void,
 ): Promise<void> {
   const initialSettings = storage.getState().settings as any;
   if (!isLocalVoiceProviderSelected(initialSettings)) {
@@ -1298,7 +1304,11 @@ export async function toggleLocalVoiceTurn(
     return;
   }
 
-  if (inFlight && initialBargeInDecision.kind !== 'interrupt_and_rearm') {
+  if (initialState.status === 'sending' || initialState.status === 'transcribing') {
+    // A fresh Start supersedes finite work, even if its provider ignores abort.
+    // End releases capture and invalidates playback without joining that work.
+    await stopLocalVoiceSession();
+  } else if (inFlight && initialBargeInDecision.kind !== 'interrupt_and_rearm') {
     await inFlight;
   }
 
@@ -1413,19 +1423,20 @@ export async function toggleLocalVoiceTurn(
       await inFlight.catch(() => {});
     }
 
-    if (!await ensureLocalConversationBindingForSession(settings, sessionId, requestedTargetSessionAddress)) {
+    if (!await ensureLocalConversationBindingForSession(settings, sessionId, requestedTargetSessionAddress, conversationSelection, onConversationSelection)) {
       return;
     }
     startLocalVoiceAgentOnConnect({ settings, config });
     prewarmDaemonVoiceInferenceOnConnect({ settings });
-    inFlight = startLocalVoiceCapture({
+    const operation = startLocalVoiceCapture({
       sessionId: resolveLocalConversationControlSessionId(settings, bargeInDecision.sessionId),
       interrupted: true,
       ...(currentUiContext ? { currentUiContext } : {}),
     }).finally(() => {
-      inFlight = null;
+      if (inFlight === operation) inFlight = null;
     });
-    await inFlight;
+    inFlight = operation;
+    await operation;
     return;
   }
 
@@ -1433,18 +1444,19 @@ export async function toggleLocalVoiceTurn(
   if (current.status === 'idle' || current.status === 'error') {
     const settings = storage.getState().settings as any;
     const { config } = resolveLocalVoiceAdapterSettings(settings);
-    if (!await ensureLocalConversationBindingForSession(settings, sessionId, requestedTargetSessionAddress)) {
+    if (!await ensureLocalConversationBindingForSession(settings, sessionId, requestedTargetSessionAddress, conversationSelection, onConversationSelection)) {
       return;
     }
     startLocalVoiceAgentOnConnect({ settings, config });
     prewarmDaemonVoiceInferenceOnConnect({ settings });
-    inFlight = startLocalVoiceCapture({
+    const operation = startLocalVoiceCapture({
       sessionId: controlSessionId,
       ...(currentUiContext ? { currentUiContext } : {}),
     }).finally(() => {
-      inFlight = null;
+      if (inFlight === operation) inFlight = null;
     });
-    await inFlight;
+    inFlight = operation;
+    await operation;
     return;
   }
 
@@ -1468,12 +1480,13 @@ export async function commitLocalVoiceInput(sessionId: string): Promise<void> {
   if (provider === 'device' || provider === 'local_neural') {
     localVoiceCaptureOwner.clearHandsFree({ provider, sessionId });
   }
-  inFlight = (provider === 'recorded_audio'
+  const operation = (provider === 'recorded_audio'
     ? stopAndSendRecordedTurn(admission, captureAttempt)
     : stopSttAndSend(admission, captureAttempt, provider)).finally(() => {
-    inFlight = null;
+    if (inFlight === operation) inFlight = null;
   });
-  await inFlight;
+  inFlight = operation;
+  await operation;
 }
 
 export async function stopLocalVoiceSession(reason?: 'continued_elsewhere', signal?: AbortSignal): Promise<void> {
@@ -1492,6 +1505,7 @@ export async function stopLocalVoiceSession(reason?: 'continued_elsewhere', sign
   }
 
   const activeSessionId = current.sessionId;
+  const endingOperation = inFlight;
   // The UI-context subscription carries the admitting Account's authority.
   // Revoke it synchronously; native capture cleanup may yield while the next
   // Account is already publishing through the shared current-UI port.
@@ -1567,5 +1581,8 @@ export async function stopLocalVoiceSession(reason?: 'continued_elsewhere', sign
     }
   }).finally(() => {
     releaseCaptureAdmission(activeSessionId);
+    // Retired finite work may settle later, but cannot retain or clear the
+    // replacement attempt's operation slot.
+    if (inFlight === endingOperation) inFlight = null;
   });
 }

@@ -12,9 +12,49 @@ import { VoiceLocalConversationSchema } from './localConversation.js';
 import { createStoredReadSchema } from '../../json/storedReadSchema.js';
 import { BoundedLegacyJsonValueSchema } from '../../account/settings/catalog/legacyJson.js';
 import { VoiceProviderSettingsEnvelopeV1Schema } from '../realtime/providerSettings.js';
+import { BUILT_IN_SETTINGS_METADATA_V1 } from '../../actions/settings/builtInSettingsMetadata.js';
 
 describe('shared Voice settings owner', () => {
   const owner = createVoiceSettingsOwner({ bundledContributions: [] });
+
+  it('uses one conversation lifetime preference and migrates both retained warm policies to continuity', () => {
+    // ui-web-v0.2.19 (63829e3cd6a8f1f48b10891af0c8b2313e51ac7e),
+    // apps/ui/sources/sync/domains/settings/voiceSettings.ts:177-178.
+    expect(owner.readLocalConversationVoiceSettings(owner.voiceSettingsParse({})).agent.rootSessionPolicy).toBe('continue');
+    expect(owner.readLocalConversationVoiceSettings(owner.voiceSettingsParse({})).agent).not.toHaveProperty('maxWarmRoots');
+    for (const rootSessionPolicy of ['single', 'keep_warm', 'continue', 'new']) {
+      const voice = owner.voiceSettingsParse({ providers: { local_conversation: { schemaVersion: 1,
+        config: { agent: { rootSessionPolicy, maxWarmRoots: 5, idleTtlSeconds: 99 } } } } });
+      const config = owner.readLocalConversationVoiceSettings(voice);
+      expect(config.agent.rootSessionPolicy).toBe(rootSessionPolicy === 'new' ? 'new' : 'continue');
+      expect(config.agent.idleTtlSeconds).toBe(99);
+      expect(config.agent).not.toHaveProperty('maxWarmRoots');
+      expect(voice.providers.local_conversation?.config).toMatchObject({ agent: { idleTtlSeconds: 99 } });
+      expect(voice.providers.local_conversation?.config).not.toHaveProperty('agent.maxWarmRoots');
+      expect(owner.readLocalConversationVoiceSettings(owner.voiceSettingsParse(JSON.parse(JSON.stringify(voice))))
+        .agent.rootSessionPolicy).toBe(rootSessionPolicy === 'new' ? 'new' : 'continue');
+      if (rootSessionPolicy === 'single' || rootSessionPolicy === 'keep_warm') {
+        const migrated = owner.voiceSettingsParse({ adapters: { local_conversation: {
+          agent: { rootSessionPolicy, maxWarmRoots: 5, idleTtlSeconds: 99 },
+        } } });
+        expect(owner.readLocalConversationVoiceSettings(migrated).agent).toMatchObject({
+          rootSessionPolicy: 'continue', idleTtlSeconds: 99,
+        });
+        expect(migrated.providers.local_conversation?.config).not.toHaveProperty('agent.maxWarmRoots');
+      }
+    }
+  });
+
+  it('omits the retired warm-root limit from analytics and portable preference discovery', () => {
+    const analytics = owner.projectVoiceSettingsAnalytics({ providers: { local_conversation: {
+      schemaVersion: 1, config: { agent: { rootSessionPolicy: 'keep_warm', maxWarmRoots: 5 } },
+    } } });
+    expect(analytics.localConversationAgentRootSessionPolicy).toBe('continue');
+    expect(analytics).not.toHaveProperty('localConversationAgentMaxWarmRootsBucket');
+    const anchors = BUILT_IN_SETTINGS_METADATA_V1.map(setting => setting.anchor);
+    expect(anchors).not.toContain('voiceConversations.maxWarmRoots');
+    expect(anchors).toContain('voiceConversations.rootSessionPolicy');
+  });
 
   it('defaults Voice request decisions on and preserves an explicit opt-out', () => {
     expect(owner.voiceSettingsParse({}).canApproveRequests).toBe(true);

@@ -281,7 +281,7 @@ describe('VoiceSettingsScreen (voice settings UX)', () => {
 
     it('reveals the selectable Local service before an agent preference retained under local direct', async () => {
         voiceState.providerId = 'local_direct';
-        routeParamsRef.current = { setting: VOICE_CONVERSATIONS_SETTINGS.settings.maxWarmRoots.anchor };
+        routeParamsRef.current = { setting: VOICE_CONVERSATIONS_SETTINGS.settings.idleTtlSeconds.anchor };
         const screen = await renderVoiceSettings("conversations");
         expect(findItemByTestId(screen, 'settings.voice.searchPrerequisite')?.props.subtitle).toContain(t('settingsVoice.pages.search.select', { choice: t('settingsVoice.mode.local'), control: t('settingsVoice.providerSectionTitle') }));
         expect(account!.writes).toEqual([]);

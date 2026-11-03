@@ -16379,14 +16379,11 @@ const enSettingsVoice = {
       machineAutoSubtitle:
         'Choose once for this account and keep using that machine. If it is offline, choose another explicitly.',
       rootSessionPolicy: {
-        title: 'Root session policy',
-        fallbackSubtitle: 'Choose a policy.',
-        singleTitle: 'Single',
-        singleSubtitle: 'Create a new root session each time.',
-        keepWarmTitle: 'Keep warm',
-        keepWarmSubtitle: 'Reuse an existing warm root session when possible.',
-        maxWarmRootsTitle: 'Max warm roots',
-        maxWarmRootsSubtitle: 'Limit how many warm root sessions can be kept.',
+        title: "When you start Voice",
+        continueTitle: "Continue my last conversation",
+        continueSubtitle: "Voice picks up where you left off.",
+        newTitle: "Start a new conversation each time",
+        newSubtitle: "Earlier conversations stay in Voice history.",
       },
       persistence: {
         title: 'Transcript persistence',

@@ -82,8 +82,6 @@ const COMMIT_MODEL_SETTINGS = {
 
 /** The rows inside "Advanced agent behaviour": search opening one of them opens the disclosure. */
 const ADVANCED_AGENT_SETTINGS = [
-  VOICE_CONVERSATIONS_SETTINGS.settings.rootSessionPolicy,
-  VOICE_CONVERSATIONS_SETTINGS.settings.maxWarmRoots,
   VOICE_CONVERSATIONS_SETTINGS.settings.idleTtlSeconds,
   VOICE_CONVERSATIONS_SETTINGS.settings.prewarmOnConnect,
   VOICE_CONVERSATIONS_SETTINGS.settings.teleportEnabled,
@@ -97,7 +95,7 @@ const ADVANCED_AGENT_SETTINGS = [
 
 const AGENT_SETTINGS = [...Object.values(AGENT_SELECTION_SETTINGS), ...Object.values(CHAT_MODEL_SETTINGS),
   VOICE_CONVERSATIONS_SETTINGS.settings.permissionIntent, VOICE_CONVERSATIONS_SETTINGS.settings.verbosity,
-  ...ADVANCED_AGENT_SETTINGS] as const;
+  VOICE_CONVERSATIONS_SETTINGS.settings.rootSessionPolicy, ...ADVANCED_AGENT_SETTINGS] as const;
 
 export function LocalConversationSection(props: {
   voice: VoiceSettings;
@@ -134,6 +132,7 @@ export function LocalConversationSection(props: {
     | 'providerChatAgentSelection'
     | 'mediatorChatModelId'
     | 'mediatorCommitModelId'
+    | 'rootSessionPolicy'
   >(null);
 
   const voice = voiceSettingsParse(props.voice);
@@ -305,16 +304,17 @@ export function LocalConversationSection(props: {
     ];
   }, [selectableModelMenuItems, theme.colors.text.secondary]);
 
-  const rootSessionPolicyOptions = React.useMemo(() => [
+  // What Start does: two long, sentence-like choices, so a field select rather than a segmented control.
+  const rootSessionPolicyItems = React.useMemo(() => [
     {
-      id: 'single' as const,
-      label: t('settingsVoice.local.conversation.rootSessionPolicy.singleTitle'),
-      description: t('settingsVoice.local.conversation.rootSessionPolicy.singleSubtitle'),
+      id: 'continue' as const,
+      title: t('settingsVoice.local.conversation.rootSessionPolicy.continueTitle'),
+      subtitle: t('settingsVoice.local.conversation.rootSessionPolicy.continueSubtitle'),
     },
     {
-      id: 'keep_warm' as const,
-      label: t('settingsVoice.local.conversation.rootSessionPolicy.keepWarmTitle'),
-      description: t('settingsVoice.local.conversation.rootSessionPolicy.keepWarmSubtitle'),
+      id: 'new' as const,
+      title: t('settingsVoice.local.conversation.rootSessionPolicy.newTitle'),
+      subtitle: t('settingsVoice.local.conversation.rootSessionPolicy.newSubtitle'),
     },
   ], []);
 
@@ -636,6 +636,30 @@ export function LocalConversationSection(props: {
           ]}
         />
         </SettingAnchor>
+        <SettingAnchor setting={VOICE_CONVERSATIONS_SETTINGS.settings.rootSessionPolicy}>
+          <DropdownMenu
+            testID="settings.voice.local.rootSessionPolicy"
+            open={openMenu === 'rootSessionPolicy'}
+            onOpenChange={(next) => setOpenMenu(next ? 'rootSessionPolicy' : null)}
+            variant="selectable"
+            search={false}
+            selectedId={cfg.agent.rootSessionPolicy}
+            showCategoryTitles={false}
+            matchTriggerWidth={true}
+            connectToTrigger={true}
+            rowKind="item"
+            popoverBoundaryRef={props.popoverBoundaryRef}
+            itemTrigger={{
+              title: t(VOICE_CONVERSATIONS_SETTINGS.settings.rootSessionPolicy.titleKey),
+            }}
+            items={rootSessionPolicyItems}
+            onSelect={(id) => {
+              setOpenMenu(null);
+              // Changing what the next Start does never touches the conversation that is running now.
+              if (id === 'continue' || id === 'new') setAgent({ rootSessionPolicy: id });
+            }}
+          />
+        </SettingAnchor>
             <SettingAnchor setting={VOICE_CONVERSATIONS_SETTINGS.settings.greeting}>
             <VoiceGreetingItem
               value={resolveVoiceWelcomeSelection(voice.welcome)}
@@ -652,38 +676,9 @@ export function LocalConversationSection(props: {
                 {...state.headerProps}
                 title={t('settingsVoice.pages.conversations.advancedAgentTitle')}
                 subtitle={t('settingsVoice.pages.conversations.advancedAgentDescription')}
-                rightElement={<Icon name={state.expanded ? 'caret-down' : 'caret-right'} size={14} color={theme.colors.text.secondary} />}
-                showChevron={false}
               />
             )}
           >
-                <SettingAnchor setting={VOICE_CONVERSATIONS_SETTINGS.settings.rootSessionPolicy}>
-                <SegmentedChoiceItem
-                  title={t(VOICE_CONVERSATIONS_SETTINGS.settings.rootSessionPolicy.titleKey)}
-                  subtitleLines={0}
-                  testIDPrefix="settings.voice.local.mediatorRootSessionPolicy"
-                  value={cfg.agent.rootSessionPolicy === 'keep_warm' ? 'keep_warm' : 'single'}
-                  onChange={(next) => setAgent({ rootSessionPolicy: next })}
-                  options={rootSessionPolicyOptions}
-                />
-                </SettingAnchor>
-
-                {cfg.agent.rootSessionPolicy === 'keep_warm' ? (
-                  <SettingAnchor setting={VOICE_CONVERSATIONS_SETTINGS.settings.maxWarmRoots}>
-                  <FieldValueItem
-                    title={t(VOICE_CONVERSATIONS_SETTINGS.settings.maxWarmRoots.titleKey)}
-                    subtitle={t('settingsVoice.local.conversation.rootSessionPolicy.maxWarmRootsSubtitle')}
-                    fieldTestID="settings.voice.local.maxWarmRoots.field"
-                    kind="integer"
-                    value={String(cfg.agent.maxWarmRoots)}
-                    onCommit={(draft) => {
-                      const next = Math.max(1, Math.floor(Number(draft)));
-                      setAgent({ maxWarmRoots: next });
-                      return String(next);
-                    }}
-                  />
-                  </SettingAnchor>
-                ) : searchPrerequisite({ settings: [VOICE_CONVERSATIONS_SETTINGS.settings.maxWarmRoots], reason: t('settingsVoice.pages.search.select', { choice: t('settingsVoice.local.conversation.rootSessionPolicy.keepWarmTitle'), control: t('settingsVoice.local.conversation.rootSessionPolicy.title') }) })}
           <SettingAnchor setting={VOICE_CONVERSATIONS_SETTINGS.settings.idleTtlSeconds}>
           <FieldValueItem
             title={t(VOICE_CONVERSATIONS_SETTINGS.settings.idleTtlSeconds.titleKey)}

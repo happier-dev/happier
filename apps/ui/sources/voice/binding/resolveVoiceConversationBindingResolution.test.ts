@@ -2,6 +2,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vites
 import { buildSystemSessionMetadataV1 } from '@happier-dev/protocol/sessions/control/contract';
 import { ACP_CATALOG_ROWS_ROUTE_V1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import { createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { createSessionMetadataHttpBoundary } from '@/dev/testkit/harness/sessionMetadataHttpBoundary';
@@ -10,9 +11,9 @@ import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionO
 import { createMachineReadBatchResponseFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
-import { waitForTestEvent } from '@/dev/testkit';
 import type { BuiltinVoiceAdapterAssembly } from '@/dev/testkit/harness/builtinVoiceAdapters';
 import { SessionResumeRequestV1Schema } from '@happier-dev/protocol/sessions/control/sessionResumeRequestV1';
+import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol/spawnSession';
 import { createConnectedPurposeCatalogHttpBoundary } from '@/dev/testkit/harness/connectedAccountCatalogBoundary';
 import { readLocalConversationVoiceSettings } from '@/sync/domains/settings/voiceSettings';
 import { SessionCurrentProjectionRecordV1Schema } from '@happier-dev/protocol/sessions/listing/response';
@@ -24,11 +25,6 @@ const nativeAlertCalls = vi.hoisted(() => {
   const calls: Parameters<typeof import('react-native')['Alert']['alert']>[] = [];
   return calls;
 });
-const nativeAlertObservers = vi.hoisted(() => new Set<() => void>());
-const subscribeNativeAlert = (notify: () => void) => {
-  nativeAlertObservers.add(notify);
-  return () => { nativeAlertObservers.delete(notify); };
-};
 
 vi.mock('react-native', async () => {
   const { createReactNativeNativeMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -37,7 +33,6 @@ vi.mock('react-native', async () => {
       // Native presentation/user input is external; Modal.confirm stays real.
       alert: (...args: Parameters<typeof import('react-native')['Alert']['alert']>) => {
         nativeAlertCalls.push(args);
-        for (const notify of nativeAlertObservers) notify();
       },
     },
   });
@@ -52,6 +47,7 @@ const { sync } = await import('@/sync/sync');
 const { createBuiltinVoiceAdapterAssembly } = await import('@/dev/testkit/harness/builtinVoiceAdapters');
 const { registerVoiceAdapters, resetVoiceAdapterRegistryForTests } = await import('@/voice/session/voiceAdapterRegistry');
 const { ensureVoiceConversationBindingResolution } = await import('./resolveVoiceConversationBindingResolution');
+const { resolveVoiceConversationSelection } = await import('./resolveVoiceConversationSelection');
 const { writeVoiceConversationScopeMetadata, readVoiceConversationScopeMetadata } = await import('@/voice/persistence/voiceConversationScopeMetadata');
 const { VOICE_CONVERSATION_SYSTEM_SESSION_KEY } = await import('@/voice/persistence/voiceConversationSession');
 const { readVoiceSessionOwnerMetadataFromState } = await import('@/voice/shared/readVoiceSessionOwnerMetadata');
@@ -60,6 +56,8 @@ const { clearVoiceAgentRecoveryReplaySource, readVoiceAgentRecoveryReplaySource 
 const { useVoiceTargetStore } = await import('@/voice/runtime/voiceTargetStore');
 const { clearDaemonMergedProjectionCacheForTests } = await import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs');
 const { voiceSessionBindingStore } = await import('./voiceConversationBindingStore');
+const { createVoiceSessionBindingStore } = await import('./voiceConversationBindingStore');
+const { createVoiceSessionBindingManager } = await import('./voiceConversationBindingManager');
 const { voiceSessionBindingManager } = await import('./voiceConversationBindingRuntime');
 const { writeVoiceConversationBindingMetadata } = await import('./voiceConversationBindingMetadata');
 const { RPC_METHODS } = await import('@happier-dev/protocol/rpc');
@@ -108,7 +106,7 @@ describe('ensureVoiceConversationBindingResolution', () => {
         return { ok: false, error: 'RPC method not found', errorCode: 'RPC_METHOD_NOT_FOUND' };
       if (request.method === RPC_METHODS.SPAWN_HAPPY_SESSION || request.method === RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE) {
         const input = SessionResumeRequestV1Schema.parse(request.payload);
-        return { ok: true, result: { type: 'success', sessionId: input.sessionId } satisfies import('@happier-dev/protocol').SpawnSessionResult };
+        return { ok: true, result: { type: 'success', sessionId: input.sessionId } satisfies import('@happier-dev/protocol/spawnSession').SpawnSessionResult };
       }
       throw new Error(`Unexpected daemon effect: ${request.method}`);
     });
@@ -158,7 +156,6 @@ describe('ensureVoiceConversationBindingResolution', () => {
   afterAll(() => network.dispose());
 
   function expectCarrier(id: string, rootId?: string) {
-    expect(metadata.writes).toContain(id);
     expect(readVoiceConversationScopeMetadata(readVoiceSessionOwnerMetadataFromState(storage.getState(), id)))
       .toEqual(rootId ? { kind: 'session_root', sessionRootId: rootId } : { kind: 'voice_home' });
     expect(network.requests.some(request => request.method === RPC_METHODS.SESSION_SPAWN_NEW)).toBe(false);
@@ -188,6 +185,94 @@ describe('ensureVoiceConversationBindingResolution', () => {
     return createStoredReadSchema(SessionOwnerCompatibilityViewV1Schema.shape.voiceConversationBindingV1)
       .parse(record.ownerMetadata.v.system?.voiceConversationBindingV1);
   }
+
+  it('VI-LIFE selects the last Account Session-list conversation without a device pointer and keeps explicit choices exact', () => {
+    const latest = { ...carrier('last-list-conversation', undefined, 'machine-1', 500), meaningfulActivityAt: 500 };
+    const earlier = { ...carrier('earlier-list-conversation', undefined, 'machine-1', 100), meaningfulActivityAt: 100 };
+    storage.setState({ sessions: {}, sessionListRowsByServerId: { [connection.home.id]: {
+      [latest.id]: buildSessionListRenderableFromSession(latest),
+      [earlier.id]: buildSessionListRenderableFromSession(earlier),
+    } } });
+    const selection = (extra: Partial<Parameters<typeof resolveVoiceConversationSelection>[0]> = {}) =>
+      resolveVoiceConversationSelection({ settings: localSettings(), ...extra });
+
+    expect(selection()).toEqual({ kind: 'continue', conversationSessionAddress: address(latest.id) });
+    const deliberateNew = { kind: 'new' as const, creationKey: 'person-selected-new' };
+    expect(selection({ conversationSelection: deliberateNew })).toBe(deliberateNew);
+    expect(selection({ requestedConversationSessionAddress: address(earlier.id) }))
+      .toEqual({ kind: 'continue', conversationSessionAddress: address(earlier.id) });
+    storage.setState({ sessions: {}, sessionListRowsByServerId: {} });
+    expect(selection()).toMatchObject({ kind: 'new', creationKey: expect.any(String) });
+  });
+
+  it('VI-LIFE continues a stored session-root conversation with its recorded coding target before a binding exists', async () => {
+    const binding = await voiceSessionBindingManager.ensureBound({
+      adapterId: 'local_conversation', controlSessionId: '__voice_agent__',
+      requestedTargetSessionId: null, requestedTargetServerId: connection.home.id,
+      conversationSelection: { kind: 'continue', conversationSessionAddress: address('voice-root-s1') },
+    });
+    expect(binding).toMatchObject({
+      conversationSessionAddress: address('voice-root-s1'), targetSessionAddress: address('s1'),
+    });
+    expect(await readPersistedBinding('voice-root-s1')).toMatchObject({
+      targetSessionId: 's1', targetServerId: connection.home.id,
+    });
+    expect(network.requests.some(request => request.method === RPC_METHODS.SESSION_SPAWN_NEW)).toBe(false);
+  });
+
+  it('VI-LIFE hydrates an explicitly continued conversation after detail residency releases its Session', async () => {
+    // Snapshot the real HTTP fixture before the client releases its detail row.
+    expect(metadata.handle(new URL('/v2/sessions/voice-root-s1', connection.home.serverUrl))?.status).toBe(200);
+    voiceSessionBindingStore.getState().bind({ adapterId: 'local_conversation', controlSessionId: '__voice_agent__',
+      conversationSessionId: 'voice-root-s1', conversationSessionAddress: address('voice-root-s1'),
+      transcriptMode: 'native_session', targetSessionAddress: address('s1'), updatedAt: 1 });
+    storage.setState(current => ({ sessions: Object.fromEntries(Object.entries(current.sessions)
+      .filter(([id]) => id !== 'voice-root-s1')), sessionListRowsByServerId: {} }));
+    expect(readVoiceSessionOwnerMetadataFromState(storage.getState(), address('voice-root-s1'))).toBeNull();
+    sessionDetailReads.length = 0;
+
+    const [result] = await Promise.allSettled([voiceSessionBindingManager.ensureBound({
+      adapterId: 'local_conversation', controlSessionId: '__voice_agent__',
+      requestedTargetSessionId: null, requestedTargetServerId: connection.home.id,
+      conversationSelection: { kind: 'continue', conversationSessionAddress: address('voice-root-s1') },
+    })]);
+
+    expect(network.requests.filter(request => request.method === RPC_METHODS.SESSION_SPAWN_NEW)).toEqual([]);
+    expect(sessionDetailReads).toContain('/v2/sessions/voice-root-s1');
+    if (result?.status === 'rejected') throw result.reason;
+    expect(result).toMatchObject({ status: 'fulfilled', value: {
+      conversationSessionAddress: address('voice-root-s1'), targetSessionAddress: address('s1'),
+    } });
+  });
+
+  it('VI-LIFE a fresh manager hydrates and continues the explicitly chosen address', async () => {
+    await voiceSessionBindingManager.ensureBound({
+      adapterId: 'local_conversation', controlSessionId: '__voice_agent__',
+      requestedTargetServerId: connection.home.id,
+      conversationSelection: { kind: 'continue', conversationSessionAddress: address('voice-root-s1') },
+    });
+    voiceSessionBindingStore.getState().unbind('voice-root-s1');
+    voiceSessionBindingStore.getState().replacePersistedBindings([]);
+    storage.setState(current => ({ sessions: Object.fromEntries(Object.entries(current.sessions)
+      .filter(([id]) => id !== 'voice-root-s1')), sessionListRowsByServerId: {} }));
+    sessionDetailReads.length = 0;
+    network.requests.length = 0;
+    const freshStore = createVoiceSessionBindingStore();
+    const freshManager = createVoiceSessionBindingManager({
+      store: freshStore,
+      resolveBinding: input => ensureVoiceConversationBindingResolution({
+        ...input, providerId: input.adapterId, settings: storage.getState().settings,
+      }),
+      persistBinding: binding => sync.patchSessionMetadataWithRetry(binding.conversationSessionId,
+        current => writeVoiceConversationBindingMetadata(current, binding)),
+    });
+    const binding = await freshManager.ensureBound({ adapterId: 'local_conversation', controlSessionId: '__voice_agent__',
+      requestedTargetSessionId: null, requestedTargetServerId: connection.home.id,
+      conversationSelection: { kind: 'continue', conversationSessionAddress: address('voice-root-s1') } });
+    expect(binding).toMatchObject({ conversationSessionAddress: address('voice-root-s1'), targetSessionAddress: address('s1') });
+    expect(sessionDetailReads).toContain('/v2/sessions/voice-root-s1');
+    expect(network.requests.filter(request => request.method === RPC_METHODS.SESSION_SPAWN_NEW)).toEqual([]);
+  });
 
   it.each([
     { name: 'global null', carrierId: 'voice-home', storedTarget: null, expectedTarget: null },
@@ -248,21 +333,35 @@ describe('ensureVoiceConversationBindingResolution', () => {
     expect(network.requests).toEqual([]);
   });
 
-  it.each([
-    ['trims provider ids before resolving local conversation bindings', ' local_conversation '],
-    ['uses voice home and native transcript mode when no target session exists', 'local_conversation'],
-  ])('%s', async (_title, providerId) => {
-    expect(await ensureVoiceConversationBindingResolution({ providerId, controlSessionId: '__voice_agent__',
-      requestedTargetSessionId: null, settings: localSettings() })).toEqual({
+  it('trims provider ids before continuing the selected local conversation', async () => {
+    expect(await ensureVoiceConversationBindingResolution({ providerId: ' local_conversation ', controlSessionId: '__voice_agent__',
+      requestedTargetSessionId: null, settings: localSettings(),
+      conversationSelection: { kind: 'continue', conversationSessionAddress: address('voice-home') } })).toEqual({
       conversationSessionId: 'voice-home', conversationSessionAddress: address('voice-home'),
       controlSessionId: '__voice_agent__', transcriptMode: 'native_session', targetSessionAddress: null,
     });
     expectCarrier('voice-home');
   });
 
-  it('binds local daemon agent sessions to the target session root', async () => {
+  it('chooses the last Account conversation ahead of a retained binding on idle Start', async () => {
+    storage.setState(current => ({ sessions: { ...current.sessions,
+      'voice-home-newer': { ...carrier('voice-home-newer', undefined, 'machine-1', 100), meaningfulActivityAt: 100 },
+    } }));
+    voiceSessionBindingStore.getState().bind({ adapterId: 'local_conversation', controlSessionId: '__voice_agent__',
+      conversationSessionId: 'voice-home', conversationSessionAddress: address('voice-home'),
+      transcriptMode: 'native_session', targetSessionAddress: null, updatedAt: 1 });
     expect(await ensureVoiceConversationBindingResolution({ providerId: 'local_conversation', controlSessionId: '__voice_agent__',
-      requestedTargetSessionId: 's1', settings: localSettings() })).toEqual({
+      requestedTargetSessionId: null, settings: localSettings() })).toEqual({
+      conversationSessionId: 'voice-home-newer', conversationSessionAddress: address('voice-home-newer'),
+      controlSessionId: '__voice_agent__', transcriptMode: 'native_session', targetSessionAddress: null,
+    });
+    expectCarrier('voice-home-newer');
+  });
+
+  it('continues a selected local daemon conversation at its target session root', async () => {
+    expect(await ensureVoiceConversationBindingResolution({ providerId: 'local_conversation', controlSessionId: '__voice_agent__',
+      requestedTargetSessionId: 's1', settings: localSettings(),
+      conversationSelection: { kind: 'continue', conversationSessionAddress: address('voice-root-s1') } })).toEqual({
       conversationSessionId: 'voice-root-s1', conversationSessionAddress: address('voice-root-s1'),
       controlSessionId: '__voice_agent__', transcriptMode: 'native_session', targetSessionAddress: address('s1'),
     });
@@ -312,11 +411,12 @@ describe('ensureVoiceConversationBindingResolution', () => {
       .toMatchObject({ conversationSessionId: 'voice-root-s1', targetSessionAddress: null });
   });
 
-  it('uses voice home when stayInVoiceHome is enabled even with a target', async () => {
+  it('continues the selected voice-home conversation with stayInVoiceHome enabled and a coding target', async () => {
     const settings = localSettings(true);
     storage.setState({ settings });
     expect(await ensureVoiceConversationBindingResolution({ providerId: 'local_conversation', controlSessionId: '__voice_agent__',
-      requestedTargetSessionId: 's1', settings })).toEqual({
+      requestedTargetSessionId: 's1', settings,
+      conversationSelection: { kind: 'continue', conversationSessionAddress: address('voice-home') } })).toEqual({
       conversationSessionId: 'voice-home', conversationSessionAddress: address('voice-home'),
       controlSessionId: '__voice_agent__', transcriptMode: 'native_session', targetSessionAddress: address('s1'),
     });
@@ -324,7 +424,7 @@ describe('ensureVoiceConversationBindingResolution', () => {
     expect(metadata.writes).not.toContain('voice-root-s1');
   });
 
-  it('recovers a global voice-home binding by switching machines and preserving replay context', async () => {
+  it('refuses an unavailable exact retained conversation without switching machines or replaying elsewhere', async () => {
     machineRows = [createPlainMachineRowFixture({ id: 'm_old', accountId: 'account-binding' }),
       createPlainMachineRowFixture({ id: 'm_new', accountId: 'account-binding' })];
     machineRows[0] = { ...machineRows[0]!, active: false, activeAt: 0 };
@@ -336,30 +436,26 @@ describe('ensureVoiceConversationBindingResolution', () => {
       conversationSessionId: 'sys_voice_old', conversationSessionAddress: address('sys_voice_old'),
       transcriptMode: 'native_session', targetSessionAddress: null, updatedAt: 10 });
     persistVoiceAutoTargetMachineId('m_old', storage.getState().settingsScope);
-    const resolutionPromise = ensureVoiceConversationBindingResolution({ providerId: 'local_conversation', controlSessionId: '__voice_agent__',
-      requestedTargetSessionId: null, settings: localSettings() });
-    await waitForTestEvent(subscribeNativeAlert, () => expect(nativeAlertCalls.length).toBe(1));
+    network.setRpcAckResponder(async request => {
+      if (request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE)
+        return { ok: false, error: 'RPC method not found', errorCode: 'RPC_METHOD_NOT_FOUND' };
+      if (request.method === RPC_METHODS.SPAWN_HAPPY_SESSION || request.method === RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE) {
+        const input = SessionResumeRequestV1Schema.parse(request.payload);
+        expect(input.sessionId).toBe('sys_voice_old');
+        return { ok: true, result: { type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE,
+          errorMessage: 'The exact conversation Machine is unavailable' } satisfies import('@happier-dev/protocol/spawnSession').SpawnSessionResult };
+      }
+      throw new Error(`Unexpected daemon effect: ${request.method}`);
+    });
+    await expect(ensureVoiceConversationBindingResolution({ providerId: 'local_conversation', controlSessionId: '__voice_agent__',
+      requestedTargetSessionId: null, settings: localSettings() })).rejects.toMatchObject({ code: SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE });
     expect(readVoiceAutoTargetMachineId(storage.getState())).toBe('m_old');
     expect(readVoiceAgentRecoveryReplaySource('__voice_agent__')).toBeNull();
-    expect(nativeAlertCalls[0]?.[3]?.cancelable).toBe(false);
-    const confirmSwitch = nativeAlertCalls[0]?.[2]?.[1]?.onPress;
-    if (!confirmSwitch) throw new Error('Native switch confirmation was not presented');
-    confirmSwitch();
-
-    await waitForTestEvent(subscribeNativeAlert, () => expect(nativeAlertCalls.length).toBe(2));
-    expect(readVoiceAutoTargetMachineId(storage.getState())).toBe('m_old');
-    expect(readVoiceAgentRecoveryReplaySource('__voice_agent__')).toBeNull();
-    expect(nativeAlertCalls[1]?.[3]?.cancelable).toBe(false);
-    const confirmReplay = nativeAlertCalls[1]?.[2]?.[1]?.onPress;
-    if (!confirmReplay) throw new Error('Native replay confirmation was not presented');
-    confirmReplay();
-
-    const resolution = await resolutionPromise;
-    expect(readVoiceAutoTargetMachineId(storage.getState())).toBe('m_new');
-    expect(readVoiceAgentRecoveryReplaySource('__voice_agent__')).toBe('sys_voice_old');
-    expect(resolution).toEqual({ conversationSessionId: 'voice-home-new-machine', conversationSessionAddress: address('voice-home-new-machine'),
-      controlSessionId: '__voice_agent__', transcriptMode: 'native_session', targetSessionAddress: null });
-    expectCarrier('voice-home-new-machine');
+    expect(voiceSessionBindingStore.getState().getByControlSessionId('__voice_agent__')?.conversationSessionAddress)
+      .toEqual(address('sys_voice_old'));
+    expect(nativeAlertCalls).toEqual([]);
+    expect(metadata.writes).toEqual([]);
+    expect(network.requests.some(request => request.method === RPC_METHODS.SESSION_SPAWN_NEW)).toBe(false);
   });
 
   it('keeps Provider-backed Chat on the daemon-owned native transcript binding', async () => {
@@ -373,15 +469,15 @@ describe('ensureVoiceConversationBindingResolution', () => {
     storage.getState().applySessions(['s2', 'voice-root-s2'].map(id => {
       const session = storage.getState().sessions[id]!;
       return { ...session, metadata: { ...session.metadata!, flavor: 'opencode',
-        // Fixed-Agent carriers record the same explicit native default that
-        // R41's immutable recipe matcher receives from canonical creation.
+        // Retain the native connected-service choice recorded on creation.
         ...(id === 'voice-root-s2' ? { connectedServices: { v: 2 as const, bindingsByServiceId: {} } } : {}),
       } };
     }));
     metadata.replaceSession('s2');
     metadata.replaceSession('voice-root-s2');
     const resolution = await ensureVoiceConversationBindingResolution({ providerId: 'local_conversation', controlSessionId: '__voice_agent__',
-      requestedTargetSessionId: 's2', settings });
+      requestedTargetSessionId: 's2', settings,
+      conversationSelection: { kind: 'continue', conversationSessionAddress: address('voice-root-s2') } });
     expect(resolution?.transcriptMode).toBe('native_session');
     expect(resolution?.conversationSessionAddress).toEqual(address('voice-root-s2'));
     expectCarrier('voice-root-s2', 's2');
@@ -391,7 +487,8 @@ describe('ensureVoiceConversationBindingResolution', () => {
     registerVoiceAdapters([...assembly.adapters, { ...assembly.adapters[0]!, id: 'custom_provider', resolveConversationBinding: undefined,
       resolveBindingTranscriptMode: () => 'synthetic' }]);
     expect(await ensureVoiceConversationBindingResolution({ providerId: 'custom_provider', controlSessionId: 's9',
-      requestedTargetSessionId: 's9', settings: {} })).toEqual({ conversationSessionId: 'voice-root-s9',
+      requestedTargetSessionId: 's9', settings: {},
+      conversationSelection: { kind: 'continue', conversationSessionAddress: address('voice-root-s9') } })).toEqual({ conversationSessionId: 'voice-root-s9',
       conversationSessionAddress: address('voice-root-s9'), controlSessionId: 's9', transcriptMode: 'synthetic', targetSessionAddress: address('s9') });
     expectCarrier('voice-root-s9', 's9');
   });

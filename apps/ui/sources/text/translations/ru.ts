@@ -13344,16 +13344,11 @@ settingsSession: {
         machineAutoSubtitle:
           "Выберите машину один раз для этого аккаунта и продолжайте её использовать. Если она офлайн, явно выберите другую.",
         rootSessionPolicy: {
-          title: "Политика корневой сессии",
-          fallbackSubtitle: "Выберите политику.",
-          singleTitle: "Одиночная",
-          singleSubtitle: "Каждый раз создавать новую корневую сессию.",
-          keepWarmTitle: "Держать тёплой",
-          keepWarmSubtitle:
-            "По возможности переиспользовать тёплую корневую сессию.",
-          maxWarmRootsTitle: "Макс. тёплых корней",
-          maxWarmRootsSubtitle:
-            "Ограничить число тёплых корневых сессий.",
+          title: "Когда вы запускаете Voice",
+          continueTitle: "Продолжать последний разговор",
+          continueSubtitle: "Voice продолжит с того места, где вы остановились.",
+          newTitle: "Каждый раз начинать новый разговор",
+          newSubtitle: "Прежние разговоры остаются в истории Voice.",
         },
         persistence: {
           title: "Сохранение транскрипта",

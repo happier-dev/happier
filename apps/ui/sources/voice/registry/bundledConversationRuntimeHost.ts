@@ -811,13 +811,17 @@ export function createBundledConversationRuntimeHostLease(input: Readonly<{
     },
     createMicSession: createRealtimeMicSession,
     openLevelWriter: (input: Parameters<typeof voiceRuntimeLevelStore.open>[0]) => voiceRuntimeLevelStore.open(input),
-    ensureBound: (input: Readonly<{ adapterId: string; controlSessionId: string; requestedTargetSessionAddress: SessionAddress | null; signal?: AbortSignal }>) => {
+    ensureBound: (input: Readonly<{ adapterId: string; controlSessionId: string; requestedTargetSessionAddress: SessionAddress | null; signal?: AbortSignal;
+      conversationSelection?: import('@/voice/binding/voiceConversationBindingTypes').VoiceConversationSelection;
+      onConversationSelection?: (selection: import('@/voice/binding/voiceConversationBindingTypes').VoiceConversationSelection) => void }>) => {
       if (!generation.isCurrent()) throw new Error('voice_runtime_generation_revoked');
       return voiceSessionBindingManager.ensureBound({
         adapterId: input.adapterId,
         controlSessionId: input.controlSessionId,
         requestedTargetSessionId: input.requestedTargetSessionAddress?.sessionId ?? null,
         requestedTargetServerId: input.requestedTargetSessionAddress?.serverId ?? null,
+        conversationSelection: input.conversationSelection,
+        onConversationSelection: input.onConversationSelection,
         signal: input.signal,
       });
     },
@@ -1120,6 +1124,8 @@ export function createBundledConversationRuntimeHostLease(input: Readonly<{
       });
     },
     async resolveAgentRealtimeVoiceConversationBinding(input: Readonly<{
+      conversationSelection?: import('@/voice/binding/voiceConversationBindingTypes').VoiceConversationSelection;
+      onConversationSelection?: (selection: import('@/voice/binding/voiceConversationBindingTypes').VoiceConversationSelection) => void;
       provider: ContributionRef;
       agent: ContributionRef;
       controlSessionId: string;
@@ -1139,7 +1145,7 @@ export function createBundledConversationRuntimeHostLease(input: Readonly<{
           try { return await inspectAgentRealtimeSession({ ...inspection, signal: lifetime.signal }); }
           finally { lifetime.dispose(); }
         },
-        ensureGlobalConversation: async ({ agent, isReusableSession }) => {
+        ensureGlobalConversation: async ({ agent }) => {
           const voice = voiceSettingsParse(
             input.settings && typeof input.settings === 'object'
               ? (input.settings as Readonly<{ voice?: unknown }>).voice
@@ -1159,8 +1165,7 @@ export function createBundledConversationRuntimeHostLease(input: Readonly<{
             // No exact resolved Codex runtime/version currently has provider-boundary
             // proof of first-turn model visibility after cold resume.
             coldResumeStartupInstructionsEffective: false,
-            isReusableSession,
-          }, input.signal);
+          }, input.signal, input.conversationSelection, input.onConversationSelection);
         },
       });
     },

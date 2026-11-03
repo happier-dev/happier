@@ -18,7 +18,8 @@ import { createDeferred, flushHookEffects, pressTestInstanceAsync, renderSetting
 import { sync } from '@/sync/sync';
 import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
 import { t } from '@/text';
-import { PluginProjectionV2Schema, ProviderConnectionIdSchema } from '@happier-dev/protocol';
+import { PluginProjectionV2Schema} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { ProviderConnectionIdSchema } from '@happier-dev/protocol/providers/ids';
 import { clearDaemonMergedProjectionCacheForTests } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
 import { resolveVoiceConfiguredAgentTarget } from '@/voice/agent/resolveVoiceConfiguredAgentTarget';
 import { storage } from '@/sync/domains/state/storage';
@@ -921,7 +922,6 @@ describe('LocalConversationSection', () => {
     { id: 'customAgent', overrides: { conversationMode: 'agent', agent: { agentSource: 'session' } } },
     { id: 'chatModelId', overrides: { conversationMode: 'agent', agent: { chatModelSource: 'session' } } },
     { id: 'commitModelId', overrides: { conversationMode: 'agent', agent: { commitModelSource: 'chat' } } },
-    { id: 'maxWarmRoots', overrides: { conversationMode: 'agent', agent: { rootSessionPolicy: 'single' } } },
     { id: 'silenceMs', overrides: { handsFree: { ...readLocalConversationVoiceSettings(voiceSettingsDefaults).handsFree, enabled: false } } },
     { id: 'sttLanguage', overrides: { stt: { ...readLocalConversationVoiceSettings(voiceSettingsDefaults).stt, provider: 'device' } } },
     { id: 'ttsVoiceId', overrides: { tts: { ...readLocalConversationVoiceSettings(voiceSettingsDefaults).tts, provider: 'device' } } },
@@ -1281,21 +1281,24 @@ describe('LocalConversationSection', () => {
     }
   });
 
-  it('renders warm-root policy controls for the voice agent', async () => {
+  it('offers the conversation lifetime choice beside the Voice agent, outside Advanced, and saves the picked one', async () => {
     const LocalConversationSection = await loadLocalConversationSection();
+    const setVoice = vi.fn();
     const voice = createLocalConversationVoice({
       conversationMode: 'agent',
       agent: {
-        rootSessionPolicy: 'keep_warm',
-        maxWarmRoots: 4,
+        rootSessionPolicy: 'continue',
       },
     });
 
-    const screen = await renderSettingsView(<LocalConversationSection voice={voice} setVoice={() => {}} />);
-    openAdvancedAgent(screen);
-    const policyChoice = findSegmentedChoiceByTitle(screen, t('settingsVoice.local.conversation.rootSessionPolicy.title'));
-    expect(policyChoice?.props.value).toBe('keep_warm');
-    expect(policyChoice?.props.options.map((option: { id: string }) => option.id)).toEqual(['single', 'keep_warm']);
+    const screen = await renderSettingsView(<LocalConversationSection voice={voice} setVoice={setVoice} />);
+    const policy = findDropdownByItemTriggerTitle(screen, t('settingsVoice.local.conversation.rootSessionPolicy.title'));
+    expect(policy?.props.selectedId).toBe('continue');
+    expect(policy?.props.items.map((item: DropdownMenuItem) => item.id)).toEqual(['continue', 'new']);
+
+    act(() => policy?.props.onSelect('new'));
+    expect(setVoice).toHaveBeenCalledTimes(1);
+    expect(readLocalConversationVoiceSettings(setVoice.mock.calls[0]![0]).agent.rootSessionPolicy).toBe('new');
   });
 
   it('hides Agent-only commit isolation when voice.agent is disabled', async () => {

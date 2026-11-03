@@ -1,16 +1,12 @@
 import * as React from 'react';
+import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
+import { voiceSessionBindingStore } from '@/voice/binding/voiceConversationBindingStore';
+import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
 
-import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
-import { normalizeSessionAddress, type SessionAddress } from '@/sync/domains/session/sessionAddress';
-import { storage } from '@/sync/domains/state/storage';
-import { findVoiceConversationSessionId } from '@/voice/persistence/voiceConversationSystemSessionLookup';
+const readCurrentBinding = () => voiceSessionBindingStore.getState().getByControlSessionId(VOICE_AGENT_GLOBAL_SESSION_ID);
 
-/** The Account's existing global Voice conversation, read passively (never created by a reader). */
+/** Exact retained admission, never the newest Session in a recipe pool. */
 export function useVoiceHomeConversationAddress(): SessionAddress | null {
-    const serverId = useActiveServerSnapshot().serverId;
-    const sessionId = storage((state) => findVoiceConversationSessionId(state));
-    return React.useMemo(
-        () => (sessionId ? normalizeSessionAddress(serverId, sessionId) : null),
-        [serverId, sessionId],
-    );
+    const binding = React.useSyncExternalStore(voiceSessionBindingStore.subscribe, readCurrentBinding, readCurrentBinding);
+    return binding?.lifetime === 'runtime_attempt' ? null : binding?.conversationSessionAddress ?? null;
 }

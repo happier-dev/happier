@@ -13717,16 +13717,11 @@ settingsSession: {
         machineAutoSubtitle:
           "Scegli una macchina per questo account e continua a usarla. Se è offline, scegline un’altra esplicitamente.",
         rootSessionPolicy: {
-          title: "Politica sessione radice",
-          fallbackSubtitle: "Scegli una politica.",
-          singleTitle: "Singola",
-          singleSubtitle: "Crea una nuova sessione radice ogni volta.",
-          keepWarmTitle: "Mantieni calda",
-          keepWarmSubtitle:
-            "Riutilizza una sessione radice calda quando possibile.",
-          maxWarmRootsTitle: "Max radici calde",
-          maxWarmRootsSubtitle:
-            "Limita quante sessioni radice calde mantenere.",
+          title: "Quando avvii Voice",
+          continueTitle: "Continua la mia ultima conversazione",
+          continueSubtitle: "Voice riprende da dove avevi lasciato.",
+          newTitle: "Inizia ogni volta una nuova conversazione",
+          newSubtitle: "Le conversazioni precedenti restano nella cronologia di Voice.",
         },
         persistence: {
           title: "Persistenza trascrizione",

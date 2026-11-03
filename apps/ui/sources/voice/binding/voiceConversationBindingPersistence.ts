@@ -5,12 +5,11 @@ import {
 } from '@/sync/domains/runtimePublication/readSessionRuntimePublicationState';
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
 import { readVoiceAgentRunMetadataFromSession, type VoiceAgentRunMetadataV1 } from '@/voice/persistence/voiceAgentRunMetadata';
-import { findReusableVoiceConversationRuntimeSessionId, findVoiceConversationSessionId } from '@/voice/persistence/voiceConversationSession';
 import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString';
 import { readVoiceSessionOwnerMetadataFromState } from '@/voice/shared/readVoiceSessionOwnerMetadata';
 
-import { voiceConversationBindingResolver } from './VoiceConversationBindingResolver';
-import type { VoiceConversationTranscriptMode, VoiceSessionBinding } from './voiceConversationBindingTypes';
+import { voiceSessionBindingStore } from './voiceConversationBindingStore';
+import { readLastVoiceConversationAddress } from './resolveVoiceConversationSelection';
 
 type ResolvePersistedVoiceConversationParams = Readonly<{
     managedSessionId: string;
@@ -23,44 +22,8 @@ export type PersistedVoiceConversationRuntimeState = Readonly<{
     runtimePublication: SessionRuntimePublicationState;
 }>;
 
-function pickPersistedBinding(
-    controlSessionId: string,
-    explicitConversationSessionId: string | null,
-): VoiceSessionBinding | null {
-    if (explicitConversationSessionId) {
-        const byConversation = voiceConversationBindingResolver.resolveByConversationSessionId({
-            conversationSessionId: explicitConversationSessionId,
-        });
-        if (byConversation) return byConversation;
-    }
-
-    const byControl = voiceConversationBindingResolver.resolveByControlSessionId({
-        controlSessionId,
-        adapterId: 'local_conversation',
-    });
-    if (byControl) return byControl;
-
-    if (controlSessionId !== VOICE_AGENT_GLOBAL_SESSION_ID) return null;
-    return voiceConversationBindingResolver.resolveLatest({
-        adapterId: 'local_conversation',
-        controlSessionIds: [controlSessionId],
-    });
-}
-
 export function resolvePersistedDaemonConversationSessionId(): string | null {
-    const boundConversationSessionId = normalizeNonEmptyString(
-        pickPersistedBinding(VOICE_AGENT_GLOBAL_SESSION_ID, null)?.conversationSessionId,
-    );
-    if (boundConversationSessionId) {
-        return boundConversationSessionId;
-    }
-
-    const state = storage.getState() as any;
-    return (
-        findReusableVoiceConversationRuntimeSessionId(state)
-        ?? findVoiceConversationSessionId(state)
-        ?? null
-    );
+    return readLastVoiceConversationAddress()?.sessionId ?? null;
 }
 
 function readRuntimePublicationForSession(metadataSessionId: string): SessionRuntimePublicationState {
@@ -76,11 +39,11 @@ export function resolvePersistedVoiceConversationMetadataSessionId(
     if (!managedSessionId) return null;
 
     const explicitConversationSessionId = normalizeNonEmptyString(params.conversationSessionId);
-    const binding = pickPersistedBinding(managedSessionId, explicitConversationSessionId);
     return normalizeNonEmptyString(
         explicitConversationSessionId
-            ?? binding?.conversationSessionId
-            ?? (managedSessionId === VOICE_AGENT_GLOBAL_SESSION_ID ? resolvePersistedDaemonConversationSessionId() : managedSessionId),
+            ?? (managedSessionId === VOICE_AGENT_GLOBAL_SESSION_ID
+                ? resolvePersistedDaemonConversationSessionId()
+                : voiceSessionBindingStore.getState().getByControlSessionId(managedSessionId)?.conversationSessionId ?? managedSessionId),
     );
 }
 

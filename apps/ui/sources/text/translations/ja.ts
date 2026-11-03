@@ -13783,16 +13783,11 @@ settingsSession: {
         machineAutoSubtitle:
           "このアカウントで一度選んだマシンを使い続けます。オフラインの場合は、別のマシンを明示的に選んでください。",
         rootSessionPolicy: {
-          title: "ルートセッション方針",
-          fallbackSubtitle: "方針を選択してください。",
-          singleTitle: "単発",
-          singleSubtitle: "毎回新しいルートセッションを作成します。",
-          keepWarmTitle: "ウォーム維持",
-          keepWarmSubtitle:
-            "可能ならウォームなルートセッションを再利用します。",
-          maxWarmRootsTitle: "最大ウォームルート数",
-          maxWarmRootsSubtitle:
-            "保持するウォームなルートセッション数を制限します。",
+          title: "Voice を開始するとき",
+          continueTitle: "前回の会話を続ける",
+          continueSubtitle: "前回の続きから再開します。",
+          newTitle: "毎回新しい会話を始める",
+          newSubtitle: "以前の会話は Voice の履歴に残ります。",
         },
         persistence: {
           title: "トランスクリプトの永続化",

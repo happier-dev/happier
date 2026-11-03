@@ -1,10 +1,12 @@
 import type {
-  ConnectedServiceBindingsV2,
-  VoiceConversationToolEffectCalls,
+  ConnectedServiceBindingsV2} from '@happier-dev/protocol/connect/connected-service-bindings';
+import type {
+  VoiceConversationToolEffectCalls} from '@happier-dev/protocol/plugins/contributions/voice';
+import type {
   VoiceRealtimeJsonValue,
   VoiceRealtimeToolResultV1,
   VoiceTranscriptCanonicalEventV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/voice/realtime/events';
 import type {
   AgentSessionRealtimeHandle,
 } from '@happier-dev/plugin-sdk/agents/runtime';
@@ -219,6 +221,8 @@ export type BundledRealtimeProviderRuntimeHost = Readonly<{
     pcm: VoicePcmConnectionMedia;
   }>): VoiceRealtimeConnection;
   ensureBound(input: Readonly<{
+    conversationSelection?: import('@/voice/binding/voiceConversationBindingTypes').VoiceConversationSelection;
+    onConversationSelection?: (selection: import('@/voice/binding/voiceConversationBindingTypes').VoiceConversationSelection) => void;
     adapterId: string;
     controlSessionId: string;
     requestedTargetSessionAddress: SessionAddress | null;
@@ -249,6 +253,8 @@ export type BundledRealtimeProviderRuntimeHost = Readonly<{
     conversationSessionId: string;
   }>): boolean;
   resolveAgentRealtimeVoiceConversationBinding?(input: Readonly<{
+    conversationSelection?: import('@/voice/binding/voiceConversationBindingTypes').VoiceConversationSelection;
+    onConversationSelection?: (selection: import('@/voice/binding/voiceConversationBindingTypes').VoiceConversationSelection) => void;
     provider: Readonly<{ pluginId: string; localId: string }>;
     agent: Readonly<{ pluginId: string; localId: string }>;
     controlSessionId: string;
@@ -400,6 +406,8 @@ type BundledRealtimeProviderRuntimeConfigBase = Readonly<{
   /** Element zero accepts input; remaining controls continue the response. */
   encodeTextTurn(text: string): readonly VoiceRealtimeJsonValue[];
   resolveConversationBinding?(input: Readonly<{
+    conversationSelection?: import('@/voice/binding/voiceConversationBindingTypes').VoiceConversationSelection;
+    onConversationSelection?: (selection: import('@/voice/binding/voiceConversationBindingTypes').VoiceConversationSelection) => void;
     controlSessionId: string;
     requestedTargetSessionAddress: SessionAddress | null;
     settings: unknown;

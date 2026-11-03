@@ -1,5 +1,6 @@
 import { getCurrentAppShellVoiceProviderActivation } from '@/components/appShell/plugins/committedPluginUiProjection';
 import { getVoiceAdapterRegistry, resolveVoiceAdapterSurfaceCapabilities } from './voiceAdapterRegistry';
+import type { VoiceConversationSelection } from '@/voice/binding/voiceConversationBindingTypes';
 import { storage } from '@/sync/domains/state/storage';
 import { captureVoiceAttemptRecoveryTarget } from './voiceAttemptRecoveryTarget';
 import { canDismissVoiceSessionFailedAttempt, getVoiceSessionSnapshot, recordVoiceSessionEndReason, type VoiceSessionEndReason } from './voiceSessionStore';
@@ -60,10 +61,11 @@ export type VoiceSessionLifecycleController = Readonly<{
     ) => Promise<VoiceOutputFocusApplication>;
     stop: (sessionId: string, reason?: Exclude<VoiceSessionEndReason, { kind: 'disconnected' }>) => Promise<void>;
     subscribe: (listener: () => void) => () => void;
-    toggle: (targetSessionAddress: SessionAddress | null) => Promise<void>;
+    toggle: (targetSessionAddress: SessionAddress | null, conversationSelection?: VoiceConversationSelection) => Promise<void>;
 }>;
 
 type PendingAdapterSwitch = Readonly<{
+    conversationSelection?: VoiceConversationSelection;
     sourceAdapterId: string;
     sessionId: string;
     requestedTargetSessionAddress: SessionAddress | null;
@@ -83,6 +85,7 @@ type StartingAdapter = {
 };
 
 type VoiceRecoveryBinding = Readonly<{
+    conversationSelection?: VoiceConversationSelection;
     providerId: VoiceAdapterId;
     sessionId: string;
     requestedTargetSessionAddress: SessionAddress | null;
@@ -307,6 +310,7 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
         sessionId: string,
         requestedTargetSessionAddress: SessionAddress | null,
         startAttempt = createStartingAdapter(adapter, sessionId, requestedTargetSessionAddress),
+        conversationSelection?: VoiceConversationSelection,
     ): Promise<void> => {
         heldInput = null;
         const ownedSessionId = startAttempt.expectedSnapshotSessionId;
@@ -314,12 +318,33 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
             resolveVoiceAdapterSurfaceCapabilities(adapter.id, storage.getState().settings.voice),
             requestedTargetSessionAddress,
         );
+        let attemptBinding: VoiceRecoveryBinding = {
+            providerId: adapter.id, sessionId: ownedSessionId,
+            requestedTargetSessionAddress, recoveryTarget, conversationSelection,
+        };
+        const onConversationSelection = (selection: VoiceConversationSelection): void => {
+            // Binding admission alone chooses policy and exact identity. Late
+            // results cannot restore recovery after End or an authority change.
+            if (disposed || startingAdapter !== startAttempt
+                || recoveryBinding !== attemptBinding
+                || configuredProviderId !== adapter.id
+                || getRegistry().get(adapter.id) !== adapter) return;
+            attemptBinding = { ...attemptBinding, conversationSelection: selection };
+            recoveryBinding = attemptBinding;
+            const pending = pendingAdapterSwitch;
+            if (pending?.restartForCurrentUiContextTools
+                && !pending.startRequested
+                && pending.sourceAdapterId === adapter.id
+                && pending.sessionId === ownedSessionId) {
+                pendingAdapterSwitch = { ...pending, conversationSelection: selection };
+            }
+        };
         if (adapter.engineKind !== 'realtime') {
-            recoveryBinding = { providerId: adapter.id, sessionId: ownedSessionId, requestedTargetSessionAddress, recoveryTarget };
+            recoveryBinding = attemptBinding;
             ensureAttemptConnectivityLease(adapter, ownedSessionId, requestedTargetSessionAddress);
             startingAdapter = startAttempt;
             try {
-                await adapter.start({ sessionId, requestedTargetSessionAddress });
+                await adapter.start({ sessionId, requestedTargetSessionAddress, ...(conversationSelection ? { conversationSelection } : {}), onConversationSelection });
                 if (getRegistry().get(adapter.id) !== adapter) {
                     // Registration withdrawal is a synchronous authority
                     // boundary. A provider that finishes setup afterwards
@@ -357,7 +382,7 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
             throw busy;
         }
         ensureAttemptConnectivityLease(adapter, ownedSessionId, requestedTargetSessionAddress);
-        recoveryBinding = { providerId: adapter.id, sessionId: ownedSessionId, requestedTargetSessionAddress, recoveryTarget };
+        recoveryBinding = attemptBinding;
         realtimeCaptureAdmission = {
             adapter,
             adapterId: adapter.id,
@@ -367,7 +392,7 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
         retiredAttemptStopStarted = false;
         startingAdapter = startAttempt;
         try {
-            await adapter.start({ sessionId, requestedTargetSessionAddress });
+            await adapter.start({ sessionId, requestedTargetSessionAddress, ...(conversationSelection ? { conversationSelection } : {}), onConversationSelection });
             if (getRegistry().get(adapter.id) !== adapter) {
                 await stopAdapter(adapter, ownedSessionId);
                 return;
@@ -679,6 +704,7 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
                 }
                 pendingAdapterSwitch = {
                     sourceAdapterId: targetAdapter.id,
+                    conversationSelection: recoveryBinding?.conversationSelection,
                     sessionId: pending.sessionId,
                     requestedTargetSessionAddress: pending.requestedTargetSessionAddress,
                     targetAdapterId: targetAdapter.id,
@@ -743,6 +769,8 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
                 targetAdapter,
                 pending.sessionId,
                 pending.requestedTargetSessionAddress,
+                undefined,
+                targetAdapterId === pending.sourceAdapterId ? pending.conversationSelection : undefined,
             )
                 .catch(() => {
                     // A failed target start must not leave a dangling pending
@@ -931,14 +959,14 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
         return null;
     };
 
-    const startConfiguredAdapter = async (requestedTargetSessionAddress: SessionAddress | null): Promise<void> => {
+    const startConfiguredAdapter = async (requestedTargetSessionAddress: SessionAddress | null, conversationSelection?: VoiceConversationSelection): Promise<void> => {
         const sessionId = requestedTargetSessionAddress?.sessionId ?? '';
         let adapter = resolveConfiguredAdapter();
         const providerId = configuredProviderId;
         const activation = !adapter && providerId && providerId !== 'off'
             ? getCurrentAppShellVoiceProviderActivation(providerId) : null;
         if (activation && providerId && providerId !== 'off') {
-            const request: VoiceRecoveryBinding = { providerId,
+            const request: VoiceRecoveryBinding = { providerId, conversationSelection,
                 sessionId: sessionId.trim() || VOICE_AGENT_GLOBAL_SESSION_ID, requestedTargetSessionAddress };
             pendingStart = request;
             publishSnapshot();
@@ -956,12 +984,14 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
              */
             if (configuredProviderId !== null && configuredProviderId !== 'off') {
                 const unavailable: VoiceRecoveryBinding = {
+                    conversationSelection,
                     providerId: configuredProviderId,
                     sessionId: sessionId.trim() || VOICE_AGENT_GLOBAL_SESSION_ID,
                     requestedTargetSessionAddress,
                 };
                 if (
                     recoveryBinding?.providerId === unavailable.providerId
+                    && recoveryBinding.conversationSelection === conversationSelection
                     && recoveryBinding.sessionId === unavailable.sessionId
                     && (
                         recoveryBinding.requestedTargetSessionAddress
@@ -990,7 +1020,7 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
         }
         const startAttempt = createStartingAdapter(adapter, sessionId, requestedTargetSessionAddress);
         try {
-            await startAdapter(adapter, sessionId, requestedTargetSessionAddress, startAttempt);
+            await startAdapter(adapter, sessionId, requestedTargetSessionAddress, startAttempt, conversationSelection);
         } catch (error) {
             const settledSnapshot = publishedSnapshot;
             const isCurrentPublishedFailure = configuredProviderId === adapter.id
@@ -1038,7 +1068,7 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
         return true;
     };
 
-    const toggle = async (requestedTargetSessionAddress: SessionAddress | null): Promise<void> => {
+    const toggle = async (requestedTargetSessionAddress: SessionAddress | null, conversationSelection?: VoiceConversationSelection): Promise<void> => {
         if (disposed || cancelPendingStart()) return;
         retirementFailure = null;
         const retiringStops = [...adapterStopPromises.values()].filter((stop) => stop.retireAttempt)
@@ -1049,6 +1079,7 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
         if (retiringStops.length > 0) {
             if (configuredProviderId === null || configuredProviderId === 'off') return;
             const request = {
+                conversationSelection,
                 providerId: configuredProviderId,
                 sessionId: requestedTargetSessionAddress?.sessionId.trim() || VOICE_AGENT_GLOBAL_SESSION_ID,
                 requestedTargetSessionAddress,
@@ -1060,7 +1091,7 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
                 await Promise.all(retiringStops);
                 if (disposed || pendingStart !== request) return;
                 pendingStart = null;
-                await startConfiguredAdapter(request.requestedTargetSessionAddress);
+                await startConfiguredAdapter(request.requestedTargetSessionAddress, request.conversationSelection);
             } catch (error) {
                 if (disposed || configuredProviderId !== request.providerId
                     || (pendingStart !== request && recoveryBinding !== request)) return;
@@ -1099,7 +1130,7 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
             await endAdapterAttempt(pendingStartAttempt.adapter, pendingStartAttempt.sessionId);
             return;
         }
-        await startConfiguredAdapter(requestedTargetSessionAddress);
+        await startConfiguredAdapter(requestedTargetSessionAddress, conversationSelection);
     };
     refreshAdapterSubscriptions();
     const unsubscribeRegistry = getRegistry().subscribe?.(() => {
@@ -1411,6 +1442,7 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
              */
             pendingAdapterSwitch = {
                 sourceAdapterId: owned.adapter.id,
+                conversationSelection: recoveryBinding?.conversationSelection,
                 sessionId: owned.snapshot.sessionId,
                 requestedTargetSessionAddress:
                     attemptConnectivityLease?.adapter === owned.adapter
@@ -1515,7 +1547,7 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
             if (!binding || binding.providerId !== configuredProviderId) return;
             // The recovery surface's session id is a navigation hint, not
             // authority to retarget the failed attempt or change its Home.
-            await toggle(binding.requestedTargetSessionAddress);
+            await toggle(binding.requestedTargetSessionAddress, binding.conversationSelection);
         },
         setOutputFocusState: async (sessionId, state) => {
             if (disposed) return 'unsupported';

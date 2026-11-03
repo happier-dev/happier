@@ -59,6 +59,8 @@ function agentRealtimeVoiceBindingDeclined(
 }
 
 export async function resolveAgentRealtimeVoiceConversationBinding(input: Readonly<{
+  conversationSelection?: import('@/voice/binding/voiceConversationBindingTypes').VoiceConversationSelection;
+  onConversationSelection?: (selection: import('@/voice/binding/voiceConversationBindingTypes').VoiceConversationSelection) => void;
   provider: AgentRealtimeContributionRef;
   agent: AgentRealtimeContributionRef;
   controlSessionId: string;
@@ -68,7 +70,6 @@ export async function resolveAgentRealtimeVoiceConversationBinding(input: Readon
   inspect: InspectAgentRealtimeSession;
   ensureGlobalConversation(input: Readonly<{
     agent: AgentRealtimeContributionRef;
-    isReusableSession(input: Readonly<{ sessionId: string }>): Promise<boolean>;
   }>): Promise<string>;
 }>): Promise<VoiceAdapterConversationBinding | null> {
   const bind = (conversationSessionAddress: SessionAddress): VoiceAdapterConversationBinding =>
@@ -87,10 +88,12 @@ export async function resolveAgentRealtimeVoiceConversationBinding(input: Readon
   };
 
   if (input.controlSessionId !== input.globalSessionId) {
+    if (input.conversationSelection?.kind === 'new') throw agentRealtimeVoiceBindingDeclined('unsupported_runtime');
     const conversationSessionAddress = input.requestedTargetSessionAddress;
     if (!conversationSessionAddress || conversationSessionAddress.sessionId !== input.controlSessionId) {
       throw agentRealtimeVoiceBindingDeclined('session_unavailable');
     }
+    input.onConversationSelection?.({ kind: 'continue', conversationSessionAddress });
     return settle(conversationSessionAddress, await input.inspect({
       sessionAddress: conversationSessionAddress,
       provider: input.provider,
@@ -100,13 +103,6 @@ export async function resolveAgentRealtimeVoiceConversationBinding(input: Readon
 
   const conversationSessionId = await input.ensureGlobalConversation({
     agent: input.agent,
-    // Reuse is a yes/no question about a candidate the caller may replace, not
-    // a Start refusal: an unusable candidate means "make another one".
-    isReusableSession: async ({ sessionId }) => (await input.inspect({
-      sessionAddress: { serverId: input.globalConversationServerId, sessionId },
-      provider: input.provider,
-      agent: input.agent,
-    })).available,
   });
   const conversationSessionAddress = {
     serverId: input.globalConversationServerId,

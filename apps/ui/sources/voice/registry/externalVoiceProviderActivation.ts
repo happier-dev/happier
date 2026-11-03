@@ -942,6 +942,8 @@ export function createExternalVoiceProviderRuntimeContribution(input: Readonly<{
     ...(execution
       ? {
           async resolveConversationBinding(bindingInput: Readonly<{
+            conversationSelection?: import('@/voice/binding/voiceConversationBindingTypes').VoiceConversationSelection;
+            onConversationSelection?: (selection: import('@/voice/binding/voiceConversationBindingTypes').VoiceConversationSelection) => void;
             controlSessionId: string;
             requestedTargetSessionAddress: SessionAddress | null;
             settings: unknown;

@@ -13502,16 +13502,11 @@ settingsSession: {
         machineAutoSubtitle:
           "Elige una máquina para esta cuenta y sigue usándola. Si está desconectada, elige otra explícitamente.",
         rootSessionPolicy: {
-          title: "Política de sesión raíz",
-          fallbackSubtitle: "Elige una política.",
-          singleTitle: "Única",
-          singleSubtitle: "Crear una nueva sesión raíz cada vez.",
-          keepWarmTitle: "Mantener caliente",
-          keepWarmSubtitle:
-            "Reutilizar una sesión raíz caliente cuando sea posible.",
-          maxWarmRootsTitle: "Máx. raíces calientes",
-          maxWarmRootsSubtitle:
-            "Limita cuántas sesiones raíz calientes se conservan.",
+          title: "Al iniciar Voice",
+          continueTitle: "Continuar mi última conversación",
+          continueSubtitle: "Voice retoma donde lo dejaste.",
+          newTitle: "Empezar una conversación nueva cada vez",
+          newSubtitle: "Las conversaciones anteriores quedan en el historial de Voice.",
         },
         persistence: {
           title: "Persistencia de la transcripción",

@@ -13333,16 +13333,11 @@ settingsSession: {
         machineAutoSubtitle:
           "Wybierz maszynę raz dla tego konta i nadal jej używaj. Jeśli jest offline, wybierz inną jawnie.",
         rootSessionPolicy: {
-          title: "Polityka sesji głównej",
-          fallbackSubtitle: "Wybierz politykę.",
-          singleTitle: "Pojedyncza",
-          singleSubtitle: "Za każdym razem twórz nową sesję główną.",
-          keepWarmTitle: "Utrzymuj w gotowości",
-          keepWarmSubtitle:
-            "W miarę możliwości używaj ponownie rozgrzanej sesji głównej.",
-          maxWarmRootsTitle: "Maks. rozgrzanych korzeni",
-          maxWarmRootsSubtitle:
-            "Ogranicz liczbę rozgrzanych sesji głównych.",
+          title: "Gdy uruchamiasz Voice",
+          continueTitle: "Kontynuuj moją ostatnią rozmowę",
+          continueSubtitle: "Voice wraca tam, gdzie skończyłeś.",
+          newTitle: "Za każdym razem zaczynaj nową rozmowę",
+          newSubtitle: "Wcześniejsze rozmowy zostają w historii Voice.",
         },
         persistence: {
           title: "Trwałość transkrypcji",

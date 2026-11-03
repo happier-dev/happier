@@ -42,11 +42,24 @@ import {
 } from '@/voice/runtime/voiceRuntimeFailureCode';
 import type { VoiceMachineErrorKind } from '@/voice/runtime/machine/voiceConversationRuntimeTypes';
 import { normalizeSessionAddress, type SessionAddress } from '@/sync/domains/session/sessionAddress';
+import type { VoiceConversationSelection } from '@/voice/binding/voiceConversationBindingTypes';
 
 function readRequest(value: VoiceRealtimeJsonValue): Readonly<Record<string, VoiceRealtimeJsonValue>> {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? value as Readonly<Record<string, VoiceRealtimeJsonValue>>
     : {};
+}
+
+function readConversationSelection(value: VoiceRealtimeJsonValue | undefined): VoiceConversationSelection | undefined {
+  if (value === undefined) return undefined;
+  const selection = readRequest(value);
+  if (selection.kind === 'new' && typeof selection.creationKey === 'string' && selection.creationKey.trim()) {
+    return { kind: 'new', creationKey: selection.creationKey };
+  }
+  const raw = selection.conversationSessionAddress;
+  const record = raw === undefined ? {} : readRequest(raw);
+  const address = normalizeSessionAddress(record.serverId, record.sessionId);
+  return selection.kind === 'continue' && address ? { kind: 'continue', conversationSessionAddress: address } : undefined;
 }
 
 export function readRequestedTargetSessionAddress(
@@ -177,7 +190,9 @@ export function createBundledRealtimeProviderRuntime(
   let disposed = false;
   const isCurrentGeneration = (): boolean => host.isCurrentGeneration?.() !== false;
   let disposePromise: Promise<void> | null = null;
-  let activeStartAttempt: object | null = null;
+  let activeStartAttempt: Readonly<{
+    onConversationSelection?: (selection: VoiceConversationSelection) => void;
+  }> | null = null;
   /**
    * Whether a machine port already named the current start's outcome. It keeps
    * the unsettled-outcome record below from duplicating a decline or failure the
@@ -530,6 +545,8 @@ export function createBundledRealtimeProviderRuntime(
         controlSessionId: input.controlSessionId,
         requestedTargetSessionAddress: targetSessionAddress,
         signal: input.signal,
+        conversationSelection: readConversationSelection(request.conversationSelection),
+        onConversationSelection: activeStartAttempt?.onConversationSelection,
       });
       abortIfRequested(input.signal);
       beginTranscriptProjection(input);
@@ -1579,7 +1596,7 @@ export function createBundledRealtimeProviderRuntime(
         code: 'voice_runtime_generation_revoked',
       });
     }
-    const startAttempt = {};
+    const startAttempt = { onConversationSelection: input.onConversationSelection };
     activeStartAttempt = startAttempt;
     startOutcomeNamed = false;
     recordedTranscriptDrops.clear();
@@ -1646,6 +1663,7 @@ export function createBundledRealtimeProviderRuntime(
           ...(initialContext ? { initialContext } : {}),
           ...(requestedTargetSessionAddress ? { requestedTargetSessionAddress } : {}),
           textOnly: input.textOnly === true,
+          ...(input.conversationSelection ? { conversationSelection: input.conversationSelection } : {}),
         },
       });
     } catch (error) {

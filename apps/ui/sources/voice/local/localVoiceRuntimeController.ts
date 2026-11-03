@@ -13,6 +13,7 @@ import {
 } from './localVoiceEngine';
 import type { VoiceCurrentUiToolPort } from '@/voice/tools/currentUiContextToolPort';
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
+import type { VoiceConversationSelection } from '@/voice/binding/voiceConversationBindingTypes';
 
 export type LocalVoiceRuntimeController = Readonly<{
   abortTurn: (sessionId: string) => Promise<void>;
@@ -38,6 +39,8 @@ export type LocalVoiceRuntimeController = Readonly<{
     sessionId: string,
     currentUiContext?: VoiceCurrentUiToolPort,
     requestedTargetSessionAddress?: SessionAddress | null,
+    conversationSelection?: VoiceConversationSelection,
+    onConversationSelection?: (selection: VoiceConversationSelection) => void,
   ) => Promise<void>;
 }>;
 
@@ -54,8 +57,8 @@ export function createLocalVoiceRuntimeController(): LocalVoiceRuntimeController
       await sendLocalVoiceAgentTextTurn(controlSessionId, text, durableDispatch, onAccepted),
     sendAgentTextUpdate: async (sessionId, update) => await sendLocalVoiceAgentTextUpdate(sessionId, update),
     stopSession: async (reason, signal) => await stopLocalVoiceSession(reason, signal),
-    toggleTurn: async (sessionId, currentUiContext, requestedTargetSessionAddress) =>
-      await toggleLocalVoiceTurn(sessionId, currentUiContext, requestedTargetSessionAddress),
+    toggleTurn: async (sessionId, currentUiContext, requestedTargetSessionAddress, conversationSelection, onConversationSelection) =>
+      await toggleLocalVoiceTurn(sessionId, currentUiContext, requestedTargetSessionAddress, conversationSelection, onConversationSelection),
   };
 }
 

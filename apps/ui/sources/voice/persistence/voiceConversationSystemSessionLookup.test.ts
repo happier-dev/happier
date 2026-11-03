@@ -2,8 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 
 import {
-  findReusableVoiceConversationRuntimeSessionId,
-  findVoiceConversationSessionId,
+  isVoiceConversationSystemSessionMetadata,
   isVoiceConversationCustodySessionMetadata,
   resolveVoiceConversationSessionMetadataFromState,
 } from './voiceConversationSystemSessionLookup';
@@ -24,8 +23,7 @@ describe('voiceConversationSystemSessionLookup', () => {
       },
     };
 
-    expect(findReusableVoiceConversationRuntimeSessionId(state)).toBe('voice_cached');
-    expect(findVoiceConversationSessionId(state)).toBe('voice_cached');
+    expect(isVoiceConversationSystemSessionMetadata(resolveVoiceConversationSessionMetadataFromState(state, 'voice_cached'))).toBe(true);
   });
 
   it('reads the released voice_carrier system-session key during the bounded migration window', () => {
@@ -42,11 +40,10 @@ describe('voiceConversationSystemSessionLookup', () => {
       },
     };
 
-    expect(findReusableVoiceConversationRuntimeSessionId(state)).toBe('legacy_voice_carrier');
-    expect(findVoiceConversationSessionId(state)).toBe('legacy_voice_carrier');
+    expect(isVoiceConversationSystemSessionMetadata(resolveVoiceConversationSessionMetadataFromState(state, 'legacy_voice_carrier'))).toBe(true);
   });
 
-  it('admits retired Voice sessions only to the custody classifier, never reuse lookup', () => {
+  it('admits retired Voice sessions only to the custody classifier', () => {
     const metadata = {
       systemSessionV1: { v: 1, key: 'voice_conversation_retired', hidden: true },
     };
@@ -62,11 +59,10 @@ describe('voiceConversationSystemSessionLookup', () => {
     };
 
     expect(isVoiceConversationCustodySessionMetadata(metadata)).toBe(true);
-    expect(findReusableVoiceConversationRuntimeSessionId(state)).toBeNull();
-    expect(findVoiceConversationSessionId(state)).toBeNull();
+    expect(isVoiceConversationSystemSessionMetadata(resolveVoiceConversationSessionMetadataFromState(state, 'retired_voice'))).toBe(false);
   });
 
-  it('prefers visible lookup metadata over stale raw session metadata when resolving reusable sessions', () => {
+  it('prefers visible lookup metadata over stale raw session metadata', () => {
     const serverId = getActiveServerSnapshot().serverId;
     const state = {
       sessions: {
@@ -102,8 +98,10 @@ describe('voiceConversationSystemSessionLookup', () => {
       },
     };
 
-    expect(findReusableVoiceConversationRuntimeSessionId(state)).toBe('voice_cached');
-    expect(findVoiceConversationSessionId(state)).toBe('voice_cached');
+    expect(resolveVoiceConversationSessionMetadataFromState(state, 'voice_cached')).toMatchObject({
+      machineId: 'machine-1', path: '/tmp/canonical',
+    });
+    expect(isVoiceConversationSystemSessionMetadata(resolveVoiceConversationSessionMetadataFromState(state, 'voice_cached'))).toBe(true);
   });
 
   it('preserves canonical Voice markers when preferred session-list metadata is flattened', () => {
@@ -159,7 +157,7 @@ describe('voiceConversationSystemSessionLookup', () => {
       },
       hiddenSystemSession: true,
     });
-    expect(findReusableVoiceConversationRuntimeSessionId(state)).toBe('voice_cached');
+    expect(isVoiceConversationSystemSessionMetadata(resolveVoiceConversationSessionMetadataFromState(state, 'voice_cached'))).toBe(true);
   });
 
   it('uses the layout-v1 owner view and never a private-looking shared Voice marker', () => {
@@ -188,11 +186,13 @@ describe('voiceConversationSystemSessionLookup', () => {
       ownerMetadataView: null,
     };
 
-    expect(findVoiceConversationSessionId({
+    const state = {
       sessions: {
         voice_owner: ownerSession,
         voice_missing_owner: missingOwnerSession,
       },
-    })).toBe('voice_owner');
+    };
+    expect(isVoiceConversationSystemSessionMetadata(resolveVoiceConversationSessionMetadataFromState(state, 'voice_owner'))).toBe(true);
+    expect(isVoiceConversationSystemSessionMetadata(resolveVoiceConversationSessionMetadataFromState(state, 'voice_missing_owner'))).toBe(false);
   });
 });

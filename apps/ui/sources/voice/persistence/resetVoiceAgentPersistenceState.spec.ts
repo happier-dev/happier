@@ -86,15 +86,15 @@ describe('resetVoiceAgentPersistenceState', () => {
     expect(readVoiceAgentRunMetadataFromSession({ sessionId: 'sys_newer' })?.runId).toBe('run_newer');
   });
 
-  it('falls back to the newest hidden conversation when no canonical binding exists', async () => {
+  it('VI-LIFE leaves unrelated hidden runs untouched when no exact binding exists', async () => {
     const unbound = await conversation('sys_bound', 10, 'run_bound');
     storage.setState(state => ({ sessions: { ...state.sessions, sys_bound: unbound } }));
     sessionHttp.replaceSession('sys_bound');
     const { resetVoiceAgentPersistenceState } = await import('./resetVoiceAgentPersistenceState');
     const { readVoiceAgentRunMetadataFromSession } = await import('./voiceAgentRunMetadata');
     await resetVoiceAgentPersistenceState({ stop: async () => {} });
-    expect(sessionHttp.writes).toContain('sys_newer');
-    expect(readVoiceAgentRunMetadataFromSession({ sessionId: 'sys_newer' })).toBeNull();
+    expect(sessionHttp.writes).toEqual([]);
+    expect(readVoiceAgentRunMetadataFromSession({ sessionId: 'sys_newer' })?.runId).toBe('run_newer');
     expect(readVoiceAgentRunMetadataFromSession({ sessionId: 'sys_bound' })?.runId).toBe('run_bound');
   });
 

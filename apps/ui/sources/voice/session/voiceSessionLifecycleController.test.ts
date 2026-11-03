@@ -12,7 +12,7 @@ import {
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { getActionSpec } from '@happier-dev/protocol';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { createDeferred, waitForTestEvent } from '@/dev/testkit';
 
 // This file statically imports Socket consumers before the mixed native/Web
@@ -179,7 +179,15 @@ async function createActualLifecycle(input: Readonly<{ currentUiContext?: boolea
         async start(global = false) {
             const peerIndex = browser.peers.length;
             const starting = lifecycle.toggle(global ? null : target);
-            const peer = await Promise.race([browser.peerCreated(peerIndex), starting.then(() => browser.peer)]);
+            const peer = await Promise.race([browser.peerCreated(peerIndex), starting.then(() => {
+                const snapshot = lifecycle.getSnapshot();
+                const observation = { status: snapshot.status, errorCode: snapshot.errorCode,
+                    requests: environment.providerFetch.mock.calls.map(([input]) => new URL(String(input)).pathname),
+                    accountOperations: runtime.requestAccountOperation.mock.calls.length,
+                };
+                expect(observation, JSON.stringify(observation)).toMatchObject({ status: 'connected' });
+                return browser.peer;
+            })]);
             await Promise.race([peer.dataChannelCreated, starting]);
             expect(peer.createDataChannel).toHaveBeenCalledWith('oai-events');
             peer.channel.open();
@@ -1369,6 +1377,154 @@ describe('createVoiceSessionLifecycleController', () => {
             ));
         });
 
+        it.each(['explicit New', 'idle Start with new lifetime'] as const)(
+            'retries an unknown New conversation creation with the same ordinary Session creation key: %s', async (entry) => {
+            const state = await getStorage();
+            const { readLocalConversationVoiceSettings } = await import('@/sync/domains/settings/voiceSettings');
+            const { RPC_METHODS } = await import('@happier-dev/protocol/rpc');
+            const { SessionSpawnNewInputV2Schema } = await import('@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2');
+            const { SessionSpawnNewResultV1Schema } = await import('@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1');
+            const { createUiSessionSpawnUserAttemptId } = await import('@/sync/domains/session/spawn/spawnSessionNonce');
+            const { createVoiceSessionLifecycleController } = await import('./voiceSessionLifecycleController');
+            const settings = state.getState().settings;
+            const config = readLocalConversationVoiceSettings(settings.voice);
+            state.__setState({ settings: { ...settings, voice: { ...settings.voice, providerId: 'local_conversation',
+                executionMachine: { mode: 'fixed', machineId: 'machine-1' },
+                providers: { ...settings.voice.providers, local_conversation: { schemaVersion: 1, config: { ...config,
+                    conversationMode: 'agent', agent: { ...config.agent, agentSource: 'agent', agentId: 'codex',
+                        rootSessionPolicy: 'new' } } } },
+            } } });
+            await loadLocalVoiceEngineWithCompatState();
+            const incumbent = machineRpcWithServerScope.getMockImplementation();
+            if (!incumbent) throw new Error('Actual local Voice Socket responder missing');
+            const creationKeys: Array<string | undefined> = [];
+            // The receiving daemon can retain a creation after its acknowledgement
+            // is lost. Its real DTO requires retries to use the original key.
+            const unknownCreation = SessionSpawnNewResultV1Schema.parse({
+                type: 'pending', retryWithSameCreationKey: true, outcome: 'unknown',
+            });
+            machineRpcWithServerScope.mockImplementation((request: Readonly<{ method: string; payload: unknown }>) => {
+                if (request.method !== RPC_METHODS.SESSION_SPAWN_NEW) return incumbent(request);
+                creationKeys.push(SessionSpawnNewInputV2Schema.parse(request.payload).creationKey);
+                return Promise.resolve(unknownCreation);
+            });
+            const explicitCreationKey = createUiSessionSpawnUserAttemptId();
+            const controller = createVoiceSessionLifecycleController();
+            controller.setConfiguredProviderId('local_conversation');
+            try {
+                await controller.toggle(null, entry === 'explicit New'
+                    ? { kind: 'new', creationKey: explicitCreationKey } : undefined).catch(() => undefined);
+                const creationKey = entry === 'explicit New' ? explicitCreationKey : creationKeys[0];
+                expect(creationKey).toEqual(expect.stringMatching(/^ui-session-attempt-/));
+                expect(creationKeys).toEqual([creationKey]);
+                expect(controller.getSnapshot()).toMatchObject({ status: 'disconnected', canStop: false,
+                    errorMessage: 'VOICE_CONVERSATION_SPAWN_PENDING' });
+                expect(localVoiceSpeechOutputBoundary.fileRecording.start).not.toHaveBeenCalled();
+
+                // Preference edits govern the next deliberate Start, not an
+                // unfinished creation whose outcome the daemon cannot yet prove.
+                const retrySettings = state.getState().settings;
+                const retryConfig = readLocalConversationVoiceSettings(retrySettings.voice);
+                state.__setState({ settings: { ...retrySettings, voice: { ...retrySettings.voice,
+                    providers: { ...retrySettings.voice.providers, local_conversation: { schemaVersion: 1,
+                        config: { ...retryConfig, agent: { ...retryConfig.agent, rootSessionPolicy: 'continue' } } } },
+                } } });
+                await controller.retry(VOICE_AGENT_GLOBAL_SESSION_ID).catch(() => undefined);
+
+                // A different key starts another ordinary Session; retrying the
+                // same deliberate New must instead rejoin the unknown creation.
+                expect(creationKeys).toEqual([creationKey, creationKey]);
+                expect(controller.getSnapshot()).toMatchObject({ status: 'disconnected', canStop: false,
+                    errorMessage: 'VOICE_CONVERSATION_SPAWN_PENDING' });
+                expect(localVoiceSpeechOutputBoundary.fileRecording.start).not.toHaveBeenCalled();
+            } finally { await controller.dispose(); }
+        });
+
+        it('retries an exact Continue after an unknown Resume without applying a new lifetime preference', async () => {
+            const state = await getStorage();
+            const { readLocalConversationVoiceSettings } = await import('@/sync/domains/settings/voiceSettings');
+            const { RPC_ERROR_CODES, RPC_METHODS } = await import('@happier-dev/protocol/rpc');
+            const { createRpcCallError } = await import('@happier-dev/protocol/rpcErrors');
+            const { SessionSpawnNewInputV2Schema } = await import('@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2');
+            const { createVoiceSessionLifecycleController } = await import('./voiceSessionLifecycleController');
+            const { voiceSessionBindingStore } = await import('@/voice/binding/voiceConversationBindingStore');
+            const settings = state.getState().settings;
+            const config = readLocalConversationVoiceSettings(settings.voice);
+            state.__setState({ settings: { ...settings, voice: { ...settings.voice, providerId: 'local_conversation',
+                providers: { ...settings.voice.providers, local_conversation: { schemaVersion: 1, config: { ...config,
+                    conversationMode: 'agent', agent: { ...config.agent, prewarmOnConnect: false,
+                        rootSessionPolicy: 'continue' }, tts: { ...config.tts, autoSpeakReplies: false } } } },
+            } } });
+            await loadLocalVoiceEngineWithCompatState();
+            const incumbent = machineRpcWithServerScope.getMockImplementation();
+            if (!incumbent) throw new Error('Actual local Voice Socket responder missing');
+            const creationKeys: Array<string | undefined> = [];
+            const resumeRequests: Array<Readonly<{ serverId: string; payload: unknown }>> = [];
+            let failNextResume = true;
+            machineRpcWithServerScope.mockImplementation(async (request: Readonly<{
+                method: string; payload: unknown; serverId: string;
+            }>) => {
+                if (request.method === RPC_METHODS.SESSION_SPAWN_NEW) {
+                    creationKeys.push(SessionSpawnNewInputV2Schema.parse(request.payload).creationKey);
+                }
+                if (request.method === RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE
+                    || request.method === RPC_METHODS.SPAWN_HAPPY_SESSION) {
+                    resumeRequests.push({ serverId: request.serverId, payload: request.payload });
+                    if (failNextResume) {
+                        failNextResume = false;
+                        // The daemon may have resumed this exact Session before
+                        // the transport lost its reply. Do not substitute a New.
+                        throw createRpcCallError({ error: 'Resume acknowledgement unavailable',
+                            errorCode: RPC_ERROR_CODES.OUTCOME_UNKNOWN });
+                    }
+                }
+                return incumbent(request);
+            });
+            const controller = createVoiceSessionLifecycleController();
+            controller.setConfiguredProviderId('local_conversation');
+            const target = { serverId: localVoiceHomeId, sessionId: 's1' };
+            try {
+                await controller.toggle(target);
+                expect(controller.getSnapshot()).toMatchObject({ status: 'connected', canStop: true });
+                const binding = voiceSessionBindingStore.getState().getByControlSessionId(VOICE_AGENT_GLOBAL_SESSION_ID);
+                if (!binding) throw new Error('Real executable Voice conversation did not bind');
+                const originalCreationKeys = [...creationKeys];
+                expect(originalCreationKeys).toHaveLength(1);
+                await controller.stop(VOICE_AGENT_GLOBAL_SESSION_ID);
+
+                await expect(controller.toggle(target, { kind: 'continue',
+                    conversationSessionAddress: binding.conversationSessionAddress,
+                })).rejects.toMatchObject({ code: RPC_ERROR_CODES.OUTCOME_UNKNOWN });
+                expect(controller.getSnapshot()).toMatchObject({ status: 'disconnected', canStop: false,
+                    errorCode: 'provider_error', errorMessage: RPC_ERROR_CODES.OUTCOME_UNKNOWN,
+                    errorRecoveryAction: 'retry' });
+                expect(resumeRequests).toEqual([{ serverId: binding.conversationSessionAddress.serverId,
+                    payload: expect.objectContaining({ type: 'resume-session', sessionId: binding.conversationSessionId }) }]);
+                expect(creationKeys).toEqual(originalCreationKeys);
+                const captureStartsBeforeRetry = localVoiceSpeechOutputBoundary.fileRecording.start.mock.calls.length;
+
+                const retrySettings = state.getState().settings;
+                const retryConfig = readLocalConversationVoiceSettings(retrySettings.voice);
+                state.__setState({ settings: { ...retrySettings, voice: { ...retrySettings.voice,
+                    providers: { ...retrySettings.voice.providers, local_conversation: { schemaVersion: 1,
+                        config: { ...retryConfig, agent: { ...retryConfig.agent, rootSessionPolicy: 'new' } } } },
+                } } });
+                await controller.retry(VOICE_AGENT_GLOBAL_SESSION_ID).catch(() => undefined);
+
+                // A retry cannot replace the explicitly selected conversation
+                // merely because the person's next-Start preference changed.
+                expect(creationKeys).toEqual(originalCreationKeys);
+                expect(resumeRequests).toEqual(Array.from({ length: 2 }, () => ({
+                    serverId: binding.conversationSessionAddress.serverId,
+                    payload: expect.objectContaining({ type: 'resume-session', sessionId: binding.conversationSessionId }),
+                })));
+                expect(voiceSessionBindingStore.getState().getByControlSessionId(VOICE_AGENT_GLOBAL_SESSION_ID)
+                    ?.conversationSessionAddress).toEqual(binding.conversationSessionAddress);
+                expect(controller.getSnapshot()).toMatchObject({ status: 'connected', canStop: true });
+                expect(localVoiceSpeechOutputBoundary.fileRecording.start).toHaveBeenCalledTimes(captureStartsBeforeRetry + 1);
+            } finally { await controller.dispose(); }
+        });
+
         it('keeps Global sign-in recovery on the admitted Agent and machine after preferences change', async () => {
             const state = await getStorage();
             const { readLocalConversationVoiceSettings } = await import('@/sync/domains/settings/voiceSettings');
@@ -1431,6 +1587,9 @@ describe('createVoiceSessionLifecycleController', () => {
             const { mutateConnectedAccountPurposeDefaultsInContext } = await import('@/sync/ops/connectedAccounts/connectedAccountPurposeDefaults');
             const { writeAgentConnectedAccountPurposeDefault } = await import('@happier-dev/protocol/account/settings/connected-services');
             const { resolveAgentCatalogProjection } = await import('@/agents/backendCatalog/agentCatalogProjection');
+            const { getConnectedAccountCatalogValue, subscribeConnectedAccountCatalogSnapshots } = await import(
+                '@/sync/store/settings/connectedAccountCatalogSnapshot'
+            );
             const settings = state.getState().settings;
             const config = readLocalConversationVoiceSettings(settings.voice);
             state.__setState({ settings: { ...settings, voice: { ...settings.voice, providerId: 'local_conversation',
@@ -1457,6 +1616,7 @@ describe('createVoiceSessionLifecycleController', () => {
                 const declaration = entry.connectedAccounts[0];
                 const consumer = entry.identity;
                 if (!consumer || !declaration) throw new Error('Agent purpose declaration unavailable');
+                const previousRevision = getConnectedAccountCatalogValue(scope, 'purposes').revision;
                 await act(async () => { await withConnectedAccountCatalogAccount(scope, undefined, context =>
                     mutateConnectedAccountPurposeDefaultsInContext(context, (current, legacySettings) => {
                         const next = writeAgentConnectedAccountPurposeDefault({ settings: legacySettings, purposeBindings: current,
@@ -1469,10 +1629,21 @@ describe('createVoiceSessionLifecycleController', () => {
                         } };
                     }));
                 });
+                // The write acknowledges durable custody before its asynchronous
+                // catalog revalidation publishes the current default to Voice.
+                await act(async () => { await waitForTestEvent(subscribeConnectedAccountCatalogSnapshots,
+                    () => getConnectedAccountCatalogValue(scope, 'purposes'),
+                    snapshot => snapshot.status === 'ready' && !snapshot.stale
+                        && snapshot.revision !== previousRevision); });
             };
             try {
                 await act(async () => { await controller.toggle(null).catch(() => undefined); });
                 expect(controller.getSnapshot()).toMatchObject({ errorCode: 'authentication_required', errorMessage: 'agent_signed_out', canStop: false });
+                const scope = state.getState().profileScope;
+                if (!scope) throw new Error('Restored Voice Account unavailable');
+                await act(async () => { await waitForTestEvent(subscribeConnectedAccountCatalogSnapshots,
+                    () => getConnectedAccountCatalogValue(scope, 'purposes'),
+                    snapshot => snapshot.status === 'ready' && !snapshot.stale); });
                 const recordings = localVoiceSpeechOutputBoundary.fileRecording.start.mock.calls.length;
                 await selectDefault('claude');
                 expect(controller.getSnapshot()).toMatchObject({ errorMessage: 'agent_signed_out' });
@@ -1545,12 +1716,14 @@ describe('createVoiceSessionLifecycleController', () => {
                     privacy: { ...voice.privacy, currentUiContextMode: restoredMode },
                     executionMachine: { mode: 'fixed', machineId: 'machine-1' },
                     providers: { ...voice.providers, local_conversation: { schemaVersion: 1, config: { ...config,
-                        conversationMode: 'agent', agent: { ...config.agent, prewarmOnConnect: true } } } },
+                        conversationMode: 'agent', agent: { ...config.agent, prewarmOnConnect: true,
+                            rootSessionPolicy: 'new' } } } },
                 } } });
                 await loadLocalVoiceEngineWithCompatState();
                 const { createVoiceSessionLifecycleController } = await import('./voiceSessionLifecycleController');
                 const { ExecutionRunEnsureOrStartRequestSchema } = await import('@happier-dev/protocol/execution/runs/index');
                 const { SESSION_RPC_METHODS } = await import('@happier-dev/protocol/rpc');
+                const { voiceSessionBindingStore } = await import('@/voice/binding/voiceConversationBindingStore');
                 const controller = createVoiceSessionLifecycleController();
                 controller.setConfiguredProviderId('local_conversation');
                 controller.setCurrentUiContextToolSetEnabled(true);
@@ -1574,6 +1747,9 @@ describe('createVoiceSessionLifecycleController', () => {
                     expect(seeds()[0]?.disabledActionIds ?? []).not.toEqual(expect.arrayContaining(currentUiActionIds));
                     const initialRunId = localVoiceAgentRpc.readRetainedRun()?.runId;
                     expect(initialRunId).toBeDefined();
+                    const conversationAddress = voiceSessionBindingStore.getState()
+                        .getByControlSessionId(VOICE_AGENT_GLOBAL_SESSION_ID)?.conversationSessionAddress;
+                    expect(conversationAddress).toBeDefined();
                     const controlSessionId = controller.getSnapshot().sessionId;
                     const captureStarts = localVoiceSpeechOutputBoundary.fileRecording.start.mock.calls.length;
                     const captureStops = localVoiceSpeechOutputBoundary.fileRecording.stop.mock.calls.length;
@@ -1581,6 +1757,8 @@ describe('createVoiceSessionLifecycleController', () => {
                     await waitForLocalVoiceBoundaryEvent('agent-start', 2);
                     await voiceAgentSessions.ensureRunning(VOICE_AGENT_GLOBAL_SESSION_ID);
                     expect(seeds()).toHaveLength(2);
+                    expect(voiceSessionBindingStore.getState().getByControlSessionId(VOICE_AGENT_GLOBAL_SESSION_ID)
+                        ?.conversationSessionAddress).toEqual(conversationAddress);
                     expect(seeds()[1]?.disabledActionIds).toEqual(expect.arrayContaining(currentUiActionIds));
                     expect(localVoiceAgentRpc.requests.filter(request => request.method === SESSION_RPC_METHODS.EXECUTION_RUN_STOP))
                         .toEqual([{ method: SESSION_RPC_METHODS.EXECUTION_RUN_STOP, input: { runId: initialRunId } }]);
@@ -1592,6 +1770,8 @@ describe('createVoiceSessionLifecycleController', () => {
                     await waitForLocalVoiceBoundaryEvent('agent-start', 3);
                     await voiceAgentSessions.ensureRunning(VOICE_AGENT_GLOBAL_SESSION_ID);
                     expect(seeds()).toHaveLength(3);
+                    expect(voiceSessionBindingStore.getState().getByControlSessionId(VOICE_AGENT_GLOBAL_SESSION_ID)
+                        ?.conversationSessionAddress).toEqual(conversationAddress);
                     expect(seeds()[2]?.disabledActionIds ?? []).not.toEqual(expect.arrayContaining(currentUiActionIds));
                     expect(localVoiceAgentRpc.requests.filter(request => request.method === SESSION_RPC_METHODS.EXECUTION_RUN_STOP)).toHaveLength(2);
                     expect(localVoiceSpeechOutputBoundary.fileRecording.start).toHaveBeenCalledTimes(captureStarts + 2);

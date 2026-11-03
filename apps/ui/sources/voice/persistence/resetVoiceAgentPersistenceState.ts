@@ -1,7 +1,6 @@
 import { storage } from '@/sync/domains/state/storage';
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
 import { voiceConversationBindingResolver } from '@/voice/binding/VoiceConversationBindingResolver';
-import { findVoiceConversationSessionId } from '@/voice/persistence/voiceConversationSession';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { areAccountSettingsScopesEqual } from '@/sync/domains/settings/scope/accountSettingsScope';
 
@@ -16,7 +15,7 @@ function resolveVoiceAgentRunMetadataSessionId(state: ReturnType<typeof storage.
     if (boundConversationSessionId && state?.sessions?.[boundConversationSessionId]) {
         return boundConversationSessionId;
     }
-    return findVoiceConversationSessionId(state);
+    return null;
 }
 
 export async function resetVoiceAgentPersistenceState(params: Readonly<{

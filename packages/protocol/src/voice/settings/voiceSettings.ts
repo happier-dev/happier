@@ -529,7 +529,7 @@ function readLocalDirectVoiceSettings(settings: Pick<CanonicalVoiceSettings, 'pr
 function readLocalConversationVoiceSettings(settings: Pick<CanonicalVoiceSettings, 'providers'>): VoiceLocalConversationSettings {
   const envelope = settings.providers?.local_conversation;
   if (envelope?.schemaVersion === 1) {
-    const parsed = createStoredReadSchema(VoiceLocalConversationSchema).safeParse(envelope.config);
+    const parsed = createStoredReadSchema(VoiceLocalConversationSchema).safeParse(normalizeLegacyLocalConversationInput(envelope.config));
     if (parsed.success) return stripLegacyLocalConversationOwnership(parsed.data);
   }
   return stripLegacyLocalConversationOwnership(VoiceLocalConversationSchema.parse({}));
@@ -840,7 +840,6 @@ function projectVoiceSettingsAnalytics(rawValue: unknown): Record<string, boolea
     localConversationAgentStayInVoiceHome: localAgent.stayInVoiceHome,
     localConversationAgentTeleportEnabled: localAgent.teleportEnabled,
     localConversationAgentRootSessionPolicy: localAgent.rootSessionPolicy,
-    localConversationAgentMaxWarmRootsBucket: bucketVoiceAnalyticsCount(localAgent.maxWarmRoots, 3, 5),
     localConversationAgentCustomVoiceHomeConfigured:
       localAgent.voiceHomeSubdirName !== defaultLocalConversation.agent.voiceHomeSubdirName,
     localConversationAgentPermissionPolicy: localAgent.permissionIntent,

@@ -13376,16 +13376,11 @@ settingsSession: {
         machineAutoSubtitle:
           "Choisis une machine pour ce compte et garde-la. Si elle est hors ligne, choisis-en une autre explicitement.",
         rootSessionPolicy: {
-          title: "Politique de session racine",
-          fallbackSubtitle: "Choisis une politique.",
-          singleTitle: "Unique",
-          singleSubtitle: "Créer une nouvelle session racine à chaque fois.",
-          keepWarmTitle: "Garder au chaud",
-          keepWarmSubtitle:
-            "Réutiliser une session racine déjà chaude quand c’est possible.",
-          maxWarmRootsTitle: "Racines chaudes max",
-          maxWarmRootsSubtitle:
-            "Limite le nombre de sessions racines chaudes conservées.",
+          title: "Quand vous lancez Voice",
+          continueTitle: "Reprendre ma dernière conversation",
+          continueSubtitle: "Voice reprend là où vous vous étiez arrêté.",
+          newTitle: "Commencer une nouvelle conversation à chaque fois",
+          newSubtitle: "Les conversations précédentes restent dans l’historique de Voice.",
         },
         persistence: {
           title: "Persistance du transcript",

@@ -86,8 +86,7 @@ export const VoiceLocalConversationSchema = z.object({
       autoTargetMachineId: z._default(z.nullable(z.string()), null),
       stayInVoiceHome: z._default(z.boolean(), false),
       teleportEnabled: z._default(z.boolean(), true),
-      rootSessionPolicy: z._default(z.enum(['single', 'keep_warm']), 'single'),
-      maxWarmRoots: z._default(z.number().check(z.int(), z.positive()), 3),
+      rootSessionPolicy: z._default(z.enum(['continue', 'new']), 'continue'),
       voiceHomeSubdirName: z._default(z.string(), 'voice-agent'),
       permissionIntent: z._default(z.enum(PERMISSION_INTENTS), 'read-only'),
       idleTtlSeconds: z._default(z.number().check(z.int(), z.positive()), 1800),
@@ -188,6 +187,8 @@ export function normalizeLegacyLocalConversationInput(input: unknown): unknown {
       ? {
           agent: {
             ...agentWithoutLegacyPermissionPolicy,
+            rootSessionPolicy: agent.rootSessionPolicy === 'single' || agent.rootSessionPolicy === 'keep_warm'
+              ? 'continue' : agent.rootSessionPolicy,
             agentSource: normalizeString(agent.agentSource),
             agentId: normalizeString(agent.agentId),
             machineTargetMode: normalizeString(agent.machineTargetMode),

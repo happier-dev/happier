@@ -1,7 +1,8 @@
-import type { PendingDeliveryBlockedReason } from '@happier-dev/protocol';
+import type { PendingDeliveryBlockedReason } from '@happier-dev/protocol/sessions/messages/pendingDeliveryBlockedReason';
 import { readRpcErrorCode } from '@/sync/runtime/rpcErrors';
 import { readConnectedServiceUxDiagnosticFromError, type ConnectedServiceUxDiagnosticV1 } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
+import type { VoiceConversationSelection } from '@/voice/binding/voiceConversationBindingTypes';
 import type { VoiceConversationInUseVoice } from '@happier-dev/protocol/actions/voiceConversationActionFamily';
 import type {
   VoiceOutputFocusApplication,
@@ -104,6 +105,8 @@ export type VoiceAdapterController = Readonly<{
    */
   conversationTargeting?: VoiceConversationTargeting;
   start(input: Readonly<{
+    conversationSelection?: VoiceConversationSelection;
+    onConversationSelection?: (selection: VoiceConversationSelection) => void;
     sessionId: string;
     requestedTargetSessionAddress: SessionAddress | null;
     initialContext?: string;
@@ -143,6 +146,8 @@ export type VoiceAdapterController = Readonly<{
   getSnapshot(): VoiceSessionSnapshot;
   subscribe?(listener: () => void): () => void;
   resolveConversationBinding?(input: Readonly<{
+    conversationSelection?: VoiceConversationSelection;
+    onConversationSelection?: (selection: VoiceConversationSelection) => void;
     controlSessionId: string;
     requestedTargetSessionAddress: SessionAddress | null;
     settings: unknown;

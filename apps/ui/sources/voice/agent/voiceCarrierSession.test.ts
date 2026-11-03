@@ -1,6 +1,11 @@
+import { createSessionListSourceFixture, createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { GLOBAL_VOICE_AGENT_STARTUP_INSTRUCTIONS_ID, GLOBAL_VOICE_AGENT_STARTUP_INSTRUCTIONS_REVISION } from '@happier-dev/agents';
-import { SessionOrganizationSnapshotResponseSchema, SessionCurrentProjectionRecordV1Schema, SessionMetadataTuplePatchV1Schema, SessionSpawnNewInputV2Schema, SessionSpawnNewResultV1Schema, V2SessionListResponseSchema, PluginProjectionV2Schema } from '@happier-dev/protocol';
+import { SessionOrganizationSnapshotResponseSchema} from '@happier-dev/protocol/sessions/organization/snapshot';
+import { SessionCurrentProjectionRecordV1Schema} from '@happier-dev/protocol/sessions/listing/response';
+import { SessionSpawnNewInputV2Schema} from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
+import { SessionSpawnNewResultV1Schema} from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
+import { PluginProjectionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { MachineAccessGrantsListResponseV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
 import { encodePlainMachineStoredContent } from '@happier-dev/protocol/machines/machineStoredContent';
 import { createPlainSessionOwnerMetadataEnvelopeV1, createSessionOwnerMetadataV1, projectSessionSharedMetadataV1, projectSessionOwnerCompatibilityViewV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
@@ -10,7 +15,6 @@ import { ACP_CATALOG_ROWS_ROUTE_V1 } from '@happier-dev/protocol/acp/catalog/cat
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
-import { createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { createMachineReadBatchResponseFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { createExistingSessionDirectoryPreflightResult, createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
@@ -20,10 +24,10 @@ import { storage } from '@/sync/domains/state/storage';
 import { settingsParse } from '@/sync/domains/settings/settings';
 import { clearDaemonMergedProjectionCacheForTests } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
 import { readVoiceSessionOwnerMetadataFromState } from '@/voice/shared/readVoiceSessionOwnerMetadata';
-import { buildVoiceSpawnUserAttemptId } from '@/voice/shared/voiceSpawnAttempt';
 import { captureMachinePresenceObservation } from '@/sync/domains/machines/reachability/machineReachability';
 import { createConnectedPurposeCatalogHttpBoundary } from '@/dev/testkit/harness/connectedAccountCatalogBoundary';
 import { readLocalConversationVoiceSettings } from '@/sync/domains/settings/voiceSettings';
+import { createSessionMetadataHttpBoundary } from '@/dev/testkit/harness/sessionMetadataHttpBoundary';
 
 vi.mock('socket.io-client', async (importOriginal) =>
   (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
@@ -37,6 +41,7 @@ const readSessions = vi.fn();
 const readSession = vi.fn();
 let daemonProjection: unknown = null;
 const committedSessionRecords = new Map<string, ReturnType<typeof sessionWireRecord>>();
+let sessionMetadataHttp = createSessionMetadataHttpBoundary(() => ({}));
 const purposes = createConnectedPurposeCatalogHttpBoundary();
 const voiceHomeDirectory = '/tmp/.happier/voice-agent';
 const exactConnectedServices = { v: 2 as const, bindingsByServiceId: {
@@ -94,10 +99,12 @@ function captureCarrierSessionRecords() {
         : { path: '/voice', host: 'voice.test', flavor: state.settings.lastUsedAgent,
           permissionMode: readLocalConversationVoiceSettings(settingsParse(state.settings).voice).agent.permissionIntent,
           ...(partial as ReturnType<typeof createSessionFixture>).metadata } });
-    committedSessionRecords.set(id, sessionWireRecord(session));
+    const record = sessionWireRecord(session);
+    committedSessionRecords.set(id, record);
+    sessionMetadataHttp.replaceSession(id, record);
   }
 }
-function publishCarrierFixture() {
+function publishCarrierFixture(observePresence = true) {
   const sessions = Object.fromEntries(Object.entries(state.sessions).map(([id, partial]) => {
     const session = createSessionFixture({ active: true, ...partial as Parameters<typeof createSessionFixture>[0], id,
       serverId: account!.home.id, metadata: (partial as ReturnType<typeof createSessionFixture>).metadataLayoutVersion === 1
@@ -114,7 +121,7 @@ function publishCarrierFixture() {
     authoringMemory: structuredClone(state.authoringMemory), settings: settingsParse(state.settings) });
   // Authored current Machine fixtures include their presence observation; they
   // are not a cache retained from the previous Account transport's teardown.
-  captureMachinePresenceObservation({ serverId: account!.serverId, accountId: 'voice-account' })(Object.keys(machines));
+  if (observePresence) captureMachinePresenceObservation({ serverId: account!.serverId, accountId: 'voice-account' })(Object.keys(machines));
 }
 async function respondToServerRequest(input: RequestInfo | URL, init?: RequestInit) {
   const purposeResponse = await purposes.handle(input, init);
@@ -157,7 +164,7 @@ async function respondToServerRequest(input: RequestInfo | URL, init?: RequestIn
   if (path.endsWith('/messages')) return Response.json({ messages: [], hasMore: false });
   if (path === '/v2/sessions' || path === '/v2/sessions/active' || path === '/v1/sessions') {
     if (spawnSession.mock.calls.length) { await readSessions(); captureCarrierSessionRecords(); }
-    return Response.json(V2SessionListResponseSchema.parse({ sessions: [...committedSessionRecords.values()], hasNext: false, nextCursor: null }));
+    return Response.json(createSessionListSourceFixture({ sessions: [...committedSessionRecords.values()], hasNext: false, nextCursor: null }));
   }
   const detail = /^\/v2\/sessions\/([^/]+)$/.exec(path);
   if (detail) {
@@ -166,17 +173,11 @@ async function respondToServerRequest(input: RequestInfo | URL, init?: RequestIn
     const current = committedSessionRecords.get(id);
     if (!current) return new Response('{}', { status: 404 });
     if (init?.method === 'PATCH') {
-      const patch = SessionMetadataTuplePatchV1Schema.parse(JSON.parse(String(init.body)));
-      if (patch.mode === 'shared_editor') throw new Error('Expected owner metadata mutation');
-      const target = patch.mode === 'owner_migration' ? patch.target : patch;
-      const committed = SessionCurrentProjectionRecordV1Schema.parse({
-        ...current, metadataLayoutVersion: 1, metadata: target.sharedMetadata.ciphertext,
-        metadataVersion: current.metadataVersion + 1, ownerMetadata: target.ownerMetadata,
-        agentState: target.agentState.ciphertext, agentStateVersion: (current.agentStateVersion ?? 0) + 1,
-      });
-      committedSessionRecords.set(id, committed);
-      return Response.json({ success: true, metadataLayoutVersion: 1,
-        sharedMetadata: { version: committed.metadataVersion }, agentState: { version: committed.agentStateVersion } });
+      const response = sessionMetadataHttp.handle(input, init);
+      const detail = sessionMetadataHttp.handle(input);
+      if (!response || !detail) throw new Error('Missing canonical Session metadata boundary');
+      committedSessionRecords.set(id, SessionCurrentProjectionRecordV1Schema.parse((await detail.json()).session));
+      return response;
     }
     return Response.json({ session: current });
   }
@@ -196,6 +197,7 @@ installDisconnectedServerSocketBoundary(socket => {
     if (!record) throw new Error('Metadata ACK requested for an unknown Session');
     const committed = SessionCurrentProjectionRecordV1Schema.parse({ ...record, metadata: payload.metadata, metadataVersion: payload.expectedVersion + 1 });
     committedSessionRecords.set(payload.sid, committed);
+    sessionMetadataHttp.replaceSession(payload.sid, committed);
     return { result: 'success', version: committed.metadataVersion, metadata: committed.metadata };
   });
 });
@@ -229,7 +231,8 @@ describe('voiceConversationSession', () => {
   beforeEach(async () => {
     vi.useRealTimers();
     spawnSession.mockReset(); readSessions.mockReset(); readSession.mockReset();
-    committedSessionRecords.clear(); daemonProjection = null; clearDaemonMergedProjectionCacheForTests();
+    committedSessionRecords.clear(); sessionMetadataHttp = createSessionMetadataHttpBoundary(() => ({}));
+    daemonProjection = null; clearDaemonMergedProjectionCacheForTests();
     const { useVoiceTargetStore } = await import('@/voice/runtime/voiceTargetStore');
     useVoiceTargetStore.setState({ autoTargetMachineByScope: {}, scope: 'global', primaryActionSessionAddress: null, voiceLiveContextSessionAddresses: [], lastFocusedSessionAddress: null });
     state = { settings: {} };
@@ -260,18 +263,6 @@ describe('voiceConversationSession', () => {
         },
       },
     };
-  });
-
-  it('findVoiceConversationSessionId picks the newest hidden system voice conversation session', async () => {
-    const { findVoiceConversationSessionId } = await import('@/voice/persistence/voiceConversationSession');
-
-    state.sessions = {
-      s1: { id: 's1', updatedAt: 5, metadata: { systemSessionV1: { v: 1, key: 'voice_conversation', hidden: true } } },
-      s2: { id: 's2', updatedAt: 10, metadata: { systemSessionV1: { v: 1, key: 'voice_conversation', hidden: true } } },
-      s3: { id: 's3', updatedAt: 999, metadata: { systemSessionV1: { v: 1, key: 'other', hidden: true } } },
-    };
-
-    expect(findVoiceConversationSessionId(state)).toBe('s2');
   });
 
   it('ensureVoiceConversationSessionId spawns and then marks the session as a hidden voice conversation', async () => {
@@ -307,7 +298,6 @@ describe('voiceConversationSession', () => {
       ensureVoiceConversationSessionForVoiceHome,
     } = await import('@/voice/persistence/voiceConversationSession');
     enableCodexStartupInstructionsV1();
-    const isReusableSession = vi.fn(() => true);
     state.sessions.old_voice = {
       id: 'old_voice',
       active: true,
@@ -351,11 +341,9 @@ describe('voiceConversationSession', () => {
       backendTarget: { kind: 'backend', backendId: 'codex' },
       permissionIntent: 'default',
       coldResumeStartupInstructionsEffective: false,
-      isReusableSession,
-    });
+    }, undefined, { kind: 'new', creationKey: 'startup-instructions-new' });
 
 
-    expect(isReusableSession).not.toHaveBeenCalled();
     const spawnInput = spawnSession.mock.calls[0]?.[0];
     expect(spawnSession.mock.calls[0]?.[0]).toHaveProperty('agentSessionStartupInstructionsV1');
     expect(spawnInput.agentSessionStartupInstructionsV1).toMatchObject({
@@ -375,14 +363,13 @@ describe('voiceConversationSession', () => {
       .not.toContain('Global Voice agent');
   });
 
-  it('reuses an exact hidden voice-home session only when cold-resume startup instructions are effective', async () => {
+  it('continues an explicitly selected native voice-home Session with effective startup instructions', async () => {
     const {
       ensureVoiceConversationSessionForVoiceHome,
     } = await import('@/voice/persistence/voiceConversationSession');
     enableCodexStartupInstructionsV1();
     state.sessions.exact_voice = createSplitVoiceHomeCandidate('exact_voice');
     installFreshVoiceHomeSpawn();
-    const isReusableSession = vi.fn(() => true);
 
     publishCarrierFixture();
     await expect(ensureVoiceConversationSessionForVoiceHome({
@@ -390,21 +377,12 @@ describe('voiceConversationSession', () => {
       connectedServices: exactConnectedServices,
       permissionIntent: 'default',
       coldResumeStartupInstructionsEffective: true,
-      isReusableSession,
-    })).resolves.toBe('exact_voice');
+    }, undefined, { kind: 'continue', conversationSessionAddress: { serverId: homeId, sessionId: 'exact_voice' } })).resolves.toBe('exact_voice');
 
-    expect(isReusableSession).toHaveBeenCalledOnce();
-    expect(isReusableSession).toHaveBeenCalledWith(expect.objectContaining({
-      sessionId: 'exact_voice',
-      metadata: expect.objectContaining({
-        connectedServices: exactConnectedServices,
-        voiceAgentStartupInstructionsV1: globalVoiceStartupMarker,
-      }),
-    }));
     expect(spawnSession).not.toHaveBeenCalled();
   });
 
-  it('reuses and retires only exact Windows voice-home directory identities across separator spellings', async () => {
+  it('continues the selected Windows voice-home Session and leaves unrelated conversations untouched', async () => {
     const {
       ensureVoiceConversationSessionForVoiceHome,
     } = await import('@/voice/persistence/voiceConversationSession');
@@ -448,7 +426,6 @@ describe('voiceConversationSession', () => {
       },
     };
     installFreshVoiceHomeSpawn();
-    const isReusableSession = vi.fn(() => true);
 
     publishCarrierFixture();
     await expect(ensureVoiceConversationSessionForVoiceHome({
@@ -456,24 +433,17 @@ describe('voiceConversationSession', () => {
       connectedServices: exactConnectedServices,
       permissionIntent: 'default',
       coldResumeStartupInstructionsEffective: true,
-      isReusableSession,
-    })).resolves.toBe('exact_voice');
+    }, undefined, { kind: 'continue', conversationSessionAddress: { serverId: homeId, sessionId: 'exact_voice' } })).resolves.toBe('exact_voice');
 
-    expect(isReusableSession).toHaveBeenCalledWith(expect.objectContaining({
-      sessionId: 'exact_voice',
-    }));
-    expect(isReusableSession).not.toHaveBeenCalledWith(expect.objectContaining({
-      sessionId: 'sibling_voice',
-    }));
     expect(readVoiceSessionOwnerMetadataFromState(storage.getState(), 'legacy_equivalent')?.systemSessionV1).toMatchObject({
       v: 1,
-      key: 'voice_conversation_retired',
+      key: 'voice_conversation',
       hidden: true,
     });
     expect(spawnSession).not.toHaveBeenCalled();
   });
 
-  it('keeps a Windows voice-home spawn directory operational while hashing its normalized identity', async () => {
+  it('keeps a Windows voice-home spawn directory operational', async () => {
     const {
       ensureVoiceConversationSessionId,
     } = await import('@/voice/persistence/voiceConversationSession');
@@ -504,38 +474,25 @@ describe('voiceConversationSession', () => {
 
     expect(spawnSession).toHaveBeenCalledWith(expect.objectContaining({
       directory: { kind: 'path', path: operationalDirectory },
-      creationKey: buildVoiceSpawnUserAttemptId({
-        surface: 'voice_home',
-        serverId: homeId,
-        machineId: 'm1',
-        directory: 'c:/users/alice/.happier/voice-agent',
-        backendTarget: { kind: 'backend', backendId: 'claude' },
-        connectedServices: { v: 2, bindingsByServiceId: {} },
-        permissionMode: 'read-only',
-        requirements: null,
-      }),
     }));
   });
 
-  it('fresh-creates instead of reusing an exact hidden voice-home session without cold-resume proof', async () => {
+  it('starts an explicitly new conversation without selecting an existing same-recipe conversation', async () => {
     const {
       ensureVoiceConversationSessionForVoiceHome,
     } = await import('@/voice/persistence/voiceConversationSession');
     enableCodexStartupInstructionsV1();
     state.sessions.exact_voice = createVoiceHomeCandidate('exact_voice');
     installFreshVoiceHomeSpawn();
-    const isReusableSession = vi.fn(() => true);
 
     publishCarrierFixture();
     await expect(ensureVoiceConversationSessionForVoiceHome({
       backendTarget: { kind: 'backend', backendId: 'codex' },
       connectedServices: exactConnectedServices,
       permissionIntent: 'default',
-      coldResumeStartupInstructionsEffective: false,
-      isReusableSession,
-    })).resolves.toBe('fresh_voice');
+      coldResumeStartupInstructionsEffective: true,
+    }, undefined, { kind: 'new', creationKey: 'person-selected-new' })).resolves.toBe('fresh_voice');
 
-    expect(isReusableSession).not.toHaveBeenCalled();
     expect(spawnSession.mock.calls[0]?.[0]).toHaveProperty('agentSessionStartupInstructionsV1');
     expect(spawnSession).toHaveBeenCalledWith(expect.objectContaining({
       executionTarget: { serverId: homeId, machineId: 'm1' },
@@ -546,7 +503,7 @@ describe('voiceConversationSession', () => {
     }));
   });
 
-  it('fresh-creates when every reusable hidden voice-home candidate mismatches one required identity field', async () => {
+  it('refuses an explicitly selected native conversation whose required execution identity differs', async () => {
     const {
       ensureVoiceConversationSessionForVoiceHome,
     } = await import('@/voice/persistence/voiceConversationSession');
@@ -595,36 +552,22 @@ describe('voiceConversationSession', () => {
           revision: 0,
         },
       }),
-      wrong_machine: createVoiceHomeCandidate('wrong_machine', {
-        machineId: 'm2',
-      }),
-      wrong_directory: createVoiceHomeCandidate('wrong_directory', {
-        path: '/tmp/.happier/other-voice-agent',
-      }),
     };
     state.sessions.wrong_split_agent = createSplitVoiceHomeCandidate('wrong_split_agent', { flavor: 'claude' });
     state.sessions.missing_split_agent = createSplitVoiceHomeCandidate('missing_split_agent', { flavor: undefined });
-    installFreshVoiceHomeSpawn();
-    const isReusableSession = vi.fn(() => true);
 
     publishCarrierFixture();
-    await expect(ensureVoiceConversationSessionForVoiceHome({
-      backendTarget: { kind: 'backend', backendId: 'codex' },
-      connectedServices: exactConnectedServices,
-      permissionIntent: 'default',
-      coldResumeStartupInstructionsEffective: true,
-      isReusableSession,
-    })).resolves.toBe('fresh_voice');
+    for (const sessionId of Object.keys(state.sessions)) {
+      await expect(ensureVoiceConversationSessionForVoiceHome({
+        backendTarget: { kind: 'backend', backendId: 'codex' },
+        connectedServices: exactConnectedServices,
+        permissionIntent: 'default',
+        coldResumeStartupInstructionsEffective: true,
+      }, undefined, { kind: 'continue', conversationSessionAddress: { serverId: homeId, sessionId } }))
+        .rejects.toMatchObject({ code: 'VOICE_AGENT_STARTUP_INSTRUCTIONS_UNSUPPORTED' });
+    }
 
-    expect(isReusableSession).not.toHaveBeenCalled();
-    expect(spawnSession.mock.calls[0]?.[0]).toHaveProperty('agentSessionStartupInstructionsV1');
-    expect(spawnSession).toHaveBeenCalledWith(expect.objectContaining({
-      executionTarget: { serverId: homeId, machineId: 'm1' },
-      directory: { kind: 'path', path: voiceHomeDirectory },
-      agentTarget: expect.objectContaining({ identity: expect.objectContaining({ localId: 'codex' }) }),
-      connectedServices: exactConnectedServices,
-      permissionMode: 'default',
-    }));
+    expect(spawnSession).not.toHaveBeenCalled();
   });
 
   it('fails closed before sending startup text when an old daemon projects no V1 capability', async () => {
@@ -638,7 +581,6 @@ describe('voiceConversationSession', () => {
       backendTarget: { kind: 'backend', backendId: 'codex' },
       permissionIntent: 'default',
       coldResumeStartupInstructionsEffective: false,
-      isReusableSession: () => false,
     })).rejects.toMatchObject({
       code: 'VOICE_AGENT_STARTUP_INSTRUCTIONS_UNSUPPORTED',
     });
@@ -697,7 +639,7 @@ describe('voiceConversationSession', () => {
 
       publishCarrierFixture();
       const pending = ensureVoiceConversationSessionId();
-      const rejection = expect(pending).rejects.toMatchObject({ code: 'VOICE_CONVERSATION_TARGET_MISSING' });
+      const rejection = expect(pending).rejects.toMatchObject({ code: 'VOICE_AGENT_TARGET_MACHINE_OFFLINE' });
       await flushHookEffects({ cycles: 1, advanceTimersMs: 5_100 });
       await rejection;
       expect(spawnSession).not.toHaveBeenCalled();
@@ -729,7 +671,7 @@ describe('voiceConversationSession', () => {
 
       publishCarrierFixture();
       const pending = ensureVoiceConversationSessionId();
-      const rejection = expect(pending).rejects.toMatchObject({ code: 'VOICE_CONVERSATION_TARGET_MISSING' });
+      const rejection = expect(pending).rejects.toMatchObject({ code: 'VOICE_AGENT_TARGET_MACHINE_OFFLINE' });
       await flushHookEffects({ cycles: 1, advanceTimersMs: 5_100 });
       await rejection;
       expect(spawnSession).not.toHaveBeenCalled();
@@ -859,7 +801,7 @@ describe('voiceConversationSession', () => {
 
       publishCarrierFixture();
       const pending = ensureVoiceConversationSessionId();
-      const rejection = expect(pending).rejects.toMatchObject({ code: 'VOICE_CONVERSATION_TARGET_MISSING' });
+      const rejection = expect(pending).rejects.toMatchObject({ code: 'VOICE_AGENT_TARGET_MACHINE_OFFLINE' });
       await flushHookEffects({ cycles: 1, advanceTimersMs: 5_100 });
       await rejection;
       expect(spawnSession).not.toHaveBeenCalled();
@@ -943,7 +885,7 @@ describe('voiceConversationSession', () => {
     });
   });
 
-  it('reuses an exact session-root voice conversation across Windows separator spellings', async () => {
+  it('continues the explicitly selected session-root conversation across Windows separator spellings', async () => {
     const {
       ensureVoiceConversationSessionForSessionRoot,
     } = await import('@/voice/persistence/voiceConversationSession');
@@ -985,13 +927,14 @@ describe('voiceConversationSession', () => {
     publishCarrierFixture();
     await expect(ensureVoiceConversationSessionForSessionRoot({
       sessionRootAddress: { serverId: homeId, sessionId: 's_user' },
+      conversationSelection: { kind: 'continue', conversationSessionAddress: { serverId: homeId, sessionId: 'exact_session_root_voice' } },
     })).resolves.toBe('exact_session_root_voice');
 
     expect(readSessions).not.toHaveBeenCalled();
     expect(spawnSession).not.toHaveBeenCalled();
   });
 
-  it('keeps a Windows session-root spawn directory operational while hashing its normalized identity', async () => {
+  it('keeps a Windows session-root spawn directory operational', async () => {
     const {
       ensureVoiceConversationSessionForSessionRoot,
     } = await import('@/voice/persistence/voiceConversationSession');
@@ -1032,17 +975,6 @@ describe('voiceConversationSession', () => {
 
     expect(spawnSession).toHaveBeenCalledWith(expect.objectContaining({
       directory: { kind: 'path', path: operationalDirectory },
-      creationKey: buildVoiceSpawnUserAttemptId({
-        surface: 'voice_session_root',
-        serverId: homeId,
-        machineId: 'm1',
-        directory: 'c:/workspace/repo',
-        backendTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
-        connectedServices: undefined,
-        permissionMode: 'read-only',
-        modelSelection: null,
-        sessionId: 's_user',
-      }),
     }));
   });
 
@@ -1124,7 +1056,7 @@ describe('voiceConversationSession', () => {
     expect(spawnSession).toHaveBeenCalledTimes(1);
   });
 
-  it('reuses an active hidden voice session for the same session root', async () => {
+  it('continues the explicitly selected active conversation for the same session root', async () => {
     const { ensureVoiceConversationSessionForSessionRoot } = await import('@/voice/persistence/voiceConversationSession');
 
     state.sessions.s_user = {
@@ -1150,7 +1082,9 @@ describe('voiceConversationSession', () => {
     };
 
     publishCarrierFixture();
-    await expect(ensureVoiceConversationSessionForSessionRoot({ sessionRootAddress: { serverId: homeId, sessionId: 's_user' } })).resolves.toBe('sys_voice_repo');
+    await expect(ensureVoiceConversationSessionForSessionRoot({ sessionRootAddress: { serverId: homeId, sessionId: 's_user' },
+      conversationSelection: { kind: 'continue', conversationSessionAddress: { serverId: homeId, sessionId: 'sys_voice_repo' } },
+    })).resolves.toBe('sys_voice_repo');
     expect(spawnSession).not.toHaveBeenCalled();
   });
 
@@ -1191,7 +1125,7 @@ describe('voiceConversationSession', () => {
     expect(spawnSession).not.toHaveBeenCalled();
   });
 
-  it('fails fast when the target root machine daemon is offline', async () => {
+  it('does not spawn when the root machine has no reachable target', async () => {
     const { ensureVoiceConversationSessionForSessionRoot } = await import('@/voice/persistence/voiceConversationSession');
     state.sessions.s_user = {
       id: 's_user',
@@ -1206,7 +1140,7 @@ describe('voiceConversationSession', () => {
       seq: 1,
       createdAt: 0,
       updatedAt: 0,
-      active: true,
+      active: false,
       activeAt: Date.now() - 5 * 60_000,
       revokedAt: null,
       metadata: { host: 'm1', platform: 'darwin', happyCliVersion: '1', happyHomeDir: '/tmp/.happier', homeDir: '/home/u' },
@@ -1216,15 +1150,13 @@ describe('voiceConversationSession', () => {
     };
 
     publishCarrierFixture();
-    await expect(ensureVoiceConversationSessionForSessionRoot({ sessionRootAddress: { serverId: homeId, sessionId: 's_user' } })).rejects.toMatchObject({
-      message: 'Target machine daemon is offline. Start or reconnect the daemon before starting local voice.',
-      code: 'VOICE_AGENT_TARGET_MACHINE_OFFLINE',
-    });
+    await expect(ensureVoiceConversationSessionForSessionRoot({ sessionRootAddress: { serverId: homeId, sessionId: 's_user' } }))
+      .rejects.toThrow('voice_conversation_session_target_missing');
 
     expect(spawnSession).not.toHaveBeenCalled();
   });
 
-  it('does not reuse an inactive hidden voice home session as the runtime anchor', async () => {
+  it('continues the last inactive Voice conversation instead of replacing its identity', async () => {
     const { ensureVoiceConversationSessionId } = await import('@/voice/persistence/voiceConversationSession');
 
     state.sessions.stale_voice = {
@@ -1253,8 +1185,8 @@ describe('voiceConversationSession', () => {
     });
 
     publishCarrierFixture();
-    await expect(ensureVoiceConversationSessionId()).resolves.toBe('sys_voice_fresh');
-    expect(spawnSession).toHaveBeenCalledTimes(1);
+    await expect(ensureVoiceConversationSessionId()).resolves.toBe('stale_voice');
+    expect(spawnSession).not.toHaveBeenCalled();
   });
 
   it('hydrates a missing target session before spawning a hidden voice conversation session for its root', async () => {
@@ -1330,7 +1262,7 @@ describe('voiceConversationSession', () => {
     expect(spawnSession).toHaveBeenCalledTimes(1);
   });
 
-  it('retires an existing direct-linked voice conversation session and spawns a persisted replacement', async () => {
+  it('starts a persisted conversation without retiring an unselected direct-linked legacy conversation', async () => {
     const { ensureVoiceConversationSessionId } = await import('@/voice/persistence/voiceConversationSession');
 
     state.sessions.legacy_direct = {
@@ -1364,7 +1296,7 @@ describe('voiceConversationSession', () => {
 
     expect(readVoiceSessionOwnerMetadataFromState(storage.getState(), 'legacy_direct')?.systemSessionV1).toMatchObject({
       v: 1,
-      key: 'voice_conversation_retired',
+      key: 'voice_conversation',
       hidden: true,
     });
     expect(spawnSession).toHaveBeenCalledWith(expect.objectContaining({
@@ -1374,54 +1306,4 @@ describe('voiceConversationSession', () => {
     }));
   });
 
-  it('applies single-root policy by retiring older voice conversation sessions', async () => {
-    const { ensureVoiceConversationSessionId } = await import('@/voice/persistence/voiceConversationSession');
-
-    state.settings.voice.providers.local_conversation.config.agent.rootSessionPolicy = 'single';
-    state.sessions = {
-      old1: { id: 'old1', updatedAt: 5, metadata: { systemSessionV1: { v: 1, key: 'voice_conversation', hidden: true }, path: '/tmp/x', machineId: 'm1' } },
-      old2: { id: 'old2', updatedAt: 6, metadata: { systemSessionV1: { v: 1, key: 'voice_conversation', hidden: true }, path: '/tmp/y', machineId: 'm1' } },
-    };
-
-    spawnSession.mockResolvedValue({ type: 'success', sessionId: 'sys_voice' });
-    readSessions.mockImplementation(async () => {
-      state.sessions.sys_voice = {
-        id: 'sys_voice',
-        updatedAt: 10,
-        metadata: { path: '/tmp/repo', host: 'm1', machineId: 'm1', homeDir: '/home/u' },
-      };
-    });
-
-    publishCarrierFixture();
-    await expect(ensureVoiceConversationSessionId()).resolves.toBe('sys_voice');
-
-    expect(readVoiceSessionOwnerMetadataFromState(storage.getState(), 'old1')?.systemSessionV1).toMatchObject({ v: 1, key: 'voice_conversation_retired', hidden: true });
-    expect(readVoiceSessionOwnerMetadataFromState(storage.getState(), 'old2')?.systemSessionV1).toMatchObject({ v: 1, key: 'voice_conversation_retired', hidden: true });
-  });
-
-  it('applies keep-warm policy by keeping only maxWarmRoots voice conversation sessions', async () => {
-    const { ensureVoiceConversationSessionId } = await import('@/voice/persistence/voiceConversationSession');
-
-    state.settings.voice.providers.local_conversation.config.agent.rootSessionPolicy = 'keep_warm';
-    state.settings.voice.providers.local_conversation.config.agent.maxWarmRoots = 2;
-    state.sessions = {
-      keep: { id: 'keep', updatedAt: 99, metadata: { systemSessionV1: { v: 1, key: 'voice_conversation', hidden: true }, path: '/tmp/keep', machineId: 'm1' } },
-      retire: { id: 'retire', updatedAt: 1, metadata: { systemSessionV1: { v: 1, key: 'voice_conversation', hidden: true }, path: '/tmp/retire', machineId: 'm1' } },
-    };
-
-    spawnSession.mockResolvedValue({ type: 'success', sessionId: 'sys_voice' });
-    readSessions.mockImplementation(async () => {
-      state.sessions.sys_voice = {
-        id: 'sys_voice',
-        updatedAt: 100,
-        metadata: { path: '/tmp/repo', host: 'm1', machineId: 'm1', homeDir: '/home/u' },
-      };
-    });
-
-    publishCarrierFixture();
-    await expect(ensureVoiceConversationSessionId()).resolves.toBe('sys_voice');
-
-    expect(readVoiceSessionOwnerMetadataFromState(storage.getState(), 'keep')?.systemSessionV1).toMatchObject({ v: 1, key: 'voice_conversation', hidden: true });
-    expect(readVoiceSessionOwnerMetadataFromState(storage.getState(), 'retire')?.systemSessionV1).toMatchObject({ v: 1, key: 'voice_conversation_retired', hidden: true });
-  });
 });

@@ -7,7 +7,14 @@ import { buildSystemSessionMetadataV1 } from '@happier-dev/protocol/sessions/con
 vi.mock('socket.io-client', async original =>
   (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(original));
 
-let storage: typeof import('@/sync/domains/state/storage').storage;
+// Cold transformation of the real Account/runtime graph is suite setup, not
+// part of an individual retained-identity read's finite hook budget.
+const { createVoiceSettingsAccountTestHarness } = await import('@/voice/settings/panels/voiceSettingsAccountTestHarness');
+const { settingsParse } = await import('@/sync/domains/settings/settings');
+const { storage } = await import('@/sync/domains/state/storage');
+const { writeVoiceConversationBindingMetadata } = await import('./voiceConversationBindingMetadata');
+const { RuntimeDescriptorV1Schema } = await import('@happier-dev/protocol/sessions/metadata/runtime-descriptor');
+const { AgentRuntimeFacetsV1Schema } = await import('@happier-dev/protocol/sessions/metadata/agentRuntimeFacetsV1');
 let serverId: string;
 const claudeTarget = { kind: 'builtInAgent', agentId: 'claude' } as const;
 
@@ -20,15 +27,9 @@ function runMetadata(runId: string, updatedAtMs: number) {
 afterEach(() => standardCleanup());
 
 beforeEach(async () => {
-  const { createVoiceSettingsAccountTestHarness } = await import('@/voice/settings/panels/voiceSettingsAccountTestHarness');
-  const { settingsParse } = await import('@/sync/domains/settings/settings');
   const account = await createVoiceSettingsAccountTestHarness(settingsParse({}));
   onTestFinished(account.dispose);
   serverId = account.scope.serverId;
-  ({ storage } = await import('@/sync/domains/state/storage'));
-  const { writeVoiceConversationBindingMetadata } = await import('./voiceConversationBindingMetadata');
-  const { RuntimeDescriptorV1Schema } = await import('@happier-dev/protocol/sessions/metadata/runtime-descriptor');
-  const { AgentRuntimeFacetsV1Schema } = await import('@happier-dev/protocol/sessions/metadata/agentRuntimeFacetsV1');
   const metadata = writeVoiceConversationBindingMetadata({ ...createSessionFixture().metadata!,
     ...buildSystemSessionMetadataV1({ key: 'voice_conversation', hidden: true }),
     runtimeDescriptorV1: RuntimeDescriptorV1Schema.parse({ v: 1, agentId: 'claude', agent: { backendMode: 'native' } }),
@@ -46,6 +47,27 @@ beforeEach(async () => {
 });
 
 describe('voiceConversationBindingPersistence', () => {
+  it('VI-LIFE does not retain a device pointer after Account Session-list rows are released', async () => {
+    const { voiceSessionBindingStore } = await import('./voiceConversationBindingStore');
+    voiceSessionBindingStore.getState().bind({ adapterId: 'local_conversation', controlSessionId: '__voice_agent__',
+      conversationSessionId: 'sys_voice', conversationSessionAddress: { serverId, sessionId: 'sys_voice' },
+      transcriptMode: 'native_session', targetSessionAddress: { serverId, sessionId: 's1' }, updatedAt: 1 });
+    voiceSessionBindingStore.getState().unbind('sys_voice');
+    storage.setState({ sessions: {}, sessionListRowsByServerId: {} });
+    const { resolvePersistedDaemonConversationSessionId, resolvePersistedVoiceConversationMetadataSessionId } =
+      await import('./voiceConversationBindingPersistence');
+    expect(resolvePersistedDaemonConversationSessionId()).toBeNull();
+    expect(resolvePersistedVoiceConversationMetadataSessionId({ managedSessionId: '__voice_agent__' })).toBeNull();
+  });
+
+  it('reads the last Account conversation independently of runtime bindings or recipe matches', async () => {
+    const { voiceSessionBindingStore } = await import('./voiceConversationBindingStore');
+    voiceSessionBindingStore.setState({ bindingsByConversationSessionId: {}, runtimeBindingsByConversationSessionId: {}, persistedBindingsByConversationSessionId: {} });
+    storage.setState({ sessions: { newer: createSessionFixture({ id: 'newer', serverId, active: true, updatedAt: 999,
+      metadata: { ...createSessionFixture().metadata!, ...buildSystemSessionMetadataV1({ key: 'voice_conversation', hidden: true }) } }) } });
+    const { resolvePersistedDaemonConversationSessionId } = await import('./voiceConversationBindingPersistence');
+    expect(resolvePersistedDaemonConversationSessionId()).toBe('newer');
+  });
   it('falls back to the session-scoped metadata session for non-global managed runs', async () => {
     storage.setState(state => ({ sessions: { ...state.sessions, s1: { ...state.sessions.s1!,
       metadata: { ...state.sessions.s1!.metadata!, voiceAgentRunV1: runMetadata('run_session', 333) },
