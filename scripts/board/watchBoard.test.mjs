@@ -18,9 +18,9 @@ async function fixture(t) {
   await Promise.all([fs.writeFile(board, '# Board\n'), fs.writeFile(second, '# Second\n')]);
   return { root, board, second, seen };
 }
-function start(t, fixture, extra = [], heartbeat = 10000, wakeOnBacklog = true) {
+function start(t, fixture, extra = [], heartbeat = 10000, wakeOnBacklog = true, names = ['Programme', 'LANE']) {
   const child = spawn(process.execPath, [watcher, '--board', fixture.board, '--board', fixture.second,
-    '--name', 'Programme', '--name', 'LANE', '--seen', fixture.seen, '--heartbeat-ms', String(heartbeat),
+    ...names.flatMap((name) => ['--name', name]), '--seen', fixture.seen, '--heartbeat-ms', String(heartbeat),
     ...(wakeOnBacklog ? ['--wake-on-backlog'] : []), ...extra],
   { cwd: fixture.root, stdio: ['ignore', 'pipe', 'pipe'] });
   t.after(() => child.kill());
@@ -39,14 +39,54 @@ function start(t, fixture, extra = [], heartbeat = 10000, wakeOnBacklog = true) 
   }) };
 }
 
-test('ignores either caller name as sender, including broadcasts and regex matches', async (t) => {
+test('reports self-authored headings once without waking, including explicit aliases and broadcasts', async (t) => {
   const f = await fixture(t);
   await fs.writeFile(f.seen, JSON.stringify({ heading: 'previous heading' }) + '\n');
   const own = [heading('LANE'), heading('Programme', 'RULING'), heading('ALL leads', 'URGENT')]
     .map((line, i) => line.replace('Writer →', `${i === 1 ? 'Programme' : 'LANE'} →`));
+  await fs.writeFile(f.board, own.join('\n'));
+  const options = ['--self-name', 'Programme', '--self-name', 'LANE', '--wake-regex', 'act'];
+  assert.deepEqual(await start(t, f, options, 80).done, [...own, 'HEARTBEAT']);
+  assert.deepEqual(await start(t, f, options, 80).done, ['HEARTBEAT']);
   const other = heading('LANE', 'ASK', 'from someone else');
-  await fs.writeFile(f.board, [...own, other].join('\n'));
-  assert.deepEqual(await start(t, f, ['--wake-regex', 'act']).done, [other]);
+  await fs.appendFile(f.board, '\n' + other + '\n');
+  assert.deepEqual(await start(t, f, options).done, [other]);
+});
+
+test('the first recipient name defaults to the caller identity without suppressing watched lane senders', async (t) => {
+  const f = await fixture(t);
+  const own = heading('LANE').replace('Writer →', 'Programme →');
+  await fs.writeFile(f.board, own + '\n');
+  assert.deepEqual(await start(t, f, [], 80).done, [own, 'HEARTBEAT']);
+  const other = heading('Programme').replace('Writer →', 'LANE →');
+  await fs.appendFile(f.board, other + '\n');
+  assert.deepEqual(await start(t, f).done, [other]);
+});
+
+test('delivers both missed Coordination asks inserted deep out of order, exactly once across re-arms', { timeout: 15000 }, async (t) => {
+  const f = await fixture(t);
+  const names = ['Coordination', 'PLAN-58', 'STORE-LIVE', 'HYDRATE-LIVE'];
+  const store = '### 2026-11-03 04:32 UTC — STORE-LIVE → Coordination — ASK — reload journey stack for f898901cbe279aa91837c1156580817c6081cc75';
+  const hydrate = '### 2026-11-03 04:56 UTC — HYDRATE-LIVE → Coordination — ASK — reload journey stack for 103bb932d33553700e73032ffdcb55957a319e3a';
+  await fs.writeFile(f.seen, Array.from({ length: 1150 }, (_, i) => JSON.stringify({ heading: heading('Coordination', 'ASK', `seen ${i}`) })).join('\n') + '\n');
+  const ready = heading('Coordination', 'CLAIM', 'watching');
+  const lines = [ready, ...Array.from({ length: 600 }, (_, i) => heading('Other', 'ASK', `unrelated ${i}`))];
+  await fs.writeFile(f.board, lines.join('\n'));
+  const run = start(t, f, ['--wake-regex', 'reload journey stack'], 10000, false, names);
+  await run.line();
+  lines.splice(430, 0, store);
+  lines.splice(281, 0, hydrate);
+  const next = f.board + '.tmp';
+  await fs.writeFile(next, lines.join('\n'));
+  await fs.rename(next, f.board);
+  assert.deepEqual(await run.done, [ready, hydrate, store]);
+  await fs.writeFile(f.second, [store, hydrate].join('\n'));
+  assert.deepEqual(await start(t, f, [], 80, false, names).done, ['HEARTBEAT']);
+  const recorded = (await fs.readFile(f.seen, 'utf8')).trim().split('\n').map(JSON.parse);
+  for (const missed of [store, hydrate]) assert.equal(recorded.filter((item) => item.heading === missed).length, 1);
+  const multipleRecipients = heading('Other, PLAN-58', 'ASK', 'second addressee matches');
+  await fs.appendFile(f.second, '\n' + multipleRecipients + '\n');
+  assert.deepEqual(await start(t, f, [], 10000, false, names).done, [multipleRecipients]);
 });
 
 test('deduplicates exact report line text across history and body-only edits', async (t) => {

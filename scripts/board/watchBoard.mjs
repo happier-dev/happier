@@ -3,11 +3,12 @@ import { watch } from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 
-const usage = 'Usage: node scripts/board/watchBoard.mjs --board <path> [--board <path>] --name <programme> [--name <lane>] --seen <caller.jsonl> --heartbeat-ms <ms> [--reports <directory-or-*.md>] [--wake-regex <regex>] [--wake-on-backlog]';
+const usage = 'Usage: node scripts/board/watchBoard.mjs --board <path> [--board <path>] --name <caller> [--name <watched-lane>] [--self-name <sender-alias>] --seen <caller.jsonl> --heartbeat-ms <ms> [--reports <directory-or-*.md>] [--wake-regex <regex>] [--wake-on-backlog]';
 
 async function main() {
   const { values } = parseArgs({ options: {
     board: { type: 'string', multiple: true }, name: { type: 'string', multiple: true },
+    'self-name': { type: 'string', multiple: true },
     seen: { type: 'string' }, reports: { type: 'string', multiple: true },
     'heartbeat-ms': { type: 'string' }, 'wake-regex': { type: 'string' },
     'wake-on-backlog': { type: 'boolean' },
@@ -17,6 +18,8 @@ async function main() {
   const boards = [...new Set(values.board.map((board) => path.resolve(board)))];
   const roots = [...new Set((values.reports ?? ['lanes/*.md']).map((root) => path.resolve(root.replace(/[\\/]\*\.md$/, ''))))];
   const names = new Set(values.name);
+  // Recipient subscriptions include watched lanes; they are not caller identities.
+  const selfNames = new Set([values.name[0], ...(values['self-name'] ?? [])]);
   const wakeRegex = values['wake-regex'] === undefined ? undefined : new RegExp(values['wake-regex']);
   const seenPath = path.resolve(values.seen);
   const seen = new Set();
@@ -85,7 +88,6 @@ async function main() {
       for (const heading of headings) {
         const match = /^### .*? — (.+?) → (.+?) — ([^—]+?) — /.exec(heading);
         if (!match) continue;
-        if (names.has(match[1].trim())) continue;
         const addressees = match[2].split(',').map((name) => name.trim());
         const broadcast = addressees.some((name) => name.toLowerCase() === 'all leads') && ['URGENT', 'RULING', 'HOLD'].includes(match[3]);
         if (!broadcast && !addressees.some((name) => names.has(name))) continue;
@@ -94,7 +96,7 @@ async function main() {
         seen.add(heading);
         if (silent) continue;
         process.stdout.write(heading + '\n');
-        if (broadcast || ['ASK', 'URGENT', 'RULING'].includes(match[3]) || wakeRegex?.test(heading)) wake = true;
+        if (!selfNames.has(match[1].trim()) && (broadcast || ['ASK', 'URGENT', 'RULING'].includes(match[3]) || wakeRegex?.test(heading))) wake = true;
       }
     }
     // Persist initialization even when there were no current items to record.
