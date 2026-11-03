@@ -490,14 +490,14 @@ describe('CLI declared Account settings', () => {
     setActiveAccountSettingsSnapshot({ source: 'network', settings: accountSettingsParse(content.v),
       rawSettings: content.v, settingsVersion: version, loadedAtMs: 1, settingsSecretsReadKeys: [],
       scopeKey: resolveAccountSettingsScopeKeyForToken(token) });
-    const createOwner = () => createCliActionExecutor({ token, sessionId: 'settings-parity', serverId: 'settings-home',
+    const createOwner = () => createCliActionExecutor({ token, sessionId: 'settings-parity',
+      getCurrentSessionMetadata: () => ({ path: '/repo', machineId: 'machine' }), serverId: 'settings-home',
       serverHttpBaseUrl: 'http://settings.test', mode: 'plain', ctx: null, credentials: { token, encryption: null } });
     const invoke = (actionId: 'settings.set' | 'settings.get', input: unknown) => {
       const owner = createOwner();
       if (surface === 'cli') return owner.execute(actionId, input, { surface, authority: 'account_automation' });
       return createActionToolExecutorBridge({ executor: owner, surface, actionsSettings: policy })
-        .executeActionByToolName(surface === 'agent' ? 'action_execute' : actionId.replaceAll('.', '_'),
-          surface === 'agent' ? { actionId, input } : input, 'settings-parity');
+        .executeActionByToolName('action_execute', { actionId, input }, 'settings-parity');
     };
     // A different category arrives at the HTTP CAS boundary after the initial read.
     // The real category binding must rebase, not replace the retention preference map.

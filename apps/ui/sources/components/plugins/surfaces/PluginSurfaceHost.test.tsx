@@ -304,28 +304,30 @@ const pluginSurfaceConnectivity = {
 // consume. Mocking the hooks module does not update already-bound public
 // storage exports and conceals admission failures beneath the mounted host.
 let surfaceFixtureStorage: typeof import('@/sync/domains/state/storage').storage | null = null;
+function createPluginSurfaceMachines() {
+    const machineIds = ['machine_1', 'machine-1', 'machine_docs', 'origin-machine',
+        'settings-machine', 'ambient-machine', 'machine-ambient', 'machine-origin',
+        'machine-stale', 'machine-old', 'machine-new', 'machine-current', 'machine-compose', 'machine_a'];
+    return machineIds.map(id => {
+        const active = pluginSurfaceConnectivity.machineOnlineById.get(id) ?? pluginSurfaceConnectivity.machineOnline;
+        return createMachineFixture({ id, active,
+            // Publish current activity; an epoch-zero offline row cannot
+            // supersede the Machine owner's newer observed presence.
+            activeAt: Date.now(), daemonStateVersion: pluginSurfaceConnectivity.daemonStateVersion,
+            ...(realResourceTransport.settingsEnabled
+                ? { storageMode: 'plain' as const, dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER } : {}),
+        });
+    });
+}
 function applyPluginSurfaceConnectivity() {
     const storage = surfaceFixtureStorage;
     const scope = captureActiveServerAccountScopeLifetime()?.scope;
     if (!scope || !storage) return;
-    const machineIds = ['machine_1', 'machine-1', 'machine_docs', 'origin-machine',
-        'settings-machine', 'ambient-machine', 'machine-ambient', 'machine-origin',
-        'machine-stale', 'machine-old', 'machine-new', 'machine-current', 'machine-compose', 'machine_a'];
-    const machines = Object.fromEntries(machineIds.map(id => {
-        const active = pluginSurfaceConnectivity.machineOnlineById.get(id) ?? pluginSurfaceConnectivity.machineOnline;
-        return [id, createMachineFixture({ id, active,
-            // A just-seen inactive heartbeat is still reachable during the
-            // canonical presence grace. An offline fixture has no such lease.
-            activeAt: active ? Date.now() : 0, daemonStateVersion: pluginSurfaceConnectivity.daemonStateVersion,
-            ...(realResourceTransport.settingsEnabled
-                ? { storageMode: 'plain' as const, dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER } : {}),
-        })] as const;
-    }));
+    const rows = createPluginSurfaceMachines();
     act(() => {
-        storage.setState({ endpointStatus: pluginSurfaceConnectivity.endpointStatus, machines,
-            machineListByServerId: { ...storage.getState().machineListByServerId, [scope.serverId]: Object.values(machines) },
-            machineListStatusByServerId: { ...storage.getState().machineListStatusByServerId, [scope.serverId]: 'idle' } });
-        observeMachinePresenceForTest(scope, machineIds);
+        storage.setState({ endpointStatus: pluginSurfaceConnectivity.endpointStatus });
+        storage.getState().applyMachines(rows, true, { sourceServerId: scope.serverId });
+        observeMachinePresenceForTest(scope, rows.map(machine => machine.id));
     });
 }
 // Exercise the same applied Home, credentials and Account lifetime as app entry.
@@ -347,6 +349,9 @@ const pluginSurfaceAccountLifetime = {
                 ? { token: createAccountTokenForTests(scope.accountId, { currentAccount: true }) } : undefined,
                 request: undefined } : requestOrOptions;
         await surfaceConnection?.dispose();
+        // This fixture replaces the Home's HTTP boundary, including its
+        // capabilities. Do not retain the preceding fixture's feature answer.
+        (await import('@/sync/api/capabilities/serverFeaturesClient')).resetServerFeaturesClientForTests();
         // A cold fixture replaces its physical Home connection. Drain the
         // prior reachability lifecycle before its HTTP boundary is replaced;
         // global test cleanup otherwise resets HTTP before afterAll drains it.
@@ -362,6 +367,7 @@ const pluginSurfaceAccountLifetime = {
                 const served = request?.(path, init);
                 if (served) return served;
                 if (path === '/health') return Response.json({});
+                if (path === '/v1/account/profile') return Response.json(AccountProfileSchema.parse({ id: scope.accountId }));
                 if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
                 if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture({ version: 1, updatedAt: 1 }));
                 if (path === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
@@ -401,7 +407,8 @@ const pluginSurfaceAccountLifetime = {
                 if (path === `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`) {
                     return createEmptyAccountBootstrapHttpResponse(path, init);
                 }
-                return Response.json({ error: 'not_found' }, { status: 404 });
+                return createEmptyAccountBootstrapHttpResponse(path, init)
+                    ?? Response.json({ error: 'not_found' }, { status: 404 });
             }),
         });
         if (surfaceConnection.home.id !== scope.serverId) throw new Error('Fixture Home identity must match its routed mount.');
@@ -1298,7 +1305,8 @@ vi.mock('@/sync/ops/machineContributionRegistryProjection', async (importOrigina
     };
 });
 
-vi.mock('@/sync/api/plugins/data/queryPluginCollectionUiQuery', () => ({
+vi.mock('@/sync/api/plugins/data/queryPluginCollectionUiQuery', async (importOriginal) => ({
+    ...(await importOriginal<typeof import('@/sync/api/plugins/data/queryPluginCollectionUiQuery')>()),
     createActivePluginCollectionUiQueryPager: (...args: unknown[]) => (
         createActivePluginCollectionUiQueryPagerMock(...args)
     ),
@@ -14948,7 +14956,11 @@ describe('installed Session widget through the mounted plugin controller', () =>
             })) },
             ordinarySessionListMembershipByServerId: { [widgetAccountScope.serverId]: availableSessions.map(entry => entry.id) },
             sessionListIndexByServerId: { [widgetAccountScope.serverId]: availableSessions.map(entry => ({ type: 'session', sessionId: entry.id, serverId: widgetAccountScope.serverId, serverName: 'Home' })) },
-            machineListByServerId: { [widgetAccountScope.serverId]: [createMachineFixture({ id: 'machine_1', active: true, activeAt: Date.now() }), createMachineFixture({ id: 'machine_a', active: true })] } });
+        });
+        storage.getState().applyMachines([
+            createMachineFixture({ id: 'machine_1', active: true, activeAt: Date.now() }),
+            createMachineFixture({ id: 'machine_a', active: true }),
+        ], true, { sourceServerId: widgetAccountScope.serverId });
         if (repair === 'lost') {
             // Missing hydration is not Session retirement: publish the same
             // known deletion that the real Session input owner observes.

@@ -3260,6 +3260,7 @@ describe('createActionExecutor (session control)', () => {
           : { status: 'revoked', grantId: 'grant' };
       },
       clientActionExecute: async () => { effects++; return { ok: true, result: { ok: true } }; },
+      sessionConnectedServicesAuthSet: async () => { effects++; return { ok: true }; },
     });
     for (const surface of ['agent', 'mcp'] as const) {
       const discovered = listActionSpecsForCatalogSurface({ surface }).map(spec => spec.id);
