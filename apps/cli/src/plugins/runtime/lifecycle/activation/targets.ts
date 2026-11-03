@@ -38,6 +38,7 @@ const PRODUCT_DEMAND_READY_REGISTRATION_FAMILIES = new Set([
     'voiceProviders',
     // Capture registration resolves and demands the exact declared source.
     'captureSources',
+    'secretSources',
     // Resource binding and plugin invocation prepare the exact registered
     // producer before exposing its synchronous descriptor/watch services.
     'resources',

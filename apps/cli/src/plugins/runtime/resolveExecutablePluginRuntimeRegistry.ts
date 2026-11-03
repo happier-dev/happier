@@ -4,6 +4,7 @@ import { materializeActionRequestAttributionV1 } from '@happier-dev/protocol/act
 import { listRuntimeContributedActionDefinitions } from './invocation/actions/createCommittedContributedActionDeps';
 import { derivePluginDaemonContributionRegistrationRights } from '@happier-dev/protocol/plugins/contributions/catalog';
 import { resolveProjectNativeAdapter, type ProjectNativeAdapterResolutionV1 } from './lifecycle/contributions/targetProjectNativeAdapters';
+import { createTargetSecretSources } from './lifecycle/contributions/targetSecretSources';
 import type { ProjectNativeAdapterRoleV1 } from '@happier-dev/protocol/plugins/contributions/projectNativeAdapters';
 import type { ResolvedPluginExecutable } from './invocation/services/exec';
 import { authorizePluginExecLaunchForHost } from './invocation/services/exec';
@@ -787,6 +788,7 @@ export type ResolvedExecutablePluginRuntimeRegistry = Readonly<{
     resolveServerFeaturesSnapshot?(): CliServerFeaturesSnapshot | undefined;
     activatedPluginIds: Awaited<ReturnType<typeof activatePluginRuntimeRegistry>>['activatedPluginIds'];
     activateContributionsOnDemand: Awaited<ReturnType<typeof activatePluginRuntimeRegistry>>['activateContributionsOnDemand'];
+    secretSources?: import('./lifecycle/contributions/targetSecretSources').TargetSecretSourcesV1;
     resolveProjectNativeAdapter(reference: PluginContributionIdentityV1, role: ProjectNativeAdapterRoleV1): Promise<ProjectNativeAdapterResolutionV1>;
     resolveCaptureSource(reference: PluginContributionIdentityV1): Promise<Readonly<{
             declaration: import('@happier-dev/protocol/plugins/contributions/v2').PluginCaptureSourceContributionV1;
@@ -7589,6 +7591,39 @@ agentIsolation?: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').Ho
         },
         activateContributionsOnDemand,
         acquireAgentCatalogEntry,
+        secretSources: createTargetSecretSources({
+            targets: authoritativeContributes.activationTargets,
+            registry: {
+                activateContributionsOnDemand,
+                get targetRegistrations() { return activatedRegistry.targetRegistrations; },
+                isPluginOccurrenceCurrent: isCurrentPluginOccurrence,
+            },
+            createInvocationContext(reference, occurrenceId, signal) {
+                const target = resolveExactActivationTarget(reference.pluginId);
+                if (!target) throw new Error('Secret source occurrence is unavailable');
+                const lifetime = createPluginInvocationLifetime(composePluginConsumerSignal(reference.pluginId, signal));
+                try {
+                    const seed: PluginInvocationServicesSeed = {
+                        plugin: { id: reference.pluginId, version: target.manifest.version },
+                        contribution: { id: reference.localId, qualifiedId: `${reference.pluginId}/secretSources/${reference.localId}` },
+                        occurrenceId, sourceCustody: readCurrentPluginSourceCustody(reference.pluginId) ?? undefined,
+                        correlationId: randomUUID(), surface: 'cli', signal: lifetime.signal,
+                        redactionLifetimeSignal: lifetime.redactionLifetimeSignal,
+                        isOccurrenceCurrent: () => !lifetime.signal.aborted && isCurrentPluginOccurrence(reference.pluginId, occurrenceId),
+                    };
+                    const hostAccessRequests = resolveManifestHostAccessRequestsForQualifiedContribution({
+                        manifest: target.manifest, pluginId: reference.pluginId, contribution: seed.contribution,
+                    });
+                    if (!hostAccessRequests) throw new Error('Secret source HostAccess is unavailable');
+                    const services = invocationServiceOwners.createOperationServices(seed, {
+                        filesystemRoots: { pluginData: join(pluginStorePaths.storageDir, reference.pluginId, 'fs'), projects: new Map() },
+                        executionKind: 'machine_native', hostAccessRequests, environment: {},
+                    });
+                    return { context: { plugin: seed.plugin, contribution: seed.contribution, surface: seed.surface,
+                        invokedAtMs: lifetime.invokedAtMs, signal: lifetime.signal, services }, complete: lifetime.complete };
+                } catch (error) { lifetime.complete(); throw error; }
+            },
+        }),
         resolveProjectNativeAdapter(reference, role) {
             return resolveProjectNativeAdapter({
                 reference, role, targets: authoritativeContributes.activationTargets,

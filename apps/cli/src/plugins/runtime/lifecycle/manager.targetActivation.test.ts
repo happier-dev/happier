@@ -1,3 +1,5 @@
+import { loadInstalledPlugins } from '../../discovery/load/installed';
+import { createAuthoredAdmittedPluginRuntimeFixture } from '../../testkit/admittedRuntime';
 import { unexpectedProjectNativeAdapterResolution } from "@/plugins/testkit/unexpectedProjectNativeAdapterResolution";
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
@@ -80,6 +82,50 @@ async function createCommittedFileBackedFixtureActivationSource(params: Readonly
 }
 
 describe('target activation publication', () => {
+    it('acquires secret source values only on demand through the admitted executable registry', async () => {
+        let reads = 0;
+        let heldSignal: AbortSignal | undefined;
+        const plugin = definePlugin({
+            id: 'acme.vault', version: '1.0.0', displayName: 'Vault',
+            entrypoints: { daemon: './daemon.mjs' },
+            secretSources: { vault: { declaration: { title: 'Vault' }, runtime: {
+                async acquire(input, context) {
+                    reads += 1;
+                    heldSignal = context.signal;
+                    if (input.reference === 'missing') return { ok: false, code: 'not_found', repair: 'configure' };
+                    if (input.reference === 'throw') throw new Error('native secret stdout and stderr');
+                    return { ok: true, value: `rotated-${reads}` };
+                },
+            } } },
+        });
+        const fixture = await createAuthoredAdmittedPluginRuntimeFixture({
+            plugins: [{ manifest: plugin.manifest, files: { 'daemon.mjs': 'export function activate() {}' },
+                instantiateCommittedModule: () => ({ activate: plugin.activate }) }],
+            coldStart: true,
+            async resolveContributes(happyHomeDir) {
+                return createResolvedContributionRegistry(projectLoadedPluginContributes({
+                    loadResult: await loadInstalledPlugins({ happyHomeDir }), provenance: 'external',
+                }));
+            },
+        });
+        try {
+            const sources = fixture.registry.secretSources;
+            expect(sources?.list()).toEqual([{ contribution: { pluginId: 'acme.vault', localId: 'vault' }, title: 'Vault' }]);
+            expect(reads).toBe(0);
+            if (!sources) throw new Error('Secret source host is missing');
+            const source = { contribution: { pluginId: 'acme.vault', localId: 'vault' }, account: 'account', reference: 'field' };
+            await expect(sources.acquire(source)).resolves.toEqual({ ok: true, value: 'rotated-1' });
+            expect(heldSignal).toBeInstanceOf(AbortSignal);
+            await expect(sources.acquire(source)).resolves.toEqual({ ok: true, value: 'rotated-2' });
+            await expect(sources.acquire({ ...source, reference: 'missing' })).resolves.toEqual({ ok: false, code: 'not_found', repair: 'configure' });
+            await expect(sources.acquire({ ...source, reference: 'throw' })).resolves.toEqual({ ok: false, code: 'acquisition_failed', repair: 'retry' });
+            const controller = new AbortController();
+            controller.abort();
+            await expect(sources.acquire(source, { signal: controller.signal })).resolves.toEqual({ ok: false, code: 'cancelled' });
+            expect(reads).toBe(4);
+        } finally { await fixture.dispose(); }
+    });
+
     it('reports captured source-admission failures without another currentness authority', async () => {
         const registry = await activatePluginRuntimeRegistry({
             contributes: createResolvedContributionRegistry({}),
