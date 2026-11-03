@@ -4928,3 +4928,15 @@ claiming separation. Updating the daemon is required to obtain fallback behavior
 The retained 0.2 checkout has no member-isolation surface, so it cannot certify
 this pre-amendment 0.3 refusal path. No persisted migration or version shim is
 introduced by the placement change.
+
+## Agent isolation bootstrap retirement (unreleased 0.3)
+
+Off preview optionally adds `plan.retirement`, and accepted/unchanged Set results
+optionally add `retirement: { removed, retained }`. The closed presentation rows
+carry the bootstrap owner's observed resource, planned disposition and typed
+retention remedy; they grant no execution authority. The exact setup plan still
+owns elevated removal. These optional additions retain old-result readability;
+older strict development readers require the matching Protocol update before
+using the new daemon response (the existing 0.3 all-component direct cut).
+There is no persisted format, new Action, wire epoch or released/predecessor
+counterpart for this isolation retirement seam.

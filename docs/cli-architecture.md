@@ -5958,3 +5958,17 @@ The grant controller exposes this same policy projection and the existing
 preview/set Actions for the disclosure and Linux separate-user setup; visual
 composition is a separate UI pass. Older daemons keep returning their typed
 isolation refusal, which newer clients present without a private-RPC retry.
+
+## Agent isolation bootstrap retirement (0.3 development)
+
+An Off review also inventories the shared bootstrap when desired policy is
+already disabled. Its optional `plan.retirement` lists native presence, exact
+managed RunAs removal, and typed remedies for retained resources. The legacy
+bootstrap recorded neither exclusive user/group ownership nor prior permissions
+or Git values. Those identities, shared tools and authored home/workspace data
+are retained with explicit administrator guidance. A changed or foreign sudoers
+file is retained too; only a matching content digest, root owner/group and mode
+can enter the existing elevated APPLY. Accepted/unchanged results report removed
+step ids and retained remedies. Off inventory uses the same read-only elevated
+CHECK and administrator recovery as enabling; it never treats denied observation
+as an empty plan. This is an unreleased 0.3 development contract.

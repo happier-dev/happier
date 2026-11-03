@@ -54,12 +54,24 @@ export const MachineAgentIsolationStatusV1Schema = lazyZodSchema(() => z.union([
 ]));
 export type MachineAgentIsolationStatusV1 = z.infer<typeof MachineAgentIsolationStatusV1Schema>;
 
+const AgentIsolationRetirementEffectV1Schema = lazyZodSchema(() => z.union([
+  z.strictObject({ stepId: id, kind: id, target: id, observation: z.enum(['present', 'absent', 'unknown']),
+    action: z.enum(['remove', 'none']) }),
+  z.strictObject({ stepId: id, kind: id, target: id, observation: z.enum(['present', 'unknown']), action: z.literal('retain'),
+    reasonCode: z.enum(['ownership_unproven', 'authored_data', 'shared_resource', 'prior_value_unknown',
+      'foreign_effect_conflict', 'native_check_unavailable']), remedy: id }),
+]));
+const AgentIsolationRetirementResultV1Schema = lazyZodSchema(() => z.strictObject({
+  removed: z.array(id), retained: z.array(AgentIsolationRetirementEffectV1Schema),
+}));
+
 export const AgentIsolationEffectPlanV1Schema = lazyZodSchema(() => z.strictObject({
   memberProvisioning: z.optional(z.literal('linuxUsersV1')),
   roots: z.array(z.strictObject({ rootId: id, path: id,
     changes: z.array(z.enum(['group', 'setgid', 'mode', 'gitShared', 'safeDirectory'])) })),
   ancestorAcls: z.array(z.strictObject({ path: id, add: z.literal('x') })),
   sessionsToReplace: version, requiresAdmin: z.boolean(), planDigest: id,
+  retirement: z.optional(z.array(AgentIsolationRetirementEffectV1Schema)),
 }));
 export type AgentIsolationEffectPlanV1 = z.infer<typeof AgentIsolationEffectPlanV1Schema>;
 const previewInput = { serverId: z.optional(id), machineId: id, enabled: z.boolean(),
@@ -93,8 +105,10 @@ export const MachineAgentIsolationSetInputV1Schema = lazyZodSchema(() => z.stric
 }));
 export type MachineAgentIsolationSetInputV1 = z.infer<typeof MachineAgentIsolationSetInputV1Schema>;
 export const MachineAgentIsolationSetResultV1Schema = lazyZodSchema(() => z.union([
-  z.strictObject({ kind: z.literal('accepted'), operationId: id, metadataVersion: version, status: MachineAgentIsolationStatusV1Schema }),
-  z.strictObject({ kind: z.literal('unchanged'), metadataVersion: version, status: MachineAgentIsolationStatusV1Schema }),
+  z.strictObject({ kind: z.literal('accepted'), operationId: id, metadataVersion: version, status: MachineAgentIsolationStatusV1Schema,
+    retirement: z.optional(AgentIsolationRetirementResultV1Schema) }),
+  z.strictObject({ kind: z.literal('unchanged'), metadataVersion: version, status: MachineAgentIsolationStatusV1Schema,
+    retirement: z.optional(AgentIsolationRetirementResultV1Schema) }),
   z.strictObject({ kind: z.literal('plan_changed'), current: MachineAgentIsolationReadyPreviewV1Schema,
     operationId: z.optional(id) }),
   z.strictObject({ kind: z.literal('conflict'), policy: MachineAgentIsolationPolicyV1Schema, metadataVersion: version }),

@@ -209,11 +209,16 @@ export function registerDaemonMachineAgentIsolationRpcHandlers(rpc: RpcHandlerRe
         return !!intent && prepared?.setupPlan.basis.kind === 'agentIsolation'
           && sameStrictJsonValue({ roots: intent.roots, ancestorAcls: intent.ancestorAcls, sessionsToReplace: intent.sessionsToReplace,
             ...(mutation.enabled && mutation.memberProvisioning ? { memberProvisioning: mutation.memberProvisioning } : {}) }, prepared.setupPlan.basis.review)
-          && sameStrictJsonValue(intent.steps, prepared.setupPlan.steps);
+          && (mutation.enabled ? sameStrictJsonValue(intent.steps, prepared.setupPlan.steps)
+            : prepared.setupPlan.steps.every(step => intent.steps.some(candidate => sameStrictJsonValue(candidate, step))));
       };
       if (!await verifyEffect()) {
         return await parkForReview();
       }
+      const retirement = prepared.preview.plan.retirement ? { retirement: {
+        removed: prepared.preview.plan.retirement.filter(effect => effect.action === 'remove').map(effect => effect.stepId),
+        retained: prepared.preview.plan.retirement.filter(effect => effect.action === 'retain'),
+      } } : {};
       const currentStatus = options.read().status;
       const waitingForReplacement = currentStatus.kind === 'applying' && currentStatus.phase === 'runtime_replacement'
         && (prepared.preview.plan.sessionsToReplace > 0 || mutation.enabled && !effects.nativeReadiness);
@@ -221,7 +226,7 @@ export function registerDaemonMachineAgentIsolationRpcHandlers(rpc: RpcHandlerRe
         && (mutation.enabled ? currentStatus.kind === 'effective' : currentStatus.kind === 'disabled');
       if (result.status !== 'applied' && !prepared.preview.plan.requiresAdmin && (waitingForReplacement || settled)) {
         return MachineAgentIsolationSetResultV1Schema.parse({ kind: 'unchanged', metadataVersion: result.metadataVersion,
-          status: currentStatus });
+          status: currentStatus, ...retirement });
       }
       const applying = { kind: 'applying', phase: mutation.enabled ? 'account' : 'runtime_replacement' } as const;
       await publish(applying);
@@ -256,7 +261,7 @@ export function registerDaemonMachineAgentIsolationRpcHandlers(rpc: RpcHandlerRe
         if (effects.readSessionsToReplace() !== 0) status = { kind: 'applying', phase: 'runtime_replacement' };
       }
       await publish(status);
-      return MachineAgentIsolationSetResultV1Schema.parse({ kind: 'accepted', operationId, metadataVersion: result.metadataVersion, status });
+      return MachineAgentIsolationSetResultV1Schema.parse({ kind: 'accepted', operationId, metadataVersion: result.metadataVersion, status, ...retirement });
     };
     rpc.registerHandler(actionId, async (raw, ingress) => {
       if (actionId !== 'machines.agentIsolation.set' || !options.runActionOperation || !ingress) return await run(raw, ingress);

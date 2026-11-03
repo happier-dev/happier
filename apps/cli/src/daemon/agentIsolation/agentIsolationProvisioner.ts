@@ -1,4 +1,4 @@
-import { applyMachineSetupEffectPlan, checkMachineSetupEffectPlan, createMachineSetupNativeBackend, type MachineSetupBackend } from '@happier-dev/cli-common/machineSetup';
+import { createMachineSetupEffectPlan, applyMachineSetupEffectPlan, checkMachineSetupEffectPlan, createMachineSetupNativeBackend, type MachineSetupBackend } from '@happier-dev/cli-common/machineSetup';
 import { resolveMachineAgentExecutionPlacementV1, readMachineAgentIsolationPolicyV1, type AgentIsolationEffectPlanV1, type MachineAgentIsolationPolicyV1,
   type MachineAgentIsolationPreviewResultV1, type MachineAgentIsolationStatusV1, type MachineElevatedResultV1 } from '@happier-dev/protocol';
 import type { MachineSetupEffectPlanV1 } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
@@ -10,6 +10,7 @@ import { buildAgentIsolationMemberAccountStep, buildAgentIsolationMemberRetireme
 import { readAgentIsolationNativeIdentity, type AgentIsolationMemberNativeIdentity } from './agentIsolationNativeIdentity';
 import { readAgentIsolationMemberBinding, readAgentIsolationMemberBindingForAccount, writeAgentIsolationMemberBinding,
   type AgentIsolationMemberBindingScope } from './memberBindings';
+import { projectAgentIsolationBootstrapRetirement } from './bootstrapRetirement';
 import { resolveAgentIsolationEffectIntentResult } from './effectIntent';
 import type { AgentIsolationReadinessSystem } from './agentIsolationReadiness';
 import type { MachineNativeEffectContext } from '@/daemon/local/services/launch/machineNativeEffectAdmission';
@@ -80,14 +81,21 @@ export async function prepareAgentIsolationEffectsResult(input: Readonly<{
     ? { memberProvisioning: 'linuxUsersV1' as const } : {};
   const basis: MachineSetupEffectPlanV1['basis'] = { kind: 'agentIsolation', machineId: input.machineId, enabled: input.enabled,
     expectedPolicy: input.expectedPolicy ?? policy.policy, review: { roots, ancestorAcls, sessionsToReplace, ...memberReview } };
+  const observationSteps = ('retirementObservations' in intent ? intent.retirementObservations : undefined) ?? steps;
   let setupPlan: MachineSetupEffectPlanV1;
-  if (!effects.backend && input.enabled && input.operationId && input.verifyCurrent) {
+  if (!effects.backend && input.operationId && input.verifyCurrent) {
     const checked = await checkElevatedMachineSetupPlanResult({ machineId: input.machineId, operationId: input.operationId,
-      basis, steps, signal: input.signal }, { ...effects.elevation, verifyCurrent: input.verifyCurrent });
+      basis, steps: observationSteps, signal: input.signal }, { ...effects.elevation, verifyCurrent: input.verifyCurrent });
     if (checked.outcome !== 'checked') return { ...unavailable(),
       ...(checked.outcome === 'not_applied' ? { setup: checked } : {}) };
     setupPlan = checked.plan;
-  } else setupPlan = await checkMachineSetupEffectPlan({ basis, steps, backend: effects.backend ?? createMachineSetupNativeBackend() });
+  } else setupPlan = await checkMachineSetupEffectPlan({ basis, steps: observationSteps, backend: effects.backend ?? createMachineSetupNativeBackend() });
+  const retirement = !input.enabled ? projectAgentIsolationBootstrapRetirement(setupPlan) : undefined;
+  if (retirement) {
+    const removals = new Set(retirement.filter(effect => effect.action === 'remove').map(effect => effect.stepId));
+    setupPlan = createMachineSetupEffectPlan({ basis, steps: setupPlan.steps.filter(step => removals.has(step.id)),
+      nativeFacts: setupPlan.nativeFacts.filter(fact => removals.has(fact.stepId)) });
+  }
   const nativeFailure = setupPlan.nativeFacts.find(fact => fact.status === 'unavailable' || fact.status === 'unsupported');
   if (nativeFailure) {
     const reasonCode = nativeFailure.status === 'unsupported' ? 'native_check_unsupported' : 'native_check_unavailable';
@@ -98,7 +106,8 @@ export async function prepareAgentIsolationEffectsResult(input: Readonly<{
   const plan: AgentIsolationEffectPlanV1 = { ...memberReview, roots: roots.map(root => ({ ...root,
     changes: input.enabled && setupPlan.nativeFacts.find(fact => fact.stepId === `workspace-${root.rootId}`)?.status !== 'satisfied'
       ? ['group', 'setgid', 'mode', 'gitShared', 'safeDirectory'] : [] })), ancestorAcls, sessionsToReplace,
-    requiresAdmin: setupPlan.nativeFacts.some(fact => fact.status !== 'satisfied'), planDigest: setupPlan.planDigest };
+    requiresAdmin: setupPlan.nativeFacts.some(fact => fact.status !== 'satisfied'), planDigest: setupPlan.planDigest,
+    ...(retirement ? { retirement } : {}) };
   return { setupPlan, ...('daemonObservation' in intent ? { daemonObservation: intent.daemonObservation } : {}),
     preview: { kind: 'ready', plan, policy: policy.policy,
     metadataVersion: snapshot.metadataVersion, status: input.status } };

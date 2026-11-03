@@ -17,10 +17,14 @@ export function createAgentIsolationEffectsBoundary(input: Pick<AgentIsolationEf
   let loseConfirmation = false;
   const backend: machineSetup.MachineSetupBackend = {
     async observe(step, ...rest) { if (input.backend) return input.backend.observe(step, ...rest);
+      if (step.kind === 'file' && step.state === 'absent') return { stepId: step.id,
+        status: installed.has(step.id) ? 'drifted' : 'satisfied', facts: { present: installed.has(step.id) } };
       return { stepId: step.id, status: installed.has(step.id) ? 'satisfied' : 'drifted',
-      facts: { installed: installed.has(step.id) } }; },
+      facts: { present: installed.has(step.id) } }; },
     async apply(step, ...rest) { mutations.push(step.id);
-      if (input.backend) await input.backend.apply(step, ...rest); else installed.add(step.id); },
+      if (input.backend) await input.backend.apply(step, ...rest);
+      else if (step.kind === 'file' && step.state === 'absent') installed.delete(step.id);
+      else installed.add(step.id); },
   };
   const observation: MachineAdminAccessObservationV1 = { version: 1, observedAt: 0, daemonUid: 1001, daemonUsername: 'happier', daemonPrimaryGroup: 'happier',
     daemonIdentity: 'nonRoot', rootEquivalentGroups: [], passwordlessSudoToRoot: 'allowed', managedDropIn: 'valid',

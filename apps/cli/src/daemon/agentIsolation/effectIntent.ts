@@ -4,6 +4,7 @@ import type { MachineAgentIsolationStatusV1 } from '@happier-dev/protocol';
 import { isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPath';
 import { buildUserManagerGroupRefreshStep } from '@/daemon/service/userManagerGroups';
 import { buildAgentIsolationProvisioningSteps, type AgentIsolationMemberRequester } from './provisioning';
+import { buildAgentIsolationBootstrapRetirementObservations } from './bootstrapRetirement';
 import type { AgentIsolationEffectDependencies } from './agentIsolationProvisioner';
 
 type UnavailableStatus = Extract<MachineAgentIsolationStatusV1, { kind: 'unavailable' }>;
@@ -18,12 +19,15 @@ export async function resolveAgentIsolationEffectIntentResult(enabled: boolean, 
   const sessionsToReplace = effects.readSessionsToReplace();
   if (!Number.isSafeInteger(sessionsToReplace) || sessionsToReplace < 0) return unavailable('session_inventory',
     'Restore the daemon Session inventory before reviewing isolation.');
-  // Off changes future admission, not permissions or ownership. Its actual
-  // filesystem effect is empty; a missing checkout must not block recovery.
-  if (!enabled) return { kind: 'ready' as const, intent: { roots: [], ancestorAcls: [], sessionsToReplace, steps: [] } };
   const daemon = await effects.elevation.observe().catch(() => null);
   if (!daemon || daemon.daemonIdentity !== 'nonRoot' || daemon.daemonUid === null || daemon.daemonUid <= 0 || !daemon.daemonUsername || !daemon.daemonPrimaryGroup)
     return unavailable('daemon_identity', 'Run the daemon as a named non-root OS user with a primary group, then review isolation.');
+  if (!enabled) {
+    const retirementObservations = buildAgentIsolationBootstrapRetirementObservations({ daemonUsername: daemon.daemonUsername,
+      daemonPrimaryGroup: daemon.daemonPrimaryGroup, binaryPath: effects.installedCli });
+    return { kind: 'ready' as const, intent: { roots: [], ancestorAcls: [], sessionsToReplace, daemonObservation: daemon,
+      steps: retirementObservations.filter(step => step.kind === 'file' && step.state === 'absent'), retirementObservations } };
+  }
   if (requesterIdentity) return { kind: 'ready' as const, intent: { roots: [], ancestorAcls: [], sessionsToReplace: 0, daemonObservation: daemon,
     steps: buildAgentIsolationProvisioningSteps({ daemonUsername: daemon.daemonUsername, daemonPrimaryGroup: daemon.daemonPrimaryGroup, binaryPath: effects.installedCli, requesterIdentity, retainedMemberUid }) } };
   const admitted = effects.readRoots();
