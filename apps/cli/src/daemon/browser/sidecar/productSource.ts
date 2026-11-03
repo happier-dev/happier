@@ -12,11 +12,7 @@ import type { MachineResourcesPolicyReader } from '@/processes/toolIdleTimeouts'
 import { browserCommandDispatchFailure } from '../control/types';
 import { createBrowserProfileStore, type BrowserProfileStore } from '../profiles/store';
 import { createBrowserStoragePartitionOwner } from '../storage/partitions';
-import {
-    resolveSidecarBrowserBinary,
-    type SidecarBrowserBinaryCandidate,
-    type SidecarBrowserBinaryResolution,
-} from './binary';
+import { resolveProductBrowserSidecarBinary } from './binary';
 import type {
     BrowserSidecarControlAdapterFactory,
     BrowserSidecarControlAdapterFactoryResult,
@@ -36,19 +32,6 @@ import {
 } from '@/packagedRuntime/installables/sourceAdapters/browserChromium';
 
 const PRODUCT_SOURCE_MISSING_REASON = 'No source-backed managed or packaged Browser sidecar executable is registered.';
-
-// Product whitelist is narrowed to managed-only (FP-BRW-SOURCE-1 step 10a). System/PATH Chrome,
-// floating Chrome-for-Testing, Playwright caches, and Electron Chromium must NEVER count as a
-// product source — they stay fail-closed forever (TRACKING §10 Category 2). The launch owner and
-// `binary.ts` enforce the same invariant defensively.
-const PRODUCT_BROWSER_SIDECAR_SOURCES = new Set<SidecarBrowserBinaryCandidate['source']>([
-    'managedBrowserPackage',
-]);
-
-const PRODUCT_BROWSER_SIDECAR_DISCOVERY_KINDS = new Set<SidecarBrowserBinaryCandidate['discoveryKind']>([
-    'managedRuntime',
-    'packagedApp',
-]);
 
 type CreateLaunchOwnerFactory = (
     input: BrowserSidecarLaunchOwnerControlAdapterFactoryInput,
@@ -80,37 +63,6 @@ function unavailable(
         errorCode,
         disabledReason,
     };
-}
-
-function isProductCandidate(candidate: SidecarBrowserBinaryCandidate): boolean {
-    return PRODUCT_BROWSER_SIDECAR_SOURCES.has(candidate.source)
-        && PRODUCT_BROWSER_SIDECAR_DISCOVERY_KINDS.has(candidate.discoveryKind);
-}
-
-function missingProductSourceResolution(): SidecarBrowserBinaryResolution {
-    return {
-        ok: false,
-        source: 'managedBrowserPackage',
-        errorCode: 'managed_package_missing',
-        disabledReason: PRODUCT_SOURCE_MISSING_REASON,
-        diagnostics: [],
-    };
-}
-
-export function resolveProductBrowserSidecarBinary(params: Readonly<{
-    platform?: NodeJS.Platform | string;
-    candidates?: readonly SidecarBrowserBinaryCandidate[];
-}> = {}): SidecarBrowserBinaryResolution {
-    const productCandidates = (params.candidates ?? []).filter(isProductCandidate);
-    if (productCandidates.length === 0) {
-        return missingProductSourceResolution();
-    }
-
-    return resolveSidecarBrowserBinary({
-        platform: params.platform ?? process.platform,
-        sourcePreference: 'managed-first',
-        candidates: productCandidates,
-    });
 }
 
 /**
@@ -166,15 +118,6 @@ export function createProductBrowserSidecarControlAdapterFactory(params: Readonl
         });
         if (!binaryResolution.ok) {
             return unavailable(binaryResolution.errorCode, binaryResolution.disabledReason);
-        }
-
-        // Provenance is mandatory: a managed candidate without a locally-verified pinned digest
-        // must never reach the launch owner. This is the BRW-7 acceptance invariant.
-        if (binaryResolution.provenance?.origin !== 'managed_package') {
-            return unavailable(
-                'binary_resolution_failed',
-                'Managed Browser sidecar source resolved without verified provenance.',
-            );
         }
 
         if (!params.featureEnabled) return unavailable('feature_disabled', 'browser.sidecar feature disabled');

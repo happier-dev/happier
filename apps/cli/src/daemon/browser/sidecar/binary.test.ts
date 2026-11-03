@@ -1,15 +1,29 @@
 import { describe, expect, it } from 'vitest';
 
+const provenance = { origin: 'managed_package' as const, pinnedVersion: '127.0.6533.88',
+    channel: 'stable' as const, integrityDigest: `sha256:${'a'.repeat(64)}`, license: 'BSD-3-Clause' };
+
 describe('daemon browser sidecar binary resolution', () => {
-    it('prefers managed browser candidates over system candidates by default', async () => {
+    it('exposes only the managed product resolver, without a generic source chooser', async () => {
+        const mod = await import('./binary');
+        expect(mod).not.toHaveProperty('resolveSidecarBrowserBinary');
+    });
+    it('admits product provenance at the binary owner rather than its launch consumer', async () => {
+        const { resolveProductBrowserSidecarBinary } = await import('./binary');
+        expect(resolveProductBrowserSidecarBinary({ platform: 'linux', candidates: [{
+            source: 'managedBrowserPackage', discoveryKind: 'managedRuntime', available: true,
+            executablePath: '/fixture/managed-chromium',
+        }] })).toMatchObject({ ok: false, errorCode: 'binary_resolution_failed' });
+    });
+
+    it('selects only the managed product candidate even when a system browser is available', async () => {
         const mod = await import('./binary');
 
         expect(mod).not.toBeNull();
         if (!mod) return;
 
-        const result = mod.resolveSidecarBrowserBinary({
+        const result = mod.resolveProductBrowserSidecarBinary({
             platform: 'darwin',
-            sourcePreference: 'managed-first',
             candidates: [
                 {
                     source: 'systemChrome',
@@ -22,6 +36,7 @@ describe('daemon browser sidecar binary resolution', () => {
                     executablePath: '/Users/test/.happier/tools/browser/current/chrome',
                     discoveryKind: 'managedRuntime',
                     available: true,
+                    provenance,
                 },
             ],
         });
@@ -47,9 +62,8 @@ describe('daemon browser sidecar binary resolution', () => {
             license: 'BSD-3-Clause',
         };
 
-        const result = mod.resolveSidecarBrowserBinary({
+        const result = mod.resolveProductBrowserSidecarBinary({
             platform: 'darwin',
-            sourcePreference: 'managed-first',
             candidates: [{
                 source: 'managedBrowserPackage',
                 executablePath: '/Users/test/.happier/tools/browser-chromium/current/chrome',
@@ -66,38 +80,14 @@ describe('daemon browser sidecar binary resolution', () => {
         });
     });
 
-    it('does not synthesize provenance for a candidate that lacks it', async () => {
-        const mod = await import('./binary');
-
-        expect(mod).not.toBeNull();
-        if (!mod) return;
-
-        const result = mod.resolveSidecarBrowserBinary({
-            platform: 'darwin',
-            sourcePreference: 'managed-first',
-            candidates: [{
-                source: 'managedBrowserPackage',
-                executablePath: '/Users/test/.happier/tools/browser-chromium/current/chrome',
-                discoveryKind: 'managedRuntime',
-                available: true,
-            }],
-        });
-
-        expect(result.ok).toBe(true);
-        if (result.ok) {
-            expect(result.provenance).toBeUndefined();
-        }
-    });
-
     it('fails closed on unsupported platforms before selecting a candidate', async () => {
         const mod = await import('./binary');
 
         expect(mod).not.toBeNull();
         if (!mod) return;
 
-        const result = mod.resolveSidecarBrowserBinary({
+        const result = mod.resolveProductBrowserSidecarBinary({
             platform: 'freebsd',
-            sourcePreference: 'managed-first',
             candidates: [{
                 source: 'managedBrowserPackage',
                 executablePath: '/managed/chrome',
@@ -113,27 +103,26 @@ describe('daemon browser sidecar binary resolution', () => {
         });
     });
 
-    it('rejects PATH-only system browser candidates instead of treating them as binary-safe', async () => {
+    it.each(['pathProbe', 'systemRegistry', 'explicitUserConfig'] as const)('refuses a system browser discovered by %s without a managed product source', async discoveryKind => {
         const mod = await import('./binary');
 
         expect(mod).not.toBeNull();
         if (!mod) return;
 
-        const result = mod.resolveSidecarBrowserBinary({
+        const result = mod.resolveProductBrowserSidecarBinary({
             platform: 'linux',
-            sourcePreference: 'system-first',
             candidates: [{
                 source: 'systemChrome',
                 executablePath: '/usr/bin/google-chrome',
-                discoveryKind: 'pathProbe',
+                discoveryKind,
                 available: true,
             }],
         });
 
         expect(result).toMatchObject({
             ok: false,
-            source: 'systemChrome',
-            errorCode: 'system_browser_unavailable',
+            source: 'managedBrowserPackage',
+            errorCode: 'managed_package_missing',
         });
         expect(JSON.stringify(result)).not.toContain('/usr/bin/google-chrome');
     });

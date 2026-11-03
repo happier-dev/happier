@@ -20,8 +20,8 @@ export type SidecarBrowserBinaryCandidate = Readonly<{
     /**
      * Locally-derived provenance for a managed candidate (pinned version/channel + verified
      * sha256 digest + license). Present only for product-eligible managed sources. The resolver
-     * threads it into the successful resolution; the product gate (`productSource.ts`) requires it
-     * before delegating to the launch owner. A candidate without provenance can never become a
+     * threads it into the successful resolution; product binary resolution requires it
+     * before any launch consumer. A candidate without provenance can never become a
      * product source.
      */
     provenance?: BrowserSidecarBinaryProvenanceV1;
@@ -52,134 +52,82 @@ export type SidecarBrowserBinaryResolution =
         diagnostics: readonly SidecarBrowserBinaryDiagnostic[];
     }>;
 
-type SidecarBrowserBinarySourcePreference = 'managed-first' | 'system-first';
+const SUPPORTED_PLATFORMS = new Set<string>(['darwin', 'linux', 'win32']);
 
-const SUPPORTED_PLATFORMS = new Set<NodeJS.Platform>(['darwin', 'linux', 'win32']);
+export type ProductBrowserSidecarBinaryResolution =
+    | Extract<SidecarBrowserBinaryResolution, { ok: false }>
+    | Readonly<Omit<Extract<SidecarBrowserBinaryResolution, { ok: true }>, 'source' | 'provenance'> & {
+        source: 'managedBrowserPackage';
+        provenance: BrowserSidecarBinaryProvenanceV1;
+    }>;
 
-const MANAGED_FIRST_PRIORITY: readonly BrowserSidecarBinarySourceV1[] = [
-    'managedBrowserPackage',
-    'chromeForTesting',
-    'playwrightChromium',
-    'electronChromium',
-    'systemChrome',
-];
-
-const SYSTEM_FIRST_PRIORITY: readonly BrowserSidecarBinarySourceV1[] = [
-    'systemChrome',
-    'managedBrowserPackage',
-    'chromeForTesting',
-    'playwrightChromium',
-    'electronChromium',
-];
-
-function sourcePriority(
-    source: BrowserSidecarBinarySourceV1,
-    preference: SidecarBrowserBinarySourcePreference,
-): number {
-    const priority = preference === 'system-first' ? SYSTEM_FIRST_PRIORITY : MANAGED_FIRST_PRIORITY;
-    const index = priority.indexOf(source);
-    return index === -1 ? Number.MAX_SAFE_INTEGER : index;
-}
-
-function nonEmptyExecutablePath(candidate: SidecarBrowserBinaryCandidate): string | null {
-    const value = candidate.executablePath?.trim();
-    return value ? value : null;
-}
-
-function isBinarySafeSystemCandidate(candidate: SidecarBrowserBinaryCandidate): boolean {
-    return candidate.source !== 'systemChrome' || candidate.discoveryKind !== 'pathProbe';
-}
-
-function diagnosticFor(candidate: SidecarBrowserBinaryCandidate): SidecarBrowserBinaryDiagnostic {
-    const hasExecutablePath = nonEmptyExecutablePath(candidate) !== null;
-    const pathOnlySystemCandidate = candidate.source === 'systemChrome' && candidate.discoveryKind === 'pathProbe';
-    const available = candidate.available && hasExecutablePath && !pathOnlySystemCandidate;
-
-    return {
-        source: candidate.source,
-        discoveryKind: candidate.discoveryKind,
-        available,
-        ...(available ? {} : {
-            errorCode: pathOnlySystemCandidate ? 'system_browser_unavailable' : 'binary_resolution_failed',
-            disabledReason: candidate.disabledReason
-                ?? (pathOnlySystemCandidate
-                    ? 'PATH-only browser discovery is not binary-safe for sidecar runtime launch.'
-                    : 'Browser sidecar binary candidate is unavailable.'),
-        }),
-    };
-}
-
-function resolveFailure(input: Readonly<{
-    candidates: readonly SidecarBrowserBinaryCandidate[];
-    diagnostics: readonly SidecarBrowserBinaryDiagnostic[];
-}>): SidecarBrowserBinaryResolution {
-    const systemDiagnostic = input.diagnostics.find((diagnostic) => diagnostic.source === 'systemChrome');
-    if (systemDiagnostic?.errorCode === 'system_browser_unavailable') {
+/** Resolve the managed product source with provenance supplied by the installed-artifact owner. */
+export function resolveProductBrowserSidecarBinary(params: Readonly<{
+    platform?: NodeJS.Platform | string;
+    candidates?: readonly SidecarBrowserBinaryCandidate[];
+}> = {}): ProductBrowserSidecarBinaryResolution {
+    const productCandidates = (params.candidates ?? []).filter(candidate => (
+        candidate.source === 'managedBrowserPackage'
+        && (candidate.discoveryKind === 'managedRuntime' || candidate.discoveryKind === 'packagedApp')
+    ));
+    if (productCandidates.length === 0) {
         return {
             ok: false,
-            source: 'systemChrome',
-            errorCode: 'system_browser_unavailable',
-            disabledReason: systemDiagnostic.disabledReason ?? 'No binary-safe system browser candidate is available.',
-            diagnostics: input.diagnostics,
+            source: 'managedBrowserPackage',
+            errorCode: 'managed_package_missing',
+            disabledReason: 'No source-backed managed or packaged Browser sidecar executable is registered.',
+            diagnostics: [],
         };
     }
-
-    const managedCandidateExists = input.candidates.some((candidate) => candidate.source === 'managedBrowserPackage');
-    if (managedCandidateExists || input.candidates.length === 0) {
+    const diagnostics: SidecarBrowserBinaryDiagnostic[] = productCandidates.map(candidate => {
+        const available = candidate.available && Boolean(candidate.executablePath?.trim());
+        return {
+            source: candidate.source,
+            discoveryKind: candidate.discoveryKind,
+            available,
+            ...(available ? {} : {
+                errorCode: 'binary_resolution_failed' as const,
+                disabledReason: candidate.disabledReason ?? 'Browser sidecar binary candidate is unavailable.',
+            }),
+        };
+    });
+    const platform = params.platform ?? process.platform;
+    if (!SUPPORTED_PLATFORMS.has(platform)) {
+        return {
+            ok: false,
+            source: 'unsupported',
+            errorCode: 'unsupported_platform',
+            disabledReason: `Browser sidecar runtime is not supported on ${platform}.`,
+            diagnostics,
+        };
+    }
+    const candidate = productCandidates.find(candidate => candidate.available && candidate.executablePath?.trim());
+    const executablePath = candidate?.executablePath?.trim();
+    if (!candidate || !executablePath) {
         return {
             ok: false,
             source: 'managedBrowserPackage',
             errorCode: 'managed_package_missing',
             disabledReason: 'Managed browser package is not installed or not launchable.',
-            diagnostics: input.diagnostics,
+            diagnostics,
         };
     }
-
-    return {
-        ok: false,
-        source: input.candidates[0]?.source ?? 'managedBrowserPackage',
-        errorCode: 'binary_resolution_failed',
-        disabledReason: 'No eligible browser sidecar binary candidate is available.',
-        diagnostics: input.diagnostics,
-    };
-}
-
-export function resolveSidecarBrowserBinary(params: Readonly<{
-    platform: NodeJS.Platform | string;
-    sourcePreference?: SidecarBrowserBinarySourcePreference;
-    candidates: readonly SidecarBrowserBinaryCandidate[];
-}>): SidecarBrowserBinaryResolution {
-    const diagnostics = params.candidates.map(diagnosticFor);
-    if (!SUPPORTED_PLATFORMS.has(params.platform as NodeJS.Platform)) {
+    const provenance = candidate.provenance;
+    if (provenance?.origin !== 'managed_package') {
         return {
             ok: false,
-            source: 'unsupported',
-            errorCode: 'unsupported_platform',
-            disabledReason: `Browser sidecar runtime is not supported on ${params.platform}.`,
+            source: 'managedBrowserPackage',
+            errorCode: 'binary_resolution_failed',
+            disabledReason: 'Managed Browser sidecar source resolved without verified provenance.',
             diagnostics,
         };
     }
-
-    const preference = params.sourcePreference ?? 'managed-first';
-    const sortedCandidates = [...params.candidates].sort((left, right) => (
-        sourcePriority(left.source, preference) - sourcePriority(right.source, preference)
-    ));
-
-    for (const candidate of sortedCandidates) {
-        const executablePath = nonEmptyExecutablePath(candidate);
-        if (!candidate.available || !executablePath || !isBinarySafeSystemCandidate(candidate)) {
-            continue;
-        }
-
-        return {
-            ok: true,
-            source: candidate.source,
-            executablePath,
-            discoveryKind: candidate.discoveryKind,
-            ...(candidate.provenance ? { provenance: candidate.provenance } : {}),
-            diagnostics,
-        };
-    }
-
-    return resolveFailure({ candidates: params.candidates, diagnostics });
+    return {
+        ok: true,
+        source: 'managedBrowserPackage',
+        executablePath,
+        discoveryKind: candidate.discoveryKind,
+        provenance,
+        diagnostics,
+    };
 }
