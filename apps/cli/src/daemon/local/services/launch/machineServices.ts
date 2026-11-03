@@ -205,6 +205,8 @@ export function createMachineServicesRuntime(input: Readonly<{
     }
     async function discover(registry: ResolvedExecutablePluginRuntimeRegistry, adapter?: PluginContributionIdentityV1,
         signal?: AbortSignal): Promise<Extract<MachineServicesDiscoveryResultV1, { kind: 'snapshot' }>> {
+        // Join the same restored Environment ownership used by list/detail before offering watches.
+        await ensureEnvironmentServices();
         const references = adapter ? [adapter] : registry.contributes.activationTargets.flatMap(target =>
             target.manifest.contributes.projectNativeAdapters.filter(declaration => declaration.roles.includes('nativeServiceLifecycle'))
                 .map(declaration => ({ pluginId: target.pluginId, localId: declaration.id })));
