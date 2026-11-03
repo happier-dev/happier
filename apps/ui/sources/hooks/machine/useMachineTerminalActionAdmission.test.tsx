@@ -30,7 +30,8 @@ import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { flushHookEffects } from '@/dev/testkit';
 import type { EmbeddedTerminalRendererHandle } from '@/components/terminal/embedded/embeddedTerminalRendererHandle';
 import { createArtifactStoreBoundary } from '@/dev/testkit/harness/artifactStoreBoundary';
-import { decideApprovalAsInbox } from '@/dev/testkit/harness/approvalInbox';
+import { decideApprovalAsInbox, replayApprovedAsDaemon } from '@/dev/testkit/harness/approvalInbox';
+import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
 
 // The Home answers Machine list and batched row reads for the one Machine Bob owns.
 function serveBobMachine(request: Readonly<{ path: string; method: string; body?: unknown }>): Response | undefined {
@@ -117,6 +118,47 @@ describe('Project terminal admission through canonical Machine Actions', () => {
                 expect(Modal.confirm).not.toHaveBeenCalled();
             } finally { await hook.unmount(); }
         } finally { await home.dispose(); }
+    });
+    it.each([false, true])('retains the daemon Project refusal through the real New terminal request and Details (approval: %s)', async (requiresApproval) => {
+        const serverUrl = `https://terminal-project-refusal-${requiresApproval}.test`;
+        const serverIdentityId = `srv_terminal_refusal_${requiresApproval}`;
+        const artifacts = createArtifactStoreBoundary({ ownerAccountId: () => 'bob', encryptionMode: 'plain' });
+        const home = await serveActionHomes({ homes: [{ key: 'session', serverUrl, serverIdentityId, accountId: 'bob', currentAccount: true,
+            ...(requiresApproval ? { settings: { actionsSettingsV1: { v: 1, actions: {
+                'machines.terminal.open': { approvalRequiredSurfaces: ['ui'] },
+            } } } } : {}) }],
+            route: request => artifacts.handle(`${request.path}${request.url.search}`, { method: request.method, headers: request.headers,
+                ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }) })
+                ?? serveBobMachine(request) ?? createEmptyAccountBootstrapHttpResponse(request.path, { method: request.method }) ?? undefined });
+        publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
+        const workspace = { serverId: home.homes.session!.id, workspaceId: 'accepted', machineId: 'machine', rootPath: '/project' };
+        applyProjectAccountRowsFixture(storage, { workspaceRefs: [{ id: workspace.workspaceId, serverId: workspace.serverId,
+            machineId: workspace.machineId, rootPath: workspace.rootPath, createdAtMs: 1 }] });
+        rpc.mockReset(); rpc.mockResolvedValue({ ok: false, errorCode: 'terminal_invalid_request', error: 'project_setup_consent_required' });
+        const terminalRef = { current: { write: vi.fn(), clear: vi.fn() } };
+        const hook = await renderHook(() => useMachineTerminalSession({ terminalKey: 'new-project-shell', workspace,
+            machineId: workspace.machineId, serverId: workspace.serverId, cwd: workspace.rootPath, terminalRef }));
+        try {
+            await act(async () => hook.getCurrent().onReady(80, 24));
+            if (requiresApproval) {
+                await vi.waitFor(() => expect(artifacts.list()).toHaveLength(1));
+                await replayApprovedAsDaemon({ serverId: workspace.serverId, machineId: workspace.machineId,
+                    artifactId: artifacts.list()[0]!.id, decision: 'approve' });
+            }
+            await vi.waitFor(() => expect(rpc.mock.calls, JSON.stringify({ status: hook.getCurrent().status,
+                error: hook.getCurrent().error })).toHaveLength(1));
+            await vi.waitFor(() => expect(hook.getCurrent()).toMatchObject({ status: 'error', error: 'project_setup_consent_required' }));
+            expect(rpc).toHaveBeenCalledWith(expect.objectContaining({ method: RPC_METHODS.DAEMON_TERMINAL_ENSURE,
+                payload: { terminalKey: 'new-project-shell', workspace, cwd: workspace.rootPath, cols: 80, rows: 24 } }));
+            const frame = await renderScreen(<EmbeddedTerminalPaneFrame title="Shell" controller={hook.getCurrent()}
+                surface={null} chrome="toolbar" testIdPrefix="project-refusal" />);
+            try {
+                expect(frame.findByType(SurfaceStateCard).props).toMatchObject({
+                    reason: t('terminalEmbedded.errors.projectSetupConsentRequired'),
+                    diagnosticCode: 'project_setup_consent_required',
+                });
+            } finally { await frame.unmount(); }
+        } finally { await hook.unmount(); await home.dispose(); }
     });
     it.each([false, true])('preserves one declined Open through real responsive leaves (phone-first: %s)', async (phoneFirst) => {
         const home = await serveTerminalApprovalHome(`https://terminal-responsive-cancel-${phoneFirst}.test`);

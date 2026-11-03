@@ -79,13 +79,13 @@ export function useMachineTerminalActionAdmission(input: Readonly<{ terminalKey:
             || !areServerProfileIdentifiersEquivalent(lifetime.scope.serverId, workspace.serverId))) {
             return { ok: false, errorCode: 'terminal_access_denied', error: 'terminal_access_denied' };
         }
-        const fail = (code: string): MachineTerminalAdmissionResult => {
+        const fail = (code: string, failure?: Readonly<{ error: string }>): MachineTerminalAdmissionResult => {
             const cancelled = code === 'approval_canceled' || code === 'approval_rejected';
             // Declining a restart does not mean its existing PTY was never opened.
             if (cancelled && !restart && input.scopeId && input.memberId && accountContext.current?.accountLifetime.isCurrent()) {
                 dispatchSessionTerminalWorkspaceCommand(input.scopeId, { type: 'openCancelled', terminalId: input.memberId, cancelled: true });
             }
-            return { ok: false, errorCode: code, error: code, ...(cancelled ? { cancelled: true as const } : {}) };
+            return { ok: false, errorCode: code, error: failure?.error ?? code, ...(cancelled ? { cancelled: true as const } : {}) };
         };
         await capture(signal);
         const capturedAuthority = accountContext.current!;
@@ -137,7 +137,7 @@ export function useMachineTerminalActionAdmission(input: Readonly<{ terminalKey:
                     expectedAccountId: capturedAuthority.accountId, signal,
                 });
                 if (!capturedAuthority.accountLifetime.isCurrent() || signal.aborted) return fail('terminal_access_denied');
-                if (!census.ok) return fail(census.errorCode ?? census.error);
+                if (!census.ok) return fail(census.errorCode ?? census.error, census);
                 // Released own-Session daemons may lack census support. They
                 // retain the approved create path; a new Project requires its
                 // admitted requester/Workspace-aware backend.
@@ -146,7 +146,7 @@ export function useMachineTerminalActionAdmission(input: Readonly<{ terminalKey:
                 } else {
                     const listed = DaemonTerminalListResponseV1Schema.safeParse(census.result);
                     if (!listed.success) return fail('terminal_invalid_response');
-                    if (!listed.data.ok) return fail(listed.data.errorCode);
+                    if (!listed.data.ok) return fail(listed.data.errorCode, listed.data);
                     const cwd = request.cwd ?? project?.workspace.rootPath;
                     const existing = listed.data.terminals.find(terminal => terminal.terminalKey === memberKey
                         && (cwd === undefined || terminal.cwd === cwd)
@@ -199,7 +199,7 @@ export function useMachineTerminalActionAdmission(input: Readonly<{ terminalKey:
                                 ? await readExistingTerminal() ?? fail('terminal_not_found') : value;
                             callbacks.onApprovalSucceeded(result);
                         },
-                        onFailed: code => { settleAssociation(retained.artifactId); callbacks.onApprovalFailed(code); } });
+                        onFailed: (code, failure) => { settleAssociation(retained.artifactId); callbacks.onApprovalFailed(code, failure); } });
                     if (original.status === 'executed') await continuation.onExecuted(artifact);
                     else if (original.status === 'canceled' || original.status === 'failed' || original.status === 'rejected') continuation.onTerminal?.(original.status, artifact);
                     else approval.requestApproval(continuation);
@@ -214,7 +214,7 @@ export function useMachineTerminalActionAdmission(input: Readonly<{ terminalKey:
                 const result = await execute(actionId, payload, { ...originContext,
                     bypassApprovals: false, serverId: capturedAuthority.serverId, expectedAccountId: capturedAuthority.accountId,
                     actionRequestId: requestId, signal: executionSignal });
-                if (!result.ok) return fail(result.errorCode ?? result.error);
+                if (!result.ok) return fail(result.errorCode ?? result.error, result);
                 const pending = ActionApprovalRequestCreatedResultSchema.safeParse(result.result);
                 if (!pending.success) {
                     const parsed = DaemonTerminalEnsureResponseSchema.safeParse(result.result);
@@ -238,7 +238,7 @@ export function useMachineTerminalActionAdmission(input: Readonly<{ terminalKey:
                             ...originContext, bypassApprovals: false,
                             serverId: capturedAuthority.serverId, expectedAccountId: capturedAuthority.accountId,
                         });
-                        if (!canceled.ok) return fail(canceled.errorCode ?? 'outcome_unknown');
+                        if (!canceled.ok) return fail(canceled.errorCode ?? 'outcome_unknown', canceled);
                         const receipt = canceled.result;
                         return fail(receipt && typeof receipt === 'object' && 'status' in receipt && receipt.status === 'canceled'
                             ? 'approval_canceled' : 'terminal_approval_cancellation_pending');
@@ -252,7 +252,7 @@ export function useMachineTerminalActionAdmission(input: Readonly<{ terminalKey:
                     actionId, scope: capturedAuthority.accountLifetime.scope, signal, expectedInput: payload, expectedRequestId: requestId,
                     expectedExecutionOrigin: original.executionOriginV1,
                     onSucceeded: value => { settleAssociation(pending.data.artifactId); callbacks.onApprovalSucceeded(value); },
-                    onFailed: code => { settleAssociation(pending.data.artifactId); callbacks.onApprovalFailed(code); } }));
+                    onFailed: (code, failure) => { settleAssociation(pending.data.artifactId); callbacks.onApprovalFailed(code, failure); } }));
                 return { approvalPending: true as const };
             }, { serverId: capturedAuthority.serverId, accountId: capturedAuthority.accountId }),
         });
