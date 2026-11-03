@@ -13,6 +13,11 @@ const binding: SessionProviderBindingMetadataV1 = {
 };
 
 describe('presentSessionProviderBinding', () => {
+    it('offers review and restart for a typed binding change rather than retrying the same binding', () => {
+        expect(presentSessionProviderBinding({ binding, status: null,
+            error: createProviderErrorV1('provider_binding_changed', { connectionId: binding.connectionId }),
+        }).banner).toMatchObject({ kind: 'changed', action: 'restart' });
+    });
     it.each([
         ['agent_timeout', 'settingsProviders.errors.machineTimeoutTitle'],
         ['provider_catalog_unavailable', 'settingsProviders.errors.genericTitle'],

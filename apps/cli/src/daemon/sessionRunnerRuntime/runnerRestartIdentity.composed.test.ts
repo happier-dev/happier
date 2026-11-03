@@ -1,8 +1,11 @@
 import '../../../../ui/sources/dev/vitestSetup';
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { ProviderConnectionIdSchema } from '@happier-dev/protocol/providers/ids';
+import type { SessionProviderBindingMetadataV1 } from '@happier-dev/protocol/providers/sessions/bindingMetadataV1';
 import { installSessionOpsNetworkBoundary } from '../../../../ui/sources/dev/testkit/harness/sessionOpsNetworkBoundary';
 import type { TrackedSession } from '../types';
+import { hashProcessCommand } from '../sessionRegistry';
 
 vi.mock('../../../../ui/sources/modal', async () =>
   (await import('../../../../ui/sources/dev/testkit/mocks/modal')).createModalModuleMock().module);
@@ -70,7 +73,7 @@ describe('wrapped runner status → UI provider restart → daemon signal custod
       expect(methods).toEqual([RPC_METHODS.DAEMON_SESSION_RUNNER_STATUS_V2_GET]);
     } finally { await app.close(); }
   });
-  it.each(['stable', 'replaced before request', 'reused at signal'] as const)('uses the executable guard while retaining exact launcher cleanup custody (%s)', async change => {
+  it.each(['stable', 'missing launcher birth', 'missing runner birth', 'missing launcher custody', 'missing runner birth replaced', 'replaced before request', 'reused at signal'] as const)('uses the executable guard while retaining exact launcher cleanup custody (%s)', async change => {
     boundary.resetRequests();
     resetScopedMachineTransportCacheForTests();
     storage.setState({ sessions: {}, sessionListRowsByServerId: {} });
@@ -82,18 +85,27 @@ describe('wrapped runner status → UI provider restart → daemon signal custod
       return null;
     });
     const command = 'node /cli/versions/0.3.0/package-dist/index.mjs codex --happy-starting-mode remote --started-by daemon';
+    const launchBinding: SessionProviderBindingMetadataV1 = { v: 1, connectionId: ProviderConnectionIdSchema.parse('pc_gateway'),
+      contributionKey: null, connectionRevision: 1, protocol: 'openai-responses', materialization: 'engineConfig',
+      compatibilityFingerprint: 'compatibility:v1:a', bindingSecurityFingerprint: 'binding-security:v1:alpha',
+      displaySnapshot: { providerName: 'Gateway', connectionName: 'Work' } };
+    const missingLauncherBirth = change === 'missing launcher birth' || change === 'missing launcher custody';
+    const missingRunnerBirth = change === 'missing runner birth' || change === 'missing runner birth replaced';
     const tracked: TrackedSession = { pid: 4242, startedBy: 'daemon', happySessionId: 's1',
-      processCommandHash: 'launcher-hash', processStartTimeMs: 100, processCommand: 'source-launcher',
-      spawnOptions: { directory: '/work', resume: 'thread-1', backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' } } };
-    const runner = { pid: 4343, processStartTimeMs: 200, processCommandHash: 'runner-hash', processCommand: command };
-    adoptTrackedSessionRunnerIdentity(tracked, runner);
+      processCommandHash: change === 'missing launcher custody' ? undefined : hashProcessCommand('source-launcher'),
+      processStartTimeMs: missingLauncherBirth ? undefined : 100, processCommand: 'source-launcher',
+      spawnOptions: { directory: '/work', resume: 'thread-1', providerBindingMetadataV1: launchBinding,
+        backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' } } };
+    const runner = { pid: 4343, processStartTimeMs: 200, processCommandHash: hashProcessCommand(command), processCommand: command };
+    adoptTrackedSessionRunnerIdentity(tracked, { ...runner, processStartTimeMs: missingRunnerBirth ? undefined : 200 });
     const currentIdentity = { status: 'known' as const, source: 'launch_spec' as const,
       comparableId: 'version:0.3.0', entrypointVersion: '0.3.0' };
     let childBirth = 200;
-    const readIdentity = async (pid: number) => ({ pid, command,
+    const readIdentity = async (pid: number) => ({ pid, command: pid === tracked.pid ? 'source-launcher' : command,
       processStartTimeMs: pid === tracked.pid ? 100 : childBirth });
     let statusReads = 0;
     let restartRequests = 0;
+    let recoveryOptions: TrackedSession['spawnOptions'];
     const deliveryErrors: unknown[] = [];
     const kill = vi.spyOn(process, 'kill').mockImplementation(() => true);
     const app = createDaemonControlApp({ getChildren: () => [tracked], machineId: 'm1', controlToken: 'fixture-token',
@@ -107,7 +119,10 @@ describe('wrapped runner status → UI provider restart → daemon signal custod
       handleSessionRunnerRestart: request => {
         restartRequests++;
         return restartSessionRunnerOnCurrentRuntime({ request, tracked, currentIdentity,
-          requestRestart: input => requestPlannedRunnerRestart({ ...input, deferral: { kind: 'none' },
+          readProcessIdentityByPidFn: readIdentity,
+          requestRestart: input => {
+            recoveryOptions = input.transientSpawnOptions;
+            return requestPlannedRunnerRestart({ ...input, deferral: { kind: 'none' },
             restartRequestedPids: new Set(), pidToTrackedSession: new Map([[tracked.pid, tracked]]),
             isProcessSafeToSignal: params => isPidSafeHappySessionProcess(params, { readProcessIdentityByPidFn: readIdentity }),
             captureRunnerRemainder: async () => {
@@ -116,7 +131,8 @@ describe('wrapped runner status → UI provider restart → daemon signal custod
             },
             requestSignal: signal => requestConnectedServiceSessionRestartSignal({ pid: tracked.pid, delayMs: 0,
               shouldSignal: signal.shouldSignal, onSignalFailure: signal.onSignalFailure }),
-          }),
+            });
+          },
         });
       },
     });
@@ -142,14 +158,22 @@ describe('wrapped runner status → UI provider restart → daemon signal custod
       expect(snapshot).not.toBeNull();
       if (!snapshot) throw new Error('Missing daemon status');
       if (change === 'replaced before request') adoptTrackedSessionRunnerIdentity(tracked, { ...runner, pid: 4444 });
+      if (change === 'missing runner birth replaced') childBirth++;
       const result = await ops.restartSessionRunnerForProviderBindingChange({ runtimeState: snapshot.state,
-        runnerProcessIdentity: snapshot.runnerProcessIdentity, serverId: home.id });
-      expect(result).toMatchObject(change === 'stable' ? { ok: true, status: 'restarted' }
+        runnerProcessIdentity: snapshot.runnerProcessIdentity, serverId: home.id,
+        launchBinding, nextBindingSecurityFingerprint: 'binding-security:v1:beta' });
+      const succeeds = change === 'stable' || change === 'missing launcher birth' || change === 'missing runner birth';
+      expect(result).toMatchObject(succeeds ? { ok: true, status: 'restarted' }
         : { ok: false, status: 'runner_identity_changed' });
       expect(restartRequests).toBe(1);
       expect(statusReads).toBe(1); // Terminal refusals settle without status re-polls.
-      if (change === 'stable') expect(kill).toHaveBeenCalledExactlyOnceWith(4242, 'SIGTERM');
+      if (succeeds) expect(kill).toHaveBeenCalledExactlyOnceWith(4242, 'SIGTERM');
       else expect(kill).not.toHaveBeenCalled();
+      if (succeeds) expect(recoveryOptions).toMatchObject({ resume: 'thread-1',
+        providerBindingSecurityChangeConfirmationV1: { sessionId: 's1', connectionId: launchBinding.connectionId,
+          previousBindingSecurityFingerprint: 'binding-security:v1:alpha', nextBindingSecurityFingerprint: 'binding-security:v1:beta' } });
+      expect(tracked.spawnOptions?.providerBindingMetadataV1).toEqual(launchBinding);
+      expect(tracked.spawnOptions).not.toHaveProperty('providerBindingSecurityChangeConfirmationV1');
     } finally { await app.close(); }
   });
 });

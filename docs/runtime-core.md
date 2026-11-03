@@ -544,6 +544,13 @@ daemon RPC method (or the daemon's explicit unsupported-version response) produc
 returns `runner_not_active` with `no_tracked_process`; a missing V2 process witness
 on an active runner is `version_unknown`, not proof of an old daemon. The UI
 offers startup recovery, daemon update, or connection/status checks accordingly.
+Explicit V2 Provider binding recovery can complete an incomplete tracked process
+witness from a fresh OS observation when the existing launcher/runner identity
+and the person's expected runner still match. It then uses the ordinary guarded
+stop-and-resume path, preserving the conversation and passing the exact binding
+change confirmation only to the replacement attempt. Passive status reads and
+automatic refresh do not change the binding or repair these witnesses. Machine
+Provider consent and spawn-time binding continuity remain the authorities.
 Loaded-daemon replay requires the orchestrator's next authorized reload.
 
 ## Native Agent seam

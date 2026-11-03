@@ -1,5 +1,7 @@
 import type { TrackedSession } from '@/daemon/types';
-import { resolveTrackedSessionRunnerIdentity } from '../sessions/sessionReportCorrelation';
+import { adoptTrackedSessionRunnerIdentity, resolveTrackedSessionRunnerIdentity } from '../sessions/sessionReportCorrelation';
+import { hashProcessCommand, processIdentityMatches } from '@happier-dev/cli-common/processInstance';
+import { parseProcessGenerationWitness, readProcessIdentityByPid } from '../processIdentity';
 import type { SpawnSessionOptions } from '@/session/shared/spawnSessionContract';
 import type {
   SessionRunnerRestartDisabledReason,
@@ -76,6 +78,7 @@ type RestartSessionRunnerOnCurrentRuntimeInput = Readonly<{
   resolveActivityDisabledReason?: ResolveActivityDisabledReason;
   resolveAgentRuntimeCurrentness?: ResolveAgentRuntimeCurrentness;
   refreshTrackedSessionRuntimeSnapshot?: RefreshTrackedSessionRuntimeSnapshot;
+  readProcessIdentityByPidFn?: typeof readProcessIdentityByPid;
   readNativeRuntimeActivity?: (sessionId: string) => Promise<'active' | 'settled' | 'unknown'>;
   /** Set only by the explicit confirmed-background restart operation. */
   allowNativeBackgroundInterruption?: true;
@@ -251,6 +254,40 @@ function resolveExpectedRunnerProcessIdentity(input: Readonly<{
   return input.expectedRunnerProcessIdentity;
 }
 
+async function refreshProviderRecoveryProcessWitness(input: Readonly<{
+  tracked: TrackedSession;
+  expectedRunner: RunnerRestartIdentityWitness;
+  readIdentity: typeof readProcessIdentityByPid;
+}>): Promise<boolean> {
+  const runner = resolveTrackedSessionRunnerIdentity(input.tracked);
+  if (!runner) return false;
+  const launcherFact = await input.readIdentity(input.tracked.pid).catch(() => null);
+  const runnerFact = runner.pid === input.tracked.pid
+    ? launcherFact
+    : await input.readIdentity(runner.pid).catch(() => null);
+  const observedWitness = (fact: Awaited<ReturnType<typeof readProcessIdentityByPid>>) => {
+    const generation = parseProcessGenerationWitness(fact);
+    if (!fact || !generation
+      || typeof fact.command !== 'string' || !fact.command.trim()) return null;
+    return { ...generation,
+      processCommandHash: hashProcessCommand(fact.command), processCommand: fact.command };
+  };
+  const launcherObserved = observedWitness(launcherFact);
+  const runnerObserved = observedWitness(runnerFact);
+  if (!launcherObserved || !runnerObserved
+    || !processIdentityMatches(input.tracked, launcherObserved)
+    || !processIdentityMatches(runner, runnerObserved)
+    || !processIdentityMatches(input.expectedRunner, runnerObserved)) return false;
+
+  // An explicit recovery can complete a legacy command-hash witness with its
+  // observed birth. Never replace a known generation or the person's runner.
+  input.tracked.processStartTimeMs = launcherObserved.processStartTimeMs;
+  input.tracked.processCommandHash = launcherObserved.processCommandHash;
+  input.tracked.processCommand = launcherObserved.processCommand;
+  adoptTrackedSessionRunnerIdentity(input.tracked, runnerObserved);
+  return true;
+}
+
 function resolveActivityRefusal(
   tracked: TrackedSession,
   sessionId: string,
@@ -378,6 +415,17 @@ async function restartSessionRunnerOnCurrentRuntimeImpl(
     expectedRunnerProcessIdentity,
     tracked,
   });
+  if (contextFailure?.reasonCode === 'non_destructive_refresh_unsupported'
+    && input.request.reason === 'provider_binding_change_recovery'
+    && 'v' in input.request && input.request.v === 2
+    && input.request.dryRun !== true && tracked && expectedRunnerProcessIdentity) {
+    const refreshed = await refreshProviderRecoveryProcessWitness({
+      tracked, expectedRunner: expectedRunnerProcessIdentity,
+      readIdentity: input.readProcessIdentityByPidFn ?? readProcessIdentityByPid,
+    });
+    if (!refreshed) return skipped('runner_identity_changed', sessionId);
+    contextFailure = validateRestartContext({ request: input.request, expectedRunnerProcessIdentity, tracked });
+  }
   if (
     contextFailure?.reasonCode === 'missing_resume_identity'
     && shouldRefreshSessionRunnerResumeIdentity(tracked)

@@ -5383,7 +5383,7 @@ export function useSessionComposerController({
                         ...banner,
                         title: t('session.providerBinding.changedTitle'),
                         body: t('session.providerBinding.changedBody', params),
-                        actionLabel: t('session.providerBinding.restartAction'),
+                        actionLabel: t('settingsProviders.errors.actions.reviewAndRestart'),
                     };
                 case 'unavailable':
                     return {

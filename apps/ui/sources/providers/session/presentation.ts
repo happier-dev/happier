@@ -27,6 +27,9 @@ export function presentSessionProviderBinding(input: Readonly<{
     const common = { providerName: snapshot.providerName, connectionName: snapshot.connectionName };
     const error = input.error ?? (input.status && 'error' in input.status && input.status.error.action === 'retry'
         ? input.status.error : null);
+    if (error?.action === 'review_and_restart') {
+        return { launchLabel, banner: { kind: 'changed', action: 'restart', ...common } };
+    }
     if (error) {
         return { launchLabel, banner: { kind: 'status-error', action: 'retry', ...common,
             errorPresentation: presentProviderError(error) } };
