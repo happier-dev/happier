@@ -168,6 +168,46 @@ const composerSurfaceCatalog = [{
 }] as const;
 
 describe('loadDaemonMergedProjectionCacheEntry', () => {
+    it('hydrates Machine Store kinds for AppShell UI demand without fetching unrelated catalogs or rereading on reopen', async () => {
+        // JQ-R16: the admitted source exists, but AppShell's section demand
+        // omitted Store declarations before the union ever received them.
+        const { PLUGIN_UI_SECTIONS } = await import('@/sync/domains/plugins/ui/projectionSections');
+        const { projectPluginStoreKindDeclarationV1 } = await import('@happier-dev/protocol/plugins/contributions/storeKinds');
+        const { normalizePluginUiProjection } = await import('@/sync/domains/plugins/ui/projection');
+        const { loadDaemonMergedProjectionCacheEntry } = await import('./loadDaemonMergedProjectionInputs');
+        const account = createAccountLifetime('account-a');
+        onTestFinished(() => account.retire());
+        const pluginId = 'qa.store-live';
+        const kind = projectPluginStoreKindDeclarationV1({ pluginId, pluginVersion: '1.0.0', definition: {
+            id: 'theme', title: 'Themes', viewId: 'store', operations: {
+                list: 'list', read: 'read', installed: 'installed', prepare: 'prepare', acquire: 'acquire', manage: 'manage',
+            },
+        } });
+        const snapshot = buildDeferredDaemonProjectionSections(DaemonContributionRegistryProjectionDescribeResponseSchema.parse({
+            protocolVersion: 1, projectionDigest: 'a'.repeat(64), projection: { ...daemonProjection(7),
+                familiesById: { storeKinds: { family: 'storeKinds', entriesById: { [kind.id]: kind } } },
+                agentsById: { codex: { id: 'codex', title: 'Codex' } },
+            },
+        }));
+        const reads: string[] = [];
+        network.setRpcAckResponder(async call => {
+            const request = call.payload as Readonly<{ sectionRead?: { digest: string; offset: number; includeDigests?: readonly string[] }; sectionFrameVersion?: 2 }>;
+            const read = request.sectionRead;
+            reads.push(...(read ? [read.digest, ...read.includeDigests ?? []] : ['manifest']));
+            return { ok: true, result: read ? snapshot.read(read.digest, read.offset, read.includeDigests, request.sectionFrameVersion) : snapshot.manifest };
+        });
+        const params = { ...projectionScope, accountLifetime: account.lifetime, sections: PLUGIN_UI_SECTIONS, reuseFreshReady: true };
+        const answer = await loadDaemonMergedProjectionCacheEntry(params);
+        expect(answer).toMatchObject({ kind: 'ready' });
+        if (!answer || answer.kind !== 'ready') throw new Error('UI projection did not settle');
+        const projection = normalizePluginUiProjection(answer.inputs.pluginProjectionV2!);
+        expect(projection.storeKindsById[kind.id]?.definition).toEqual(kind.definition);
+        expect(reads).not.toContain(snapshot.manifest.sections.agentsById);
+        const beforeReopen = reads.length;
+        expect(await loadDaemonMergedProjectionCacheEntry(params)).toBe(answer);
+        expect(reads.length - beforeReopen).toBe(0);
+    });
+
     it('shares one cold Browse inventory read for 512 unrelated contributions and reopens without Describe', async () => {
         const { loadDaemonMergedProjectionCacheEntry } = await import('./loadDaemonMergedProjectionInputs');
         const { DAEMON_AGENT_CATALOG_SECTIONS } = await import('./agentCatalogSections');

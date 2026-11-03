@@ -47,6 +47,9 @@ import {
     type ConnectedAccountDescriptorMachineProjection,
 } from '@/sync/domains/connectedServices/connectedAccountDescriptorProjection';
 
+import { PLUGIN_UI_SECTIONS } from './projectionSections';
+export { PLUGIN_UI_SECTIONS, PLUGIN_SEARCH_SECTIONS } from './projectionSections';
+
 const CONNECTED_ACCOUNT_PROJECTION_TRANSPORT_ERROR = Object.freeze({
     kind: 'error' as const,
     reason: 'transport' as const,
