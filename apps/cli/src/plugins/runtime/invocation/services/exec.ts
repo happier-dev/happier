@@ -3,7 +3,9 @@ import type { PluginAgentCliReadinessServiceForHost } from '../../context/agents
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import { realpath } from 'node:fs/promises';
 import { createConnection } from 'node:net';
-import { isAbsolute } from 'node:path';
+import { isAbsolute, join } from 'node:path';
+import { createSessionNativeDirectory } from '@/utils/fs/unixPathAccess';
+import type { AgentLaunchNativeSocketDirectory } from '@/daemon/agentIsolation/agentLaunchFrame';
 import { configuration } from '@/configuration';
 import type { ManagedExecutableRef } from '@happier-dev/plugin-sdk/managed-services';
 import type { AgentCliReadinessService as PluginAgentCliReadinessService, ExecService, PluginProcessHandle, SystemToolsService as PluginSystemToolsService } from '@happier-dev/plugin-sdk/exec';
@@ -67,6 +69,9 @@ import { type HostRequesterExecutionIdentity } from '@/daemon/agentIsolation/age
 
 
 type AgentNativeLaunchQualifier = NonNullable<NonNullable<Parameters<ExecService['spawn']>[1]>['nativeLaunch']>;
+type McpLaunchMaterial = (NonNullable<Parameters<NonNullable<HostAgentIsolationLaunchContext['prepareLaunch']>>[0]['mcpLaunchMaterial']>
+    & Readonly<{ nativeSocketDirectory?: AgentLaunchNativeSocketDirectory }>) | undefined;
+
 
 const INTERNAL_PROTOCOL_GRACEFUL_DISPOSERS = new WeakMap<PluginProtocolClientHandle<'jsonRpc'>,
     (beforeTerminate: SupervisedPluginGracefulStop) => Promise<void>>();
@@ -130,11 +135,42 @@ export type HostAgentNativeLaunchPreparation = (
 
 type NativeLaunchQualifiers = WeakSet<object>;
 const INTERNAL_NATIVE_LAUNCH_QUALIFIERS = new WeakMap<ExecService, NativeLaunchQualifiers>();
+const INTERNAL_NATIVE_SESSION_CONTEXTS = new WeakMap<object, () => SessionMcpLocalContext | undefined>();
+const INTERNAL_NATIVE_MCP_MATERIAL = new WeakMap<object, () => McpLaunchMaterial>();
+type HostResolvedAgentLaunchAuthorizer = (
+    launch: ResolvedHostExecLaunch,
+    signal?: AbortSignal,
+    nativeLaunch?: AgentNativeLaunchQualifier,
+    agentLaunchKind?: HostAgentIsolationLaunchKind,
+    mcpLaunchMaterial?: McpLaunchMaterial,
+) => Promise<HostAuthorizedPluginExecLaunch>;
+
 const INTERNAL_RESOLVED_AGENT_LAUNCH_AUTHORIZERS = new WeakMap<ExecService, Readonly<{
     signal: AbortSignal;
     admit(kind: HostAgentIsolationLaunchKind, signal?: AbortSignal): Promise<void>;
     authorize: HostResolvedAgentLaunchAuthorizer;
 }>>();
+
+/** A captured incarnation's host-only native authority, never an SDK grant. */
+export type HostAgentNativeLaunchAuthority = Readonly<{
+    signal: AbortSignal;
+    admit(signal?: AbortSignal): Promise<void>;
+    authorize(launch: ResolvedHostExecLaunch, signal?: AbortSignal): Promise<HostAuthorizedPluginExecLaunch>;
+}>;
+
+export function captureAgentNativeLaunchAuthorityForHost(service: ExecService,
+    kind: HostAgentIsolationLaunchKind, lifetime?: AbortSignal,
+    readMcpLaunchMaterial?: () => McpLaunchMaterial): HostAgentNativeLaunchAuthority | null {
+    const authority = INTERNAL_RESOLVED_AGENT_LAUNCH_AUTHORIZERS.get(service);
+    if (!authority) return null;
+    const capturedSignal = lifetime && lifetime !== authority.signal ? AbortSignal.any([authority.signal, lifetime]) : authority.signal;
+    const combined = (signal?: AbortSignal) => signal ? AbortSignal.any([capturedSignal, signal]) : capturedSignal;
+    return Object.freeze({ signal: capturedSignal,
+        admit: signal => authority.admit(kind, combined(signal)),
+        authorize: (launch, signal) => authorizeResolvedAgentNativeExecLaunchForHost(service, launch, combined(signal), undefined, kind,
+            readMcpLaunchMaterial?.()),
+    });
+}
 
 function assertNativeLaunchQualifier(qualifiers: NativeLaunchQualifiers, nativeLaunch?: AgentNativeLaunchQualifier): void {
     if (nativeLaunch === undefined) return;
@@ -144,7 +180,9 @@ function assertNativeLaunchQualifier(qualifiers: NativeLaunchQualifiers, nativeL
 }
 
 /** Only host composition qualifies cold native launch intent; ordinary admission still applies. */
-export function issueAgentNativeLaunchQualifierForHost(service: ExecService): AgentNativeLaunchQualifier {
+export function issueAgentNativeLaunchQualifierForHost(service: ExecService,
+    readSessionMcpContext?: () => SessionMcpLocalContext | undefined,
+    readMcpLaunchMaterial?: () => McpLaunchMaterial): AgentNativeLaunchQualifier {
     let qualifiers = INTERNAL_NATIVE_LAUNCH_QUALIFIERS.get(service);
     if (!qualifiers) {
         qualifiers = new WeakSet();
@@ -152,6 +190,10 @@ export function issueAgentNativeLaunchQualifierForHost(service: ExecService): Ag
     }
     const qualifier = Object.freeze({});
     qualifiers.add(qualifier);
+    if (readSessionMcpContext) INTERNAL_NATIVE_SESSION_CONTEXTS.set(qualifier, readSessionMcpContext);
+    // Classify ordinary versus held native material once when the qualifier is issued.
+    // A held provider stays live so withdrawal cannot become a daemon-UID fallback.
+    if (readMcpLaunchMaterial?.()) INTERNAL_NATIVE_MCP_MATERIAL.set(qualifier, readMcpLaunchMaterial);
     return qualifier as AgentNativeLaunchQualifier;
 }
 
@@ -874,6 +916,7 @@ async function finalizeHostExecLaunch(input: Readonly<{
             const material = isolated.snapshot.launch!;
             if (input.agentNativeLaunch && !material.sessionMcpContext) fail('agent_isolation_unavailable', 'Current Session MCP context is unavailable');
             const launch = createUnixAgentIdentityLaunch({ ...material, executable: command, args, cwd: isolated.cwd,
+                nativeSocketDirectory: input.mcpLaunchMaterial?.nativeSocketDirectory,
                 ...(isolated.snapshot.memberIdentity ? { memberIdentity: isolated.snapshot.memberIdentity } : {}),
                 environment: { ...environment, ...material.environment },
                 sessionMcpContext: material.sessionMcpContext });
@@ -2121,6 +2164,28 @@ export function createStablePluginExecService(params: Readonly<{
     const service: ExecService = Object.freeze({
         agentCli,
         systemTools,
+        async prepareNativeSocketDirectory(options?: Parameters<ExecService['prepareNativeSocketDirectory']>[0]) {
+            guard();
+            const nativeLaunch = options?.nativeLaunch;
+            assertNativeLaunchQualifier(nativeLaunchQualifiers, nativeLaunch);
+            const readMaterial = nativeLaunch ? INTERNAL_NATIVE_MCP_MATERIAL.get(nativeLaunch) : undefined;
+            const material = readMaterial?.();
+            if (readMaterial && !material) return fail('agent_isolation_unavailable', 'Held native transport identity is unavailable');
+            const uid = material?.nativeIdentity.agentUid ?? process.getuid?.();
+            if (uid === undefined) return fail('agent_isolation_unavailable', 'Native Unix transport is unavailable');
+            const directory = await createSessionNativeDirectory({ uid, prefix: 'happier-codex-', access: 'rwx', runtimeRoot: '/tmp' })
+                .catch(error => fail('agent_isolation_unavailable', 'Native Unix transport is unavailable', error));
+            try {
+                guard();
+                const nativeProxy = uid !== process.getuid?.();
+                if (!nativeProxy) return Object.freeze({ ...directory, nativeProxy, ...(nativeLaunch ? { nativeLaunch } : {}) });
+                if (!nativeLaunch || !material) return fail('agent_isolation_unavailable', 'Held native transport identity is unavailable');
+                const bound = issueAgentNativeLaunchQualifierForHost(service,
+                    INTERNAL_NATIVE_SESSION_CONTEXTS.get(nativeLaunch), () => ({ ...material,
+                        nativeSocketDirectory: { path: join(directory.path, 'private'), daemonUid: process.getuid!() } }));
+                return Object.freeze({ ...directory, nativeProxy, nativeLaunch: bound });
+            } catch (error) { await directory.dispose(); throw error; }
+        },
         async run(
             request: Parameters<ExecService['run']>[0],
             options?: Parameters<ExecService['run']>[1],
@@ -2333,7 +2398,6 @@ export type ProjectNativeToolchainIoForHost = ProjectNativeToolchainIo & Readonl
 
 export type HostPluginExecExecutionKind = 'person_break_glass' | 'machine_native';
 
-type McpLaunchMaterial = Parameters<NonNullable<HostAgentIsolationLaunchContext['prepareLaunch']>>[0]['mcpLaunchMaterial'];
 
 type PreauthorizedPluginExecSpawn = Readonly<{
     launch: ResolvedPluginExecutable;
@@ -2361,15 +2425,3 @@ async function resolveExecRequesterIdentity(input: Readonly<{
     }
     return identity;
 }
-
-const INTERNAL_NATIVE_SESSION_CONTEXTS = new WeakMap<object, () => SessionMcpLocalContext | undefined>();
-
-const INTERNAL_NATIVE_MCP_MATERIAL = new WeakMap<object, () => McpLaunchMaterial>();
-
-type HostResolvedAgentLaunchAuthorizer = (
-    launch: ResolvedHostExecLaunch,
-    signal?: AbortSignal,
-    nativeLaunch?: AgentNativeLaunchQualifier,
-    agentLaunchKind?: HostAgentIsolationLaunchKind,
-    mcpLaunchMaterial?: McpLaunchMaterial,
-) => Promise<HostAuthorizedPluginExecLaunch>;

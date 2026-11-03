@@ -1,4 +1,10 @@
+import { qualifyMcpExecutionSourceForHost, readMcpExecutionSource, refuseMcpExecutionSource } from '@/mcp/runtime/mcpExecutionSource';
 import { randomUUID } from 'node:crypto';
+import { readRunnerAgentSessionBootstrap } from '@/agent/runtime/session/process/runnerAgentSessionBootstrap';
+import { readAgentIsolationNativeIdentity } from '@/daemon/agentIsolation/agentIsolationNativeIdentity';
+import { isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPath';
+import { requireAgentIsolationMaterialNativeIdentity } from '@/daemon/agentIsolation/agentLaunchMaterials';
+import type { SessionMcpLocalContext } from '@/mcp/runtime/sessionMcpLocalTransport';
 import { SessionStartupInputRefusalError } from '@/agent/runtime/session/input/sessionStartupInputRefusal';
 import { createRepositoryCheckpointCodeRollback } from '@/agent/runtime/checkpoints/repositoryCheckpointPromptLifecycle';
 import { agentReceivesUserMcpServersV1 } from '@happier-dev/protocol/plugins/contributions/v2';
@@ -129,6 +135,10 @@ import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accou
 import type { RuntimeActionSettingsProvider } from '@/settings/actionsSettingsProvider';
 import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
 import { resolveRunnerMcpServers } from '@/mcp/runtime/resolveRunnerMcpServers';
+import { createSessionMcpStdioRuntime } from '@/mcp/runtime/createSessionMcpStdioRuntime';
+import type { ExecService } from '@happier-dev/plugin-sdk/exec';
+import type { AgentLaunchMaterialization } from '@/daemon/agentIsolation/agentLaunchMaterials';
+import type { AgentIsolationMemberNativeIdentity } from '@/daemon/agentIsolation/agentIsolationNativeIdentity';
 import { readMcpServersSettingsFromAccountSettings } from '@/mcp/servers/readMcpServersSettingsFromAccountSettings';
 import { projectMcpToolLaunchPolicies } from '@/mcp/runtime/projectMcpToolLaunchPolicy';
 import type { McpServerIdentity } from '@/mcp/runtime/assignMcpWireNames';
@@ -559,6 +569,14 @@ export type HostSessionRuntimeFactoryParams = Readonly<{
   messageQueue?: MessageQueue2<PermissionModeQueuedPromptMode, PermissionModeQueuedPrompt>;
   messageBuffer: MessageBuffer;
   mcpServers: Record<string, McpServerConfig>;
+  /** Host-private bridge authority for the admitted launch frame, never plugin input. */
+  sessionMcpContext?: SessionMcpLocalContext;
+  /** Exact selected MCP projection beside the incumbent native qualifier. */
+  mcpLaunchMaterial?: AgentLaunchMaterialization & Readonly<{
+    nativeIdentity: Pick<AgentIsolationMemberNativeIdentity, 'agentUid' | 'agentGid' | 'home'>;
+  }>;
+  bindMcpExecService?(service: ExecService): () => void;
+  agentEnvironment?: Readonly<Record<string, string>>;
   resolveMcpToolNaming?: import('@happier-dev/plugin-sdk/agents/runtime').AgentSessionMcpService['resolveToolNaming'];
   mcpServersStrictMode?: boolean;
   mcpToolPolicy?: import('@happier-dev/plugin-sdk/agents/runtime').AgentSessionOpenRequest['mcpToolPolicy'];
@@ -830,6 +848,8 @@ export type HostSessionRuntimeLoopApi = Readonly<{
 }>;
 
 export type HostSessionRuntimeConfig = {
+  /** Explicit direct local CLI composition; never restored from metadata. */
+  localWorkflow?: boolean;
   flavor: CreateSessionMetadataOptions['flavor'];
   policyAgentId: string;
   providerRequirements?: unknown;
@@ -1685,7 +1705,7 @@ export async function runHostSessionRuntime(
     | (() => void)
     | null = null;
   let unsubscribeSessionLiveWorkForConstructionCleanup: (() => void) | null = null;
-  let mcpServerForConstructionCleanup: { stop: () => void } | null = null;
+  let mcpServerForConstructionCleanup: { stop: () => void | Promise<void> } | null = null;
   let sessionStateMetadataObserverForConstructionCleanup:
     | { dispose: () => void }
     | null = null;
@@ -1752,8 +1772,8 @@ export async function runHostSessionRuntime(
       await runCleanupStep('cancel reconnection', () => {
         reconnectionHandle?.cancel();
       });
-      await runCleanupStep('stop MCP server', () => {
-        mcpServerForConstructionCleanup?.stop();
+      await runCleanupStep('stop MCP server', async () => {
+        await mcpServerForConstructionCleanup?.stop();
         mcpServerForConstructionCleanup = null;
       });
       await runCleanupStep('clean up startup bootstrap', async () => {
@@ -2619,6 +2639,45 @@ export async function runHostSessionRuntime(
     });
   unsubscribePendingQueueDeliveryTimingForConstructionCleanup =
     unsubscribePendingQueueDeliveryTiming;
+  let mcpExecutionSource: ReturnType<typeof readMcpExecutionSource> | undefined;
+  const readSessionMcpExecutionSource = async (signal?: AbortSignal) => {
+    signal?.throwIfAborted();
+    if (runtimeAuthority.accountCredentials && !isSessionOpenAccountCurrent()) {
+      return refuseMcpExecutionSource('requester_authority_unavailable');
+    }
+    mcpExecutionSource ??= readMcpExecutionSource({ credentials: runtimeAuthority.sessionCredentials,
+      catalogCredentials: runtimeAuthority.accountCredentials, sessionId: currentLifecycleSession.sessionId,
+      machineId, serverHttpBaseUrl: sessionOpenContext.home.serverUrl, localWorkflow: config.localWorkflow,
+      accountSession: { serverId: sessionOpenContext.home.serverId,
+        homeServerIdentityId: session.getServerIdentityId(), isCurrent: isSessionOpenAccountCurrent },
+      signal: startupRegistrationLifetime.signal });
+    const source = await mcpExecutionSource;
+    signal?.throwIfAborted();
+    if (runtimeAuthority.accountCredentials && !isSessionOpenAccountCurrent()) {
+      return refuseMcpExecutionSource('requester_authority_unavailable');
+    }
+    return source;
+  };
+  const agentExecutionHome = session.getServerIdentityId();
+  let agentExecutionSource: ReturnType<typeof readMcpExecutionSource> | undefined;
+  const readSessionAgentExecutionSource = () => {
+    agentExecutionSource ??= (async () => {
+      const parent = await readSessionMcpExecutionSource(startupRegistrationLifetime.signal);
+      // Local person presence is not an Agent proof. Qualify the same held
+      // Account/Machine source once, without creating a Session birth.
+      const source = parent.kind === 'local_user'
+        ? await readMcpExecutionSource({ credentials: runtimeAuthority.sessionCredentials,
+          catalogCredentials: runtimeAuthority.accountCredentials,
+          sessionId: currentLifecycleSession.sessionId, machineId,
+          serverHttpBaseUrl: sessionOpenContext.home.serverUrl,
+          accountSession: { serverId: sessionOpenContext.home.serverId,
+            homeServerIdentityId: agentExecutionHome, isCurrent: isSessionOpenAccountCurrent },
+          signal: startupRegistrationLifetime.signal })
+        : parent;
+      return qualifyMcpExecutionSourceForHost(source, startupRegistrationLifetime.signal);
+    })();
+    return agentExecutionSource;
+  };
   const runnerMcpAccountSettings = runtimeAuthority.scope === 'account'
     && config.resolveRunnerMcpServersAccountSettings
     ? config.resolveRunnerMcpServersAccountSettings({
@@ -2762,8 +2821,59 @@ export async function runHostSessionRuntime(
         && getActiveAccountSettingsSnapshotLifetimeToken() === mcpAccountLifetimeToken,
     }));
   });
+  let nativeMcpRuntime: ReturnType<typeof createSessionMcpStdioRuntime> | undefined;
+  let nativeMcpLaunchMaterial: HostSessionRuntimeFactoryParams['mcpLaunchMaterial'];
   const mcpPreparation = traceCapabilityPreparation('mcp_preparation', async () => {
-    const result = receivesUserMcpServers
+    const isolatedMaterial = await (async () => {
+      const bootstrapFile = process.env[HAPPIER_AGENT_RUNTIME_RUNNER_BOOTSTRAP_FILE_ENV_KEY];
+      const launch = bootstrapFile
+        ? (await readRunnerAgentSessionBootstrap(bootstrapFile)).launch
+        : undefined;
+      const identity = launch?.agentIsolationMemberIdentity;
+      const runtimeHome = launch?.agentIsolationRuntimeHome;
+      if (identity) {
+        // The private carrier retains a native observation, not Session
+        // authority. Bind it to the same captured birth and canonical Home
+        // used by this Session before granting the payload socket access.
+        const source = await readSessionAgentExecutionSource();
+        if (source.kind !== 'requester' || source.identity.kind !== 'isolated'
+          || !source.hostHomeServerIdentityId
+          || source.hostHomeServerIdentityId !== session.getServerIdentityId()) {
+          return refuseMcpExecutionSource('requester_authority_unavailable');
+        }
+        const nativeIdentity = requireAgentIsolationMaterialNativeIdentity(identity, {
+          ...source.identity, homeServerIdentityId: source.hostHomeServerIdentityId,
+        });
+        if (!runtimeHome || !isCanonicalAbsolutePathInsideRoot(nativeIdentity.home, runtimeHome)) {
+          return refuseMcpExecutionSource('requester_authority_unavailable');
+        }
+        return { identity: nativeIdentity, target: { runtimeHome, memberIdentity: nativeIdentity } };
+      }
+      if (config.machineMetadata.agentIsolation?.enabled === true) {
+        const source = await readSessionAgentExecutionSource();
+        if (source.kind !== 'requester' || source.identity.kind !== 'isolated'
+          || source.identity.separationRequired || !source.hostHomeServerIdentityId
+          || source.hostHomeServerIdentityId !== session.getServerIdentityId()) {
+          return refuseMcpExecutionSource('requester_authority_unavailable');
+        }
+        const nativeIdentity = await readAgentIsolationNativeIdentity(startupRegistrationLifetime.signal);
+        if (runtimeHome && !isCanonicalAbsolutePathInsideRoot(nativeIdentity.home, runtimeHome)) {
+          return refuseMcpExecutionSource('requester_authority_unavailable');
+        }
+        return { identity: nativeIdentity, ...(runtimeHome ? { target: { runtimeHome } } : {}) };
+      }
+      return null;
+    })();
+    const isolatedIdentity = isolatedMaterial?.identity;
+    if (isolatedMaterial?.target) nativeMcpRuntime = createSessionMcpStdioRuntime({
+      target: isolatedMaterial.target, nativeIdentity: isolatedMaterial.identity,
+      // Only the canonical native HOME and existing public executable search
+      // path aid authored command resolution; no Account/provider environment.
+      environment: Object.freeze({ HOME: isolatedMaterial.identity.home,
+        ...(process.env.PATH === undefined ? {} : { PATH: process.env.PATH }) }),
+      directory: runtimeDirectory, signal: startupRegistrationLifetime.signal,
+    });
+    const result = receivesUserMcpServers || agentToolsDelivery !== 'unsupported'
     ? await runWithServerHttpBaseUrl(sessionOpenContext.home.serverUrl, () => resolveRunnerMcpServersFn({
       session: runnerMcpSession,
       credentials: runtimeAuthority.sessionCredentials,
@@ -2788,11 +2898,20 @@ export async function runHostSessionRuntime(
       mcpToolCallIdMetaKey: agentToolCapabilities?.mcpToolCallIdMetaKey,
       mcpPermissionHandler: permissionHandler,
       includeHappierMcpServer: agentToolsDelivery === 'native_mcp',
+      ...(nativeMcpRuntime ? { admittedStdio: nativeMcpRuntime.runtime } : {}),
+      ...(isolatedIdentity ? { localTransport: { agentUid: isolatedIdentity.agentUid } }
+        : process.platform !== 'win32' && process.getuid ? { localTransport: { agentUid: process.getuid() } } : {}),
       sessionMetadata: runtimeSessionMetadataSnapshot ?? runtimeMetadata,
       ...(config.resolvedMcpServers ? { resolvedMcpServers: config.resolvedMcpServers } : {}),
     }))
-    : { happierMcpServer: { stop: () => undefined }, mcpServers: {}, mcpServersStrictMode: undefined, mcpServerIdentities: undefined, mcpToolPolicy: undefined, resolveMcpToolNaming: undefined, resolvedServers: undefined, reach: undefined };
+    : { happierMcpServer: { stop: async () => undefined }, mcpServers: {}, mcpServersStrictMode: undefined, mcpServerIdentities: undefined, mcpToolPolicy: undefined, resolveMcpToolNaming: undefined, resolvedServers: undefined, reach: undefined, sessionMcpContext: undefined, agentEnvironment: undefined };
     mcpServerForConstructionCleanup = result.happierMcpServer;
+    if (isolatedMaterial?.target) nativeMcpLaunchMaterial = Object.freeze({
+      ...isolatedMaterial.target, nativeIdentity: isolatedMaterial.identity,
+      environment: Object.freeze({ ...result.agentEnvironment }),
+      selectedMaterials: Object.freeze(('selectedMaterials' in result ? result.selectedMaterials ?? [] : [])
+        .map(file => Object.freeze({ ...file }))),
+    });
     return result;
   });
   // A failed preparation cannot return while its sibling is still creating
@@ -2922,6 +3041,10 @@ export async function runHostSessionRuntime(
     messageQueue,
     messageBuffer,
     mcpServers,
+    get sessionMcpContext() { return mcpPrepared.value.sessionMcpContext; },
+    get mcpLaunchMaterial() { return nativeMcpLaunchMaterial; },
+    ...(nativeMcpRuntime ? { bindMcpExecService: nativeMcpRuntime.bindExec } : {}),
+    get agentEnvironment() { return mcpPrepared.value.agentEnvironment; },
     resolveMcpToolNaming,
     mcpServerIdentities,
     ...(mcpServersStrictMode !== undefined ? { mcpServersStrictMode } : {}),

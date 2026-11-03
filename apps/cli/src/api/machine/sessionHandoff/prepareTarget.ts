@@ -21,6 +21,7 @@ import {
 } from './prepareTargetWorkflow';
 import { hasUnsupportedWorkspaceAction, workspaceSyncUpdateRequired } from './workspaceSyncGuard';
 import type { RunSessionHandoffPrepareTargetJobInput } from './prepareTargetRunJob';
+import type { ResolvePrepareTargetBootstrapInput } from './prepareTargetBootstrap';
 import type { RpcHandlerContext } from '@/api/rpc/types';
 import { SessionHandoffPrepareTargetRequestSchema } from '@happier-dev/protocol/sessions/control/handoff/handoffSchemas';
 
@@ -38,6 +39,7 @@ export type RegisterSessionHandoffPrepareTargetRpcHandlerInput = Readonly<{
   machineTransferChannel: MachineTransferChannel | undefined;
   directPeerTransfer: SessionHandoffDirectPeerTransferHandle | undefined;
   existingStateSupported?: boolean;
+  prepareManagedDirectoryPlacement?: (request: Parameters<NonNullable<ResolvePrepareTargetBootstrapInput['prepareManagedDirectoryPlacement']>>[0], context?: RpcHandlerContext) => ReturnType<NonNullable<ResolvePrepareTargetBootstrapInput['prepareManagedDirectoryPlacement']>>;
   resolveExistingSessionState?: (request: Parameters<NonNullable<RunSessionHandoffPrepareTargetJobInput['resolveExistingSessionState']>>[0], targetPath: string, context?: RpcHandlerContext) => ReturnType<NonNullable<RunSessionHandoffPrepareTargetJobInput['resolveExistingSessionState']>>;
   importSessionBundle: (
     bundle: SessionHandoffAgentBundle,
@@ -66,9 +68,9 @@ export function createSessionHandoffPrepareTargetActionHandler(
   params: RegisterSessionHandoffPrepareTargetRpcHandlerInput,
 ): RegisterSessionHandoffPrepareTargetRpcHandlerResult {
   const createWorkflow = (context?: RpcHandlerContext) => createSessionHandoffPrepareTargetWorkflow({ ...params,
+    ...(params.prepareManagedDirectoryPlacement ? { prepareManagedDirectoryPlacement: request => params.prepareManagedDirectoryPlacement!(request, context) } : {}),
     ...(params.resolveExistingSessionState ? { resolveExistingSessionState: (request, targetPath) => params.resolveExistingSessionState!(request, targetPath, context) } : {}),
   });
-  const workflow = createWorkflow();
 
   return {
     handle: async (raw: unknown, context?: RpcHandlerContext) => {
@@ -78,7 +80,7 @@ export function createSessionHandoffPrepareTargetActionHandler(
         if (params.existingStateSupported !== true) return { ok: false, errorCode: 'handoff_existing_state_update_required' } as const;
         return createWorkflow(context).handlePrepareTargetRaw(raw);
       }
-      return await workflow.handlePrepareTargetRaw(raw);
+      return await createWorkflow(context).handlePrepareTargetRaw(raw);
     },
     resumePersistedPrepareTarget: async (record, context) => {
       await createWorkflow(context).resumePersistedPrepareTarget(record);

@@ -1,4 +1,4 @@
-import { lstat, readFile, realpath, rm, rmdir } from 'node:fs/promises';
+import { lstat, mkdir, readFile, realpath, rm, rmdir } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import type { Readable, Writable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
@@ -10,6 +10,25 @@ import { isCanonicalConnectedServiceMaterializedRoot,
 import { writeBytesAtomic } from '../../utils/fs/writeJsonAtomic';
 import { parseAgentLaunchPayload, type AgentLaunchPayload } from './agentLaunchFrame';
 import { createBestEffortCleanupDirectory } from '../connectedServices/materialization/materializer';
+import { grantExactUidPathAccess } from '@/utils/fs/unixPathAccess';
+
+async function prepareNativeSocketDirectory(payload: AgentLaunchPayload): Promise<() => Promise<void>> {
+  const directory = payload.nativeSocketDirectory;
+  if (!directory) return async () => {};
+  await mkdir(directory.path, { mode: 0o700 }).catch((error: unknown) => {
+    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+  });
+  const entry = await lstat(directory.path);
+  if (!entry.isDirectory() || entry.isSymbolicLink() || entry.uid !== process.getuid?.()
+    || (entry.mode & 0o777) !== 0o700) throw new AgentLaunchMaterialError();
+  const cleanup = async () => { await rm(directory.path, { recursive: true, force: true }); };
+  try {
+    // Codex accepts a native-owned alias parent without group/other write.
+    // Host traversal is sufficient for lstat(alias); its target stays private.
+    await grantExactUidPathAccess({ path: directory.path, uid: directory.daemonUid, access: '--x', directory: true });
+    return cleanup;
+  } catch (error) { await cleanup(); throw error; }
+}
 
 export class AgentLaunchMaterialError extends Error {
   readonly code = 'agent_launch_material_invalid';
@@ -94,8 +113,10 @@ export async function executeAgentLaunchPayload(payload: AgentLaunchPayload, io:
     }
   }, { failureMode: 'reject' });
   let executionFailure: unknown;
+  let cleanupNativeSocketDirectory = async () => {};
   try {
     await publishPreparedAgentLaunchMaterials(prepared);
+    cleanupNativeSocketDirectory = await prepareNativeSocketDirectory(payload);
     io.signal?.throwIfAborted();
     const { spawnSupervisedPluginProcess } = await import('../../plugins/runtime/exec/processSupervisor');
     io.signal?.throwIfAborted();
@@ -172,12 +193,13 @@ export async function executeAgentLaunchPayload(payload: AgentLaunchPayload, io:
     executionFailure = error;
     throw error;
   } finally {
-    try { await cleanupMaterial(); }
-    catch (cleanupError) {
-      if (executionFailure !== undefined) {
-        throw new AggregateError([executionFailure, cleanupError], 'Agent launch and material cleanup failed');
-      }
-      throw cleanupError;
+    const cleanupFailures: unknown[] = [];
+    await cleanupMaterial().catch((error: unknown) => { cleanupFailures.push(error); });
+    await cleanupNativeSocketDirectory().catch((error: unknown) => { cleanupFailures.push(error); });
+    if (cleanupFailures.length) {
+      if (executionFailure !== undefined) throw new AggregateError([executionFailure, ...cleanupFailures], 'Agent launch and cleanup failed');
+      if (cleanupFailures.length === 1) throw cleanupFailures[0];
+      throw new AggregateError(cleanupFailures, 'Agent launch cleanup failed');
     }
   }
 }

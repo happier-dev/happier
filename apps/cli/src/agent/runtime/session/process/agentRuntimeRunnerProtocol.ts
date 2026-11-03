@@ -1,3 +1,4 @@
+import { RequesterWorkAttributionV1Schema } from '@happier-dev/protocol/machines/requesterWorkAttributionV1';
 import { lazyZodSchema } from '@happier-dev/protocol/lazyZodSchema';
 import { z } from 'zod/mini';
 
@@ -424,6 +425,14 @@ export const AgentRuntimeDaemonSessionDescriptorV1Schema = lazyZodSchema(() => z
 export type AgentRuntimeDaemonSessionDescriptorV1 =
   z.infer<typeof AgentRuntimeDaemonSessionDescriptorV1Schema>;
 
+/** Strict shape only; the Session owner still qualifies this retained observation. */
+export const AgentIsolationMemberNativeIdentitySchema = lazyZodSchema(() => z.strictObject({
+  requester: asHostProtocolZod(RequesterWorkAttributionV1Schema), homeServerIdentityId: BoundedIdSchema,
+  digest: BoundedIdSchema, username: BoundedIdSchema, primaryGroup: BoundedIdSchema,
+  home: BoundedPathSchema, workspaceRoot: BoundedPathSchema, ownershipMarker: BoundedIdSchema,
+  agentUid: z.number().check(z.int(), z.positive()), agentGid: z.number().check(z.int(), z.positive()),
+}));
+
 /** Private launch inputs, separate from Agent identity and daemon operation authority. */
 export const AgentRuntimeRunnerBootstrapV1Schema = lazyZodSchema(() => z.strictObject({
   v: z.literal(1),
@@ -432,6 +441,10 @@ export const AgentRuntimeRunnerBootstrapV1Schema = lazyZodSchema(() => z.strictO
     runtimeDescriptorV1: RuntimeDescriptorV1Schema,
     terminalHostOwner: z.optional(z.enum(['startup', 'runtime'])),
     sessionConnectedAccounts: z.optional(AgentSessionConnectedAccountsV1Schema),
+    /** Host-private native observation from the same materialization lifetime. */
+    agentIsolationMemberIdentity: z.optional(AgentIsolationMemberNativeIdentitySchema),
+    /** Exact parent materialization target, never reconstructed by the child. */
+    agentIsolationRuntimeHome: z.optional(BoundedPathSchema),
   })),
 }));
 

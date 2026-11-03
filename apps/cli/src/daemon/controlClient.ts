@@ -416,6 +416,8 @@ export async function notifyDaemonSessionStarted(
   error?: string;
   errorCode?: string;
   response?: unknown;
+  httpStatus?: number;
+  transportErrorCode?: string;
 }>> {
   const {
     sessionCreationOutcome,
@@ -427,7 +429,7 @@ export async function notifyDaemonSessionStarted(
     metadata,
     ...(sessionCreationOutcome ? { sessionCreationOutcome } : {}),
     ...(persistedTakeoverAdmission ? { persistedTakeoverAdmission } : {}),
-  }, requestOptions);
+  }, { ...requestOptions, includeFailureDiagnostics: true });
 }
 
 /**

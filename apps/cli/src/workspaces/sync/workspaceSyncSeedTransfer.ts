@@ -15,6 +15,7 @@ import type {
   WorkspaceTargetMaterializationFence,
 } from '@/scm/workspace/workspaceExportMaterialization';
 import { materializeWorkspaceExportArtifactsWithScmWorkspace } from '@/scm/workspace/workspaceExportMaterialization';
+import type { WorkspaceMaterializedEntryAccess } from '@/scm/workspace/workspaceExportStaging/promoteStagedWorkspace';
 import type { DirectPeerOnDemandTransferScope } from '@/machines/transfer/directPeerTransport';
 import {
   createBufferTransferPayloadSource,
@@ -101,6 +102,7 @@ export async function materializeLocalWorkspaceSyncSeed(input: Readonly<{
   activeServerDir: string;
   sourcePath: string;
   targetPath: string;
+  prepareEntryAccess?: WorkspaceMaterializedEntryAccess;
   workspaceTransfer: ScmWorkspaceIntegrationWorkspaceTransferRequestInput;
   materializationReceiptPath?: string;
   originalTargetExists?: boolean;
@@ -112,6 +114,7 @@ export async function materializeLocalWorkspaceSyncSeed(input: Readonly<{
     const materialized = await materializeWorkspaceExportArtifactsWithScmWorkspace({
       workspaceExportArtifacts: built.workspaceExportArtifacts,
       targetPath: input.targetPath,
+      prepareEntryAccess: input.prepareEntryAccess,
       conflictPolicy: 'replace_existing',
       blobProvider: built.blobProvider ?? { getBlobFilePath: () => undefined },
       naming: WORKSPACE_SYNC_SEED_MATERIALIZATION_NAMING,

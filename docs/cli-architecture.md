@@ -5165,14 +5165,23 @@ integrated verification. This section describes the intended owner and lifecycle
 not released availability. The public directory intent is documented in
 [Protocol](./protocol.md#session-creation-directory-intent-planned-03-development-behavior).
 
-The target daemon will own each managed working directory through
-`src/session/creation/managedSessionDirectories.ts`. Its root is
-`<activeServerDir>/session-directories/`, where `configuration.activeServerDir`
-is `<HAPPIER_HOME_DIR>/servers/<activeServerId>` after normal home/server
-resolution. Clients choose `{kind:'managed'}`; they never construct a private path.
-POSIX root/allocation permissions are 0700. Windows protection uses the existing
-owner + LOCAL SYSTEM ACL boundary in `protectedLocalState`; protection failure
-refuses startup.
+The target daemon owns each managed working directory through
+`src/session/creation/managedSessionDirectories.ts`. Its private ownership records
+remain under `<activeServerDir>/session-directories/.owners/`, after normal
+home/server resolution. Clients choose `{kind:'managed'}`; they never construct
+an allocation path. Ordinary allocations retain the private root. A separated
+member allocation uses its held member workspace root; a shared isolated Agent
+uses the unambiguous accepted workspace root. Ambiguous shared workspace selection
+refuses with an instruction to choose an accepted workspace/path. The existing
+private record retains the selected placement, so resume, seeding, handoff and
+removal use the same owner. Old records keep their original placement.
+
+The daemon creates isolated payload directories and grants only the executing
+UID the access needed to work there, including inherited access for its files.
+It does not grant access to daemon-private ancestors or the ownership inventory.
+Ordinary POSIX root/allocation permissions remain 0700. Windows protection uses
+the existing owner + LOCAL SYSTEM ACL boundary in `protectedLocalState`;
+protection failure refuses startup.
 
 A new allocation is keyed by the canonical namespaced `sessionCreationTag`, not
 the raw creation key. Target preparation only derives its path. Materialization

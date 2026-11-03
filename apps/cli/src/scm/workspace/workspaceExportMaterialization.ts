@@ -15,7 +15,7 @@ import {
     createWorkspaceStagingRoot,
     type WorkspaceStagingRoot,
 } from './workspaceExportStaging/createWorkspaceStagingRoot';
-import { promoteStagedWorkspace } from './workspaceExportStaging/promoteStagedWorkspace';
+import { promoteStagedWorkspace, type WorkspaceMaterializedEntryAccess } from './workspaceExportStaging/promoteStagedWorkspace';
 import {
     stageWorkspaceEntries,
     type WorkspaceExportBlobProvider,
@@ -668,6 +668,7 @@ export async function rehydrateWorkspaceTargetMaterializationFromReceiptPath(inp
 export async function materializeWorkspaceExportArtifactsWithScmWorkspace(params: Readonly<{
     workspaceExportArtifacts: ScmWorkspaceIntegrationWorkspaceExportArtifacts;
     targetPath: string;
+    prepareEntryAccess?: WorkspaceMaterializedEntryAccess;
     /** An admitted release destination is exact and may never fall back to the user's home. */
     admittedTargetRoot?: string;
     conflictPolicy: ScmWorkspaceIntegrationWorkspaceTransferConflictPolicy;
@@ -772,6 +773,7 @@ export async function materializeWorkspaceExportArtifactsWithScmWorkspace(params
             targetWorkspaceDirectory: targetPath,
             expectedManifest: params.workspaceExportArtifacts.manifest,
             scmRegistry: params.registry,
+            prepareEntryAccess: params.prepareEntryAccess,
             ...('existingTarget' in targetMaterialization ? { existingTarget: targetMaterialization.existingTarget } : {}),
         });
         await targetMaterialization.custody.bindPromotedTarget();

@@ -85,26 +85,47 @@ const sanitizedPreviewBySource = {
  * Never copy messages, stacks, references, arbitrary codes or accessor values. */
 export function readSessionPreparationFailureDiagnostic(error: unknown): Readonly<{
   originalCode: string; reason: string; contextSource: string;
+  failureCause?: NonNullable<SessionRuntimeIssueV1['failureCause']>;
 }> {
-  const readClosedField = (key: string, allowed: ReadonlySet<string>) => {
-    if (!error || typeof error !== 'object') return 'unknown';
+  const readDataField = (value: unknown, key: string): unknown => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
     try {
-      const descriptor = Object.getOwnPropertyDescriptor(error, key);
-      return descriptor && 'value' in descriptor && typeof descriptor.value === 'string'
-        && allowed.has(descriptor.value) ? descriptor.value : 'unknown';
-    } catch { return 'unknown'; }
+      const descriptor = Object.getOwnPropertyDescriptor(value, key);
+      return descriptor && 'value' in descriptor ? descriptor.value : undefined;
+    } catch { return undefined; }
   };
-  const originalCode = readClosedField('code', preparationDiagnosticCodes);
-  const reason = readClosedField('reason', preparationDiagnosticReasons);
+  const readClosedField = (value: unknown, key: string, allowed: ReadonlySet<string>) => {
+    const field = readDataField(value, key);
+    return typeof field === 'string' && allowed.has(field) ? field : 'unknown';
+  };
+  const readDataRecord = (value: unknown): Record<string, unknown> | undefined => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+    try {
+      const descriptors = Object.getOwnPropertyDescriptors(value);
+      if (Object.values(descriptors).some(descriptor => !('value' in descriptor))) return undefined;
+      return Object.fromEntries(Object.entries(descriptors).map(([key, descriptor]) => [key, descriptor.value]));
+    } catch { return undefined; }
+  };
+  const cause = readDataRecord(readDataField(readDataField(error, 'details'), 'failureCause'));
+  const parsedCause = SessionRuntimeFailureCauseV1Schema.safeParse(cause && {
+    ...cause,
+    ...(Object.hasOwn(cause, 'preparationCause')
+      ? { preparationCause: readDataRecord(cause.preparationCause) ?? null }
+      : {}),
+  });
+  const originalCode = readClosedField(error, 'code', preparationDiagnosticCodes);
+  const reason = readClosedField(error, 'reason', preparationDiagnosticReasons);
   return {
     originalCode,
     reason: reason === 'unknown' && originalCode === 'agent_isolation_unavailable' ? originalCode : reason,
-    contextSource: readClosedField('contextSource', preparationDiagnosticSources),
+    contextSource: readClosedField(error, 'contextSource', preparationDiagnosticSources),
+    ...(parsedCause.success ? { failureCause: parsedCause.data } : {}),
   };
 }
 
 const preparationDiagnosticCodes = new Set([
   ...Object.keys(SESSION_PREPARATION_FAILURE_PREVIEWS),
+  ...Object.keys(AGENT_STARTUP_FAILURE_PREVIEWS),
   ...ProviderErrorCodeV1Schema.options,
   ...ProviderBrokerAdmissionFailureCodeV1Schema.options,
   'account_role_overrides_unavailable',

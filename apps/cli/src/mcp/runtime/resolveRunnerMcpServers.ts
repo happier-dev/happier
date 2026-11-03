@@ -1,3 +1,9 @@
+import type { SessionMcpLocalContext, SessionMcpLocalTransportOptions } from './sessionMcpLocalTransport';
+import { SESSION_MCP_CONTEXT_FILE_ENV } from './sessionMcpLocalTransport';
+import type { AdmittedMcpStdioRuntime, PrepareMcpStdioTransport } from './supervisedStdioTransport';
+import { join } from 'node:path';
+import { SESSION_MCP_CONTEXT_RELATIVE_PATH } from '@/daemon/agentIsolation/agentLaunchMaterials';
+import type { AgentLaunchSelectedMaterial } from '@/daemon/agentIsolation/agentLaunchFrame';
 import type { McpServerConfig } from '@/agent';
 import type { ProcessEnvInput } from '@/utils/processEnv/buildScopedProcessEnv';
 import { createHappierMcpBridge } from '@/agent/runtime/createHappierMcpBridge';
@@ -194,6 +200,8 @@ type RunnerMcpServersParams = Readonly<{
   resolvedMcpServers?: Record<string, McpServerConfig>;
   /** Extension-delivered Happier tools already have their own bridge. */
   includeHappierMcpServer?: boolean;
+  localTransport?: SessionMcpLocalTransportOptions;
+  admittedStdio?: AdmittedMcpStdioRuntime;
   /**
    * Binds this resolution to one Session-owned Execution Run occurrence.
    *
@@ -214,9 +222,16 @@ export type RunnerMcpRuleObservation = Readonly<{
   catalog?: Readonly<{ revision: number | 'absent'; authority: 'active' | 'inactive' }>;
 }>;
 
-type RunnerMcpServersResult<Bridge extends { stop: () => void }> = Readonly<{
+type RunnerMcpServersResult<Bridge extends { stop: () => void | Promise<void> }> = Readonly<{
   happierMcpServer: Bridge;
+  /** Host-private current carrier; never persisted or exposed in command arguments. */
+  sessionMcpContext?: SessionMcpLocalContext;
+  /** Same-UID launch reference only; isolated launches publish through their frame. */
+  agentEnvironment?: Readonly<Record<string, string>>;
   mcpServers: Record<string, McpServerConfig>;
+  /** Published only by the existing Agent-launch frame owner. */
+  selectedMaterials?: readonly AgentLaunchSelectedMaterial[];
+  prepareTransport?: PrepareMcpStdioTransport;
   mcpServersStrictMode?: boolean;
   mcpServerIdentities?: Readonly<Record<string, McpServerIdentity>>;
   mcpToolPolicy?: AgentSessionOpenRequest['mcpToolPolicy'];
@@ -227,20 +242,23 @@ type RunnerMcpServersResult<Bridge extends { stop: () => void }> = Readonly<{
 }>;
 type HappierMcpBridgeHandle = {
   url: string;
+  localContext?: SessionMcpLocalContext;
+  contextFilePath?: string;
   supportedSessionReadActions: readonly SessionRunPromptReadActionIdV1[];
   readToolNames: (signal?: AbortSignal) => Promise<readonly string[]>;
-  stop: () => void;
+  stop: () => Promise<void>;
 };
 
 export function resolveRunnerMcpServers(params: RunnerMcpServersParams & { includeHappierMcpServer?: true }): Promise<RunnerMcpServersResult<HappierMcpBridgeHandle>>;
-export function resolveRunnerMcpServers(params: RunnerMcpServersParams & { includeHappierMcpServer: false }): Promise<RunnerMcpServersResult<{ stop: () => void }>>;
-export function resolveRunnerMcpServers(params: RunnerMcpServersParams): Promise<RunnerMcpServersResult<{ stop: () => void }>>;
-export async function resolveRunnerMcpServers(params: RunnerMcpServersParams): Promise<RunnerMcpServersResult<{ stop: () => void }>> {
+export function resolveRunnerMcpServers(params: RunnerMcpServersParams & { includeHappierMcpServer: false }): Promise<RunnerMcpServersResult<{ stop: () => Promise<void> }>>;
+export function resolveRunnerMcpServers(params: RunnerMcpServersParams): Promise<RunnerMcpServersResult<{ stop: () => Promise<void> }>>;
+export async function resolveRunnerMcpServers(params: RunnerMcpServersParams): Promise<RunnerMcpServersResult<{ stop: () => Promise<void> }>> {
   const pluginAttachments: Readonly<{ dispose(): void | Promise<void> }>[] = [];
-  const disposePluginAttachments = () => {
-    for (const attachment of pluginAttachments.splice(0)) void Promise.resolve(attachment.dispose()).catch(error => {
-      logger.debug('[mcp] Plugin attachment cleanup failed', { error });
-    });
+  const disposePluginAttachments = async () => {
+    await Promise.all(pluginAttachments.splice(0).map(async attachment => {
+      try { await attachment.dispose(); }
+      catch (error) { logger.debug('[mcp] Plugin attachment cleanup failed', { error }); }
+    }));
   };
   // A daemon preparation may already hold a registry before selection or native
   // bridge construction. Every failed preparation phase retires that lease.
@@ -405,9 +423,10 @@ export async function resolveRunnerMcpServers(params: RunnerMcpServersParams): P
   if (operationContext && !await operationContext.isCurrent()) throw new McpServerCatalogUnavailableError('scope-retired');
   recordStartupPhase('account_currentness');
   const emptyMcpServers: Record<string, McpServerConfig> = {};
-  const builtIn = params.includeHappierMcpServer === false
-    ? { happierMcpServer: { stop: () => undefined }, mcpServers: emptyMcpServers }
+  const builtIn = params.includeHappierMcpServer === false && !params.localTransport
+    ? { happierMcpServer: { stop: async () => undefined, localContext: undefined, contextFilePath: undefined }, mcpServers: emptyMcpServers }
     : await createHappierMcpBridge(scopedSession, {
+    ...(params.localTransport ? { localTransport: params.localTransport } : {}),
     mcpToolCallIdMetaKey: params.mcpToolCallIdMetaKey,
     commandMode: params.commandMode,
     sessionCredentials: params.credentials,
@@ -424,34 +443,52 @@ export async function resolveRunnerMcpServers(params: RunnerMcpServersParams): P
       : {}),
     requiredDirectActionIds: run ? SESSION_RUN_PROMPT_READ_ACTION_IDS_V1 : undefined,
   });
+  const ownedBridge = builtIn.happierMcpServer;
+  const nativeContextFile = params.admittedStdio && builtIn.happierMcpServer.localContext
+    ? join(params.admittedStdio.target.runtimeHome, SESSION_MCP_CONTEXT_RELATIVE_PATH) : undefined;
+  const nativeBuiltInServers = nativeContextFile && builtIn.mcpServers.happier ? {
+    ...builtIn.mcpServers, happier: { ...builtIn.mcpServers.happier,
+      env: { ...builtIn.mcpServers.happier.env, [SESSION_MCP_CONTEXT_FILE_ENV]: nativeContextFile } },
+  } : builtIn.mcpServers;
+  const advertisedBuiltInMcpServers = params.includeHappierMcpServer === false ? emptyMcpServers : nativeBuiltInServers;
+  const contextFile = nativeContextFile ?? builtIn.happierMcpServer.contextFilePath;
+  const agentEnvironment = contextFile
+    ? Object.freeze({ [SESSION_MCP_CONTEXT_FILE_ENV]: contextFile }) : undefined;
+  const readAgentEnvironment = () => builtIn.happierMcpServer.localContext ? agentEnvironment : undefined;
 
-  const naming = 'readToolNames' in builtIn.happierMcpServer && builtIn.mcpServers.happier
-    ? { resolveMcpToolNaming: createHappierMcpToolNamingResolver(builtIn.mcpServers.happier, builtIn.happierMcpServer.readToolNames) }
+  const naming = 'readToolNames' in builtIn.happierMcpServer && nativeBuiltInServers.happier
+    ? { resolveMcpToolNaming: createHappierMcpToolNamingResolver(nativeBuiltInServers.happier, builtIn.happierMcpServer.readToolNames) }
     : {};
   recordStartupPhase('builtin_bridge');
 
   if (operationContext && !await operationContext.isCurrent()) {
-    builtIn.happierMcpServer.stop();
+    await ownedBridge.stop();
     throw new McpServerCatalogUnavailableError('scope-retired');
   }
   recordStartupPhase('account_currentness');
 
   if (!accountSettings || !accountCredentials) {
-    disposePluginAttachments();
+    await disposePluginAttachments();
     recordStartupPhase('completed');
-    return { ...naming, happierMcpServer: builtIn.happierMcpServer, mcpServers: params.resolvedMcpServers ? mergeWithBuiltInHappierMcpServer({ builtIn: builtIn.mcpServers, extra: params.resolvedMcpServers }) : builtIn.mcpServers };
+    return { ...naming, happierMcpServer: ownedBridge,
+      get sessionMcpContext() { return builtIn.happierMcpServer.localContext; },
+      get agentEnvironment() { return readAgentEnvironment(); },
+      mcpServers: params.resolvedMcpServers ? mergeWithBuiltInHappierMcpServer({ builtIn: advertisedBuiltInMcpServers, extra: params.resolvedMcpServers }) : advertisedBuiltInMcpServers };
   }
 
   if (!mcpSettings || !resolvedSelection) {
-    disposePluginAttachments();
+    await disposePluginAttachments();
     recordStartupPhase('completed');
-    return { ...naming, happierMcpServer: builtIn.happierMcpServer, mcpServers: builtIn.mcpServers };
+    return { ...naming, happierMcpServer: ownedBridge,
+      get sessionMcpContext() { return builtIn.happierMcpServer.localContext; },
+      get agentEnvironment() { return readAgentEnvironment(); },
+      mcpServers: advertisedBuiltInMcpServers };
   }
 
   const settingsSecretsReadKeys = deriveSettingsSecretsReadKeysForCredentials(accountCredentials);
   const invocationSnapshot = operationContext?.readSnapshot();
   if (operationContext && !invocationSnapshot) {
-    builtIn.happierMcpServer.stop();
+    await ownedBridge.stop();
     throw new McpServerCatalogUnavailableError('scope-retired');
   }
   const sourceSignal = params.executionRun?.signal ?? params.session.getRuntimeLifetimeSignal?.() ?? undefined;
@@ -474,13 +511,16 @@ export async function resolveRunnerMcpServers(params: RunnerMcpServersParams): P
   }>> = {};
   const requestAuthPort = scopedSession.getMcpRequestAuthPort?.();
   const materializationIds = new Set<string>();
-  const retireRequestAuth = () => {
+  const retireRequestAuth = async () => {
+    const retiring: Promise<unknown>[] = [];
     for (const materializationId of materializationIds) {
       materializationIds.delete(materializationId);
-      void requestAuthPort?.close({ materializationId }).catch(() => {
+      const retirement = requestAuthPort?.close({ materializationId }).catch(() => {
         logger.debug('[mcp] Request-auth capability retirement failed');
       });
+      if (retirement) retiring.push(retirement);
     }
+    await Promise.all(retiring);
   };
   let materialized: Awaited<ReturnType<typeof materializeMcpServerConfigRecord>>;
   try {
@@ -543,24 +583,26 @@ export async function resolveRunnerMcpServers(params: RunnerMcpServersParams): P
     savedSecretMaterializer,
     session: { sessionId: params.session.sessionId,
       ...(attestation.success ? { attestedContext: attestation.data } : {}) },
-    processEnv: env,
+    processEnv: params.admittedStdio?.environment ?? env,
     tmpDir: params.tmpDir ?? null,
+    signal: sourceSignal,
+    agentLaunchTarget: params.admittedStdio?.target,
     strictMode: mcpSettings.strictMode,
     requestAuthByServerId,
     requestAuthFailuresByServerId,
   });
     recordStartupPhase('config_materialization');
   } catch (error) {
-    disposePluginAttachments();
-    retireRequestAuth();
-    builtIn.happierMcpServer.stop();
+    await disposePluginAttachments();
+    await retireRequestAuth();
+    await ownedBridge.stop();
     throw error;
   }
   if (operationContext && !await operationContext.isCurrent()) {
-    disposePluginAttachments();
+    await disposePluginAttachments();
     materialized.cleanup();
-    retireRequestAuth();
-    builtIn.happierMcpServer.stop();
+    await retireRequestAuth();
+    await ownedBridge.stop();
     throw new McpServerCatalogUnavailableError('scope-retired');
   }
   recordStartupPhase('account_currentness');
@@ -584,7 +626,7 @@ export async function resolveRunnerMcpServers(params: RunnerMcpServersParams): P
     return [[name, { ...identity, ...(usage ? { usage } : {}) }]];
   })) as Record<string, McpServerIdentity> };
   const extra = params.resolvedMcpServers ?? materialized.mcpServers;
-  const merged = mergeWithBuiltInHappierMcpServer({ builtIn: builtIn.mcpServers, extra });
+  const merged = mergeWithBuiltInHappierMcpServer({ builtIn: advertisedBuiltInMcpServers, extra });
   const warningsByName = new Map(materialized.warnings
     .filter(warning => !Object.hasOwn(merged, warning.serverName))
     .map(warning => [warning.serverName, warning]));
@@ -612,12 +654,23 @@ export async function resolveRunnerMcpServers(params: RunnerMcpServersParams): P
   return {
     ...naming,
     happierMcpServer: {
-      ...builtIn.happierMcpServer,
-      stop: () => {
-        try { builtIn.happierMcpServer.stop(); } finally { materialized.cleanup(); retireRequestAuth(); disposePluginAttachments(); }
+      ...ownedBridge,
+      get localContext() { return builtIn.happierMcpServer.localContext; },
+      stop: async () => {
+        try { await ownedBridge.stop(); }
+        finally {
+          try { await materialized.cleanup(); }
+          finally { await retireRequestAuth(); await disposePluginAttachments(); }
+        }
       },
     },
+    get sessionMcpContext() { return builtIn.happierMcpServer.localContext; },
+    get agentEnvironment() { return readAgentEnvironment(); },
     mcpServers: merged,
+    ...(materialized.selectedMaterials ? { selectedMaterials: materialized.selectedMaterials } : {}),
+    ...(params.admittedStdio ? { prepareTransport: ((config, signal) => params.admittedStdio!.prepareTransport({
+      config, selectedMaterials: materialized.selectedMaterials ?? [], signal,
+    })) satisfies PrepareMcpStdioTransport } : {}),
     mcpServersStrictMode: mcpSettings.strictMode,
     mcpServerIdentities,
     ...(!params.resolvedMcpServers ? { reach: { context: resolvedSelection.context, settings: mcpSettings, mcpPluginItems,
@@ -628,7 +681,7 @@ export async function resolveRunnerMcpServers(params: RunnerMcpServersParams): P
     ...(mcpToolPolicy ? { mcpToolPolicy } : {}),
   };
   } catch (error) {
-    disposePluginAttachments();
+    await disposePluginAttachments();
     throw error;
   }
 }

@@ -62,6 +62,19 @@ export interface SystemToolsService {
 export interface ExecService {
     readonly agentCli: AgentCliReadinessService;
     readonly systemTools: SystemToolsService;
+    /** Prepare one transient Unix transport leaf for this held native identity.
+     * The returned qualifier prepares its native-owned alias parent on server
+     * launch; clients retain their original qualifier and use nativeProxy.
+     */
+    prepareNativeSocketDirectory(options?: Readonly<{
+        nativeLaunch?: AgentNativeLaunchQualifier;
+    }>): Promise<Readonly<{
+        path: string;
+        nativeProxy: boolean;
+        nativeLaunch?: AgentNativeLaunchQualifier;
+        dispose(): Promise<void>;
+    }>>;
+
     run(
         request: PluginExecSpawnRequest & { timeoutMs?: number },
         options?: {

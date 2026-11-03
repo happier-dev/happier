@@ -14,6 +14,11 @@ const base64Bytes = z.string().refine((value) => Buffer.from(value, 'base64').to
 export const AgentLaunchNativeIdentitySchema = z.object({ username: nonNullString, agentUid: z.number().int().positive(),
   agentGid: z.number().int().positive(), home: absolutePath }).strict();
 
+/** A host-bound transient alias parent; the shim executes its exact UID grant. */
+export const AgentLaunchNativeSocketDirectorySchema = z.object({ path: absolutePath,
+  daemonUid: z.number().int().nonnegative() }).strict();
+export type AgentLaunchNativeSocketDirectory = z.infer<typeof AgentLaunchNativeSocketDirectorySchema>;
+
 /** The private runner envelope and stdin frame consume the same file grammar. */
 export const AgentLaunchMaterializationSchema = z.object({
   /** Incumbent lease's retained Agent-owned runtime home, never the canonical Agent HOME. */
@@ -25,6 +30,7 @@ export const AgentLaunchMaterializationSchema = z.object({
 const payloadSchema = AgentLaunchMaterializationSchema.safeExtend({
   v: z.literal(1),
   nativeIdentity: AgentLaunchNativeIdentitySchema.optional(),
+  nativeSocketDirectory: AgentLaunchNativeSocketDirectorySchema.optional(),
   executable: absolutePath,
   args: z.array(nonNullString),
   cwd: absolutePath,
@@ -34,6 +40,7 @@ export type AgentLaunchSelectedMaterial = Readonly<{ relativePath: string; conte
 export type AgentLaunchPayload = Readonly<{
   v: 1;
   nativeIdentity?: Readonly<{ username: string; agentUid: number; agentGid: number; home: string }>;
+  nativeSocketDirectory?: AgentLaunchNativeSocketDirectory;
   executable: string;
   args: readonly string[];
   cwd: string;

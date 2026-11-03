@@ -20,6 +20,7 @@ import type { ImportedSessionHandoffBundle } from '../../../session/handoff/type
 import { ensureSessionHandoffWorkspaceCwd } from '../../../session/handoff/paths/sessionHandoffWorkspaceCwd';
 import { expandHomeRelativePath, resolveSessionHandoffLocalHomeDir } from '../../../session/handoff/paths/sessionHandoffPathNormalization';
 import { createManagedSessionDirectories } from '../../../session/creation/managedSessionDirectories';
+import type { ManagedSessionDirectoryPayloadPlacement } from '../../../session/creation/managedSessionDirectories';
 
 import {
   canUseDirectPeerForSessionHandoffAgentBundle,
@@ -59,6 +60,7 @@ export type RunSessionHandoffPrepareTargetJobInput = Readonly<{
   machineTransferChannel: MachineTransferChannel | undefined;
   directPeerTransfer: SessionHandoffDirectPeerTransferHandle | undefined;
   resolveExistingSessionState?: (request: SessionHandoffPrepareTargetRequest, targetPath: string) => Promise<ImportedSessionHandoffBundle>;
+  managedDirectoryPayloadPlacement?: ManagedSessionDirectoryPayloadPlacement;
   importSessionBundle: (
     bundle: SessionHandoffAgentBundle,
     targetPath: string,
@@ -138,7 +140,7 @@ export async function runSessionHandoffPrepareTargetJob(
   let prepareTargetRequest: SessionHandoffPrepareTargetRequest | undefined = initialPrepareTargetRequest ?? request;
   let actualTransportStrategy = initialTransportStrategy;
   let agentBundle: SessionHandoffAgentBundle | null = null;
-  const managedDirectories = createManagedSessionDirectories({ activeServerDir });
+  const managedDirectories = createManagedSessionDirectories({ activeServerDir, payloadPlacement: params.managedDirectoryPayloadPlacement });
   const managedIdentity = request.targetDirectory?.kind === 'managed'
     && typeof request.operationId === 'string' && typeof request.sessionId === 'string'
     ? { operationId: request.operationId, sessionId: request.sessionId }
@@ -334,8 +336,9 @@ export async function runSessionHandoffPrepareTargetJob(
       }
       }
 
-      const targetPath = managedIdentity
-        ? (await managedDirectories.allocateForHandoff(managedIdentity)).directory
+      const managedAllocation = managedIdentity ? await managedDirectories.allocateForHandoff(managedIdentity) : null;
+      const targetPath = managedAllocation
+        ? managedAllocation.directory
         : request.sourceMachineId === request.targetMachineId
           ? expandHomeRelativePath({
             path: request.targetPath,
@@ -343,11 +346,14 @@ export async function runSessionHandoffPrepareTargetJob(
           })
           : request.targetPath;
       managedAllocationPrepared = managedIdentity !== null;
-      if (managedIdentity) {
+      if (managedIdentity && managedAllocation) {
         await materializePrepareManagedWorkspaceSeed({ request, targetPath, actualTransportStrategy,
           localSourceExport, machineTransferChannel, directPeerTransfer, transferTimeoutMs,
           assertCanContinue: assertPrepareJobNotCancelled,
+          prepareEntryAccess: await managedDirectories.prepareSeedEntryAccess(managedAllocation.allocationId),
         });
+        // Seed promotion replaces the leaf; restore the admitted exact-UID ACL.
+        await managedDirectories.allocateForHandoff(managedIdentity);
       }
       if (!managedIdentity && request.workspaceRootPath !== undefined && request.workspaceSessionRelativeCwd !== undefined) {
         await ensureSessionHandoffWorkspaceCwd({

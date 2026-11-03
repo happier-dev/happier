@@ -75,6 +75,7 @@ export function canUseDirectPeerForSessionHandoffAgentBundle(input: Readonly<{
 export async function materializePrepareManagedWorkspaceSeed(params: Readonly<{
   request: SessionHandoffPrepareTargetRequest;
   targetPath: string;
+  prepareEntryAccess?: Parameters<typeof materializeWorkspaceExportArtifactsWithScmWorkspace>[0]['prepareEntryAccess'];
   actualTransportStrategy: SessionHandoffPrepareTargetRequest['negotiatedTransportStrategy'];
   localSourceExport: SessionHandoffSourceExportRecord | null;
   machineTransferChannel?: MachineTransferChannel;
@@ -131,7 +132,7 @@ export async function materializePrepareManagedWorkspaceSeed(params: Readonly<{
       await params.assertCanContinue();
     },
     materializeWorkspaceExportArtifacts: async (request) => await materializeWorkspaceExportArtifactsWithScmWorkspace({
-      ...request, assertCanContinue: params.assertCanContinue,
+      ...request, assertCanContinue: params.assertCanContinue, prepareEntryAccess: params.prepareEntryAccess,
     }),
   });
   try {

@@ -309,6 +309,7 @@ export type MachineRpcHandlerDeps = Readonly<{
   readMachineEffectiveCores?: () => number | undefined;
   requesterSessionRuntime?: NonNullable<Parameters<typeof import('@/rpc/handlers/sessionLifecycle').registerSessionLifecycleRpcHandlers>[0]['requesterSessionRuntime']>;
   requesterBootstrapBoundary?: NonNullable<Parameters<typeof registerMachineSessionHandoffRpcHandlers>[0]['requesterBootstrapBoundary']>;
+  prepareManagedSessionHandoffDirectoryPlacement?: NonNullable<Parameters<typeof registerMachineSessionHandoffRpcHandlers>[0]['prepareManagedDirectoryPlacement']>;
   accountReadRuntime?: MachineTerminalRpcHandlerDeps['accountReadRuntime'];
   managedActivity?: ManagedActivityRpcOwner;
   machineWorkSummary?: MachineWorkSummaryRpcOwner;
@@ -1069,6 +1070,7 @@ function registerMachineRpcHandlersOnce(params: Readonly<{
     : undefined;
   registerMachineSessionHandoffRpcHandlers({
     rpcHandlerManager,
+    ...(params.deps?.prepareManagedSessionHandoffDirectoryPlacement ? { prepareManagedDirectoryPlacement: params.deps.prepareManagedSessionHandoffDirectoryPlacement } : {}),
     ...(admitExistingSessionState ? { admitExistingSessionState } : {}),
     ...(params.deps?.requesterSessionRuntime ? { requesterSessionRuntime: params.deps.requesterSessionRuntime } : {}),
     ...(params.deps?.requesterBootstrapBoundary ? { requesterBootstrapBoundary: params.deps.requesterBootstrapBoundary } : {}),

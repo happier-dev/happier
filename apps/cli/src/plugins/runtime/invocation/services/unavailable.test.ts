@@ -8,6 +8,13 @@ import {
 } from './unavailable';
 
 describe('unavailable invocation services', () => {
+    it('refuses native socket preparation through the typed unavailable Exec contract', () => {
+        const services = createUnavailablePluginServices();
+        expect(() => services.exec.prepareNativeSocketDirectory()).toThrow(expect.objectContaining({
+            code: 'plugin_service_unavailable', details: { serviceId: 'exec' },
+        }));
+    });
+
     it('reuses unchanged invocation availability without the CPU cost of rebinding services', () => {
         const unavailable = createPluginInvocationServiceBinding('occurrence', 'invocation');
         const available = withPluginInvocationServiceBindingAvailability(unavailable,

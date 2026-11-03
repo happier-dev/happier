@@ -1,8 +1,7 @@
-import { stat } from 'node:fs/promises';
+import { lstat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { constants } from 'node:os';
 import { setTimeout as delay } from 'node:timers/promises';
-import { createSecureTempDirectorySync } from '@happier-dev/plugin-sdk/fs';
 import { PluginError, type LoggerService } from '@happier-dev/plugin-sdk';
 import { readSessionPreparationFailureCode } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 
@@ -257,27 +256,23 @@ async function waitForSocket(
     if (result) throw new CodexSharedAppServerStartupError('process_exited', result);
     if (observationFailed) throw new CodexSharedAppServerStartupError('process_observation_failed');
     try {
-      await stat(socketPath);
-      return;
-    } catch {
-      await delay(25, undefined, { signal });
-    }
+      const publication = await lstat(socketPath);
+      if (publication.isSymbolicLink() || publication.isSocket()) return;
+    } catch { /* Native publication has not appeared yet. */ }
+    await delay(25, undefined, { signal });
   }
 }
 
-function defaultDependencies(): Dependencies {
-  let temporary: ReturnType<typeof createSecureTempDirectorySync> | undefined;
+function defaultDependencies(prepareDirectory: () => ReturnType<ExecService['prepareNativeSocketDirectory']>): Dependencies {
+  let temporary: Awaited<ReturnType<ExecService['prepareNativeSocketDirectory']>> | undefined;
   return {
     readCodexVersion,
     createRuntimeDirectory: async () => {
-      // Shared control is Unix-only. A caller's TMPDIR can exceed AF_UNIX's
-      // pathname capacity; retain the SDK's private ownership/cleanup under
-      // the short native Unix temp parent instead of changing child-process env.
-      temporary = createSecureTempDirectorySync({ prefix: 'codex', tmpDir: '/tmp' });
+      temporary = await prepareDirectory();
       return temporary.path;
     },
     waitForSocket,
-    removeRuntimeDirectory: async () => temporary?.cleanup(),
+    removeRuntimeDirectory: async () => temporary?.dispose(),
     createClient: createCodexNativeAppServerClient,
     probeRealtime: probeCodexRealtimeConversationFeature,
   };
@@ -304,7 +299,12 @@ export async function createCodexSharedAppServer(params: Readonly<{
   }>) => Promise<DisposableCodexAppServerClient>;
   dispose: () => Promise<void>;
 }> | null> {
-  const dependencies = { ...defaultDependencies(), ...params.dependencies };
+  let nativeDirectory: Awaited<ReturnType<ExecService['prepareNativeSocketDirectory']>> | undefined;
+  const defaults = defaultDependencies(async () => {
+    nativeDirectory = await params.exec.prepareNativeSocketDirectory(params.nativeLaunch ? { nativeLaunch: params.nativeLaunch } : undefined);
+    return nativeDirectory;
+  });
+  const dependencies = { ...defaults, ...params.dependencies };
   const versionOutput = await dependencies.readCodexVersion(
     params.exec,
     params.processEnv,
@@ -316,6 +316,8 @@ export async function createCodexSharedAppServer(params: Readonly<{
   if (!supportsSharedControl(versionOutput, params.platform ?? process.platform)) return null;
 
   const runtimeDirectory = await dependencies.createRuntimeDirectory();
+  const transport = { kind: 'unixWebSocket' as const, socketPath: join(runtimeDirectory, 'private', 'app-server.sock'),
+    ...(nativeDirectory?.nativeProxy ? { nativeProxy: true as const } : {}) };
   // Leave the socket parent absent so Codex creates it with its cross-platform
   // private-directory policy (0700 on Unix, a user-only DACL on Windows).
   const socketPath = join(runtimeDirectory, 'private', 'app-server.sock');
@@ -362,7 +364,7 @@ export async function createCodexSharedAppServer(params: Readonly<{
           maxStderrBytes: 16_384,
         }, params.signal || params.nativeLaunch ? {
           ...(params.signal ? { signal: params.signal } : {}),
-          ...(params.nativeLaunch ? { nativeLaunch: params.nativeLaunch } : {}),
+          ...(nativeDirectory?.nativeLaunch || params.nativeLaunch ? { nativeLaunch: nativeDirectory?.nativeLaunch ?? params.nativeLaunch } : {}),
         } : undefined);
         await dependencies.waitForSocket(
           socketPath,
@@ -381,7 +383,8 @@ export async function createCodexSharedAppServer(params: Readonly<{
             toolRestrictionRequired: request.toolRestrictionRequired,
             toolRestrictionAllowedMcpServerKeys: request.toolRestrictionAllowedMcpServerKeys,
             signal: params.signal,
-            transport: { kind: 'unixWebSocket', socketPath, realtimeConversationAdvertised },
+            ...(params.nativeLaunch ? { nativeLaunch: params.nativeLaunch } : {}),
+            transport: { ...transport, realtimeConversationAdvertised },
           }),
         });
       } catch (error) {
@@ -422,9 +425,9 @@ export async function createCodexSharedAppServer(params: Readonly<{
         toolRestrictionRequired: request.toolRestrictionRequired,
         toolRestrictionAllowedMcpServerKeys: request.toolRestrictionAllowedMcpServerKeys,
         signal: params.signal,
+        ...(params.nativeLaunch ? { nativeLaunch: params.nativeLaunch } : {}),
         transport: {
-          kind: 'unixWebSocket',
-          socketPath,
+          ...transport,
           realtimeConversationAdvertised,
         },
       });

@@ -1,4 +1,4 @@
-import { encodeAgentLaunchFrame, type AgentLaunchSelectedMaterial } from './agentLaunchFrame';
+import { encodeAgentLaunchFrame, type AgentLaunchSelectedMaterial, type AgentLaunchNativeSocketDirectory } from './agentLaunchFrame';
 import { SESSION_MCP_CONTEXT_RELATIVE_PATH, withSessionMcpAgentLaunchMaterial } from './agentLaunchMaterials';
 import type { SessionMcpLocalContext } from '@/mcp/runtime/sessionMcpLocalTransport';
 import type { AgentIsolationMemberNativeIdentity } from './agentIsolationNativeIdentity';
@@ -29,6 +29,7 @@ export function createUnixAgentIdentityLaunch(input: Readonly<{
   selectedMaterials: readonly AgentLaunchSelectedMaterial[];
   sessionMcpContext?: SessionMcpLocalContext | null;
   memberIdentity?: AgentIsolationMemberNativeIdentity;
+  nativeSocketDirectory?: AgentLaunchNativeSocketDirectory;
 }>): UnixAgentIdentityLaunch {
   const member = input.memberIdentity;
   if (member && !isCanonicalAbsolutePathInsideRoot(member.home, input.runtimeHome)) throw new PluginError({
@@ -61,6 +62,7 @@ export function createUnixAgentIdentityLaunch(input: Readonly<{
     stdinPreamble: encodeAgentLaunchFrame({
       v: 1, executable: input.executable, args: input.args, cwd: input.cwd,
       runtimeHome: materialization.runtimeHome, environment, selectedMaterials: materialization.selectedMaterials,
+      ...(input.nativeSocketDirectory ? { nativeSocketDirectory: input.nativeSocketDirectory } : {}),
       ...(member ? { nativeIdentity: { username: member.username, agentUid: member.agentUid,
         agentGid: member.agentGid, home: member.home } } : {}),
     }),

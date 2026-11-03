@@ -1,5 +1,5 @@
 import { deriveConnectedServiceRunMaterializeToken } from './connectedServices/runs/capabilityToken';
-import { classifyActionTransportFailure } from '@/api/client/classifyServerEndpointError';
+import { classifyActionTransportFailure, isNetworkConnectionErrorCode, readNormalizedConnectionErrorCode } from '@/api/client/classifyServerEndpointError';
 import { AUTHORITY_CEILING_HEADER_V1 } from '@happier-dev/protocol/actions/invocationAuthority';
 import { armDeadlineTimer } from '@happier-dev/protocol/common/deadlineTimer';
 import { sanitizeConnectedServiceDiagnosticString } from './connectedServices/runtimeAuth/sanitizeConnectedServiceDiagnosticString';
@@ -16,6 +16,7 @@ type DaemonPostOptions = DaemonControlRequestOptions & {
   mutation?: boolean;
   authScope?: 'daemon-control' | 'connected-service-run-materialize';
   authTokenOverride?: string;
+  includeFailureDiagnostics?: true;
 };
 
 /** The containing operation owns the deadline, including human approval waits. */
@@ -119,13 +120,14 @@ export async function daemonPost(path: string, body?: unknown, options: DaemonPo
     }
     if (response.ok) return parsed ?? {};
     const object = parsed && typeof parsed === 'object' ? parsed as Record<string, unknown> : null;
-    if (object && typeof object.success === 'boolean') return object;
+    const diagnostic = options.includeFailureDiagnostics ? { httpStatus: response.status } : {};
+    if (object && typeof object.success === 'boolean') return { ...object, ...diagnostic };
     const errorCode = typeof object?.errorCode === 'string' ? object.errorCode : undefined;
     const detail = typeof object?.error === 'string' ? object.error : typeof object?.message === 'string' ? object.message : undefined;
     const suffix = [errorCode, detail].filter(Boolean).join(': ');
     const error = `Request failed: ${path}, HTTP ${response.status}${suffix ? ` (${suffix})` : ''}`;
     await logControlError(error);
-    return { error, errorCode, response: parsed };
+    return { error, errorCode, response: parsed, ...diagnostic };
   } catch (cause) {
     const error = `Request failed: ${path}, ${cause instanceof Error ? cause.message : 'Unknown error'}`;
     await logControlError(error);
@@ -133,7 +135,11 @@ export async function daemonPost(path: string, body?: unknown, options: DaemonPo
       mutation: options.mutation === true, requestIssued,
       cancelled: options.signal?.aborted === true,
     });
-    return { error, ...(failure && failure !== 'network' ? { errorCode: failure } : {}) };
+    const connectionCode = readNormalizedConnectionErrorCode(cause);
+    const transportErrorCode = isNetworkConnectionErrorCode(connectionCode) ? connectionCode : failure;
+    return { error, ...(failure && failure !== 'network' ? { errorCode: failure } : {}),
+      ...(options.includeFailureDiagnostics && transportErrorCode ? { transportErrorCode } : {}),
+    };
   } finally {
     cancelDeadline?.();
   }

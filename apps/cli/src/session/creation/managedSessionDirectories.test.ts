@@ -35,6 +35,55 @@ async function fixture() {
 }
 
 describe('managed session directory ownership', () => {
+  it.skipIf(process.platform === 'win32')('preserves a legacy private allocation when isolated resume needs explicit replacement consent', async () => {
+    const { activeServerDir, owner } = await fixture();
+    const original = await owner.materializeForFreshSpawn({ sessionCreationTag: 'legacy-private' });
+    await owner.bind({ allocationId: original.allocationId, sessionId: 'legacy-session' });
+    await writeFile(join(original.directory, 'keep'), 'retained-private-bytes');
+    const workspace = await mkdtemp(join(tmpdir(), 'happier-resume-workspace-'));
+    roots.push(workspace);
+    const isolated = createManagedSessionDirectories({ activeServerDir,
+      payloadPlacement: { root: workspace, agentUid: process.getuid!() },
+    });
+    const request = { directory: original.directory, existingSessionId: 'legacy-session', sessionCreationTag: 'legacy-private' };
+    expect(await isolated.prepareForSpawn(request)).toEqual({ ok: false, errorCode: 'SESSION_DIRECTORY_MISSING' });
+    const replacement = await isolated.prepareForSpawn({ ...request, approvedNewDirectoryCreation: true, resumeRequestId: 'accepted-replacement' });
+    expect(replacement).toMatchObject({ ok: true });
+    if (!replacement.ok) throw new Error('Explicit replacement refused');
+    expect(replacement.directory).toBe(join(workspace, replacement.allocationId));
+    expect(await readFile(join(original.directory, 'keep'), 'utf8')).toBe('retained-private-bytes');
+    expect(await owner.resolveForSession({ sessionId: 'legacy-session', path: original.directory })).toMatchObject({ ok: true });
+  });
+
+  it.skipIf(process.platform === 'win32').each(['member', 'shared-Agent'])('retains accepted %s workspace placement through restart, Trash and removal', async identity => {
+    const { activeServerDir } = await fixture();
+    const workspace = await mkdtemp(join(tmpdir(), 'happier-accepted-workspace-'));
+    roots.push(workspace);
+    const owner = createManagedSessionDirectories({ activeServerDir,
+      payloadPlacement: { root: workspace, agentUid: process.getuid!() },
+    });
+    const allocation = await owner.materializeForFreshSpawn({ sessionCreationTag: `isolated-${identity}` });
+    expect(allocation.directory).toBe(join(workspace, allocation.allocationId));
+    const recordPath = join(activeServerDir, 'session-directories', '.owners', `${allocation.allocationId}.json`);
+    expect(JSON.parse(await readFile(recordPath, 'utf8'))).toMatchObject({ payloadPlacement: { root: workspace } });
+    if (process.platform !== 'win32') {
+      expect((await stat(join(activeServerDir, 'session-directories'))).mode & 0o777).toBe(0o700);
+      expect((await stat(recordPath)).mode & 0o777).toBe(0o600);
+    }
+    await owner.bind({ allocationId: allocation.allocationId, sessionId: `session-${identity}` });
+    await writeFile(join(allocation.directory, 'keep'), 'retained-session');
+    const restarted = createManagedSessionDirectories({ activeServerDir });
+    expect(await restarted.listRecords()).toMatchObject([{ directory: allocation.directory }]);
+    expect(await restarted.resolveForSession({ sessionId: `session-${identity}`, path: allocation.directory })).toMatchObject({ ok: true });
+    const payloadPath = join(workspace, 'trash-payload');
+    await restarted.retireToTrash({ allocationId: allocation.allocationId, payloadPath });
+    await restarted.reinstateFromTrash({ allocationId: allocation.allocationId, payloadPath, restorePath: allocation.directory });
+    expect(await readFile(join(allocation.directory, 'keep'), 'utf8')).toBe('retained-session');
+    await restarted.removeForSession({ sessionId: `session-${identity}`, stopSession: async () => ({ status: 'not_found' }) });
+    await expect(access(allocation.directory)).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(access(recordPath)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
   it('converges a restore interrupted after moving bytes but before committing active ownership', async () => {
     const { activeServerDir, owner } = await fixture();
     const allocation = await owner.materializeForFreshSpawn({ sessionCreationTag: 'restore-crash' });

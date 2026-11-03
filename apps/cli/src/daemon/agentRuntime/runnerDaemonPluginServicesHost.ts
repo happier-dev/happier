@@ -55,9 +55,12 @@ import {
 import {
     authorizePluginExecLaunchForHost,
     authorizeResolvedProjectExecLaunchForHost,
+    issueAgentNativeLaunchQualifierForHost,
     type HostAgentNativeLaunchPreparation,
     type HostAuthorizedPluginExecLaunch,
 } from '@/plugins/runtime/invocation/services/exec';
+import { assertHostRequesterExecutionAdmissionForHost, resolveHostRequesterExecutionIdentityForLaunch,
+    type HostAgentIsolationLaunchContext, type HostAgentIsolationLaunchKind } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import type {
     AgentInvocationTurnAdmissionWitness,
 } from '@/plugins/runtime/invocation/services/types';
@@ -143,6 +146,7 @@ type Invocation = {
     readonly runnerRetainedAgent?: AgentSessionRunnerBindingV1;
     readonly services: PluginServices;
     readonly prepareAgentNativeLaunch?: HostAgentNativeLaunchPreparation;
+    readonly agentIsolation?: HostAgentIsolationLaunchContext;
     readonly managedProvider: ManagedProviderInvocation | null;
     managedProviderStart: Promise<void> | null;
     managedProviderMaterialization: Readonly<{
@@ -468,6 +472,7 @@ export function createRunnerDaemonPluginServicesHost(input: Readonly<{
     }>): Promise<Readonly<{
         services: PluginServices;
         prepareAgentNativeLaunch?: HostAgentNativeLaunchPreparation;
+        agentIsolation?: HostAgentIsolationLaunchContext;
         managedProvider?: ManagedProviderInvocation | null;
         resourceDescriptors: Readonly<Record<
             string,
@@ -510,7 +515,7 @@ export function createRunnerDaemonPluginServicesHost(input: Readonly<{
         sessionId: string,
         runner: AgentRuntimeDaemonServiceAuthorityRunnerIdentity,
         retainedAgent: AgentSessionRunnerBindingV1,
-        operation: RunnerDaemonPluginServiceOperationV1,
+        operation: Readonly<{ kind: RunnerDaemonPluginServiceOperationV1['kind']; invocationId: string }>,
         runAuthority: Readonly<{
             executionRunSnapshotId?: string;
             runnerRetainedAgent?: AgentSessionRunnerBindingV1;
@@ -845,6 +850,22 @@ export function createRunnerDaemonPluginServicesHost(input: Readonly<{
         return await invocation.disposal;
     };
 
+    const admitInvocationNativeLaunch = async (invocation: Invocation, kind: HostAgentIsolationLaunchKind,
+        signal: AbortSignal | undefined, recheck: () => void) => {
+        const assertCurrent = async () => {
+            recheck();
+            if (disposed || invocation.disposed || invocation.controller.signal.aborted || signal?.aborted
+                || !await invocation.authorizeOperation(undefined)) {
+                return fail('plugin_services_invocation_unavailable', 'Runner PluginServices invocation is unavailable');
+            }
+        };
+        await assertCurrent();
+        const identity = await resolveHostRequesterExecutionIdentityForLaunch({ context: invocation.agentIsolation, signal });
+        await assertCurrent();
+        assertHostRequesterExecutionAdmissionForHost({ identity: identity ?? { kind: 'unknown', reason: 'requester_authority_unavailable' },
+            snapshot: invocation.agentIsolation?.read(), agentLaunchKind: kind });
+    };
+
     const dispatchOperation = async (
         dispatchInput: Readonly<{
             sessionId: string;
@@ -1016,6 +1037,7 @@ export function createRunnerDaemonPluginServicesHost(input: Readonly<{
                 } : {}),
                 services: created.services,
                 ...(created.prepareAgentNativeLaunch ? { prepareAgentNativeLaunch: created.prepareAgentNativeLaunch } : {}),
+                ...(created.agentIsolation ? { agentIsolation: created.agentIsolation } : {}),
                 managedProvider,
                 managedProviderStart: null,
                 managedProviderMaterialization: null,
@@ -2683,8 +2705,14 @@ export function createRunnerDaemonPluginServicesHost(input: Readonly<{
             }
             case 'plugin_exec.launch.authorize_v1':
             case 'plugin_exec.resolved_agent_launch.authorize_v1': {
+                if (operation.kind === 'plugin_exec.resolved_agent_launch.authorize_v1' && operation.phase === 'admit') {
+                    await admitInvocationNativeLaunch(invocation, operation.agentLaunchKind, signal,
+                        () => { requireInvocation(sessionId, runner, retainedAgent, operation, dispatchInput); });
+                    return result(operation, null);
+                }
                 const nativeLaunch = operation.kind === 'plugin_exec.resolved_agent_launch.authorize_v1'
-                    || operation.agentNativeLaunch === true;
+                    ? !operation.mcpLaunchMaterial || operation.sessionMcpContext !== undefined
+                    : operation.agentNativeLaunch === true;
                 if (nativeLaunch && !invocation.prepareAgentNativeLaunch) {
                     return fail('plugin_exec_native_launch_unavailable', 'Native Agent launch preparation is unavailable');
                 }
@@ -2699,10 +2727,18 @@ export function createRunnerDaemonPluginServicesHost(input: Readonly<{
                     } : undefined;
                 let launch: HostAuthorizedPluginExecLaunch;
                 if (operation.kind === 'plugin_exec.resolved_agent_launch.authorize_v1') {
+                    // The strict schema owns the cross-field phase refinement;
+                    // this guard narrows its optional tuple at the consumer.
+                    if (!operation.launch) return fail('plugin_exec_native_launch_unavailable', 'Resolved native launch tuple is unavailable');
                     const { stdin, ...resolved } = operation.launch;
                     launch = await authorizeResolvedProjectExecLaunchForHost({
                         launch: { ...resolved, ...(stdin === undefined ? {} : { stdin: new Uint8Array(Buffer.from(stdin, 'base64')) }) },
                         prepareAgentNativeLaunch, signal: preparationSignal,
+                        agentIsolation: invocation.agentIsolation,
+                        agentNativeLaunch: !operation.mcpLaunchMaterial || operation.sessionMcpContext !== undefined,
+                        sessionMcpContext: operation.sessionMcpContext,
+                        mcpLaunchMaterial: operation.mcpLaunchMaterial,
+                        agentLaunchKind: operation.agentLaunchKind,
                         assertCurrent() { requireInvocation(sessionId, runner, retainedAgent, operation, dispatchInput); },
                     });
                 } else {
@@ -2745,7 +2781,12 @@ export function createRunnerDaemonPluginServicesHost(input: Readonly<{
                                 }
                                 : {}),
                         },
-                        { ...operationOptions, ...(prepareAgentNativeLaunch ? { prepareAgentNativeLaunch } : {}) },
+                        {
+                            ...operationOptions,
+                            ...(nativeLaunch ? { nativeLaunch: issueAgentNativeLaunchQualifierForHost(services.exec,
+                                () => operation.sessionMcpContext, () => operation.mcpLaunchMaterial) } : {}),
+                            ...(prepareAgentNativeLaunch ? { prepareAgentNativeLaunch } : {}),
+                        },
                     );
                 }
                 const authorizationId = randomUUID();
@@ -2767,6 +2808,9 @@ export function createRunnerDaemonPluginServicesHost(input: Readonly<{
                                         .toString('base64'),
                             }
                             : {}),
+                        ...(launch.stdinPreamble === undefined ? {} : {
+                            stdinPreamble: Buffer.from(launch.stdinPreamble).toString('base64'),
+                        }),
                         ...(launch.timeoutMs !== undefined
                             ? { timeoutMs: launch.timeoutMs }
                             : {}),

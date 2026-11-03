@@ -1,8 +1,15 @@
-import { mkdir } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { dirname } from 'node:path';
 import { WebSocketServer } from 'ws';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
+
+/** Native filesystem boundary for current-UID Exec test adapters. */
+export async function prepareTestNativeSocketDirectory() {
+    const path = await mkdtemp('/tmp/happier-codex-test-');
+    await chmod(path, 0o700);
+    return { path, nativeProxy: false, dispose: async () => { await rm(path, { recursive: true, force: true }); } };
+}
 
 export type CodexSocketFixtureRequest = Readonly<{ id?: number; method: string; params?: JsonValue }>;
 

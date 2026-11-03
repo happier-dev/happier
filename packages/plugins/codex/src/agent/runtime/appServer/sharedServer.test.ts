@@ -1,7 +1,8 @@
+import { prepareTestNativeSocketDirectory } from './client.test-support';
 import { createCodexAppServerTurnFailure, formatCodexAppServerErrorForUi } from './turns/failure';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { readFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { tmpdir, userInfo } from 'node:os';
@@ -42,9 +43,15 @@ describe('createCodexSharedAppServer', () => {
       // Exec is the external process/daemon boundary; the probes, fallback,
       // startup lock and failure projection run their real implementations.
       const exec = {
-        systemTools: { resolve: async () => ({ executable: { kind: 'systemTool', id: 'codex-cli' } }) },
+        prepareNativeSocketDirectory: prepareTestNativeSocketDirectory,
+      systemTools: { resolve: async () => ({ executable: { kind: 'systemTool', id: 'codex-cli' } }) },
         run: async (request: Parameters<ExecService['run']>[0]): Promise<PluginProcessResult> => {
           probes.push(request.args.join(' '));
+          if (stage === 'stdio-feature' && request.args.includes('--version')) return {
+            termination: { observed: { kind: 'exit', exitCode: 0 }, requestedBy: { kind: 'none' } },
+            stdout: new TextEncoder().encode('codex-cli 0.162.1'), stderr: new Uint8Array(),
+            stdoutTruncated: false, stderrTruncated: false,
+          };
           if (stage !== 'stdio-version' || request.args.includes('--version')) throw refusal;
           return { termination: { observed: { kind: 'exit', exitCode: 0 }, requestedBy: { kind: 'none' } },
             stdout: new Uint8Array(), stderr: new Uint8Array(), stdoutTruncated: false, stderrTruncated: false };
@@ -102,14 +109,17 @@ describe('createCodexSharedAppServer', () => {
     const result: PluginProcessResult = { termination: { observed: { kind: 'exit', exitCode: 0 }, requestedBy: { kind: 'none' } },
       stdout: new Uint8Array(), stderr: new Uint8Array(), stdoutTruncated: false, stderrTruncated: false };
     const exec = {
+      prepareNativeSocketDirectory: prepareTestNativeSocketDirectory,
       systemTools: { resolve: async () => ({ executable: { kind: 'systemTool', id: 'codex-cli' } }) },
       run: async () => ({ ...result, stdout: new TextEncoder().encode('codex-cli 0.162.1') }),
       spawn: async (request: Parameters<ExecService['spawn']>[0]) => {
         nativeSpawns += 1;
         const endpoint = request.args![request.args!.indexOf('--listen') + 1]!.slice('unix://'.length);
         await mkdir(dirname(endpoint), { recursive: true });
-        // Publish an OS path before accepting connections, as a native bind/listen race can do.
-        await writeFile(endpoint, '');
+        // Native Codex publishes an alias before its private listener accepts connections.
+        const unpublishedListener = join(dirname(endpoint), 'pending-native-listener.sock');
+        await writeFile(unpublishedListener, '');
+        await symlink(unpublishedListener, endpoint);
         return { wait: () => exited, dispose: async () => { await nativePeer?.close(); nativePeer = undefined; finish(result); } };
       },
       clients: { connectJsonRpc: async (request: Parameters<typeof connectFixtureClient>[0], options?: { signal?: AbortSignal }) => {
@@ -155,6 +165,7 @@ describe('createCodexSharedAppServer', () => {
     // endpoint construction, actual OS bind and cleanup use production logic.
     const exec = {
       clients: { connectJsonRpc: connectFixtureClient },
+      prepareNativeSocketDirectory: prepareTestNativeSocketDirectory,
       systemTools: { resolve: async () => ({ executable: { kind: 'systemTool', id: 'codex-cli' } }) },
       run: async () => result,
     } as unknown as ExecService;
@@ -208,6 +219,7 @@ describe('createCodexSharedAppServer', () => {
     });
     const exec = {
       clients: { connectJsonRpc: connectFixtureClient },
+      prepareNativeSocketDirectory: prepareTestNativeSocketDirectory,
       systemTools: { resolve: async () => ({ executable: { kind: 'systemTool', id: 'codex-cli' } }) },
       run: async (request: Parameters<ExecService['run']>[0]) => ({
         ...nativeResult,
@@ -285,6 +297,7 @@ describe('createCodexSharedAppServer', () => {
     // client perform the handshake; no provider orchestration is replaced.
     const exec = {
       clients: { connectJsonRpc: connectFixtureClient },
+      prepareNativeSocketDirectory: prepareTestNativeSocketDirectory,
       systemTools: { resolve: async () => ({ executable: { kind: 'systemTool', id: 'codex-cli' } }) },
       run: async (request: Parameters<ExecService['run']>[0], options: Parameters<ExecService['run']>[1]) => {
         probeOptions.push(options);
@@ -390,7 +403,8 @@ describe('createCodexSharedAppServer', () => {
     }));
     const server = await createCodexSharedAppServer({
       exec: {
-        systemTools: { resolve: vi.fn(async () => ({ executable: { kind: 'systemTool', id: 'codex-cli' } })) },
+        prepareNativeSocketDirectory: prepareTestNativeSocketDirectory,
+      systemTools: { resolve: vi.fn(async () => ({ executable: { kind: 'systemTool', id: 'codex-cli' } })) },
         run,
       } as never,
       processEnv: {},
@@ -424,7 +438,8 @@ describe('createCodexSharedAppServer', () => {
     const waitForSocket = vi.fn(async () => undefined);
     const server = await createCodexSharedAppServer({
       exec: {
-        systemTools: { resolve: vi.fn(async () => ({ executable: { kind: 'systemTool', id: 'codex-cli' } })) },
+        prepareNativeSocketDirectory: prepareTestNativeSocketDirectory,
+      systemTools: { resolve: vi.fn(async () => ({ executable: { kind: 'systemTool', id: 'codex-cli' } })) },
         spawn,
       } as never,
       processEnv: { HOME: '/home/test' },

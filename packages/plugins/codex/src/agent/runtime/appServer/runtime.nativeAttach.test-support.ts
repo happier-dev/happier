@@ -12,7 +12,7 @@ import { openCodexNativeAppServerExecutionRunConversation, openCodexNativeAppSer
 import type { CodexProviderBindingEngineConfigV1 } from '../../providerBinding/runtimeConfig.js';
 import { resolveCodexTerminalPermissionPolicy } from '../terminal/permissionPolicy.js';
 import { connectManagedJsonRpcTestClient, createManagedJsonRpcTestClient } from '../../../../../../../apps/cli/src/testkit/process/managedJsonRpc';
-import { CODEX_RAW_PROXY_FIXTURE_SCRIPT } from './client.test-support';
+import { prepareTestNativeSocketDirectory, CODEX_RAW_PROXY_FIXTURE_SCRIPT } from './client.test-support';
 
 // The network fixture models pinned Codex 0.159.2's empty paginated rollout:
 // name/set supplies metadata; a full read persists it; native resume then works.
@@ -280,6 +280,7 @@ export async function withCodexNativeAttachFixture(run: (fixture: {
   await runtime.updateConfig?.({ configOption: { id: 'reasoning_effort', value: 'low' } });
   const nativeExec = {
     ...exec,
+    prepareNativeSocketDirectory: prepareTestNativeSocketDirectory,
     // Substitute the process boundary with the same real JSON-RPC socket transport.
     clients: { ...exec.clients, spawn: async (request: { maxFrameBytes: number; requestTimeoutMs: number;
       launch: { args?: readonly string[]; env?: Readonly<Record<string, string>> } }) => {

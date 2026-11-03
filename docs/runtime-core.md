@@ -2041,10 +2041,22 @@ Codex Session and execution-run startup use one sanitizer for closed failure
 codes and static messages, retaining bounded authentication and missing-state
 facts without copying native error prose, payloads or causes. The host's primary
 Session issue projector retains those Protocol-owned codes through publication.
-Shared Codex control allocates its Unix socket through the SDK's secure temp
-owner under `/tmp`, independent of a potentially overlong caller `TMPDIR`;
-child-process environment and the existing Windows stdio path are unchanged.
-These are development-source contracts, not certification of a loaded runner.
+Shared Codex control obtains its per-Session socket directory from the host
+Exec owner using the held native launch identity. Cross-UID Linux placement
+reuses the Session MCP directory/verified exact-UID ACL owner under `/tmp`;
+daemon-private ancestors stay private. The existing first-party native-launch
+shim creates the native-owned alias child and grants the daemon UID traversal
+only. Readiness observes alias publication without following the private socket.
+Codex 0.162.1 keeps its physical socket under its own UID-only daemon directory.
+Happier connects through Codex's existing
+`app-server proxy --sock <Session alias>` under that same executing UID,
+so it preserves Codex's native directory/socket permissions and targets the exact
+Session server. The existing supervisor owns readiness and cancellation; the
+plugin supplies no UID and has no owner-identity fallback. Session MCP retains
+its separate per-Session bearer authentication. The short Unix runtime root is
+independent of an overlong `TMPDIR`, including same-UID launches. Windows stdio
+retains its existing contract. These are development-source contracts, not
+certification of a loaded runner.
 
 Codex app-server transcript projection also has one owner for native tool
 identity. Typed commands and their raw echoes share that identity; code-mode

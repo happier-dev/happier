@@ -43,6 +43,7 @@ import type { ConnectedServiceQuotasCoordinator } from '../connectedServices/quo
 import { ensureSessionDirectory } from './ensureSessionDirectory';
 import { createManagedSessionDirectories } from '@/session/creation/managedSessionDirectories';
 import { seedManagedSessionDirectory } from '@/session/creation/seedManagedSessionDirectory';
+import { prepareDaemonAgentIsolationIdentity } from '../spawn/prepareDaemonAgentIsolationIdentity';
 import { isDefiniteSpawnPreAdmissionRejection } from '@/session/services/spawnPreAdmissionRejection';
 import { readSessionCreationTerminalSpawnErrorDetail } from '@/api/session/sessionCreationTerminalSpawnErrorDetail';
 import { prepareExecuteSpawnSessionRequest } from './prepareExecuteSpawnSessionRequest';
@@ -418,9 +419,7 @@ export async function executeSpawnSessionRequest(
             ...(prepared.connectedServiceMaterializationIdentityV1
                 ? { connectedServiceMaterializationIdentityV1: prepared.connectedServiceMaterializationIdentityV1 } : {}),
         };
-        const managedDirectoryOwner = prepared.directoryKind === 'managed'
-            ? createManagedSessionDirectories()
-            : null;
+        let managedDirectoryOwner: ReturnType<typeof createManagedSessionDirectories> | null = null;
         let managedAllocation: Readonly<{ allocationId: string; created: boolean }> | null = null;
         let childLaunchSubmitted = false;
         const rollbackManagedAllocation = async () => {
@@ -671,6 +670,18 @@ export async function executeSpawnSessionRequest(
             if (!daemonProviderLaunch.ok) {
                 return await refuseSpawn(daemonProviderLaunch.result);
             }
+            const preparedAgentIsolationIdentity = await prepareDaemonAgentIsolationIdentity({
+                hasAgentRuntime: catalogAgentId !== null, prepareAgentIsolationMember: params.prepareAgentIsolationMember,
+                readAgentIsolationEnabled: params.readAgentIsolationEnabled,
+                requesterWorkAttributionV1: options.requesterSessionBootstrap?.attribution ?? options.requesterWorkAttributionV1,
+                signal: preparationSignal ?? params.signal,
+                ...(prepared.directoryKind === 'managed' ? { managedDirectory: {
+                    directory, workspaceRoots: params.agentIsolation?.read()?.workspaceRoots ?? [],
+                } } : {}),
+            });
+            if (!preparedAgentIsolationIdentity.ok) return await refuseSpawn(preparedAgentIsolationIdentity.result);
+            managedDirectoryOwner = prepared.directoryKind === 'managed'
+                ? createManagedSessionDirectories({ payloadPlacement: preparedAgentIsolationIdentity.payloadPlacement }) : null;
             const managedDirectory = managedDirectoryOwner
                 ? await managedDirectoryOwner.prepareForSpawn({
                     directory,
@@ -924,8 +935,7 @@ export async function executeSpawnSessionRequest(
             recordPreparationPhase('requester_custody');
 
             const connectedServices = await prepareDaemonConnectedServices({
-                prepareAgentIsolationMember: params.prepareAgentIsolationMember,
-                readAgentIsolationEnabled: params.readAgentIsolationEnabled,
+                preparedAgentIsolationIdentity,
                 signal: params.signal,
                 ...(requesterRuntime ? { accountSettingsSnapshot: requesterRuntime.readAccountSettingsSnapshot(),
                     activeServerDir: requesterRuntime.activeServerDir,

@@ -62,6 +62,7 @@ export type ResolvePrepareTargetBootstrapInput = Readonly<{
   directPeerTransfer: SessionHandoffPrepareTargetJobInput['directPeerTransfer'];
   importSessionBundle: SessionHandoffPrepareTargetJobInput['importSessionBundle'];
   resolveExistingSessionState?: SessionHandoffPrepareTargetJobInput['resolveExistingSessionState'];
+  prepareManagedDirectoryPlacement?: (request: SessionHandoffPrepareTargetRequest) => Promise<SessionHandoffPrepareTargetJobInput['managedDirectoryPayloadPlacement']>;
   getTransferRouteCache: SessionHandoffPrepareTargetJobInput['getTransferRouteCache'];
   invalidateDirectPeerRouteCacheForHandoffMachines: SessionHandoffPrepareTargetJobInput['invalidateDirectPeerRouteCacheForHandoffMachines'];
 }>;
@@ -156,6 +157,19 @@ export async function resolvePrepareTargetBootstrap(
   }
 
   const jobId = persistedJob?.jobId ?? buildPrepareJobId(input.request.handoffId);
+  const existingActiveJob = input.activePrepareJobs.get(jobId);
+  // Consume ingress custody before returning. The delayed job holds only its
+  // admitted placement, never a bootstrap whose ingress lifetime has ended.
+  let managedDirectoryPayloadPlacement: SessionHandoffPrepareTargetJobInput['managedDirectoryPayloadPlacement'];
+  if (!existingActiveJob && input.request.targetDirectory?.kind === 'managed') {
+    try {
+      managedDirectoryPayloadPlacement = await input.prepareManagedDirectoryPlacement?.(input.request);
+    } catch (error) {
+      if (!error || typeof error !== 'object' || !('code' in error) || error.code !== 'agent_isolation_unavailable') throw error;
+      return { kind: 'response', response: { ok: false, errorCode: 'agent_isolation_unavailable',
+        error: 'Choose an accepted Workspace or path for this Session' } };
+    }
+  }
   const pendingUpdatedAtMs = Date.now();
   const createdAtMs = persistedJob?.createdAtMs ?? pendingUpdatedAtMs;
   const isRestartingPersistedJob = Boolean(
@@ -187,7 +201,6 @@ export async function resolvePrepareTargetBootstrap(
     status: pendingStatus,
   }));
 
-  const existingActiveJob = input.activePrepareJobs.get(jobId);
   let runJob = existingActiveJob;
   if (!runJob) {
     runJob = runSessionHandoffPrepareTargetJob({
@@ -208,6 +221,7 @@ export async function resolvePrepareTargetBootstrap(
       directPeerTransfer: input.directPeerTransfer,
       importSessionBundle: input.importSessionBundle,
       ...(input.resolveExistingSessionState ? { resolveExistingSessionState: input.resolveExistingSessionState } : {}),
+      ...(managedDirectoryPayloadPlacement ? { managedDirectoryPayloadPlacement } : {}),
       getTransferRouteCache: input.getTransferRouteCache,
       invalidateDirectPeerRouteCacheForHandoffMachines: input.invalidateDirectPeerRouteCacheForHandoffMachines,
     }).finally(() => {

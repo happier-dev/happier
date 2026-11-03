@@ -982,6 +982,8 @@ export function createNativeAgentSessionHostServices(params: Readonly<{
     sessionMachineId?: string | null;
     memoryRecallGuidanceEnabled?: boolean;
     toolsDelivery?: AgentToolsDelivery;
+    /** Opaque launch references from the owning Session MCP transport. */
+    agentEnvironment?: Readonly<Record<string, string>>;
     subagents?: AgentSessionHostServices['subagents'];
 }>): AgentSessionHostServices {
     const isSessionScopeCurrent = (): boolean => {
@@ -1273,6 +1275,7 @@ export function createNativeAgentSessionHostServices(params: Readonly<{
                     typeof entry[1] === 'string'
                 )),
             );
+            Object.assign(env, params.agentEnvironment);
             const pluginToolCatalog = await params.owners.happierTools.readPluginToolCatalog(signal);
             assertSessionScopeAvailable('happier-tools');
             signal.throwIfAborted();
@@ -5507,6 +5510,13 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                     ]),
                 ]);
             }
+            const agentEnvironment = hostRuntimeParams.agentEnvironment;
+            if (agentEnvironment) {
+                const values = Object.freeze({ ...openInputs.launchEnvironment.values, ...agentEnvironment });
+                openInputs = Object.freeze({ ...openInputs, launchEnvironment: Object.freeze({ values,
+                    unset: Object.freeze(openInputs.launchEnvironment.unset.filter(name => !Object.hasOwn(agentEnvironment, name))),
+                }) });
+            }
             recordOpenPhase('host_services');
             const operationServices = await params.createInvocationServices?.({
                 correlationId: sessionId,
@@ -5527,6 +5537,7 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
             const services = operationServices
                 ? bindNativeAgentSessionServices(operationServices, sessionServices)
                 : sessionServices;
+            const releaseMcpExecBinding = hostRuntimeParams.bindMcpExecService?.(services.exec);
             const terminalHostLaunchTransformerBinding =
                 sessionHostServices.terminalHost
                     ? installAgentChildLaunchEnvironmentTransformerForTerminalHost(
@@ -5619,7 +5630,8 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                                     } finally {
                                         terminalHostLaunchTransformerBinding
                                             ?.dispose();
-                                        await sessionHostServices.dispose();
+                                        try { await sessionHostServices.dispose(); }
+                                        finally { releaseMcpExecBinding?.(); }
                                     }
                                 }
                             }
@@ -5645,7 +5657,8 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                 agent: params.agent,
                 sourceEnvironment: openInputs.launchEnvironment.values,
             });
-            const nativeLaunch = issueAgentNativeLaunchQualifierForHost(services.exec);
+            const nativeLaunch = issueAgentNativeLaunchQualifierForHost(services.exec,
+                () => hostRuntimeParams.sessionMcpContext, () => hostRuntimeParams.mcpLaunchMaterial);
             const context = composeNativeAgentSessionRuntimeContext({
                 identity,
                 contributionId,
@@ -5666,6 +5679,7 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                         readCodec: () => runtime?.sessions?.transcriptIdentity ?? null,
                     },
                     accountSettings: hostRuntimeParams.accountSettings ?? {},
+                    get agentEnvironment() { return hostRuntimeParams.agentEnvironment; },
                     profileId: typeof hostRuntimeParams.metadata.profileId === 'string'
                         ? hostRuntimeParams.metadata.profileId
                         : null,

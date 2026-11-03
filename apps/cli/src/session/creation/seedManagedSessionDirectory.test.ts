@@ -1,4 +1,4 @@
-import { access, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -17,6 +17,24 @@ describe('managed fork workspace seeding', () => {
     });
   });
   afterAll(async () => { await runtimeLease?.release(); await pluginReloadController.shutdown(); });
+  it.skipIf(process.platform === 'win32')('seeds the recorded accepted workspace placement without creating a private payload', async () => {
+    const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-managed-fork-placement-'));
+    try {
+      const workspaceRoot = join(activeServerDir, 'workspace');
+      await mkdir(workspaceRoot);
+      const owner = createManagedSessionDirectories({ activeServerDir,
+        payloadPlacement: { root: workspaceRoot, agentUid: process.getuid!() } });
+      const source = await owner.materializeForFreshSpawn({ sessionCreationTag: 'source' });
+      await owner.bind({ allocationId: source.allocationId, sessionId: 'source' });
+      await writeFile(join(source.directory, 'notes.txt'), 'retained source files');
+      const target = await owner.materializeForFreshSpawn({ sessionCreationTag: 'child' });
+      expect(await seedManagedSessionDirectory({ activeServerDir, sessionCreationTag: 'child', targetPath: target.directory,
+        seed: { sourceSessionId: 'source', sourceSessionCreationTag: 'source', sourcePath: source.directory },
+      })).toEqual({ ok: true });
+      expect(await readFile(join(target.directory, 'notes.txt'), 'utf8')).toBe('retained source files');
+      await expect(access(join(activeServerDir, 'session-directories', target.allocationId))).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally { await rm(activeServerDir, { recursive: true, force: true }); }
+  });
   it.each(['source', 'child'] as const)('copies a plain source workspace privately and deleting %s cannot remove the other copy', async (removed) => {
     const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-managed-fork-seed-'));
     try {

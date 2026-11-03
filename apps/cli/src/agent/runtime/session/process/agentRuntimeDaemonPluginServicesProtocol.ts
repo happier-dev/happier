@@ -1,3 +1,5 @@
+import { SessionMcpLocalContextSchema } from '@/mcp/runtime/sessionMcpLocalContext';
+import { HOST_AGENT_ISOLATION_LAUNCH_KINDS } from '@/daemon/agentIsolation/agentIsolationLaunchKind';
 import { lazyZodSchema } from '@happier-dev/protocol/lazyZodSchema';
 import { z } from 'zod/mini';
 import { z as zMini } from 'zod/mini';
@@ -29,6 +31,15 @@ import {
 } from './agentRuntimeDaemonServiceTurnWitness';
 import { asHostProtocolZod } from '@/plugins/runtime/protocolComposableZodAdapter';
 import { AccountNoticeItemTypeV1Schema, PluginNoticePageV1Schema } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
+
+import { AgentLaunchMaterializationSchema, AgentLaunchNativeIdentitySchema, AgentLaunchNativeSocketDirectorySchema } from '@/daemon/agentIsolation/agentLaunchFrame';
+import { AgentIsolationMemberNativeIdentitySchema } from './agentRuntimeRunnerProtocol';
+
+const McpLaunchMaterialSchema = lazyZodSchema(() => asHostProtocolZod(AgentLaunchMaterializationSchema.safeExtend({
+    memberIdentity: z.optional(AgentIsolationMemberNativeIdentitySchema),
+    nativeIdentity: AgentLaunchNativeIdentitySchema.omit({ username: true }),
+    nativeSocketDirectory: AgentLaunchNativeSocketDirectorySchema.optional(),
+})));
 
 const BoundedIdSchema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1), z.maxLength(512)));
 const HostPluginContributionIdentityV1Schema = lazyZodSchema(() => asHostProtocolZod(
@@ -1181,13 +1192,19 @@ export const RUNNER_DAEMON_PLUGIN_SERVICE_OPERATION_V1_SCHEMAS = [
         ...OptionalWitnessSchema,
         systemToolResolutionId: z.optional(BoundedIdSchema),
         agentNativeLaunch: z.optional(z.literal(true)),
+        sessionMcpContext: z.optional(SessionMcpLocalContextSchema),
+        mcpLaunchMaterial: z.optional(McpLaunchMaterialSchema),
         request: ExecSpawnRequestSchema,
     })),
     lazyZodSchema(() => z.strictObject({
         kind: z.literal('plugin_exec.resolved_agent_launch.authorize_v1'),
         ...OperationBaseSchema,
         ...OptionalWitnessSchema,
-        launch: z.strictObject({
+        phase: z.optional(z.enum(['admit', 'resolved'])),
+        agentLaunchKind: z.enum(HOST_AGENT_ISOLATION_LAUNCH_KINDS),
+        sessionMcpContext: z.optional(SessionMcpLocalContextSchema),
+        mcpLaunchMaterial: z.optional(McpLaunchMaterialSchema),
+        launch: z.optional(z.strictObject({
             command: z.string().check(z.minLength(1)),
             args: z.array(z.string()),
             env: StringRecordSchema,
@@ -1198,8 +1215,20 @@ export const RUNNER_DAEMON_PLUGIN_SERVICE_OPERATION_V1_SCHEMAS = [
             maxStderrBytes: z.optional(SafeNonNegativeIntegerSchema),
             processOwnerTag: z.optional(BoundedTextSchema),
             waitForGracefulRootExitBeforeTreeStop: z.optional(z.literal(true)),
-        }),
-    })),
+        })),
+    }).check(z.superRefine((operation, context) => {
+        // Keep the existing object discriminator used by operation declaration
+        // readers. The phase refines this one private operation, not its kind.
+        if (operation.phase === 'admit') {
+            for (const field of ['launch', 'sessionMcpContext', 'mcpLaunchMaterial'] as const) {
+                if (Object.prototype.hasOwnProperty.call(operation, field)) context.addIssue({
+                    code: 'custom', path: [field], message: 'Admission accepts no launch material',
+                });
+            }
+        } else if (operation.launch === undefined) context.addIssue({
+            code: 'custom', path: ['launch'], message: 'Resolved authorization requires its launch tuple',
+        });
+    }))),
     lazyZodSchema(() => z.strictObject({
         kind: z.literal('plugin_exec.launch.release_v1'),
         ...OperationBaseSchema,

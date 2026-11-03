@@ -1,3 +1,4 @@
+import { codexNativeStartupAuthFailureCases, withCodexNativeAttachFixture } from '../../../../../../../packages/plugins/codex/src/agent/runtime/appServer/runtime.nativeAttach.test-support';
 import type { RegisteredSessionStateFieldMutationV1 } from '@/api/session/client/transport/mutations/sessionClientDurableMutationTypes';
 import type { RuntimeActivitySnapshotTail } from '@/api/session/sessionClientPort';
 import { hostSubagentStore } from '@/session/subagents/hostSubagentStore';
@@ -13755,4 +13756,44 @@ describe('runHostSessionRuntime', () => {
       }),
     );
   });
+  it('retains the real Codex startup cause through the runner construction-failure log', async () => {
+    const [{ createNativeAgentRuntimeSessionPlan }, fixtures, { buildPluginSessionBindingInput }] = await Promise.all([
+      import('@/agent/runtime/registry/engineRegistry/nativeAgentSession'),
+      import('@/agent/runtime/registry/engineRegistry/nativeAgentSession.testkit'),
+      import('@/plugins/runtime/runtimeCore/plugin/sessionLaunch'),
+    ]);
+    const harness = createHarness();
+    const diagnostic = vi.spyOn(logger, 'infoFile');
+    try {
+      await withCodexNativeAttachFixture(async ({ openConfiguredSession }) => {
+        const agentId = 'acme-codex-startup-cause';
+        const plan = await createNativeAgentRuntimeSessionPlan({
+          ...fixtures.createExternalContributionFixtures(agentId), lease: fixtures.createLease(agentId),
+          runtime: { sessions: { open: async () => {
+            await openConfiguredSession();
+            throw new Error('Expected native initialize to fail');
+          } } },
+          createSessionHostServiceOwners: fixtures.createSessionHostServiceOwners,
+          sessionInput: buildPluginSessionBindingInput({ credentials: harness.opts.credentials, directory: '/repo',
+            backendTarget: { kind: 'backend', backendId: agentId } }),
+        });
+        if (!plan.config.createSessionRuntime) throw new Error('Native Session factory missing');
+        setSessionRuntimeFactory(harness.config, plan.config.createSessionRuntime);
+        await expect(runHostSessionRuntime(harness.opts, harness.config, harness.deps)).rejects.toMatchObject({
+          code: 'agent_startup_rpc_rejected',
+          details: { failureCause: { phase: 'client_start', providerErrorCode: -32000 } },
+        });
+      }, { initializeFailure: { code: -32000, message: '/private/native/credential PRIVATE_TOKEN' } });
+      const construction = diagnostic.mock.calls.find(([message]) => String(message).includes('Session construction failed'));
+      expect(construction?.[1]).toMatchObject({ phase: 'agent_runtime_open',
+        originalCode: 'agent_startup_rpc_rejected',
+        failureCause: { phase: 'client_start', providerErrorCode: -32000 },
+      });
+      expect(JSON.stringify(construction)).not.toMatch(/PRIVATE|private\/native/);
+      expect(harness.runtime.sendPrompt).not.toHaveBeenCalled();
+      expect(harness.session.close).toHaveBeenCalledOnce();
+    } finally { diagnostic.mockRestore(); }
+  });
+
+
 });

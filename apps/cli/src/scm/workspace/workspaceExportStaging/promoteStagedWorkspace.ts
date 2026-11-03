@@ -10,6 +10,7 @@ import { readWorkspaceStagingRootMarker, type WorkspaceStagingRoot } from './cre
 import { verifyStagedWorkspace, type VerifyStagedWorkspaceResult } from './verifyStagedWorkspace';
 
 type WorkspaceFileManifestEntry = Extract<WorkspaceManifest['entries'][number], { kind: 'file' }>;
+export type WorkspaceMaterializedEntryAccess = (entry: Readonly<{ path: string; directory: boolean }>) => Promise<void>;
 
 function resolveWorkspaceEntryPath(params: Readonly<{
     workspaceRoot: string;
@@ -29,21 +30,20 @@ function resolveWorkspaceEntryPath(params: Readonly<{
 async function applyPromotedWorkspaceMetadata(params: Readonly<{
     workspaceDirectory: string;
     expectedManifest: WorkspaceManifest;
+    prepareEntryAccess?: WorkspaceMaterializedEntryAccess;
 }>): Promise<void> {
-    const fileEntries = params.expectedManifest.entries.filter(
-        (entry): entry is WorkspaceFileManifestEntry => entry.kind === 'file',
-    );
-
-    for (const entry of fileEntries) {
-        await applyWorkspaceMetadata({
+    for (const entry of params.expectedManifest.entries) {
+        if (entry.kind === 'symlink') continue;
+        const entryPath = resolveWorkspaceEntryPath({ workspaceRoot: params.workspaceDirectory, relativePath: entry.relativePath });
+        if (entry.kind === 'file') await applyWorkspaceMetadata({
             entryKind: 'file',
-            entryPath: resolveWorkspaceEntryPath({
-                workspaceRoot: params.workspaceDirectory,
-                relativePath: entry.relativePath,
-            }),
+            entryPath,
             mode: entry.executable ? 0o755 : 0o644,
         });
+        // Apply exact native access after chmod, which otherwise masks ACL grants.
+        await params.prepareEntryAccess?.({ path: entryPath, directory: entry.kind === 'directory' });
     }
+    await params.prepareEntryAccess?.({ path: params.workspaceDirectory, directory: true });
 }
 
 export type PromoteStagedWorkspaceResult = Readonly<{
@@ -83,6 +83,7 @@ export async function promoteStagedWorkspace(params: Readonly<{
     targetWorkspaceDirectory: string;
     expectedManifest: WorkspaceManifest;
     scmRegistry?: ScmBackendRegistry;
+    prepareEntryAccess?: WorkspaceMaterializedEntryAccess;
 }>): Promise<PromoteStagedWorkspaceResult> {
     await assertVerifiedStagingRootMarker(params.stagingRoot);
     await assertTargetWorkspaceDoesNotExist(params.targetWorkspaceDirectory);
@@ -101,6 +102,7 @@ export async function promoteStagedWorkspace(params: Readonly<{
     await applyPromotedWorkspaceMetadata({
         workspaceDirectory: params.stagingRoot.workspaceDirectory,
         expectedManifest: params.expectedManifest,
+        prepareEntryAccess: params.prepareEntryAccess,
     });
 
     await mkdir(dirname(params.targetWorkspaceDirectory), { recursive: true });

@@ -1,3 +1,4 @@
+import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import type { AgentIsolationEffectDependencies } from '@/daemon/agentIsolation/agentIsolationProvisioner';
 import { admitDeploymentArchiveFilesystemForHost } from '@/deployments/targets/ownServer/archiveFilesystemAdmission';
 import { isHostRequesterUnrestrictedOwner, resolveHostRequesterAgentPlacementForHost } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
@@ -363,6 +364,8 @@ import { settleMachineCaddyFirewallForHost } from '@/machines/reachability/machi
 import { observeOwnDaemonReachability } from '@/machines/reachability/observeOwnDaemonReachability';
 import type { HostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import { prepareRequesterNativeOperation, type PrepareRequesterNativeOperationInput } from '@/daemon/agentIsolation/prepareNativeOperation';
+import { createSessionAgentIsolationMemberPreparation } from '@/daemon/agentIsolation/sessionPreparation';
+import { prepareDaemonAgentIsolationIdentity } from '@/daemon/spawn/prepareDaemonAgentIsolationIdentity';
 import { registerDaemonMachineAdminAccessRpcHandlers, type DaemonMachineAdminAccessRoutes } from '@/rpc/handlers/daemonMachineAdminAccess';
 import { registerDaemonMachineAgentIsolationRpcHandlers } from '@/rpc/handlers/daemonMachineAgentIsolation';
 import { resolveInstalledMachineEffectCli } from '@/machines/adminAccess/runElevatedEffect';
@@ -2013,6 +2016,23 @@ export class ApiMachineClient {
                 readSpawnFailureLimits: this.lifecycleDependencies.readSpawnFailureLimits,
                 ownerRemainder: this.lifecycleDependencies.ownerRemainder,
                 agentIsolation: this.lifecycleDependencies.agentIsolation,
+                prepareManagedSessionHandoffDirectoryPlacement: async (request, context) => {
+                    const signal = context?.signal ?? new AbortController().signal;
+                    const prepareMember = createSessionAgentIsolationMemberPreparation({
+                        machineId: this.machine.id, custodianAccountId: readAccountIdFromToken(this.token),
+                        agentIsolation: this.lifecycleDependencies.agentIsolation,
+                        resolveCurrentMachineExecutionOriginContext: resolveExternalActionOrigin,
+                    })(context?.requesterSessionBootstrap ? { bootstrap: context.requesterSessionBootstrap } : null, signal);
+                    const placement = await prepareDaemonAgentIsolationIdentity({ hasAgentRuntime: true,
+                        prepareAgentIsolationMember: prepareMember,
+                        readAgentIsolationEnabled: () => this.getAgentIsolationSnapshot().enabled,
+                        requesterWorkAttributionV1: context?.requesterSessionBootstrap?.attribution, signal,
+                        managedDirectory: { directory: request.targetPath, workspaceRoots: this.lifecycleDependencies.agentIsolation?.read()?.workspaceRoots ?? [] },
+                    });
+                    if (!placement.ok) throw new PluginError({ code: 'agent_isolation_unavailable',
+                        message: 'Choose an accepted Workspace or path for this Session', retryable: false });
+                    return placement.payloadPlacement;
+                },
                 nativeOperationRuntime: { prepareNativeOperation: input => this.prepareNativeOperation(input) },
                 resolveHostHomeServerIdentityId: async signal => (await resolveExternalActionOrigin(signal))?.serverIdentityId ?? null,
                 mcpServers: { ...deps?.mcpServers, readCredentials: readExecutionRunAccountCredentials,

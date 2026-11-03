@@ -38,6 +38,8 @@ export type CodexAppServerTransport =
         kind: 'unixWebSocket';
         socketPath: string;
         realtimeConversationAdvertised: boolean;
+        /** Host-held native identity requires its exact-socket proxy. */
+        nativeProxy?: true;
     }>;
 
 function isCodexProxyTransport(transport: CodexAppServerTransport | undefined): transport is Exclude<CodexAppServerTransport, { kind: 'stdio' }> {
@@ -190,6 +192,9 @@ export function buildCodexAppServerArgs(params: Readonly<{
 }>): string[] {
     if (params.transport?.kind === 'daemonProxy') {
         return ['app-server', 'proxy'];
+    }
+    if (params.transport?.kind === 'unixWebSocket' && params.transport.nativeProxy) {
+        return ['app-server', 'proxy', '--sock', params.transport.socketPath];
     }
     const userMcpOverrides = params.disableUserMcpServers === true
         ? readCodexMcpServerKeysFromConfigToml(params.env).map((key) => `mcp_servers.${key}.enabled=false`)
@@ -480,7 +485,7 @@ async function createUnlockedCodexNativeAppServerClient(params: CodexNativeAppSe
     const enableRealtimeConversation = !proxyTransport && realtimeConversationAdvertised;
     let handle: Pick<PluginProtocolClientHandle<'jsonRpc'>, 'client' | 'wait' | 'dispose'> | PluginJsonRpcConnection;
     try {
-        handle = params.transport?.kind === 'unixWebSocket'
+        handle = params.transport?.kind === 'unixWebSocket' && !params.transport.nativeProxy
             ? await params.exec.clients.connectJsonRpc({
                 endpoint: { kind: 'unixWebSocket', socketPath: params.transport.socketPath },
                 maxFrameBytes: readJsonLineMaxChars(env), requestTimeoutMs: readCodexAppServerRpcTimeoutMs(env),
@@ -492,9 +497,9 @@ async function createUnlockedCodexNativeAppServerClient(params: CodexNativeAppSe
                 disableUserMcpServers: params.disableUserMcpServers,
                 enableRealtimeConversation,
                 transport: params.transport,
-            }), params.signal || (params.nativeLaunch && !proxyTransport) ? {
+            }), params.signal || (params.nativeLaunch && params.transport?.kind !== 'daemonProxy') ? {
                 ...(params.signal ? { signal: params.signal } : {}),
-                ...(params.nativeLaunch && !proxyTransport ? { nativeLaunch: params.nativeLaunch } : {}),
+                ...(params.nativeLaunch && params.transport?.kind !== 'daemonProxy' ? { nativeLaunch: params.nativeLaunch } : {}),
             } : undefined) as PluginProtocolClientHandle<'jsonRpc'>;
     } catch (error) {
         annotateUnixSocketStartupFailure(error, params.transport);

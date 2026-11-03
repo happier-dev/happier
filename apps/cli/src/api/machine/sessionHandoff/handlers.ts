@@ -126,6 +126,7 @@ export type SessionHandoffRuntimeDependencies = Readonly<{
 
 export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
   rpcHandlerManager: RpcHandlerManager;
+  prepareManagedDirectoryPlacement?: Parameters<typeof createSessionHandoffPrepareTargetActionHandler>[0]['prepareManagedDirectoryPlacement'];
   requesterSessionRuntime?: NonNullable<Parameters<typeof registerSessionLifecycleRpcHandlers>[0]['requesterSessionRuntime']>;
   requesterBootstrapBoundary?: NonNullable<Parameters<typeof registerSessionLifecycleRpcHandlers>[0]['requesterBootstrapBoundary']>;
   sessionOperationExclusion?: ExternalSessionOperationExclusionOwner;
@@ -457,6 +458,7 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
     directPeerTransfer: params.directPeerTransfer,
     importSessionBundle,
     existingStateSupported,
+    ...(params.prepareManagedDirectoryPlacement ? { prepareManagedDirectoryPlacement: params.prepareManagedDirectoryPlacement } : {}),
     resolveExistingSessionState: async (request, targetPath, context) => {
       if (!request.sessionId) throw Object.assign(new Error('Existing Session identity is missing'), { code: 'invalid_request' });
       return resolveExistingSessionState({ ...request, sessionId: request.sessionId }, targetPath, context);

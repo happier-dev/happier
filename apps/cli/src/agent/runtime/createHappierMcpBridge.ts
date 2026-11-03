@@ -1,3 +1,4 @@
+import { SESSION_MCP_CONTEXT_FILE_ENV, supportsSessionMcpLocalTransport, type SessionMcpLocalContext, type SessionMcpLocalTransportOptions } from '@/mcp/runtime/sessionMcpLocalTransport'
 import type { HappyMcpSessionClient } from '@/mcp/startHappyServer'
 import { resolveNodeBackedMcpServerCommand } from '@/mcp/runtime/resolveNodeBackedMcpServerCommand'
 import type { McpServerConfig } from '@/agent'
@@ -59,19 +60,23 @@ async function resolveHappierMcpServerConfig(
   _commandMode: 'direct-script' | 'current-process',
   accountSettings?: AccountSettings | null,
   scopedActionSettings?: ActionsSettingsV1,
+  sessionLocal?: Readonly<{ contextFilePath?: string }>,
 ): Promise<McpServerConfig> {
   const config = await resolveNodeBackedMcpServerCommand({
     distEntrypointSegments: ['mcp', 'bridges', 'happierMcpStdioBridge.mjs'],
     sourceEntrypointSegments: ['mcp', 'bridges', 'happierMcpStdioBridge.ts'],
-    args: ['--url', url],
+    args: sessionLocal ? ['--session-local'] : ['--url', url],
     preferSourceEntrypoint: isTruthyEnvFlag(process.env.HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT),
   })
-  return withActionSettingsEnv(config, accountSettings, scopedActionSettings)
+  return withActionSettingsEnv(sessionLocal?.contextFilePath ? {
+    ...config, env: { ...config.env, [SESSION_MCP_CONTEXT_FILE_ENV]: sessionLocal.contextFilePath },
+  } : config, accountSettings, scopedActionSettings)
 }
 
 export async function createHappierMcpBridge(
   session: HappyMcpSessionClient,
   opts: {
+    localTransport?: SessionMcpLocalTransportOptions
     commandMode?: 'direct-script' | 'current-process'
     mcpToolCallIdMetaKey?: string
     sessionCredentials?: StoredCredentials | null
@@ -88,9 +93,11 @@ export async function createHappierMcpBridge(
 ): Promise<{
   happierMcpServer: {
     url: string
+    localContext?: SessionMcpLocalContext
+    contextFilePath?: string
     supportedSessionReadActions: readonly SessionRunPromptReadActionIdV1[]
     readToolNames: (signal?: AbortSignal) => Promise<readonly string[]>
-    stop: () => void
+    stop: () => Promise<void>
   }
   mcpServers: Record<string, McpServerConfig>
 }> {
@@ -100,6 +107,7 @@ export async function createHappierMcpBridge(
 export async function createHappierMcpBridgeWithOptions(
   session: HappyMcpSessionClient,
   opts: {
+    localTransport?: SessionMcpLocalTransportOptions
     commandMode?: 'direct-script' | 'current-process'
     mcpToolCallIdMetaKey?: string
     sessionCredentials?: StoredCredentials | null
@@ -116,14 +124,18 @@ export async function createHappierMcpBridgeWithOptions(
 ): Promise<{
   happierMcpServer: {
     url: string
+    localContext?: SessionMcpLocalContext
+    contextFilePath?: string
     supportedSessionReadActions: readonly SessionRunPromptReadActionIdV1[]
     readToolNames: (signal?: AbortSignal) => Promise<readonly string[]>
-    stop: () => void
+    stop: () => Promise<void>
   }
   mcpServers: Record<string, McpServerConfig>
 }> {
   const { startHappyServer } = await import('@/mcp/startHappyServer')
   const happierMcpServer = await startHappyServer(session, {
+    ...(opts.localTransport ? { localTransport: opts.localTransport }
+      : supportsSessionMcpLocalTransport() && process.getuid ? { localTransport: { agentUid: process.getuid() } } : {}),
     mcpToolCallIdMetaKey: opts.mcpToolCallIdMetaKey,
     sessionCredentials: opts.sessionCredentials ?? opts.credentials ?? null,
     credentials: opts.credentials ?? null,
@@ -144,13 +156,20 @@ export async function createHappierMcpBridgeWithOptions(
   })
   const commandMode = opts.commandMode ?? 'direct-script'
   const scopedActionSettings = opts.actionsSettingsProvider?.getActionsSettings()
-  const mcpServers: Record<string, McpServerConfig> = {
+  let mcpServers: Record<string, McpServerConfig>
+  try {
+    mcpServers = {
     happier: await resolveHappierMcpServerConfig(
       happierMcpServer.url,
       commandMode,
       opts.accountSettings ?? null,
       scopedActionSettings,
+      happierMcpServer.localContext ? { contextFilePath: happierMcpServer.contextFilePath } : undefined,
     ),
+  }
+  } catch (error) {
+    await happierMcpServer.stop()
+    throw error
   }
 
   return {

@@ -1,3 +1,4 @@
+import type { SessionMcpLocalContext } from '@/mcp/runtime/sessionMcpLocalTransport';
 import { randomUUID } from 'node:crypto';
 import { buildScopedProcessEnv } from '@/utils/processEnv/buildScopedProcessEnv';
 import { PLUGIN_SERVICE_DESCRIPTORS } from '@/plugins/runtime/invocation/services/unavailable';
@@ -218,6 +219,7 @@ type RunnerAuthorizedLaunchWire = Readonly<{
     env: Readonly<Record<string, string>>;
     cwd?: string;
     stdin?: string;
+    stdinPreamble?: string;
     timeoutMs?: number;
     maxStdoutBytes?: number;
     maxStderrBytes?: number;
@@ -246,6 +248,10 @@ function isRunnerAuthorizedLaunchWire(
         && (
             value.stdin === undefined
             || typeof value.stdin === 'string'
+        )
+        && (
+            value.stdinPreamble === undefined
+            || typeof value.stdinPreamble === 'string'
         )
         && (
             value.timeoutMs === undefined
@@ -2581,11 +2587,12 @@ export async function prepareRunnerDaemonPluginServices(
                 message: 'Daemon returned an invalid process launch authorization' });
         }
         const authorizationId = raw.authorizationId;
-        const { stdin, ...launch } = raw.launch;
+        const { stdin, stdinPreamble, ...launch } = raw.launch;
         let released = false;
         return Object.freeze({ ...launch,
             args: Object.freeze([...launch.args]), env: Object.freeze({ ...launch.env }),
             ...(stdin === undefined ? {} : { stdin: new Uint8Array(Buffer.from(stdin, 'base64')) }),
+            ...(stdinPreamble === undefined ? {} : { stdinPreamble: new Uint8Array(Buffer.from(stdinPreamble, 'base64')) }),
             release() {
                 if (released) return;
                 released = true;
@@ -2703,7 +2710,9 @@ export async function prepareRunnerDaemonPluginServices(
             >[0] & Readonly<{ timeoutMs?: number }>,
             options?: Parameters<
                 PluginServices['exec']['spawn']
-            >[1] & Readonly<{ agentNativeLaunch?: true }>,
+            >[1] & Readonly<{ agentNativeLaunch?: true; sessionMcpContext?: SessionMcpLocalContext;
+                mcpLaunchMaterial?: Extract<RunnerDaemonPluginServiceOperationV1,
+                    { kind: 'plugin_exec.launch.authorize_v1' }>['mcpLaunchMaterial'] }>,
             systemToolResolutionId?: string,
         ) {
             assertAvailable('exec');
@@ -2716,6 +2725,9 @@ export async function prepareRunnerDaemonPluginServices(
                         'plugin_exec.launch.authorize_v1',
                     ...requestBase(),
                     ...(options?.agentNativeLaunch ? { agentNativeLaunch: true as const } : {}),
+                    ...(options?.sessionMcpContext ? { sessionMcpContext: options.sessionMcpContext } : {}),
+                    ...(options?.mcpLaunchMaterial ? { mcpLaunchMaterial: { ...options.mcpLaunchMaterial,
+                    selectedMaterials: [...options.mcpLaunchMaterial.selectedMaterials] } } : {}),
                     ...(systemToolResolutionId
                         ? { systemToolResolutionId }
                         : {}),
@@ -2762,11 +2774,20 @@ export async function prepareRunnerDaemonPluginServices(
             );
             return readAuthorizedExecLaunch(raw);
         },
+        async admitAgentNativeLaunch(kind, signal) {
+            assertAvailable('exec');
+            await dispatch<null>({ kind: 'plugin_exec.resolved_agent_launch.authorize_v1',
+                ...requestBase(), phase: 'admit', agentLaunchKind: kind }, { signal });
+        },
         async authorizeResolvedAgentNativeLaunch(launch, options) {
             assertAvailable('exec');
             const { stdin, release: _release, ...tuple } = launch;
             const raw = parseObjectResult(await dispatch<unknown>({
                 kind: 'plugin_exec.resolved_agent_launch.authorize_v1', ...requestBase(),
+                agentLaunchKind: options?.agentLaunchKind ?? 'exec',
+                ...(options?.sessionMcpContext ? { sessionMcpContext: options.sessionMcpContext } : {}),
+                ...(options?.mcpLaunchMaterial ? { mcpLaunchMaterial: { ...options.mcpLaunchMaterial,
+                    selectedMaterials: [...options.mcpLaunchMaterial.selectedMaterials] } } : {}),
                 launch: { ...tuple, args: [...tuple.args], ...(stdin === undefined ? {} : { stdin: Buffer.from(stdin).toString('base64') }) },
             }, options), 'plugin_exec_launch_authorization_invalid', 'Daemon returned an invalid process launch authorization');
             return readAuthorizedExecLaunch(raw);

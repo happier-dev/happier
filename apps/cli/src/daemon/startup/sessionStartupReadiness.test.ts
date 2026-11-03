@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { configuration, reloadConfiguration } from '@/configuration';
 import { reportSessionToDaemonIfRunning } from '@/agent/runtime/startupSideEffects';
+import { readSessionPreparationFailureDiagnostic } from '@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue';
 import { notifyDaemonSessionStarted } from '@/daemon/controlClient';
 import { AGENT_RUNTIME_DAEMON_SERVICES_PATH, AgentRuntimeDaemonServiceResponseV1Schema } from '@/agent/runtime/session/process/agentRuntimeDaemonServiceProtocol';
 import { createAgentSessionRunnerFactoryBinding } from '@/plugins/runtime/runner/agentSessionRunnerFactoryBinding';
@@ -36,6 +37,28 @@ import { createSessionStartupReadinessHandler } from './sessionStartupReadiness'
 afterEach(() => { vi.unstubAllEnvs(); reloadConfiguration(); });
 
 describe('session startup acknowledgement', () => {
+    it('retains the native connection refusal through the real loopback readiness report without endpoint or credential content', async () => {
+        const listener = createServer();
+        await new Promise<void>(resolve => listener.listen(0, '127.0.0.1', resolve));
+        const address = listener.address();
+        if (!address || typeof address === 'string') throw new Error('Missing fixture listener');
+        await new Promise<void>((resolve, reject) => listener.close(error => error ? reject(error) : resolve()));
+        const refusal = await reportSessionToDaemonIfRunning({
+            sessionId: 'refused-readiness-control', metadata: createTestMetadata({ startedBy: 'daemon' }), requireDaemonAck: true,
+        }, {
+            retryTimeoutMs: 0,
+            notifyDaemonSessionStartedFn: (id, snapshot, options) => notifyDaemonSessionStarted(id, snapshot, {
+                ...options, target: { pid: process.pid, httpPort: address.port, controlToken: 'private-control-token' },
+            }),
+        }).catch((error: unknown) => error);
+        expect(refusal).toMatchObject({ code: 'native_agent_privileged_effect_outcome_unknown' });
+        const diagnostic = readSessionPreparationFailureDiagnostic(refusal);
+        expect(diagnostic).toMatchObject({
+            failureCause: { phase: 'client_start', failureReason: 'unknown', code: 'ECONNREFUSED' },
+        });
+        expect(JSON.stringify(diagnostic)).not.toMatch(/private-control-token|127\.0\.0\.1|refused-readiness-control/);
+    });
+
     it.each(['service ingress', 'restart reattachment', 'foreground promotion', 'committed Team Session'] as const)(
         'settles fresh wrapper creation only after the captured child marker and runner authority are published: %s', async (phase) => {
         const home = await mkdtemp(join(tmpdir(), 'happier-fresh-wrapper-readiness-'));
@@ -104,12 +127,17 @@ describe('session startup acknowledgement', () => {
                 });
                 // A wrong control credential must fail at the real ingress,
                 // even though the matching requester Session was admitted.
-                await expect(reportSessionToDaemonIfRunning({ sessionId, metadata, requireDaemonAck: true }, {
+                const refusal = await reportSessionToDaemonIfRunning({ sessionId, metadata, requireDaemonAck: true }, {
                     retryTimeoutMs: 0,
                     notifyDaemonSessionStartedFn: (id, snapshot, options) => notifyDaemonSessionStarted(id, snapshot, {
                         ...options, target: { pid: process.pid, httpPort: address.port, controlToken: 'wrong-token' },
                     }),
-                })).rejects.toMatchObject({ code: 'native_agent_privileged_effect_outcome_unknown' });
+                }).catch((error: unknown) => error);
+                expect(refusal).toMatchObject({ code: 'native_agent_privileged_effect_outcome_unknown' });
+                expect(readSessionPreparationFailureDiagnostic(refusal)).toMatchObject({
+                    failureCause: { phase: 'client_start', failureReason: 'permission_denied', httpStatus: 401 },
+                });
+                expect(JSON.stringify(readSessionPreparationFailureDiagnostic(refusal))).not.toContain('wrong-token');
             } else {
                 const response = await app.inject({ method: 'POST', url: '/session-started',
                     headers: { 'x-happier-daemon-token': 'fresh-wrapper-token' },

@@ -1,3 +1,5 @@
+import type { Socket } from 'node:net';
+import { prepareSessionMcpLocalTransport, type SessionMcpLocalTransportOptions } from './runtime/sessionMcpLocalTransport';
 import { createServer, type OutgoingHttpHeaders, type ServerResponse } from "node:http";
 import { json } from 'node:stream/consumers';
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
@@ -112,6 +114,7 @@ export type HappyMcpSessionClient = {
 };
 
 type HappySessionToolRuntimeOptions = Readonly<{
+    localTransport?: SessionMcpLocalTransportOptions;
     mcpToolCallIdMetaKey?: string;
     sessionCredentials?: StoredCredentials | null;
     credentials?: StoredCredentials | null;
@@ -313,11 +316,24 @@ export async function startHappyServer(
     const supportedSessionReadActions = listAdmittedSessionRunReadActionIds(toolsSnapshot);
     const keepAliveIntervalMs = configuration.mcpSseKeepAliveIntervalMs;
 
+    let localTransport: Awaited<ReturnType<typeof prepareSessionMcpLocalTransport>> | undefined;
+    try {
+        if (opts?.localTransport) localTransport = await prepareSessionMcpLocalTransport(opts.localTransport);
+    } catch (error) {
+        bridgeLifetime.abort();
+        readToolInventory.dispose();
+        throw error;
+    }
+
     //
     // Create the HTTP server
     //
 
     const server = createServer(async (req, res) => {
+        if (localTransport && !localTransport.authenticate(req.headers.authorization)) {
+            res.writeHead(401, { 'content-type': 'application/json' }).end(JSON.stringify({ error: 'unauthorized' }));
+            return;
+        }
         let parsedBody: unknown;
         if (req.method === 'POST') {
             try {
@@ -439,15 +455,58 @@ export async function startHappyServer(
         }
     });
 
-    const baseUrl = await new Promise<URL>((resolve) => {
-        server.listen(0, "127.0.0.1", () => {
-            const addr = server.address() as AddressInfo;
-            resolve(new URL(`http://127.0.0.1:${addr.port}`));
-        });
+    const connections = new Set<Socket>();
+    server.on('connection', socket => {
+        connections.add(socket);
+        socket.once('close', () => connections.delete(socket));
     });
+    let stopPromise: Promise<void> | undefined;
+    const stop = (): Promise<void> => {
+        if (stopPromise) return stopPromise;
+        stopPromise = Promise.resolve().then(async () => {
+            bridgeSignal.removeEventListener('abort', onOwnerAbort);
+            bridgeLifetime.abort();
+            readToolInventory.dispose();
+            for (const socket of connections) socket.destroy();
+            await new Promise<void>(resolve => server.close(() => resolve()));
+            await localTransport?.retire();
+        }).catch(error => {
+            // Revoked authority stays revoked; a failed physical removal still
+            // belongs to this same owner for the next explicit cleanup attempt.
+            stopPromise = undefined;
+            throw error;
+        });
+        return stopPromise;
+    };
+    const onOwnerAbort = () => { void stop(); };
+    let baseUrl: URL;
+    try {
+        if (localTransport) {
+            await localTransport.listen(server);
+            // The SDK requires an HTTP URL; the dispatcher always uses the Unix socket.
+            baseUrl = new URL('http://localhost/mcp');
+        } else {
+            // Existing non-isolated Windows transport; isolated launches never enter here.
+            baseUrl = await new Promise<URL>((resolve, reject) => {
+                server.once('error', reject);
+                server.listen(0, '127.0.0.1', () => {
+                    server.off('error', reject);
+                    const addr = server.address() as AddressInfo;
+                    resolve(new URL(`http://127.0.0.1:${addr.port}`));
+                });
+            });
+        }
+        bridgeSignal.addEventListener('abort', onOwnerAbort, { once: true });
+        bridgeSignal.throwIfAborted();
+    } catch (error) {
+        await stop();
+        throw error;
+    }
 
     return {
         url: baseUrl.toString(),
+        get localContext() { return localTransport?.localContext; },
+        ...(localTransport?.contextFilePath ? { contextFilePath: localTransport.contextFilePath } : {}),
         toolNames: toolNamesSnapshot,
         readToolNames: async (signal?: AbortSignal) => {
             const operationSignal = signal ? AbortSignal.any([bridgeSignal, signal]) : bridgeSignal;
@@ -457,12 +516,7 @@ export async function startHappyServer(
             return listHappierMcpToolNames(readToolInventory(catalog).tools.map(tool => tool.name));
         },
         supportedSessionReadActions,
-        stop: () => {
-            logger.debug('[happierMCP] Stopping server');
-            bridgeLifetime.abort();
-            readToolInventory.dispose();
-            server.close();
-        }
+        stop,
     }
 }
 

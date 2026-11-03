@@ -24,29 +24,33 @@ import { callMcpToolWithResolvedTimeout } from '@/mcp/mcpToolCallRequestOptions'
 import { isActionEnabledByEnv } from '@/settings/actionsSettings';
 import { isMcpToolNameAlias, projectMcpToolNames } from '@/mcp/runtime/projectMcpToolNames';
 import { runMcpStdioBridgeLifecycle } from '@/mcp/runtime/runMcpStdioBridgeLifecycle';
+import { connectSessionMcpClient, readSessionMcpContextFromEnvironment } from '@/mcp/runtime/sessionMcpLocalTransport';
 
-function parseArgs(argv: string[]): { url: string | null; toolNameMaxLength?: number } {
+function parseArgs(argv: string[]): { url: string | null; sessionLocal: boolean; toolNameMaxLength?: number } {
   let url: string | null = null;
+  let sessionLocal = false;
   let toolNameMaxLength: number | undefined;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--url' && i + 1 < argv.length) {
       url = argv[i + 1];
       i++;
+    } else if (a === '--session-local') {
+      sessionLocal = true;
     } else if (a === '--tool-name-max-length') {
       toolNameMaxLength = Number(argv[++i]);
       projectMcpToolNames([], toolNameMaxLength);
     }
   }
-  return { url, ...(toolNameMaxLength === undefined ? {} : { toolNameMaxLength }) };
+  return { url, sessionLocal, ...(toolNameMaxLength === undefined ? {} : { toolNameMaxLength }) };
 }
 
 async function main() {
   // Resolve target HTTP MCP URL
-  const { url: urlFromArgs, toolNameMaxLength } = parseArgs(process.argv.slice(2));
+  const { url: urlFromArgs, sessionLocal, toolNameMaxLength } = parseArgs(process.argv.slice(2));
   const baseUrl = urlFromArgs || process.env.HAPPIER_HTTP_MCP_URL || '';
 
-  if (!baseUrl) {
+  if (!sessionLocal && !baseUrl) {
     // Write to stderr; never stdout.
     process.stderr.write(
       '[happier-mcp] Missing target URL. Set HAPPIER_HTTP_MCP_URL or pass --url <http://127.0.0.1:PORT>\n'
@@ -56,11 +60,19 @@ async function main() {
 
   let httpClient: Client | null = null;
   let httpClientPromise: Promise<Client> | null = null;
+  let closeHttpClient: (() => Promise<void>) | null = null;
+  const upstreamLifetime = new AbortController();
 
   async function ensureHttpClient(): Promise<Client> {
     if (httpClient) return httpClient;
     if (httpClientPromise) return await httpClientPromise;
     const pending = (async () => {
+      if (sessionLocal) {
+        const connection = await connectSessionMcpClient(await readSessionMcpContextFromEnvironment(), upstreamLifetime.signal);
+        httpClient = connection.client;
+        closeHttpClient = connection.close;
+        return connection.client;
+      }
       const client = new Client(
         { name: 'happier-stdio-bridge', version: '1.0.0' },
         { capabilities: {} }
@@ -69,6 +81,7 @@ async function main() {
       try {
         await client.connect(transport);
         httpClient = client;
+        closeHttpClient = async () => { await client.close(); };
         return client;
       } catch (error) {
         await client.close().catch(() => undefined);
@@ -141,16 +154,23 @@ async function main() {
       return { transport: stdio };
     },
     closeServer: async () => await server.close(),
-    closeUpstream: async () => await httpClient?.close(),
+    closeUpstream: async () => {
+      // Join an in-flight connection so stdio shutdown cannot orphan its socket.
+      upstreamLifetime.abort();
+      await httpClientPromise?.catch(() => undefined);
+      await closeHttpClient?.();
+    },
   });
   if (requestedSignal === 'SIGINT') process.exitCode = 130;
   if (requestedSignal === 'SIGTERM') process.exitCode = 143;
 }
 
 // Start and surface fatal errors to stderr only
-main().catch((err) => {
+main().catch((err: unknown) => {
   try {
-    process.stderr.write(`[happier-mcp] Fatal: ${err instanceof Error ? err.message : String(err)}\n`);
+    const message = process.argv.includes('--session-local')
+      ? 'mcp_socket_access_unavailable' : err instanceof Error ? err.message : String(err);
+    process.stderr.write(`[happier-mcp] Fatal: ${message}\n`);
   } finally {
     process.exit(1);
   }

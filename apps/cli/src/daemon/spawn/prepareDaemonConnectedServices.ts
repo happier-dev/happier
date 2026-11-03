@@ -1,7 +1,6 @@
-import { PluginError } from '@happier-dev/plugin-sdk';
+import { prepareDaemonAgentIsolationIdentity, type PreparedDaemonAgentIsolationIdentity, type PrepareAgentIsolationMember } from './prepareDaemonAgentIsolationIdentity';
+export type { PrepareAgentIsolationMember } from './prepareDaemonAgentIsolationIdentity';
 import { CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
-import { readAgentIsolationNativeIdentity, type AgentIsolationMemberNativeIdentity } from '../agentIsolation/agentIsolationNativeIdentity';
-import type { RequesterWorkAttributionV1 } from '../lifecycle/requesterWorkAttribution';
 import { resolveConnectedServiceMaterializedRootDir } from '../connectedServices/materialize/resolveConnectedServiceMaterializedRootDir';
 import { resolveConnectedServicesProviderStateSharingPolicyV1 } from '@happier-dev/protocol/account/settings/connected-services';
 import type { ConnectedServiceBindingsV2, ConnectedServiceMaterializationIdentityV1 } from '@happier-dev/protocol';
@@ -13,7 +12,7 @@ import type {
 import { configuration } from '@/configuration';
 import { getActiveAccountSettingsSnapshot, type ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import type { SpawnSessionOptions, SpawnSessionResult } from '@/session/shared/spawnSessionContract';
-import { SPAWN_SESSION_ERROR_CODES, projectSessionRunnerLaunchAdmissionFailure } from '@/session/shared/spawnSessionContract';
+import { SPAWN_SESSION_ERROR_CODES } from '@/session/shared/spawnSessionContract';
 import { logger } from '@/ui/logger';
 
 import {
@@ -67,14 +66,6 @@ export type MissingConnectedServiceMaterializationIdentityRepair = Readonly<{
     identity: ConnectedServiceMaterializationIdentityV1;
     persistAfterMaterialization: () => Promise<void>;
 }>;
-
-/** The admission owner binds canonical Home and Machine authority. Preparation
- * consumes its one member observation without selecting another requester.
- * Undefined selects only the admitted ordinary owner path; member refusals reject. */
-export type PrepareAgentIsolationMember = (input: Readonly<{
-    requesterWorkAttributionV1?: RequesterWorkAttributionV1;
-    signal?: AbortSignal;
-}>) => Promise<AgentIsolationMemberNativeIdentity | undefined>;
 
 function readConnectedServiceBindingsOrNull(raw: unknown): ConnectedServiceBindingsV2 | null {
     const parsed = ConnectedServicesBindingsIngressSchema.safeParse(raw);
@@ -133,6 +124,7 @@ export type PreparedDaemonConnectedServices = Readonly<{
 }>;
 
 export async function prepareDaemonConnectedServices(input: Readonly<{
+    preparedAgentIsolationIdentity?: PreparedDaemonAgentIsolationIdentity;
     prepareAgentIsolationMember?: PrepareAgentIsolationMember;
     readAgentIsolationEnabled?: () => boolean;
     signal?: AbortSignal;
@@ -240,25 +232,18 @@ export async function prepareDaemonConnectedServices(input: Readonly<{
         || 'unmaterialized-connected-services';
     const authSessionId = input.normalizedExistingSessionId || undefined;
     let auth: ConnectedServiceAuth = null;
-    let memberIdentity: AgentIsolationMemberNativeIdentity | undefined;
-    let nativeIdentity: Pick<AgentIsolationMemberNativeIdentity, 'agentUid' | 'agentGid' | 'home'> | undefined;
-    try {
-        memberIdentity = input.catalogAgentId ? await input.prepareAgentIsolationMember?.({
-            requesterWorkAttributionV1: options.requesterSessionBootstrap?.attribution
-                ?? options.requesterWorkAttributionV1,
+    let isolationIdentity = input.preparedAgentIsolationIdentity;
+    if (!isolationIdentity) {
+        const prepared = await prepareDaemonAgentIsolationIdentity({
+            hasAgentRuntime: input.catalogAgentId !== null, prepareAgentIsolationMember: input.prepareAgentIsolationMember,
+            readAgentIsolationEnabled: input.readAgentIsolationEnabled,
+            requesterWorkAttributionV1: options.requesterSessionBootstrap?.attribution ?? options.requesterWorkAttributionV1,
             signal: input.signal,
-        }) : undefined;
-        // Only the canonical admission producer may select the ordinary owner
-        // legacy account. A refused member throws and cannot reach this path.
-        nativeIdentity = memberIdentity ?? (input.prepareAgentIsolationMember
-            && input.readAgentIsolationEnabled?.() === true && input.catalogAgentId
-            ? await readAgentIsolationNativeIdentity(input.signal) : undefined);
-    } catch (error) {
-        if (!(error instanceof PluginError) || error.code !== 'agent_isolation_unavailable') throw error;
-        return { ok: false, result: projectSessionRunnerLaunchAdmissionFailure({
-            kind: 'launch_error', code: 'agent_isolation_unavailable', message: 'Member execution requires owner setup',
-        })! };
+        });
+        if (!prepared.ok) return prepared;
+        isolationIdentity = prepared;
     }
+    const { memberIdentity, nativeIdentity } = isolationIdentity;
     const agentLaunchTarget = nativeIdentity && input.catalogAgentId ? {
         ...(memberIdentity ? { memberIdentity } : {}),
         runtimeHome: resolveConnectedServiceMaterializedRootDir({ baseDir: nativeIdentity.home,

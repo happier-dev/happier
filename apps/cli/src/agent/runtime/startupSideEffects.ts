@@ -20,6 +20,7 @@ import type {
     PersistedTakeoverAdmissionPhase,
 } from '@/daemon/spawn/persistedTakeoverAdmission';
 import type { SessionMetadataPublisherPreconditionV1 } from '@happier-dev/protocol';
+import type { SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 
 type DaemonReportDeps = {
     notifyDaemonSessionStartedFn?: typeof notifyDaemonSessionStarted;
@@ -44,9 +45,17 @@ const inFlightDaemonSessionReports = new Map<string, InFlightDaemonSessionReport
 export class DaemonSessionReadinessError extends Error {
     readonly code = 'native_agent_privileged_effect_outcome_unknown' as const;
 
-    constructor(message: string) {
+    readonly details: Readonly<{ failureCause: NonNullable<SessionRuntimeIssueV1['failureCause']> }>;
+
+    constructor(message: string, diagnostic: Pick<Awaited<ReturnType<typeof notifyDaemonSessionStarted>>, 'httpStatus' | 'transportErrorCode'> = {}) {
         super(`Daemon session readiness was not acknowledged: ${message || 'unknown daemon report failure'}`);
         this.name = 'DaemonSessionReadinessError';
+        this.details = { failureCause: {
+            phase: 'client_start',
+            failureReason: diagnostic.httpStatus === 401 || diagnostic.httpStatus === 403 ? 'permission_denied' : 'unknown',
+            ...(diagnostic.httpStatus !== undefined ? { httpStatus: diagnostic.httpStatus } : {}),
+            ...(diagnostic.transportErrorCode ? { code: diagnostic.transportErrorCode } : {}),
+        } };
     }
 }
 
@@ -320,6 +329,7 @@ async function runDaemonSessionReport(
         const boundedAttemptTimeoutMs = Math.min(reportAttemptTimeoutMs, Math.max(100, retryTimeoutMs));
 
         let failure: unknown = null;
+        let diagnostic: Awaited<ReturnType<typeof notifyDaemonSessionStarted>> | undefined;
         try {
             logger.debug(`[START] Reporting session ${sessionId} to daemon (attempt ${attempt})`);
             const result = await notifyFn(sessionId, metadata, {
@@ -332,6 +342,7 @@ async function runDaemonSessionReport(
                 return;
             }
             failure = result.error;
+            diagnostic = result;
         } catch (error) {
             failure = error;
         }
@@ -340,7 +351,7 @@ async function runDaemonSessionReport(
         if (!isTransientDaemonReportError(message) || timedOut) {
             logger.debug('[START] Failed to report to daemon (may not be running):', failure);
             if (state.requireDaemonAck) {
-                throw new DaemonSessionReadinessError(message);
+                throw new DaemonSessionReadinessError(message, diagnostic);
             }
             return;
         }
