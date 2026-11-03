@@ -32,13 +32,12 @@ export function projectAccountRowsReadHttpResponse(rows: readonly unknown[], url
 }
 
 /** Account HTTP is the system boundary; real CLI row/graph admission runs beneath this adapter. */
-export function mockProjectAccountRowsHttpBoundary(rows: unknown[], options: Readonly<{
+export function createProjectAccountRowsHttpBoundary(rows: unknown[], options: Readonly<{
   beforeMutation?: (request: ProjectAccountRowMutationRequestV1) => void;
 }> = {}) {
-  vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, data: { mode: 'plain', updatedAt: 0 } });
   const indexFor = (key: ProjectAccountRowKeyV1) => rows.findIndex(row => row !== null && typeof row === 'object'
     && JSON.stringify(Reflect.get(row, 'key')) === JSON.stringify(key));
-  return vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+  return async (url: string, body: unknown) => {
     if (url.endsWith('/list') || url.endsWith('/read')) return projectAccountRowsReadHttpResponse(rows, url, body);
     const request = ProjectAccountRowMutationRequestV1Schema.parse(body);
     options.beforeMutation?.(request);
@@ -57,5 +56,12 @@ export function mockProjectAccountRowsHttpBoundary(rows: unknown[], options: Rea
       if (index < 0) rows.push(row); else rows[index] = row;
     }
     return { status: 200, data: { status: 'updated', rows: acknowledged, cursor: 1 } };
-  });
+  };
+}
+
+export function mockProjectAccountRowsHttpBoundary(rows: unknown[], options: Readonly<{
+  beforeMutation?: (request: ProjectAccountRowMutationRequestV1) => void;
+}> = {}) {
+  vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, data: { mode: 'plain', updatedAt: 0 } });
+  return vi.spyOn(axios, 'post').mockImplementation(createProjectAccountRowsHttpBoundary(rows, options));
 }

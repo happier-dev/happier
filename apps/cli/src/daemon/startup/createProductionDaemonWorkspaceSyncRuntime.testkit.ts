@@ -81,6 +81,7 @@ export async function composeBindChildSourcePhaseTestRuntime(options: Readonly<{
   /** Exercise the real Account row store through the supplied HTTP boundary. */
   projectRowsFromHttp?: boolean;
   serverId?: string;
+  profileId?: string;
   parentServerId?: string;
   managedHomeId?: string;
   homeTarget?: ResolvedHomeTarget;
@@ -101,6 +102,7 @@ export async function composeBindChildSourcePhaseTestRuntime(options: Readonly<{
   options.onCompositionPhase?.('filesystem and network fixture');
   if (options.projectRowsFromHttp) withdrawActiveProjectAccountRowsSnapshot();
   const serverId = options.serverId ?? 'srv_bind_child_home';
+  const profileId = options.profileId ?? serverId;
   const parentServerId = options.parentServerId ?? serverId;
   const managedHomeId = options.managedHomeId ?? serverId;
   const homeServerUrl = 'https://bind-child-home.invalid';
@@ -111,12 +113,12 @@ export async function composeBindChildSourcePhaseTestRuntime(options: Readonly<{
   // Project Open resolves the Home by the exact saved profile (profile persistence is the
   // boundary); the daemon always runs with one.
   if (!options.homeTarget && defaultHomeDescriptor) {
-    await updateSettings((current) => ({ ...current, servers: { ...current.servers, [serverId]: {
-      id: serverId, name: serverId, serverUrl: homeServerUrl, webappUrl: homeServerUrl, createdAt: 1, updatedAt: 1, lastUsedAt: 0,
+    await updateSettings((current) => ({ ...current, servers: { ...current.servers, [profileId]: {
+      id: profileId, name: profileId, serverUrl: homeServerUrl, webappUrl: homeServerUrl, createdAt: 1, updatedAt: 1, lastUsedAt: 0,
       homeConnectionDescriptor: defaultHomeDescriptor } } }));
   }
   const defaultHomeTarget = defaultHomeDescriptor ? resolveHomeTargetFromDescriptor({ descriptor: defaultHomeDescriptor,
-    authority: 'saved_profile', profile: { id: 'server-1', serverUrl: homeServerUrl, webappUrl: homeServerUrl,
+    authority: 'saved_profile', profile: { id: profileId, serverUrl: homeServerUrl, webappUrl: homeServerUrl,
       homeConnectionDescriptor: defaultHomeDescriptor },
   }) : undefined;
   // Explicit Home fixtures own their fresh same/foreign observation boundary.
@@ -548,7 +550,7 @@ export async function composeBindChildSourcePhaseTestRuntime(options: Readonly<{
     const production = await runWithServerHttpBaseUrl(localHomeTarget.applicationUrl, async () => {
       if (options.projectRowsFromHttp) {
         options.onCompositionPhase?.(`Project row read for ${machineId}`);
-        await readProjectAccountRows({ credentials: machineCredentials, serverId: accountServerId, publication: 'installed' });
+        await readProjectAccountRows({ credentials: machineCredentials, serverId: localProfileId, publication: 'installed' });
       }
       options.onCompositionPhase?.(`Production runtime construction for ${machineId}`);
       return await createProductionDaemonWorkspaceSyncRuntime(productionInput, overrides);

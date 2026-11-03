@@ -836,7 +836,11 @@ describe('createDaemonWorkspaceSyncRuntime', () => {
   it('forwards broker open cancellation into the controller machine-carrier path', async () => {
     const harness = boundaries();
     const stopped = Object.assign(new Error('test transport stopped'), { code: 'cancelled' });
-    const openMachineCarrierTunnel = vi.fn(async () => { throw stopped; });
+    let transportSignal: AbortSignal | undefined;
+    const openMachineCarrierTunnel = async (input: Readonly<{ signal?: AbortSignal }>) => {
+      transportSignal = input.signal;
+      throw stopped;
+    };
     const runtime = createDaemonWorkspaceSyncRuntime({
       ...harness.deps,
       openMachineCarrierTunnel,
@@ -854,7 +858,7 @@ describe('createDaemonWorkspaceSyncRuntime', () => {
       expiresAtMs: Date.now() + 1_000,
       signal: abort.signal,
     })).rejects.toBe(stopped);
-    expect(openMachineCarrierTunnel).toHaveBeenCalledWith(expect.objectContaining({ signal: abort.signal }));
+    expect(transportSignal).toBe(abort.signal);
     await runtime.stop();
   });
 

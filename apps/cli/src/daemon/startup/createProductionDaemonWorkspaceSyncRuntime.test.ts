@@ -31,6 +31,8 @@ import { createProjectWorkerAction } from '@/workspaces/execution/projectWorkerA
 import { createProjectWorkerAdmission } from '@/workspaces/execution/projectWorkerAdmission';
 import { createDaemonAdmissionDrain } from '@/daemon/lifecycle/admissionDrain';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
+import { createProjectAccountRowsHttpBoundary } from '@/workspaces/projectAccountRows.testkit';
+import { configuration } from '@/configuration';
 
 const socketIo = vi.hoisted(() => vi.fn());
 vi.mock('socket.io-client', () => ({ io: socketIo }));
@@ -121,6 +123,51 @@ function settingsSnapshot(): ActiveProjectAccountRowsSnapshot {
 }
 
 describe('createProductionDaemonWorkspaceSyncRuntime', () => {
+  it.each(['copy', 'foreign-project'] as const)('settles worker creation when the installed profile differs from the portable Home identity (%s)', async outcome => {
+    const rows: ProjectAccountRowV1[] = [];
+    const http = createProjectAccountRowsHttpBoundary(rows);
+    const profileId = configuration.activeServerId;
+    const fixture = await composeBindChildSourcePhaseTestRuntime({ socketIo, projectRowsFromHttp: true,
+      profileId, serverId: 'srv_portable_copy_home',
+      readAdditionalHttpPostResponse: async (url, body) => url.includes('/v1/account/project-rows/')
+        ? await http(url, body) : undefined });
+    expect(profileId).not.toBe(fixture.serverId);
+    await fixture.settleProjects();
+    const cipher = createProjectAccountRowCipherV1({ mode: 'plain', material: null, randomBytes: n => new Uint8Array(n) });
+    const target = outcome === 'copy' ? { ...fixture.targetRef, projectKey: fixture.sourceRef.id } : fixture.targetRef;
+    for (const value of [fixture.sourceRef, target]) {
+      const key = { kind: 'workspace-ref' as const, serverId: value.serverId, id: value.id };
+      rows.push(ProjectAccountRowV1Schema.parse({ key, revision: 0, content: cipher.seal({ key, value }) }));
+    }
+    await runWithServerHttpBaseUrl('https://bind-child-home.invalid', async () =>
+      await readProjectAccountRows({ credentials: fixture.credentials, serverId: profileId, publication: 'installed' }));
+    await fixture.settleProjects();
+    const installedScope = getActiveProjectAccountRowsSnapshot()?.scopeKey;
+    const cancellation = new AbortController();
+    const creation = fixture.parent.workspaceSync.relationshipOwner.create({
+      v: 1, operationId: 'profile-scoped-worker-copy', actionInput: {
+        v: 1, sourceWorkspaceRefId: fixture.sourceRef.id, targetMachineId: fixture.targetRef.machineId,
+        targetPath: fixture.targetPath, mode: 'keep_synced', purpose: 'worker_clean_copy', contentPolicy,
+        destinationIntent: 'materialize_from_source_workspace',
+      },
+    }, cancellation.signal);
+    // A regression must cleanly cancel the pending owner during normal test teardown.
+    onTestFinished(async () => { cancellation.abort(); await creation.catch(() => undefined); });
+    if (outcome === 'foreign-project') {
+      await expect(creation).rejects.toMatchObject({ code: 'project_workspace_changed' });
+      await expect(stat(fixture.targetPath)).rejects.toMatchObject({ code: 'ENOENT' });
+      expect(getActiveProjectAccountRowsSnapshot()?.scopeKey).toBe(installedScope);
+      return;
+    }
+    const created = WorkspaceSyncRelationshipCreateResultV1Schema.parse(await creation);
+    expect(created.created).toBe(true);
+    expect(getActiveProjectAccountRowsSnapshot()?.scopeKey).toBe(installedScope);
+    expect(getActiveProjectAccountRowsSnapshot()?.relationships).toEqual(expect.arrayContaining([
+      expect.objectContaining({ relationshipId: created.relationshipId, enabled: true }),
+    ]));
+    expect(await readFile(join(fixture.targetPath, 'payload.txt'), 'utf8')).toBe('before quiesce');
+  });
+
   it('reports unavailable activity and discovery during Project withdrawal and recovers on the next publication', async () => {
     const fixture = await composeBindChildSourcePhaseTestRuntime({ socketIo, projectRowsFromHttp: true,
       readAdditionalHttpPostResponse: async url => url.endsWith('/v1/account/project-rows/list')

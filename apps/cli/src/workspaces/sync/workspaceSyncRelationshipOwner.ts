@@ -6,8 +6,7 @@ import type { WorkspaceContentPolicyV1, WorkspaceRefV1, WorkspaceSyncPersistentM
 import type { WorkspaceSyncCommittedCopyTargetV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncCommittedCopyV1';
 
 import { materializeWorkspaceRefForMachineRoot, resolveWorkspaceRefById, resolveWorkspaceRefForMachineRoot } from '@/workspaces/workspaceRefsV1';
-import { createProjectAccountSnapshotMutation, type ProjectAccountSnapshotMutation, type ProjectAccountSnapshotMutationResult } from '@/workspaces/projectAccountRows';
-import type { StoredCredentials } from '@/persistence';
+import type { ProjectAccountSnapshotMutation, ProjectAccountSnapshotMutationResult } from '@/workspaces/projectAccountRows';
 import type { ProjectWorkerDependency } from '@/workspaces/execution/projectWorkerAdmission';
 import { deriveWorkspaceSyncRelationshipId } from './workspaceSyncRelationshipIdentity';
 import { validateWorkspaceSyncRelationship } from './workspaceSyncSettings';
@@ -204,13 +203,6 @@ function isIndeterminate(error: unknown): boolean {
  * that overrides it cannot carry a target replacement approval.
  */
 const defaultRelationshipId = deriveWorkspaceSyncRelationshipId;
-
-/** Production adapter to the graph/ref row transaction, beneath this semantic owner. */
-export function createProjectAccountRowsWorkspaceSyncRelationshipMutation(
-  credentials: StoredCredentials,
-): ProjectAccountSnapshotMutation {
-  return createProjectAccountSnapshotMutation(credentials);
-}
 
 export function createWorkspaceSyncRelationshipOwner(
   options: WorkspaceSyncRelationshipOwnerOptions,

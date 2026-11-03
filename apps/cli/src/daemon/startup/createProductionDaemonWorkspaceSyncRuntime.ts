@@ -52,6 +52,7 @@ import {
   subscribeActiveProjectAccountRowsSnapshot,
   type ActiveProjectAccountRowsSnapshot,
   readProjectAccountRows,
+  createProjectAccountSnapshotMutation,
 } from '@/workspaces/projectAccountRows';
 import { resolveWorkspaceSyncRelationshipEndpointRoles } from '@/workspaces/sync/workspaceSyncRelationshipEndpoints';
 import { resolveWorkspaceRefById } from '@/workspaces/workspaceRefsV1';
@@ -82,7 +83,6 @@ import {
 } from '@/workspaces/sync/workspaceSyncLegacyState';
 import { sameExecutionWorkspace, type WorkspaceSyncHandoffAdapter } from '@/workspaces/sync/workspaceSyncHandoffAdapter';
 import {
-  createProjectAccountRowsWorkspaceSyncRelationshipMutation,
   createWorkspaceSyncRelationshipOwner,
   type WorkspaceSyncRelationshipOwner,
 } from '@/workspaces/sync/workspaceSyncRelationshipOwner';
@@ -578,6 +578,13 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
   const localProfileId = input.activeServerId ?? configuration.activeServerId;
   const serverHttpBaseUrl = resolveServerHttpBaseUrl();
   const factories: ProductionDaemonWorkspaceSyncFactories = { ...defaultFactories, ...overrides };
+  // Installed publication and reconciliation share the daemon's local profile
+  // scope. WorkspaceRef identities inside that snapshot retain the portable Home.
+  const refreshInstalledProjectRows = async (signal?: AbortSignal) => await factories.refreshProjectRows({
+    credentials: input.credentials, serverId: localProfileId, publication: 'installed',
+    selection: { kinds: ['workspace-ref', 'relationship-graph'] },
+    ...(signal ? { signal } : {}),
+  });
   let inspection: WorkspaceSyncLegacyStateInspection;
   try {
     inspection = await factories.inspectLegacyState({
@@ -631,13 +638,13 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
     localMachineId: input.localMachineId,
     getProjectSnapshot: factories.getProjectSnapshot,
     ...(input.callWorkspaceTargetPhase ? { callWorkspaceTargetPhase: input.callWorkspaceTargetPhase } : {}),
-    refreshProjectSnapshot: async (signal, context) => await factories.refreshProjectRows({
-      ...(context?.callerInputAuthorization ? { authorization: context.callerInputAuthorization,
-        effectActionId: context.callerInputAuthorization.binding.actionId } : { credentials: input.credentials, publication: 'installed' }),
+    refreshProjectSnapshot: async (signal, context) => context?.callerInputAuthorization ? await factories.refreshProjectRows({
+      authorization: context.callerInputAuthorization,
+      effectActionId: context.callerInputAuthorization.binding.actionId,
       serverId: semanticServerId,
-      selection: context?.callerInputAuthorization ? { kinds: ['workspace-ref', 'relationship-graph'] } : undefined,
+      selection: { kinds: ['workspace-ref', 'relationship-graph'] },
       ...(signal ? { signal } : {}),
-    }),
+    }) : await refreshInstalledProjectRows(signal),
     readChildMachineFacts: async (machineIds, signal) => await readWorkspaceSyncChildMachineFacts({
       serverId: semanticServerId,
       serverHttpBaseUrl, localProfileId, ...(input.homeTarget ? { homeTarget: input.homeTarget } : {}),
@@ -1549,10 +1556,8 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
         targetMachineId: target.machineId, targetWorkspaceRefId: target.id });
       return result.ok ? 'present' : 'absent';
     },
-    mutateProjectSnapshot: createProjectAccountRowsWorkspaceSyncRelationshipMutation(input.credentials),
-    readProjectSnapshot: async () => {
-      return await factories.refreshProjectRows({ credentials: input.credentials, publication: 'installed' });
-    },
+    mutateProjectSnapshot: createProjectAccountSnapshotMutation({ credentials: input.credentials, serverId: localProfileId }),
+    readProjectSnapshot: refreshInstalledProjectRows,
     ensureRelationship: async (relationship, signal, preparation) => {
       if (!runtime) throw controllerUnavailable();
       return await runtime.managedWorkspaceSync.ensure(relationship, signal, preparation);
@@ -1586,11 +1591,7 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
     waitForProjectReconciliation: async (graphRevision, signal) => {
       if (!runtime) throw controllerUnavailable();
       signal?.throwIfAborted();
-      const refreshed = await factories.refreshProjectRows({
-        credentials: input.credentials,
-        publication: 'installed',
-        ...(signal ? { signal } : {}),
-      });
+      const refreshed = await refreshInstalledProjectRows(signal);
       await runtime.whenProjectsSettled({
         graphRevision: graphRevision < 0 ? 'absent' : graphRevision,
         ...(refreshed.scopeKey ? { scopeKey: refreshed.scopeKey } : {}),
@@ -1767,8 +1768,7 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
           : relationship ? [relationship.alphaWorkspaceRefId, relationship.betaWorkspaceRefId] : [request.targetWorkspaceRefId];
         const refs = factories.getProjectSnapshot()?.workspaceRefs ?? [];
         if (endpointIds.some(id => !resolveWorkspaceRefById(refs, id, semanticServerId))) {
-          await factories.refreshProjectRows({ credentials: input.credentials, serverId: semanticServerId, publication: 'installed',
-            ...(signal ? { signal } : {}) });
+          await refreshInstalledProjectRows(signal);
         }
       }
       return await targetAuthority.prepareBootstrapHere(request, signal, context);
@@ -1823,7 +1823,7 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
         || request.machineId !== input.localMachineId || !input.readProjectWorkerDependencies) {
         throw compositionError('workspace_sync_dependencies_unavailable', 'Worker dependency target is unavailable');
       }
-      const snapshot = await factories.refreshProjectRows({ credentials: input.credentials, serverId: request.serverId, signal, publication: 'installed' });
+      const snapshot = await refreshInstalledProjectRows(signal);
       const ref = resolveWorkspaceRefById(snapshot.workspaceRefs, request.workspaceRefId, request.serverId);
       const relationship = snapshot.relationships.find(value => value.relationshipId === request.relationshipId);
       if (!ref || !relationship
