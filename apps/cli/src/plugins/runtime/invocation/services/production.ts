@@ -32,7 +32,7 @@ import type {
     PluginProviderOperationsSource,
 } from './types';
 import { resolvePluginPathWithinRoots } from './filesystem';
-import type { createStablePluginExecService } from './exec';
+import type { createStablePluginExecService, HostPluginExecExecutionKind } from './exec';
 import type {
     InteractionsService } from '@happier-dev/plugin-sdk/interactions';
 import type {
@@ -132,6 +132,7 @@ export type { PluginSecretDeclaration } from '../../context/declaredPluginSecret
 
 type PluginOperationServicesInput = Readonly<{
     prepareAgentNativeLaunch?: import('./exec').HostAgentNativeLaunchPreparation;
+    executionKind?: HostPluginExecExecutionKind;
     filesystemRoots: PluginFileSystemRoots;
     environment?: Readonly<Record<string, string>>;
     systemTools?: ExecSystemToolServiceV1;
@@ -534,6 +535,7 @@ healthChecks?: import('./unavailable').PluginInvocationServicesFactoryParams['he
             connectedAccountsOwner?: StablePluginConnectedAccountsOwner;
             resolveExecutable?: ResolvePluginExecutable;
             prepareAgentNativeLaunch?: import('./exec').HostAgentNativeLaunchPreparation;
+            executionKind?: PluginOperationServicesInput['executionKind'];
             assertLaunchCurrent?: (signal: AbortSignal) => Promise<void>;
         }>,
     ) => {
@@ -655,6 +657,7 @@ healthChecks?: import('./unavailable').PluginInvocationServicesFactoryParams['he
                 exec: {
 ...(params.exec.agentIsolation ? { agentIsolation: params.exec.agentIsolation } : {}),
 
+                    ...(overrides?.executionKind ? { executionKind: overrides.executionKind } : {}),
                     readSpawnFailureLimits: params.exec.readSpawnFailureLimits,
                     ...(params.exec.agentCli ? { agentCli: params.exec.agentCli } : {}),
                     ...(systemTools
@@ -959,6 +962,7 @@ healthChecks?: import('./unavailable').PluginInvocationServicesFactoryParams['he
                 {
                     ...(operation.connectedAccountsOwner ? { connectedAccountsOwner: operation.connectedAccountsOwner } : {}),
                     ...(operation.prepareAgentNativeLaunch ? { prepareAgentNativeLaunch: operation.prepareAgentNativeLaunch } : {}),
+                    ...(operation.executionKind ? { executionKind: operation.executionKind } : {}),
                     ...(operation.assertLaunchCurrent ? { assertLaunchCurrent: operation.assertLaunchCurrent } : {}),
                     ...(operation.settingsDeclarations
                         ? { settingsDeclarations: operation.settingsDeclarations }

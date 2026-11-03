@@ -57,6 +57,7 @@ import {
 } from './events';
 import {
     createStablePluginExecService,
+    type HostPluginExecExecutionKind,
     type PluginExecDisclosureMismatch,
 } from './exec';
 import { createPluginFileSystemService } from './filesystem';
@@ -221,6 +222,7 @@ export type PluginInvocationServicesFactoryParams = Readonly<{
     ) => PluginFileSystemRoots | null;
     now?: () => number;
     exec?: Readonly<{
+        executionKind?: HostPluginExecExecutionKind;
         readSpawnFailureLimits?: import('@/processes/spawnFailure/classifySpawnFailure').SpawnFailureLimitsReader;
         posixProcessGroup?: Parameters<typeof createStablePluginExecService>[0]['posixProcessGroup'];
         resolveExecutable: (
@@ -1033,6 +1035,7 @@ export function createPluginInvocationServicesFromDescriptors(
         ? createStablePluginExecService({
 ...(params.exec?.agentIsolation ? { agentIsolation: params.exec.agentIsolation } : {}),
 
+            ...(params.exec?.executionKind ? { executionKind: params.exec.executionKind } : {}),
             readSpawnFailureLimits: params.exec?.readSpawnFailureLimits,
             ...(params.exec?.posixProcessGroup ? { posixProcessGroup: params.exec.posixProcessGroup } : {}),
             ...(seed.processOwner ? { processOwner: seed.processOwner }
