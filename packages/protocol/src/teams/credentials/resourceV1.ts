@@ -1,5 +1,6 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod/mini';
+import { ProviderErrorCodeV1Schema } from '../../providers/errors.js';
 import { MachinePoolNameV1Schema } from '../../machines/pools/v1.js';
 import { asProtocolZod } from '../../plugins/actions/internalProtocolZodAdapter.js';
 
@@ -31,6 +32,7 @@ import {
 import { TeamCredentialResourceReadinessV1Schema } from './readinessV1.js';
 import { TeamCredentialUsageCapabilitiesV1Schema, TeamCredentialUsageLimitDenialV1Schema } from './usageV1.js';
 import { TeamCredentialUsageLimitDefinitionV1Schema } from './usageV1.js';
+import { TeamCredentialAllowedRoutesV1Schema, TeamCredentialDeliveryPolicyV1Schema } from './deliveryV1.js';
 import {
   TeamCredentialSourceBindingV1Schema,
 } from './sourceBindingV1.js';
@@ -570,6 +572,10 @@ export const TeamCredentialResourceCatalogEntryV1Schema = lazyZodSchema(() => z.
   recoveryAction: z.nullable(TeamCredentialResourceRecoveryActionV1Schema),
   mayBroker: z.boolean(),
   mayReceiveDirect: z.boolean(),
+  deliveryPolicy: z.optional(TeamCredentialDeliveryPolicyV1Schema),
+  allowedRoutes: z.optional(TeamCredentialAllowedRoutesV1Schema),
+  /** Presentation for an unavailable route when no model row can be emitted. */
+  deliveryUnavailableReason: z.optional(ProviderErrorCodeV1Schema),
   directMaterialState: TeamCredentialDirectMaterialStateV1Schema,
   /**
    * Retained first-disclosure history for this viewer, separate from the

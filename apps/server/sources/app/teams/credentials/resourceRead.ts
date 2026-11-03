@@ -833,6 +833,8 @@ async function projectCatalogEntryInTx(
         // and an unavailable broker must not erase direct authority.
         mayBroker: entitlement.mayBroker,
         mayReceiveDirect: entitlement.mayReceiveDirect,
+        deliveryPolicy: entitlement.deliveryPolicy,
+        allowedRoutes: entitlement.allowedRoutes,
         directMaterialState,
         ...(directDeliveryRecorded ? { directDeliveryRecorded: true } : {}),
         sessionUsePolicy: policy.success ? policy.data : null,
