@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { LimaCommandResult, LimaExecutor } from '@happier-dev/plugin-sdk/machine-provisioners';
-import { createLimaProvider } from './provider.js';
+import { buildCreateArgs, createLimaProvider } from './provider.js';
 import { LimaLaunchSchema } from './schemas.js';
 import { MachineProvisionerObservationV1Schema } from '@happier-dev/plugin-sdk/machine-provisioners';
 
@@ -29,6 +29,15 @@ function processBoundary(handler: (args: readonly string[], options?: Parameters
 }
 
 describe('public Lima native leaf', () => {
+  it.each(['vz', 'qemu'] as const)('disables automatic guest-to-host forwarding in the generated %s template', vmType => {
+    const args = buildCreateArgs({ ...launch, instance: 'happier-port-forward-test', vmType });
+    const forwarding = args.find((arg, index) => args[index - 1] === '--set' && arg.startsWith('.portForwards = '));
+    expect(forwarding).toBeDefined();
+    expect(JSON.parse(forwarding!.slice('.portForwards = '.length))).toEqual([
+      { guestIP: '0.0.0.0', guestIPMustBeZero: false, proto: 'any', guestPortRange: [1, 65535], ignore: true },
+    ]);
+  });
+
   it.each(['Running', 'Stopped'])('reports retained storage for an exact listed %s guest through the shared observation contract', async status => {
     const { executor, effects } = processBoundary(() => ({ exitCode: 0, out: JSON.stringify({ ...native, status }), err: '' }));
     const observation = MachineProvisionerObservationV1Schema.parse(await createLimaProvider(executor, 123).inspect(resource));

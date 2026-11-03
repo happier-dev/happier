@@ -1505,6 +1505,13 @@ The public machine-provisioner author surface also prepares [persistence-only la
 
 An acquire invocation can receive the host-populated managed-row id as a native naming/correlation tag beside its raw launch value. That tag grants no authority, does not select another resource or leaf, and promises no native exactly-once behavior; the private admitted-row custody remains authoritative.
 
+In 0.3 development source, the Lima leaf's creation template explicitly ignores
+all automatic guest-to-host TCP/UDP port forwarding on every guest address.
+Lima's separate SSH port still carries native guest commands and bootstrap IO;
+Domain routes and service probes execute on their selected Machine or observer.
+Existing guests retain their saved configuration until edited or recreated;
+Inspect, Start and recovery do not retrofit this template policy.
+
 Lima derives a native name from that opaque row id separately from the recipe's
 display name. Acquisition cannot adopt an existing VM: the shared native helper's
 `created: false` is a refusal, while same-row recovery uses the row-derived exact

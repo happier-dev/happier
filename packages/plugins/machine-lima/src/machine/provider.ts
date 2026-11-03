@@ -63,13 +63,18 @@ function expectedResource(launch: LimaLaunch): LimaResource {
   return LimaResourceSchema.parse({ ...identity, memoryBytes: memoryGiB * gib, diskBytes: diskGiB * gib });
 }
 
-function buildCreateArgs(launch: LimaLaunch) {
+export function buildCreateArgs(launch: LimaLaunch) {
   return [
     'create', '--name', launch.instance, '--tty=false', '--vm-type', launch.vmType, '--arch', launch.arch,
     '--cpus', String(launch.cpus), '--memory', String(launch.memoryGiB), '--disk', String(launch.diskGiB),
     '--containerd', 'none', '--mount-none',
     '--set', `.images = ${JSON.stringify([{ location: launch.image, arch: launch.arch }])}`,
     '--set', `.mounts = ${JSON.stringify(launch.mounts)}`,
+    // Guest services must not claim the controller's loopback ports. Lima's
+    // separate ssh.localPort still provides native shell/bootstrap access.
+    '--set', `.portForwards = ${JSON.stringify([
+      { guestIP: '0.0.0.0', guestIPMustBeZero: false, proto: 'any', guestPortRange: [1, 65535], ignore: true },
+    ])}`,
     '--set', '.ssh.forwardAgent = false | .containerd.user = false | .containerd.system = false',
     'template://ubuntu-24.04',
   ];
