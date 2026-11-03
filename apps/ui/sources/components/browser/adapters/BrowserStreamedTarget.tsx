@@ -1,4 +1,5 @@
 import * as React from 'react';
+import type { RemoteViewerClipboardShortcut } from '@/components/stream/remoteViewerClipboard';
 import { Animated, Image, Platform, View, type LayoutChangeEvent } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import type { MachineLiveStreamControlSidebandV1, MachineLiveStreamInputControlKindV1 } from '@happier-dev/protocol';
@@ -59,9 +60,12 @@ export type BrowserStreamedSurfaceRuntime = Readonly<{
      * daemon turns them into a human takeover. Absent when the source accepts no input.
      */
     input?: Readonly<{
+        viewerKey?: string;
         sourceId: string;
         streamId: string;
         send: (control: MachineLiveStreamControlSidebandV1) => void;
+        /** Focused controlling-viewer clipboard intent; never encoded as a letter key. */
+        clipboardShortcut?: RemoteViewerClipboardShortcut;
     }> | null;
 }>;
 

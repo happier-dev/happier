@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { PixelRatio, View, type LayoutChangeEvent } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import type { ComputerGrantStatusV1, MachineLiveStreamInputControlKindV1 } from '@happier-dev/protocol';
+import type { ComputerGrantStatusV1} from '@happier-dev/protocol/computer/v1';
 import { resolveComputerAccess } from '@happier-dev/protocol/computer/v1';
 
 import {
@@ -14,6 +14,9 @@ import { buildBrowserStreamSidebandControl } from '@/components/browser/adapters
 import { BrowserPresenceCapsule, type BrowserPresenceAgent, type BrowserPresenceCapsuleProps } from '@/components/browser/copresence/BrowserPresenceCapsule';
 import { BrowserAgentCursor } from '@/components/browser/copresence/BrowserAgentCursor';
 import { BrowserFrameStatusCapsule } from '@/components/browser/frame/BrowserFrameStatusCapsule';
+import { RemoteViewerStage, type RemoteViewerStageControls, type RemoteViewerHostActions } from '@/components/stream/RemoteViewerStage';
+import { useRemoteViewerActions } from '@/components/stream/useRemoteViewerActions';
+import { useBrowserSoftKeyboard } from '@/components/browser/streamed/useBrowserSoftKeyboard';
 import { LiveStreamInputLayer } from '@/components/stream/LiveStreamInputLayer';
 import { LiveStreamPlayer } from '@/components/stream/LiveStreamPlayer';
 import { IconButton } from '@/components/ui/buttons/IconButton';
@@ -24,7 +27,7 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { resolveComputerRecovery } from '@/sync/domains/computer/targets';
 import { SessionViewerMachineMark } from '@/components/sessions/viewer/SessionViewerMachineMark';
-import { Text } from '@/components/ui/text/Text';
+import { Text, TextInput } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { useSessionCockpitBottomChromeHeight } from '@/components/workspaceCockpit/session/SessionCockpitChromeRegistry';
 import type { BrowserCopresence } from '@/sync/domains/browser/automation/copresence';
@@ -34,9 +37,9 @@ import { keepHyphenatedNameTogether } from '@/utils/sessions/machineDisplayNames
 
 import { ComputerPermissionCard, type ComputerOpenSettingsState } from './ComputerPermissionCard';
 
-/** The person's gestures W7's native source turns into input: click and keys (no drag yet). */
-const SCREEN_INPUT_KINDS: ReadonlySet<MachineLiveStreamInputControlKindV1> = new Set(['tap', 'keyboard_text', 'keyboard_key']);
-const supportsScreenInput = (kind: MachineLiveStreamInputControlKindV1): boolean => SCREEN_INPUT_KINDS.has(kind);
+/** Native click, release-time atomic drag, scroll and keys share the registered source relay. */
+const SCREEN_INPUT_KINDS: ReadonlySet<LiveStreamInputGesture['kind']> = new Set(['tap', 'drag', 'wheel', 'keyboard_text', 'keyboard_key']);
+const supportsScreenInput = (kind: LiveStreamInputGesture['kind']): boolean => SCREEN_INPUT_KINDS.has(kind);
 
 const stylesheet = StyleSheet.create((theme) => ({
     root: {
@@ -100,6 +103,7 @@ export type ComputerScreenViewerProps = Readonly<{
     /** The owner has not answered the initial share-selection read yet. */
     selectionPending?: boolean;
     stream: BrowserStreamedSurfaceRuntime | null;
+    onRemoteActionsChange?: (actions: RemoteViewerHostActions | null) => void;
     presence: BrowserCopresence;
     /** The agent's action is in flight ("is using"), not merely allowed ("can use"). */
     agentActing: boolean;
@@ -197,25 +201,56 @@ function ViewerStreamInput(props: Readonly<{
     viewport: Readonly<{ width: number; height: number }>;
     content: Readonly<{ x: number; y: number; width: number; height: number }>;
     label: string;
+    controls: RemoteViewerStageControls;
+    controlling: boolean;
+    onRemoteActionsChange?: (actions: RemoteViewerHostActions | null) => void;
     testID: string;
 }>): React.ReactElement {
     const { send, sourceId, streamId } = props.input;
-    const onGesture = React.useCallback((gesture: Readonly<{ eventId: string; action: LiveStreamInputGesture }>) => {
+    const sendGesture = React.useCallback((gesture: Readonly<{ eventId: string; action: LiveStreamInputGesture }>) => {
         // Points normalized to the drawn picture; the native owner scales them to captured pixels (W7).
         const control = buildBrowserStreamSidebandControl({ sourceId, streamId, eventId: gesture.eventId, gesture: gesture.action });
         if (control) send(control);
     }, [send, sourceId, streamId]);
+    const sequence = React.useRef(0);
+    const sendAction = React.useCallback((action: LiveStreamInputGesture) => sendGesture({eventId: `viewer:${Date.now()}:${++sequence.current}`, action}), [sendGesture]);
+    const actions = useRemoteViewerActions({enabled: true, sendGesture: sendAction, clipboardShortcut: props.input.clipboardShortcut});
+    const keyboard = useBrowserSoftKeyboard({enabled: true, target: null, manual: true, sendText: actions.sendText, sendKey: actions.sendKey});
+    const keyboardActions = React.useMemo(() => ({available: keyboard.available, focused: keyboard.focused,
+        showKeyboard: keyboard.showKeyboard, hideKeyboard: keyboard.hideKeyboard}),
+        [keyboard.available, keyboard.focused, keyboard.showKeyboard, keyboard.hideKeyboard]);
+    const onGesture = React.useCallback((gesture: Readonly<{eventId: string; action: LiveStreamInputGesture}>) => {
+        const action = actions.prepareGesture(gesture.action);
+        if (action) sendGesture({...gesture, action});
+    }, [actions.prepareGesture, sendGesture]);
+    const supports = React.useCallback((kind: LiveStreamInputGesture['kind']) => kind === 'move' ? props.controlling : supportsScreenInput(kind), [props.controlling]);
+    const published = React.useMemo(() => ({...actions, keyboard: keyboardActions, inputMode: {value: props.controls.mode, setMode: props.controls.setMode},
+        resetZoom: props.controls.resetZoom}),
+        [actions, keyboardActions, props.controls.mode, props.controls.setMode, props.controls.resetZoom]);
+    const publishActions = React.useRef(props.onRemoteActionsChange);
+    publishActions.current = props.onRemoteActionsChange;
+    React.useEffect(() => { publishActions.current?.(published); return () => publishActions.current?.(null); }, [published]);
     return (
         <View style={stylesheet.fill}>
             <LiveStreamInputLayer
                 inputAccepted
-                supports={supportsScreenInput}
+                supports={supports}
+                mode={props.controls.mode}
+                localZoom
+                zoomReset={props.controls.zoomReset}
+                onViewTransformChange={props.controls.onViewTransformChange}
+                renderCursor={props.controls.renderCursor}
+                renderDragTrail={props.controls.renderDragTrail}
                 viewport={props.viewport}
                 content={props.content}
                 onGesture={onGesture}
+                onClipboardShortcut={props.input.clipboardShortcut}
                 accessibilityLabel={props.label}
                 testID={props.testID}
             />
+            <TextInput ref={keyboard.inputRef} {...keyboard.sentinelProps}
+                style={{position: 'absolute', left: 0, bottom: 0, width: 1, height: 1, opacity: 0}}
+                accessibilityLabel={t('browserPresence.interaction.showKeyboard')} testID={`${props.testID}-keyboard-sentinel`} />
         </View>
     );
 }
@@ -399,6 +434,13 @@ export function ComputerScreenViewer(props: ComputerScreenViewerProps): React.Re
         </View>
     ) : (
         <View style={stylesheet.fill} testID={`${testID}-${surfaceState}`}>
+            <RemoteViewerStage key={props.stream?.input?.viewerKey} viewerKey={props.stream?.input?.viewerKey} viewport={viewport ?? {width: 1, height: 1}}
+                enabled={Boolean(props.stream?.input && viewport && pageRect && inputOpen)} testID={testID}
+                renderInput={controls => props.stream?.input && viewport && pageRect && inputOpen ? (
+                    <ViewerStreamInput input={props.stream.input} viewport={viewport} content={pageRect} controls={controls}
+                        controlling={props.presence.kind === 'human'} onRemoteActionsChange={props.onRemoteActionsChange}
+                        label={t('computerUse.presentation.inputA11y', {target})} testID={`${testID}-input`} />
+                ) : null}>
             <View
                 testID={`${testID}-picture`}
                 style={pageRect
@@ -407,15 +449,7 @@ export function ComputerScreenViewer(props: ComputerScreenViewerProps): React.Re
             >
                 <LiveStreamPlayer testID={`${testID}-player`} state={playerState} statusOwnedByHost />
             </View>
-            {props.stream?.input && viewport && pageRect && inputOpen ? (
-                <ViewerStreamInput
-                    input={props.stream.input}
-                    viewport={viewport}
-                    content={pageRect}
-                    label={t('computerUse.presentation.inputA11y', { target })}
-                    testID={`${testID}-input`}
-                />
-            ) : null}
+            </RemoteViewerStage>
             {surfaceState === 'stalled' ? (
                 // Only the held picture dims: the empty stage around a small window keeps its paint.
                 <View
