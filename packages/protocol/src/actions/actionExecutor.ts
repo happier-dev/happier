@@ -2,7 +2,7 @@ import { executeSessionDelete } from './executor/session/delete.js';
 import type { AdmittedActionInputById } from './actionSpecs.js';
 import { createHostReviewedChildPortV1 } from './executor/deploymentRoleChild.js';
 import { prepareHostReviewedChildrenV1, readHostReviewedChildrenPlanV1 } from './executor/deploymentRoleApproval.js';
-import { readHostReviewedChildOperationV1 } from './executor/deploymentRoleChild.js';
+import { isHostAdmittedReviewedChildPolicyV1, readHostReviewedChildOperationV1 } from './executor/deploymentRoleChild.js';
 import { createConfidentialApprovalContinuation, isDecidingHumanAdmissionCurrent } from './executor/confidentialContinuation.js';
 import { settleActionOutput, isDeferredApprovalResult } from './executor/resultProjection.js';
 import { bindCallerInput, callerInputSchema } from './executor/callerInput.js';
@@ -2898,7 +2898,9 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       ...(existingAdmission ? { existing: existingAdmission } : {}), approvalReplay: options?.approvalReplay === true,
       isSameHome: (left, right) => isSameHome(left, right, ctx) });
     if ('ok' in childrenPreparation) return childrenPreparation;
-    const { plan: hostReviewedChildren, policies: childPolicies, approvalPreview: childrenApprovalPreview, executeAdmittedAction, admittedReviewedChild } = childrenPreparation;
+    const { plan: hostReviewedChildren, policies: childPolicies, approvalPreview: childrenApprovalPreview, executeAdmittedAction,
+      admittedReviewedChild: preparedChildAdmission } = childrenPreparation;
+    let admittedReviewedChild = preparedChildAdmission;
     const reviewAdmitted = existingAdmission?.reviewAdmitted === true || nativeReview !== null
       // The private replay owner already admitted and recorded this decision.
       // Consumers use that fact; they do not validate the witness a second time.
@@ -2918,7 +2920,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       return { ok: false, errorCode: 'deployment_unavailable', error: 'deployment_unavailable' };
     }
     const preferenceScope = resolveActionApprovalPreferenceScopeV1(approvalScope, previewTemplateEnvironmentId);
-    const childReviewRequired = childrenPreparation.reviewRequired;
+    let childReviewRequired = childrenPreparation.reviewRequired;
     const resolveBaseApprovalRouting = (executionContext: ActionExecutorContext,
       approvedOperation?: Pick<NonNullable<Awaited<ReturnType<NonNullable<ActionExecutorDeps['readApprovedOperation']>>>>, 'parent' | 'steps'> | null) => {
       const context = actionPolicyContext(actionId, childReviewRequired
@@ -2975,7 +2977,12 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     const dispatchMessageAdmission: Extract<SessionMessageSendAdmission, { ok: true }> = sessionMessageSendAdmission;
     if (invokeReviewedOperationChild) return await invokeReviewedOperationChild(async issuedContext => {
       ctx = issuedContext;
-      baseApprovalRouting = resolveBaseApprovalRouting(ctx, readHostReviewedChildOperationV1(ctx, actionId, admittedInput));
+      const reviewedOperation = readHostReviewedChildOperationV1(ctx, actionId, admittedInput);
+      // The issuer admitted this exact child after demanded policy was prepared.
+      // Saved-trigger consent has no admitted-policy marker and retains Require.
+      admittedReviewedChild = isHostAdmittedReviewedChildPolicyV1(reviewedOperation, actionId, admittedInput) ? true : undefined;
+      if (admittedReviewedChild) childReviewRequired = false;
+      baseApprovalRouting = resolveBaseApprovalRouting(ctx, reviewedOperation);
       return await continueAdmittedAction(dispatchParsed, dispatchMessageAdmission);
     });
     return await continueAdmittedAction(dispatchParsed, dispatchMessageAdmission);
@@ -3420,11 +3427,12 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       }
 
       ctx = { ...ctx, hostReviewedChild: existingAdmission?.context.hostReviewedChild
-        ?? (admittedReviewedChild ? ctx.hostReviewedChild : hostReviewedChildren || reviewAdmitted ? createHostReviewedChildPortV1({ actionId,
+        ?? (hostReviewedChildren || reviewAdmitted ? createHostReviewedChildPortV1({ actionId,
           input: admittedInput, context: ctx, ...(hostReviewedChildren ? { plan: hostReviewedChildren } : {}),
           ...(childPolicies ? { policies: childPolicies } : {}),
-          ...(reviewAdmitted ? { reviewAdmitted: true as const } : {}),
-          execute: (childInput, childContext, childActionId) => executeHostChild(childActionId, childInput, childContext) }) : undefined) };
+          ...(reviewAdmitted || admittedReviewedChild ? { reviewAdmitted: true as const } : {}),
+          execute: (childInput, childContext, childActionId) => executeHostChild(childActionId, childInput, childContext) })
+          : admittedReviewedChild ? ctx.hostReviewedChild : undefined) };
       const dispatchAdmission: PreparedCoreAdmission = {
         ...existingAdmission,
         actionId,
