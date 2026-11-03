@@ -517,5 +517,6 @@ export const ManagedMachineBootstrapEstablishPromptV1Schema = lazyZodSchema(() =
   kind: z.literal('administrator.establish'), promptId: ActionOperationIdentifierV1Schema,
   administratorUsername: MachineAdministratorUsernameV1Schema, message: ActionOperationProgressLabelV1Schema,
 }));
+export type ManagedMachineBootstrapEstablishPromptV1 = Readonly<z.infer<typeof ManagedMachineBootstrapEstablishPromptV1Schema>>;
 
 export type ManagedMachineBootstrapPromptV1 = Readonly<z.infer<typeof ManagedMachineBootstrapPromptV1Schema>>;

@@ -348,6 +348,7 @@ export const MachineSetupCombinedPlanResultV1Schema = lazyZodSchema(() => z.stri
 export const MachineSetupPlanUnavailableTargetV1Schema = lazyZodSchema(() => z.strictObject({
   homeId: id(), machineId: id(), status: z.literal('unavailable'), reason: z.literal('offline'), errorCode: z.literal('machine_offline'),
 }));
+export type MachineSetupPlanUnavailableTargetV1 = z.infer<typeof MachineSetupPlanUnavailableTargetV1Schema>;
 
 export type MachineSetupCombinedPlanResultV1 = z.infer<typeof MachineSetupCombinedPlanResultV1Schema>;
 
