@@ -1,3 +1,4 @@
+import { compareSkillUpdateFilesV1, resolveSkillUpdateFilesV1 } from './skillUpdateFilesV1.js';
 import { decodeBase64, encodeBase64 } from '../../../crypto/base64.js';
 import type { ActionExecuteResult } from '../../../actions/actionExecutionResult.js';
 import { resolveArtifactOrganizationHeaderV1 } from '../../../artifacts/artifactOrganizationV1.js';
@@ -288,7 +289,7 @@ export function createSkillActionExecuteV1(port: SkillActionPortV1) {
     skillMarkdown(bundle.files);
     return bundle;
   }
-  async function update(opened: Awaited<ReturnType<typeof current>>, files: readonly SkillFileInputV1[], lock: SkillLockV1, signal?: AbortSignal, preserveBody = false) {
+  async function update(opened: Awaited<ReturnType<typeof read>>, files: readonly SkillFileInputV1[], lock: SkillLockV1, signal?: AbortSignal, preserveBody = false) {
     const artifact = opened.artifact ?? fail(opened.lock.provenance.kind === 'first_party' ? 'first_party_read_only' : 'skill_read_only');
     validateFiles(files, nowMs());
     const store: PromptLibraryArtifactStore = { ...port.store, update: input => port.store.update({ ...input,
@@ -374,7 +375,7 @@ export function createSkillActionExecuteV1(port: SkillActionPortV1) {
     }
     return previews;
   }
-  async function upstream(opened: Awaited<ReturnType<typeof current>>) {
+  async function upstream(opened: Awaited<ReturnType<typeof read>>) {
     const provenance = opened.lock.provenance;
     const latest = opened.lock.upstream?.latest;
     if (latest?.kind === 'wellKnown' && provenance.kind === 'wellKnown' && port.readLinkSkills) {
@@ -395,12 +396,16 @@ export function createSkillActionExecuteV1(port: SkillActionPortV1) {
       : provenance.kind === 'link' ? provenance.url : fail('update_unavailable'));
     return diffPreview(opened, next);
   }
-  function diffPreview(opened: Awaited<ReturnType<typeof current>>, next: Awaited<ReturnType<typeof preview>>) {
+  function diffPreview(opened: Awaited<ReturnType<typeof read>>, next: Pick<Awaited<ReturnType<typeof preview>>, 'files' | 'cost' | 'provenance'>, baseFiles?: readonly SkillFileInputV1[]) {
     const mine = projectPromptBundleActionEntriesV1(opened.content.body.entries);
-    const paths = [...new Set([...mine.map(file => file.path), ...next.files.map(file => file.path)])].sort();
-    return { next, files: paths.map(path => { const left = mine.find(file => file.path === path) ?? null, right = next.files.find(file => file.path === path) ?? null;
-      return { path, mine: left, theirs: right, changed: left?.contentBase64 !== right?.contentBase64 || left?.unixMode !== right?.unixMode }; }),
+    return { next, files: compareSkillUpdateFilesV1(mine, next.files, baseFiles),
       costDelta: { mine: estimateSkillCostV1(opened.content.skillMd), theirs: next.cost } };
+  }
+  function candidatePreview(opened: Awaited<ReturnType<typeof read>>, candidate: NonNullable<SkillLibraryActionInputByIdV1['skills.updates.diff']['candidate']>) {
+    validateFiles(candidate.baseFiles, nowMs());
+    // An absent release skill is reviewable; actual skill writes still require a valid SKILL.md.
+    if (candidate.files.length) validateFiles(candidate.files, nowMs());
+    return diffPreview(opened, { files: candidate.files, cost: estimateSkillCostV1(candidate.files.length ? skillMarkdown(candidate.files) : ''), provenance: opened.lock.provenance }, candidate.baseFiles);
   }
   async function execute(actionId: SkillLibraryActionIdV1, raw: unknown, caller: SkillActionCallerV1, signal?: AbortSignal): Promise<unknown> {
     signal?.throwIfAborted();
@@ -569,13 +574,25 @@ export function createSkillActionExecuteV1(port: SkillActionPortV1) {
             return { ...item, ...(sourceFolderName ? { sourceFolderName } : {}) };
           }), caller, input.where, signal, held); break; }
         case 'skills.export': { const input = inputs[actionId].parse(raw); const items = await Promise.all(input.skillIds.map(async id => { const opened = await read(id, signal); return { name: opened.content.frontmatter.name, files: projectPromptBundleActionEntriesV1(opened.content.body.entries) }; })); result = await exportSkillBundlesAsZipV1(items); break; }
-        case 'skills.updates.diff': { const input = inputs[actionId].parse(raw), diff = await upstream(await current(input.skillId, signal)); result = { files: diff.files, costDelta: diff.costDelta }; break; }
-        case 'skills.updates.apply': { const input = inputs[actionId].parse(raw), opened = await reviewed(input.skillId, input.expectedRevision, signal), diff = await upstream(opened);
+        case 'skills.updates.diff': { const input = inputs[actionId].parse(raw);
+          const opened = input.candidate ? await read(input.skillId, signal, []) : await current(input.skillId, signal);
+          const diff = input.candidate ? candidatePreview(opened, input.candidate) : await upstream(opened);
+          result = { files: diff.files, revision: opened.revision, costDelta: diff.costDelta }; break; }
+        case 'skills.updates.apply': { const input = inputs[actionId].parse(raw);
+          const source = input.candidate ? undefined : await reviewed(input.skillId, input.expectedRevision, signal);
+          const opened = source ?? await read(input.skillId, signal, []);
+          if (input.candidate && input.expectedRevision !== opened.revision) return fail('revision_conflict');
+          const diff = input.candidate ? candidatePreview(opened, input.candidate) : await upstream(opened);
           const changed = diff.files.filter(file => file.changed);
-          if (opened.item.modified && changed.some(file => input.choices?.[file.path] === undefined)) return fail('choices_required');
-          const files = diff.files.flatMap(file => { const selected = input.choices?.[file.path] === 'mine' ? file.mine : file.theirs; return selected ? [selected] : []; });
-          const keepMine = changed.some(file => input.choices?.[file.path] === 'mine');
-          const lock = { ...opened.lock, provenance: diff.next.provenance, upstream: { state: 'current' as const },
+          if (source?.item.modified && changed.some(file => input.choices?.[file.path] === undefined)) return fail('choices_required');
+          const resolved = resolveSkillUpdateFilesV1(diff.files, input);
+          if (!resolved.ok) return fail(resolved.code);
+          if (input.candidate && !resolved.changed) {
+            result = { revision: opened.revision, provenance: opened.lock.provenance }; break;
+          }
+          const files = resolved.files;
+          const keepMine = changed.some(file => input.choices?.[file.path] === 'mine' || input.choices?.[file.path] === 'both');
+          const lock = input.candidate ? opened.lock : { ...opened.lock, provenance: diff.next.provenance, upstream: { state: 'current' as const },
             ...(!keepMine ? { importedDigest: computePromptBundleDigestV1({ v: 1, entries: files, createdAtMs: 0, updatedAtMs: 0 }) } : {}) };
           result = { ...await update(opened, files, lock, signal), provenance: lock.provenance }; break; }
       }

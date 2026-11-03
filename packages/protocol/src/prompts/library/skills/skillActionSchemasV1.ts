@@ -1,3 +1,4 @@
+import { ThreeWayTextComparisonV1Schema, ThreeWayTextChoiceV1Schema } from '../../../diff/threeWayText.js';
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { AgentIdV1Schema } from '../../../agents/agentIdV1.js';
@@ -10,6 +11,10 @@ import { SkillListItemV1Schema, SkillUnavailableItemV1Schema, SkillProvenanceV1S
 export const SkillFileInputV1Schema = lazyZodSchema(() => z.strictObject({ path: z.string().check(z.minLength(1)), contentBase64: z.string(),
   contentKind: z.enum(['utf8', 'binary']), unixMode: z.optional(z.nullable(z.number().check(z.int(), z.minimum(0), z.maximum(0o7777)))) }));
 export type SkillFileInputV1 = z.infer<typeof SkillFileInputV1Schema>;
+export const SkillUpdateCandidateV1Schema = lazyZodSchema(() => z.strictObject({ baseFiles: z.array(SkillFileInputV1Schema), files: z.array(SkillFileInputV1Schema) }));
+export type SkillUpdateCandidateV1 = z.infer<typeof SkillUpdateCandidateV1Schema>;
+export const SkillUpdateChoiceV1Schema = ThreeWayTextChoiceV1Schema;
+export type SkillUpdateChoiceV1 = z.infer<typeof SkillUpdateChoiceV1Schema>;
 export const SkillActionFailureResultV1Schema = lazyZodSchema(() => z.strictObject({ ok: z.literal(false), code: z.string().check(z.minLength(1)), current: z.optional(SkillListItemV1Schema) }));
 export type SkillActionFailureResultV1 = z.infer<typeof SkillActionFailureResultV1Schema>;
 export const SkillFileChangeV1Schema = lazyZodSchema(() => z.union([
@@ -40,7 +45,7 @@ export const SkillInstallSourceV1Schema = lazyZodSchema(() => z.union([
 ]));
 const changeResult = lazyZodSchema(() => z.strictObject({ revision: SkillRevisionV1Schema }));
 export const SkillUpdateFileV1Schema = lazyZodSchema(() => z.strictObject({ path: z.string(), mine: z.nullable(SkillFileInputV1Schema),
-  theirs: z.nullable(SkillFileInputV1Schema), changed: z.boolean() }));
+  theirs: z.nullable(SkillFileInputV1Schema), changed: z.boolean(), base: z.optional(z.nullable(SkillFileInputV1Schema)), comparison: z.optional(ThreeWayTextComparisonV1Schema) }));
 export type SkillUpdateFileV1 = z.infer<typeof SkillUpdateFileV1Schema>;
 export const SKILL_ACTION_INPUT_SCHEMAS_V1 = {
   'skills.list': lazyZodSchema(() => z.strictObject({ query: z.optional(z.string()), state: z.optional(z.enum(['in_use', 'off', 'updates', 'needs_attention'])) })),
@@ -53,8 +58,9 @@ export const SKILL_ACTION_INPUT_SCHEMAS_V1 = {
     items: z.array(z.strictObject({ name: z.string().check(z.minLength(1)), path: z.string().check(z.minLength(1)) })).check(z.minLength(1)), where: z.optional(ReachRulesChangeV1Schema) })),
   'skills.found.read': lazyZodSchema(() => z.strictObject({ machineId: z.string().check(z.minLength(1)), path: z.string().check(z.minLength(1)) })),
   'skills.export': lazyZodSchema(() => z.strictObject({ skillIds: z.array(skillId).check(z.minLength(1)) })),
-  'skills.updates.diff': identity,
-  'skills.updates.apply': lazyZodSchema(() => z.strictObject({ skillId, expectedRevision: SkillRevisionV1Schema, choices: z.optional(z.record(z.string(), z.enum(['mine', 'theirs']))) })),
+  'skills.updates.diff': lazyZodSchema(() => z.strictObject({ skillId, candidate: z.optional(SkillUpdateCandidateV1Schema) })),
+  'skills.updates.apply': lazyZodSchema(() => z.strictObject({ skillId, expectedRevision: SkillRevisionV1Schema, candidate: z.optional(SkillUpdateCandidateV1Schema),
+    choices: z.optional(z.record(z.string(), SkillUpdateChoiceV1Schema)), hunkChoices: z.optional(z.record(z.string(), z.record(z.string(), SkillUpdateChoiceV1Schema))) })),
 } as const;
 export const SKILL_ACTION_OUTPUT_SCHEMAS_V1 = {
   'skills.list': lazyZodSchema(() => z.strictObject({ items: z.array(SkillListItemV1Schema), revision: z.string(),
@@ -69,7 +75,7 @@ export const SKILL_ACTION_OUTPUT_SCHEMAS_V1 = {
   'skills.found.adopt': batchCreateResult,
   'skills.found.read': lazyZodSchema(() => z.strictObject({ name: z.string().check(z.minLength(1)), files: z.array(SkillFileInputV1Schema) })),
   'skills.export': lazyZodSchema(() => z.strictObject({ fileName: z.string(), bytes: z.string() })),
-  'skills.updates.diff': lazyZodSchema(() => z.strictObject({ files: z.array(SkillUpdateFileV1Schema), costDelta: z.strictObject({ mine: SkillCostV1Schema, theirs: SkillCostV1Schema }) })),
+  'skills.updates.diff': lazyZodSchema(() => z.strictObject({ files: z.array(SkillUpdateFileV1Schema), revision: z.optional(SkillRevisionV1Schema), costDelta: z.strictObject({ mine: SkillCostV1Schema, theirs: SkillCostV1Schema }) })),
   'skills.updates.apply': lazyZodSchema(() => z.strictObject({ revision: SkillRevisionV1Schema, provenance: SkillProvenanceV1Schema })),
 } as const;
 export type SkillLibraryActionIdV1 = keyof typeof SKILL_ACTION_INPUT_SCHEMAS_V1;

@@ -25,6 +25,7 @@ import { ApprovalRequestV2Schema, type ApprovalRequest } from '../../../approval
 import { createBlockingApprovalCoordinator } from '../../../actions/blockingApprovalCoordinator.js';
 
 const markdown = '---\nname: sample\ndescription: A useful skill\n---\nInstructions';
+const included = { ok: true, state: 'on', previous: 'inherit', applyTiming: { t: 'next_turn' } } as const;
 const files = [{ path: 'SKILL.md', contentBase64: encodeBase64(new TextEncoder().encode(markdown), 'base64'), contentKind: 'utf8' as const }];
 type RegistryPorts = Pick<ReturnType<typeof createRegistryHostV1>, 'readRegistryItem' | 'readRegistrySource' | 'filesForPointer' | 'readLinkSkills' | 'fetchLinkSkillFiles'>;
 function gitRegistryHarness() {
@@ -705,6 +706,94 @@ describe('skill library Actions', () => {
     expect(await h.execute('skills.install', { source, dryRun: true }, { surface: 'ui' })).toMatchObject({ items: [{ trust: 'runs_scripts', provenance: { kind: 'upload' } }] }); expect(h.creates()).toBe(0);
     expect(await h.execute('skills.install', { source, where: { kind: 'replace', rules: [] } }, { surface: 'ui' })).toMatchObject({ skillIds: ['skill-1'] }); expect(h.rules()).toEqual([]);
     expect(readSkillLockV1(h.artifacts.get('skill-1')!.header)).not.toHaveProperty('sourceFolderName');
+  });
+
+  it.each([
+    { choice: 'mine', via: 'hunk' }, { choice: 'theirs', via: 'hunk' }, { choice: 'both', via: 'hunk' },
+    { choice: 'both', via: 'file' }, { choice: 'mine', via: 'default' },
+  ] as const)('merges template skill candidates with $choice overlap choices via $via without changing provenance', async ({ choice, via }) => {
+    const h = harness();
+    const file = (path: string, content: string) => ({ path, contentKind: 'utf8' as const, contentBase64: encodeBase64(new TextEncoder().encode(content), 'base64') });
+    const base = file('SKILL.md', markdown + '\nshared\nanchor one\nlocal slot\nanchor two\nauthor slot\n');
+    const mine = file('SKILL.md', markdown + '\nmy overlap\nanchor one\nlocal edit\nanchor two\nauthor slot\n');
+    const theirs = file('SKILL.md', markdown + '\nauthor overlap\nanchor one\nlocal slot\nanchor two\nauthor edit\n');
+    await h.execute('skills.create', { name: 'sample', files: [mine] }, { surface: 'ui' });
+    const originalLock = readSkillLockV1(h.artifacts.get('skill-1')!.header);
+    const candidate = { baseFiles: [base], files: [theirs] };
+    const diff = await h.execute('skills.updates.diff', { skillId: 'skill-1', candidate }, { surface: 'ui' });
+    expect(diff).toMatchObject({ revision: '1:1', files: [{ base, mine, theirs, comparison: { segments: expect.any(Array) } }] });
+    const parsed = SKILL_ACTION_OUTPUT_SCHEMAS_V1['skills.updates.diff'].parse(diff);
+    const overlap = parsed.files[0]!.comparison!.segments.find(segment => segment.kind === 'conflict')!;
+    expect(overlap).toBeDefined();
+    const applied = await h.execute('skills.updates.apply', { skillId: 'skill-1', expectedRevision: '1:1', candidate,
+      ...(via === 'hunk' ? { hunkChoices: { 'SKILL.md': { [overlap.index]: choice } } } : via === 'file' ? { choices: { 'SKILL.md': choice } } : {}) }, { surface: 'ui' });
+    expect(applied).toMatchObject({ revision: '2:2', provenance: originalLock.provenance });
+    const result = JSON.parse(h.artifacts.get('skill-1')!.body!).entries[0];
+    const expectedOverlap = choice === 'mine' ? 'my overlap\n' : choice === 'theirs' ? 'author overlap\n' : 'my overlap\nauthor overlap\n';
+    expect(new TextDecoder().decode(decodeBase64(result.contentBase64, 'base64'))).toBe(markdown + '\n' + expectedOverlap + 'anchor one\nlocal edit\nanchor two\nauthor edit\n');
+    expect(readSkillLockV1(h.artifacts.get('skill-1')!.header)).toEqual(originalLock);
+  });
+  it.each(['skills.updates.diff', 'skills.updates.apply'] as const)('runs inline template %s without reading global catalogs', async actionId => {
+    const h = harness();
+    await h.execute('skills.create', { name: 'sample', files }, { surface: 'ui' });
+    // Catalog persistence is a separate boundary; inline release bytes need only the addressed Artifact.
+    h.skillRules.readCatalog = async () => { throw new Error('Global rules catalog must not be read'); };
+    const readPluginSkills = vi.fn(async () => []);
+    const execute = createSkillActionExecuteV1({ store: h.store, skillRules: h.skillRules,
+      readPluginSkills,
+      includeInSession: async () => included });
+    const next = { ...files[0]!, contentBase64: encodeBase64(new TextEncoder().encode(markdown + '\nRelease update'), 'base64') };
+    const input = { skillId: 'skill-1', expectedRevision: '1:1', candidate: { baseFiles: files, files: [next] } };
+    if (actionId === 'skills.updates.diff') {
+      expect(await execute(actionId, { skillId: input.skillId, candidate: input.candidate }, { surface: 'ui' }))
+        .toMatchObject({ revision: '1:1', files: [{ mine: files[0], theirs: next, changed: true }] });
+    } else {
+      expect(await execute(actionId, input, { surface: 'ui' })).toMatchObject({ revision: '2:2' });
+      expect(await execute(actionId, input, { surface: 'ui' })).toEqual({ ok: false, code: 'revision_conflict' });
+    }
+    expect(readPluginSkills).not.toHaveBeenCalled();
+  });
+  it('reviews every file of a removed template skill without allowing an empty skill write', async () => {
+    const h = harness();
+    const baseFiles = [...files, { path: 'asset.bin', contentKind: 'binary' as const, contentBase64: encodeBase64(new Uint8Array([0, 255, 1]), 'base64') }];
+    await h.execute('skills.create', { name: 'sample', files: baseFiles }, { surface: 'ui' });
+    const stored = h.artifacts.get('skill-1');
+    const candidate = { baseFiles, files: [] };
+    const diff = await h.execute('skills.updates.diff', { skillId: 'skill-1', candidate }, { surface: 'ui' });
+    expect(diff).toMatchObject({ revision: '1:1', costDelta: { theirs: { descriptionTokens: 0, bodyTokens: 0 } },
+      files: baseFiles.map(file => ({ path: file.path, base: file, mine: file, theirs: null, changed: true })) });
+    SKILL_ACTION_OUTPUT_SCHEMAS_V1['skills.updates.diff'].parse(diff);
+    expect(await h.execute('skills.updates.apply', { skillId: 'skill-1', expectedRevision: '1:1', candidate,
+      choices: { 'SKILL.md': 'theirs', 'asset.bin': 'theirs' } }, { surface: 'ui' }))
+      .toMatchObject({ ok: false, code: 'missing_required_entry' });
+    expect(h.artifacts.get('skill-1')).toBe(stored);
+  });
+  it('keeps the current revision and performs zero content writes for an unchanged template candidate', async () => {
+    const h = harness();
+    const currentFiles = [...files, { path: 'notes.txt', contentKind: 'utf8', contentBase64: encodeBase64(new TextEncoder().encode('\ufeffNotes\r\n'), 'base64') }];
+    await h.execute('skills.create', { name: 'sample', files: currentFiles }, { surface: 'ui' });
+    const update = vi.spyOn(h.store, 'update');
+    expect(await h.execute('skills.updates.apply', { skillId: 'skill-1', expectedRevision: '1:1', candidate: { baseFiles: currentFiles, files: currentFiles } }, { surface: 'ui' }))
+      .toMatchObject({ revision: '1:1' });
+    expect(update).not.toHaveBeenCalled();
+  });
+  it('preserves template local deletions and additions, selects binary/removal bytes, and refuses stale review revisions', async () => {
+    const h = harness();
+    const file = (path: string, value: string, contentKind: 'utf8' | 'binary' = 'utf8') => ({ path, contentKind, contentBase64: encodeBase64(new TextEncoder().encode(value), 'base64') });
+    const base = [files[0]!, file('local-delete.txt', 'base'), file('removed.txt', 'base'), file('asset.bin', 'base', 'binary')];
+    const mine = [files[0]!, file('removed.txt', 'local'), file('asset.bin', 'mine', 'binary'), file('local.txt', 'local only')];
+    const candidate = { baseFiles: base, files: [files[0]!, file('local-delete.txt', 'author changed'), file('asset.bin', 'theirs', 'binary'), file('new.txt', 'author added')] };
+    await h.execute('skills.create', { name: 'sample', files: mine }, { surface: 'ui' });
+    expect(await h.execute('skills.updates.apply', { skillId: 'skill-1', expectedRevision: '1:1', candidate,
+      choices: { 'asset.bin': 'both' } }, { surface: 'ui' })).toMatchObject({ ok: false, code: 'invalid_update_choice' });
+    expect(h.artifacts.get('skill-1')!.revision.bodyVersion).toBe(1);
+    await h.execute('skills.update', { skillId: 'skill-1', expectedRevision: '1:1', files: [{ kind: 'upsert', file: file('other.txt', 'another writer') }] }, { surface: 'ui' });
+    expect(await h.execute('skills.updates.apply', { skillId: 'skill-1', expectedRevision: '1:1', candidate }, { surface: 'ui' })).toMatchObject({ ok: false, code: 'revision_conflict' });
+    expect(await h.execute('skills.updates.apply', { skillId: 'skill-1', expectedRevision: '2:2', candidate,
+      choices: { 'asset.bin': 'theirs', 'removed.txt': 'theirs' } }, { surface: 'ui' })).toMatchObject({ revision: '3:3' });
+    const result = JSON.parse(h.artifacts.get('skill-1')!.body!).entries;
+    expect(result).toEqual(expect.arrayContaining([files[0]!, file('asset.bin', 'theirs', 'binary'), file('local.txt', 'local only'), file('new.txt', 'author added'), file('other.txt', 'another writer')]));
+    expect(result.map((entry: { path: string }) => entry.path).sort()).toEqual(['SKILL.md', 'asset.bin', 'local.txt', 'new.txt', 'other.txt']);
   });
 });
 
