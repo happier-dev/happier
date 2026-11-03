@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 
+import { resolveDependencyInstallRoot, waitForDependencyRefresh } from '../../utils/proc/dependency_refresh.mjs';
 import { readCliDistIntegrity, resolveCliDistEntrypointFromBin } from '../../utils/cli/cliDistIntegrity.mjs';
 
 function resolveTsxLoaderPath(cliDir) {
@@ -51,13 +52,17 @@ function resolveDistCliEntrypoint(cliDir) {
   return { kind: 'dist', nodeArgs: [packagedEntrypoint], distEntrypoint: packagedEntrypoint };
 }
 
-export function resolveCliEntrypoint({ cliDir, preferSource = false } = {}) {
+export async function resolveCliEntrypoint({ cliDir, preferSource = false, env = process.env, signal } = {}) {
   const root = String(cliDir ?? '').trim();
   if (!root) return null;
 
-  if (preferSource) {
-    return resolveTsxCliEntrypoint(root) ?? resolveDistCliEntrypoint(root);
+  const entrypoint = preferSource
+    ? resolveTsxCliEntrypoint(root) ?? resolveDistCliEntrypoint(root)
+    : resolveDistCliEntrypoint(root) ?? resolveTsxCliEntrypoint(root);
+  // A source launch reads the host's live installation. Observe its existing
+  // writer before admitting the preload, without leasing a long-lived CLI.
+  if (entrypoint?.kind === 'tsx') {
+    await waitForDependencyRefresh({ installDir: resolveDependencyInstallRoot(root), env, signal });
   }
-
-  return resolveDistCliEntrypoint(root) ?? resolveTsxCliEntrypoint(root);
+  return entrypoint;
 }

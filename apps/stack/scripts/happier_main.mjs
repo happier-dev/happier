@@ -255,7 +255,7 @@ async function main() {
           args: cliLaunchSpec.args,
           distEntrypoint: cliLaunchSpec.entrypoint,
       }
-    : resolveCliEntrypoint({
+    : await resolveCliEntrypoint({
         cliDir,
         preferSource: runtimeLaunchContext.runtimeMode.mode === 'source',
       });

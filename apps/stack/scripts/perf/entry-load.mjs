@@ -4,11 +4,11 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { withDependencyConsumption } from '../utils/proc/dependency_refresh.mjs';
 import { probeRuntimeImport } from '../utils/proc/runtimeImportProbe.mjs';
 
 const repo = fileURLToPath(new URL('../../../../', import.meta.url));
 const self = fileURLToPath(import.meta.url);
-const preload = join(repo, 'packages/cli-common/registerSourceRuntime.mjs');
 
 // Source imports use the same entry owners as the existing per-package probes.
 // UI needs its canonical native-platform boundary harness; SDK needs browser
@@ -23,46 +23,50 @@ export const ENTRY_GRAPHS = Object.freeze([
   { id: 'sdk-browser', entry: 'packages/sdk/scripts/validateBrowserConsumer.mjs', cwd: 'packages/sdk' },
 ]);
 
-export async function loadEntryGraph(graph, { signal, repoDir = repo } = {}) {
+export async function loadEntryGraph(graph, { signal, repoDir = repo, env = process.env } = {}) {
   const home = await mkdtemp(join(tmpdir(), 'hstack-entry-load-'));
   try {
-    const ui = graph.id === 'ui-catalog';
-    let nodeArgs = ui ? [] : ['--import', preload];
-    let sourceEnv = {};
-    if (graph.id === 'voice-inference-worker') {
-      const { createCliSourceLoader } = await import(pathToFileURL(join(repoDir,
-        'packages/cli-common/cliSourceLoader.mjs')).href);
-      const loader = await createCliSourceLoader('hstack-voice-entry-invocation');
-      try {
-        const { buildHappyCliSubprocessInvocation } = await loader.import(pathToFileURL(join(repoDir,
-          'apps/cli/src/utils/spawnHappyCLI.ts')).href, import.meta.url);
-        const invocation = buildHappyCliSubprocessInvocation(['daemon', 'voice-inference-worker'], {
-          environment: { ...process.env, HAPPIER_CLI_SUBPROCESS_RUNTIME: 'node',
-            HAPPIER_CLI_SUBPROCESS_PREFER_TSX: '1', HAPPIER_CLI_SUBPROCESS_ENTRYPOINT: undefined,
-            HAPPIER_CLI_SUBPROCESS_RUNTIME_BACKED: undefined },
-        });
-        const sourceEntry = invocation.argv.indexOf(join(repoDir, 'apps/cli/src/index.ts'));
-        if (invocation.runtime !== 'node' || sourceEntry < 0) throw new Error('Expected source worker invocation');
-        // Consume the real source invocation's loader/conditions, substituting
-        // only this import-only entry for its IPC-running CLI main.
-        nodeArgs = invocation.argv.slice(0, sourceEntry);
-        sourceEnv = invocation.env ?? {};
-      } finally { await loader.unregister(); }
-    }
-    const entrypoint = ui
-      ? createRequire(join(repo, 'apps/ui/package.json')).resolve('vitest/vitest.mjs') : self;
-    const result = await probeRuntimeImport({ entrypoint,
-      args: ui ? ['run', '--config', join(repoDir, 'apps/ui/vitest.config.ts'), 'sources/agents/catalog/catalog.test.ts']
-        : [`--child=${graph.id}`, `--repo-dir=${repoDir}`],
-      nodeArgs,
-      cwd: join(repoDir, graph.cwd), signal,
-      env: { ...process.env, ...sourceEnv, HAPPIER_HOME_DIR: home, HAPPIER_STACK_CLI_HOME_DIR: home,
-        HAPPIER_SERVER_LIGHT_DATA_DIR: home, TSX_DISABLE_CACHE: '1',
-        ...(graph.tsconfig ? { TSX_TSCONFIG_PATH: join(repoDir, graph.tsconfig) } : {}),
-        HAPPIER_CLI_DIST_INTEGRITY_PROBE: '1', HAPPIER_CLI_RUNTIME_DISABLE: '1', HAPPIER_CLI_UPDATE_CHECK: '0' },
+    // Each graph is actual installed-module consumption, after host admission.
+    // Release between graphs so a queued refresh can publish before the next.
+    return await withDependencyConsumption({ installDir: repoDir, env, signal }, async readerEnv => {
+      const ui = graph.id === 'ui-catalog';
+      let nodeArgs = ui ? [] : ['--import', join(repoDir, 'packages/cli-common/registerSourceRuntime.mjs')];
+      let sourceEnv = {};
+      if (graph.id === 'voice-inference-worker') {
+        const { createCliSourceLoader } = await import(pathToFileURL(join(repoDir,
+          'packages/cli-common/cliSourceLoader.mjs')).href);
+        const loader = await createCliSourceLoader('hstack-voice-entry-invocation');
+        try {
+          const { buildHappyCliSubprocessInvocation } = await loader.import(pathToFileURL(join(repoDir,
+            'apps/cli/src/utils/spawnHappyCLI.ts')).href, import.meta.url);
+          const invocation = buildHappyCliSubprocessInvocation(['daemon', 'voice-inference-worker'], {
+            environment: { ...readerEnv, HAPPIER_CLI_SUBPROCESS_RUNTIME: 'node',
+              HAPPIER_CLI_SUBPROCESS_PREFER_TSX: '1', HAPPIER_CLI_SUBPROCESS_ENTRYPOINT: undefined,
+              HAPPIER_CLI_SUBPROCESS_RUNTIME_BACKED: undefined },
+          });
+          const sourceEntry = invocation.argv.indexOf(join(repoDir, 'apps/cli/src/index.ts'));
+          if (invocation.runtime !== 'node' || sourceEntry < 0) throw new Error('Expected source worker invocation');
+          // Consume the real source invocation's loader/conditions, substituting
+          // only this import-only entry for its IPC-running CLI main.
+          nodeArgs = invocation.argv.slice(0, sourceEntry);
+          sourceEnv = invocation.env ?? {};
+        } finally { await loader.unregister(); }
+      }
+      const entrypoint = ui
+        ? createRequire(join(repo, 'apps/ui/package.json')).resolve('vitest/vitest.mjs') : self;
+      const result = await probeRuntimeImport({ entrypoint,
+        args: ui ? ['run', '--config', join(repoDir, 'apps/ui/vitest.config.ts'), 'sources/agents/catalog/catalog.test.ts']
+          : [`--child=${graph.id}`, `--repo-dir=${repoDir}`],
+        nodeArgs,
+        cwd: join(repoDir, graph.cwd), signal,
+        env: { ...readerEnv, ...sourceEnv, HAPPIER_HOME_DIR: home, HAPPIER_STACK_CLI_HOME_DIR: home,
+          HAPPIER_SERVER_LIGHT_DATA_DIR: home, TSX_DISABLE_CACHE: '1',
+          ...(graph.tsconfig ? { TSX_TSCONFIG_PATH: join(repoDir, graph.tsconfig) } : {}),
+          HAPPIER_CLI_DIST_INTEGRITY_PROBE: '1', HAPPIER_CLI_RUNTIME_DISABLE: '1', HAPPIER_CLI_UPDATE_CHECK: '0' },
+      });
+      return { graph: graph.id, entry: graph.entry, basis: 'current-source', ...result,
+        firstFailingModule: result.firstFailingModule === self ? graph.entry : result.firstFailingModule };
     });
-    return { graph: graph.id, entry: graph.entry, basis: 'current-source', ...result,
-      firstFailingModule: result.firstFailingModule === self ? graph.entry : result.firstFailingModule };
   } catch (error) {
     if (signal?.aborted) throw error;
     return { graph: graph.id, entry: graph.entry, basis: 'current-source', status: 'failed',
