@@ -101,6 +101,7 @@ export function createKimiWireSource(): AcpProviderTurnSourceFactory {
         let latestTurn = -1;
         const wakeups = new Set<() => void>();
         const wake = () => { for (const resolveWait of wakeups) resolveWait(); wakeups.clear(); };
+        /** Latch the first live-source failure, notify the session owner, and wake requests blocked on missing journal evidence. */
         const fail = (error: unknown) => {
             if (failure || disposed) return;
             failure = error instanceof Error ? error : new Error('Cannot observe the Kimi session journal');

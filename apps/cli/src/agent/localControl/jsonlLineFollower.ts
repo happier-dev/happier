@@ -197,6 +197,7 @@ export class JsonlLineFollower {
         this.scheduleNextPoll(aggregate);
     }
 
+    /** Preserve the cursor while the path is absent; only proven replacement or truncation resets it before row delivery. */
     private async drainInner(source: JsonlFollowerDrainSource): Promise<JsonlFollowerDrainOutcome> {
         let size = 0;
         let hadReset = false;
@@ -343,6 +344,7 @@ export class JsonlLineFollower {
         };
     }
 
+    /** Reset on a changed device/inode pair before adopting the replacement file, reporting whether continuity was lost. */
     private handleFileIdentity(statResult: Awaited<ReturnType<typeof stat>>): boolean {
         const nextIdentity = { dev: statResult.dev, ino: statResult.ino };
         if (this.fileIdentity && !isSameFileIdentity(this.fileIdentity, nextIdentity)) {
