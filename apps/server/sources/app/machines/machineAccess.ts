@@ -26,6 +26,7 @@ import { resolveAccountDisplayLabelV1, ACCOUNT_DISPLAY_PROFILE_SELECT } from '@/
 import { acquireAccountChangePublicationLocksInTx, assertAccountChangePublicationAudienceInTx, beforeAccountChangePublication, markAccountsChanged } from '@/app/changes/markAccountChanged';
 import { resolveEffectiveAccountEncryptionModeFromAccountRow } from '@/app/encryption/accountEncryptionMode';
 import { captureMachineAccessImpactsInTx, applyMachineAccessImpactsInTx } from './machineAccessEffects';
+import { isMachineOperationSupportedForRequester, type MachineOperationRequesterContext } from './machineOperationSupport';
 import { isMachineRecipientWorkPending, projectMachineRecipientWork, readMachineRecipientWorkInTx, readMachineAudienceAccountIdsInTx } from './machineRecipientWork';
 
 type MachineActor = Readonly<{ actorAccountId: string; machineId: string }>;
@@ -45,6 +46,7 @@ const MACHINE_RESOURCE_FACTS_SELECT = {
         id: true, kind: true, accountId: true, metadata: true, metadataVersion: true,
         daemonState: true, daemonStateVersion: true, dataEncryptionKey: true,
         installationId: true, active: true, revokedAt: true, replacedByMachineId: true,
+        operationProtocolCapabilities: true, operationProtocolCapabilitiesRevision: true,
         account: { select: { ...ACCOUNT_DISPLAY_PROFILE_SELECT, encryptionMode: true, status: true } },
     } as const;
 
@@ -292,10 +294,12 @@ export async function readMachineDataKeyForCallerInTx(tx: Tx, input: MachineActo
     const opening = openings.get(input.machineId);
     return opening?.access.accessState === 'ready' ? opening.callerDataEncryptionKey : null;
 }
-export interface MachineAdmissionInput extends MachineActor {
+export interface MachineAdmissionInput extends MachineActor, Partial<MachineOperationRequesterContext> {
     requiredRole?: MachineAccessRoleV1;
     requireOnline?: boolean;
     rpcMethod?: string;
+    /** Reviewed composite effects retain role custody while checking their actual operation. */
+    operationRpcMethod?: string;
     actionId?: string;
 }
 export async function resolveMachineAdmissionInTx(tx: Tx, input: MachineAdmissionInput): Promise<MachineAdmission> {
@@ -396,16 +400,19 @@ async function resolveMachineAdmissionFromFactsInTx(tx: Tx, row: MachineFacts | 
     if (!row || !access) return { kind: 'denied', code: 'access_denied' };
     if (!resourceContentMatchesMode(row, access.encryptionMode)) return { kind: 'denied', code: 'encryption_material_unavailable' };
     if (row.revokedAt || row.replacedByMachineId || !row.installationId || (input.requireOnline === true && !row.active)) return { kind: 'denied', code: 'machine_unavailable' };
+    // A template creates the same requester-owned Session as ordinary New Session.
+    // Keep its signed root while consuming the existing spawn role/isolation policy.
+    const operationActionId = input.actionId === 'template.instantiate' ? 'session.spawn_new' : input.actionId;
     let requiredRole = input.requiredRole ?? 'use';
     const browserExtensionAction = input.actionId !== undefined && isBrowserExtensionActionIdV1(input.actionId);
     if (input.actionId && requiredMachineRoleForBrowserAction(input.actionId) === 'manage') requiredRole = 'manage';
     let method = input.rpcMethod;
+    const requesterSessionLifecycle = operationActionId === 'session.spawn_new' || operationActionId === 'session.open';
     if (input.actionId && !method) {
         const actionId = SignedRootActionIdSchema.safeParse(input.actionId);
         const spec = actionId.success ? getActionSpec(actionId.data) : null;
         // Session creation/resume uses admitted requester custody at the Action ingress.
         // Its private raw RPC binding remains custodian-only when requested directly.
-        const requesterSessionLifecycle = spec?.id === 'session.spawn_new' || spec?.id === 'session.open';
         method = requesterSessionLifecycle ? undefined : isProviderActionIdV1(input.actionId)
             ? resolveProviderActionRpcRouteV1(input.actionId)?.method : spec?.bindings?.rpcMethod;
         if (!method && !access.owned && !requesterSessionLifecycle && !browserExtensionAction && !isRequesterProjectExecutionActionV1(input.actionId)) {
@@ -413,11 +420,17 @@ async function resolveMachineAdmissionFromFactsInTx(tx: Tx, row: MachineFacts | 
         }
     }
     if (method) {
-        const rpcRole = resolveMachineRpcRequiredRole({ method, owned: access.owned, requiredRole, actionId: input.actionId });
+        const rpcRole = resolveMachineRpcRequiredRole({ method, owned: access.owned, requiredRole, actionId: operationActionId });
         if (rpcRole === null) return { kind: 'denied', code: 'custodian_only' };
         requiredRole = rpcRole;
     }
     if (requiredRole === 'manage' && access.role !== 'manage') return { kind: 'denied', code: 'access_denied' };
+    if (!isMachineOperationSupportedForRequester({ actorAccountId: input.actorAccountId, machine: row,
+        rpcMethod: input.operationRpcMethod ?? method, actionId: operationActionId,
+        callerAuthority: input.callerAuthority, sessionActionOrigin: input.sessionActionOrigin,
+        executionBinding: input.executionBinding })) {
+        return { kind: 'denied', code: 'daemon_upgrade_required' };
+    }
     if (access.accessState === 'refused') return { kind: 'denied', code: 'recipient_encryption_incompatible' };
     if (access.accessState !== 'ready') return { kind: 'denied', code: 'recipient_key_pending' };
     return { kind: 'admitted', actorAccountId: input.actorAccountId, custodianAccountId: row.accountId,

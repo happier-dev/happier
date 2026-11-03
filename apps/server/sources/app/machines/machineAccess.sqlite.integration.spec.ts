@@ -7,6 +7,7 @@ import { db } from '@/storage/db';
 import { inTx } from '@/storage/inTx';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
 import { createSignedAccountContentBinding } from '@/testkit/accountEncryption';
+import { makeShareEligibleForTest } from '@/testkit/shareEligibility.testkit';
 import { observePrismaReads } from '@/testkit/observePrismaReads';
 import * as access from './machineAccess';
 import { ACTION_OPERATION_RPC_METHODS_V1, ACTION_OPERATION_RPC_METHODS_V2 } from '@happier-dev/protocol/actions/operations/v1';
@@ -34,10 +35,89 @@ describe('Machine current access (real SQLite)', () => {
         const machine = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: owner.id,
             metadata: mode === 'plain' ? encodePlainMachineStoredContent({ host: 'host', platform: 'linux', happyCliVersion: 'test', homeDir: '/home/test', happyHomeDir: '/home/test/.happier' }) : 'metadata',
             daemonState: mode === 'plain' ? encodePlainMachineStoredContent({ status: 'running' }) : 'state', installationId: 'install', active: false,
+            operationProtocolCapabilities: { requesterExecutionIsolation: { protocolVersions: [1] } }, operationProtocolCapabilitiesRevision: 1,
             dataEncryptionKey: mode === 'plain' ? new Uint8Array(Buffer.from(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64')) : envelope } });
         return { owner, machine, key };
     }
-    const grant = (actorAccountId: string, machineId: string, accountId: string, level: 'view' | 'admin' = 'view') => inTx(tx => access.setMachineAccessGrantInTx(tx, { actorAccountId, machineId, principal: { kind: 'account', accountId }, level }));
+    const grant = async (actorAccountId: string, machineId: string, accountId: string, level: 'view' | 'admin' = 'view') => {
+        await makeShareEligibleForTest(actorAccountId, accountId);
+        return inTx(tx => access.setMachineAccessGrantInTx(tx, { actorAccountId, machineId, principal: { kind: 'account', accountId }, level }));
+    };
+
+    it('distinguishes custodian-only policy from a daemon upgrade requirement', async () => {
+        const f = await fixture();
+        const requester = await account();
+        await grant(f.owner.id, f.machine.id, requester.id);
+        expect(await access.resolveMachineAdmission({ actorAccountId: requester.id, machineId: f.machine.id,
+            rpcMethod: RPC_METHODS.DAEMON_WORKSPACE_SYNC_LIST })).toEqual({ kind: 'denied', code: 'custodian_only' });
+        await db.machine.update({ where: { id: f.machine.id }, data: { operationProtocolCapabilities: {} } });
+        expect(await access.resolveMachineAdmission({ actorAccountId: requester.id, machineId: f.machine.id,
+            actionId: 'session.spawn_new' })).toEqual({ kind: 'denied', code: 'daemon_upgrade_required' });
+        expect(await access.resolveMachineAdmission({ actorAccountId: f.owner.id, machineId: f.machine.id,
+            rpcMethod: RPC_METHODS.DAEMON_WORKSPACE_SYNC_LIST })).toMatchObject({ kind: 'admitted', actorAccountId: f.owner.id });
+    });
+
+    it('withdraws only protected member operations and reads their enforcement capability in the existing admission query', async () => {
+        const f = await fixture();
+        const requester = await account();
+        await db.machine.update({ where: { id: f.machine.id }, data: { operationProtocolCapabilities: {} } });
+        await grant(f.owner.id, f.machine.id, requester.id, 'admin');
+        const actor = { actorAccountId: requester.id, machineId: f.machine.id };
+        const methods = [
+            RPC_METHODS.BASH,
+            RPC_METHODS.DAEMON_TERMINAL_ENSURE, RPC_METHODS.DAEMON_TERMINAL_LIST,
+            RPC_METHODS.DAEMON_TERMINAL_STREAM_READ, RPC_METHODS.DAEMON_TERMINAL_STREAM_READ_BYTES,
+            RPC_METHODS.DAEMON_TERMINAL_STREAM_ACK, RPC_METHODS.DAEMON_TERMINAL_STREAM_INPUT,
+            RPC_METHODS.DAEMON_TERMINAL_INPUT, RPC_METHODS.DAEMON_TERMINAL_RESIZE,
+            RPC_METHODS.DAEMON_TERMINAL_RESTART, RPC_METHODS.DAEMON_TERMINAL_CLOSE,
+            RPC_METHODS.READ_FILE, RPC_METHODS.WRITE_FILE, RPC_METHODS.STAT_FILE,
+            RPC_METHODS.LIST_DIRECTORY, RPC_METHODS.GET_DIRECTORY_TREE, RPC_METHODS.CREATE_DIRECTORY,
+            RPC_METHODS.RENAME_PATH, RPC_METHODS.DELETE_PATH, RPC_METHODS.COPY_PATH,
+            RPC_METHODS.DAEMON_FILESYSTEM_LIST_ROOTS, RPC_METHODS.DAEMON_FILESYSTEM_READ_FILE,
+            RPC_METHODS.DAEMON_FILESYSTEM_WRITE_FILE, RPC_METHODS.DAEMON_FILESYSTEM_LIST_DIRECTORY,
+            RPC_METHODS.DAEMON_FILESYSTEM_GET_DIRECTORY_TREE, RPC_METHODS.DAEMON_FILESYSTEM_CREATE_DIRECTORY,
+            RPC_METHODS.DAEMON_FILESYSTEM_RENAME, RPC_METHODS.DAEMON_FILESYSTEM_DELETE,
+            RPC_METHODS.DAEMON_FILESYSTEM_COPY, RPC_METHODS.DAEMON_FILESYSTEM_UPLOAD,
+            RPC_METHODS.DAEMON_FILESYSTEM_DOWNLOAD, RPC_METHODS.DAEMON_FILESYSTEM_TRANSFER_CANCEL,
+            RPC_METHODS.DAEMON_TRANSFER_UPLOAD_INIT, RPC_METHODS.DAEMON_TRANSFER_UPLOAD_CHUNK,
+            RPC_METHODS.DAEMON_TRANSFER_UPLOAD_FINALIZE, RPC_METHODS.DAEMON_TRANSFER_UPLOAD_ABORT,
+            RPC_METHODS.DAEMON_TRANSFER_DOWNLOAD_INIT, RPC_METHODS.DAEMON_TRANSFER_DOWNLOAD_CHUNK,
+            RPC_METHODS.DAEMON_TRANSFER_DOWNLOAD_FINALIZE, RPC_METHODS.DAEMON_TRANSFER_DOWNLOAD_ABORT,
+            RPC_METHODS.DAEMON_WORKSPACE_FILES_LIST, RPC_METHODS.DAEMON_WORKSPACE_FILES_SEARCH,
+            RPC_METHODS.DAEMON_WORKSPACE_FILES_REPLACE_PREVIEW, RPC_METHODS.DAEMON_WORKSPACE_FILES_REPLACE_APPLY,
+            RPC_METHODS.DAEMON_LSP_SYNC, RPC_METHODS.DAEMON_LSP_QUERY, RPC_METHODS.DAEMON_LSP_WATCH,
+            RPC_METHODS.DAEMON_LSP_RESTART, RPC_METHODS.DAEMON_LSP_RENAME_APPLY,
+            RPC_METHODS.DAEMON_LSP_FILE_RENAME_APPLY, RPC_METHODS.DAEMON_LSP_CODE_ACTION_APPLY,
+            RPC_METHODS.DAEMON_LSP_FORMAT_APPLY, RPC_METHODS.DAEMON_LSP_IMPORTS_ORGANIZE_APPLY,
+            RPC_METHODS.SCM_FILE_READ, RPC_METHODS.DIFFTASTIC, RPC_METHODS.DAEMON_MCP_SERVERS_TEST,
+            RPC_METHODS.DAEMON_PROJECTS_PREPARE, RPC_METHODS.DAEMON_PROJECTS_SCRIPT_RUN,
+            RPC_METHODS.DAEMON_PROJECTS_COMPUTE_EXEC,
+        ];
+        for (const rpcMethod of methods) {
+            expect(await access.resolveMachineAdmission({ ...actor, rpcMethod }), rpcMethod)
+                .toEqual({ kind: 'denied', code: 'daemon_upgrade_required' });
+        }
+        await db.machine.update({ where: { id: f.machine.id }, data: {
+            operationProtocolCapabilities: { requesterExecutionIsolation: { protocolVersions: [1] } },
+            operationProtocolCapabilitiesRevision: 1,
+        } });
+        for (const rpcMethod of methods) {
+            expect(await access.resolveMachineAdmission({ ...actor, rpcMethod }), rpcMethod).toMatchObject({ kind: 'admitted' });
+        }
+        const admitted = await inTx(async tx => {
+            const observed = observePrismaReads(tx, ['machine']);
+            const value = await access.resolveMachineAdmissionInTx(observed.tx, { ...actor, rpcMethod: RPC_METHODS.BASH });
+            return { value, reads: observed.reads };
+        });
+        expect(admitted).toMatchObject({ value: { kind: 'admitted' }, reads: ['machine.findMany', 'machine.findMany'] });
+        await db.machine.update({ where: { id: f.machine.id }, data: {
+            operationProtocolCapabilities: { requesterExecutionIsolation: { protocolVersions: [2] }, sessionSpawn: { protocolVersions: [1] } },
+        } });
+        expect(await access.resolveMachineAdmission({ ...actor, rpcMethod: RPC_METHODS.BASH }))
+            .toEqual({ kind: 'denied', code: 'daemon_upgrade_required' });
+        expect(await access.resolveMachineAdmission({ ...actor, rpcMethod: RPC_METHODS.CAPABILITIES_DESCRIBE }))
+            .toMatchObject({ kind: 'admitted' });
+    });
 
     it('admits extension discovery with Use and profile mutations only with Manage', async () => {
         const f = await fixture();

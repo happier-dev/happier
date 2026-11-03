@@ -19,7 +19,7 @@ export const MachineAccessRefusalCodeV1Schema = lazyZodSchema(() => z.enum([
   'access_denied', 'machine_unavailable', 'recipient_encryption_incompatible', 'recipient_key_pending',
   'encryption_material_unavailable', 'recipient_binding_changed', 'machine_key_changed',
   'invalid_recipient_envelope', 'principal_not_found', 'principal_ineligible', 'custodian_protected',
-  'data_key_not_required', 'unsupported_operation', 'custodian_only',
+  'data_key_not_required', 'unsupported_operation', 'custodian_only', 'daemon_upgrade_required',
 ]));
 export type MachineAccessRoleV1 = z.infer<typeof MachineAccessRoleV1Schema>;
 export type MachineAccessLevelV1 = z.infer<typeof MachineAccessLevelV1Schema>;
