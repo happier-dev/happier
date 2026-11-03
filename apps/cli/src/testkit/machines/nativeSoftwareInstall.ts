@@ -1,4 +1,8 @@
 import { createNativeSoftwareOsFixture, nativeTerminal, packageOs } from './nativeSoftwareOs';
+import { randomBytes } from 'node:crypto';
+import { sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
+import { computeAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
+import { sealAccountSettingsV2RawContent } from '@/settings/accountSettings/updateAccountSettingsV2WithRetry';
 import axios from 'axios';
 import tweetnacl from 'tweetnacl';
 import { expect, onTestFailed, onTestFinished, vi } from 'vitest';
@@ -83,6 +87,8 @@ type NativeSoftwareActionDeps = ActionExecutorDeps & Required<Pick<ActionExecuto
 /** The real installed Machine/recipe/task path; only native OS and Home IO are substituted. */
 export async function createNativeSoftwareInstallFixture(options: Readonly<{
   scenario: NativeSoftwareScenario;
+  unprivilegedPackageFactUnavailable?: 'presence' | 'locks';
+  accountEncryptionMode?: 'plain' | 'e2ee';
   machineId?: string;
   homeId?: string;
   accountId?: string;
@@ -105,9 +111,10 @@ export async function createNativeSoftwareInstallFixture(options: Readonly<{
   const firstPresence = scenario.startsWith('first-') || removing;
   const initiallyPresent = scenario === 'first-present' || scenario === 'first-forged-absent';
   const excludedToSelected = scenario === 'excluded-to-selected';
-  const encryptionMode = scenario.endsWith('-e2ee') ? 'e2ee' : 'plain';
+  const encryptionMode = options.accountEncryptionMode ?? (scenario.endsWith('-e2ee') ? 'e2ee' : 'plain');
   recordFixturePhase('os_fixture.begin');
-  const os = await createNativeSoftwareOsFixture({ manager, initiallyPresent });
+  const os = await createNativeSoftwareOsFixture({ manager, initiallyPresent,
+    unprivilegedPackageFactUnavailable: options.unprivilegedPackageFactUnavailable });
   recordFixturePhase('os_fixture.end');
   const { directory, statePath, rootLaunches, rootPlans, nativeCommands, runNative } = os;
   const env = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_SERVER_URL', 'HAPPIER_ACTIVE_SERVER_ID']);
@@ -153,6 +160,9 @@ export async function createNativeSoftwareInstallFixture(options: Readonly<{
     : { token, encryption: { type: 'dataKey', machineKey: accountMachineKey,
       publicKey: tweetnacl.box.keyPair.fromSecretKey(accountMachineKey).publicKey }, credentialProvenance: 'stored_session' };
   osStore.credentials = credentials;
+  const accountEncryptionCurrentness = { mode: encryptionMode, version: 1,
+    signingKeyFingerprint: null, contentKeyFingerprint: encryptionMode === 'plain' ? null
+      : computeAccountEncryptionMigrateKeyFingerprintV1(tweetnacl.box.keyPair.fromSecretKey(accountMachineKey).publicKey), updatedAt: 1 };
   const issuerCredentials: StoredCredentials = nativeConfirmed ? { ...credentials, token: issuerToken } : credentials;
   const sources = MachineSetupSourceV1Schema.parse([{ kind: 'direct', setup: { items: [{
     kind: 'softwareRecipe', selection: {
@@ -163,7 +173,9 @@ export async function createNativeSoftwareInstallFixture(options: Readonly<{
     exclusions: [{ ref: { pluginId: 'com.example.public-package', recipeId: 'jq', revision: '1' }, reason: 'not_selected' }],
   }) : undefined;
   const machine: Machine = { id: machineId, ...(encryptionMode === 'plain' ? { encryptionMode } : {
-    encryptionMode, encryptionKey: new Uint8Array(32).fill(7), encryptionVariant: 'dataKey', dataEncryptionKey: 'owner-envelope',
+    encryptionMode, encryptionKey: new Uint8Array(32).fill(7), encryptionVariant: 'dataKey',
+    dataEncryptionKey: Buffer.from(sealEncryptedDataKeyEnvelopeV1({ dataKey: new Uint8Array(32).fill(7),
+      recipientPublicKey: tweetnacl.box.keyPair.fromSecretKey(accountMachineKey).publicKey, randomBytes })).toString('base64'),
   }), metadata: {
     host: 'worker', platform: 'linux', happyCliVersion: 'dev', homeDir: directory, happyHomeDir: configuration.happyHomeDir,
     adminAccess: { version: 1, mode: scenario === 'apt' || firstPresence || excludedToSelected || nativeConfirmed ? 'preauthorized' : 'none' },
@@ -196,7 +208,7 @@ export async function createNativeSoftwareInstallFixture(options: Readonly<{
       result: 'success', version: machine.daemonStateVersion + 1, daemonState: Reflect.get(payload, 'daemonState'),
     };
     expect(event).toBe('machine-update-metadata');
-    expect(Reflect.get(payload, 'expectedDataEncryptionKey')).toBe(encryptionMode === 'plain' ? null : 'owner-envelope');
+    expect(Reflect.get(payload, 'expectedDataEncryptionKey')).toBe(encryptionMode === 'plain' ? null : machine.dataEncryptionKey);
     const stored: unknown = Reflect.get(payload, 'metadata');
     if (typeof stored !== 'string') throw new Error('Metadata CAS must carry serialized content');
     const decoded = codec.decodeStored(stored);
@@ -236,7 +248,8 @@ export async function createNativeSoftwareInstallFixture(options: Readonly<{
     ...(publishedCapabilities ? { operationProtocolCapabilities: publishedCapabilities,
       operationProtocolCapabilitiesRevision: capabilitiesRevision } : {}),
     metadata: codec.encodeStored(machine.metadata), metadataVersion: machine.metadataVersion,
-    daemonState: machine.daemonState, daemonStateVersion: machine.daemonStateVersion });
+    daemonState: machine.daemonState == null ? null : codec.encodeStored(machine.daemonState),
+    daemonStateVersion: machine.daemonStateVersion });
   let additionalHomeRead: ((url: string) => Readonly<{ status: number; data: unknown }> | undefined) | undefined;
   const profile = vi.spyOn(axios, 'get').mockImplementation(async url => {
     const phase = String(url).endsWith('/v1/account/profile') ? 'home_get.profile'
@@ -248,9 +261,9 @@ export async function createNativeSoftwareInstallFixture(options: Readonly<{
         data: String(url).endsWith('/v1/machines') ? [readHomeMachine()]
           : String(url).endsWith(`/v1/machines/${machineId}`) ? { machine: readHomeMachine() }
           : new URL(String(url)).pathname === '/v1/artifacts' ? []
-          : String(url).endsWith('/v1/account/encryption/currentness') ? {
-          mode: encryptionMode, version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
-        } : /\/v[12]\/account\/settings$/u.test(String(url)) ? { content: { t: 'plain', v: {} }, version: 1 }
+          : String(url).endsWith('/v1/account/encryption/currentness') ? accountEncryptionCurrentness
+          : /\/v[12]\/account\/settings$/u.test(String(url)) ? { content: sealAccountSettingsV2RawContent({ credentials,
+          raw: {}, envelopeKind: encryptionMode === 'plain' ? 'plain' : 'encrypted', randomBytes }), version: 1 }
           : String(url).endsWith('/v1/account/encryption') ? { mode: encryptionMode, updatedAt: 1 } : { id: accountId },
       });
       if (phase) recordFixturePhase(`${phase}.end`, response.status);

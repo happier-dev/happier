@@ -4,7 +4,7 @@ import { machineRecipeInputConstraintsSatisfiedV1, type MachineRecipeTargetFacts
 import { isMachineSetupRecipeExcludedV1, type MachineSetupDetachedItemV1,
   type MachineSetupExclusionV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
 import type { MachineSetupRemovalOfferV1, MachineSetupRemovalPlanV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
-import { findMachineSetupBlockingObservationV1, type MachineSetupBackend } from '@happier-dev/cli-common/machineSetup';
+import { findMachineSetupBlockingObservationV1, machineSetupPlansRequireAdministratorV1, type MachineSetupBackend } from '@happier-dev/cli-common/machineSetup';
 import { prepareMachineRecipeProgramV1 } from './prepareMachineRecipeProgram';
 
 /** The source-change owner reads first-presence from the Machine's sibling source facts. */
@@ -43,7 +43,13 @@ export async function prepareMachineSetupRemovalsV1(input: Readonly<{
           ...(input.readTargetFacts ? { readTargetFacts: input.readTargetFacts } : {}),
           ...(input.signal ? { signal: input.signal } : {}),
         });
-        if (plan && !findMachineSetupBlockingObservationV1(plan)) eligible = true;
+        if (plan) {
+          const blocked = findMachineSetupBlockingObservationV1(plan);
+          // The admitted root interpreter checks administrator-only facts before
+          // mutation. An unprivileged preview cannot decide those facts for it.
+          eligible = !blocked || blocked.status === 'unavailable' && blocked.reason === 'needs_admin_to_check'
+            && machineSetupPlansRequireAdministratorV1([plan]);
+        }
       }
     }
     input.signal?.throwIfAborted();

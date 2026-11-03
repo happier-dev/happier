@@ -108,6 +108,7 @@ const Result = z.object({
     stepId: z.string().optional(),
     reason: z.string().optional(),
     requiredFact: z.string().min(1).optional(),
+    initialPresence: z.array(z.enum(['present', 'absent', 'unknown'])).optional(),
     restoration: z.optional(MachineFirewallRestorationV1Schema),
 }).strict() satisfies z.ZodType<machineSetup.MachineSetupApplyResultV1>;
 const Checked: z.ZodType<CheckedResult> = z.union([

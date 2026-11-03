@@ -96,7 +96,37 @@ export type MachineSetupApplyResultV1 = Readonly<{
     status: 'applied' | 'plan_changed' | 'unsupported' | 'unavailable' | 'failed' | 'cancelled' | 'outcome_unknown';
     completedStepIds: readonly string[]; daemonRestartRequired: boolean; stepId?: string; reason?: string; requiredFact?: string;
     restoration?: MachineSetupFirewallRestorationV1;
+    /** Executing-process presence, in admitted plan order, before any mutation. */
+    initialPresence?: readonly ('present' | 'absent' | 'unknown')[];
 }>;
+
+/** Unknown steps cannot establish that this operation first installed an item. */
+export function readMachineSetupInitialPresenceV1(plan: MachineSetupEffectPlanV1): 'present' | 'absent' | undefined {
+  const presence = plan.steps.flatMap((step, index): Array<boolean | undefined> => {
+    const observation = plan.nativeFacts[index];
+    if (!observation || observation.stepId !== step.id
+      || observation.status !== 'satisfied' && observation.status !== 'drifted') return [undefined];
+    const facts = observation.facts;
+    if (step.kind === 'package') {
+      const packages = facts.packages;
+      if (facts.manager !== step.manager || !Array.isArray(packages)) return [undefined];
+      return step.packages.map(pkg => {
+        const matches = packages.flatMap(value => {
+          if (value === null || typeof value !== 'object' || Array.isArray(value)) return [];
+          const native = value as Readonly<Record<string, unknown>>;
+          return native.manager === step.manager && native.name === pkg.name && native.kind === pkg.kind
+            && native.source === pkg.source && native.scope === pkg.scope ? [native] : [];
+        });
+        const match = matches.length === 1 ? matches[0] : undefined;
+        return match && typeof match.present === 'boolean' ? match.present : undefined;
+      });
+    }
+    return [(['file', 'directory', 'user', 'group'].includes(step.kind) && typeof facts.present === 'boolean')
+      ? facts.present : undefined];
+  });
+  return presence.includes(true) ? 'present'
+    : presence.length > 0 && presence.every(value => value === false) ? 'absent' : undefined;
+}
 
 export class MachineSetupEffectError extends Error {
     constructor(readonly reasonCode: 'foreign_effect_conflict' | 'validation_failed' | 'native_effect_failed' | 'package_manager_busy' | 'required_fact_unavailable' | 'needs_admin_to_check') {
@@ -229,11 +259,14 @@ export async function applyMachineSetupEffectPlans(input: Readonly<{
     const completedStepIds: string[] = [];
     let daemonRestartRequired = false;
     let restoration: MachineSetupFirewallRestorationV1 | undefined;
+    const initialPresence: NonNullable<MachineSetupApplyResultV1['initialPresence']>[number][] = [];
     const result = (status: MachineSetupApplyResultV1['status'], stepId?: string, reason?: string, requiredFact?: string): MachineSetupApplyResultV1 => ({
         status, completedStepIds: [...completedStepIds], daemonRestartRequired,
         ...(stepId ? { stepId } : {}), ...(reason ? { reason } : {}),
         ...(requiredFact ? { requiredFact } : {}),
         ...(restoration ? { restoration } : {}),
+        ...(status === 'applied' && entries.some(entry => 'plan' in entry && entry.plan.basis.kind === 'setup')
+            ? { initialPresence: [...initialPresence] } : {}),
     });
     const establishment = input.administratorEstablishment;
     const entries: readonly (Readonly<{ plan: MachineSetupEffectPlanV1 }> | Readonly<{ intent: MachineSetupNativeEffectIntentV1 }>)[] =
@@ -306,6 +339,7 @@ export async function applyMachineSetupEffectPlans(input: Readonly<{
                     return result('failed', administratorStep.id, 'validation_failed');
                 }
             }
+            initialPresence.push(readMachineSetupInitialPresenceV1(current) ?? 'unknown');
             programs.push({ plan: reviewed ?? current, nativeFacts, ...(administratorStep ? { administratorStep } : {}) });
         }
         const potentialEffectSteps = readMachineSetupPotentialEffectStepsV1({

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { MachineSetupPlanInputV1Schema, MachineSetupPlanResultV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { machineSetupItemKeyV1 } from '@happier-dev/protocol';
 import { createNativeSoftwareInstallFixture } from '@/testkit/machines/nativeSoftwareInstall';
 import { nativeTerminal } from '@/testkit/machines/nativeSoftwareOs';
 import { createMachineSetupPlanAction } from './machineSetupAction';
@@ -11,6 +12,45 @@ describe('admitted Machine setup snapshot lifetime', () => {
     nativeTerminal.exit = undefined;
     nativeTerminal.onLaunch = undefined;
     nativeTerminal.autoExit = false;
+  });
+  it.each([
+    { unavailable: 'locks', present: false, mode: 'plain' },
+    { unavailable: 'presence', present: false, mode: 'plain' },
+    { unavailable: 'presence', present: false, mode: 'e2ee' },
+    { unavailable: 'locks', present: true, mode: 'plain' },
+    { unavailable: 'presence', present: true, mode: 'plain' },
+  ] as const)('retains executing pre-install presence for Remove when $unavailable is unavailable ($present, $mode)', async ({ unavailable, present, mode }) => {
+    const fixture = await createNativeSoftwareInstallFixture({ scenario: present ? 'first-present' : 'first-absent',
+      accountEncryptionMode: mode, unprivilegedPackageFactUnavailable: unavailable });
+    const plan = MachineSetupPlanResultV1Schema.parse(await fixture.machineSetupPlan({
+      input: { homeId: 'srv_home', machineId: fixture.machine.id, sources: fixture.sources, mode: 'effects' },
+      context: fixture.context('machines.setup.plan'),
+    }));
+    expect(plan.recipePlans?.[0]?.plan.nativeFacts[0]?.status).toBe('unavailable');
+    expect(await fixture.apply({ input: { homeId: 'srv_home', machineId: fixture.machine.id,
+      desiredRevision: plan.desiredRevision, sources: plan.sources, exclusions: plan.exclusions,
+      recipePlans: plan.recipePlans ?? [] }, context: fixture.context('machines.setup.apply') }))
+      .toMatchObject({ operationId: expect.any(String) });
+    const item = fixture.sources[0]!.setup.items![0]!;
+    if (item.kind === 'app') throw new Error('Expected the native package recipe');
+    const itemKey = machineSetupItemKeyV1(item);
+    expect(fixture.machine.metadata?.setup?.sourceFacts?.direct?.firstPresence?.[itemKey]).toBe(present ? 'present' : 'absent');
+    expect((await fixture.readInstalled()).installed).toBe(true);
+    const removal = MachineSetupPlanResultV1Schema.parse(await fixture.machineSetupPlan({
+      input: { homeId: 'srv_home', machineId: fixture.machine.id, sources: [{ kind: 'direct', setup: {} }], mode: 'effects',
+        removeItemKeys: present ? [] : [itemKey] }, context: fixture.context('machines.setup.plan'),
+    }));
+    if (present) {
+      expect(removal.removalOffers).toContainEqual(expect.objectContaining({ itemKey, status: 'notEligible', reason: 'preExisting' }));
+      expect(removal.removalPlans).toEqual([]);
+    } else {
+      expect(removal.removalPlans).toHaveLength(1);
+      expect(await fixture.machineSetupRemove({ input: { homeId: 'srv_home', machineId: fixture.machine.id,
+        desiredRevision: removal.desiredRevision, sources: removal.sources, exclusions: removal.exclusions,
+        removeItemKeys: [itemKey], removalPlans: removal.removalPlans ?? [] }, context: fixture.context('machines.setup.remove') }))
+        .toMatchObject({ operationId: expect.any(String) });
+      expect((await fixture.readInstalled()).installed).toBe(false);
+    }
   });
   it('checks and publishes OS updates through Plan without changing desired Software or loading recipes', async () => {
     const fixture = await createNativeSoftwareInstallFixture({ scenario: 'apt' });

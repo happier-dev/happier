@@ -29,7 +29,7 @@ import { resolveInstalledMachineEffectCli } from '../adminAccess/runElevatedEffe
 import { requestMachineSetupHome, type MachineSetupInstallation } from './machineSetupHomeRequest';
 import { prepareMachineSetupApps, type MachineSetupAppPreparationHost } from './prepareMachineSetupApps';
 import { prepareMachineSetupAcceptedAppRuns } from './acceptedAppRuns';
-import { machineSetupPlansRequireAdministratorV1 } from '@happier-dev/cli-common/machineSetup';
+import { machineSetupPlansRequireAdministratorV1, readMachineSetupInitialPresenceV1 } from '@happier-dev/cli-common/machineSetup';
 import { prepareMachineSetupUpdatesPlanV1 } from './machineSetupUpdatesAction';
 import { logger } from '@/ui/logger';
 
@@ -37,42 +37,16 @@ export type MachineSetupTargetAction = (params: Readonly<{
   input: MachineSetupApplyTargetV1; context: RpcActionExecutorContext; signal?: AbortSignal;
 }>) => Promise<unknown>;
 
-/** Unknown steps cannot establish that this operation first installed an item. */
-function initialPresence(plan: MachineSetupEffectPlanV1): 'present' | 'absent' | undefined {
-  const presence = plan.steps.flatMap((step, index): Array<boolean | undefined> => {
-    const observation = plan.nativeFacts[index];
-    if (!observation || observation.stepId !== step.id
-      || observation.status !== 'satisfied' && observation.status !== 'drifted') return [undefined];
-    const facts = observation.facts;
-    if (step.kind === 'package') {
-      const packages = facts.packages;
-      if (facts.manager !== step.manager || !Array.isArray(packages)) return [undefined];
-      return step.packages.map(pkg => {
-        const matches = packages.flatMap(value => {
-          if (value === null || typeof value !== 'object' || Array.isArray(value)) return [];
-          const native = value as Readonly<Record<string, unknown>>;
-          return native.manager === step.manager && native.name === pkg.name && native.kind === pkg.kind
-            && native.source === pkg.source && native.scope === pkg.scope ? [native] : [];
-        });
-        const match = matches.length === 1 ? matches[0] : undefined;
-        return match && typeof match.present === 'boolean' ? match.present : undefined;
-      });
-    }
-    return [(['file', 'directory', 'user', 'group'].includes(step.kind) && typeof facts.present === 'boolean')
-      ? facts.present : undefined];
-  });
-  return presence.includes(true) ? 'present'
-    : presence.length > 0 && presence.every(value => value === false) ? 'absent' : undefined;
-}
-
 function observeInitialPresence(sources: MachineSetupSourceV1,
-  recipePlans: readonly { sourceIndex: number; itemIndex: number; plan: MachineSetupEffectPlanV1 }[]): MachineSetupSourceFactsMapV1 {
+  recipePlans: readonly { sourceIndex: number; itemIndex: number; plan: MachineSetupEffectPlanV1;
+    initialPresence?: 'present' | 'absent' | 'unknown' }[]): MachineSetupSourceFactsMapV1 {
   const observed = new Map<string, 'present' | 'absent' | undefined>();
   for (const entry of recipePlans) {
     const item = sources[entry.sourceIndex]?.setup.items?.[entry.itemIndex];
     if (!item || item.kind === 'app') continue;
     const key = machineSetupItemKeyV1(item);
-    const next = initialPresence(entry.plan);
+    const next = entry.initialPresence === 'unknown' ? undefined
+      : entry.initialPresence ?? readMachineSetupInitialPresenceV1(entry.plan);
     observed.set(key, observed.get(key) === 'present' || next === 'present' ? 'present'
       : observed.has(key) && observed.get(key) !== next ? undefined : next);
   }
@@ -351,6 +325,18 @@ function createMachineSetupTargetAction(params: MachineSetupActionParameters, mo
           ...(creation ? { preset: creation.preset } : {}), requesterAccountId, userHomeDirectory: homedir(),
           ...(elevation ? { elevation } : {}), operation, signal: cancellationSignal, terminalSessions,
           settleNative: () => custody.release(),
+          onSetupApplied: (plans, result) => {
+            if (!result.initialPresence) return;
+            const firstPresence = result.initialPresence;
+            const nativeSourceFacts = observeInitialPresence(sources, input.recipePlans.map(entry => ({ ...entry,
+              initialPresence: firstPresence[plans.indexOf(entry.plan)] ?? 'unknown',
+            })));
+            for (const source of sources) {
+              const origin = machineSetupSourceOriginKeyV1(source);
+              observedSourceFacts[origin] = { ...observedSourceFacts[origin],
+                firstPresence: nativeSourceFacts[origin]?.firstPresence };
+            }
+          },
           onAdmitted: async () => {
             await report('running'); reportedRunning = Boolean(creation);
           },

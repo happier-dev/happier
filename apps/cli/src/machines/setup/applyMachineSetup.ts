@@ -2,7 +2,7 @@ import type { ActionExecuteFailure, ActionExecuteResult } from '@happier-dev/pro
 import type { ActionOperationDomainRefV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { SystemTaskExecutionError } from '@happier-dev/cli-common/systemTasks';
 import { createMachineSetupNativeBackend, applyMachineSetupEffectPlans, machineSetupPlansRequireAdministratorV1,
-  runMachineSetupNativeCommand } from '@happier-dev/cli-common/machineSetup';
+  runMachineSetupNativeCommand, type MachineSetupApplyResultV1 } from '@happier-dev/cli-common/machineSetup';
 import { getLiveSystemTasksRunnerAdapter } from '@/capabilities/systemTasks/liveSystemTasksRunner';
 import { mergeMachineSetupsV1, type MachineSetupV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
 import type { MachineSetupPlanResultV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
@@ -62,6 +62,8 @@ export type ApplyMachineSetupInput = Readonly<{
   settleNative?: () => Promise<void>;
   /** Publish setup progress only after the complete native key set is admitted. */
   onAdmitted?: () => Promise<void>;
+  /** Native first-presence belongs to the executor that observed it before mutation. */
+  onSetupApplied?: (plans: readonly MachineSetupEffectPlanV1[], result: MachineSetupApplyResultV1) => void;
   isCurrent(): Promise<boolean>;
 }>;
 type AdmittedMachineSetupInput = Omit<ApplyMachineSetupInput, 'setup'> & Readonly<{
@@ -239,7 +241,8 @@ async function applyAdmittedMachineSetup(input: AdmittedMachineSetupInput): Prom
       if (!input.elevation) return fail('admin_access_unavailable');
       const elevated = await runElevatedEffect({ machineId: input.machineId, operationId, signal,
         effect: { kind: 'setupOperation', plans },
-        onSetupApplied: result => { daemonRestartRequired = result.daemonRestartRequired; },
+        onSetupApplied: result => { daemonRestartRequired = result.daemonRestartRequired;
+          input.onSetupApplied?.(input.plans, result); },
       }, input.elevation);
       if (elevated.outcome !== 'applied') {
         const code = elevated.outcome === 'not_applied'
@@ -260,6 +263,7 @@ async function applyAdmittedMachineSetup(input: AdmittedMachineSetupInput): Prom
       });
       input.emit?.({ type: 'machine.setup.result', data: result });
       daemonRestartRequired = result.daemonRestartRequired;
+      if (result.status === 'applied') input.onSetupApplied?.(input.plans, result);
       if (result.status !== 'applied') {
         if (signal.aborted) return fail('cancelled');
         return fail(result.status === 'plan_changed' ? 'plan_changed' : result.reason ?? result.status);

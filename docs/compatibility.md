@@ -2,6 +2,21 @@
 
 This document defines when Happier preserves old behavior across UI, CLI, daemon, server, installers, and persisted state. The goal is safe upgrades and mixed-version operation without turning undeployed implementation history into permanent compatibility debt.
 
+## Software first-presence provenance (unreleased 0.3)
+
+Software Apply records the executing native interpreter's presence observation
+before its first mutation, even when the daemon's earlier check was unavailable.
+Only proven absence makes a new item eligible for declared Remove; pre-existing
+or unproven software stays retained. Existing source-fact persistence, Account
+content envelopes and removal admission are unchanged; no ownership is inferred
+for earlier installations whose initial presence was never recorded.
+
+The closed managed-CLI result adds optional `initialPresence` in admitted plan
+order. The daemon and executing Machine's managed CLI must load the matching
+implementation together; older strict internal readers reject the new field.
+Older results without it remain readable and do not fabricate executor evidence.
+
+
 ## Native administrator refusal diagnostics (unreleased 0.3)
 
 The shared elevation owner retains the missing native fact and its remedy for
