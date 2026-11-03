@@ -43,7 +43,7 @@ import type { ImagePointV1 } from '@happier-dev/protocol';
 import { evaluateBrowserTargetPolicy } from '@/sync/domains/browser/policy/evaluate';
 import { resolveLocalBrowserProfile } from '@/sync/domains/browser/profiles/localBrowserProfile';
 import { selectActiveBrowserView } from '@/sync/domains/browser/shell';
-import { resolveBrowserViewIdForTarget } from '@/sync/domains/browser/store';
+import { resolveBrowserViewIdentityForTarget } from '@/sync/domains/browser/store';
 import { useSession } from '@/sync/domains/state/storage';
 import { useMachineDisplayNamesById, useSessionCompletedBrowserActionKey } from '@/sync/store/hooks';
 import { allowBrowserSandbox } from '@/sync/domains/browser/firstUse/browserFirstUse';
@@ -750,12 +750,11 @@ export function BrowserSurfaceHost(props: Readonly<{
     // launchpad/new-tab URL entry uses; it NEVER spawns a sibling workspace tab. Only EXTERNAL
     // surfaces (Services rows, session-header button) create a new tab via `props.onOpenTarget`.
     const navigateCurrentTabInPlace = React.useCallback((target: BrowserViewTargetV1, options?: BrowserLaunchpadOpenTargetOptions) => {
-        const viewId = resolveBrowserViewIdForTarget(target);
+        const identity = resolveBrowserViewIdentityForTarget(target, { browserSessionId: props.browserSessionId });
         void onCommand({
             kind: 'openView',
-            commandId: `browser_command:${viewId}:open:${Date.now()}`,
-            browserSessionId: props.browserSessionId,
-            viewId,
+            commandId: `browser_command:${identity.viewId}:open:${Date.now()}`,
+            ...identity,
             target,
             platform: options?.platform ?? props.platform,
             currentUrl: options?.currentUrl ?? resolveInitialCurrentUrl(target),

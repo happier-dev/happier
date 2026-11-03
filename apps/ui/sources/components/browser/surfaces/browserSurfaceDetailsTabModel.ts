@@ -2,7 +2,7 @@ import { BrowserViewTargetV1Schema, type BrowserViewTargetV1 } from '@happier-de
 
 import type { DetailsTab, DetailsTabState } from '@/components/appShell/panes/details/workspace/detailsWorkspaceTypes';
 import type { DetailsTabPresentation } from '@/components/appShell/panes/details/workspace/DetailsTabStrip';
-import { resolveBrowserViewIdForTarget } from '@/sync/domains/browser/store';
+import { resolveBrowserViewIdentityForTarget } from '@/sync/domains/browser/store';
 import { withoutPreviewAdmission } from '@/sync/domains/local/services/preview/url';
 import { t } from '@/text';
 
@@ -41,12 +41,13 @@ export function resolveBrowserTargetSurfaceSessionId(
     scope: string,
     target: BrowserViewTargetV1,
 ): string {
-    return createBrowserSurfaceSessionId([
+    const presentationSessionId = createBrowserSurfaceSessionId([
         scope,
         target.kind,
         ...(browserTargetSessionPart(target) ? [browserTargetSessionPart(target) as string] : []),
         target.targetId,
     ]);
+    return resolveBrowserViewIdentityForTarget(target, { browserSessionId: presentationSessionId }).browserSessionId;
 }
 
 /**
@@ -126,8 +127,8 @@ function normalizeRestoredLocation(target: BrowserViewTargetV1, value: unknown):
 /**
  * Build a single-view `browser-view` workspace tab from a target. `key` is stable per
  * target+session so re-opening the same target focuses the existing workspace tab (via the
- * reducer's `findGroupIdByTabKey` path) instead of duplicating it. Callers may override
- * `browserSessionId` / `viewId` for scoped (mobile) mounts; otherwise the canonical details
+ * reducer's `findGroupIdByTabKey` path) instead of duplicating it. Presentation identities may
+ * scope client-owned views; daemon targets keep their semantic identity. Otherwise the canonical details
  * identity is used so the tab's `viewId` matches the content record the opener seeds via
  * `openBrowserTarget`.
  */
@@ -139,9 +140,10 @@ export function createBrowserViewDetailsTab(params: Readonly<{
     currentUrl?: string | null;
 }>): DetailsTab {
     const scopePart = params.scope ?? 'details';
-    const browserSessionId = params.browserSessionId
-        ?? resolveBrowserTargetSurfaceSessionId(scopePart, params.target);
-    const viewId = params.viewId ?? resolveBrowserViewIdForTarget(params.target);
+    const { browserSessionId, viewId } = resolveBrowserViewIdentityForTarget(params.target, {
+        browserSessionId: params.browserSessionId ?? resolveBrowserTargetSurfaceSessionId(scopePart, params.target),
+        viewId: params.viewId,
+    });
     const title = params.target.display?.title
         ?? params.target.display?.addressLabel
         ?? t('browserSurface.title');

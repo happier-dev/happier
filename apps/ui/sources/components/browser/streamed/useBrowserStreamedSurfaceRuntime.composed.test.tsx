@@ -187,6 +187,79 @@ describe('useBrowserStreamedSurfaceRuntime', () => {
         boundary.relaySend = null;
     });
 
+    it('renders the advertised daemon source when opened through the canonical workspace target', async () => {
+        const { BrowserDaemonViewV1Schema } = await import('@happier-dev/protocol/browser/control/v1');
+        const { resolveBrowserDaemonStreamTarget } = await import('@/sync/domains/browser/store');
+        const { resolveBrowserViewTargetOpen } = await import('../surfaces/openBrowserTargetInWorkspace');
+        const { applyOpenDetailsTab, createEmptyPaneDetailsState } = await import('@/components/appShell/panes/details/workspace/detailsWorkspaceReducer');
+        const { readBrowserViewDetailsResource } = await import('../surfaces/browserSurfaceDetailsTabModel');
+        const candidate = BrowserDaemonViewV1Schema.parse(daemonView({ v: 1, sourceId: 'browser-view-key-1', sourceKind: 'browser',
+            supportedCodecs: ['image.mjpeg'], inputMode: 'shared', sidebands: [], health: { status: 'available' } }));
+        boundary.views = [candidate];
+        const target = resolveBrowserDaemonStreamTarget(candidate);
+        if (!target) throw new Error('Daemon source missing');
+        const opened = resolveBrowserViewTargetOpen({ scope: 'sessionDetails', platform: 'web',
+            browserFeatureDecision: { featureId: 'browser', state: 'enabled', blockedBy: null,
+                blockerCode: 'none', diagnostics: [], evaluatedAt: 1, scope: { scopeKind: 'runtime' } },
+        }, target);
+        const openedView = opened.seededState.viewsById[opened.viewId];
+        if (!openedView) throw new Error('Workspace view missing');
+        const restored = readBrowserViewDetailsResource(JSON.parse(JSON.stringify(opened.tab.resource)));
+        expect(restored).toMatchObject({ browserSessionId: candidate.browserSessionId, viewId: candidate.viewId, target });
+        const firstOpen = applyOpenDetailsTab(createEmptyPaneDetailsState(), { tab: opened.tab, openAs: 'default' });
+        const reopened = resolveBrowserViewTargetOpen({ scope: 'sessionDetails', platform: 'web' }, target);
+        const secondOpen = applyOpenDetailsTab(firstOpen, { tab: reopened.tab, openAs: 'default' });
+        expect(Object.values(secondOpen.tabsByKey)).toHaveLength(1);
+        expect(secondOpen.tabsByKey[opened.tab.key]?.resource).toEqual(restored);
+        const { useBrowserStreamedSurfaceRuntime } = await import('./useBrowserStreamedSurfaceRuntime');
+        const hook = await renderHook(() => useBrowserStreamedSurfaceRuntime({ view: openedView, machineId: 'machine_1', serverId }));
+        try {
+            await flushHookEffects({ cycles: 6, turns: 6 });
+            expect(boundary.requests).toContainEqual(expect.objectContaining({
+                method: RPC_METHODS.DAEMON_BROWSER_VIEW_LIST,
+                payload: { machineId: 'machine_1', browserSessionId: candidate.browserSessionId },
+            }));
+            await waitForStreamAdmission();
+            const streamId = hook.getCurrent()?.input?.streamId;
+            expect(hook.getCurrent()?.input?.sourceId).toBe(candidate.sourceId);
+            if (!streamId) throw new Error('Workspace source was not admitted');
+            const bytes = new Uint8Array([1, 2, 3]);
+            const envelope: MachineLiveStreamRelayEnvelopeV1 = { v: 1, sourceMachineId: 'machine_1', targetMachineId: 'machine_1',
+                message: { kind: 'frame', frame: { v: 1, streamId, sequence: 1, timestampMs: 1,
+                    codecId: 'image.mjpeg', payloadKind: 'image_keyframe', payloadEncoding: 'binary_base64',
+                    payloadBase64: encodeBase64(bytes), payloadSizeBytes: bytes.byteLength } } };
+            await act(async () => { for (const listener of boundary.listeners) listener(envelope); });
+            expect(hook.getCurrent()?.playerState?.lastFrameUrl).toBeTruthy();
+            expect(openedView).toMatchObject({ browserSessionId: candidate.browserSessionId, viewId: candidate.viewId });
+        } finally { await hook.unmount(); }
+    });
+
+    it.each(['web', 'android'] as const)('retains the daemon source when opened with scoped presentation defaults (%s)', async platform => {
+        const { BrowserDaemonViewV1Schema } = await import('@happier-dev/protocol/browser/control/v1');
+        const { resolveBrowserDaemonStreamTarget, openBrowserTarget, createBrowserViewState } = await import('@/sync/domains/browser/store');
+        const { resolveBrowserViewTargetReplacementTab } = await import('../surfaces/openBrowserTargetInWorkspace');
+        const candidate = BrowserDaemonViewV1Schema.parse(daemonView({ v: 1, sourceId: 'browser-view-key-1', sourceKind: 'browser',
+            supportedCodecs: ['image.mjpeg'], inputMode: 'shared', sidebands: [], health: { status: 'available' } }));
+        boundary.views = [candidate];
+        const target = resolveBrowserDaemonStreamTarget(candidate);
+        if (!target) throw new Error('Daemon source missing');
+        const replacement = resolveBrowserViewTargetReplacementTab({ target,
+            browserSessionId: 'scoped-presentation', viewId: 'presentation-view' });
+        expect(replacement.resource).toMatchObject({ browserSessionId: candidate.browserSessionId, viewId: candidate.viewId });
+        const opened = openBrowserTarget(createBrowserViewState(), target, {
+            platform, browserSessionId: 'scoped-presentation', viewId: 'presentation-view',
+        });
+        const openedView = opened.viewsById[candidate.viewId];
+        expect(openedView).toMatchObject({ browserSessionId: candidate.browserSessionId });
+        const { useBrowserStreamedSurfaceRuntime } = await import('./useBrowserStreamedSurfaceRuntime');
+        const hook = await renderHook(() => useBrowserStreamedSurfaceRuntime({ view: openedView, machineId: 'machine_1', serverId }));
+        try {
+            await flushHookEffects({ cycles: 6, turns: 6 });
+            await waitForStreamAdmission();
+            expect(hook.getCurrent()?.input?.sourceId).toBe(candidate.sourceId);
+        } finally { await hook.unmount(); }
+    });
+
     it('retains the managed-browser prerequisite for the surface and clears it after a successful retry', async () => {
         boundary.discoveryError = 'managed_package_missing';
         const { useBrowserStreamedSurfaceRuntime } = await import('./useBrowserStreamedSurfaceRuntime');

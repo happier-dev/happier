@@ -143,6 +143,18 @@ describe("browser view store", () => {
         expect(violations).toEqual([]);
     });
 
+    it('opens a daemon source with its identity even when presentation defaults are supplied', async () => {
+        const { openBrowserTarget, createBrowserViewState } = await import('./store');
+        const target = { kind: 'streamedBrowser', targetId: 'source', streamId: 'source',
+            daemonView: { browserSessionId: 'daemon-session', viewId: 'daemon-view' } } as const;
+        const opened = openBrowserTarget(createBrowserViewState(), target, {
+            platform: 'web', browserSessionId: 'presentation-session', viewId: 'presentation-view',
+        });
+        expect(Object.values(opened.viewsById)).toMatchObject([
+            { browserSessionId: 'daemon-session', viewId: 'daemon-view', target },
+        ]);
+    });
+
     it("opens targets from suggestions", async () => {
         const mod = await loadBrowserStoreModule();
         const state = mod?.applyBrowserTargetSuggestions(mod.createBrowserViewState(), {

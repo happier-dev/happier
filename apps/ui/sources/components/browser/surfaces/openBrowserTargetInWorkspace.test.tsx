@@ -32,6 +32,7 @@ import {
     mapLocalServiceLaunchTargetToBrowserTarget,
     resolveBrowserViewTargetOpen,
     resolveBrowserViewTargetOpenTab,
+    resolveBrowserTargetOpenOptions,
 } from './openBrowserTargetInWorkspace';
 import { readBrowserViewDetailsResource } from './browserSurfaceDetailsTabModel';
 import { removeServerProfile, setServerProfileIdentityForUrl, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
@@ -152,6 +153,12 @@ function readTabBrowserSessionId(tab: DetailsTab): string | undefined {
 }
 
 describe('openBrowserTargetInWorkspace', () => {
+    it('opens an already bound daemon stream without fabricating a local profile policy', () => {
+        const options = resolveBrowserTargetOpenOptions({ browserSessionId: 'daemon-session', platform: 'web',
+            target: { kind: 'streamedBrowser', targetId: 'source', streamId: 'source',
+                daemonView: { browserSessionId: 'daemon-session', viewId: 'daemon-view' } } });
+        expect(options).not.toHaveProperty('targetPolicyDecision');
+    });
     afterEach(() => {
         resetLocalServicePreviewStoreForTests();
         machineRpcMock.mockReset();

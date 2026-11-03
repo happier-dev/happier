@@ -182,7 +182,7 @@ export function resolveBrowserTargetOpenOptions(params: Readonly<{
     currentUrl?: string;
     currentUrlExpiresAt?: number;
 }>): Parameters<typeof openBrowserTarget>[2] {
-    if (params.target.kind === 'externalUrl' || params.target.kind === 'streamedBrowser') {
+    if (params.target.kind === 'externalUrl') {
         const targetPolicyDecision = evaluateBrowserTargetPolicy({
             target: params.target,
             // The in-app browser engines carry no daemon-issued profile; fall back to the host-local

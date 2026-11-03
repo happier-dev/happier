@@ -18,20 +18,29 @@ export const DEFAULT_BROWSER_SESSION_ID = "browser_session_default";
 export function resolveBrowserDaemonStreamTarget(view: BrowserDaemonViewV1): BrowserViewTargetV1 | null {
     if (!view.captureSource || view.captureSource.sourceId !== view.sourceId || view.captureSource.sourceKind !== 'browser') return null;
     return { kind: 'streamedBrowser', targetId: view.sourceId, streamId: view.sourceId,
+        daemonView: { browserSessionId: view.browserSessionId, viewId: view.viewId },
         ...(view.target.display ? { display: view.target.display } : {}) };
 }
 
-function resolveDefaultBrowserViewId(target: BrowserViewTargetV1): string {
-    return `browser_view:${target.targetId}`;
+/** Daemon view identity survives presentation scopes and in-place retargeting. */
+export function resolveBrowserViewIdentityForTarget(
+    target: BrowserViewTargetV1,
+    presentation: Readonly<{ browserSessionId?: string; viewId?: string }> = {},
+): Readonly<{ browserSessionId: string; viewId: string }> {
+    if (target.kind === 'streamedBrowser' && target.daemonView) return target.daemonView;
+    return {
+        browserSessionId: presentation.browserSessionId ?? DEFAULT_BROWSER_SESSION_ID,
+        viewId: presentation.viewId ?? `browser_view:${target.targetId}`,
+    };
 }
 
 /**
  * Canonical `viewId` for a browser target's content/view record. Exposed so the open-routing
  * owner (and any caller) agrees on the same identity as {@link openBrowserTarget} without
- * duplicating the `browser_view:${targetId}` rule. Ordering authority stays in `control/**`.
+ * duplicating identity construction. Ordering authority stays in `control/**`.
  */
 export function resolveBrowserViewIdForTarget(target: BrowserViewTargetV1): string {
-    return resolveDefaultBrowserViewId(target);
+    return resolveBrowserViewIdentityForTarget(target).viewId;
 }
 
 function resolveInitialCurrentUrl(target: BrowserViewTargetV1): string | undefined {
@@ -62,12 +71,11 @@ export function openBrowserTarget(
         nativeViewCaptureHandlerRegistered?: boolean;
     }>,
 ): BrowserViewState {
-    const viewId = options.viewId ?? resolveDefaultBrowserViewId(target);
+    const identity = resolveBrowserViewIdentityForTarget(target, options);
     const command = {
         kind: "openView",
-        commandId: `browser_command:${viewId}:open`,
-        browserSessionId: options.browserSessionId ?? DEFAULT_BROWSER_SESSION_ID,
-        viewId,
+        commandId: `browser_command:${identity.viewId}:open`,
+        ...identity,
         target,
         platform: options.platform,
         currentUrl: options.currentUrl ?? resolveInitialCurrentUrl(target),
