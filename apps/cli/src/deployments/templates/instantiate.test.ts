@@ -74,6 +74,24 @@ it.each(['template', 'environment'] as const)('retains generated secret outcomes
             ref: { kind: 'content', digest: `sha256:${'a'.repeat(64)}` } } }, { runtimeAccountId: 'account-cli-fixture' })))
             .toMatchObject({ ok: false, errorCode: 'template_changed' });
         expect(fixture.writes).toEqual([]);
+        if (entry === 'template') {
+            const invalid = { ...input, mode: 'preview' as const,
+                bindings: [{ purpose: 'variable' as const, name: 'APP_PASSWORD', phase: 'runtime' as const,
+                    source: { kind: 'generated' as const, key: 'requested-password' } }] };
+            const invalidCreate = DeploymentEnvironmentCreateIntentInputV1Schema.parse({ name: 'App', requestKey: 'generated-app',
+                protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers', controllerMachineId: 'target',
+                mode: 'preview', serverId: input.serverId, projectSourceId: input.projectSourceId,
+                definition: { from: 'catalogApp', templateRef: input.templateRef },
+                firstTargetLink: { machines: [{ machineId: 'target', installationId: identity.installationId }] },
+                bindings: invalid.bindings, generatedSecretAudience: input.generatedSecretAudience });
+            const context = { runtimeAccountId: 'account-cli-fixture' };
+            for (const invoke of [() => templates.prepare(invalid, context), () => templates.prepareCreate(invalidCreate, context),
+                () => templates.instantiate(invalid, context), () => templates.instantiateCreate(invalidCreate, context)]) {
+                expect.soft(await fixture.inHome(async () => invoke())).toMatchObject({ ok: false, errorCode: 'template_generator_undeclared',
+                    error: expect.stringContaining('requested-password'), details: { key: 'requested-password' } });
+            }
+            expect(fixture.writes).toEqual([]);
+        }
         sourceReads = 0;
         const result = await fixture.inHome(() => entry === 'template'
             ? templates.instantiate(input, { runtimeAccountId: 'account-cli-fixture' })

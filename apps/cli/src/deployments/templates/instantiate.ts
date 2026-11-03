@@ -16,7 +16,7 @@ import { DeploymentEnvironmentContentV1Schema, DeploymentEnvironmentTemplateSetI
     DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1,
     environmentSecretBindingIdentityV1, resolveDeploymentStoredDefinitionRevisionV1, createOwnServerEnvironmentConfigurationV1,
     type DeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol';
-import { prepareDeploymentTemplateInstantiationV1, resolveDeploymentCreationDefaultsV1, resolveDeploymentTemplateInstantiationBaselineRefV1 } from '@happier-dev/deployments';
+import { DeploymentTemplatePreparationErrorV1, prepareDeploymentTemplateInstantiationV1, resolveDeploymentCreationDefaultsV1, resolveDeploymentTemplateInstantiationBaselineRefV1 } from '@happier-dev/deployments';
 import type { StoredCredentials } from '@/persistence';
 import type { SavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
@@ -30,7 +30,11 @@ import type { DeploymentCreationDefaultRequestForHost, DeploymentCreationDefault
 import { createPublishCatalogPreparation } from '@/workspaces/publishProject';
 
 const refuse = (code: string): never => { throw Object.assign(new Error(code), { code }); };
-const failure = (errorCode: string): ActionExecuteFailure => ({ ok: false, errorCode, error: errorCode });
+function failure(errorCode: string, error?: unknown): ActionExecuteFailure {
+    if (error instanceof DeploymentTemplatePreparationErrorV1 && error.code === errorCode) return { ok: false, errorCode,
+        error: error.message, ...(error.details ? { details: error.details } : {}) };
+    return { ok: false, errorCode, error: errorCode };
+}
 function errorCode(error: unknown): string {
     return error && typeof error === 'object' && 'code' in error && typeof error.code === 'string' ? error.code : 'template_unavailable';
 }
@@ -329,7 +333,7 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
                 ...(deployment ? { deployment } : {}) };
         } catch (error) {
             const code = context.signal?.aborted && !effectIssued ? 'cancelled' : errorCode(error);
-            if (!effectIssued) return failure(code);
+            if (!effectIssued) return failure(code, error);
             return { kind: 'partial', phase, errorCode: code, savedSecrets,
                 ...(environmentId ? { environmentId, revision } : {}), ...(targetLinkId ? { targetLinkId } : {}),
                 ...(deployment ? { deployment } : {}),
@@ -346,7 +350,7 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
                     creationDefaults: plan.defaults, ...(plan.review.creationDefaultsBasis ? { creationDefaultsBasis: plan.review.creationDefaultsBasis } : {}),
                     template: plan.review,
                 }) };
-            } catch (error) { return failure(context.signal?.aborted ? 'cancelled' : errorCode(error)); }
+            } catch (error) { return failure(context.signal?.aborted ? 'cancelled' : errorCode(error), error); }
         },
         async instantiateCreate(input: DeploymentEnvironmentCreateIntentInputV1, context: ActionExecutorContext,
             review?: DeploymentEnvironmentCreationReviewV1) {
@@ -359,10 +363,10 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
                 return 'errorCode' in result ? result : result.kind === 'applied'
                     ? { ok: true as const, environmentId: result.environmentId, revision: result.revision }
                     : failure('invalid_action_output');
-            } catch (error) { return failure(context.signal?.aborted ? 'cancelled' : errorCode(error)); }
+            } catch (error) { return failure(context.signal?.aborted ? 'cancelled' : errorCode(error), error); }
         },
         async prepare(input: DeploymentTemplateInstantiateInputV1, context: ActionExecutorContext) {
         try { return { input, preview: normalizeStrictJsonValue((await prepare(input, context)).review) }; }
-        catch (error) { return failure(errorCode(error)); }
+        catch (error) { return failure(errorCode(error), error); }
     } };
 }
