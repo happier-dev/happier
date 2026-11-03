@@ -92,6 +92,7 @@ const stylesheet = StyleSheet.create((theme) => ({
 const VERB_ICON = {
     capture: 'camera',
     query: 'text-aa',
+    move: 'cursor',
     click: 'hand',
     type: 'text-aa',
     press: 'text-aa',
@@ -106,6 +107,7 @@ function describeComputerAction(reference: Extract<TranscriptComputerActionRefer
         case 'query': return t(running ? 'computerUse.tool.queryRunning' : 'computerUse.tool.query');
         case 'drag': return t(running ? 'browserPresence.doing.drag' : 'computerUse.tool.drag');
         case 'wheel': return t(running ? 'browserPresence.doing.scroll' : 'computerUse.tool.wheel');
+        case 'move': return t(running ? 'computerUse.tool.moveRunning' : 'computerUse.tool.move');
         case 'click': return !running && reference.targetLabel
             ? t('computerUse.tool.clickTarget', { target: reference.targetLabel })
             : t(running ? 'computerUse.tool.clickRunning' : 'computerUse.tool.click');

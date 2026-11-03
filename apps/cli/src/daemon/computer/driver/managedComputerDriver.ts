@@ -184,9 +184,16 @@ async function createCuaComputerDriver(params: Readonly<{ displayId: string; exe
     context?: Readonly<{ signal?: AbortSignal }>): Promise<ComputerDriverInputResult> => {
     if (context?.signal?.aborted) return { status: 'interrupted', completion: 'known' };
     try { assertTarget(target); } catch (error) { return { status: 'failed', code: error instanceof ComputerDriverError ? error.code : 'driver_unavailable' }; }
+    // Cua's window move_cursor routes reveal its overlay rather than delivering app hover.
+    if (operation.kind === 'move' && target.kind === 'window') return { status: 'failed', code: 'input_not_supported' };
     const observation = captureId === null ? undefined : captureBinding;
     if ((captureId !== null || !['press', 'type'].includes(operation.kind)) && (!observation || observation.captureId !== captureId
       || computerTargetKeyV1(observation.target) !== computerTargetKeyV1(target))) return { status: 'failed', code: operation.kind === 'element' ? 'computer_element_stale' : 'stale_capture' };
+    // Cua 0.37.0's atomic click has no modifier field. Never silently deliver an unmodified click.
+    if (operation.kind === 'click' && operation.modifiers?.length) return { status: 'failed', code: 'input_not_supported' };
+    if (operation.kind === 'press' && operation.modifiers?.includes('fn') && process.platform !== 'darwin') {
+      return { status: 'failed', code: 'input_not_supported' };
+    }
     const elementToken = operation.kind === 'element' ? observation?.elementTokens.get(operation.elementId) : undefined;
     if (operation.kind === 'element' && !elementToken) return { status: 'failed', code: 'computer_element_stale' };
     if (operation.kind === 'click' && (!observation || !Number.isFinite(operation.x) || !Number.isFinite(operation.y) || operation.x < 0 || operation.y < 0
@@ -237,12 +244,17 @@ async function createCuaComputerDriver(params: Readonly<{ displayId: string; exe
       const calls: Array<Readonly<{ name: string; args: Record<string, unknown> }>> = [];
       const frame = { scope: target.kind === 'display' ? 'desktop' : 'window', coordinate_frame: target.kind === 'display' ? 'desktop' : 'window' };
       switch (operation.kind) {
+        case 'move':
+          point(operation.x, operation.y);
+          calls.push({ name: 'move_cursor', args: { scope: 'desktop', x: operation.x, y: operation.y } }); break;
         case 'element': calls.push({ name: operation.action === 'click' ? 'click' : 'set_value', args: {
           element_token: elementToken, ...(operation.action === 'set_value' ? { value: operation.value } : {}),
         } }); break;
-        case 'click': calls.push({ name: 'click', args: { capture_id: captureId, x: operation.x, y: operation.y, button: operation.button ?? 'left' } }); break;
+        case 'click': calls.push({ name: 'click', args: { capture_id: captureId, x: operation.x, y: operation.y, button: operation.button ?? 'left',
+          ...(operation.clickCount ? { count: operation.clickCount } : {}) } }); break;
         case 'type': calls.push({ name: 'type_text', args: { text: operation.text } }); break;
-        case 'press': calls.push({ name: 'press_key', args: { key: operation.key } }); break;
+        case 'press': calls.push({ name: 'press_key', args: { key: operation.key,
+          ...(operation.modifiers?.length ? { modifiers: operation.modifiers } : {}) } }); break;
         case 'drag': {
           const from = point(operation.fromX, operation.fromY); const to = point(operation.toX, operation.toY);
           calls.push({ name: 'drag', args: { ...frame, from_x: from.x, from_y: from.y, to_x: to.x, to_y: to.y } }); break;
@@ -258,7 +270,9 @@ async function createCuaComputerDriver(params: Readonly<{ displayId: string; exe
       let result: NativeToolResult = { structuredContent: { effect: 'unverifiable' } };
       for (const call of calls) {
         admitted = true;
-        result = await native.call(call.name, { ...nativeTarget, ...call.args, delivery_mode: deliveryMode });
+        result = await native.call(call.name, operation.kind === 'move'
+          ? { ...call.args, ...(process.platform === 'darwin' ? { delivery_mode: deliveryMode } : {}) }
+          : { ...nativeTarget, ...call.args, delivery_mode: deliveryMode });
         if (result.isError || result.structuredContent?.effect === 'refused') break;
       }
       if (result.isError || result.structuredContent?.effect === 'refused') {

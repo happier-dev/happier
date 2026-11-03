@@ -72,6 +72,7 @@ export const ComputerCaptureGeometryV1Schema = lazyZodSchema(() => z.strictObjec
 export type ComputerCaptureGeometryV1 = z.infer<typeof ComputerCaptureGeometryV1Schema>;
 
 export const ComputerInputOperationV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
+  z.strictObject({ kind: z.literal('move'), x: CoordinateSchema, y: CoordinateSchema }),
   z.strictObject({ kind: z.literal('click'), x: CoordinateSchema, y: CoordinateSchema, button: z.optional(z.enum(['left', 'right', 'middle'])),
     clickCount: z.optional(z.literal(2)), modifiers: z.optional(z.array(MachineLiveStreamKeyModifierV1Schema)) }),
   z.strictObject({ kind: z.literal('press'), key: IdSchema, modifiers: z.optional(z.array(MachineLiveStreamKeyModifierV1Schema)) }),
@@ -259,7 +260,7 @@ export const ComputerControlStatusResponseV1Schema = lazyZodSchema(() => z.stric
   uncertain: z.boolean(),
   /** A current native read, omitted by stream metadata and quarantined sources. */
   grants: z.optional(ComputerGrantStatusV1Schema),
-  activity: z.optional(z.strictObject({ kind: z.enum(['capture', 'click', 'type', 'press', 'drag', 'wheel', 'element']), targetLabel: TargetLabelSchema })),
+  activity: z.optional(z.strictObject({ kind: z.enum(['capture', 'move', 'click', 'type', 'press', 'drag', 'wheel', 'element']), targetLabel: TargetLabelSchema })),
   activeTarget: z.optional(BrowserActiveTargetV1Schema),
 }));
 export type ComputerControlStatusResponseV1 = z.infer<typeof ComputerControlStatusResponseV1Schema>;

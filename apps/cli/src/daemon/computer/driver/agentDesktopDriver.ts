@@ -176,6 +176,7 @@ export async function createAgentDesktopComputerDriver(params: Readonly<{ displa
       };
       let args: string[];
       switch (operation.kind) {
+        case 'move': { const p = point(operation.x, operation.y); args = ['--headed', 'mouse-move', `--xy=${p.x},${p.y}`]; break; }
         case 'element': args = operation.action === 'click' ? ['click', operation.elementId]
           : ['set-value', operation.elementId, '--', operation.value]; break;
         case 'press': args = [...(target.kind === 'display' ? ['--headed'] : []), 'press',
@@ -195,7 +196,7 @@ export async function createAgentDesktopComputerDriver(params: Readonly<{ displa
         case 'wheel': { const p = point(operation.x, operation.y); args = ['--headed', 'mouse-wheel', `--x=${p.x}`, `--y=${p.y}`,
           `--dx=${operation.deltaX}`, `--dy=${operation.deltaY}`]; break; }
       }
-      if (operation.kind === 'click' || operation.kind === 'drag' || operation.kind === 'wheel') {
+      if (operation.kind === 'move' || operation.kind === 'click' || operation.kind === 'drag' || operation.kind === 'wheel') {
         const current = await targetBounds(target);
         const geometry = observed!.geometry;
         if (current.x !== geometry.originX || current.y !== geometry.originY || current.width !== geometry.nativeWidth || current.height !== geometry.nativeHeight)

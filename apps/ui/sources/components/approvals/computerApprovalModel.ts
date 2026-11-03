@@ -6,12 +6,13 @@ import {
     ComputerSecretFillRequestV1Schema,
     resolveComputerAccess,
     type ComputerApprovalDisplayV1,
+    type ComputerInputOperationV1,
 } from '@happier-dev/protocol/computer/v1';
 
 /** Frozen owner-provided display facts, kept apart from the person's subsequent choice. */
 export type ComputerActionApproval = Readonly<{
     access: 'see' | 'use';
-    act: 'see' | 'read' | 'click' | 'press' | 'type' | 'share' | 'fill' | 'drag' | 'wheel';
+    act: Exclude<ComputerInputOperationV1['kind'], 'element'> | 'see' | 'read' | 'share' | 'fill';
     machineId: string;
     machineName: string;
     appName?: string;

@@ -10,6 +10,7 @@ const NormalizedCoordinateSchema = lazyZodSchema(() => z.number().check(z.minimu
 
 export const MachineLiveStreamInputModeV1Schema = lazyZodSchema(() => z.enum(['none', 'shared', 'exclusive']));
 export const MACHINE_LIVE_STREAM_INPUT_CONTROL_KINDS_V1 = [
+  'move',
   'tap',
   'long_press',
   'swipe',
@@ -21,6 +22,7 @@ export const MACHINE_LIVE_STREAM_INPUT_CONTROL_KINDS_V1 = [
   'hardware_button',
   'orientation',
   'browser_input',
+  'wheel',
 ] as const;
 export const MachineLiveStreamInputControlKindV1Schema = lazyZodSchema(() => z.enum(MACHINE_LIVE_STREAM_INPUT_CONTROL_KINDS_V1));
 
@@ -50,10 +52,19 @@ export const MachineLiveStreamControlSidebandV1Schema = lazyZodSchema(() => z.di
     controlEpoch: NonNegativeIntSchema,
     event: BrowserInputEventV1Schema,
   }),
+  z.strictObject({
+    ...BaseSidebandControlSchema.shape,
+    kind: z.literal('move'),
+    x: NormalizedCoordinateSchema,
+    y: NormalizedCoordinateSchema,
+  }),
   (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(BaseSidebandControlSchema, {
     kind: z.literal('tap'),
     x: NormalizedCoordinateSchema,
     y: NormalizedCoordinateSchema,
+    button: z.optional(z.enum(['left', 'right', 'middle'])),
+    clickCount: z.optional(z.literal(2)),
+    modifiers: z.optional(z.array(MachineLiveStreamKeyModifierV1Schema)),
   })),
   (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(BaseSidebandControlSchema, {
     kind: z.literal('long_press'),
@@ -104,6 +115,8 @@ export const MachineLiveStreamControlSidebandV1Schema = lazyZodSchema(() => z.di
     key: z.string().check(z.minLength(1)),
     modifiers: z.optional(z.array(MachineLiveStreamKeyModifierV1Schema)),
   })),
+  z.strictObject({ ...BaseSidebandControlSchema.shape, kind: z.literal('wheel'), x: NormalizedCoordinateSchema, y: NormalizedCoordinateSchema,
+    deltaX: z.number(), deltaY: z.number() }),
   (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(BaseSidebandControlSchema, {
     kind: z.literal('hardware_button'),
     button: z.string().check(z.minLength(1)),
@@ -179,9 +192,9 @@ export function validateMachineLiveStreamControlLeaseV1(input: Readonly<{
 
   if (!machineLiveStreamControlRequiresInputLeaseV1(control.data)) return { ok: true };
   if (source.data.inputMode === 'none') return { ok: false, reasonCode: 'input_not_supported' };
-  // Browser input is arbitrated by the daemon automation/controller owner. Simulator/device
+  // Browser and shared Computer input are arbitrated by their daemon controller owners. Simulator/device
   // input retains its existing lease contract; source kind is supplied by the capture registry.
-  if (input.sourceKind === 'browser') return { ok: true };
+  if (input.sourceKind === 'browser' || (input.sourceKind === 'screen' && source.data.inputMode === 'shared')) return { ok: true };
   if (!input.activeLease) return { ok: false, reasonCode: 'input_lease_required' };
 
   const lease = MachineLiveStreamControlLeaseV1Schema.safeParse(input.activeLease);

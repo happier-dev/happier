@@ -192,6 +192,10 @@ export function createComputerCaptureSource(input: Readonly<{
           const operation = viewerOperation(sideband, latest);
           if (!operation || !latest) return result.session.applySidebandControl?.(sideband) ?? { ok: false, reasonCode: 'input_not_supported' };
           const viewedGeometry = latest.geometry;
+          if (operation.kind === 'move') {
+            const status = control.getStatus();
+            if (status.controller !== 'human' || status.stopping || status.uncertain) return { ok: false, reasonCode: 'invalid_control' };
+          }
           // Present-user sidebands are admitted by the existing stream custody/lease owner.
           const takeover = control.takeOver();
           pendingInput = pendingInput.then(async () => {
@@ -199,7 +203,7 @@ export function createComputerCaptureSource(input: Readonly<{
             if (stopped) return;
             if (drain.completion === 'unknown') { failInput('human_input_interruption_uncertain'); return; }
             let captureId: string | null = null;
-            if (operation.kind === 'click') {
+            if (operation.kind === 'click' || operation.kind === 'move' || operation.kind === 'drag' || operation.kind === 'wheel') {
               const epoch = control.getStatus().controlEpoch;
               const observation = await (await getDriver()).capture(input.target);
               control.observe(epoch);
@@ -296,6 +300,14 @@ function clickedTarget(capture: Readonly<{ geometry: ComputerCaptureGeometryV1;
 function viewerOperation(control: MachineLiveStreamControlSidebandV1, capture: { geometry: { captureWidth: number; captureHeight: number } } | null): ComputerInputOperationV1 | null {
   if (control.kind === 'keyboard_text') return { kind: 'type', text: control.text };
   if (control.kind === 'keyboard_key') return { kind: 'press', key: control.key, ...(control.modifiers ? { modifiers: control.modifiers } : {}) };
-  if (control.kind === 'tap' && capture) return { kind: 'click', x: control.x * capture.geometry.captureWidth, y: control.y * capture.geometry.captureHeight };
+  if (!capture) return null;
+  const { captureWidth: width, captureHeight: height } = capture.geometry;
+  if (control.kind === 'tap') return { kind: 'click', x: control.x * width, y: control.y * height,
+    ...(control.button ? { button: control.button } : {}), ...(control.clickCount ? { clickCount: control.clickCount } : {}),
+    ...(control.modifiers ? { modifiers: control.modifiers } : {}) };
+  if (control.kind === 'move') return { kind: 'move', x: control.x * width, y: control.y * height };
+  if (control.kind === 'wheel') return { kind: 'wheel', x: control.x * width, y: control.y * height, deltaX: control.deltaX, deltaY: control.deltaY };
+  if (control.kind === 'drag') return { kind: 'drag', fromX: control.fromX * width, fromY: control.fromY * height,
+    toX: control.toX * width, toY: control.toY * height };
   return null;
 }

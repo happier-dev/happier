@@ -1,4 +1,4 @@
-import { ComputerActionResultV1Schema, ComputerApprovalDisplayV1Schema, ComputerCaptureResponseV1Schema, ComputerInputRequestV1Schema, ComputerQueryResponseV1Schema, type ComputerCaptureResponseV1 } from '@happier-dev/protocol/computer/v1';
+import { ComputerActionResultV1Schema, ComputerApprovalDisplayV1Schema, ComputerCaptureResponseV1Schema, ComputerInputRequestV1Schema, ComputerQueryResponseV1Schema, type ComputerCaptureResponseV1, type ComputerInputOperationV1 } from '@happier-dev/protocol/computer/v1';
 import { maybeParseJson } from '@happier-dev/protocol/activity/parseJson';
 import { z } from 'zod/mini';
 import type { ToolCall } from '@happier-dev/session-core/messages';
@@ -20,7 +20,7 @@ const isComputerAgentActionId = (actionId: string): actionId is ComputerAgentAct
 
 const SelectionRequiredSchema = z.object({ status: z.literal('target_selection_required'), approvalDisplay: ComputerApprovalDisplayV1Schema });
 
-export type TranscriptComputerVerb = 'capture' | 'query' | 'click' | 'type' | 'press' | 'drag' | 'wheel';
+export type TranscriptComputerVerb = Exclude<ComputerInputOperationV1['kind'], 'element'> | 'capture' | 'query';
 type CapturedMedia = Extract<ComputerCaptureResponseV1, { status: 'captured' }>['media'];
 
 /**

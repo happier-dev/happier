@@ -119,6 +119,17 @@ describe('agent-desktop native driver', () => {
       expect(await driver.clipboard?.(target, { kind: 'read' })).toEqual({ ok: false, code: 'clipboard_text_unavailable' });
     } finally { await driver.close(); }
   });
+  it('maps grounded hover to physical mouse movement without a button press', async () => {
+    setup();
+    const driver = await createAgentDesktopComputerDriver({ displayId: ':73', executablePath: '/managed/agent-desktop' });
+    try {
+      const capture = await driver.capture(target);
+      expect(await driver.input(target, capture.captureId, { kind: 'move', x: 10, y: 20 }))
+        .toEqual({ status: 'dispatched' });
+      expect(boundary.calls.find(args => args.includes('mouse-move')))
+        .toEqual(['--headed', 'mouse-move', '--xy=30,50']);
+    } finally { await driver.close(); }
+  });
   it('captures the native snapshot window descriptor without requiring list-windows metadata', async () => {
     setup(args => args.includes('list-windows') ? [window]
       : args.includes('screenshot') ? { data: png, format: 'png', width: 200, height: 100, scale_factor: 1 }

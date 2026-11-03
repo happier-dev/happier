@@ -30,6 +30,7 @@ export type ComputerUseTranslations = Readonly<{
             list: string;
             see: string;
             read: string;
+            move: string;
             click: string;
             press: string;
             type: string;
@@ -201,6 +202,8 @@ export type ComputerUseTranslations = Readonly<{
         captureRunning: string;
         query: string;
         queryRunning: string;
+        move: string;
+        moveRunning: string;
         click: string;
         clickRunning: string;
         clickTarget: (params: Readonly<{ target: string }>) => string;
@@ -249,6 +252,7 @@ export const computerUseTranslationsEnglish = { en: {
                 list: 'See which windows are open',
                 see: 'Take a screenshot',
                 read: 'Read the text and controls',
+                move: "Move the pointer",
                 click: 'Click',
                 press: 'Press a key',
                 type: 'Type',
@@ -418,6 +422,8 @@ export const computerUseTranslationsEnglish = { en: {
             captureRunning: 'Taking a screenshot',
             query: 'Read the window’s text and controls',
             queryRunning: 'Reading the window',
+            move: "Moved the pointer",
+            moveRunning: "Moving the pointer",
             click: 'Clicked in the window',
             clickRunning: 'Clicking in the window',
             clickTarget: ({ target }) => `Clicked “${target}”`,

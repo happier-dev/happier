@@ -5,6 +5,7 @@ import { createManagedComputerDriver } from './managedComputerDriver';
 import { createComputerCaptureSource } from '../source';
 import { createComputerRoutes } from '../routes';
 import { createMachineLiveStreamCaptureRegistry } from '../../peer/mediation/stream/captureRegistry';
+import { createDaemonMachineLiveStreamCaptureAdapter } from '../../peer/mediation/stream/captureAdapter';
 import { startMachineLiveStreamFramePump } from '../../peer/mediation/stream/framePump';
 import { createMachineLiveStreamRelayTerminator } from '../../peer/mediation/stream/relay';
 import { createCliActionExecutorHarness } from '@/session/actions/createCliActionExecutorHarness';
@@ -53,6 +54,51 @@ describe('native primary-display and macOS contract', () => {
       ...(platform === 'macos' ? { scale_factor: 2 } : { frame_scale: 1 }),
     } };
   }
+
+  it('delivers display hover through the real relay and native driver without pressing a button', async () => {
+    const display = { kind: 'display', displayId: ':73' } as const;
+    native.call.mockImplementation(async ({ name }) => name === 'list_windows' ? { structuredContent: { windows: [] } }
+      : name === 'get_desktop_state' ? desktopResult()
+      : name === 'get_screen_size' ? { structuredContent: { width: 200, height: 100, scale_factor: 1 } }
+        : name === 'check_permissions' ? { structuredContent: { x11: true, xsend_event: true } }
+          : { structuredContent: { effect: 'unverifiable' } });
+    const registry = createMachineLiveStreamCaptureRegistry();
+    const routes = createComputerRoutes({ machineId: 'machine', registry, defaultDisplayId: display.displayId,
+      executablePath: '/managed/native-driver' });
+    const selection = ComputerSelectedTargetResponseV1Schema.parse(await routes.dispatch('computer.target.select',
+      { machineId: 'machine', target: display }, { authority: 'present_user', defaultSessionId: 'hover', bypassApprovals: true }));
+    const registered = registry.resolve({ sourceId: selection.sourceId });
+    if (!registered.ok || !registered.source.computer) throw new Error('Missing selected Computer source');
+    const source = registered.source.computer;
+    const now = Date.now();
+    const relay = createMachineLiveStreamRelayTerminator({ machineId: 'machine', captureAdapter: createDaemonMachineLiveStreamCaptureAdapter(registry),
+      nowMs: Date.now, emitEnvelope: () => {} });
+    try {
+      expect(await relay.start({ v: 1, streamId: 'hover', streamFamily: 'screen', sourceId: source.sourceId,
+        routeKind: 'server_relay', sourceMachineId: 'machine', targetMachineId: 'machine', codecId: 'image.frame.v1',
+        authorization: { payload: { v: 1, grantId: 'hover-grant', accountId: 'account', sourceMachineId: 'machine',
+          targetMachineId: 'machine', flowKind: 'live_stream', routeKind: 'server_relay', streamId: 'hover',
+          streamFamily: 'screen', sourceId: source.sourceId, codecId: 'image.frame.v1', iat: now, exp: now + 60_000,
+          aud: 'happier-live-stream-relay-authorization' }, signature: { keyId: 'key', alg: 'Ed25519', valueBase64Url: 'AQID' } },
+      }, 'present_user')).toEqual({ ok: true, streamId: 'hover' });
+      await vi.waitFor(() => expect(native.tools.some(tool => tool.name === 'get_desktop_state')).toBe(true));
+      const before = source.status();
+      expect(relay.applyControl({ v: 1, sourceMachineId: 'machine', targetMachineId: 'machine', message: {
+        kind: 'sideband_control', control: { v: 1, streamId: 'hover', sourceId: source.sourceId,
+          eventId: 'hover-denied', kind: 'move', x: 0.25, y: 0.75 },
+      } })).toMatchObject({ ok: false });
+      expect(source.status()).toEqual(before);
+      expect(native.tools.some(tool => tool.name === 'move_cursor')).toBe(false);
+      await source.interrupt();
+      expect(relay.applyControl({ v: 1, sourceMachineId: 'machine', targetMachineId: 'machine', message: {
+        kind: 'sideband_control', control: { v: 1, streamId: 'hover', sourceId: source.sourceId,
+          eventId: 'hover-1', kind: 'move', x: 0.25, y: 0.75 },
+      } })).toEqual({ ok: true });
+      await vi.waitFor(() => expect(native.tools.find(tool => tool.name === 'move_cursor')?.arguments)
+        .toEqual({ x: 50, y: 75, scope: 'desktop', ...(process.platform === 'darwin' ? { delivery_mode: 'foreground' } : {}) }));
+      expect(native.tools.some(tool => ['click', 'drag', 'press_key'].includes(tool.name))).toBe(false);
+    } finally { await relay.dispose(); await routes.dispose(); }
+  });
 
   it('carries the enumerated primary-display label through selection and subsequent target reads', async () => {
     native.call.mockImplementation(async ({ name }) => name === 'list_windows' ? { structuredContent: { windows: [] } }
