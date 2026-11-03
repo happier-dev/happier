@@ -114,7 +114,7 @@ describe('external Action mounted plugin admission', () => {
       },
       resolvePluginExecutionOriginContext: () => ({ serverIdentityId: 'srv_home-1', machineId: 'machine-1' }),
       resolveAccountPluginExecutionSelection: (pluginId: string) => readCurrentMountedAccountPluginExecutionSelection({
-        pluginId, registry: fixture.registry, runtime: { credentials: { token: 'fixture', encryption: null },
+        pluginId, runtime: { credentials: { token: 'fixture', encryption: null },
           serverHttpBaseUrl: 'https://account-caller.test', isCurrent: async () => true },
       }),
     };

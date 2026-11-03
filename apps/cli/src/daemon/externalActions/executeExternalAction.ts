@@ -636,8 +636,7 @@ export async function executeExternalAction(input: Readonly<{
             const runtime = readRequesterAccountActionContext(requesterContext?.authorization);
             if (runtime) {
               const { readCurrentMountedAccountPluginExecutionSelection } = await import('@/plugins/runtime/accountPluginActivationSource');
-              return await readCurrentMountedAccountPluginExecutionSelection({ pluginId, registry: pluginRuntimeLease!.registry,
-                runtime, ...(input.signal ? { signal: input.signal } : {}) });
+              return await readCurrentMountedAccountPluginExecutionSelection({ pluginId, runtime, ...(input.signal ? { signal: input.signal } : {}) });
             }
             // A foreign requester cannot borrow the custodian's enabled selection.
             if (accountPrincipal?.accountId && accountPrincipal.accountId !== input.currentAccountId) {

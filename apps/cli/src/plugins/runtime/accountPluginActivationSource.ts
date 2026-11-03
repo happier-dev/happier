@@ -1,4 +1,3 @@
-import type { ResolvedExecutablePluginRuntimeRegistry } from './resolveExecutablePluginRuntimeRegistry';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import axios from 'axios';
@@ -128,14 +127,13 @@ export async function readCurrentAccountPluginExecutionSelection(input: AccountR
 /** Mounted callers use the authenticated runtime's Account, independently of the Machine plugin source. */
 export async function readCurrentMountedAccountPluginExecutionSelection(input: Readonly<{
     pluginId: string;
-    registry: Pick<ResolvedExecutablePluginRuntimeRegistry, 'contributes'>;
     runtime: Readonly<{ credentials: StoredCredentials; serverHttpBaseUrl: string; isCurrent(): Promise<boolean> }>;
     signal?: AbortSignal;
 }>): Promise<PluginAccountExecutionSelectionV1> {
     const unavailable = { kind: 'unavailable' as const, code: 'plugin_account_execution_unavailable' as const };
     if (!await input.runtime.isCurrent()) return unavailable;
-    const declaration = input.registry.contributes.pluginDeclarations?.find(plugin =>
-        plugin.pluginId === input.pluginId && plugin.sourceSpec.kind === 'bundled');
+    const declaration = loadCurrentBundledPluginLocatorResult({ pluginIds: [input.pluginId] }).loadedPlugins
+        .find(plugin => plugin.pluginId === input.pluginId);
     const bundled = declaration ? createPluginAccountBundledSelectionV1({
         packageName: declaration.sourceSpec.locator, manifest: declaration.manifest,
     }) : undefined;

@@ -5,9 +5,12 @@ import fastify from 'fastify';
 import { describe, expect, it, vi } from 'vitest';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { getResolvedContributionRegistry } from '@/plugins/projection/registry/builtIn/snapshot';
-import { resolvePluginStorePaths } from '@/plugins/store/paths';
+import { resolvePluginStorePaths, PLUGIN_MANIFEST_RELATIVE_PATH } from '@/plugins/store/paths';
+import { seedCurrentLocalPathPluginFixture } from '@/plugins/store/registry/currentState.testkit';
+import { resolvePluginContributes } from '@/plugins/projection/registry/resolvePluginContributions';
+import { loadCurrentBundledPluginLocatorResult } from '@/plugins/projection/registry/builtIn/locators';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
-import { readCurrentAccountPluginExecutionSelection, resolveAccountPluginActivationSources } from './accountPluginActivationSource';
+import { readCurrentAccountPluginExecutionSelection, readCurrentMountedAccountPluginExecutionSelection, resolveAccountPluginActivationSources } from './accountPluginActivationSource';
 import { resolveExecutablePluginRuntimeRegistry } from './resolveExecutablePluginRuntimeRegistry';
 import { createCommittedContributedActionInvoker, createCommittedContributedActionDefinitionLister,
     createCommittedContributedActionSchemaReader } from './invocation/actions/createCommittedContributedActionDeps';
@@ -29,6 +32,56 @@ import * as persistence from '@/persistence';
 import { manifest as authoredAccountManifest } from '../../../../../packages/plugin-sdk/fixtures/account-actions/src/index';
 
 describe('Account activation source assembly', () => {
+    it('selects mounted Account bundled custody independently of the Machine development source, retaining Account refusals', async () => {
+        const directory = await mkdtemp(join(tmpdir(), 'mounted-account-development-source-'));
+        const home = join(directory, 'home');
+        const pluginRoot = join(directory, 'channels');
+        const pluginId = 'happier.channels';
+        const declaration = loadCurrentBundledPluginLocatorResult({ pluginIds: [pluginId] }).loadedPlugins
+            .find(plugin => plugin.pluginId === pluginId);
+        if (!declaration) throw new Error('Expected canonical bundled Channels declaration');
+        const manifestPath = join(pluginRoot, PLUGIN_MANIFEST_RELATIVE_PATH);
+        const app = fastify();
+        let enabled = true;
+        let current = true;
+        app.post(PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intent.read'], async request => {
+            expect(PluginAvailabilityIntentReadActionInputV1Schema.parse(request.body)).toEqual({ pluginId });
+            return { availabilityCursor: 1, hostingCapability: { enabled: false },
+                intent: { pluginId, desiredVersion: null, enabled, offlineUiHosting: 'disabled', writableCollections: [], revision: '1' },
+                release: null, uiArtifacts: [], packageAssets: [] };
+        });
+        await app.ready();
+        const restore = installAxiosFastifyAdapter({ app, origin: 'http://mounted-account-development.test' });
+        try {
+            await mkdir(dirname(manifestPath), { recursive: true });
+            await writeFile(manifestPath, JSON.stringify(declaration.manifest));
+            const daemonEntry = declaration.manifest.entrypoints?.daemon;
+            if (daemonEntry) {
+                const daemonPath = join(pluginRoot, daemonEntry);
+                await mkdir(dirname(daemonPath), { recursive: true });
+                await writeFile(daemonPath, 'export function activate() {}');
+            }
+            await seedCurrentLocalPathPluginFixture({ happyHomeDir: home, pluginRoot,
+                pluginId, manifestVersion: declaration.manifest.version, devWatch: true });
+            const registry = { contributes: createResolvedContributionRegistry(await resolvePluginContributes({ happyHomeDir: home })) };
+            expect(registry.contributes.pluginDeclarations?.find(plugin => plugin.pluginId === pluginId)?.sourceSpec)
+                .toMatchObject({ kind: 'path', devWatch: true });
+            const read = () => readCurrentMountedAccountPluginExecutionSelection({ pluginId,
+                runtime: { credentials: { token: 'fixture', encryption: null },
+                    serverHttpBaseUrl: 'http://mounted-account-development.test', isCurrent: async () => current } });
+
+            enabled = false;
+            expect(await read()).toEqual({ kind: 'unavailable', code: 'plugin_disabled' });
+            enabled = true;
+            current = false;
+            expect(await read()).toEqual({ kind: 'unavailable', code: 'plugin_account_execution_unavailable' });
+            current = true;
+            expect(await read()).toMatchObject({ kind: 'available', release: null,
+                manifest: { id: pluginId, version: declaration.manifest.version },
+                sourceCustody: { kind: 'bundled_first_party',
+                    packagedRuntime: { kind: 'source_declaration', packageName: declaration.sourceSpec.locator } } });
+        } finally { restore(); await app.close(); await rm(directory, { recursive: true, force: true }); }
+    });
     it('resolves an authored authentication-only Account artifact without a Machine or native runtime', async () => {
         const home = await mkdtemp(join(tmpdir(), 'account-portable-authentication-'));
         const app = fastify();

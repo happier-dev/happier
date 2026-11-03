@@ -912,7 +912,7 @@ export class ApiMachineClient {
         const runtime = await this.resolveInstalledAccountRuntime(signal ?? new AbortController().signal);
         if (!runtime || !await runtime.isCurrent()) return unavailable;
         const { readCurrentMountedAccountPluginExecutionSelection } = await import('@/plugins/runtime/accountPluginActivationSource');
-        return await readCurrentMountedAccountPluginExecutionSelection({ pluginId, registry, runtime, ...(signal ? { signal } : {}) });
+        return await readCurrentMountedAccountPluginExecutionSelection({ pluginId, runtime, ...(signal ? { signal } : {}) });
     };
 
     /** Trusted host custody delegates to the actual registered PTY owners. */
