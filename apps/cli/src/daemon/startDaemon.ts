@@ -663,6 +663,7 @@ export async function startDaemon(
     };
     let managedMachinePolicyRuntime: ReturnType<typeof createDaemonManagedMachinePolicyRuntime> | null = null;
     let confidentialSecretFill: ReturnType<typeof api.createConfidentialSecretFillExecutor> | null = null;
+    let confidentialActionInputs: ReturnType<typeof api.createConfidentialActionInputsExecutor> | null = null;
     const machineAdmissionTransport = async (
       request: Parameters<ApiMachineClient['enqueueSessionPendingByMachine']>[0],
       options?: Parameters<ApiMachineClient['enqueueSessionPendingByMachine']>[1],
@@ -679,6 +680,8 @@ export async function startDaemon(
       clientActionExecute: createClientActionReverseDispatcher(() => apiMachineForSessions),
       confidentialSecretFill: async (args) => confidentialSecretFill
         ? await confidentialSecretFill(args) : { status: 'refused', code: 'target_unavailable' },
+      confidentialActionInputs: async (args) => confidentialActionInputs
+        ? await confidentialActionInputs(args) : { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' },
     });
     let apiMachine: ApiMachineClient | null = null;
     let machineBootstrapRuntime: ReturnType<typeof createDaemonMachineBootstrapRuntime> | null = null;
@@ -1671,6 +1674,8 @@ export async function startDaemon(
         : Promise.resolve({ ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' }),
     });
     confidentialSecretFill = api.createConfidentialSecretFillExecutor({
+      machineId: () => machineId, readHostIdentity: resolveCurrentMachineExecutionOriginContext });
+    confidentialActionInputs = api.createConfidentialActionInputsExecutor({ secretSources: daemonSecretSources,
       machineId: () => machineId, readHostIdentity: resolveCurrentMachineExecutionOriginContext });
     const pluginRegistrySourceHome = resolveServerHttpBaseUrl();
     const pluginRegistrySourceHost = createCliRegistryHostV1({ credentials });

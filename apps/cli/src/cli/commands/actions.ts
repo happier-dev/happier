@@ -6,6 +6,7 @@ import { ExternalActionRequestIdV1Schema } from '@happier-dev/protocol/actions/e
 import { compilePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import { isValidPluginJsonSchemaValue } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
 import { getActionSpec, resolveActionExecutionPlacementForInput, SignedRootActionIdSchema } from '@happier-dev/protocol/actions/actionSpecs';
+import { readMissingActionSecretInputPaths } from '@happier-dev/protocol/actions/actionInputHintsRuntime';
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import type { ActionDefinitionV1, ActionExecuteFailure, ActionExecuteResult, SignedRootActionId } from '@happier-dev/protocol';
 import { SessionGoalControlFailureV1Schema } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateRpc';
@@ -167,6 +168,7 @@ function resolveInvokeActionInput(
       wholeInputSchema: compiled.wholeInputSchema,
       callerSchema: compiled.callerSchema,
       bindInput: compiled.bindInput,
+      secretInput: compiled.spec,
       context: {
         actionId: compiled.actionId,
         invocationId: randomUUID(),
@@ -438,6 +440,11 @@ async function execute(args: string[], deps: ActionsDeps, signal?: AbortSignal):
         return;
       }
       input = resolveInvokeActionInput(args, compiled);
+      if (!input || typeof input !== 'object' || Array.isArray(input)) invalidInvokeArguments('Action input must be an object.');
+      input = await prepareSavedSecretsCliInput({ actionId: requested,
+        input: input as Readonly<Record<string, unknown>>, secretInput: definition, signal,
+        execute: (actionId, readInput) => executor.execute(actionId, readInput, { ...context, actionRequestId: randomUUID() }),
+      });
       validateDiscoveredActionInput(definition, input);
     }
     invocation = {
@@ -449,11 +456,13 @@ async function execute(args: string[], deps: ActionsDeps, signal?: AbortSignal):
     invocation = localInvocation!;
   }
   let resolvedInput = invocation.input;
-  if (!contributed && needsSavedSecretsInputPreparation(invocation.actionId)) {
+  if (!contributed && (needsSavedSecretsInputPreparation(invocation.actionId)
+    || readMissingActionSecretInputPaths(getActionSpec(invocation.actionId), resolvedInput).length > 0)) {
     if (!resolvedInput || typeof resolvedInput !== 'object' || Array.isArray(resolvedInput)) invalidInvokeArguments('Action input must be an object.');
     try {
       resolvedInput = await prepareSavedSecretsCliInput({ actionId: invocation.actionId,
         input: resolvedInput as Readonly<Record<string, unknown>>, signal,
+        secretInput: getActionSpec(invocation.actionId),
         execute: (actionId, input) => executor.execute(actionId, input, { ...context, actionRequestId: randomUUID() }),
       });
     } catch (error) {
@@ -567,7 +576,9 @@ export async function handleActionsCommand(
   }
   try { await execute(args, { ...DEFAULT_DEPS, ...deps }, signal); }
   catch (error) {
-    const candidate = error instanceof Error ? error as ActionCommandError : null;
+    const candidate: ActionCommandError | null = error instanceof SavedSecretsInputFailure
+      ? Object.assign(error, { actionFailure: true, code: error.failure.errorCode, details: error.failure.details })
+      : error instanceof Error ? error as ActionCommandError : null;
     const mapped = candidate?.actionFailure === true || candidate?.expectedFailure === true
       ? { code: String(candidate.code ?? 'action_failed'), unexpected: false, message: candidate.message }
       : mapUnknownErrorToControlError(error);

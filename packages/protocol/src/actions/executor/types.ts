@@ -1545,6 +1545,12 @@ export type ActionExecutorDeps = Readonly<{
   browserProfileLoginsImport?: (args: Readonly<{ input: BrowserProfileLoginsImportV1;
     context: ActionExecutorContext }>) => Promise<BrowserProfileLoginsImportResultV1>;
   /** Private live custody; never dispatched through Action arguments or observers. */
+  /** Selected private operands exist only around the admitted consuming effect. */
+  confidentialActionInputs?: (args: Readonly<{
+    continuation: import('../../approvals/privateSecretContinuationV1.js').PrivateActionInputContinuationV1;
+    context: ActionExecutorContext;
+    execute(input: Readonly<Record<string, unknown>>): Promise<ActionExecuteResult>;
+  }>) => Promise<ActionExecuteResult>;
   confidentialSecretFill?: (args: Readonly<{
     actionId: PrivateSecretContinuationV1['actionId'];
     request: PrivateSecretContinuationV1['request'];

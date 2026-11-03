@@ -9,11 +9,12 @@ import type { RpcActionExecutor } from './_actionDispatchAdapter';
 import { APPROVAL_RPC_SCOPES } from './actionSpecRpcRegistration';
 import { registerActionSpecRpcHandlers } from './registerActionSpecRpcHandlers';
 import type { RpcHandlerContext } from '@/api/rpc/types';
-import { PrivateSecretContinuationV1Schema } from '@happier-dev/protocol/approvals/privateSecretContinuationV1';
+import { PrivateConfidentialContinuationV1Schema } from '@happier-dev/protocol/approvals/privateSecretContinuationV1';
 import { SecretFillSettlementV1Schema } from '@happier-dev/protocol/computer/v1';
 import type { ActionExecutorContext, ActionExecuteResult } from '@happier-dev/protocol';
 import { ACTION_ID_FAMILIES_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { canUseCustodianAccountForMachineRequest } from '@/daemon/lifecycle/requesterWorkAttribution';
+import { projectUnexpectedActionFailureV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 type ApprovalActionId = typeof ACTION_ID_FAMILIES_V1.approvals[number];
 
@@ -112,15 +113,21 @@ export function registerApprovalRpcHandlers(params: Readonly<{
     },
   );
   params.rpcHandlerManager.registerHandler(RPC_METHODS.APPROVAL_REQUEST_SECRET_CONTINUE, async (input, context) => {
-    if (context?.callerAuthority !== 'present_user') return { status: 'refused', code: 'approval_required' };
-    const parsed = PrivateSecretContinuationV1Schema.safeParse(input);
-    if (!parsed.success) return { status: 'refused', code: 'approval_changed' };
+    const isActionInputs = input !== null && typeof input === 'object' && 'kind' in input && input.kind === 'action_inputs';
+    const failure = (code: string): ActionExecuteResult => ({ ok: false, errorCode: code, error: code });
+    if (context?.callerAuthority !== 'present_user') return isActionInputs
+      ? failure('present_user_required') : { status: 'refused', code: 'approval_required' };
+    const parsed = PrivateConfidentialContinuationV1Schema.safeParse(input);
+    if (!parsed.success) return isActionInputs ? failure('invalid_parameters') : { status: 'refused', code: 'approval_changed' };
+    const continuation = parsed.data;
+    const actionInputs = 'kind' in continuation;
     try {
       const executor = await resolveAccountExecutor(context);
-      if (!executor) return { status: 'refused', code: 'target_unavailable' };
-      if (!executor.continueConfidentialApprovalRequest) return { status: 'refused', code: 'target_unavailable' };
-      const result = await executor.continueConfidentialApprovalRequest(parsed.data, {
-        authority: context.callerAuthority, surface: 'rpc', serverId: parsed.data.request.serverId,
+      if (!executor?.continueConfidentialApprovalRequest) return actionInputs
+        ? failure('target_unavailable') : { status: 'refused', code: 'target_unavailable' };
+      const result = await executor.continueConfidentialApprovalRequest(continuation, {
+        authority: context.callerAuthority, surface: 'rpc', serverId: actionInputs ? continuation.serverId : continuation.request.serverId,
+        ...(actionInputs ? { defaultSessionMachineId: continuation.machineId } : {}),
         signal: context.signal,
         ...(context.machineAdmission ? {
           runtimeAccountId: context.machineAdmission.actorAccountId,
@@ -130,6 +137,7 @@ export function registerApprovalRpcHandlers(params: Readonly<{
           ? { verifyMachineAdmissionCurrent: context.verifyMachineAdmissionCurrent }
           : {}),
       });
+      if (actionInputs) return result;
       if (result.ok) {
         const settlement = SecretFillSettlementV1Schema.safeParse(result.result);
         return settlement.success ? settlement.data : { status: 'unknown', code: 'delivery_unknown' };
@@ -139,10 +147,11 @@ export function registerApprovalRpcHandlers(params: Readonly<{
       if (refusal.success) return refusal.data;
       return { status: 'refused', code: result.errorCode === 'present_user_required' ? 'approval_required' : 'approval_changed' };
     } catch {
-      return { status: 'unknown', code: 'delivery_unknown' };
+      return actionInputs ? projectUnexpectedActionFailureV1(true) : { status: 'unknown', code: 'delivery_unknown' };
     } finally {
       // Own no reusable private operand after this single admission attempt.
-      if (parsed.data.choice.kind === 'once') parsed.data.choice.value = '';
+      const choices = actionInputs ? continuation.choices.map(entry => entry.choice) : [continuation.choice];
+      for (const choice of choices) if (choice.kind === 'once') choice.value = '';
     }
   });
 }

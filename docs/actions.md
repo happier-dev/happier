@@ -6102,6 +6102,20 @@ while there is no matching successor. The stale Ask and absent publication are
 visible and recoverable: the person can reject it or restore the plugin and
 obligation so a matching successor can rejoin. There is no sweeper or timer.
 
+In 0.3 development, a missing required secret input on the consuming Action
+opens that same confidential choice. Built-in input hints and plugin manifest
+`widget: 'secret'` fields supply the declaration and their existing required-field
+rules decide whether an absent value needs a choice. An omitted optional secret
+(such as the MCP OAuth client secret) leaves approval to the ordinary Account
+Action policy. Supplied secrets retain private custody. Callers invoke the actual
+Action rather than a separate secret-request Action. The retained request has
+no secret values, and the private continuation supplies one Once or Saved
+choice per prompted path. The existing approval claim binds the exact request,
+Home and Machine, and a repeated completed decision returns its recorded result.
+The direct CLI uses its existing hidden terminal or stdin reader for these
+fields. Remember is a separate Saved Secret write after successful consumption;
+its failure must not replay the consuming Action.
+
 In unreleased 0.3 Plugin UI source, `Action.Control` binds a host-rendered control
 to an Action reference and controller. Its button is physically owned by the mounted
 host on native and hosted-web, including details panes. A press asks that controller

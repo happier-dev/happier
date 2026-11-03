@@ -4,6 +4,7 @@ import chalk from 'chalk';
 
 import type { ActionExecuteResult } from '@happier-dev/protocol';
 import { resolveActionExecutionPlacementForInput } from '@happier-dev/protocol/actions/actionSpecs';
+import { readMissingActionSecretInputPaths } from '@happier-dev/protocol/actions/actionInputHintsRuntime';
 
 import { printJsonEnvelope, writeJsonStdout } from '@/cli/output/jsonEnvelope';
 import { mapUnknownErrorToControlError } from '@/cli/control/controlErrorMapping';
@@ -288,13 +289,14 @@ export async function runCompiledActionCliCommand(params: Readonly<{
   }
 
   const invocationId = randomUUID();
-  const prepareInput = needsSavedSecretsInputPreparation(command.actionId);
+  const prepareSavedInput = needsSavedSecretsInputPreparation(command.actionId);
   const composed = composeActionCliInput({
     parsed,
-    canonicalSchema: prepareInput ? command.callerSchema : command.spec.inputSchema,
+    canonicalSchema: prepareSavedInput ? command.callerSchema : command.spec.inputSchema,
     wholeInputSchema: command.wholeInputSchema,
     callerSchema: command.callerSchema,
     bindInput: command.spec.cli?.bindInput,
+    secretInput: command.spec,
     context: {
       actionId: command.actionId,
       invocationId,
@@ -315,6 +317,7 @@ export async function runCompiledActionCliCommand(params: Readonly<{
     return;
   }
   let input = composed.input;
+  const prepareInput = prepareSavedInput || readMissingActionSecretInputPaths(command.spec, input).length > 0;
   const callerInput = composed.callerInput;
   let context: ActionCliPresentationContext = { command, json, input, callerInput };
 
@@ -438,6 +441,7 @@ export async function runCompiledActionCliCommand(params: Readonly<{
     }
     if (prepareInput) {
       input = await prepareSavedSecretsCliInput({ actionId: command.actionId, input, signal: requestSignal,
+        secretInput: command.spec,
         execute: (actionId, readInput) => executor.execute(actionId, readInput, {
           surface: bridgeSessionId ? 'agent' : 'cli', actionRequestId: randomUUID(),
           defaultSessionId: bridgeSessionId ?? null,

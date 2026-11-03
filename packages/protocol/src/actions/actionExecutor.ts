@@ -3,7 +3,7 @@ import type { AdmittedActionInputById } from './actionSpecs.js';
 import { createHostReviewedChildPortV1 } from './executor/deploymentRoleChild.js';
 import { prepareHostReviewedChildrenV1, readHostReviewedChildrenPlanV1 } from './executor/deploymentRoleApproval.js';
 import { readHostReviewedChildOperationV1 } from './executor/deploymentRoleChild.js';
-import { isDecidingHumanAdmissionCurrent } from './executor/confidentialContinuation.js';
+import { createConfidentialApprovalContinuation, isDecidingHumanAdmissionCurrent } from './executor/confidentialContinuation.js';
 import { settleActionOutput, isDeferredApprovalResult } from './executor/resultProjection.js';
 import { bindCallerInput, callerInputSchema } from './executor/callerInput.js';
 import type { HostReviewedChildrenPlanV1 } from './executor/types.js';
@@ -169,7 +169,11 @@ import { ManagedDeleteOutputV1Schema, ManagedMachineActionIdV1Schema, ManagedMac
 import { MachineReferenceCensusV1Schema, type MachineReferenceCensusV1 } from '../machines/machineReferenceCensusV1.js';
 import { ManagedRefusalCodeV1Schema } from '../machines/managed/providerFactsV1.js';
 import { ManagedControllerRequestFailureDetailsV1Schema, ManagedNativeFailureDetailsV1Schema } from './operations/v1.js';
-import { PrivateSecretContinuationV1Schema, type PrivateSecretContinuationV1 } from '../approvals/privateSecretContinuationV1.js';
+import type { PrivateSecretContinuationV1, PrivateActionInputContinuationV1 } from '../approvals/privateSecretContinuationV1.js';
+import { isNativeSecretFillAction, readConfidentialActionInputAdmission, readConfidentialActionInputPaths, requiresConfidentialActionChoice } from './executor/confidentialInputs.js';
+import { isMissingActionSecretInputError, readMissingActionSecretInputPaths } from './actionInputHintsRuntime.js';
+import { writeInputPath } from '../inputs/inputFieldRuntime.js';
+import { readInputPath } from '../inputs/inputPredicates.js';
 import { SecretFillSettlementV1Schema } from '../computer/v1.js';
 import { executeWaitActionV1 } from './executor/waitAction.js';
 import { executeUsageAction } from './executor/usageActions.js';
@@ -654,6 +658,55 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       context: prepared ? { ...params.context, serverIdentityId: prepared.serverIdentityId } : params.context,
     });
   };
+  async function createActionApprovalRequest(args: Readonly<{
+    actionId: ActionId; input: unknown; actionArgs: unknown; preview: unknown; context: ActionExecutorContext;
+    approval: NonNullable<ApprovalRequestV2['approval']>; sharedRequesterRequest: boolean;
+    discussionDraftReview?: true;
+    sessionCreationDirectoryApproval?: ApprovalRequestV2['sessionCreationDirectoryApproval'];
+    handoffTargetReplacementApproval?: ApprovalRequestV2['handoffTargetReplacementApproval'];
+  }>): Promise<Readonly<{ ok: true; request: ApprovalRequestV2; artifactId: string }> | ActionExecuteFailure> {
+    if (!deps.approvalsCreate) return { ok: false, errorCode: 'approvals_not_supported', error: 'approvals_not_supported' };
+    const { actionId, input, context: ctx } = args;
+    const pluginCaller = projectApprovalRequestPluginCaller(ctx.actionCaller);
+    if (ctx.actionCaller?.kind === 'plugin' && !pluginCaller) {
+      return { ok: false, errorCode: 'plugin_action_caller_required', error: 'plugin_action_caller_required' };
+    }
+    const targetSessionId = resolveSessionIdFromInput(input, ctx);
+    const requesterAdmission = resolveApprovalRequesterConfirmationV1({ context: ctx, actionId,
+      input: args.actionArgs, required: args.sharedRequesterRequest });
+    if (!requesterAdmission.ok) return requesterAdmission;
+    const { requesterConfirmation } = requesterAdmission;
+    const executionOriginV1 = await prepareApprovalExecutionOrigin({ actionId, input: args.actionArgs,
+      admittedInput: input, context: ctx, targetSessionId,
+      ...(requesterConfirmation ? { requesterConfirmation } : {}) });
+    if (!executionOriginV1) {
+      const errorCode = requesterConfirmation ? 'approval_requester_unavailable' : 'approval_origin_unavailable';
+      return { ok: false, errorCode, error: requesterConfirmation ? APPROVAL_REQUESTER_UNAVAILABLE_MESSAGE_V1 : errorCode };
+    }
+    if (ctx.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
+    const now = Date.now();
+    const requestedSurface = parseActionSurfaceKey(ctx.surface);
+    const requestingSessionId = resolvePolicyApprovalRequestingSessionId(ctx.approvalOrigin, ctx, targetSessionId);
+    const approvalOrigin = projectActionApprovalOrigin(actionId,
+      resolveApprovalOriginForRequest(ctx.approvalOrigin, requestingSessionId));
+    const proposedRequest: ApprovalRequestV2 = {
+      v: 2, status: 'open', createdAtMs: now, updatedAtMs: now,
+      createdBy: { surface: mapApprovalCreatedBySurface(ctx.surface ?? null), ...(pluginCaller ?? {}),
+        ...(requestingSessionId ? { sessionId: requestingSessionId } : {}) },
+      ...(requestedSurface ? { requestedSurface } : {}), ...(approvalOrigin ? { origin: approvalOrigin } : {}),
+      executionOriginV1, requestInputDigest: computeActionInputApprovalDigestV1(actionId, input),
+      ...(requesterConfirmation ? { requesterConfirmation } : {}),
+      ...(args.discussionDraftReview ? { discussionDraftReview: true as const } : {}),
+      ...(args.sessionCreationDirectoryApproval ? { sessionCreationDirectoryApproval: args.sessionCreationDirectoryApproval } : {}),
+      ...(args.handoffTargetReplacementApproval ? { handoffTargetReplacementApproval: args.handoffTargetReplacementApproval } : {}),
+      approval: args.approval, actionId, actionArgs: args.actionArgs,
+      summary: buildApprovalSummary(getActionSpec(actionId), input, args.preview), preview: args.preview,
+    };
+    const created = await deps.approvalsCreate({ request: proposedRequest, serverId: normalizeId(ctx.serverId) || null });
+    const request = created.request ?? proposedRequest;
+    if (request.v !== 2) return { ok: false, errorCode: 'approval_request_conflict', error: 'approval_request_conflict' };
+    return { ok: true, request, artifactId: normalizeId(created.artifactId) };
+  }
   const isSameHome = (targetServerId: unknown, currentServerId: string | null | undefined, ctx: ActionExecutorContext): boolean =>
     typeof targetServerId === 'string' && areServerProfileIdentifiersEquivalent(targetServerId, currentServerId, identifier =>
       identifier === ctx.serverId && ctx.serverIdentityId ? ctx.serverIdentityId
@@ -1059,89 +1112,6 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         };
   }
 
-  function callerInputSchema(spec: ActionSpec, ctx: ActionExecutorContext) {
-    if (ctx.surface === 'cli') {
-      // Friendly argv has already been bound; admit only the declared whole Action input.
-      return spec.cli?.wholeInputSchema ?? spec.inputSchema;
-    }
-    if (ctx.surface === 'mcp') {
-      return spec.surfaceBindings?.mcp?.inputSchema ?? spec.inputSchema;
-    }
-    if (ctx.surface === 'api') {
-      return spec.surfaceBindings?.api?.inputSchema ?? spec.inputSchema;
-    }
-    return ctx.surface === 'plugin' && ctx.actionCaller?.kind === 'plugin'
-      ? spec.surfaceBindings?.plugin?.inputSchema ?? spec.inputSchema
-      : spec.inputSchema;
-  }
-
-  async function bindCallerInput(
-    spec: ActionSpec,
-    input: unknown,
-    ctx: ActionExecutorContext,
-    hostInternal = false,
-  ): Promise<Readonly<
-    | { ok: true; input: unknown }
-    | ActionExecuteFailure
-  >> {
-    // Private children have no surface binding. Core admission parses their
-    // semantic input after resolving targets, just as it does for bound input.
-    if (hostInternal) return { ok: true, input };
-    const schema = callerInputSchema(spec, ctx);
-    const parsed = schema.safeParse(input ?? {});
-    if (!parsed.success) {
-      const timingIssue = spec.id === 'session.permission_mode.set'
-        ? parsed.error.issues.find((issue) => issue.path[0] === 'applyTiming')
-        : undefined;
-      return { ...actionInputValidationFailure(parsed.error), error: timingIssue?.message ?? 'invalid_parameters' };
-    }
-    const caller = ctx.actionCaller ?? { kind: 'host' as const };
-    const apiBinding = ctx.surface === 'api'
-      ? spec.surfaceBindings?.api
-      : undefined;
-    const pluginBinding = ctx.surface === 'plugin' && caller.kind === 'plugin'
-      ? spec.surfaceBindings?.plugin
-      : undefined;
-    const binding = apiBinding ?? pluginBinding;
-    if (!binding?.bindInput) return { ok: true, input: parsed.data };
-    if (apiBinding && caller.kind !== 'host') {
-      return {
-        ok: false,
-        errorCode: 'invalid_parameters',
-        error: 'invalid_parameters',
-      };
-    }
-    if (pluginBinding && caller.kind !== 'plugin') {
-      return {
-        ok: false,
-        errorCode: 'plugin_action_caller_required',
-        error: 'plugin_action_caller_required',
-      };
-    }
-    try {
-      return {
-        ok: true,
-        input: await binding.bindInput(parsed.data, {
-          actionId: spec.id,
-          surface: apiBinding ? 'api' : 'plugin',
-          caller,
-          ...(ctx.defaultSessionId !== undefined ? { defaultSessionId: ctx.defaultSessionId } : {}),
-          ...(ctx.serverId !== undefined ? { serverId: ctx.serverId } : {}),
-          ...(ctx.externalActionTarget !== undefined
-            ? { externalActionTarget: ctx.externalActionTarget }
-            : {}),
-          ...(ctx.signal ? { signal: ctx.signal } : {}),
-        }),
-      };
-    } catch {
-      return {
-        ok: false,
-        errorCode: apiBinding ? 'invalid_parameters' : 'plugin_action_input_binding_failed',
-        error: apiBinding ? 'invalid_parameters' : 'plugin_action_input_binding_failed',
-      };
-    }
-  }
-
   async function isApprovalExecutionOriginCurrentForRequest(args: Readonly<{
     request: ApprovalRequest;
     expectedOriginServerId?: string | null;
@@ -1288,6 +1258,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     retainedPublicProfileAction?: ActionExecutorContext['publicProfilePreparedAction'];
     retainedPublicProfilePreview?: ActionExecutorContext['publicProfilePreviewResult'];
     privateSecretContinuation?: PrivateSecretContinuationV1;
+    privateActionInputContinuation?: PrivateActionInputContinuationV1;
   }>): Promise<
     | Readonly<{ ok: true; request: ApprovalRequest; exec: ActionExecuteResult }>
     | Readonly<{ ok: false; errorCode: string; error: string }>
@@ -1417,8 +1388,9 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     if (unavailableOrigin && !retainedPluginContext) {
       return await persistExecutionFailure(args.request, unavailableOrigin);
     }
-    if ((args.request.actionId === 'computer.secret.fill' || args.request.actionId === 'browser.automation.secret.fill')
-      && !args.privateSecretContinuation) {
+    const confidentialRequestAction = ActionIdSchema.safeParse(args.request.actionId);
+    if (!args.privateSecretContinuation && !args.privateActionInputContinuation && confidentialRequestAction.success
+      && requiresConfidentialActionChoice(confidentialRequestAction.data, args.request.actionArgs, deps.listContributedActionDefinitions)) {
       return await persistExecutionFailure(args.request, {
         ok: false, errorCode: 'confidential_choice_required', error: 'confidential_choice_required',
       });
@@ -1440,7 +1412,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     if (
       (custodySpec?.approvalInputCustody === 'live_only'
         || custodySpec?.approvalResultCustody === 'live_only' && isBlockingApprovalRequest(args.request))
-      && (args.liveOnlyActionArgs === undefined
+      && !args.privateActionInputContinuation && (args.liveOnlyActionArgs === undefined
         || custodySpec?.approvalInputCustody === 'live_only' && args.ctx.signal?.aborted)
     ) {
       return await persistExecutionFailure(args.request, {
@@ -1555,7 +1527,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     const admittedReplay = resolveApprovalRequestExecutionInput(request);
     if (!admittedReplay.ok) return await persistExecutionFailure(request, admittedReplay);
     const replayInput: unknown = actionId !== null
-      && getActionSpec(actionId).approvalInputCustody === 'live_only'
+      && getActionSpec(actionId).approvalInputCustody === 'live_only' && !args.privateActionInputContinuation
       ? args.liveOnlyActionArgs
       : admittedReplay.input;
     const requestSurface = origin?.success ? origin.data.surface : null;
@@ -1846,10 +1818,6 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     };
     let effectAttempted = false;
     const exec = await (async (): Promise<ActionExecuteResult> => {
-      if (request.v === 2) {
-        const admission = await admitApprovalRequesterDecisionV1({ request, context: args.ctx });
-        if (!admission.ok) return admission;
-      }
       if (!originIsCurrent) {
         return { ok: false, errorCode: 'approval_stale', error: 'approval_stale', details: { reason: staleReason } };
       }
@@ -1891,9 +1859,18 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           return { ok: false, errorCode: 'approval_stale', error: 'approval_stale', details: { reason: 'requester_account_unavailable' } };
         }
         if (prepared) executionContext = { ...executionContext, externalActionExecutionAuthorization: prepared.authorization };
-        if (request.v === 2) {
-          const admission = await admitApprovalRequesterDecisionV1({ request, context: args.ctx });
-          if (!admission.ok) return admission;
+        if (args.privateActionInputContinuation) {
+          if (!deps.confidentialActionInputs) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
+          const privateResult = await deps.confidentialActionInputs({ continuation: args.privateActionInputContinuation,
+            context: { ...executionContext, runtimeAccountId: args.ctx.runtimeAccountId },
+            execute: async privateInput => {
+              effectAttempted = true;
+              return await executeCoreTerminal(actionId, privateInput,
+                { ...executionContext, bypassActionInterception: true }, true, undefined, undefined, true, undefined,
+                false, sameReplayHome);
+            },
+          });
+          return projectActionExecutionObservation(actionId, privateResult);
         }
         effectAttempted = true;
         return await executeCoreTerminal(actionId, executionInput, executionContext, true, undefined, undefined, true, undefined,
@@ -2205,14 +2182,40 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         admittedInput = replaceActionSessionTargetField(readRecord(admittedInput), snapshot.field, snapshot.targets[0].sessionId);
       }
     }
-    const parsed = existingAdmission
-      ? { success: true as const, data: existingAdmission.input }
+    const inputParse = existingAdmission
+      ? { success: true as const, data: admittedInput }
       : spec.inputSchema.safeParse(admittedInput);
+    const { paths: secretInputPaths, missingPaths: missingSecretPaths } = readConfidentialActionInputAdmission(
+      actionId, admittedInput, deps.listContributedActionDefinitions);
+    const parsed = !inputParse.success && isMissingActionSecretInputError(inputParse.error, admittedInput, missingSecretPaths)
+      ? { success: true as const, data: admittedInput } : inputParse;
     if (!parsed.success) {
       const invalid = actionInputValidationFailure(parsed.error);
       return actionId === 'execution.run.start'
         ? classifyExecutionRunStartFailure(invalid, 'noRunCreated')
         : invalid;
+    }
+    if (missingSecretPaths.length > 0) {
+      if (ctx.bypassApprovals) return { ok: false, errorCode: 'confidential_choice_required', error: 'confidential_choice_required' };
+      if (ctx.interactivePresentation === 'unavailable') {
+        return { ok: false, errorCode: 'action_interactive_review_required', error: 'action_interactive_review_required' };
+      }
+      // A deferred request cannot keep any supplied sibling secret either. The
+      // person chooses all confidential operands against this value-free input.
+      const paths = secretInputPaths;
+      let valueFreeInput = readRecord(admittedInput);
+      for (const path of paths) {
+        if (readInputPath(valueFreeInput, path) !== undefined) valueFreeInput = writeInputPath(valueFreeInput, path, undefined);
+      }
+      valueFreeInput = readRecord(projectNativeJsonValueForTransport(valueFreeInput));
+      const promptContext = ctx.approvalOrigin && 'toolInput' in ctx.approvalOrigin
+        ? { ...ctx, approvalOrigin: { ...ctx.approvalOrigin, toolInput: valueFreeInput } } : ctx;
+      const created = await createActionApprovalRequest({ actionId, input: valueFreeInput, actionArgs: valueFreeInput,
+        preview: { actionId, actionArgs: valueFreeInput, confidentialInputs: { kind: 'action_inputs', paths } },
+        context: promptContext, approval: { flow: 'deferred', result: 'required' },
+        sharedRequesterRequest: !delegatesApprovalClassificationToResolvedAction(actionId) && isSharedRequesterActionV1(ctx),
+      });
+      return created.ok ? { ok: true, result: { kind: 'approval_request_created', artifactId: created.artifactId, actionId } } : created;
     }
     if (spec.clientActionDomainInputSchema && typeof readRecord(parsed.data).clientId === 'string'
       && resolveActionExecutionPlacementForInput(spec, parsed.data) !== 'client') {
@@ -2986,7 +2989,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       const errorCode = mutation.status === 'conflict' ? 'version_mismatch' : 'artifact_organization_unavailable';
       return { ok: false, errorCode, error: errorCode };
     }
-    const confidentialChoiceRequired = actionId === 'computer.secret.fill' || actionId === 'browser.automation.secret.fill';
+    const confidentialChoiceRequired = isNativeSecretFillAction(actionId) || missingSecretPaths.length > 0;
     if (confidentialChoiceRequired && ctx.bypassApprovals) {
       return { ok: false, errorCode: 'confidential_choice_required', error: 'confidential_choice_required' };
     }
@@ -3144,26 +3147,6 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           if (!target.ok) return target;
           ctx = { ...ctx, executionRunTargetMachineId: target.machineId };
         }
-        const approvalPluginCaller = projectApprovalRequestPluginCaller(ctx.actionCaller);
-        if (ctx.actionCaller?.kind === 'plugin' && !approvalPluginCaller) {
-          return classifyExecutionRunStartPreDispatchFailure(actionId, {
-            ok: false,
-            errorCode: 'plugin_action_caller_required',
-            error: 'plugin_action_caller_required',
-          });
-        }
-
-        const now = Date.now();
-        const targetSessionId = resolveSessionIdFromInput(admittedInput, ctx);
-        const requestedSurface = parseActionSurfaceKey(ctx.surface);
-        const requestingSessionId = resolvePolicyApprovalRequestingSessionId(ctx.approvalOrigin, ctx, targetSessionId);
-        const approvalOrigin = projectActionApprovalOrigin(actionId,
-          resolveApprovalOriginForRequest(ctx.approvalOrigin, requestingSessionId));
-        const createdBy = {
-          surface: mapApprovalCreatedBySurface(ctx.surface ?? null),
-          ...(approvalPluginCaller ?? {}),
-          ...(requestingSessionId ? { sessionId: requestingSessionId } : {}),
-        } as const;
         const initialApprovalActionArgs = actionId === 'session.spawn_new'
           ? materializeSessionSpawnApprovalInput(discussionParticipantLaunch ? parsed.data : admittedInput, ctx)
           : admittedInput;
@@ -3188,66 +3171,15 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           });
         }
         if ('ok' in preparedApproval) return preparedApproval;
-        const approvalActionArgs = preparedApproval.actionArgs;
-        const requesterAdmission = resolveApprovalRequesterConfirmationV1({ context: ctx, actionId,
-          input: approvalActionArgs, required: sharedRequesterRequest });
-        if (!requesterAdmission.ok) return requesterAdmission;
-        const { requesterConfirmation } = requesterAdmission;
-        const executionOriginV1 = await prepareApprovalExecutionOrigin({
-          actionId,
-          input: approvalActionArgs,
-          admittedInput,
-          context: ctx,
-          targetSessionId,
-          ...(requesterConfirmation ? { requesterConfirmation } : {}),
+        const created = await createActionApprovalRequest({ actionId, input: admittedInput,
+          actionArgs: preparedApproval.actionArgs, preview: preparedApproval.preview, context: ctx,
+          approval: { flow: approvalRouting.flow, result: approvalRouting.result }, sharedRequesterRequest,
+          ...(discussionDraftReviewRequired ? { discussionDraftReview: true } : {}),
+          ...(requiredDirectoryApproval ? { sessionCreationDirectoryApproval: requiredDirectoryApproval } : {}),
+          ...(requiredHandoffTargetApproval ? { handoffTargetReplacementApproval: requiredHandoffTargetApproval } : {}),
         });
-        if (!executionOriginV1) {
-          const errorCode = requesterConfirmation ? 'approval_requester_unavailable' : 'approval_origin_unavailable';
-          return classifyExecutionRunStartPreDispatchFailure(actionId, {
-            ok: false,
-            errorCode,
-            error: requesterConfirmation ? APPROVAL_REQUESTER_UNAVAILABLE_MESSAGE_V1 : errorCode,
-          });
-        }
-        if (ctx.signal?.aborted) {
-          return classifyExecutionRunStartPreDispatchFailure(actionId, {
-            ok: false,
-            errorCode: 'cancelled',
-            error: 'cancelled',
-          });
-        }
-        const proposedRequest: ApprovalRequestV2 = {
-          v: 2,
-          status: 'open',
-          createdAtMs: now,
-          updatedAtMs: now,
-          createdBy,
-          ...(requestedSurface ? { requestedSurface } : {}),
-          ...(approvalOrigin ? { origin: approvalOrigin } : {}),
-          executionOriginV1,
-          requestInputDigest: computeActionInputApprovalDigestV1(actionId, admittedInput),
-          ...(requesterConfirmation ? { requesterConfirmation } : {}),
-          ...(discussionDraftReviewRequired ? { discussionDraftReview: true as const } : {}),
-          approval: {
-            flow: approvalRouting.flow,
-            result: approvalRouting.result,
-          },
-          actionId,
-          actionArgs: approvalActionArgs,
-          summary: buildApprovalSummary(spec, admittedInput, preparedApproval.preview),
-          preview: preparedApproval.preview,
-          ...(requiredDirectoryApproval
-            ? { sessionCreationDirectoryApproval: requiredDirectoryApproval }
-            : {}),
-          ...(requiredHandoffTargetApproval
-            ? { handoffTargetReplacementApproval: requiredHandoffTargetApproval }
-            : {}),
-        };
-
-        const res = await deps.approvalsCreate({ request: proposedRequest, serverId: normalizeId(ctx.serverId) || null });
-        const request = res.request ?? proposedRequest;
-        if (request.v !== 2) return { ok: false, errorCode: 'approval_request_conflict', error: 'approval_request_conflict' };
-        const artifactId = normalizeId(res.artifactId);
+        if (!created.ok) return created;
+        const { request, artifactId } = created;
         // Retained native reads keep exact-daemon/deferred replay, but their
         // original host still owns its interest until that recorded result.
         // Creation matched the immutable subject before a successor can wait.
@@ -6279,7 +6211,9 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             if (!current.ok) return current;
           }
         }
-        if (decision === 'approve' && (existing.actionId === 'computer.secret.fill' || existing.actionId === 'browser.automation.secret.fill')) {
+        const confidentialAction = ActionIdSchema.safeParse(existing.actionId);
+        if (decision === 'approve' && confidentialAction.success && requiresConfidentialActionChoice(confidentialAction.data,
+          existing.actionArgs, deps.listContributedActionDefinitions)) {
           return { ok: false, errorCode: 'confidential_choice_required', error: 'confidential_choice_required' };
         }
         const narrowsInput = data.narrowedInput !== undefined;
@@ -6933,7 +6867,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         };
       }
     }
-    if (ctx.bypassActionInterception || (!deps.interceptActionExecution && !deps.observeActionExecution)) {
+    if (ctx.bypassActionInterception || (!deps.interceptActionExecution && !deps.observeActionExecution)
+      || readMissingActionSecretInputPaths(spec, input).length > 0) {
       return settlePrepareResult(actionId, await executeCore(
         actionId,
         input,
@@ -7153,77 +7088,14 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       { actionId, input, context, clientExecutionContinued: true });
   };
 
-  async function isDecidingHumanAdmissionCurrent(ctx: ActionExecutorContext): Promise<boolean> {
-    if (ctx.signal?.aborted) return false;
-    try {
-      const admitted = !ctx.verifyMachineAdmissionCurrent || await ctx.verifyMachineAdmissionCurrent();
-      return admitted && !ctx.signal?.aborted;
-    } catch {
-      return false;
-    }
-  }
-
-  async function continueConfidentialApprovalRequest(input: unknown, ctx: ActionExecutorContext = {}): Promise<ActionExecuteResult> {
-    if (resolveHostStampedAuthority(ctx) !== 'present_user') {
-      return { ok: false, errorCode: 'present_user_required', error: 'present_user_required' };
-    }
-    const parsed = PrivateSecretContinuationV1Schema.safeParse(input);
-    if (!parsed.success) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
-    if (!deps.approvalsGet || !deps.approvalsUpdate) {
-      return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
-    }
-    let continuation: PrivateSecretContinuationV1 | null = parsed.data;
-    try {
-      const raw = await deps.approvalsGet({ artifactId: continuation.artifactId, serverId: null });
-      const stored = StoredApprovalRequestSchema.safeParse(raw);
-      if (!stored.success || stored.data.v !== 2) {
-        return { ok: false, errorCode: raw ? 'approval_invalid' : 'approval_not_found', error: raw ? 'approval_invalid' : 'approval_not_found' };
-      }
-      let request: ApprovalRequest = stored.data;
-      const origin = stored.data.executionOriginV1;
-      if (request.actionId !== continuation.actionId || origin.requestId !== continuation.requestId
-        || origin.serverId !== continuation.request.serverId || origin.sessionId !== continuation.request.sessionId
-        || origin.machineId !== continuation.request.machineId
-        || (ctx.serverId && ctx.serverId !== origin.serverId
-          && (!origin.serverIdentityId || ctx.serverIdentityId !== origin.serverIdentityId))
-        || (ctx.serverIdentityId && origin.serverIdentityId && ctx.serverIdentityId !== origin.serverIdentityId)
-        || JSON.stringify(request.actionArgs) !== JSON.stringify(continuation.request)
-        || (continuation.submit && !continuation.request.submit)) {
-        return { ok: false, errorCode: 'approval_stale', error: 'approval_stale' };
-      }
-      const recorded = buildActionExecuteResultFromRecordedApprovalExecution(request);
-      if (recorded) return recorded;
-      if (request.status === 'executing') {
-        return { ok: false, errorCode: 'approval_execution_outcome_unknown', error: 'approval_execution_outcome_unknown' };
-      }
-      if (request.status !== 'open') return { ok: false, errorCode: 'approval_not_open', error: 'approval_not_open' };
-      const callerGrant = ctx.externalActionCredential?.grant;
-      const target = origin.target ?? { kind: 'session' as const, sessionId: continuation.request.sessionId };
-      if (callerGrant && !isApiTokenGrantTargetMemberV1(callerGrant, target, origin.machineId)) {
-        return { ok: false, errorCode: 'credential_scope_denied', error: 'credential_scope_denied' };
-      }
-      if (!isActionEnabled(getActionSpec(continuation.actionId), { ...ctx, surface: origin.surface })) {
-        return { ok: false, errorCode: 'action_disabled', error: 'action_disabled' };
-      }
-      if (!await isApprovalExecutionOriginCurrentForRequest({ request, expectedOriginServerId: origin.serverId,
-        ...(ctx.signal ? { signal: ctx.signal } : {}) }) || !await isDecidingHumanAdmissionCurrent(ctx)) {
-        return { ok: false, errorCode: 'approval_stale', error: 'approval_stale' };
-      }
-      const now = Date.now();
-      request = { ...request, status: 'approved', updatedAtMs: Math.max(now, request.updatedAtMs),
-        decision: { kind: 'approve', decidedAtMs: now, authority: 'present_user' } };
-      const claimed = await deps.approvalsUpdate({ artifactId: continuation.artifactId, request, serverId: origin.serverId });
-      const failure = readActionFailureEnvelope(claimed);
-      if (failure) return failure;
-      const execution = await executeApprovedActionForRequest({ artifactId: continuation.artifactId, request,
-        artifactServerId: origin.serverId, expectedOriginServerId: origin.serverId, ctx,
-        privateSecretContinuation: continuation, observeExecution: true });
-      return execution.ok ? execution.exec : execution;
-    } finally {
-      // JavaScript cannot promise forensic string erasure; no owned durable reference remains.
-      continuation = null;
-    }
-  }
+  const continueConfidentialApprovalRequest = createConfidentialApprovalContinuation({
+    approvalsGet: deps.approvalsGet,
+    approvalsUpdate: deps.approvalsUpdate,
+    isActionEnabled: (actionId, context) => isActionEnabled(getActionSpec(actionId), context),
+    declaredInputPaths: (actionId, input) => readConfidentialActionInputPaths(actionId, input, deps.listContributedActionDefinitions, { includeInactive: true }),
+    isOriginCurrent: (request, signal) => isApprovalExecutionOriginCurrentForRequest({ request, ...(signal ? { signal } : {}) }),
+    executeApproved: executeApprovedActionForRequest,
+  });
 
   return {
     prepare,

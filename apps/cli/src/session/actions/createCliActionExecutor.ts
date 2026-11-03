@@ -52,6 +52,7 @@ type CliActionExecutorParams = Parameters<typeof createCliActionExecutorHarness>
     prepareLocalServiceStartApproval?: ActionExecutorDeps['prepareLocalServiceStartApproval'];
     clientActionExecute?: ActionExecutorDeps['clientActionExecute'];
     confidentialSecretFill?: ActionExecutorDeps['confidentialSecretFill'];
+    confidentialActionInputs?: ActionExecutorDeps['confidentialActionInputs'];
     /** Bound by the live Session/Run host; private and deferred operations retain Artifact custody. */
     sessionActionConfirmation?: ActionExecutorDeps['sessionActionConfirmation'];
     hostActionApprovalLifetime?: ActionExecutorDeps['hostActionApprovalLifetime'];
@@ -179,6 +180,7 @@ export function createCliActionExecutor(
       ...(params.sessionActionConfirmation ? { sessionActionConfirmation: params.sessionActionConfirmation } : {}),
       clientActionExecute: params.clientActionExecute ?? (async ({ actionId }) => clientActionUnavailable(actionId)),
       ...(params.confidentialSecretFill ? { confidentialSecretFill: params.confidentialSecretFill } : {}),
+      ...(params.confidentialActionInputs ? { confidentialActionInputs: params.confidentialActionInputs } : {}),
       ...(params.runtimeActionExecute
         ? { runtimeActionExecute: params.runtimeActionExecute }
         : {}),

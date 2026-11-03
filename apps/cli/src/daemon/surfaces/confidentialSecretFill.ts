@@ -1,10 +1,19 @@
 import type { SecretFillSettlementV1 } from '@happier-dev/protocol/computer/v1';
-import type { ActionExecutorDeps } from '@happier-dev/protocol';
+import type { ActionExecutorDeps, ActionExecuteResult } from '@happier-dev/protocol';
+import type { PrivateSecretChoiceV1 } from '@happier-dev/protocol/approvals/privateSecretContinuationV1';
+import { writeInputPath } from '@happier-dev/protocol/inputs/inputFieldRuntime';
+import { ActionExecuteResultSchema, projectUnexpectedActionFailureV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
+import { registerSensitiveDiagnosticValues, redactBugReportSensitiveText,
+  type SensitiveDiagnosticValuesLease } from '@happier-dev/protocol/bugs/reports/redaction';
+import { redactPluginInvocationResultData } from '@happier-dev/cli-common/plugins/registration';
 import { getActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshotLifetimeToken } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
-import { createSavedSecretMaterializerFromSnapshotV1, type SavedSecretResolutionFailureStatusV1 } from '@/settings/secrets/savedSecretCatalog';
+import { createSavedSecretMaterializerFromSnapshotV1, type SavedSecretMaterializerV1, type SavedSecretResolutionFailureStatusV1 } from '@/settings/secrets/savedSecretCatalog';
 import { refreshSavedSecretCatalogForOperation, savedSecretOperationAdmissionStatus } from "@/settings/secrets/hydrateSavedSecretCatalog";
-import { SavedSecretOperationAdmissionError } from "@/settings/secrets/savedSecretCatalogRead";
+import { acquireSavedSecretMaterializerForOperation, SavedSecretOperationAdmissionError } from "@/settings/secrets/savedSecretCatalogRead";
 import type { CurrentMachineExecutionOriginContext } from '@/api/machine/resolveCurrentMachineExecutionOriginContext';
+
+import type { TargetSecretSourcesV1 } from '@/plugins/runtime/lifecycle/contributions/targetSecretSources';
 
 /** A verified physical target retained only by the current confidential invocation. */
 export type ConfidentialSecretFillTarget = Readonly<{
@@ -26,6 +35,102 @@ const catalogRefusal: Record<SavedSecretResolutionFailureStatusV1, RefusalCode> 
   repair_required: 'saved_secret_repair_required', deleted: 'saved_secret_deleted',
   mode_incompatible: 'saved_secret_mode_incompatible', corrupt: 'saved_secret_corrupt',
 };
+
+type ConfidentialMaterialOwner = Readonly<{
+  expectedScopeKey: string;
+  expectedAccountId: string | null;
+  serverId: string;
+  machineId: string | (() => string | null);
+  readHostIdentity?(signal?: AbortSignal): Promise<CurrentMachineExecutionOriginContext | null>;
+  readAccountMode(signal?: AbortSignal): Promise<'plain' | 'e2ee'>;
+  secretSources?: TargetSecretSourcesV1;
+}>;
+
+function resolvePrivateChoice(materializer: SavedSecretMaterializerV1,
+  choice: PrivateSecretChoiceV1, mode: 'plain' | 'e2ee'):
+  Readonly<{ status: 'ready'; value: string }> | Extract<SecretFillSettlementV1, { status: 'refused' }> {
+  if (choice.kind === 'once') return { status: 'ready', value: choice.value };
+  const inspection = materializer.inspect(choice.ref);
+  if (inspection.status !== 'ready') return { status: 'refused', code: catalogRefusal[inspection.status] };
+  if (inspection.catalogFingerprint !== choice.fingerprint
+    || (choice.revision !== null && !materializer.matchesSharedResourceRevision(choice.ref, choice.revision))) {
+    return { status: 'refused', code: 'saved_secret_changed' };
+  }
+  if ((mode === 'plain' && inspection.storage === 'settings_encrypted')
+    || (mode === 'e2ee' && inspection.storage === 'settings_plain')) {
+    return { status: 'refused', code: 'saved_secret_mode_incompatible' };
+  }
+  const material = materializer.recheck(choice.ref, inspection.fingerprint);
+  return material.status === 'ready' ? { status: 'ready', value: material.value }
+    : { status: 'refused', code: catalogRefusal[material.status] };
+}
+
+/** Materializes admitted secret leaves only in the real consumer's invocation memory. */
+export function createConfidentialActionInputsExecutor(input: ConfidentialMaterialOwner):
+  NonNullable<ActionExecutorDeps['confidentialActionInputs']> {
+  return async args => {
+    const { continuation, context } = args;
+    const failure = (code: string): ActionExecuteResult => ({ ok: false, errorCode: code, error: code });
+    let privateInput: Record<string, unknown> = continuation.request;
+    const values: string[] = [];
+    let diagnosticLease: SensitiveDiagnosticValuesLease | undefined;
+    let issued = false;
+    try {
+      if (context.signal?.aborted) return failure('cancelled');
+      if (continuation.choices.some(entry => entry.choice.kind === 'saved')
+        && (!input.expectedAccountId || context.runtimeAccountId !== input.expectedAccountId)) {
+        return failure('saved_secret_forbidden');
+      }
+      const machineId = typeof input.machineId === 'function' ? input.machineId() : input.machineId;
+      if (continuation.machineId !== machineId) return failure('target_changed');
+      if (input.readHostIdentity) {
+        const identity = await input.readHostIdentity(context.signal);
+        if (!identity || identity.machineId !== machineId || identity.serverIdentityId !== context.serverIdentityId) {
+          return failure('target_changed');
+        }
+      } else if (continuation.serverId !== input.serverId) return failure('target_changed');
+      const lifetime = getActiveAccountSettingsSnapshotLifetimeToken();
+      const mode = await input.readAccountMode(context.signal);
+      if (mode !== continuation.accountEncryptionMode) return failure('saved_secret_mode_incompatible');
+      const references = continuation.choices.flatMap(({ choice }) => choice.kind === 'saved'
+        ? [{ ref: choice.ref, ...(choice.revision === null ? {} : { revision: choice.revision }) }] : []);
+      if (references.length > 0) await refreshSavedSecretCatalogForOperation({ expectedScopeKey: input.expectedScopeKey,
+        references, ...(context.signal ? { signal: context.signal } : {}) });
+      if (context.signal?.aborted) return failure('cancelled');
+      const snapshot = getActiveAccountSettingsSnapshot();
+      if (!snapshot || snapshot.scopeKey !== input.expectedScopeKey
+        || getActiveAccountSettingsSnapshotLifetimeToken() !== lifetime) return failure('approval_changed');
+      const materializer = await acquireSavedSecretMaterializerForOperation({ snapshot, references,
+        ...(input.secretSources ? { secretSources: input.secretSources } : {}),
+        ...(context.signal ? { signal: context.signal } : {}) });
+      for (const { path, choice } of continuation.choices) {
+        const material = resolvePrivateChoice(materializer, choice, mode);
+        if (material.status !== 'ready') return failure(material.code);
+        privateInput = writeInputPath(privateInput, path, material.value);
+        values.push(material.value);
+      }
+      diagnosticLease = registerSensitiveDiagnosticValues(values);
+      issued = true;
+      const result = await args.execute(privateInput);
+      // Preserve the protocol's envelope keys even when a selected short value
+      // matches one; all consumer data (including nested keys) is redacted.
+      const envelope = projectNativeJsonValueForTransport(result);
+      return ActionExecuteResultSchema.parse(Object.fromEntries(Object.entries(envelope ?? {})
+        .map(([key, value]) => [key, redactPluginInvocationResultData(value, redactBugReportSensitiveText)])));
+    } catch (error) {
+      if (!issued && error instanceof SavedSecretOperationAdmissionError) {
+        return failure(error.reason === 'reference_stale' ? 'saved_secret_changed'
+          : catalogRefusal[savedSecretOperationAdmissionStatus(error.reason)]);
+      }
+      return context.signal?.aborted ? failure('cancelled') : projectUnexpectedActionFailureV1(issued);
+    } finally {
+      privateInput = {};
+      for (const { choice } of continuation.choices) if (choice.kind === 'once') choice.value = '';
+      values.fill('');
+      diagnosticLease?.close();
+    }
+  };
+}
 
 /** The existing Saved Secret catalog is the material authority; the physical owner supplies its hold. */
 export function createConfidentialSecretFillExecutor(input: Readonly<{

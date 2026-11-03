@@ -16,11 +16,12 @@ let currentTransport: Readonly<{
   transport: CliActionMachineAdmissionTransport;
   clientActionExecute?: ActionExecutorDeps['clientActionExecute'];
   confidentialSecretFill?: ActionExecutorDeps['confidentialSecretFill'];
+  confidentialActionInputs?: ActionExecutorDeps['confidentialActionInputs'];
 }> | null = null;
 
 /** The daemon installs its current Machine socket once for process-local Action ingress. */
 export function installDaemonMachineAdmissionTransport(
-  binding: Readonly<{ serverId: string; transport: CliActionMachineAdmissionTransport; clientActionExecute?: ActionExecutorDeps['clientActionExecute']; confidentialSecretFill?: ActionExecutorDeps['confidentialSecretFill'] }>,
+  binding: Readonly<{ serverId: string; transport: CliActionMachineAdmissionTransport; clientActionExecute?: ActionExecutorDeps['clientActionExecute']; confidentialSecretFill?: ActionExecutorDeps['confidentialSecretFill']; confidentialActionInputs?: ActionExecutorDeps['confidentialActionInputs'] }>,
 ): () => void {
   if (currentTransport) throw new Error('daemon_machine_admission_transport_already_installed');
   currentTransport = binding;
@@ -39,4 +40,8 @@ export function getDaemonClientActionExecutor(serverId: string): ActionExecutorD
 
 export function getDaemonConfidentialSecretFillExecutor(serverId: string): ActionExecutorDeps['confidentialSecretFill'] {
   return currentTransport?.serverId === serverId ? currentTransport.confidentialSecretFill : undefined;
+}
+
+export function getDaemonConfidentialActionInputsExecutor(serverId: string): ActionExecutorDeps['confidentialActionInputs'] {
+  return currentTransport?.serverId === serverId ? currentTransport.confidentialActionInputs : undefined;
 }

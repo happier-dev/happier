@@ -5,6 +5,7 @@ import { ACTION_CLI_HELP_FLAGS, ACTION_CLI_JSON_OUTPUT_FLAG, ACTION_CLI_WHOLE_IN
 export { ACTION_CLI_HELP_FLAGS, ACTION_CLI_JSON_OUTPUT_FLAG, ACTION_CLI_WHOLE_INPUT_FLAG, ACTION_CLI_MACHINE_ID_FLAG, ACTION_CLI_SERVER_ID_FLAG, ACTION_CLI_REQUEST_ID_FLAG, ACTION_CLI_GLOBAL_FLAGS, ACTION_CLI_COMPILER_OWNED_FLAGS } from './flags';
 import { evaluateInputPredicate as evaluateActionInputPredicate, readInputPath as readActionInputPath } from '@happier-dev/protocol/inputs/inputPredicates';
 import { readActionCliDerivedDefault } from '@happier-dev/protocol/actions/actionCliProjection';
+import { isMissingActionSecretInputError, readMissingActionSecretInputPaths } from '@happier-dev/protocol/actions/actionInputHintsRuntime';
 import type { ActionCliBindContext, ActionCliBindInput } from '@happier-dev/protocol';
 
 import { z } from 'zod/mini';
@@ -32,6 +33,25 @@ export type ComposedActionCliInput = Readonly<{
   input: Readonly<Record<string, unknown>>;
   callerInput: Readonly<Record<string, unknown>>;
 }> | ActionCliParseFailure;
+
+type SecretInputDeclaration = Parameters<typeof readMissingActionSecretInputPaths>[0];
+
+/** Only declared missing secret leaves wait for the CLI's private reader. */
+function parseInputBeforeSecretPreparation(
+  schema: z.ZodMiniType,
+  input: unknown,
+  secretInput?: SecretInputDeclaration,
+  fieldContext?: Readonly<{ input: Readonly<Record<string, unknown>>; field: string }>,
+) {
+  const parsed = schema.safeParse(input);
+  if (parsed.success || !secretInput) return parsed;
+  const source = fieldContext?.input ?? input;
+  const error = fieldContext ? { issues: parsed.error.issues.map(issue => ({
+    code: issue.code, path: [fieldContext.field, ...issue.path],
+  })) } : parsed.error;
+  return isMissingActionSecretInputError(error, source, readMissingActionSecretInputPaths(secretInput, source))
+    ? { success: true as const, data: input } : parsed;
+}
 
 function describeSchemaIssues(error: z.core.$ZodError): string {
   return error.issues
@@ -96,6 +116,7 @@ function parsePartialInputFields(
   shape: Readonly<Record<string, z.ZodMiniType>>,
   supplied: Readonly<Record<string, unknown>>,
   schema?: z.ZodMiniType,
+  secretInput?: SecretInputDeclaration,
 ): Readonly<Record<string, unknown>> | ActionCliParseFailure {
   const parsed: Record<string, unknown> = {};
   const issues: string[] = [];
@@ -105,7 +126,7 @@ function parsePartialInputFields(
       issues.push(`${field}: unrecognized field`);
       continue;
     }
-    const result = fieldSchema.safeParse(value);
+    const result = parseInputBeforeSecretPreparation(fieldSchema, value, secretInput, { input: supplied, field });
     if (result.success) parsed[field] = result.data;
     else {
       issues.push(...result.error.issues.map((issue) => {
@@ -155,6 +176,7 @@ export function composeActionCliInput(params: Readonly<{
   callerSchema: z.ZodMiniType;
   bindInput?: ActionCliBindInput | null;
   context: ActionCliBindContext;
+  secretInput?: SecretInputDeclaration;
 }>): ComposedActionCliInput {
   // With no whole-input JSON, an empty argv is still the friendly caller shape:
   // binders may own established defaults (for example list page size). When a
@@ -174,7 +196,7 @@ export function composeActionCliInput(params: Readonly<{
   let baseRecord: Readonly<Record<string, unknown>> = Object.freeze({});
   if (params.parsed.canonicalBase !== null) {
     if (baseShapes === null) {
-      const whole = baseSchema.safeParse(params.parsed.canonicalBase);
+      const whole = parseInputBeforeSecretPreparation(baseSchema, params.parsed.canonicalBase, params.secretInput);
       if (!whole.success) return failure(describeSchemaIssues(whole.error));
       if (!whole.data || typeof whole.data !== 'object' || Array.isArray(whole.data)) {
         return failure('Canonical Action input must be an object.');
@@ -184,7 +206,7 @@ export function composeActionCliInput(params: Readonly<{
       // The canonical schema's own cross-field rules are decided once, on the
       // merged input below; only the friendly overlay can lose a conflicting
       // field to its binder, so only the overlay's rules run on a partial source.
-      const candidates = baseShapes.map((shape) => parsePartialInputFields(shape, params.parsed.canonicalBase!));
+      const candidates = baseShapes.map((shape) => parsePartialInputFields(shape, params.parsed.canonicalBase!, undefined, params.secretInput));
       const partialBase = candidates.find((candidate) => !isParseFailure(candidate)) ?? candidates[0]!;
       if (isParseFailure(partialBase)) return partialBase;
       baseRecord = partialBase;
@@ -197,14 +219,14 @@ export function composeActionCliInput(params: Readonly<{
   let callerValue: unknown = undefined;
   if (hasCallerOverlay) {
     if (callerShape === null) {
-      const whole = params.callerSchema.safeParse(params.parsed.callerOverlay);
+      const whole = parseInputBeforeSecretPreparation(params.callerSchema, params.parsed.callerOverlay, params.secretInput);
       if (!whole.success) return failure(describeSchemaIssues(whole.error));
       callerValue = whole.data;
     } else {
       // Only a binder can discard fields before the final canonical check.
       // Without one, completeness refinements must see the merged JSON + flags.
       const overlay = parsePartialInputFields(callerShape, params.parsed.callerOverlay,
-        params.bindInput ? params.callerSchema : undefined);
+        params.bindInput ? params.callerSchema : undefined, params.secretInput);
       if (isParseFailure(overlay)) return overlay;
       callerValue = overlay;
     }
@@ -265,10 +287,10 @@ export function composeActionCliInput(params: Readonly<{
     // A partial arm cannot lend fields to a different completed internal arm.
     // Re-admit the completed public union before the broader internal schema.
     // Single-object commands retain their authenticated preparation boundary.
-    const publicInput = baseSchema.safeParse(merged);
+    const publicInput = parseInputBeforeSecretPreparation(baseSchema, merged, params.secretInput);
     if (!publicInput.success) return failure(describeSchemaIssues(publicInput.error));
   }
-  const canonical = params.canonicalSchema.safeParse(merged);
+  const canonical = parseInputBeforeSecretPreparation(params.canonicalSchema, merged, params.secretInput);
   if (!canonical.success) return failure(describeSchemaIssues(canonical.error));
   if (!canonical.data || typeof canonical.data !== 'object' || Array.isArray(canonical.data)) {
     return failure('Canonical Action input must be an object.');

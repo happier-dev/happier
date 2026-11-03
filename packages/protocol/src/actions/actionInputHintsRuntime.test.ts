@@ -3,10 +3,25 @@ import { describe, expect, expectTypeOf, it } from 'vitest';
 import { getActionSpec } from './actionSpecs.js';
 import type { ActionSpec } from './actionSpecs.js';
 import { ActionInputOptionSchema } from './actionInputHints.js';
-import { normalizeActionInputByFieldHints, resolveEffectiveActionInputFields } from './actionInputHintsRuntime.js';
+import { normalizeActionInputByFieldHints, readActionSecretInputPaths, readActionSecretInputAdmission, resolveEffectiveActionInputFields } from './actionInputHintsRuntime.js';
 import { InputHintsSchema, normalizeInputByFieldHints, resolveEffectiveInputFields } from '../inputs/index.js';
 
 describe('resolveEffectiveActionInputFields', () => {
+  it('requests only required missing secrets while retaining optional and hidden supplied secrets for private custody', () => {
+    const spec = { inputHints: { fields: [
+      { path: 'required', title: 'Required', widget: 'secret', required: true },
+      { path: 'optional', title: 'Optional', widget: 'secret' },
+      { path: 'hidden', title: 'Hidden', widget: 'secret', visibleWhen: { op: 'truthy', path: 'showHidden' } },
+    ] } } satisfies Parameters<typeof readActionSecretInputAdmission>[0];
+    expect(readActionSecretInputAdmission(spec, { hidden: 'private' })).toEqual({
+      paths: ['required', 'hidden'], missingPaths: ['required'],
+    });
+    expect(readActionSecretInputAdmission(spec, { required: 'private', optional: 'private' })).toEqual({
+      paths: ['required', 'optional'], missingPaths: [],
+    });
+    expect(readActionSecretInputPaths(spec, {}, { includeInactive: true })).toEqual(['required', 'optional', 'hidden']);
+  });
+
   it('lets every workflow-trigger list union arm be authored through the shared Action fields', () => {
     const spec = getActionSpec('workflow.trigger.list');
     const cases = [

@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { AccountSettingsSchema, encryptSecretStringV1 } from '@happier-dev/protocol';
 import type { ActionExecutorDeps } from '@happier-dev/protocol';
+import { redactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports/redaction';
 import { resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
-import { createConfidentialSecretFillExecutor, type ConfidentialSecretFillTarget } from './confidentialSecretFill';
+import { createConfidentialActionInputsExecutor, createConfidentialSecretFillExecutor, type ConfidentialSecretFillTarget } from './confidentialSecretFill';
 
 const request = { serverId: 'home', machineId: 'machine', sessionId: 'session', purpose: 'Sign in',
   browserSessionId: 'browser', viewId: 'view', tabId: 'tab', frameId: 'frame', documentId: 'document',
@@ -40,6 +41,80 @@ function harness() {
 }
 
 afterEach(resetActiveAccountSettingsSnapshotForTests);
+describe('confidential Action input material delivery', () => {
+  function actionHarness() {
+    const execute = createConfidentialActionInputsExecutor({ expectedScopeKey: 'scope', expectedAccountId: 'owner',
+      serverId: 'home', machineId: 'machine', readAccountMode: async () => 'plain' });
+    const effects: unknown[] = [];
+    const args: Parameters<NonNullable<ActionExecutorDeps['confidentialActionInputs']>>[0] = {
+      continuation: { v: 1, kind: 'action_inputs', artifactId: 'artifact', requestId: 'request',
+        actionId: 'secrets.create', request: { name: 'Password', nested: {} }, serverId: 'home', machineId: 'machine',
+        accountEncryptionMode: 'plain', choices: [{ path: 'nested.value', choice: { kind: 'once', value: secret } }] },
+      context: { authority: 'present_user', runtimeAccountId: 'owner' },
+      execute: async input => { effects.push(structuredClone(input)); return { ok: true, result: { id: 'created' } }; },
+    };
+    return { execute, args, effects };
+  }
+
+  it('executes the real consumer with private nested input once and leaves the stored request value-free', async () => {
+    setActiveAccountSettingsSnapshot(snapshot(1));
+    const h = actionHarness();
+    const result = await h.execute(h.args);
+    expect(result).toEqual({ ok: true, result: { id: 'created' } });
+    expect(h.effects).toEqual([{ name: 'Password', nested: { value: secret } }]);
+    expect(h.args.continuation.request).toEqual({ name: 'Password', nested: {} });
+    expect(JSON.stringify(result)).not.toContain(secret);
+    expect(h.args.continuation.choices[0]!.choice).toEqual({ kind: 'once', value: '' });
+  });
+
+  it('uses the existing saved material admission and refuses foreign Accounts, rotation and mode mismatch', async () => {
+    setActiveAccountSettingsSnapshot(snapshot(1));
+    const h = actionHarness();
+    h.args.continuation.choices = [{ path: 'nested.value', choice: { kind: 'saved', ref: 'personal',
+      fingerprint: 'personal:personal:1', revision: null } }];
+    expect(await h.execute({ ...h.args, context: { authority: 'present_user', runtimeAccountId: 'foreign' } }))
+      .toMatchObject({ ok: false, errorCode: 'saved_secret_forbidden' });
+    expect(await h.execute(h.args)).toEqual({ ok: true, result: { id: 'created' } });
+    setActiveAccountSettingsSnapshot(snapshot(2, 'ROTATED'));
+    expect(await h.execute(h.args)).toMatchObject({ ok: false, errorCode: 'saved_secret_changed' });
+    expect(await h.execute({ ...h.args, continuation: { ...h.args.continuation, accountEncryptionMode: 'e2ee' } }))
+      .toMatchObject({ ok: false, errorCode: 'saved_secret_mode_incompatible' });
+    expect(h.effects).toHaveLength(1);
+  });
+
+  it('scrubs once input after a consumer throws and does not expose its private exception', async () => {
+    setActiveAccountSettingsSnapshot(snapshot(1));
+    const h = actionHarness();
+    const result = await h.execute({ ...h.args, execute: async () => { throw new Error(secret); } });
+    expect(result).toMatchObject({ ok: false });
+    expect(JSON.stringify(result)).not.toContain(secret);
+    expect(h.args.continuation.choices[0]!.choice).toEqual({ kind: 'once', value: '' });
+  });
+
+  it.each([true, false])('redacts selected material from consumer result/error/details while preserving ordinary values (ok=%s)', async ok => {
+    setActiveAccountSettingsSnapshot(snapshot(1));
+    const h = actionHarness();
+    let diagnostic = '';
+    const result = await h.execute({ ...h.args, execute: async () => {
+      diagnostic = redactBugReportSensitiveText(`consumer diagnostic ${secret}`);
+      return ok ? { ok: true, result: { text: `prefix ${secret} suffix`, count: 2, enabled: true, nested: [secret] } }
+        : { ok: false, errorCode: 'consumer_failed', error: `failed ${secret}`, details: { output: secret, count: 2 } };
+    } });
+    expect(JSON.stringify(result)).not.toContain(secret);
+    expect(diagnostic).not.toContain(secret);
+    expect(redactBugReportSensitiveText(secret)).toBe(secret);
+    if (result.ok) expect(result.result).toMatchObject({ count: 2, enabled: true });
+    else expect(result).toMatchObject({ errorCode: 'consumer_failed', details: { count: 2 } });
+  });
+
+  it.each(['ok', 'result', 'error'])('preserves the Action envelope when private material matches its key (%s)', async value => {
+    setActiveAccountSettingsSnapshot(snapshot(1));
+    const h = actionHarness();
+    h.args.continuation.choices = [{ path: 'nested.value', choice: { kind: 'once', value } }];
+    const result = await h.execute({ ...h.args, execute: async () => ({ ok: true, result: { echo: value, count: 3 } }) });
+    expect(result).toEqual({ ok: true, result: { echo: '[REDACTED]', count: 3 } });
+  });
+});
 describe('trusted confidential material delivery', () => {
   it('reads current Account mode rather than trusting private payload and zeros physical bytes', async () => {
     setActiveAccountSettingsSnapshot(snapshot(1));

@@ -1,3 +1,5 @@
+import { writeInputPath } from '@happier-dev/protocol/inputs/inputFieldRuntime';
+import { readMissingActionSecretInputPaths } from '@happier-dev/protocol/actions/actionInputHintsRuntime';
 import { Buffer } from 'node:buffer';
 import type { ActionExecuteResult, ActionId } from '@happier-dev/protocol';
 import { PERSONAL_SAVED_SECRET_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/account/settings/personalSavedSecretActionsV1';
@@ -10,6 +12,7 @@ import { normalizeActionExecuteResult, unwrapCliActionSuccessPayload } from '@/c
 import { isApprovalRequestCreatedResult, type ApprovalRequestCreatedResult } from '@/cli/commands/session/shared/tryHandleApprovalRequestCreated';
 import type { ActionCliFailure } from '../commandPresentation';
 
+type SecretInputDeclaration = Parameters<typeof readMissingActionSecretInputPaths>[0];
 type Input = Readonly<Record<string, unknown>>;
 type ReadAction = (actionId: ActionId, input: Input) => Promise<ActionExecuteResult>;
 
@@ -117,9 +120,16 @@ async function resolveSecretRef(execute: ReadAction, identifier: string): Promis
 
 /** Prepare through the authenticated executor; no Settings writer or secret materializer belongs here. */
 export async function prepareSavedSecretsCliInput(params: Readonly<{
-  actionId: string; input: Input; execute: ReadAction; signal?: AbortSignal;
+  actionId: string; input: Input; execute: ReadAction; signal?: AbortSignal; secretInput?: SecretInputDeclaration;
 }>): Promise<Input> {
   const { actionId, input, execute } = params;
+  if (!needsSavedSecretsInputPreparation(actionId)) {
+    let prepared = input;
+    for (const path of readMissingActionSecretInputPaths(params.secretInput ?? {}, input)) {
+      prepared = writeInputPath(prepared, path, await readSecretValue(params.signal));
+    }
+    return prepared;
+  }
   if (actionId === 'secrets.create') {
     const { passkeyFormat, ...ordinaryInput } = input;
     if (input.source !== undefined) {

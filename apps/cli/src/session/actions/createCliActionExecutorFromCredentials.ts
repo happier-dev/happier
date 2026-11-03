@@ -16,7 +16,7 @@ import { createAccountServerActionDeps } from '@/api/accountServerActionDeps';
 import { resolveCurrentAccountAdministrationMachine, resolveCurrentAccountMachineTarget } from '@/api/machine/resolveCurrentAccountMachineTarget';
 import { configuration } from '@/configuration';
 import { isServerProfileHomeIdentity, resolveServerProfileHomeIdentityId } from '@/server/serverProfiles';
-import { getDaemonMachineAdmissionTransport, getDaemonClientActionExecutor, getDaemonConfidentialSecretFillExecutor, MachineAdmissionTransportUnavailableError } from '@/daemon/machineAdmissionTransport';
+import { getDaemonMachineAdmissionTransport, getDaemonClientActionExecutor, getDaemonConfidentialSecretFillExecutor, getDaemonConfidentialActionInputsExecutor, MachineAdmissionTransportUnavailableError } from '@/daemon/machineAdmissionTransport';
 import { resolveCliApiTokenForSdk } from '@/auth/cliApiToken';
 import {
   normalizeServerHttpBaseUrl,
@@ -732,6 +732,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
   prepareLocalServiceStartApproval?: ActionExecutorDeps['prepareLocalServiceStartApproval'];
   clientActionExecute?: ActionExecutorDeps['clientActionExecute'];
   confidentialSecretFill?: ActionExecutorDeps['confidentialSecretFill'];
+  confidentialActionInputs?: ActionExecutorDeps['confidentialActionInputs'];
   workflowAction?: ActionExecutorDeps['workflowAction'];
   managedMachineAction?: ActionExecutorDeps['managedMachineAction'];
   machineEnvironmentApply?: ActionExecutorDeps['machineEnvironmentApply'];
@@ -1045,6 +1046,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
       ...(sessionMemoryEnabled !== undefined ? { sessionMemoryEnabled } : {}),
       clientActionExecute: params.clientActionExecute ?? getDaemonClientActionExecutor(approvalServerId),
       confidentialSecretFill: params.confidentialSecretFill ?? getDaemonConfidentialSecretFillExecutor(approvalServerId),
+      confidentialActionInputs: params.confidentialActionInputs ?? getDaemonConfidentialActionInputsExecutor(approvalServerId),
       ...(params.scmFilesystemAccessPolicy ? { scmFilesystemAccessPolicy: params.scmFilesystemAccessPolicy } : {}),
       ...(params.resolveExactSessionEncryptionMaterial
         ? { resolveExactSessionEncryptionMaterial: params.resolveExactSessionEncryptionMaterial }

@@ -54,7 +54,7 @@ import {
 import type { BrowserDaemonControlRoutes } from '@/daemon/browser/control/routes';
 import type { BrowserContextRoutes } from '@/daemon/browser/context/routes';
 import type { ComputerRoutes } from '@/daemon/computer/routes';
-import { createConfidentialSecretFillExecutor } from '@/daemon/surfaces/confidentialSecretFill';
+import { createConfidentialActionInputsExecutor, createConfidentialSecretFillExecutor } from '@/daemon/surfaces/confidentialSecretFill';
 import type { CurrentMachineExecutionOriginContext } from './machine/resolveCurrentMachineExecutionOriginContext';
 import { fetchAccountEncryptionCurrentness } from './client/connectedServiceCredentialApi';
 import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
@@ -401,6 +401,24 @@ export class ApiClient {
         peerMediationObservability: this.getPeerMediationObservabilityRuntimeActionContext?.() ?? null,
       }),
       resolveServerFeaturesSnapshot: () => this.getCachedServerFeaturesSnapshot?.(),
+    });
+  }
+
+  createConfidentialActionInputsExecutor(input: Readonly<{
+    machineId(): string | null;
+    secretSources?: import('@/plugins/runtime/lifecycle/contributions/targetSecretSources').TargetSecretSourcesV1;
+    readHostIdentity(signal?: AbortSignal): Promise<CurrentMachineExecutionOriginContext | null>;
+  }>) {
+    return createConfidentialActionInputsExecutor({
+      ...(input.secretSources ? { secretSources: input.secretSources } : {}),
+      expectedScopeKey: resolveAccountSettingsScopeKeyForToken(this.credential.token),
+      expectedAccountId: readAccountIdFromToken(this.credential.token),
+      serverId: configuration.activeServerId,
+      machineId: input.machineId,
+      readHostIdentity: input.readHostIdentity,
+      readAccountMode: async (signal) => (await fetchAccountEncryptionCurrentness({
+        token: this.credential.token, ...(signal ? { signal } : {}),
+      })).mode,
     });
   }
 
