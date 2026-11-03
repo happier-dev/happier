@@ -93,7 +93,7 @@ test('publish-docker supports workflow_call and is wired from release workflow',
   assert.match(releaseWorkflow.jobs.plan.outputs.publish_ui_web_needed, /steps\.bump_plan\.outputs\.publish_ui_web == 'true'/);
   assert.match(releaseWorkflow.jobs.publish_ui_web.if, /needs\.plan\.outputs\.publish_ui_web_needed == 'true'/);
   assert.match(release, /uses:\s+\.\/\.github\/workflows\/publish-docker\.yml/);
-  assert.deepEqual(releaseWorkflow.jobs.publish_docker.needs, ['resolve_resume', 'plan', 'prepare_release_candidate', 'publish_cli_binaries', 'publish_server_runtime', 'verify_cli_candidate', 'verify_server_candidate']);
+  assert.deepEqual(releaseWorkflow.jobs.publish_docker.needs, ['release_preflight', 'resolve_resume', 'plan', 'prepare_release_candidate', 'publish_cli_binaries', 'publish_server_runtime', 'verify_cli_candidate', 'verify_server_candidate']);
   assert.match(release, /authorized_sha:\s*\${{\s*needs\.prepare_release_candidate\.outputs\.source_sha\s*}}/);
   assert.match(release, /server_version:\s*\${{\s*needs\.publish_server_runtime\.outputs\.version\s*}}/);
   assert.match(release, /cli_version:\s*\${{\s*needs\.publish_cli_binaries\.outputs\.version\s*}}/);
@@ -170,12 +170,15 @@ test('Docker candidate source is prepared without release or registry secrets', 
   assert.equal(sourceCheckout?.with?.['persist-credentials'], false);
   assert.match(JSON.stringify(candidate), /actions\/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02/);
 
-  const stableGuard = candidate.steps.find((step) => step.name === 'Verify stable candidate is current main');
-  assert.ok(stableGuard, 'stable Docker admission must compare immutable commit identities');
+  // G3: main moves after publication, so admission binds the exact admitted SHA to the
+  // promotion source branch (or the canonical channel branch when standalone).
+  const stableGuard = candidate.steps.find((step) => step.name === 'Verify admitted publication source');
+  assert.ok(stableGuard, 'stable Docker admission must bind the admitted commit to its source branch');
   assert.match(stableGuard.if, /inputs\.channel == 'stable'/);
-  assert.equal(stableGuard.env.SOURCE_SHA, '${{ steps.source.outputs.source_sha }}');
-  assert.match(stableGuard.run, /git ls-remote --exit-code origin refs\/heads\/main/);
-  assert.match(stableGuard.run, /test "\$SOURCE_SHA" = "\$main_sha"/);
+  assert.equal(stableGuard.env.AUTHORIZED_SHA, '${{ inputs.authorized_sha }}');
+  assert.equal(stableGuard.env.PROMOTION_SOURCE_REF, '${{ inputs.promotion_source_ref }}');
+  assert.match(stableGuard.run, /resolve-authorized-release-source\.mjs/);
+  assert.match(stableGuard.run, /--allow-source-ancestor/);
   assert.doesNotMatch(
     JSON.stringify(candidate),
     /source_ref != 'main'/,
