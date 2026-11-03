@@ -1262,5 +1262,45 @@ describe('createAccountPluginSecretCustodyRouter', () => {
         expect(snapshot.savedSecretResources?.length).toBe(1);
     });
 
+    it.each([
+        ['use grantee', { actorAccountId: 'member', custodianAccountId: 'owner', role: 'use' as const }, 0],
+        ['custodian', { actorAccountId: 'owner', custodianAccountId: 'owner', role: 'manage' as const }, 1],
+    ])('applies the native-source Manage rule to a %s plugin read of an external Saved Secret', async (_label, machineAdmission, expectedReads) => {
+        let nativeReads = 0;
+        const fixture = await createSecretSourceHostFixture({ runtime: { async acquire() {
+            nativeReads += 1;
+            return { ok: true, value: 'owner-vault-field' };
+        } } });
+        onTestFinished(() => fixture.dispose());
+        const token = 'requester-account-token';
+        const ref = formatSavedSecretCatalogReferenceV1({ kind: 'shared_resource', id: 'vault-field' });
+        const storedContent = { t: 'plain' as const, v: { v: 2 as const, name: 'Vault field', kind: 'password' as const,
+            source: { kind: 'external' as const, contribution: fixture.contribution, account: 'owner-account', reference: 'op://vault/item/field' } } };
+        // The requester's own external descriptor, as the Home resource owner answers it.
+        axiosGetMock.mockImplementation(async (url: string) => {
+            if (!url.endsWith('/v1/account/saved-secrets/resources/materials')) throw new Error(`unexpected Home read: ${url}`);
+            return { status: 200, data: { resources: [{ resourceId: 'vault-field', encryptionMode: 'plain', recipientEnvelope: null, storedContent,
+                entry: { ref, source: 'shared_resource', relationship: 'owner', ownerAccountId: machineAdmission.actorAccountId,
+                    name: 'Vault field', kind: 'password', encryptionMode: 'plain', revision: 1, materialStatus: 'ready',
+                    capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true } } }] } };
+        });
+        onTestFinished(() => { axiosGetMock.mockReset(); });
+        const snapshot: ActiveAccountSettingsSnapshot = {
+            source: 'network', settings: accountSettingsParse({}), settingsVersion: 1, loadedAtMs: 1,
+            scopeKey: resolveAccountSettingsScopeKeyForToken(token), settingsSecretsReadKeys: [], savedSecretCatalogState: 'ready',
+            savedSecretResources: [{ resourceId: 'vault-field', ownerAccountId: machineAdmission.actorAccountId, relationship: 'owner',
+                displayName: 'Vault field', kind: 'password', encryptionMode: 'plain', revision: 1, materialStatus: 'ready', storedContent }],
+        };
+        const operationContext = createInvocationSavedSecretOperationContextV1({ snapshot, machineAdmission,
+            credentials: { token, encryption: null }, serverHttpBaseUrl: 'https://home.example', isCurrent: async () => true,
+            secretSources: fixture.host });
+        const router = createRouter({ operationContext, accountScopeKey: snapshot.scopeKey! });
+        const custody = router.bindReadCustody({ signal: new AbortController().signal, isCurrent: () => true })!;
+        const read = custody.withSecrets({ references: [{ ref }] }, material => material.read(ref));
+        if (expectedReads === 0) await expect(read).rejects.toMatchObject({ reason: 'reference_forbidden' });
+        else await expect(read).resolves.toBe('owner-vault-field');
+        expect(nativeReads).toBe(expectedReads);
+    });
+
 
 });
