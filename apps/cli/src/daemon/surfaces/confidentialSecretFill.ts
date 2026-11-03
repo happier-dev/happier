@@ -8,7 +8,7 @@ import { registerSensitiveDiagnosticValues, redactBugReportSensitiveText,
   type SensitiveDiagnosticValuesLease } from '@happier-dev/protocol/bugs/reports/redaction';
 import { redactPluginInvocationResultData } from '@happier-dev/cli-common/plugins/registration';
 import { getActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshotLifetimeToken } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
-import { createSavedSecretMaterializerFromSnapshotV1, type SavedSecretMaterializerV1, type SavedSecretResolutionFailureStatusV1 } from '@/settings/secrets/savedSecretCatalog';
+import type { SavedSecretMaterializerV1, SavedSecretResolutionFailureStatusV1 } from '@/settings/secrets/savedSecretCatalog';
 import { refreshSavedSecretCatalogForOperation, savedSecretOperationAdmissionStatus } from "@/settings/secrets/hydrateSavedSecretCatalog";
 import { acquireSavedSecretMaterializerForOperation, SavedSecretOperationAdmissionError } from "@/settings/secrets/savedSecretCatalogRead";
 import type { CurrentMachineExecutionOriginContext } from '@/api/machine/resolveCurrentMachineExecutionOriginContext';
@@ -133,14 +133,7 @@ export function createConfidentialActionInputsExecutor(input: ConfidentialMateri
 }
 
 /** The existing Saved Secret catalog is the material authority; the physical owner supplies its hold. */
-export function createConfidentialSecretFillExecutor(input: Readonly<{
-  expectedScopeKey: string;
-  /** Account whose existing snapshot/materializer this executor can consume. */
-  expectedAccountId: string | null;
-  serverId: string;
-  machineId: string | (() => string | null);
-  readHostIdentity?(signal?: AbortSignal): Promise<CurrentMachineExecutionOriginContext | null>;
-  readAccountMode(signal?: AbortSignal): Promise<'plain' | 'e2ee'>;
+export function createConfidentialSecretFillExecutor(input: ConfidentialMaterialOwner & Readonly<{
   prepareTarget(args: Pick<ConfidentialFillArgs, 'actionId' | 'request' | 'context'>): Promise<ConfidentialSecretFillTarget | SecretFillSettlementV1>;
 }>): NonNullable<ActionExecutorDeps['confidentialSecretFill']> {
   return async (args) => {
@@ -178,7 +171,6 @@ export function createConfidentialSecretFillExecutor(input: Readonly<{
       if (!await hostIsCurrent()) return refused('target_changed');
       const mode = await input.readAccountMode(signal);
       if (mode !== args.accountEncryptionMode) return refused('saved_secret_mode_incompatible');
-      if (!currentSnapshot() || !await args.isCurrent()) return refused('approval_changed');
       const prepared = await input.prepareTarget({ actionId: args.actionId, request: args.request, context: args.context });
       if ('status' in prepared) return prepared;
       target = prepared;
@@ -186,60 +178,31 @@ export function createConfidentialSecretFillExecutor(input: Readonly<{
         return refused('observation_unavailable');
       }
       // Preparation has synchronously blocked and drained every unsafe observation before any material is resolved.
-      if (!currentSnapshot() || !await args.isCurrent() || !await target.recheck()) return refused('target_changed');
       if (args.choice.kind === 'saved') {
         await refreshSavedSecretCatalogForOperation({ expectedScopeKey: input.expectedScopeKey,
           references: [{ ref: args.choice.ref, ...(args.choice.revision === null ? {} : { revision: args.choice.revision }) }],
           ...(signal ? { signal } : {}) });
       }
       if (signal?.aborted) return { status: 'canceled', code: 'canceled' };
-      if (!await args.isCurrent() || !await target.recheck()) return refused('target_changed');
-      if (await input.readAccountMode(signal) !== mode) return refused('saved_secret_mode_incompatible');
-      if (!await args.isCurrent()) return refused('approval_changed');
       const snapshot = currentSnapshot();
       if (!snapshot) return refused('approval_changed');
-      let value: string;
-      let savedMaterialFingerprint: string | null = null;
-      if (args.choice.kind === 'saved') {
-        const materializer = createSavedSecretMaterializerFromSnapshotV1(snapshot);
-        const inspection = materializer.inspect(args.choice.ref);
-        if (inspection.status !== 'ready') return refused(catalogRefusal[inspection.status]);
-        if (inspection.catalogFingerprint !== args.choice.fingerprint
-          || (args.choice.revision !== null && !materializer.matchesSharedResourceRevision(args.choice.ref, args.choice.revision))) {
-          return refused('saved_secret_changed');
-        }
-        if ((mode === 'plain' && inspection.storage === 'settings_encrypted')
-          || (mode === 'e2ee' && inspection.storage === 'settings_plain')) return refused('saved_secret_mode_incompatible');
-        savedMaterialFingerprint = inspection.fingerprint;
-        const material = materializer.recheck(args.choice.ref, savedMaterialFingerprint);
-        if (material.status !== 'ready') return refused(catalogRefusal[material.status]);
-        value = material.value;
-      } else value = args.choice.value;
-      bytes = Buffer.from(value, 'utf8');
-      value = '';
-      if (!currentSnapshot() || signal?.aborted) return { status: 'canceled', code: 'canceled' };
+      const materializer = await acquireSavedSecretMaterializerForOperation({ snapshot,
+        ...(input.secretSources ? { secretSources: input.secretSources } : {}),
+        references: args.choice.kind === 'saved' ? [{ ref: args.choice.ref,
+          ...(args.choice.revision === null ? {} : { revision: args.choice.revision }) }] : [],
+        ...(signal ? { signal } : {}) });
+      const material = resolvePrivateChoice(materializer, args.choice, mode);
+      if (material.status !== 'ready') return material;
+      bytes = Buffer.from(material.value, 'utf8');
+      if (signal?.aborted) return { status: 'canceled', code: 'canceled' };
       issued = true;
-      const beforeDelivery = async () => {
-        if (signal?.aborted || await input.readAccountMode(signal) !== mode || !await args.isCurrent()) return false;
-        if (!await hostIsCurrent()) return false;
-        const latest = currentSnapshot();
-        if (!latest) return false;
-        if (args.choice.kind !== 'saved') return true;
-        const materializer = createSavedSecretMaterializerFromSnapshotV1(latest);
-        const inspection = materializer.inspect(args.choice.ref);
-        return inspection.status === 'ready' && inspection.catalogFingerprint === args.choice.fingerprint
-          && inspection.fingerprint === savedMaterialFingerprint
-          && (args.choice.revision === null || materializer.matchesSharedResourceRevision(args.choice.ref, args.choice.revision));
-      };
-      const filled = await target.fill(bytes, signal, beforeDelivery);
+      const filled = await target.fill(bytes, signal);
       if (filled.status !== 'filled' || !args.submit) return filled;
       try {
-        if (!args.request.submit || !target.submit || !currentSnapshot()
-          || !await args.isCurrent() || !await target.recheck()
-          || await input.readAccountMode(signal) !== mode) {
+        if (!args.request.submit || !target.submit || signal?.aborted) {
           return { ...filled, submit: { status: 'refused', code: 'submit_refused' } };
         }
-        return { ...filled, submit: await target.submit(signal, beforeDelivery) };
+        return { ...filled, submit: await target.submit(signal) };
       } catch {
         // A separately approved submit cannot erase the acknowledged fill. Its
         // unknown settlement is terminal too, never a reason to repeat either effect.

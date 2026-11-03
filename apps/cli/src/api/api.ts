@@ -424,9 +424,11 @@ export class ApiClient {
 
   createConfidentialSecretFillExecutor(input: Readonly<{
     machineId(): string | null;
+    secretSources?: import('@/plugins/runtime/lifecycle/contributions/targetSecretSources').TargetSecretSourcesV1;
     readHostIdentity(signal?: AbortSignal): Promise<CurrentMachineExecutionOriginContext | null>;
   }>) {
     return createConfidentialSecretFillExecutor({
+      ...(input.secretSources ? { secretSources: input.secretSources } : {}),
       expectedScopeKey: resolveAccountSettingsScopeKeyForToken(this.credential.token),
       expectedAccountId: readAccountIdFromToken(this.credential.token),
       serverId: configuration.activeServerId,

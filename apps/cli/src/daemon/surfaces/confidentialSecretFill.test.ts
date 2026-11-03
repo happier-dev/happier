@@ -179,7 +179,7 @@ describe('trusted confidential material delivery', () => {
       .toEqual({ status: 'filled', code: 'filled' });
   });
 
-  it('rechecks private material when its catalog revision is unchanged during final delivery preparation', async () => {
+  it('finishes with acquired material after a publication changes, then refuses a stale choice on the next acquisition', async () => {
     setActiveAccountSettingsSnapshot(snapshot(1));
     const h = harness();
     const attempted: Uint8Array[] = [];
@@ -187,20 +187,24 @@ describe('trusted confidential material delivery', () => {
       serverId: 'home', machineId: 'machine', readAccountMode: async () => 'plain',
       prepareTarget: async () => {
         h.markHeld();
-        return { ...h.target, fill: async (bytes, signal, beforeDelivery) => {
+        return { ...h.target, fill: async (bytes, signal) => {
           attempted.push(bytes);
-          // The physical target awaits its final identity/focus proof while the
-          // current material publication changes without a metadata revision.
-          setActiveAccountSettingsSnapshot({ ...snapshot(1, 'ROTATED-WITH-SAME-STAMP'), settingsVersion: 2 });
-          return h.target.fill(bytes, signal, beforeDelivery);
+          // An admitted fill keeps its acquired bytes. The next acquisition
+          // sees the new catalog, per L12-INTENT-CHALLENGE §4 row 2.
+          setActiveAccountSettingsSnapshot(snapshot(2, 'ROTATED'));
+          return h.target.fill(bytes, signal);
         } };
       } });
-    expect(await execute({ ...h.args,
-      choice: { kind: 'saved', ref: 'personal', fingerprint: 'personal:personal:1', revision: null } }))
-      .toEqual({ status: 'refused', code: 'approval_changed' });
-    expect(h.deliveries).toHaveLength(0);
-    expect(h.effects).toEqual(['cleanup']);
+    let admissions = 0;
+    const args = { ...h.args, isCurrent: async () => { admissions += 1; return true; },
+      choice: { kind: 'saved' as const, ref: 'personal', fingerprint: 'personal:personal:1', revision: null } };
+    expect(await execute(args)).toEqual({ status: 'filled', code: 'filled' });
+    expect(admissions).toBe(1);
+    expect(h.deliveries).toHaveLength(1);
+    expect(h.effects).toEqual([secret, 'cleanup']);
     expect([...attempted[0]!]).toEqual(new Array(Buffer.byteLength(secret)).fill(0));
+    expect(await execute(args)).toEqual({ status: 'refused', code: 'saved_secret_changed' });
+    expect(h.deliveries).toHaveLength(1);
   });
 
   it('retains known fill while a separately reviewed submit has uncertain settlement', async () => {
