@@ -30,7 +30,7 @@ import {
     type ServerAccountRequestAuthority,
     type ServerAccountRequestOptions,
 } from './createServerRequestWithServerScope';
-import { resolveServerAccountRequestContext } from './resolveServerAccountRequestContext';
+import { resolveServerAccountRequestContext, type ResolvedServerAccountRequestContext } from './resolveServerAccountRequestContext';
 import { storage } from '@/sync/domains/state/storage';
 import {
     resolveUiClientEncryptionRequirement,
@@ -499,6 +499,8 @@ export async function fetchSessionByIdWithServerScope(params: Readonly<{
     /** Explicit list maintenance awaits its CAS inside the containing concurrency budget. */
     awaitDisplayProjectionMaintenance?: true;
     authority?: ServerAccountRequestAuthority;
+    /** Shares the exact Account reader selected here; consumers must not resolve it again. */
+    onResolvedContext?: (context: ResolvedServerAccountRequestContext) => void;
     accountCurrentness?: AccountEncryptionCurrentnessResponse;
     isCurrent?: () => boolean;
 }> & (
@@ -548,6 +550,7 @@ export async function fetchSessionByIdWithServerScope(params: Readonly<{
     const ownsContext = !params.authority;
     let ownedAccountCurrentnessSource: ReturnType<typeof createOperationAccountCurrentnessSource> | undefined;
     try {
+    params.onResolvedContext?.(context);
 
     if (context.scope === 'active') {
         const request = params.activeRequest;

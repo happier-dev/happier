@@ -40,7 +40,7 @@ import {
     subscribeHomeCredentialMutations,
     type AuthCredentials,
 } from '@/auth/storage/tokenStorage';
-import { resolveScopedAccountEncryption } from '@/sync/encryption/scopedAccountEncryption';
+import { readScopedAccountEncryption, resolveScopedAccountEncryption } from '@/sync/encryption/scopedAccountEncryption';
 import { Encryption, captureEncryptionGenerationCurrentness } from '@/sync/encryption/encryption';
 import { encodeBase64 } from '@/encryption/base64';
 import { getRandomBytes } from '@/platform/cryptoRandom';
@@ -499,6 +499,7 @@ import { resolveServerIdForSessionIdFromLocalCache } from '@/sync/runtime/orches
 import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
 import { emitSessionMetadataUpdateWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/emitSessionMetadataUpdateWithServerScope';
 import { createOperationAccountCurrentnessSource, fetchSessionByIdWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/fetchSessionByIdWithServerScope';
+import { createSessionRouteReader } from '@/sync/engine/sessions/routeReader';
 import { runWithHomeCredentialRequestSignal } from '@/sync/runtime/orchestration/serverScopedRpc/serverAccountScopeRequestGuard';
 import { readSessionListRowForServerId } from '@/sync/domains/session/listing/sessionListRowStateLookup';
 import {
@@ -4091,10 +4092,12 @@ class Sync {
                 : Boolean(preferredServerId && storage.getState().sessionListRowsByServerId[preferredServerId]?.[normalized]);
             if (!forceRefresh && isKnownOnRequestedServer && existingSession) {
                 const encryptionMode: 'e2ee' | 'plain' = existingSession.encryptionMode === 'plain' ? 'plain' : 'e2ee';
-                const scopedEncryption = options?.authority?.context.encryption ?? this.encryption;
+                const scopedEncryption = options?.authority ? options.authority.context.encryption : prefersActiveServer
+                    ? this.encryption : readScopedAccountEncryption(preferredServerId!);
+                const readSessionEncryption = () => scopedEncryption?.getSessionEncryption(normalized) ?? null;
                 const hasEncryption = encryptionMode === 'plain'
                     ? false
-                    : Boolean(scopedEncryption?.getSessionEncryption(normalized));
+                    : Boolean(readSessionEncryption());
                 const hasAuthoritativeSessionRouteState = hasAuthoritativeSessionRouteData(existingSession, { hasSessionEncryption: hasEncryption });
                 if (DEBUG_SESSION_HYDRATE) {
                     log.log(`[sessionHydrate] fast-path check ${normalized} mode=${encryptionMode} hasEncryption=${hasEncryption} hasRouteState=${hasAuthoritativeSessionRouteState}`);
@@ -4112,6 +4115,7 @@ class Sync {
                     if (DEBUG_SESSION_HYDRATE) {
                         log.log(`[sessionHydrate] fast-path hit ${normalized}`);
                     }
+                    options?.onHydratedSessionReader?.(readSessionEncryption);
                     return createAvailableSessionRouteResult(
                         normalized,
                         String(existingSession.serverId ?? preferredServerId ?? '').trim() || undefined,
@@ -4166,8 +4170,10 @@ class Sync {
             const hydrationController = new AbortController();
             const hydrationCancellation = mergeAbortSignals([hydrationController.signal, options?.signal]);
             const hydrationEncryption = this.encryption;
-            const readerEncryption = options?.authority ? options.authority.context.encryption : hydrationEncryption;
-            const readSessionEncryption = () => readerEncryption?.getSessionEncryption(normalized) ?? null;
+            const reader = createSessionRouteReader({ sessionId: normalized,
+                accountId: options?.authority?.scope.accountId ?? this.serverID,
+                encryption: options?.authority ? options.authority.context.encryption : hydrationEncryption });
+            const readSessionEncryption = reader.readSessionEncryption;
             const hydrationGeneration = this.serverScopeGeneration;
             const hasExplicitScopeCurrentness = options?.authority !== undefined
                 && options.scopeCurrentness !== undefined;
@@ -4211,6 +4217,7 @@ class Sync {
                         log,
                         includeTurnsProjection,
                         authority: options?.authority,
+                        onResolvedContext: reader.capture,
                         accountCurrentnessSource: options?.accountCurrentnessSource,
                         signal: hydrationCancellation.signal,
                         isCurrent: isHydrationCurrent,
@@ -4290,7 +4297,7 @@ class Sync {
             const inFlightEntry = Object.freeze({
                 sessionId: normalized,
                 serverId: preferredServerId,
-                encryption: readerEncryption,
+                get encryption() { return reader.encryption; },
                 isCurrent: isHydrationCurrent,
                 promise: inFlight,
                 readSessionEncryption,

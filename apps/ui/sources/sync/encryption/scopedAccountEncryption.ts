@@ -50,6 +50,12 @@ subscribeHomeCredentialMutations(event => {
     }
 });
 
+/** Read material already admitted for this Home without acquiring another read. */
+export function readScopedAccountEncryption(serverId: string): Encryption | null {
+    const owner = owners.get(resolveServerProfileScopeIdForIdentifier(serverId));
+    return owner && isOwnerCurrent(owner) ? owner.encryption : null;
+}
+
 /** One current Account material owner per Home, shared by mounted and finite readers. */
 export async function resolveScopedAccountEncryption(params: Readonly<{
     serverId: string;

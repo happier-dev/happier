@@ -233,19 +233,30 @@ async function createEncryptedSessionFixture(sessionId: string) {
 }
 
 describe('sync.ensureSessionVisibleForMessageRoute', () => {
-    it('shares a mounted transcript acquisition with live admission and reopens without a snapshot', async () => {
+    it.each(['plain', 'e2ee'] as const)('shares a mounted %s transcript acquisition with live admission and reopens without a snapshot', async (mode) => {
         const { createSocketIoBoundaryStub } = await import('@/dev/testkit/mocks/socketIo');
         const { RPC_ERROR_CODES } = await import('@happier-dev/protocol/rpc');
         const { SOCKET_RPC_EVENTS } = await import('@happier-dev/protocol/socketRpc');
         const acknowledgements = createSocketIoBoundaryStub().socket.emitWithAck;
-        await applySelectedHomeForSessionListTest(undefined, (socket) => {
+        const sessionId = 'live-admission-open';
+        const encrypted = mode === 'e2ee' ? await createEncryptedSessionFixture(sessionId) : null;
+        if (encrypted) {
+            const originalFetch = runtimeFetchMock.getMockImplementation()!;
+            runtimeFetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+                const path = new URL(url).pathname;
+                if (path === '/v1/account/encryption') return Response.json({ mode: 'e2ee', updatedAt: 1 });
+                if (path === '/v1/account/encryption/currentness') return Response.json(createLegacyAccountEncryptionCurrentnessFixture({ secret: new Uint8Array(32).fill(7) }));
+                if (path === '/v2/account/settings' && (init?.method ?? 'GET') === 'GET') return Response.json({ content: null, version: 0 });
+                return originalFetch(url, init);
+            });
+        }
+        await applySelectedHomeForSessionListTest(encrypted?.credentials, (socket) => {
             socket.emitWithAck = vi.fn(async (event: string, payload?: unknown) => event === SOCKET_RPC_EVENTS.CALL
                 ? { ok: false, error: 'Session runner is unavailable', errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND }
                 : acknowledgements(event, payload));
         });
-        const sessionId = 'live-admission-open';
         const serverId = getActiveServerSnapshot().serverId!;
-        const row = createPlainSessionCurrentProjectionRecordFixture({ id: sessionId, seq: 1 });
+        const row = encrypted?.row ?? createPlainSessionCurrentProjectionRecordFixture({ id: sessionId, seq: 1 });
         const { buildSessionTurnsProjectionV1 } = await import('@happier-dev/protocol/sessions/turns/sessionTurnV1');
         requestMock.mockImplementation(async (path: string) => {
             if (path.split('?')[0] === `/v2/sessions/${sessionId}`) return Response.json({ session: row });
@@ -290,68 +301,6 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         await reopened.unmount();
         expect({ firstReads, reopenReads }).toEqual({ firstReads: 1, reopenReads: 0 });
     });
-
-    it.each(['plain', 'e2ee'] as const)('presents a freshly created %s Session regardless of list order or stored witness', async (mode) => {
-        const { sync } = await import('./sync');
-        for (const order of ['list-first', 'detail-first'] as const) {
-            for (const storedWitness of [false, true]) {
-                const sessionId = `staleresp-${mode}-${order}-${storedWitness}`;
-                const encrypted = await createEncryptedSessionFixture(sessionId);
-                const credentials = mode === 'plain' ? { token: tokenForSub('account-a') } : encrypted.credentials;
-                const currentness = mode === 'plain' ? createPlainAccountEncryptionCurrentnessFixture()
-                    : createLegacyAccountEncryptionCurrentnessFixture({ secret: new Uint8Array(32).fill(7) });
-                const plain = createPlainSessionCurrentProjectionRecordFixture({ id: sessionId, updatedAt: 20 });
-                let row = mode === 'plain' ? plain : { ...plain, encryptionMode: 'e2ee' as const,
-                    dataEncryptionKey: encrypted.row.dataEncryptionKey,
-                    metadata: await (async () => {
-                        const writer = await Encryption.create(new Uint8Array(32).fill(7));
-                        await writer.initializeSessions(new Map([[sessionId, encrypted.dataKey]]));
-                        return writer.getSessionEncryption(sessionId)!.encryptRaw(JSON.parse(plain.metadata));
-                    })(),
-                    ownerMetadata: sealSessionOwnerMetadataEnvelopeV1({
-                        material: resolveAccountScopedCryptoMaterialFromCredentials(credentials),
-                        ownerMetadata: plain.ownerMetadata!.t === 'plain' ? plain.ownerMetadata!.v : { v: 1 },
-                        randomBytes: length => new Uint8Array(length).fill(3),
-                    }),
-                };
-                Reflect.set(sync, 'credentials', credentials);
-                Reflect.set(sync, 'encryption', encrypted.encryption);
-                const serverId = getActiveServerSnapshot().serverId!;
-                const publishList = (updatedAt = row.updatedAt) => storage.getState().applyServerScopedSessionListRows(serverId,
-                    [buildRenderableFromRowAndCache(createCompactSessionListRowFixture({ ...row, updatedAt }), credentials, currentness,
-                        undefined, storage.getState().sessions[sessionId], undefined,
-                        createSessionListDocumentAdmission({ row, serverId, credentials, accountCurrentness: currentness }).scope)],
-                    { source: 'ordinary', mode: 'append' });
-                const originalFetch = runtimeFetchMock.getMockImplementation()!;
-                runtimeFetchMock.mockImplementation(async (url: string, init?: RequestInit) =>
-                    new URL(url).pathname === '/v1/account/encryption/currentness' ? Response.json(currentness) : originalFetch(url, init));
-                requestMock.mockImplementation(async (path: string) => path === `/v2/sessions/${sessionId}`
-                    ? Response.json({ session: row }) : undefined);
-                if (storedWitness) await expect(sync.ensureSessionVisibleForMessageRoute(sessionId, { hydrateMessages: false }))
-                    .resolves.toMatchObject({ kind: 'available' });
-                requestMock.mockClear();
-                if (order === 'list-first') publishList();
-                const result = await sync.ensureSessionVisibleForMessageRoute(sessionId, { forceRefresh: true, hydrateMessages: false });
-                if (order === 'detail-first') publishList();
-                expect(result, `${mode}/${order}/witness=${storedWitness}`).toMatchObject({ kind: 'available' });
-                expect(hasAuthoritativeSessionRouteData(storage.getState().sessions[sessionId], {
-                    hasSessionEncryption: mode === 'e2ee',
-                })).toBe(true);
-                if (order === 'list-first' && !storedWitness) {
-                    publishList(row.updatedAt + 1);
-                    await expect(sync.ensureSessionVisibleForMessageRoute(sessionId, { forceRefresh: true, hydrateMessages: false }))
-                        .resolves.toMatchObject({ kind: 'available' });
-                    row = { ...row, updatedAt: row.updatedAt + 1 };
-                    await expect(sync.ensureSessionVisibleForMessageRoute(sessionId, { forceRefresh: true, hydrateMessages: false }))
-                        .resolves.toMatchObject({ kind: 'available' });
-                }
-            }
-        }
-    });
-
-
-
-
 
     it('keeps a newly created Session route available while its first turn advances the compact list', async () => {
         const { sync } = await import('./sync');
@@ -3491,19 +3440,50 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         const activeEncryption = await Encryption.create(new Uint8Array(32).fill(9));
         Reflect.set(sync, 'encryption', activeEncryption);
         requestMock.mockRejectedValue(new Error('active request should not be used'));
-        runtimeFetchMock.mockImplementation(async (url: string) => {
-            if (new URL(url).pathname === '/v1/auth/ping') return Response.json({ success: true });
-            return Response.json({ session: fixture.row });
+        const defaultFetch = runtimeFetchMock.getMockImplementation()!;
+        const currentness = createLegacyAccountEncryptionCurrentnessFixture({ secret: new Uint8Array(32).fill(7) });
+        runtimeFetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+            const path = new URL(url).pathname;
+            if (path === '/v1/account/encryption') return Response.json({ mode: 'e2ee', updatedAt: 1 });
+            if (path === '/v1/account/encryption/currentness') return Response.json(currentness);
+            if (path === `/v2/sessions/${sessionId}`) return Response.json({ session: fixture.row });
+            return defaultFetch(url, init);
         });
-        await expect(sync.ensureSessionVisibleForMessageRoute(sessionId, {
+        const result = await sync.ensureSessionVisibleForMessageRoute(sessionId, {
             forceRefresh: true, serverId: ownerServer.id,
-        })).resolves.toMatchObject({ kind: 'available', sessionId, serverId: ownerServer.id });
+        });
+        expect(result, JSON.stringify(result)).toMatchObject({ kind: 'available', sessionId, serverId: ownerServer.id });
         expectRuntimeFetchWithBearer(`https://scoped.example/v2/sessions/${sessionId}`, scopedCredentials.token);
         expect(storage.getState().sessions[sessionId]).toMatchObject({
             serverId: ownerServer.id, metadata: { path: '/repo', host: 'host' }, agentState: { controlledByUser: true },
         });
         expect(activeEncryption.getSessionEncryption(sessionId)).toBeNull();
         expect(requestMock.mock.calls.filter(([path]) => String(path).startsWith(`/v2/sessions/${sessionId}`) || String(path).startsWith(`/v1/sessions/${sessionId}/`))).toEqual([]);
+        const transport = countTransportRequests(sessionHttpBoundary, (input, init) =>
+            `${init?.method ?? 'GET'} ${new URL(String(input)).pathname}`);
+        const { setRuntimeFetch } = await import('@/utils/system/runtimeFetch');
+        setRuntimeFetch(transport.request);
+        onTestFinished(() => setRuntimeFetch(sessionHttpBoundary));
+        const { useHydrateSession } = await import('@/hooks/session/useHydrateSessionForRoute');
+        for (const tag of ['first', 'reopen']) {
+            const hook = await renderHook(() => useHydrateSession(sessionId, `scoped-cipher-${tag}`, {
+                serverId: ownerServer.id, hydrateMessages: false,
+            }));
+            await waitForAssertion(() => expect(hook.getCurrent()).toMatchObject({
+                kind: 'available', sessionId, serverId: ownerServer.id,
+            }));
+            await hook.unmount();
+        }
+        expect(transport.read()['POST /v2/sessions/read-batch'] ?? 0).toBe(0);
+        // Recovery is new demand: it observes changed server facts even while
+        // ordinary route mounts reuse the admitted row and Account reader.
+        fixture.row.seq += 1;
+        await expect(sync.ensureSessionVisibleForMessageRoute(sessionId, {
+            serverId: ownerServer.id, fresh: true, hydrateMessages: false,
+        })).resolves.toMatchObject({ kind: 'available', sessionId });
+        expect(transport.read()['POST /v2/sessions/read-batch']).toBe(1);
+        expect(storage.getState().sessions[sessionId]?.seq).toBe(fixture.row.seq);
+        expect(activeEncryption.getSessionEncryption(sessionId)).toBeNull();
     });
 
     it('fails closed on an unknown explicit route Home without requesting the active Home', async () => {

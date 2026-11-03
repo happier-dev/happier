@@ -7,9 +7,8 @@ import type {
 } from '@/sync/domains/session/sessionRouteHydrationState';
 import { storage } from '@/sync/domains/state/storageStore';
 import { sync } from '@/sync/sync';
-import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { fireAndForget } from '@/utils/system/fireAndForget';
-import { hasAuthoritativeSessionRouteData } from '@/sync/domains/session/hasAuthoritativeSessionRouteData';
+import { readHydratedRouteSnapshot, readHydratedRouteServerSnapshot, resolveHydratedServerIdForRouteResult, type SessionRouteEncryptionReader } from './routeHydrationSnapshot';
 import { isSessionContentReadable, readSessionContentAvailability } from '@/sync/domains/session/encryptedContentAvailability';
 import { useDestinationPageTitle } from '@/components/appShell/workspace/DestinationInstanceHost';
 import { t } from '@/text';
@@ -21,33 +20,6 @@ type SessionRouteHydrationStateRecord = Readonly<{
 
 function normalizeRouteId(value: unknown): string {
     return String(value ?? '').trim();
-}
-
-function areRouteServerIdsEqual(leftRaw: unknown, rightRaw: unknown): boolean {
-    const left = normalizeRouteId(leftRaw);
-    const right = normalizeRouteId(rightRaw);
-    if (!left || !right) return left === right;
-    return areServerProfileIdentifiersEquivalent(left, right);
-}
-
-function hasAuthoritativeHydratedSessionForRoute(sessionId: string, serverId?: string | null): boolean {
-    const session = storage.getState().sessions[sessionId] ?? null;
-    if (!session || !hasAuthoritativeSessionRouteData(session)) {
-        return false;
-    }
-    if (serverId && !areRouteServerIdsEqual(String(session.serverId ?? '').trim(), serverId)) {
-        return false;
-    }
-    if (session.encryptionMode === 'plain') {
-        return true;
-    }
-    try {
-        return hasAuthoritativeSessionRouteData(session, {
-            hasSessionEncryption: Boolean(sync.encryption?.getSessionEncryption?.(sessionId)),
-        });
-    } catch {
-        return hasAuthoritativeSessionRouteData(session, { hasSessionEncryption: false });
-    }
 }
 
 function createLoadingState(
@@ -97,28 +69,6 @@ function createMissingState(
     };
 }
 
-function readHydratedRouteServerId(sessionId: string, serverId?: string): string | undefined | null {
-    if (hasAuthoritativeHydratedSessionForRoute(sessionId, serverId ?? null)) {
-        if (serverId) return serverId;
-        const hydratedServerId = normalizeRouteId(storage.getState().sessions[sessionId]?.serverId);
-        return hydratedServerId || undefined;
-    }
-
-    return null;
-}
-
-function readHydratedRouteSnapshot(sessionId: string, serverId?: string): boolean {
-    return readHydratedRouteServerId(sessionId, serverId) !== null;
-}
-
-function resolveHydratedServerIdForRouteResult(
-    sessionId: string,
-    routeServerId: string | undefined,
-    resultServerId: string | null | undefined,
-): string | undefined | null {
-    return readHydratedRouteServerId(sessionId, routeServerId ?? (normalizeRouteId(resultServerId) || undefined));
-}
-
 /**
  * Best-effort hydration for deep links / hard refreshes.
  *
@@ -139,19 +89,22 @@ export function useHydrateSession(
     const normalizedServerId = String(options?.serverId ?? '').trim();
     const routeServerId = normalizedServerId || undefined;
     const routeKey = `${routeServerId ?? ''}\n${normalizedSessionId}`;
+    const hydratedReader = React.useRef<Readonly<{ routeKey: string; read: SessionRouteEncryptionReader }> | null>(null);
+    const readRouteSnapshot = () => readHydratedRouteSnapshot(normalizedSessionId, routeServerId,
+        hydratedReader.current?.routeKey === routeKey ? hydratedReader.current.read : undefined);
     const forceRefresh = options?.forceRefresh === true;
     const hydrateMessages = options?.hydrateMessages;
     const includeTurnsProjection = options?.includeTurnsProjection;
     const hasHydratedSession = React.useSyncExternalStore(
         storage.subscribe,
-        () => readHydratedRouteSnapshot(normalizedSessionId, routeServerId),
-        () => readHydratedRouteSnapshot(normalizedSessionId, routeServerId),
+        () => readRouteSnapshot(),
+        () => readRouteSnapshot(),
     );
     const [routeStateRecord, setRouteStateRecord] = React.useState<SessionRouteHydrationStateRecord>(() => ({
         routeKey,
         state: !normalizedSessionId
             ? createMissingState('', routeServerId, 'not_found')
-            : !forceRefresh && readHydratedRouteSnapshot(normalizedSessionId, routeServerId)
+            : !forceRefresh && readRouteSnapshot()
                 ? createAvailableState(normalizedSessionId, routeServerId)
                 : createLoadingState(normalizedSessionId, routeServerId, forceRefresh ? 'refreshing' : 'cold'),
     }));
@@ -195,6 +148,9 @@ export function useHydrateSession(
                 ...(routeServerId ? { serverId: routeServerId } : {}),
                 ...(hydrateMessages !== undefined ? { hydrateMessages } : {}),
                 ...(includeTurnsProjection !== undefined ? { includeTurnsProjection } : {}),
+                onHydratedSessionReader: (read: SessionRouteEncryptionReader) => {
+                    if (!canceled) hydratedReader.current = { routeKey, read };
+                },
             };
             const promise = (sync.ensureSessionVisibleForMessageRoute as (
                 sessionId: string,
@@ -220,7 +176,8 @@ export function useHydrateSession(
                         const hydratedServerId = resolveHydratedServerIdForRouteResult(
                             normalizedSessionId,
                             routeServerId,
-                            result.serverId,
+                            result,
+                            hydratedReader.current?.routeKey === routeKey ? hydratedReader.current.read : undefined,
                         );
                         if (hydratedServerId !== null) {
                             setRouteStateRecord({
@@ -289,7 +246,8 @@ export function useHydrateSession(
         : createLoadingState(normalizedSessionId, routeServerId, 'server-switch');
 
     const hydratedAvailableServerId = normalizedSessionId && hasHydratedSession && routeState.kind !== 'missing'
-        ? readHydratedRouteServerId(normalizedSessionId, routeServerId) ?? routeServerId
+        ? readHydratedRouteServerSnapshot(normalizedSessionId, routeServerId,
+            hydratedReader.current?.routeKey === routeKey ? hydratedReader.current.read : undefined) ?? routeServerId
         : null;
     const hydratedAvailableState = React.useMemo<SessionRouteHydrationState | null>(() => {
         if (hydratedAvailableServerId === null) return null;
