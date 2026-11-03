@@ -120,6 +120,38 @@ export function readPluginUiProjectionEntryExecutionOrigin(entry: unknown): Plug
     return origin && getPluginMachineExecutionOriginRef(origin).pluginId === pluginId ? origin : null;
 }
 
+/** A declaration can inherit custody only from its current installed occurrence. */
+export function hasCurrentPluginUiProjectionOccurrence(
+    projection: Pick<PluginUiProjectionModel, 'installedPackagesById'>,
+    entry: Readonly<{ pluginId: string; occurrenceId?: string }>,
+): boolean {
+    const occurrenceId = readString(entry.occurrenceId);
+    const installed = projection.installedPackagesById[entry.pluginId];
+    return occurrenceId !== null && installed?.enabled === true && installed.occurrenceId === occurrenceId;
+}
+
+/** Some declaration families omit stamps; their installed package owns the origin. */
+export function readPluginUiProjectionEntryOrPackageExecutionOrigin(
+    projection: Pick<PluginUiProjectionModel, 'installedPackagesById'>,
+    entry: unknown,
+    packageOriginsByPluginId?: Map<string, PluginMachineExecutionOriginV1 | null>,
+): PluginMachineExecutionOriginV1 | null {
+    const producerOrigin = readPluginUiProjectionEntryExecutionOrigin(entry);
+    if (producerOrigin) return producerOrigin;
+    const record = asRecord(entry);
+    if (!record || record.executionOrigin !== undefined) return null;
+    const pluginId = readString(record.pluginId);
+    if (!pluginId || !hasCurrentPluginUiProjectionOccurrence(projection, {
+        pluginId, occurrenceId: readString(record.occurrenceId) ?? undefined,
+    })) return null;
+    if (packageOriginsByPluginId?.has(pluginId)) return packageOriginsByPluginId.get(pluginId) ?? null;
+    const origin = readPluginUiProjectionEntryExecutionOrigin({
+        pluginId, executionOrigin: projection.installedPackagesById[pluginId]?.executionOrigin,
+    });
+    packageOriginsByPluginId?.set(pluginId, origin);
+    return origin;
+}
+
 /** A standalone raw stamp is validated anew; published owned stamps read O(1). */
 export function readPluginUiContributionOrigin(entry: unknown): PluginUiContributionOriginV1 | null {
     const origin = asRecord(asRecord(entry)?.[PLUGIN_UI_CONTRIBUTION_ORIGIN_KEY]);

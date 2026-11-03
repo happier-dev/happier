@@ -23,9 +23,9 @@ import {
 } from '@/sync/domains/plugins/ui/projection';
 import {
     readPluginUiContributionOrigin,
-    readPluginUiProjectionEntryExecutionOrigin,
     type PluginUiContributionOriginV1,
 } from '@/sync/domains/plugins/ui/projectionUnion';
+import { readPluginUiProjectionEntryOrPackageExecutionOrigin } from '@/sync/domains/plugins/ui/projectionOrigins';
 import type { PluginReactNativeBundleCacheIdentity } from '@/sync/domains/plugins/ui/reactNativeRuntime';
 
 type UnknownRecord = Readonly<Record<string, unknown>>;
@@ -184,7 +184,7 @@ function readCurrentProjectedExecutableOrigin(input: Readonly<{
         });
     }
 
-    const executionOrigin = readPluginUiProjectionEntryExecutionOrigin(input.entry) ?? null;
+    const executionOrigin = readPluginUiProjectionEntryOrPackageExecutionOrigin(input.source.projection, input.entry);
     if (
         input.source.projection.generation === null
         || (executionOrigin !== null

@@ -36,6 +36,8 @@ import { resolveFleetSupplyAgreement } from '@/sync/domains/machines/administrat
 import { readSelectedPluginUiResourceCapability } from './resourceCapability';
 import { normalizeStrictJsonValue, projectNativeJsonValueForTransport, sameStrictJsonValue, type JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import {
+    hasCurrentPluginUiProjectionOccurrence as entryHasCurrentOccurrence,
+    readPluginUiProjectionEntryOrPackageExecutionOrigin,
     publishPluginUiContributionSupplies,
     readPluginUiAccountExecutableOrigin,
     readPluginUiContributionOrigin,
@@ -1511,35 +1513,18 @@ function readCurrentResourceProducerOrigin(projection: PluginUiProjectionModel, 
     return origin && entryHasCurrentOccurrence(projection, entry) ? origin : null;
 }
 
-function entryHasCurrentOccurrence(projection: PluginUiProjectionModel, entry: Readonly<{ pluginId: string; occurrenceId?: string }>): boolean {
-    const occurrenceId = readString(entry.occurrenceId);
-    const installedPackage = projection.installedPackagesById[entry.pluginId];
-    return occurrenceId !== null
-        && installedPackage?.enabled === true && installedPackage.occurrenceId === occurrenceId;
-}
-
 function resolveMemberEntryExecutionOrigin(
     member: PluginUiProjectionUnionMember & Readonly<{ projection: PluginUiProjectionModel }>,
     entry: UnknownRecord,
     packageOriginsByPluginId?: Map<string, PluginMachineExecutionOriginV1 | null>,
 ): PluginMachineExecutionOriginV1 | null {
-    const producerOrigin = readPluginUiProjectionEntryExecutionOrigin(entry);
-    if (producerOrigin) return producerOrigin;
-    if (entry.executionOrigin !== undefined) return null;
     const pluginId = readString(entry.pluginId);
     if (!pluginId) return null;
     const installation = member.materializationsByPluginId?.[pluginId];
-    if (readString(entry.occurrenceId) === null && installation?.portableRelease) {
+    if (entry.executionOrigin === undefined && readString(entry.occurrenceId) === null && installation?.portableRelease) {
         return composePluginMachineExecutionOriginV1(installation);
     }
-    const installed = member.projection.installedPackagesById[pluginId];
-    if (!installed || !entryHasCurrentOccurrence(member.projection, {
-        pluginId, occurrenceId: readString(entry.occurrenceId) ?? undefined,
-    })) return null;
-    if (packageOriginsByPluginId?.has(pluginId)) return packageOriginsByPluginId.get(pluginId) ?? null;
-    const origin = readPluginUiProjectionEntryExecutionOrigin({ pluginId, executionOrigin: installed.executionOrigin });
-    packageOriginsByPluginId?.set(pluginId, origin);
-    return origin;
+    return readPluginUiProjectionEntryOrPackageExecutionOrigin(member.projection, entry, packageOriginsByPluginId);
 }
 
 function memberHasActivationRefusal(member: PluginUiProjectionUnionMember, pluginId: string): boolean {

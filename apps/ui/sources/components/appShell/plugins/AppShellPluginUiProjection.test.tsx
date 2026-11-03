@@ -1995,7 +1995,7 @@ describe('AppShellPluginUiProjectionProvider', () => {
         }));
     });
 
-    it('acquires the selected Voice provider from a cold shell, then unwinds it offline until fresh re-description', async () => {
+    it.each(['originless', 'development'] as const)('acquires the selected %s Voice provider from a cold shell, then unwinds it offline until fresh re-description', async (custody) => {
         const consoleErrors = vi.spyOn(console, 'error');
         onTestFinished(() => consoleErrors.mockRestore());
         // Two live machines deliberately disagree with the fixed Voice choice.
@@ -2058,10 +2058,19 @@ describe('AppShellPluginUiProjectionProvider', () => {
                 hostUiApiRange: '^1.0.0',
             }],
         });
+        const executionOrigin = custody === 'development' ? PluginMachineExecutionOriginV1Schema.parse({
+            serverIdentityId: APP_SCOPE_FIXTURE.serverIdentityId,
+            sourceRef: { machineId: 'machine-voice', pluginId,
+                sourceCustody: { kind: 'development', registeredRootId: pluginId } },
+        }) : null;
         const rawProjection = PluginProjectionV2Schema.parse({
             v: 2,
             generation,
-            installedPackagesById: {},
+            installedPackagesById: executionOrigin ? { [pluginId]: {
+                id: pluginId, displayName: pluginId, version: '1.0.0', enabled: true,
+                source: { kind: 'localPath', locator: pluginId }, executionOrigin,
+                occurrenceId: origin.materializationRef.materializationId,
+            } } : {},
             agentsById: {},
             actionsById: {},
             toolsById: {},
@@ -2092,6 +2101,7 @@ describe('AppShellPluginUiProjectionProvider', () => {
                             contributionKind: 'reactNativeBundle',
                             contributionId: declaration.id,
                             generatedOwnerKind: 'voiceProvider',
+                            ...(executionOrigin ? { executionOrigin } : {}),
                             artifactGraph,
                             runtime: {
                                 decision: { state: 'load' },
@@ -2149,13 +2159,12 @@ describe('AppShellPluginUiProjectionProvider', () => {
         };
         const host = getInstalledPluginUiExecutableModuleHost();
         pluginExecutableHostState.override = host;
-        // This is the existing direct-machine Voice flow. Raw Voice declarations
-        // have no execution-origin fields; their matching bundle must likewise
-        // be originless, as emitted for bundled/development daemon contributions.
+        // The live daemon leaves Voice declarations unstamped while stamping
+        // the installed development package and its executable bundle.
         const registration = () => getPluginUiClientExecutableComposition(host).read({
             family: 'voiceProviders', pluginId, localId: declaration.id,
             occurrenceId: origin.materializationRef.materializationId,
-            executionOrigin: null,
+            executionOrigin,
             target: { artifactId: declaration.client.artifactId, exportName: 'activate', platform: 'web' },
         });
         let reconnectDescription: ReturnType<typeof createDeferred<{
@@ -2185,7 +2194,7 @@ describe('AppShellPluginUiProjectionProvider', () => {
         expect(getVoiceAdapterRegistry().get(providerId)).not.toBeNull();
         expect(projectionDescribeSpy.mock.calls.every(([machineId]) => machineId === 'machine-voice')).toBe(true);
         expect(screen.findByType('ProjectionProbe' as never).props.value.machineId).toBeNull();
-        expect(registration()?.executionOrigin).toBeNull();
+        expect(registration()?.executionOrigin).toEqual(executionOrigin);
         expect(registration()?.authority).toEqual({
             serverId: APP_SCOPE_FIXTURE.serverId, machineId: 'machine-voice',
         });
