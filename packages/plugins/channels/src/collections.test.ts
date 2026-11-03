@@ -297,8 +297,8 @@ describe('Channels collection declarations', () => {
     const before = JSON.stringify(retained);
     const migration = CHANNEL_ACCOUNT_COLLECTION_MIGRATIONS['channel-deliveries']?.find((edge) => edge.fromSchemaVersion === 2);
     expect(migration).toMatchObject({ toSchemaVersion: 3 });
-    expect(CHANNEL_DELIVERIES_COLLECTION.schemaVersion).toBe(3);
-    expect(CHANNEL_DELIVERIES_COLLECTION.readableSchemaVersions).toEqual([1, 2]);
+    expect(CHANNEL_DELIVERIES_COLLECTION.schemaVersion).toBe(5);
+    expect(CHANNEL_DELIVERIES_COLLECTION.readableSchemaVersions).toEqual([1, 2, 3, 4]);
     const migrated = await migration?.migrate(retained, { currentRevision: 1 });
     expect(migrated).toEqual({ ...retained, payload: {
       ...(retained.payload as Readonly<Record<string, JsonValue>>), content: fixture.targetContent,

@@ -2108,8 +2108,8 @@ const DELIVERY_ROW_STATE_CONSISTENCY_SCHEMA: PluginJsonSchema = {
  */
 export const CHANNEL_DELIVERIES_COLLECTION = defineAccountCollection({
   id: CHANNEL_DELIVERIES_COLLECTION_ID,
-  schemaVersion: 3,
-  readableSchemaVersions: [1, 2],
+  schemaVersion: 5,
+  readableSchemaVersions: [1, 2, 3, 4],
   schema: {
     type: 'object',
     properties: {
